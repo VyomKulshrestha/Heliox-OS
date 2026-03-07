@@ -1,8 +1,8 @@
 {
   "$schema": "https://raw.githubusercontent.com/nickcernis/tauri-docs/refs/heads/next/src/content/docs/_schema/config.schema.json",
-  "productName": "Pilot",
-  "version": "0.1.0",
-  "identifier": "com.pilot.app",
+  "productName": "Cortex-OS",
+  "version": "0.2.0",
+  "identifier": "com.cortexos.app",
   "build": {
     "frontendDist": "../ui/dist",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Pilot",
+        "title": "Cortex-OS",
         "width": 700,
         "height": 500,
         "resizable": true,
@@ -28,18 +28,23 @@
       "iconAsTemplate": true
     },
     "security": {
-      "csp": "default-src 'self'; connect-src 'self' ws://127.0.0.1:*; style-src 'self' 'unsafe-inline'"
+      "csp": "default-src 'self'; connect-src 'self' ws://127.0.0.1:* https://cdn.jsdelivr.net; script-src 'self' 'unsafe-eval' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; media-src 'self' mediastream:; img-src 'self' blob: data:"
     }
   },
   "bundle": {
     "active": true,
-    "targets": ["deb"],
+    "targets": [
+      "deb"
+    ],
     "icon": [
       "icons/icon.svg"
     ],
     "linux": {
       "deb": {
-        "depends": ["python3 (>= 3.11)", "python3-pip"]
+        "depends": [
+          "python3 (>= 3.11)",
+          "python3-pip"
+        ]
       }
     }
   }

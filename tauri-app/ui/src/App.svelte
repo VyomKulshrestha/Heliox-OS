@@ -4,6 +4,9 @@
   import ActivityLog from "./lib/components/ActivityLog.svelte";
   import SettingsPanel from "./lib/components/SettingsPanel.svelte";
   import SetupWizard from "./lib/components/SetupWizard.svelte";
+  import VoiceControl from "./lib/components/VoiceControl.svelte";
+  import GestureControl from "./lib/components/GestureControl.svelte";
+  import AmbientHUD from "./lib/components/AmbientHUD.svelte";
   import { session } from "./lib/stores/session";
   import type { Message } from "./lib/stores/session";
   import { settings } from "./lib/stores/settings";
@@ -17,7 +20,7 @@
   async function onSetupComplete() {
     await settings.updateSection("", { first_run_complete: true });
     await tick();
-    session.addSystemMessage("Pilot is ready. Type a command or click a suggestion below.");
+    session.addSystemMessage("Cortex-OS is ready. Type a command, speak, or use gestures.");
   }
 
   function scrollToBottom() {
@@ -65,10 +68,10 @@
     onmouseup={() => isDragging = false}
   >
     <div class="titlebar-left">
-      <span class="logo">P</span>
-      <span class="title">Pilot</span>
+      <span class="logo">C</span>
+      <span class="title">Cortex-OS</span>
       <span class="badge" class:connected={$session.daemonConnected}>
-        {$session.daemonConnected ? "Connected" : "Connecting..."}
+        {$session.daemonConnected ? "Online" : "Connecting..."}
       </span>
     </div>
     <nav class="tabs">
@@ -76,6 +79,9 @@
       <button class="tab" class:active={activeTab === "log"} onclick={() => activeTab = "log"}>Activity</button>
       <button class="tab" class:active={activeTab === "settings"} onclick={() => activeTab = "settings"}>Settings</button>
     </nav>
+    <div class="titlebar-right">
+      <AmbientHUD />
+    </div>
   </header>
 
   <div class="content">
@@ -92,13 +98,13 @@
         <div class="results" bind:this={resultsEl}>
           {#if $session.messages.length === 0 && !$session.loading}
             <div class="empty-state">
-              <div class="empty-logo">P</div>
-              <h2>Pilot</h2>
-              <p>Your AI command center. Tell Pilot what you'd like to do with your system.</p>
+              <div class="empty-logo">C</div>
+              <h2>Cortex-OS</h2>
+              <p>Your AI system control agent. Type, speak, or gesture — I'm ready.</p>
               <div class="suggestions">
                 <button class="suggestion" onclick={() => session.sendCommand("Show system information")}>Show system info</button>
-                <button class="suggestion" onclick={() => session.sendCommand("List files in home directory")}>List home files</button>
-                <button class="suggestion" onclick={() => session.sendCommand("Check disk usage")}>Disk usage</button>
+                <button class="suggestion" onclick={() => session.sendCommand("Take a screenshot and describe it")}>Screenshot + OCR</button>
+                <button class="suggestion" onclick={() => session.sendCommand("What processes are running?")}>List processes</button>
               </div>
             </div>
           {:else}
@@ -109,7 +115,7 @@
             {#if $session.loading}
               <div class="message system">
                 <div class="msg-header">
-                  <span class="msg-label">PILOT</span>
+                  <span class="msg-label">CORTEX</span>
                   <span class="phase-badge">{$session.phase || "thinking"}</span>
                 </div>
                 <span class="msg-text loading-dots">
@@ -120,7 +126,11 @@
           {/if}
         </div>
 
-        <CommandInput />
+        <div class="input-row">
+          <VoiceControl />
+          <CommandInput />
+          <GestureControl />
+        </div>
       </div>
     {:else if activeTab === "log"}
       <ActivityLog />
@@ -215,7 +225,7 @@
 
   {:else}
     <div class="message system-msg">
-      <span class="msg-label">PILOT</span>
+      <span class="msg-label">CORTEX</span>
       <span class="msg-text">{msg.text}</span>
     </div>
   {/if}
@@ -254,20 +264,28 @@
     gap: 10px;
   }
 
+  .titlebar-right {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    -webkit-app-region: no-drag;
+  }
+
   .logo {
     width: 24px;
     height: 24px;
     display: flex;
     align-items: center;
     justify-content: center;
-    background: var(--accent);
+    background: linear-gradient(135deg, #00c8ff, #7c3aed);
     color: white;
     font-weight: 700;
     font-size: 13px;
     border-radius: var(--radius-sm);
+    box-shadow: 0 0 10px rgba(0, 200, 255, 0.3);
   }
 
-  .title { font-weight: 600; font-size: 14px; }
+  .title { font-weight: 600; font-size: 14px; letter-spacing: 0.5px; }
 
   .badge {
     font-size: 11px;
@@ -287,6 +305,17 @@
     display: flex;
     gap: 2px;
     -webkit-app-region: no-drag;
+  }
+
+  /* Input Row — voice + text + gesture */
+  .input-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-top: 1px solid var(--border);
+    background: var(--bg-secondary);
+    position: relative;
   }
 
   .tab {
