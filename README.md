@@ -1,7 +1,7 @@
 # Cortex-OS — AI System Control Agent
 
 <p align="center">
-  <strong>Control your entire computer with natural language.</strong><br>
+  <strong>Control your entire computer with natural language, voice, and hand gestures.</strong><br>
   An open-source, privacy-first AI agent that plans, executes, and verifies complex multi-step tasks.
 </p>
 
@@ -23,6 +23,17 @@ Unlike simple command runners, Cortex-OS is a **true agentic system** with a Pla
 3. **Verifier** — Post-execution verification confirms the action succeeded
 4. **Auto-Fix** — If generated code fails, the LLM automatically fixes and retries it
 5. **Security** — Five-tier permission system with confirmation gates and rollback support
+
+## 🤖 JARVIS Mode (New!)
+
+Cortex-OS now includes a futuristic, Iron Man-style interface:
+
+- 🎤 **Voice Control**: Push-to-talk or use the always-on **"Hey Cortex"** wake word.
+- 🗣️ **Text-to-Speech**: Cortex-OS speaks its responses aloud to you.
+- 🤚 **12 Hand Gestures**: Control your PC via webcam using gestures (Open Palm, Thumbs Up/Down, Peace, Fist, Point, Rock, OK, Swipe, Finger Gun, Call Me).
+- 🖊️ **Air Drawing**: Point your index finger to draw glowing trails in the air.
+- 🌀 **Arc Reactor UI**: Animated spinning reactor logo, neural background, and particle explosion effects on task completion.
+- 📊 **Ambient HUD**: Holographic system monitor overlay for CPU, RAM, and Disk metrics.
 
 ## 🧪 Tested With 10 Complex Tasks — 80%+ Pass Rate
 

@@ -11,6 +11,7 @@
    */
 
   import { session } from "../stores/session";
+  import AudioVisualizer from "./AudioVisualizer.svelte";
 
   // ── State ──
   let isListening = $state(false);
@@ -251,6 +252,9 @@
       {/if}
     </svg>
   </button>
+
+  <!-- Audio Visualizer -->
+  <AudioVisualizer active={isListening} />
 
   <!-- Wake Word Toggle -->
   <button

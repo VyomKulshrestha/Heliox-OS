@@ -7,6 +7,9 @@
   import VoiceControl from "./lib/components/VoiceControl.svelte";
   import GestureControl from "./lib/components/GestureControl.svelte";
   import AmbientHUD from "./lib/components/AmbientHUD.svelte";
+  import ArcReactor from "./lib/components/ArcReactor.svelte";
+  import NeuralBackground from "./lib/components/NeuralBackground.svelte";
+  import ParticleBurst from "./lib/components/ParticleBurst.svelte";
   import { session } from "./lib/stores/session";
   import type { Message } from "./lib/stores/session";
   import { settings } from "./lib/stores/settings";
@@ -16,11 +19,27 @@
   let isDragging = $state(false);
   let showWizard = $derived(!$settings.first_run_complete);
   let resultsEl: HTMLDivElement | undefined = $state();
+  let particleBurst: ParticleBurst | undefined = $state();
 
   async function onSetupComplete() {
     await settings.updateSection("", { first_run_complete: true });
     await tick();
-    session.addSystemMessage("Cortex-OS is ready. Type a command, speak, or use gestures.");
+    session.addSystemMessage(getJarvisGreeting());
+  }
+
+  // JARVIS-style proactive greeting based on time
+  function getJarvisGreeting(): string {
+    const hour = new Date().getHours();
+    if (hour < 6) return "Good evening. Cortex-OS is online. All systems nominal.";
+    if (hour < 12) return "Good morning. Cortex-OS is online and ready for your commands.";
+    if (hour < 17) return "Good afternoon. Cortex-OS at your service. What shall we tackle?";
+    if (hour < 21) return "Good evening. Cortex-OS is ready. How can I assist you tonight?";
+    return "Burning the midnight oil? Cortex-OS is standing by.";
+  }
+
+  // Handle gesture events for particle effects
+  function onGestureDetected(gesture: string) {
+    particleBurst?.gestureBurst(gesture);
   }
 
   function scrollToBottom() {
@@ -50,6 +69,17 @@
     if (action.destructive) return "tier-destructive";
     return "tier-safe";
   }
+  // Trigger particle burst on new results
+  let prevMsgLen = 0;
+  $effect(() => {
+    const msgs = $session.messages;
+    if (msgs.length > prevMsgLen) {
+      const last = msgs[msgs.length - 1];
+      if (last.type === "result") particleBurst?.confirmBurst();
+      else if (last.type === "error") particleBurst?.errorBurst();
+    }
+    prevMsgLen = msgs.length;
+  });
 </script>
 
 {#if showWizard}
@@ -68,7 +98,7 @@
     onmouseup={() => isDragging = false}
   >
     <div class="titlebar-left">
-      <span class="logo">C</span>
+      <ArcReactor />
       <span class="title">Cortex-OS</span>
       <span class="badge" class:connected={$session.daemonConnected}>
         {$session.daemonConnected ? "Online" : "Connecting..."}
@@ -87,6 +117,7 @@
   <div class="content">
     {#if activeTab === "chat"}
       <div class="chat-panel">
+        <NeuralBackground />
         {#if $session.confirmRequired}
           <ConfirmDialog
             actions={$session.confirmActions}
@@ -129,7 +160,7 @@
         <div class="input-row">
           <VoiceControl />
           <CommandInput />
-          <GestureControl />
+          <GestureControl onGesture={onGestureDetected} />
         </div>
       </div>
     {:else if activeTab === "log"}
@@ -138,6 +169,9 @@
       <SettingsPanel />
     {/if}
   </div>
+
+  <!-- Particle Burst Overlay -->
+  <ParticleBurst bind:this={particleBurst} />
 </main>
 
 {#snippet messageBlock(msg: Message)}

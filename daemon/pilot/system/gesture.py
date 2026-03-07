@@ -3,13 +3,19 @@
 Uses MediaPipe Hands if available, falls back to a stub.
 Detected gestures are mapped to Cortex-OS actions.
 
-Gesture Map:
-  ✋ open_palm   → cancel / stop
-  👍 thumbs_up  → confirm action
-  ✌️ peace      → toggle voice
-  👊 fist       → execute
-  👆 point_up   → scroll up
-  🤟 rock       → system info
+Gesture Map (12 gestures):
+  ✉️ open_palm    → cancel / stop
+  👍 thumbs_up   → confirm action
+  👎 thumbs_down → deny / reject
+  ✌️ peace       → toggle voice
+  👊 fist        → execute
+  👆 point_up    → scroll up
+  🤟 rock        → system info
+  👌 ok          → acknowledge
+  🤙 call_me     → open settings
+  👈 swipe_left  → previous tab
+  👉 swipe_right → next tab
+  🔫 finger_gun  → screenshot
 """
 
 from __future__ import annotations
@@ -39,10 +45,16 @@ except ImportError:
 GESTURE_MAP = {
     "open_palm": "cancel",
     "thumbs_up": "confirm",
+    "thumbs_down": "deny",
     "peace": "toggle_voice",
     "fist": "execute",
     "point_up": "scroll_up",
     "rock": "system_info",
+    "ok": "acknowledge",
+    "call_me": "settings",
+    "swipe_left": "prev_tab",
+    "swipe_right": "next_tab",
+    "finger_gun": "screenshot",
 }
 
 
@@ -62,6 +74,31 @@ def classify_gesture(landmarks) -> tuple[str, float]:
     ring_up = is_extended(16, 14)
     pinky_up = is_extended(20, 18)
 
+    import math
+
+    def dist(a_idx: int, b_idx: int) -> float:
+        dx = lm[a_idx].x - lm[b_idx].x
+        dy = lm[a_idx].y - lm[b_idx].y
+        return math.sqrt(dx * dx + dy * dy)
+
+    # 👌 OK Sign — thumb tip touching index tip, other fingers up
+    if dist(4, 8) < 0.05 and middle_up and ring_up and pinky_up:
+        return ("ok", 0.85)
+
+    # 🔫 Finger Gun — index + thumb extended, others down, thumb horizontal
+    if thumb_extended and index_up and not middle_up and not ring_up and not pinky_up:
+        if abs(lm[4].y - lm[2].y) < 0.08:
+            return ("finger_gun", 0.78)
+
+    # 🤙 Call Me — thumb + pinky extended, others curled
+    if thumb_extended and not index_up and not middle_up and not ring_up and pinky_up:
+        return ("call_me", 0.82)
+
+    # 👎 Thumbs Down — only thumb extended, pointing downward
+    if thumb_extended and not index_up and not middle_up and not ring_up and not pinky_up:
+        if lm[4].y > lm[0].y:
+            return ("thumbs_down", 0.8)
+
     # Fist — nothing extended
     if not index_up and not middle_up and not ring_up and not pinky_up and not thumb_extended:
         return ("fist", 0.85)
@@ -70,7 +107,7 @@ def classify_gesture(landmarks) -> tuple[str, float]:
     if index_up and middle_up and ring_up and pinky_up and thumb_extended:
         return ("open_palm", 0.9)
 
-    # Thumbs up — only thumb
+    # Thumbs up — only thumb, pointing up
     if thumb_extended and not index_up and not middle_up and not ring_up and not pinky_up:
         if lm[4].y < lm[0].y:
             return ("thumbs_up", 0.8)
