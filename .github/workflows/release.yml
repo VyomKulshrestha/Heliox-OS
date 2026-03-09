@@ -1,0 +1,114 @@
+name: "Release Cortex-OS"
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-tauri:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: "windows-latest"
+            args: ""
+            label: "Windows"
+          - platform: "macos-latest"
+            args: "--target aarch64-apple-darwin"
+            label: "macOS-ARM"
+          - platform: "macos-latest"
+            args: "--target x86_64-apple-darwin"
+            label: "macOS-Intel"
+          - platform: "ubuntu-22.04"
+            args: ""
+            label: "Linux"
+
+    runs-on: ${{ matrix.platform }}
+    name: Build (${{ matrix.label }})
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── System Dependencies ──
+      - name: Install Linux dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev
+
+      # ── Rust ──
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "tauri-app/src-tauri -> target"
+
+      # ── Node.js ──
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install frontend dependencies
+        working-directory: tauri-app/ui
+        run: npm ci || npm install
+
+      # ── Python daemon (bundled alongside) ──
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python daemon dependencies
+        working-directory: daemon
+        run: pip install -e ".[full]" || pip install -e .
+
+      # ── Build Tauri ──
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: "tauri-app"
+          tagName: ${{ github.ref_name }}
+          releaseName: "Cortex-OS ${{ github.ref_name }}"
+          releaseBody: |
+            ## Cortex-OS ${{ github.ref_name }}
+
+            ### Download & Install
+            1. Download the installer for your OS below
+            2. Run the installer
+            3. Launch Cortex-OS
+            4. Enter your API key (Gemini/OpenAI/Claude) in Settings
+
+            ### Requirements
+            - **Python 3.11+** must be installed on your system
+            - Run `pip install -e daemon/` to install the AI backend
+            - Start the daemon: `python -m pilot.server`
+
+            ### What's New
+            - 🌀 Arc Reactor animated logo
+            - 🧠 Neural network background
+            - 🤚 12 hand gestures via webcam
+            - 🎤 Voice control with "Hey Cortex" wake word
+            - ✨ Particle burst effects
+            - 🔊 Audio spectrum visualizer
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}

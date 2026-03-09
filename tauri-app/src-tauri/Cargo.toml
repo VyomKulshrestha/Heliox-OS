@@ -1,8 +1,8 @@
 [package]
-name = "pilot"
-version = "0.1.0"
+name = "cortex-os"
+version = "0.2.0"
 edition = "2021"
-description = "AI Command Center for Ubuntu LTS"
+description = "Cortex-OS — AI System Control Agent"
 license = "MIT"
 
 [build-dependencies]

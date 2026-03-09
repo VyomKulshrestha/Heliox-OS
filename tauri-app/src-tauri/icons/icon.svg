@@ -1,4 +1,16 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
-  <rect width="128" height="128" rx="24" fill="#7c6fe0"/>
-  <text x="64" y="84" font-family="sans-serif" font-size="72" font-weight="700" fill="white" text-anchor="middle">P</text>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0a0e27"/>
+      <stop offset="100%" stop-color="#1a1e3e"/>
+    </linearGradient>
+    <linearGradient id="ring" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#00f0ff"/>
+      <stop offset="100%" stop-color="#7c6fe0"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="24" fill="url(#bg)"/>
+  <circle cx="64" cy="64" r="48" fill="none" stroke="url(#ring)" stroke-width="3" opacity="0.6"/>
+  <circle cx="64" cy="64" r="38" fill="none" stroke="#00f0ff" stroke-width="1.5" opacity="0.3"/>
+  <text x="64" y="84" font-family="sans-serif" font-size="68" font-weight="700" fill="#00f0ff" text-anchor="middle">C</text>
 </svg>
