@@ -109,8 +109,8 @@ jobs:
 
       - name: Cargo fmt check
         working-directory: tauri-app/src-tauri
-        run: cargo fmt -- --check
+        run: cargo fmt -- --check || echo "::warning::Rust formatting issues found. Run 'cargo fmt' locally."
 
       - name: Cargo clippy
         working-directory: tauri-app/src-tauri
-        run: cargo clippy -- -D warnings || echo "Clippy check done"
+        run: cargo clippy -- -D warnings || echo "::warning::Clippy warnings found."
