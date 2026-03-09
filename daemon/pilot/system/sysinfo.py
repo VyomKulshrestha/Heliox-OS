@@ -19,10 +19,13 @@ logger = logging.getLogger("pilot.system.sysinfo")
 
 async def system_info(categories: list[str] | None = None) -> str:
     """Get comprehensive system information."""
-    if categories is None:
-        categories = ["os", "cpu", "memory", "disk", "network"]
+    if not categories:
+        categories = ["os", "cpu", "memory", "disk", "network", "time"]
 
     sections: list[str] = []
+
+    if "time" in categories:
+        sections.append(await _time_info())
 
     if "os" in categories:
         info = get_platform_info()
@@ -47,6 +50,12 @@ async def system_info(categories: list[str] | None = None) -> str:
         sections.append(await _battery_info())
 
     return "\n\n".join(sections)
+
+
+async def _time_info() -> str:
+    import datetime
+    now = datetime.datetime.now()
+    return f"=== System Time ===\n  Current Local Time: {now.strftime('%A, %B %d, %Y %I:%M:%S %p')}\n  Timezone: {now.astimezone().tzname()}"
 
 
 async def _cpu_info() -> str:
