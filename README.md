@@ -5,9 +5,16 @@
   <a href="https://github.com/VyomKulshrestha/Cortex-OS/releases"><img src="https://img.shields.io/github/downloads/VyomKulshrestha/Cortex-OS/total?style=for-the-badge&color=7c6fe0&label=Downloads" alt="Downloads"></a>
   <a href="https://github.com/VyomKulshrestha/Cortex-OS/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/VyomKulshrestha/Cortex-OS/release.yml?style=for-the-badge&label=Build" alt="Build Status"></a>
   <a href="https://github.com/VyomKulshrestha/Cortex-OS/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/VyomKulshrestha/Cortex-OS/ci.yml?style=for-the-badge&label=CI&color=44cc11" alt="CI"></a>
+  <a href="https://github.com/VyomKulshrestha/Cortex-OS/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22"><img src="https://img.shields.io/github/issues/VyomKulshrestha/Cortex-OS/good%20first%20issue?style=for-the-badge&color=purple&label=Good%20First%20Issues" alt="Good First Issues"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/VyomKulshrestha/Cortex-OS?style=for-the-badge&color=blue" alt="License"></a>
   <img src="https://img.shields.io/badge/Platform-Windows%20|%20macOS%20|%20Linux-333?style=for-the-badge" alt="Platform">
 </p>
+
+<p align="center">
+  <!-- Replace with your actual demo GIF path once recorded -->
+  <img src="https://raw.githubusercontent.com/VyomKulshrestha/Cortex-OS/main/assets/demo.gif" alt="Cortex-OS Jarvis Demo" width="800">
+</p>
+
 
 <p align="center">
   <strong>Control your entire computer with natural language, voice, and hand gestures.</strong><br>
@@ -136,66 +143,82 @@ Auto-detects: winget, choco, brew, apt, dnf, pacman
 
 ## Architecture
 
+```mermaid
+graph TD
+    User([User Input: Voice, Text, Gestures]) --> GUI
+
+    subgraph "Frontend (Tauri + Svelte)"
+        GUI[Desktop Window]
+        HUD[Ambient System HUD]
+        VC[Voice Controller]
+        GC[Hand Gesture Controller]
+        GUI --- HUD
+        GUI --- VC
+        GUI --- GC
+    end
+
+    GUI --> |Action Request| Daemon
+
+    subgraph "Backend Daemon (Python)"
+        Daemon[Agent Server] --> Planner[LLM Planner]
+        Planner --> Router{Model Router}
+        Router --> |Cloud| Ext_LLM(Gemini / OpenAI / Claude)
+        Router --> |Local| Int_LLM(Ollama)
+        Planner --> |Action JSON| Security[Security Gate / Sandbox]
+        Security --> |Verified| Executor[System Executor]
+    end
+
+    subgraph "OS Integration"
+        Executor --> File(Filesystem)
+        Executor --> Proc(Processes)
+        Executor --> Web(Browser Automation)
+        Executor --> Shell(Shell / Registry)
+    end
 ```
-cortex-os/
-├── daemon/              # Python backend (agent system)
-│   └── pilot/
-│       ├── agents/      # Planner, Executor, Verifier, Code Sanitizer
-│       ├── models/      # Cloud (Gemini/OpenAI/Claude) + Local (Ollama) LLM routing
-│       ├── security/    # Encrypted vault, permission system, audit log
-│       └── system/      # OS interface modules (files, processes, network, etc.)
-├── tauri-app/           # Desktop GUI (Svelte 5 + Tauri v2)
-│   ├── ui/              # Frontend (Svelte + Vite)
-│   └── src-tauri/       # Rust backend
-└── schemas/             # Shared JSON schemas for action validation
-```
 
-## Requirements
+## 🚀 Installation
 
-- **Python 3.11+**
-- **Ollama** (for local LLM inference) OR a cloud API key (OpenAI, Claude, Gemini)
-- **Rust toolchain** (for building the Tauri desktop app)
-- **Node.js 20+** (for building the Svelte frontend)
+### Option 1: Download Compiled Desktop App (Recommended)
 
-## Quick Start
+The easiest way to get started is to download the pre-compiled installer for your operating system.
 
-### 1. Install the Python daemon
+1. Go to the [GitHub Releases page](https://github.com/VyomKulshrestha/Cortex-OS/releases).
+2. Download the installer for your OS:
+   - **Windows**: `Cortex-OS_x64-setup.exe`
+   - **macOS (Apple Silicon)**: `Cortex-OS_aarch64.dmg`
+   - **macOS (Intel)**: `Cortex-OS_x86_64.dmg`
+   - **Linux**: `.AppImage` or `.deb`
+3. Install the app.
+4. Open Cortex-OS and enter your API Key (e.g., Gemini, OpenAI, Claude) in the Settings tab.
 
+*Note: The Python backend requires Python 3.11+ installed on your system. You must start the local daemon manually for now.*
+
+### Option 2: Build from Source (For Developers)
+
+If you want to contribute or modify Cortex-OS, build it from the source code:
+
+**1. Install the Python daemon:**
 ```bash
-cd daemon
+git clone https://github.com/VyomKulshrestha/Cortex-OS.git
+cd Cortex-OS/daemon
 pip install -e ".[full,dev]"
 ```
 
-### 2. Choose your LLM
+**2. Choose your LLM:**
+*   Local (Ollama): `ollama pull llama3.1:8b` -> `ollama serve`
+*   Cloud (Gemini/OpenAI/Claude): Add your API key in the app GUI.
 
-**Option A: Local (Ollama — free, private)**
-```bash
-ollama pull llama3.1:8b
-ollama serve
-```
-
-**Option B: Cloud (Gemini / OpenAI / Claude)**
-Set your API key through the app UI or config file.
-
-### 3. Run the daemon
-
+**3. Run the daemon:**
 ```bash
 cd daemon
 python -m pilot.server
 ```
 
-### 4. Run the desktop app
-
+**4. Run the frontend:**
 ```bash
 cd tauri-app/ui
 npm install
 npm run dev
-```
-
-Or build the full Tauri desktop app:
-```bash
-cd tauri-app/src-tauri
-cargo tauri dev
 ```
 
 ## Example Commands
@@ -215,7 +238,11 @@ cargo tauri dev
 "Install Firefox"
 ```
 
-## Security
+## 🛡️ Security
+
+> [!WARNING]
+> **PLEASE READ BEFORE USE: SYSTEM COMPROMISE RISK**
+> Cortex-OS is an autonomous agent with the ability to execute code, delete files, and run terminal commands directly on your host operating system. While we have provided sandbox measures, the AI has real system access. **Do NOT run Cortex-OS with root/Administrator privileges** unless absolutely necessary. We are not responsible for accidental data loss caused by LLM hallucinations.
 
 - All AI outputs pass through structured schema validation before execution
 - Five-tier permission system (read-only through root-level)
@@ -257,12 +284,14 @@ host = "127.0.0.1"
 port = 8785
 ```
 
-## Contributing
+## 🤝 Contributing
 
-1. Fork the repository
-2. Create a feature branch
-3. Commit your changes
-4. Open a Pull Request
+We love contributions! Whether it's adding a new gesture, fixing a bug, or building a new plugin, check out our guides to get started.
+
+1. Read our [Contributing Guide](CONTRIBUTING.md) to set up your dev environment.
+2. Check the [Good First Issues](https://github.com/VyomKulshrestha/Cortex-OS/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) tab on GitHub to find beginner-friendly tasks.
+3. Review our [Code of Conduct](CODE_OF_CONDUCT.md).
+4. Join the community discussions in [GitHub Discussions](https://github.com/VyomKulshrestha/Cortex-OS/discussions).
 
 ## License
 
