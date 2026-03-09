@@ -6,7 +6,7 @@ exactly what a command will do before dropping the `force` flag.
 
 from __future__ import annotations
 
-import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -16,14 +16,13 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from pilot.system.platform_detect import CURRENT_PLATFORM, Platform, run_powershell
-
 logger = logging.getLogger("pilot.security.sandbox")
 
 
 @dataclass
 class SandboxPreview:
     """Result of a simulated action."""
+
     action_type: str
     target: str
     will_delete: list[str]
@@ -66,7 +65,7 @@ class SandboxEnvironment:
             if not recursive:
                 preview.warnings.append(f"Directory {path} cannot be deleted without recursive=True")
                 return preview
-            
+
             # Count files
             file_count = sum(1 for _ in path.rglob("*"))
             if file_count > 1000:
@@ -129,10 +128,10 @@ class SandboxEnvironment:
 
         snapshot_dir = Path(self._workspace) / "snapshots"
         snapshot_dir.mkdir(exist_ok=True)
-        
+
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         dest = snapshot_dir / f"{src.name}_{timestamp}.bak"
-        
+
         shutil.copy2(src, dest)
         return str(dest)
 
@@ -140,10 +139,10 @@ class SandboxEnvironment:
         """Restore a file from a snapshot."""
         src = Path(snapshot_path)
         dest = Path(target_path)
-        
+
         if not src.exists():
             return False
-            
+
         try:
             shutil.copy2(src, dest)
             return True
@@ -153,10 +152,8 @@ class SandboxEnvironment:
 
     def clear(self):
         """Clean up the sandbox environment."""
-        try:
+        with contextlib.suppress(Exception):
             shutil.rmtree(self._workspace)
-        except Exception:
-            pass
 
 
 _sandbox = SandboxEnvironment()
@@ -165,10 +162,7 @@ _sandbox = SandboxEnvironment()
 async def preview_action(action_type: str, parameters: dict) -> str:
     """Generate a human-readable preview of what an action will do."""
     if action_type == "file_delete":
-        preview = await _sandbox.preview_file_delete(
-            parameters.get("path", ""), 
-            parameters.get("recursive", False)
-        )
+        preview = await _sandbox.preview_file_delete(parameters.get("path", ""), parameters.get("recursive", False))
     elif action_type in ("shell_command", "shell_script"):
         preview = await _sandbox.preview_shell_command(parameters.get("command", "") or parameters.get("script", ""))
     else:
@@ -185,22 +179,25 @@ async def preview_action(action_type: str, parameters: dict) -> str:
             warnings=["Generic preview: effect depends entirely on parameters"],
         )
 
-    return json.dumps({
-        "risk_level": preview.risk_level.upper(),
-        "warnings": preview.warnings,
-        "impact": {
-            "delete": preview.will_delete,
-            "modify": preview.will_modify,
-            "create": preview.will_create,
+    return json.dumps(
+        {
+            "risk_level": preview.risk_level.upper(),
+            "warnings": preview.warnings,
+            "impact": {
+                "delete": preview.will_delete,
+                "modify": preview.will_modify,
+                "create": preview.will_create,
+            },
+            "reversible": preview.is_reversible,
         },
-        "reversible": preview.is_reversible,
-    }, indent=2)
+        indent=2,
+    )
 
 
 async def safe_execute_with_snapshot(file_path: str, edit_func) -> bool:
     """Execute a function that modifies a file, with automatic snapshot rollback on failure."""
     snapshot = await _sandbox.create_snapshot(file_path)
-    
+
     try:
         await edit_func()
         return True

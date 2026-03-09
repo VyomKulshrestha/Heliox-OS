@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from typing import Any
 
 logger = logging.getLogger("pilot.system.multimodal")
@@ -17,6 +17,7 @@ logger = logging.getLogger("pilot.system.multimodal")
 @dataclass
 class ChatNode:
     """A node in the multimodal chat payload."""
+
     type: str  # text, image, table, code, file_tree, error, link
     content: Any
 
@@ -43,22 +44,41 @@ class MultiModalFormatter:
                 if isinstance(data, dict):
                     if "matches" in data:
                         # Screen finding matches
-                        nodes.append(ChatNode(type="table", content={
-                            "columns": ["Text", "Center (X,Y)", "Confidence"],
-                            "rows": [[m["text"], str(m["center"]), f"{m['confidence']:.2f}"] for m in data["matches"]]
-                        }))
+                        nodes.append(
+                            ChatNode(
+                                type="table",
+                                content={
+                                    "columns": ["Text", "Center (X,Y)", "Confidence"],
+                                    "rows": [
+                                        [m["text"], str(m["center"]), f"{m['confidence']:.2f}"] for m in data["matches"]
+                                    ],
+                                },
+                            )
+                        )
                     elif "elements" in data:
                         # UI element map
-                        nodes.append(ChatNode(type="table", content={
-                            "columns": ["ID", "Type", "Text", "Center"],
-                            "rows": [[str(e["id"]), e["type"], e["text"], str(e["center"])] for e in data["elements"]]
-                        }))
+                        nodes.append(
+                            ChatNode(
+                                type="table",
+                                content={
+                                    "columns": ["ID", "Type", "Text", "Center"],
+                                    "rows": [
+                                        [str(e["id"]), e["type"], e["text"], str(e["center"])] for e in data["elements"]
+                                    ],
+                                },
+                            )
+                        )
                     elif "total_commands" in data:
                         # Context stats
-                        nodes.append(ChatNode(type="table", content={
-                            "columns": ["Metric", "Value"],
-                            "rows": [[k, str(v)] for k, v in data.items() if not isinstance(v, list)]
-                        }))
+                        nodes.append(
+                            ChatNode(
+                                type="table",
+                                content={
+                                    "columns": ["Metric", "Value"],
+                                    "rows": [[k, str(v)] for k, v in data.items() if not isinstance(v, list)],
+                                },
+                            )
+                        )
                     else:
                         nodes.append(ChatNode(type="code", content={"language": "json", "code": output}))
                 else:
@@ -74,10 +94,7 @@ class MultiModalFormatter:
                     # Guess columns from first object
                     cols = list(data[0].keys())
                     rows = [[str(item.get(c, "")) for c in cols] for item in data[:50]]
-                    nodes.append(ChatNode(type="table", content={
-                        "columns": cols,
-                        "rows": rows
-                    }))
+                    nodes.append(ChatNode(type="table", content={"columns": cols, "rows": rows}))
                 else:
                     nodes.append(ChatNode(type="code", content={"language": "json", "code": output}))
             except json.JSONDecodeError:
@@ -113,8 +130,4 @@ def format_action_result(action_type: str, output: str, params: dict) -> str:
     """Format an action result into a JSON multimodal payload."""
     formatter = MultiModalFormatter()
     nodes = formatter.format_output(action_type, output, params)
-    return json.dumps({
-        "type": "multimodal_result",
-        "action": action_type,
-        "nodes": nodes
-    })
+    return json.dumps({"type": "multimodal_result", "action": action_type, "nodes": nodes})

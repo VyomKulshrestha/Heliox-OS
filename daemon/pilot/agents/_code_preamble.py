@@ -33,7 +33,9 @@ def build_preamble(data_file_path: str) -> str:
     L.append("        if '[edit]' in p:")
     L.append("            continue")
     L.append("        # Skip known non-content sections")
-    L.append("        if p.startswith(('vte', 'Categories:', 'See also', 'References[', 'Further reading', 'External links', 'Notes[')):")
+    L.append(
+        "        if p.startswith(('vte', 'Categories:', 'See also', 'References[', 'Further reading', 'External links', 'Notes[')):"
+    )
     L.append("            continue")
     L.append("        # Skip nav blocks: many short lines = not a paragraph")
     L.append("        lines = [l.strip() for l in p.split(_NL) if l.strip()]")

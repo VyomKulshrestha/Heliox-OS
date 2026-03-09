@@ -12,7 +12,6 @@ import json
 import logging
 import os
 import tempfile
-from datetime import datetime
 from pathlib import Path
 
 from pilot.system.platform_detect import CURRENT_PLATFORM, Platform, run_powershell
@@ -23,8 +22,9 @@ logger = logging.getLogger("pilot.system.vision")
 async def _capture_screenshot_bytes(region: tuple[int, int, int, int] | None = None) -> bytes:
     """Capture screenshot and return PNG bytes."""
     try:
-        import pyautogui
         from io import BytesIO
+
+        import pyautogui
 
         img = pyautogui.screenshot(region=region)
         buf = BytesIO()
@@ -34,6 +34,7 @@ async def _capture_screenshot_bytes(region: tuple[int, int, int, int] | None = N
         # Fallback: capture via system command and read file
         tmp = os.path.join(tempfile.gettempdir(), f"pilot_screen_{os.getpid()}.png")
         from pilot.system.screen import screenshot
+
         await screenshot(tmp)
         data = Path(tmp).read_bytes()
         os.unlink(tmp)
@@ -71,7 +72,7 @@ async def screen_ocr(
     # Try Tesseract (catches both import errors AND binary-not-found)
     try:
         return await _ocr_tesseract(img_bytes, language)
-    except (ImportError, EnvironmentError, OSError, Exception) as e:
+    except (ImportError, OSError, Exception) as e:
         err_str = str(e).lower()
         if "not installed" in err_str or "not in your path" in err_str or "import" in err_str:
             pass  # Fall through
@@ -87,14 +88,25 @@ async def screen_ocr(
 
 
 async def _ocr_easyocr(img_bytes: bytes, language: str) -> str:
-    import easyocr
     from io import BytesIO
-    from PIL import Image
+
+    import easyocr
     import numpy as np
+    from PIL import Image
 
     # Map common language codes to easyocr format
-    lang_map = {"eng": "en", "fra": "fr", "deu": "de", "spa": "es", "ita": "it",
-                "por": "pt", "rus": "ru", "jpn": "ja", "kor": "ko", "chi_sim": "ch_sim"}
+    lang_map = {
+        "eng": "en",
+        "fra": "fr",
+        "deu": "de",
+        "spa": "es",
+        "ita": "it",
+        "por": "pt",
+        "rus": "ru",
+        "jpn": "ja",
+        "kor": "ko",
+        "chi_sim": "ch_sim",
+    }
     lang_code = lang_map.get(language, language[:2] if len(language) >= 2 else "en")
 
     def _do():
@@ -117,8 +129,9 @@ async def _ocr_easyocr(img_bytes: bytes, language: str) -> str:
 
 
 async def _ocr_tesseract(img_bytes: bytes, language: str) -> str:
-    import pytesseract
     from io import BytesIO
+
+    import pytesseract
     from PIL import Image
 
     def _do():
@@ -161,27 +174,30 @@ async def screen_find_text(
     img_bytes = await _capture_screenshot_bytes(region)
 
     try:
-        import easyocr
         from io import BytesIO
-        from PIL import Image
+
+        import easyocr
         import numpy as np
+        from PIL import Image
 
         def _do():
             reader = easyocr.Reader(["en"], gpu=True)
             img = Image.open(BytesIO(img_bytes))
             results = reader.readtext(np.array(img))
             matches = []
-            for (bbox, text, conf) in results:
+            for bbox, text, conf in results:
                 if target_text.lower() in text.lower():
                     # bbox is [[x1,y1],[x2,y2],[x3,y3],[x4,y4]]
                     cx = int(sum(p[0] for p in bbox) / 4)
                     cy = int(sum(p[1] for p in bbox) / 4)
-                    matches.append({
-                        "text": text,
-                        "center": (cx, cy),
-                        "confidence": round(conf, 3),
-                        "bbox": [[int(p[0]), int(p[1])] for p in bbox],
-                    })
+                    matches.append(
+                        {
+                            "text": text,
+                            "center": (cx, cy),
+                            "confidence": round(conf, 3),
+                            "bbox": [[int(p[0]), int(p[1])] for p in bbox],
+                        }
+                    )
             return matches
 
         matches = await asyncio.to_thread(_do)
@@ -193,8 +209,9 @@ async def screen_find_text(
         pass
 
     try:
-        import pytesseract
         from io import BytesIO
+
+        import pytesseract
         from PIL import Image
 
         def _do():
@@ -207,12 +224,14 @@ async def screen_find_text(
                     y = data["top"][i]
                     w = data["width"][i]
                     h = data["height"][i]
-                    matches.append({
-                        "text": text,
-                        "center": (x + w // 2, y + h // 2),
-                        "confidence": int(data["conf"][i]) / 100,
-                        "bbox": [x, y, x + w, y + h],
-                    })
+                    matches.append(
+                        {
+                            "text": text,
+                            "center": (x + w // 2, y + h // 2),
+                            "confidence": int(data["conf"][i]) / 100,
+                            "bbox": [x, y, x + w, y + h],
+                        }
+                    )
             return matches
 
         matches = await asyncio.to_thread(_do)
@@ -239,6 +258,7 @@ async def screen_analyze(
     # Try Ollama with vision model
     try:
         import httpx
+
         async with httpx.AsyncClient(timeout=60) as client:
             # Try llava or bakllava
             for model in ["llava:7b", "llava", "bakllava", "moondream"]:
@@ -259,10 +279,7 @@ async def screen_analyze(
 
         # Fallback: just do OCR and describe
         ocr_text = await screen_ocr(region)
-        return (
-            f"[Vision model not available — falling back to OCR]\n"
-            f"Screen text content:\n{ocr_text[:2000]}"
-        )
+        return f"[Vision model not available — falling back to OCR]\nScreen text content:\n{ocr_text[:2000]}"
     except Exception as e:
         return f"Screen analysis failed: {e}"
 
@@ -278,10 +295,11 @@ async def screen_element_map(
     img_bytes = await _capture_screenshot_bytes(region)
 
     try:
-        import easyocr
         from io import BytesIO
-        from PIL import Image
+
+        import easyocr
         import numpy as np
+        from PIL import Image
 
         def _do():
             reader = easyocr.Reader(["en"], gpu=True)
@@ -299,31 +317,51 @@ async def screen_element_map(
                 # Heuristic element type detection
                 elem_type = "text"
                 text_lower = text.lower().strip()
-                if text_lower in ("ok", "cancel", "save", "close", "yes", "no",
-                                  "apply", "submit", "next", "back", "done",
-                                  "open", "delete", "remove", "install", "run"):
+                if text_lower in (
+                    "ok",
+                    "cancel",
+                    "save",
+                    "close",
+                    "yes",
+                    "no",
+                    "apply",
+                    "submit",
+                    "next",
+                    "back",
+                    "done",
+                    "open",
+                    "delete",
+                    "remove",
+                    "install",
+                    "run",
+                ):
                     elem_type = "button"
                 elif w > 100 and h < 30:
                     elem_type = "label"
                 elif text_lower.startswith("http") or text_lower.startswith("www"):
                     elem_type = "link"
 
-                elements.append({
-                    "id": i,
-                    "type": elem_type,
-                    "text": text,
-                    "center": {"x": cx, "y": cy},
-                    "size": {"w": w, "h": h},
-                    "confidence": round(conf, 3),
-                })
+                elements.append(
+                    {
+                        "id": i,
+                        "type": elem_type,
+                        "text": text,
+                        "center": {"x": cx, "y": cy},
+                        "size": {"w": w, "h": h},
+                        "confidence": round(conf, 3),
+                    }
+                )
             return elements
 
         elements = await asyncio.to_thread(_do)
-        return json.dumps({
-            "elements": elements,
-            "count": len(elements),
-            "note": "Use mouse_click with center coordinates to interact"
-        }, indent=2)
+        return json.dumps(
+            {
+                "elements": elements,
+                "count": len(elements),
+                "note": "Use mouse_click with center coordinates to interact",
+            },
+            indent=2,
+        )
 
     except ImportError:
         return "Install easyocr for element detection: pip install easyocr"

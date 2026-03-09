@@ -10,7 +10,6 @@ import asyncio
 import logging
 import os
 import shutil
-import stat
 from pathlib import Path
 
 from pilot.system.platform_detect import CURRENT_PLATFORM, Platform
@@ -153,6 +152,7 @@ async def file_permissions(path: str, permissions: str | None = None) -> str:
     if CURRENT_PLATFORM == Platform.WINDOWS:
         # Windows doesn't use Unix-style permissions
         from pilot.system.platform_detect import run_command
+
         code, out, err = await run_command(["icacls", str(p)])
         return f"Windows permissions for {path}:\n{out.strip()}"
 

@@ -6,13 +6,13 @@ validated Action objects — there is no path from raw LLM text to system calls.
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import Enum, StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
 
-class ActionType(str, Enum):
+class ActionType(StrEnum):
     # -- File operations --
     FILE_READ = "file_read"
     FILE_WRITE = "file_write"
@@ -213,40 +213,61 @@ class PermissionTier(int, Enum):
 
 
 READ_ONLY_ACTIONS = {
-    ActionType.FILE_READ, ActionType.FILE_LIST, ActionType.FILE_SEARCH,
-    ActionType.PACKAGE_SEARCH, ActionType.SERVICE_STATUS,
+    ActionType.FILE_READ,
+    ActionType.FILE_LIST,
+    ActionType.FILE_SEARCH,
+    ActionType.PACKAGE_SEARCH,
+    ActionType.SERVICE_STATUS,
     ActionType.GNOME_SETTING_READ,
-    ActionType.OPEN_URL, ActionType.OPEN_APPLICATION,
+    ActionType.OPEN_URL,
+    ActionType.OPEN_APPLICATION,
     ActionType.NOTIFY,
-    ActionType.PROCESS_LIST, ActionType.PROCESS_INFO,
+    ActionType.PROCESS_LIST,
+    ActionType.PROCESS_INFO,
     ActionType.CLIPBOARD_READ,
-    ActionType.SYSTEM_INFO, ActionType.DISK_USAGE, ActionType.MEMORY_USAGE,
-    ActionType.CPU_USAGE, ActionType.NETWORK_INFO, ActionType.BATTERY_INFO,
-    ActionType.ENV_GET, ActionType.ENV_LIST,
+    ActionType.SYSTEM_INFO,
+    ActionType.DISK_USAGE,
+    ActionType.MEMORY_USAGE,
+    ActionType.CPU_USAGE,
+    ActionType.NETWORK_INFO,
+    ActionType.BATTERY_INFO,
+    ActionType.ENV_GET,
+    ActionType.ENV_LIST,
     ActionType.WINDOW_LIST,
-    ActionType.VOLUME_GET, ActionType.BRIGHTNESS_GET,
+    ActionType.VOLUME_GET,
+    ActionType.BRIGHTNESS_GET,
     ActionType.SCREENSHOT,
-    ActionType.WIFI_LIST, ActionType.DISK_LIST,
-    ActionType.USER_LIST, ActionType.USER_INFO,
+    ActionType.WIFI_LIST,
+    ActionType.DISK_LIST,
+    ActionType.USER_LIST,
+    ActionType.USER_INFO,
     ActionType.SCHEDULE_LIST,
     ActionType.REGISTRY_READ,
     # Tier 1 read-only
     ActionType.MOUSE_POSITION,
-    ActionType.SCREEN_OCR, ActionType.SCREEN_FIND_TEXT,
-    ActionType.SCREEN_ANALYZE, ActionType.SCREEN_ELEMENT_MAP,
-    ActionType.BROWSER_EXTRACT, ActionType.BROWSER_EXTRACT_TABLE,
-    ActionType.BROWSER_EXTRACT_LINKS, ActionType.BROWSER_SCREENSHOT,
-    ActionType.BROWSER_LIST_TABS, ActionType.BROWSER_PAGE_INFO,
+    ActionType.SCREEN_OCR,
+    ActionType.SCREEN_FIND_TEXT,
+    ActionType.SCREEN_ANALYZE,
+    ActionType.SCREEN_ELEMENT_MAP,
+    ActionType.BROWSER_EXTRACT,
+    ActionType.BROWSER_EXTRACT_TABLE,
+    ActionType.BROWSER_EXTRACT_LINKS,
+    ActionType.BROWSER_SCREENSHOT,
+    ActionType.BROWSER_LIST_TABS,
+    ActionType.BROWSER_PAGE_INFO,
     ActionType.TRIGGER_LIST,
     # Tier 2 read-only
-    ActionType.FILE_PARSE, ActionType.FILE_SEARCH_CONTENT,
+    ActionType.FILE_PARSE,
+    ActionType.FILE_SEARCH_CONTENT,
     ActionType.API_SCRAPE,
 }
 
 DESTRUCTIVE_ACTIONS = {
-    ActionType.FILE_DELETE, ActionType.PACKAGE_REMOVE,
+    ActionType.FILE_DELETE,
+    ActionType.PACKAGE_REMOVE,
     ActionType.PROCESS_KILL,
-    ActionType.POWER_SHUTDOWN, ActionType.POWER_RESTART,
+    ActionType.POWER_SHUTDOWN,
+    ActionType.POWER_RESTART,
     ActionType.POWER_LOGOUT,
     ActionType.SCHEDULE_DELETE,
     ActionType.DISK_UNMOUNT,
@@ -254,24 +275,31 @@ DESTRUCTIVE_ACTIONS = {
 }
 
 SYSTEM_MODIFY_ACTIONS = {
-    ActionType.PACKAGE_INSTALL, ActionType.PACKAGE_UPDATE,
-    ActionType.SERVICE_START, ActionType.SERVICE_STOP,
-    ActionType.SERVICE_RESTART, ActionType.SERVICE_ENABLE,
+    ActionType.PACKAGE_INSTALL,
+    ActionType.PACKAGE_UPDATE,
+    ActionType.SERVICE_START,
+    ActionType.SERVICE_STOP,
+    ActionType.SERVICE_RESTART,
+    ActionType.SERVICE_ENABLE,
     ActionType.SERVICE_DISABLE,
     ActionType.GNOME_SETTING_WRITE,
     ActionType.SHELL_SCRIPT,
     ActionType.SCHEDULE_CREATE,
     ActionType.FILE_PERMISSIONS,
-    ActionType.WIFI_CONNECT, ActionType.WIFI_DISCONNECT,
+    ActionType.WIFI_CONNECT,
+    ActionType.WIFI_DISCONNECT,
     ActionType.DISK_MOUNT,
     ActionType.REGISTRY_WRITE,
     # API actions that send data externally
-    ActionType.API_SEND_EMAIL, ActionType.API_WEBHOOK,
-    ActionType.API_SLACK, ActionType.API_DISCORD,
+    ActionType.API_SEND_EMAIL,
+    ActionType.API_WEBHOOK,
+    ActionType.API_SLACK,
+    ActionType.API_DISCORD,
 }
 
 
 # -- Parameter models --
+
 
 class FileParams(BaseModel):
     path: str = ""
@@ -318,6 +346,7 @@ class ShellCommandParams(BaseModel):
 
 class ShellScriptParams(BaseModel):
     """Run a multi-line script (bash/powershell)."""
+
     script: str = ""
     interpreter: str | None = None  # auto-detect: bash (linux), powershell (win)
     working_directory: str | None = None
@@ -341,6 +370,7 @@ class NotifyParams(BaseModel):
 
 class ProcessParams(BaseModel):
     """For process_list, process_kill, process_info."""
+
     pid: int | None = None  # for kill/info
     name: str | None = None  # for kill by name
     signal: str = "SIGTERM"  # for kill
@@ -348,24 +378,26 @@ class ProcessParams(BaseModel):
 
 class ClipboardParams(BaseModel):
     """For clipboard_read / clipboard_write."""
+
     content: str | None = None  # for write
 
 
 class SystemInfoParams(BaseModel):
     """What system info to gather."""
-    categories: list[str] = Field(
-        default_factory=lambda: ["os", "cpu", "memory", "disk", "network"]
-    )
+
+    categories: list[str] = Field(default_factory=lambda: ["os", "cpu", "memory", "disk", "network"])
 
 
 class PowerParams(BaseModel):
     """For power management actions."""
+
     delay_seconds: int = 0
     force: bool = False
 
 
 class ScheduleParams(BaseModel):
     """For scheduled task management."""
+
     name: str = ""
     command: str = ""
     schedule: str = ""  # cron expression or Windows task schedule
@@ -374,6 +406,7 @@ class ScheduleParams(BaseModel):
 
 class EnvParams(BaseModel):
     """For environment variable operations."""
+
     name: str = ""
     value: str | None = None
     persistent: bool = False  # write to profile
@@ -381,6 +414,7 @@ class EnvParams(BaseModel):
 
 class WindowParams(BaseModel):
     """For window management."""
+
     window_id: str | None = None
     title: str | None = None  # match by title substring
     process_name: str | None = None
@@ -388,23 +422,27 @@ class WindowParams(BaseModel):
 
 class VolumeParams(BaseModel):
     """For audio volume control."""
+
     level: int | None = None  # 0-100
     mute: bool | None = None
 
 
 class BrightnessParams(BaseModel):
     """For display brightness."""
+
     level: int | None = None  # 0-100
 
 
 class ScreenshotParams(BaseModel):
     """For taking screenshots."""
+
     output_path: str | None = None
     region: str | None = None  # "x,y,w,h" or "fullscreen" or "active_window"
 
 
 class WifiParams(BaseModel):
     """For WiFi management."""
+
     ssid: str = ""
     password: str | None = None
     interface: str | None = None
@@ -412,12 +450,14 @@ class WifiParams(BaseModel):
 
 class DiskManageParams(BaseModel):
     """For disk mount/unmount/list."""
+
     device: str | None = None
     mount_point: str | None = None
 
 
 class DownloadParams(BaseModel):
     """Download a file from a URL."""
+
     url: str = ""
     output_path: str = ""
     overwrite: bool = False
@@ -425,6 +465,7 @@ class DownloadParams(BaseModel):
 
 class RegistryParams(BaseModel):
     """Windows registry operations."""
+
     key_path: str = ""  # e.g. HKCU\\Software\\...
     value_name: str = ""
     value_data: str | None = None
@@ -433,8 +474,10 @@ class RegistryParams(BaseModel):
 
 # ======= TIER 1: GAME CHANGER PARAMS =======
 
+
 class MouseParams(BaseModel):
     """For mouse control actions."""
+
     x: int = 0
     y: int = 0
     button: str = "left"  # left, right, middle
@@ -449,6 +492,7 @@ class MouseParams(BaseModel):
 
 class KeyboardParams(BaseModel):
     """For keyboard control actions."""
+
     text: str = ""  # For type
     key: str = ""  # For press (enter, tab, escape, f1...)
     keys: list[str] = Field(default_factory=list)  # For hotkey (ctrl, c)
@@ -459,6 +503,7 @@ class KeyboardParams(BaseModel):
 
 class ScreenVisionParams(BaseModel):
     """For OCR, text finding, screen analysis."""
+
     target_text: str = ""  # For find_text
     prompt: str = "Describe what you see on the screen"  # For analysis
     region: str | None = None  # "x,y,w,h" or None for fullscreen
@@ -467,6 +512,7 @@ class ScreenVisionParams(BaseModel):
 
 class BrowserParams(BaseModel):
     """For browser automation actions."""
+
     url: str = ""
     selector: str = ""  # CSS selector
     text: str = ""  # For typing, clicking by text
@@ -492,6 +538,7 @@ class BrowserParams(BaseModel):
 
 class TriggerParams(BaseModel):
     """For reactive trigger management."""
+
     name: str = ""
     trigger_type: str = ""  # cpu_threshold, file_created, etc.
     condition: dict = Field(default_factory=dict)  # Type-specific conditions
@@ -503,8 +550,10 @@ class TriggerParams(BaseModel):
 
 # ======= TIER 2: MULTIPLIER PARAMS =======
 
+
 class CodeExecParams(BaseModel):
     """For code generation and execution."""
+
     code: str = ""
     language: str = "python"  # python, powershell, bash, cmd, javascript
     timeout: int = 30
@@ -513,6 +562,7 @@ class CodeExecParams(BaseModel):
 
 class FileIntelParams(BaseModel):
     """For file content intelligence."""
+
     path: str = ""
     search_text: str = ""
     directory: str = ""
@@ -522,6 +572,7 @@ class FileIntelParams(BaseModel):
 
 class ApiRequestParams(BaseModel):
     """For generic API and service calls."""
+
     method: str = "GET"
     url: str = ""
     headers: dict[str, str] = Field(default_factory=dict)
@@ -551,6 +602,7 @@ class ApiRequestParams(BaseModel):
 
 class EmptyParams(BaseModel):
     """For actions that need no parameters."""
+
     pass
 
 
@@ -608,27 +660,50 @@ class Action(BaseModel):
     def permission_tier(self) -> PermissionTier:
         # These actions are ALWAYS safe — never require confirmation
         ALWAYS_SAFE = {
-            ActionType.FILE_READ, ActionType.FILE_WRITE, ActionType.FILE_LIST,
-            ActionType.FILE_SEARCH, ActionType.FILE_COPY,
-            ActionType.CODE_EXECUTE, ActionType.CODE_GENERATE_AND_RUN,
+            ActionType.FILE_READ,
+            ActionType.FILE_WRITE,
+            ActionType.FILE_LIST,
+            ActionType.FILE_SEARCH,
+            ActionType.FILE_COPY,
+            ActionType.CODE_EXECUTE,
+            ActionType.CODE_GENERATE_AND_RUN,
             ActionType.SHELL_COMMAND,
-            ActionType.BROWSER_NAVIGATE, ActionType.BROWSER_EXTRACT,
-            ActionType.BROWSER_EXTRACT_TABLE, ActionType.BROWSER_EXTRACT_LINKS,
-            ActionType.BROWSER_CLICK, ActionType.BROWSER_CLICK_TEXT,
-            ActionType.BROWSER_TYPE, ActionType.BROWSER_SELECT,
-            ActionType.BROWSER_HOVER, ActionType.BROWSER_SCROLL,
-            ActionType.BROWSER_EXECUTE_JS, ActionType.BROWSER_SCREENSHOT,
-            ActionType.BROWSER_FILL_FORM, ActionType.BROWSER_NEW_TAB,
-            ActionType.BROWSER_CLOSE_TAB, ActionType.BROWSER_LIST_TABS,
-            ActionType.BROWSER_SWITCH_TAB, ActionType.BROWSER_BACK,
-            ActionType.BROWSER_FORWARD, ActionType.BROWSER_REFRESH,
-            ActionType.BROWSER_WAIT, ActionType.BROWSER_CLOSE,
+            ActionType.BROWSER_NAVIGATE,
+            ActionType.BROWSER_EXTRACT,
+            ActionType.BROWSER_EXTRACT_TABLE,
+            ActionType.BROWSER_EXTRACT_LINKS,
+            ActionType.BROWSER_CLICK,
+            ActionType.BROWSER_CLICK_TEXT,
+            ActionType.BROWSER_TYPE,
+            ActionType.BROWSER_SELECT,
+            ActionType.BROWSER_HOVER,
+            ActionType.BROWSER_SCROLL,
+            ActionType.BROWSER_EXECUTE_JS,
+            ActionType.BROWSER_SCREENSHOT,
+            ActionType.BROWSER_FILL_FORM,
+            ActionType.BROWSER_NEW_TAB,
+            ActionType.BROWSER_CLOSE_TAB,
+            ActionType.BROWSER_LIST_TABS,
+            ActionType.BROWSER_SWITCH_TAB,
+            ActionType.BROWSER_BACK,
+            ActionType.BROWSER_FORWARD,
+            ActionType.BROWSER_REFRESH,
+            ActionType.BROWSER_WAIT,
+            ActionType.BROWSER_CLOSE,
             ActionType.BROWSER_PAGE_INFO,
-            ActionType.OPEN_URL, ActionType.OPEN_APPLICATION,
-            ActionType.NOTIFY, ActionType.CLIPBOARD_READ, ActionType.CLIPBOARD_WRITE,
-            ActionType.PROCESS_LIST, ActionType.PROCESS_INFO,
-            ActionType.SYSTEM_INFO, ActionType.DISK_USAGE, ActionType.MEMORY_USAGE,
-            ActionType.SCREENSHOT, ActionType.API_REQUEST, ActionType.API_SCRAPE,
+            ActionType.OPEN_URL,
+            ActionType.OPEN_APPLICATION,
+            ActionType.NOTIFY,
+            ActionType.CLIPBOARD_READ,
+            ActionType.CLIPBOARD_WRITE,
+            ActionType.PROCESS_LIST,
+            ActionType.PROCESS_INFO,
+            ActionType.SYSTEM_INFO,
+            ActionType.DISK_USAGE,
+            ActionType.MEMORY_USAGE,
+            ActionType.SCREENSHOT,
+            ActionType.API_REQUEST,
+            ActionType.API_SCRAPE,
             ActionType.DOWNLOAD_FILE,
         }
         if self.action_type in ALWAYS_SAFE:

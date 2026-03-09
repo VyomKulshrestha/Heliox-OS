@@ -22,8 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import platform
-from typing import Callable
+from collections.abc import Callable
 
 logger = logging.getLogger("pilot.system.gesture")
 
@@ -37,6 +36,7 @@ _running = False
 try:
     import cv2
     import mediapipe as mp
+
     _mp_available = True
 except ImportError:
     logger.info("Gesture recognition unavailable: install opencv-python and mediapipe")
@@ -95,9 +95,8 @@ def classify_gesture(landmarks) -> tuple[str, float]:
         return ("call_me", 0.82)
 
     # 👎 Thumbs Down — only thumb extended, pointing downward
-    if thumb_extended and not index_up and not middle_up and not ring_up and not pinky_up:
-        if lm[4].y > lm[0].y:
-            return ("thumbs_down", 0.8)
+    if thumb_extended and not index_up and not middle_up and not ring_up and not pinky_up and lm[4].y > lm[0].y:
+        return ("thumbs_down", 0.8)
 
     # Fist — nothing extended
     if not index_up and not middle_up and not ring_up and not pinky_up and not thumb_extended:
@@ -108,9 +107,8 @@ def classify_gesture(landmarks) -> tuple[str, float]:
         return ("open_palm", 0.9)
 
     # Thumbs up — only thumb, pointing up
-    if thumb_extended and not index_up and not middle_up and not ring_up and not pinky_up:
-        if lm[4].y < lm[0].y:
-            return ("thumbs_up", 0.8)
+    if thumb_extended and not index_up and not middle_up and not ring_up and not pinky_up and lm[4].y < lm[0].y:
+        return ("thumbs_up", 0.8)
 
     # Peace — index + middle
     if index_up and middle_up and not ring_up and not pinky_up:
@@ -186,6 +184,7 @@ async def start_gesture_listener(
 
                 if gesture_name and gesture_name != last_gesture:
                     import time
+
                     now = time.time() * 1000
                     if now - last_time > cooldown_ms:
                         last_time = now

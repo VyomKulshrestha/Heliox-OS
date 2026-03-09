@@ -16,9 +16,9 @@ from pilot.actions import (
     ActionResult,
     ActionType,
     FileParams,
+    GnomeSettingParams,
     PackageParams,
     ServiceParams,
-    GnomeSettingParams,
     VerificationResult,
 )
 
@@ -34,9 +34,7 @@ class Verifier:
     def __init__(self, model_router: ModelRouter) -> None:
         self._model = model_router
 
-    async def verify(
-        self, plan: ActionPlan, results: list[ActionResult]
-    ) -> VerificationResult:
+    async def verify(self, plan: ActionPlan, results: list[ActionResult]) -> VerificationResult:
         """Verify all action results against the plan."""
         details: list[str] = []
         failed_indices: list[int] = []
@@ -107,6 +105,7 @@ class Verifier:
 
     async def _verify_file_write(self, params: FileParams) -> tuple[bool, str]:
         from pathlib import Path
+
         p = Path(params.path)
         if not p.exists():
             return False, f"File does not exist after write: {params.path}"
@@ -118,12 +117,14 @@ class Verifier:
 
     async def _verify_file_delete(self, params: FileParams) -> tuple[bool, str]:
         from pathlib import Path
+
         if Path(params.path).exists():
             return False, f"File still exists after delete: {params.path}"
         return True, "File successfully deleted"
 
     async def _verify_file_copy(self, params: FileParams) -> tuple[bool, str]:
         from pathlib import Path
+
         if not params.destination:
             return True, "No destination to verify"
         if not Path(params.destination).exists():
@@ -132,6 +133,7 @@ class Verifier:
 
     async def _verify_file_move(self, params: FileParams) -> tuple[bool, str]:
         from pathlib import Path
+
         if not params.destination:
             return True, "No destination to verify"
         if not Path(params.destination).exists():
@@ -142,30 +144,35 @@ class Verifier:
 
     async def _verify_package_install(self, params: PackageParams) -> tuple[bool, str]:
         from pilot.system.package_mgr import is_installed
+
         if await is_installed(params.name):
             return True, f"Package {params.name} is installed"
         return False, f"Package {params.name} is not installed after install"
 
     async def _verify_package_remove(self, params: PackageParams) -> tuple[bool, str]:
         from pilot.system.package_mgr import is_installed
+
         if not await is_installed(params.name):
             return True, f"Package {params.name} is removed"
         return False, f"Package {params.name} is still installed after remove"
 
     async def _verify_service_running(self, params: ServiceParams) -> tuple[bool, str]:
         from pilot.system.systemctl import is_active
+
         if await is_active(params.name, user_scope=params.user_scope):
             return True, f"Service {params.name} is active"
         return False, f"Service {params.name} is not active"
 
     async def _verify_service_stopped(self, params: ServiceParams) -> tuple[bool, str]:
         from pilot.system.systemctl import is_active
+
         if not await is_active(params.name, user_scope=params.user_scope):
             return True, f"Service {params.name} is stopped"
         return False, f"Service {params.name} is still active after stop"
 
     async def _verify_gnome_setting(self, params: GnomeSettingParams) -> tuple[bool, str]:
         from pilot.system.gnome import get_setting
+
         if params.value is None:
             return True, "No value to verify for read operation"
         actual = await get_setting(params.schema_id, params.key)
@@ -177,7 +184,9 @@ class Verifier:
 
     async def _verify_download(self, result: ActionResult) -> tuple[bool, str]:
         from pathlib import Path
+
         from pilot.actions import DownloadParams
+
         params: DownloadParams = result.action.parameters  # type: ignore[assignment]
         if Path(params.output_path).exists():
             size = Path(params.output_path).stat().st_size

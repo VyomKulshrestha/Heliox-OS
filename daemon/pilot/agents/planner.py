@@ -8,6 +8,7 @@ Enhanced with 50+ action types for full system control across Windows, Linux, an
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import sys
@@ -17,23 +18,21 @@ from pilot.actions import (
     Action,
     ActionPlan,
     ActionType,
+    ApiRequestParams,
     BrightnessParams,
+    BrowserParams,
     ClipboardParams,
+    CodeExecParams,
     DBusParams,
     DiskManageParams,
     DownloadParams,
     EmptyParams,
     EnvParams,
+    FileIntelParams,
     FileParams,
     GnomeSettingParams,
-    MouseParams,
     KeyboardParams,
-    ScreenVisionParams,
-    BrowserParams,
-    TriggerParams,
-    CodeExecParams,
-    FileIntelParams,
-    ApiRequestParams,
+    MouseParams,
     NotifyParams,
     OpenApplicationParams,
     OpenUrlParams,
@@ -43,10 +42,12 @@ from pilot.actions import (
     RegistryParams,
     ScheduleParams,
     ScreenshotParams,
+    ScreenVisionParams,
     ServiceParams,
     ShellCommandParams,
     ShellScriptParams,
     SystemInfoParams,
+    TriggerParams,
     VolumeParams,
     WifiParams,
     WindowParams,
@@ -315,10 +316,10 @@ class Planner:
             clean_raw = clean_raw.split("```json", 1)[1]
         elif clean_raw.startswith("```"):
             clean_raw = clean_raw.split("```", 1)[1]
-            
+
         if clean_raw.endswith("```"):
             clean_raw = clean_raw.rsplit("```", 1)[0]
-            
+
         clean_raw = clean_raw.strip()
 
         # Debug: log raw LLM response
@@ -327,7 +328,9 @@ class Planner:
         try:
             data = json.loads(clean_raw)
         except json.JSONDecodeError as e:
-            return ActionPlan(error=f"LLM returned invalid JSON: {e}\\n\\nRaw Response:\\n{clean_raw[:500]}", raw_input=user_input)
+            return ActionPlan(
+                error=f"LLM returned invalid JSON: {e}\\n\\nRaw Response:\\n{clean_raw[:500]}", raw_input=user_input
+            )
 
         if not isinstance(data, dict):
             return ActionPlan(error="LLM response is not a JSON object", raw_input=user_input)
@@ -335,9 +338,7 @@ class Planner:
         explanation = data.get("explanation", "")
         raw_actions = data.get("actions", [])
         if not isinstance(raw_actions, list) or not raw_actions:
-            return ActionPlan(
-                error="No actions in plan", explanation=explanation, raw_input=user_input
-            )
+            return ActionPlan(error="No actions in plan", explanation=explanation, raw_input=user_input)
 
         actions: list[Action] = []
         for i, raw_action in enumerate(raw_actions):
@@ -359,9 +360,7 @@ class Planner:
         # Post-process: fix common LLM structural errors
         actions = self._postprocess_actions(actions)
 
-        return ActionPlan(
-            actions=actions, explanation=explanation, raw_input=user_input
-        )
+        return ActionPlan(actions=actions, explanation=explanation, raw_input=user_input)
 
     # ------------------------------------------------------------------
     # Plan post-processor: fix common LLM structural mistakes
@@ -369,7 +368,8 @@ class Planner:
 
     # Actions that consume previous output (need data in the pipeline)
     _DATA_CONSUMERS = {
-        ActionType.FILE_WRITE, ActionType.CODE_EXECUTE,
+        ActionType.FILE_WRITE,
+        ActionType.CODE_EXECUTE,
         ActionType.CODE_GENERATE_AND_RUN,
     }
 
@@ -396,8 +396,11 @@ class Planner:
         # - Actions referencing /mnt/prev_output/ (fake Linux path)
         # - Excessive padding actions that serve no purpose
         _GARBAGE_TYPES = {
-            ActionType.MOUSE_CLICK, ActionType.MOUSE_MOVE, ActionType.MOUSE_SCROLL,
-            ActionType.KEYBOARD_PRESS, ActionType.KEYBOARD_HOLD,
+            ActionType.MOUSE_CLICK,
+            ActionType.MOUSE_MOVE,
+            ActionType.MOUSE_SCROLL,
+            ActionType.KEYBOARD_PRESS,
+            ActionType.KEYBOARD_HOLD,
         }
         # Count how many garbage vs real actions
         real_actions = [a for a in fixed if a.action_type not in _GARBAGE_TYPES]
@@ -409,11 +412,15 @@ class Planner:
 
         # Remove actions referencing /mnt/prev_output/ (a hallucinated path)
         fixed = [
-            a for a in fixed
+            a
+            for a in fixed
             if not (
-                (hasattr(a.parameters, 'path') and '/mnt/prev_output' in (getattr(a.parameters, 'path', '') or ''))
-                or (hasattr(a.parameters, 'output_path') and '/mnt/prev_output' in (getattr(a.parameters, 'output_path', '') or ''))
-                or (a.target and '/mnt/prev_output' in a.target)
+                (hasattr(a.parameters, "path") and "/mnt/prev_output" in (getattr(a.parameters, "path", "") or ""))
+                or (
+                    hasattr(a.parameters, "output_path")
+                    and "/mnt/prev_output" in (getattr(a.parameters, "output_path", "") or "")
+                )
+                or (a.target and "/mnt/prev_output" in a.target)
             )
         ]
 
@@ -422,8 +429,7 @@ class Planner:
             if action.action_type == ActionType.OPEN_URL:
                 # Check if any subsequent action wants previous output
                 has_consumer = any(
-                    a.action_type in self._DATA_CONSUMERS or a.use_previous_output
-                    for a in fixed[i + 1:]
+                    a.action_type in self._DATA_CONSUMERS or a.use_previous_output for a in fixed[i + 1 :]
                 )
                 if has_consumer:
                     url = ""
@@ -450,15 +456,11 @@ class Planner:
             action = fixed[i]
             if action.action_type == ActionType.BROWSER_NAVIGATE:
                 # Check if next action is already browser_extract
-                next_is_extract = (
-                    i + 1 < len(fixed)
-                    and fixed[i + 1].action_type == ActionType.BROWSER_EXTRACT
-                )
+                next_is_extract = i + 1 < len(fixed) and fixed[i + 1].action_type == ActionType.BROWSER_EXTRACT
                 if not next_is_extract:
                     # Check if any later action needs data
                     has_consumer = any(
-                        a.action_type in self._DATA_CONSUMERS or a.use_previous_output
-                        for a in fixed[i + 1:]
+                        a.action_type in self._DATA_CONSUMERS or a.use_previous_output for a in fixed[i + 1 :]
                     )
                     if has_consumer:
                         logger.info("Post-process: inserting browser_extract after browser_navigate at index %d", i)
@@ -480,13 +482,14 @@ class Planner:
             for action in fixed:
                 if action.action_type == ActionType.CODE_EXECUTE and hasattr(action.parameters, "code"):
                     code = action.parameters.code or ""
+
                     # Replace unescaped Windows paths in single/double quoted strings
                     # e.g. open('C:\Users\user\...') → open(r'C:\Users\user\...')
                     # Pattern: quote, drive letter, colon, backslash (without preceding 'r')
                     def _fix_path_string(m):
                         prefix = m.group(1)  # anything before the quote
-                        quote = m.group(2)   # the quote character
-                        path = m.group(3)    # the path content
+                        quote = m.group(2)  # the quote character
+                        path = m.group(3)  # the path content
                         # Already a raw string?
                         if prefix.endswith("r") or prefix.endswith("R"):
                             return m.group(0)
@@ -505,12 +508,16 @@ class Planner:
         # b) at the START of a plan that has a data-producer later
         # c) at the START of a plan that creates files in that path (file_write/shell_command)
         _DATA_PRODUCERS = {
-            ActionType.SCREEN_OCR, ActionType.SCREEN_ANALYZE,
-            ActionType.BROWSER_EXTRACT, ActionType.BROWSER_EXTRACT_TABLE,
+            ActionType.SCREEN_OCR,
+            ActionType.SCREEN_ANALYZE,
+            ActionType.BROWSER_EXTRACT,
+            ActionType.BROWSER_EXTRACT_TABLE,
             ActionType.BROWSER_EXTRACT_LINKS,
         }
         _FILE_CREATORS = {
-            ActionType.FILE_WRITE, ActionType.FILE_COPY, ActionType.FILE_MOVE,
+            ActionType.FILE_WRITE,
+            ActionType.FILE_COPY,
+            ActionType.FILE_MOVE,
         }
         has_data_producer = any(a.action_type in _DATA_PRODUCERS for a in fixed)
         i = 0
@@ -530,19 +537,14 @@ class Planner:
                     and any(fixed[j].action_type in _DATA_PRODUCERS for j in range(i + 1, len(fixed)))
                 )
                 # Case c: file_read on a directory path that will be created by later file_write
-                read_path = getattr(fixed[i].parameters, 'path', '') or fixed[i].target or ''
-                is_dir_check = (
-                    i == 0
-                    and any(
-                        a.action_type in _FILE_CREATORS
-                        and (getattr(a.parameters, 'path', '') or '').startswith(read_path)
-                        for a in fixed[i + 1:]
-                    )
+                read_path = getattr(fixed[i].parameters, "path", "") or fixed[i].target or ""
+                is_dir_check = i == 0 and any(
+                    a.action_type in _FILE_CREATORS and (getattr(a.parameters, "path", "") or "").startswith(read_path)
+                    for a in fixed[i + 1 :]
                 )
                 if is_between or is_premature or is_dir_check:
                     logger.info(
-                        "Post-process: removing useless file_read at index %d "
-                        "(pattern: %s)",
+                        "Post-process: removing useless file_read at index %d (pattern: %s)",
                         i,
                         "between" if is_between else "premature" if is_premature else "dir-check",
                     )
@@ -560,8 +562,8 @@ class Planner:
                     action_type=ActionType.SCREEN_OCR,
                     target=action.target,
                     parameters=ScreenVisionParams(
-                        region=getattr(action.parameters, 'region', None),
-                        language=getattr(action.parameters, 'language', 'eng'),
+                        region=getattr(action.parameters, "region", None),
+                        language=getattr(action.parameters, "language", "eng"),
                     ),
                     requires_root=False,
                     destructive=False,
@@ -572,6 +574,7 @@ class Planner:
         # --- Fix 5: Convert Linux paths to Windows paths on Windows ---
         if sys.platform == "win32":
             import pathlib
+
             home = str(pathlib.Path.home())
             for action in fixed:
                 # Fix file_write, file_read, etc. paths
@@ -612,30 +615,25 @@ class Planner:
             _SLOW_CMDS = {"systeminfo", "wmic", "tasklist", "netstat", "ipconfig", "driverquery"}
             for i, action in enumerate(fixed):
                 if action.action_type == ActionType.SHELL_SCRIPT:
-                    script = getattr(action.parameters, 'script', '') or ''
+                    script = getattr(action.parameters, "script", "") or ""
                     script_lower = script.lower()
                     # Check if script contains slow system commands
                     has_slow = any(cmd in script_lower for cmd in _SLOW_CMDS)
                     if has_slow:
                         # Convert to code_execute with subprocess
                         from pilot.actions import CodeParams
-                        python_code = (
-                            "import subprocess, os\n"
-                            "commands = {}\n"
-                        )
+
+                        python_code = "import subprocess, os\ncommands = {}\n"
                         # Parse lines from the script that look like commands
-                        lines = [l.strip() for l in script.split('\n') if l.strip() and not l.strip().startswith('#')]
+                        lines = [l.strip() for l in script.split("\n") if l.strip() and not l.strip().startswith("#")]
                         cmd_dict_parts = []
                         for line in lines:
-                            cmd_name = line.split()[0] if line.split() else ''
-                            if cmd_name.lower() in _SLOW_CMDS or '|' in line:
+                            cmd_name = line.split()[0] if line.split() else ""
+                            if cmd_name.lower() in _SLOW_CMDS or "|" in line:
                                 safe_line = line.replace("'", "\\'")
                                 cmd_dict_parts.append(f"    '{safe_line}': '{safe_line}'")
                         if cmd_dict_parts:
-                            python_code = (
-                                "import subprocess\n"
-                                "results = []\n"
-                            )
+                            python_code = "import subprocess\nresults = []\n"
                             for line in lines:
                                 if line.strip():
                                     safe_line = line.replace("'", "\\'")
@@ -647,7 +645,7 @@ class Planner:
                                         f"    results.append('=== {safe_line} === FAILED: ' + str(e))\n"
                                     )
                             python_code += "print('\\n'.join(results))\n"
-                            
+
                             fixed[i] = Action(
                                 action_type=ActionType.CODE_EXECUTE,
                                 target="system_commands",
@@ -659,9 +657,7 @@ class Planner:
                                 ),
                                 use_previous_output=False,
                             )
-                            logger.info(
-                                "Post-process: converted slow shell_script to code_execute at index %d", i
-                            )
+                            logger.info("Post-process: converted slow shell_script to code_execute at index %d", i)
 
         return fixed
 
@@ -733,6 +729,7 @@ class Planner:
 
         # Fuzzy match: find closest valid action type
         import difflib
+
         valid_types = [at.value for at in ActionType]
         matches = difflib.get_close_matches(clean, valid_types, n=1, cutoff=0.6)
         if matches:
@@ -749,8 +746,14 @@ class Planner:
         # MIGRATION: LLMs often hallucinate payload keys at the root of the action object
         # instead of inside `parameters`. We must fold them back in.
         standard_keys = {
-            "action_type", "target", "parameters", "requires_root",
-            "destructive", "reversible", "rollback_action", "use_previous_output"
+            "action_type",
+            "target",
+            "parameters",
+            "requires_root",
+            "destructive",
+            "reversible",
+            "rollback_action",
+            "use_previous_output",
         }
         for k, v in raw.items():
             if k not in standard_keys and k not in params_raw:
@@ -818,104 +821,95 @@ class Planner:
                 p["output_path"] = str(__import__("pathlib").Path.home() / "Downloads" / "download")
 
         file_types = {
-            ActionType.FILE_READ, ActionType.FILE_WRITE, ActionType.FILE_DELETE,
-            ActionType.FILE_MOVE, ActionType.FILE_COPY, ActionType.FILE_LIST,
-            ActionType.FILE_SEARCH, ActionType.FILE_PERMISSIONS,
+            ActionType.FILE_READ,
+            ActionType.FILE_WRITE,
+            ActionType.FILE_DELETE,
+            ActionType.FILE_MOVE,
+            ActionType.FILE_COPY,
+            ActionType.FILE_LIST,
+            ActionType.FILE_SEARCH,
+            ActionType.FILE_PERMISSIONS,
         }
-        if action_type in file_types:
-            if "path" not in p or not p["path"]:
-                p["path"] = target
+        if action_type in file_types and ("path" not in p or not p["path"]):
+            p["path"] = target
 
         pkg_types = {
-            ActionType.PACKAGE_INSTALL, ActionType.PACKAGE_REMOVE,
+            ActionType.PACKAGE_INSTALL,
+            ActionType.PACKAGE_REMOVE,
             ActionType.PACKAGE_SEARCH,
         }
-        if action_type in pkg_types:
-            if "name" not in p or not p["name"]:
-                p["name"] = target
+        if action_type in pkg_types and ("name" not in p or not p["name"]):
+            p["name"] = target
 
         svc_types = {
-            ActionType.SERVICE_START, ActionType.SERVICE_STOP,
-            ActionType.SERVICE_RESTART, ActionType.SERVICE_ENABLE,
-            ActionType.SERVICE_DISABLE, ActionType.SERVICE_STATUS,
+            ActionType.SERVICE_START,
+            ActionType.SERVICE_STOP,
+            ActionType.SERVICE_RESTART,
+            ActionType.SERVICE_ENABLE,
+            ActionType.SERVICE_DISABLE,
+            ActionType.SERVICE_STATUS,
         }
-        if action_type in svc_types:
-            if "name" not in p or not p["name"]:
-                p["name"] = target
+        if action_type in svc_types and ("name" not in p or not p["name"]):
+            p["name"] = target
 
         # Process management
-        if action_type == ActionType.PROCESS_KILL:
-            if "name" not in p and "pid" not in p and target:
-                try:
-                    p["pid"] = int(target)
-                except ValueError:
-                    p["name"] = target
+        if action_type == ActionType.PROCESS_KILL and "name" not in p and "pid" not in p and target:
+            try:
+                p["pid"] = int(target)
+            except ValueError:
+                p["name"] = target
 
-        if action_type == ActionType.PROCESS_INFO:
-            if "pid" not in p and target:
-                try:
-                    p["pid"] = int(target)
-                except ValueError:
-                    pass
+        if action_type == ActionType.PROCESS_INFO and "pid" not in p and target:
+            with contextlib.suppress(ValueError):
+                p["pid"] = int(target)
 
         # Volume
-        if action_type == ActionType.VOLUME_SET:
-            if "level" not in p and target:
-                try:
-                    p["level"] = int(target.replace("%", ""))
-                except ValueError:
-                    pass
+        if action_type == ActionType.VOLUME_SET and "level" not in p and target:
+            with contextlib.suppress(ValueError):
+                p["level"] = int(target.replace("%", ""))
 
         # Brightness
-        if action_type == ActionType.BRIGHTNESS_SET:
-            if "level" not in p and target:
-                try:
-                    p["level"] = int(target.replace("%", ""))
-                except ValueError:
-                    pass
+        if action_type == ActionType.BRIGHTNESS_SET and "level" not in p and target:
+            with contextlib.suppress(ValueError):
+                p["level"] = int(target.replace("%", ""))
 
         # WiFi
-        if action_type == ActionType.WIFI_CONNECT:
-            if "ssid" not in p and target:
-                p["ssid"] = target
+        if action_type == ActionType.WIFI_CONNECT and "ssid" not in p and target:
+            p["ssid"] = target
 
         # Env
-        if action_type == ActionType.ENV_GET:
-            if "name" not in p and target:
-                p["name"] = target
+        if action_type == ActionType.ENV_GET and "name" not in p and target:
+            p["name"] = target
 
-        if action_type == ActionType.ENV_SET:
-            if "name" not in p and target:
-                if "=" in target:
-                    parts = target.split("=", 1)
-                    p["name"] = parts[0]
-                    p["value"] = parts[1]
-                else:
-                    p["name"] = target
+        if action_type == ActionType.ENV_SET and "name" not in p and target:
+            if "=" in target:
+                parts = target.split("=", 1)
+                p["name"] = parts[0]
+                p["value"] = parts[1]
+            else:
+                p["name"] = target
 
         # Schedule
-        if action_type == ActionType.SCHEDULE_DELETE:
-            if "name" not in p and target:
-                p["name"] = target
+        if action_type == ActionType.SCHEDULE_DELETE and "name" not in p and target:
+            p["name"] = target
 
         # Window
         window_types = {
-            ActionType.WINDOW_FOCUS, ActionType.WINDOW_CLOSE,
-            ActionType.WINDOW_MINIMIZE, ActionType.WINDOW_MAXIMIZE,
+            ActionType.WINDOW_FOCUS,
+            ActionType.WINDOW_CLOSE,
+            ActionType.WINDOW_MINIMIZE,
+            ActionType.WINDOW_MAXIMIZE,
         }
-        if action_type in window_types:
-            if "title" not in p and "process_name" not in p and target:
-                p["title"] = target
+        if action_type in window_types and "title" not in p and "process_name" not in p and target:
+            p["title"] = target
 
         # Registry
-        if action_type == ActionType.REGISTRY_READ:
-            if "key_path" not in p and target:
-                p["key_path"] = target
+        if action_type == ActionType.REGISTRY_READ and "key_path" not in p and target:
+            p["key_path"] = target
 
         # Clipboard write
-        if action_type == ActionType.CLIPBOARD_WRITE:
-            if "content" not in p and target:
-                p["content"] = target
+        if action_type == ActionType.CLIPBOARD_WRITE and "content" not in p and target:
+            p["content"] = target
 
         # Browser actions: map target → url/selector/script
         browser_nav_types = {ActionType.BROWSER_NAVIGATE}
@@ -926,26 +920,25 @@ class Planner:
                 p["url"] = "https://" + p["url"]
 
         browser_selector_types = {
-            ActionType.BROWSER_CLICK, ActionType.BROWSER_HOVER,
-            ActionType.BROWSER_EXTRACT, ActionType.BROWSER_EXTRACT_TABLE,
-            ActionType.BROWSER_EXTRACT_LINKS, ActionType.BROWSER_SELECT,
+            ActionType.BROWSER_CLICK,
+            ActionType.BROWSER_HOVER,
+            ActionType.BROWSER_EXTRACT,
+            ActionType.BROWSER_EXTRACT_TABLE,
+            ActionType.BROWSER_EXTRACT_LINKS,
+            ActionType.BROWSER_SELECT,
             ActionType.BROWSER_WAIT,
         }
-        if action_type in browser_selector_types:
-            if ("selector" not in p or not p["selector"]) and target:
-                p["selector"] = target
+        if action_type in browser_selector_types and ("selector" not in p or not p["selector"]) and target:
+            p["selector"] = target
 
-        if action_type == ActionType.BROWSER_CLICK_TEXT:
-            if ("text" not in p or not p["text"]) and target:
-                p["text"] = target
+        if action_type == ActionType.BROWSER_CLICK_TEXT and ("text" not in p or not p["text"]) and target:
+            p["text"] = target
 
-        if action_type == ActionType.BROWSER_TYPE:
-            if ("text" not in p or not p["text"]) and target:
-                p["text"] = target
+        if action_type == ActionType.BROWSER_TYPE and ("text" not in p or not p["text"]) and target:
+            p["text"] = target
 
-        if action_type == ActionType.BROWSER_EXECUTE_JS:
-            if ("script" not in p or not p["script"]) and target:
-                p["script"] = target
+        if action_type == ActionType.BROWSER_EXECUTE_JS and ("script" not in p or not p["script"]) and target:
+            p["script"] = target
 
         return p
 
@@ -953,18 +946,28 @@ class Planner:
     def _parse_parameters(action_type: ActionType, params: dict):
         """Convert raw params dict into the appropriate Pydantic model."""
         file_types = {
-            ActionType.FILE_READ, ActionType.FILE_WRITE, ActionType.FILE_DELETE,
-            ActionType.FILE_MOVE, ActionType.FILE_COPY, ActionType.FILE_LIST,
-            ActionType.FILE_SEARCH, ActionType.FILE_PERMISSIONS,
+            ActionType.FILE_READ,
+            ActionType.FILE_WRITE,
+            ActionType.FILE_DELETE,
+            ActionType.FILE_MOVE,
+            ActionType.FILE_COPY,
+            ActionType.FILE_LIST,
+            ActionType.FILE_SEARCH,
+            ActionType.FILE_PERMISSIONS,
         }
         package_types = {
-            ActionType.PACKAGE_INSTALL, ActionType.PACKAGE_REMOVE,
-            ActionType.PACKAGE_UPDATE, ActionType.PACKAGE_SEARCH,
+            ActionType.PACKAGE_INSTALL,
+            ActionType.PACKAGE_REMOVE,
+            ActionType.PACKAGE_UPDATE,
+            ActionType.PACKAGE_SEARCH,
         }
         service_types = {
-            ActionType.SERVICE_START, ActionType.SERVICE_STOP,
-            ActionType.SERVICE_RESTART, ActionType.SERVICE_ENABLE,
-            ActionType.SERVICE_DISABLE, ActionType.SERVICE_STATUS,
+            ActionType.SERVICE_START,
+            ActionType.SERVICE_STOP,
+            ActionType.SERVICE_RESTART,
+            ActionType.SERVICE_ENABLE,
+            ActionType.SERVICE_DISABLE,
+            ActionType.SERVICE_STATUS,
         }
 
         if action_type in file_types:
@@ -1000,18 +1003,29 @@ class Planner:
         if action_type == ActionType.SYSTEM_INFO:
             return SystemInfoParams(**params)
         if action_type in (
-            ActionType.DISK_USAGE, ActionType.MEMORY_USAGE, ActionType.CPU_USAGE,
-            ActionType.NETWORK_INFO, ActionType.BATTERY_INFO,
-            ActionType.DISK_LIST, ActionType.USER_LIST, ActionType.USER_INFO,
-            ActionType.WINDOW_LIST, ActionType.VOLUME_GET, ActionType.BRIGHTNESS_GET,
-            ActionType.WIFI_LIST, ActionType.SCHEDULE_LIST,
+            ActionType.DISK_USAGE,
+            ActionType.MEMORY_USAGE,
+            ActionType.CPU_USAGE,
+            ActionType.NETWORK_INFO,
+            ActionType.BATTERY_INFO,
+            ActionType.DISK_LIST,
+            ActionType.USER_LIST,
+            ActionType.USER_INFO,
+            ActionType.WINDOW_LIST,
+            ActionType.VOLUME_GET,
+            ActionType.BRIGHTNESS_GET,
+            ActionType.WIFI_LIST,
+            ActionType.SCHEDULE_LIST,
         ):
             return EmptyParams()
 
         # Power
         if action_type in (
-            ActionType.POWER_SHUTDOWN, ActionType.POWER_RESTART,
-            ActionType.POWER_SLEEP, ActionType.POWER_LOCK, ActionType.POWER_LOGOUT,
+            ActionType.POWER_SHUTDOWN,
+            ActionType.POWER_RESTART,
+            ActionType.POWER_SLEEP,
+            ActionType.POWER_LOCK,
+            ActionType.POWER_LOGOUT,
         ):
             return PowerParams(**params)
 
@@ -1025,8 +1039,10 @@ class Planner:
 
         # Window
         if action_type in (
-            ActionType.WINDOW_FOCUS, ActionType.WINDOW_CLOSE,
-            ActionType.WINDOW_MINIMIZE, ActionType.WINDOW_MAXIMIZE,
+            ActionType.WINDOW_FOCUS,
+            ActionType.WINDOW_CLOSE,
+            ActionType.WINDOW_MINIMIZE,
+            ActionType.WINDOW_MAXIMIZE,
         ):
             return WindowParams(**params)
 
@@ -1060,62 +1076,94 @@ class Planner:
 
         # Tier 1 & 2 actions
         mouse_types = {
-            ActionType.MOUSE_CLICK, ActionType.MOUSE_DOUBLE_CLICK, ActionType.MOUSE_RIGHT_CLICK,
-            ActionType.MOUSE_MOVE, ActionType.MOUSE_DRAG, ActionType.MOUSE_SCROLL,
+            ActionType.MOUSE_CLICK,
+            ActionType.MOUSE_DOUBLE_CLICK,
+            ActionType.MOUSE_RIGHT_CLICK,
+            ActionType.MOUSE_MOVE,
+            ActionType.MOUSE_DRAG,
+            ActionType.MOUSE_SCROLL,
             ActionType.MOUSE_POSITION,
         }
         if action_type in mouse_types:
             return MouseParams(**params)
 
         keyboard_types = {
-            ActionType.KEYBOARD_TYPE, ActionType.KEYBOARD_PRESS, ActionType.KEYBOARD_HOTKEY,
+            ActionType.KEYBOARD_TYPE,
+            ActionType.KEYBOARD_PRESS,
+            ActionType.KEYBOARD_HOTKEY,
             ActionType.KEYBOARD_HOLD,
         }
         if action_type in keyboard_types:
             return KeyboardParams(**params)
 
         vision_types = {
-            ActionType.SCREEN_OCR, ActionType.SCREEN_FIND_TEXT, ActionType.SCREEN_ANALYZE,
+            ActionType.SCREEN_OCR,
+            ActionType.SCREEN_FIND_TEXT,
+            ActionType.SCREEN_ANALYZE,
             ActionType.SCREEN_ELEMENT_MAP,
         }
         if action_type in vision_types:
             return ScreenVisionParams(**params)
 
         browser_types = {
-            ActionType.BROWSER_NAVIGATE, ActionType.BROWSER_CLICK, ActionType.BROWSER_CLICK_TEXT,
-            ActionType.BROWSER_TYPE, ActionType.BROWSER_SELECT, ActionType.BROWSER_HOVER,
-            ActionType.BROWSER_SCROLL, ActionType.BROWSER_EXTRACT, ActionType.BROWSER_EXTRACT_TABLE,
-            ActionType.BROWSER_EXTRACT_LINKS, ActionType.BROWSER_EXECUTE_JS, ActionType.BROWSER_SCREENSHOT,
-            ActionType.BROWSER_FILL_FORM, ActionType.BROWSER_NEW_TAB, ActionType.BROWSER_CLOSE_TAB,
-            ActionType.BROWSER_LIST_TABS, ActionType.BROWSER_SWITCH_TAB, ActionType.BROWSER_BACK,
-            ActionType.BROWSER_FORWARD, ActionType.BROWSER_REFRESH, ActionType.BROWSER_WAIT,
-            ActionType.BROWSER_CLOSE, ActionType.BROWSER_PAGE_INFO,
+            ActionType.BROWSER_NAVIGATE,
+            ActionType.BROWSER_CLICK,
+            ActionType.BROWSER_CLICK_TEXT,
+            ActionType.BROWSER_TYPE,
+            ActionType.BROWSER_SELECT,
+            ActionType.BROWSER_HOVER,
+            ActionType.BROWSER_SCROLL,
+            ActionType.BROWSER_EXTRACT,
+            ActionType.BROWSER_EXTRACT_TABLE,
+            ActionType.BROWSER_EXTRACT_LINKS,
+            ActionType.BROWSER_EXECUTE_JS,
+            ActionType.BROWSER_SCREENSHOT,
+            ActionType.BROWSER_FILL_FORM,
+            ActionType.BROWSER_NEW_TAB,
+            ActionType.BROWSER_CLOSE_TAB,
+            ActionType.BROWSER_LIST_TABS,
+            ActionType.BROWSER_SWITCH_TAB,
+            ActionType.BROWSER_BACK,
+            ActionType.BROWSER_FORWARD,
+            ActionType.BROWSER_REFRESH,
+            ActionType.BROWSER_WAIT,
+            ActionType.BROWSER_CLOSE,
+            ActionType.BROWSER_PAGE_INFO,
         }
         if action_type in browser_types:
             return BrowserParams(**params)
 
         trigger_types = {
-            ActionType.TRIGGER_CREATE, ActionType.TRIGGER_LIST, ActionType.TRIGGER_DELETE,
-            ActionType.TRIGGER_START, ActionType.TRIGGER_STOP,
+            ActionType.TRIGGER_CREATE,
+            ActionType.TRIGGER_LIST,
+            ActionType.TRIGGER_DELETE,
+            ActionType.TRIGGER_START,
+            ActionType.TRIGGER_STOP,
         }
         if action_type in trigger_types:
             return TriggerParams(**params)
 
         code_exec_types = {
-            ActionType.CODE_EXECUTE, ActionType.CODE_GENERATE_AND_RUN,
+            ActionType.CODE_EXECUTE,
+            ActionType.CODE_GENERATE_AND_RUN,
         }
         if action_type in code_exec_types:
             return CodeExecParams(**params)
 
         file_intel_types = {
-            ActionType.FILE_PARSE, ActionType.FILE_SEARCH_CONTENT,
+            ActionType.FILE_PARSE,
+            ActionType.FILE_SEARCH_CONTENT,
         }
         if action_type in file_intel_types:
             return FileIntelParams(**params)
 
         api_types = {
-            ActionType.API_REQUEST, ActionType.API_GITHUB, ActionType.API_SEND_EMAIL,
-            ActionType.API_WEBHOOK, ActionType.API_SLACK, ActionType.API_DISCORD,
+            ActionType.API_REQUEST,
+            ActionType.API_GITHUB,
+            ActionType.API_SEND_EMAIL,
+            ActionType.API_WEBHOOK,
+            ActionType.API_SLACK,
+            ActionType.API_DISCORD,
             ActionType.API_SCRAPE,
         }
         if action_type in api_types:

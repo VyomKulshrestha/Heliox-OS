@@ -7,15 +7,10 @@ Supports sandboxed execution, output capture, and timeout control.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import sys
 import tempfile
-import time
-from pathlib import Path
-
-from pilot.system.platform_detect import CURRENT_PLATFORM, Platform
 
 logger = logging.getLogger("pilot.system.code_exec")
 
@@ -29,21 +24,20 @@ async def execute_python(
 
     The code runs in a subprocess for isolation.
     """
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".py", delete=False, encoding="utf-8"
-    ) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as f:
         f.write(code)
         script_path = f.name
 
     try:
         proc = await asyncio.create_subprocess_exec(
-            sys.executable, script_path,
+            sys.executable,
+            script_path,
             stdout=asyncio.subprocess.PIPE if capture_output else None,
             stderr=asyncio.subprocess.PIPE if capture_output else None,
         )
         try:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             proc.kill()
             return f"ERROR: Script timed out after {timeout}s"
 
@@ -67,23 +61,25 @@ async def execute_powershell(
     timeout: int = 30,
 ) -> str:
     """Execute PowerShell code and return the output."""
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".ps1", delete=False, encoding="utf-8"
-    ) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".ps1", delete=False, encoding="utf-8") as f:
         f.write(code)
         script_path = f.name
 
     try:
         shell = "pwsh" if os.path.exists("C:/Program Files/PowerShell") else "powershell"
         proc = await asyncio.create_subprocess_exec(
-            shell, "-NoProfile", "-ExecutionPolicy", "Bypass",
-            "-File", script_path,
+            shell,
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            script_path,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
         try:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             proc.kill()
             return f"ERROR: Script timed out after {timeout}s"
 
@@ -105,22 +101,21 @@ async def execute_bash(
     timeout: int = 30,
 ) -> str:
     """Execute Bash code and return the output."""
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".sh", delete=False, encoding="utf-8"
-    ) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".sh", delete=False, encoding="utf-8") as f:
         f.write("#!/bin/bash\nset -e\n" + code)
         script_path = f.name
 
     try:
         os.chmod(script_path, 0o755)
         proc = await asyncio.create_subprocess_exec(
-            "bash", script_path,
+            "bash",
+            script_path,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
         try:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             proc.kill()
             return f"ERROR: Script timed out after {timeout}s"
 
@@ -164,21 +159,21 @@ async def execute_code(
 
 async def _execute_cmd(code: str, timeout: int = 30) -> str:
     """Execute Windows CMD batch script."""
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".cmd", delete=False, encoding="utf-8"
-    ) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".cmd", delete=False, encoding="utf-8") as f:
         f.write("@echo off\n" + code)
         script_path = f.name
 
     try:
         proc = await asyncio.create_subprocess_exec(
-            "cmd", "/c", script_path,
+            "cmd",
+            "/c",
+            script_path,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
         try:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             proc.kill()
             return f"ERROR: Script timed out after {timeout}s"
 
@@ -194,21 +189,20 @@ async def _execute_cmd(code: str, timeout: int = 30) -> str:
 
 async def _execute_node(code: str, timeout: int = 30) -> str:
     """Execute JavaScript via Node.js."""
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".js", delete=False, encoding="utf-8"
-    ) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".js", delete=False, encoding="utf-8") as f:
         f.write(code)
         script_path = f.name
 
     try:
         proc = await asyncio.create_subprocess_exec(
-            "node", script_path,
+            "node",
+            script_path,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
         try:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             proc.kill()
             return f"ERROR: Script timed out after {timeout}s"
 
@@ -257,7 +251,8 @@ async def generate_and_execute(
         )
 
         code = await client.generate(
-            model, prompt,
+            model,
+            prompt,
             system=f"You are a {language} code generator. Output ONLY executable code.",
             temperature=0.1,
         )

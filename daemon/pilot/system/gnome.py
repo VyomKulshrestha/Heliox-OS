@@ -13,7 +13,8 @@ logger = logging.getLogger("pilot.system.gnome")
 
 async def _run_gsettings(args: list[str]) -> tuple[int, str, str]:
     proc = await asyncio.create_subprocess_exec(
-        "gsettings", *args,
+        "gsettings",
+        *args,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )

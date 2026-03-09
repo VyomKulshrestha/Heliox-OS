@@ -12,9 +12,7 @@ import logging
 logger = logging.getLogger("pilot.system.systemctl")
 
 
-async def _run_systemctl(
-    action: str, unit: str, *, user_scope: bool = False
-) -> tuple[int, str, str]:
+async def _run_systemctl(action: str, unit: str, *, user_scope: bool = False) -> tuple[int, str, str]:
     args = ["systemctl"]
     if user_scope:
         args.append("--user")

@@ -6,7 +6,6 @@ with fallback to OS-specific commands.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 import signal as signal_module
@@ -20,6 +19,7 @@ async def process_list(filter_name: str | None = None) -> str:
     """List running processes with PID, name, CPU%, memory%."""
     try:
         import psutil
+
         procs = []
         for proc in psutil.process_iter(["pid", "name", "cpu_percent", "memory_percent", "status"]):
             try:
@@ -72,6 +72,7 @@ async def process_kill(pid: int | None = None, name: str | None = None, sig: str
 async def _kill_by_pid(pid: int, sig: str) -> str:
     try:
         import psutil
+
         proc = psutil.Process(pid)
         proc_name = proc.name()
         if sig == "SIGKILL" or sig == "9":
@@ -109,12 +110,23 @@ async def process_info(pid: int) -> str:
     """Get detailed info about a process."""
     try:
         import psutil
+
         proc = psutil.Process(pid)
-        info = proc.as_dict(attrs=[
-            "pid", "name", "exe", "cmdline", "status",
-            "cpu_percent", "memory_percent", "memory_info",
-            "create_time", "num_threads", "username",
-        ])
+        info = proc.as_dict(
+            attrs=[
+                "pid",
+                "name",
+                "exe",
+                "cmdline",
+                "status",
+                "cpu_percent",
+                "memory_percent",
+                "memory_info",
+                "create_time",
+                "num_threads",
+                "username",
+            ]
+        )
         lines = [f"Process info for PID {pid}:"]
         for k, v in info.items():
             lines.append(f"  {k}: {v}")
@@ -123,11 +135,11 @@ async def process_info(pid: int) -> str:
         pass
 
     if CURRENT_PLATFORM == Platform.WINDOWS:
-        code, out, err = await run_powershell(
-            f"Get-Process -Id {pid} | Format-List *"
-        )
+        code, out, err = await run_powershell(f"Get-Process -Id {pid} | Format-List *")
     else:
-        code, out, err = await run_command(["ps", "-p", str(pid), "-o", "pid,user,%cpu,%mem,vsz,rss,tty,stat,start,time,command"])
+        code, out, err = await run_command(
+            ["ps", "-p", str(pid), "-o", "pid,user,%cpu,%mem,vsz,rss,tty,stat,start,time,command"]
+        )
 
     if code != 0:
         raise RuntimeError(f"Process info failed: {err.strip()}")

@@ -14,9 +14,10 @@ import json
 import logging
 import os
 import sys
-from dataclasses import dataclass, asdict
+from collections.abc import Callable, Coroutine
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Callable, Coroutine
+from typing import Any
 
 logger = logging.getLogger("pilot.system.plugins")
 
@@ -24,6 +25,7 @@ logger = logging.getLogger("pilot.system.plugins")
 @dataclass
 class PluginInfo:
     """Metadata about a loaded plugin."""
+
     name: str
     description: str
     version: str
@@ -37,6 +39,7 @@ class PluginInfo:
 @dataclass
 class PluginAction:
     """A single action provided by a plugin."""
+
     name: str
     plugin_name: str
     description: str
@@ -90,9 +93,13 @@ class PluginManager:
             if spec is None or spec.loader is None:
                 return PluginInfo(
                     name=Path(file_path).stem,
-                    description="", version="0.0.0", author="",
-                    actions=[], file_path=file_path,
-                    loaded=False, error="Invalid Python file"
+                    description="",
+                    version="0.0.0",
+                    author="",
+                    actions=[],
+                    file_path=file_path,
+                    loaded=False,
+                    error="Invalid Python file",
                 )
 
             module = importlib.util.module_from_spec(spec)
@@ -113,10 +120,7 @@ class PluginManager:
                     continue
 
                 # Check for @pilot_action decorator or action_ prefix
-                is_action = (
-                    getattr(obj, "_is_pilot_action", False)
-                    or attr_name.startswith("action_")
-                )
+                is_action = getattr(obj, "_is_pilot_action", False) or attr_name.startswith("action_")
 
                 if is_action:
                     action_id = f"plugin_{name}_{attr_name}"
@@ -154,9 +158,13 @@ class PluginManager:
         except Exception as e:
             info = PluginInfo(
                 name=Path(file_path).stem,
-                description="", version="0.0.0", author="",
-                actions=[], file_path=file_path,
-                loaded=False, error=str(e),
+                description="",
+                version="0.0.0",
+                author="",
+                actions=[],
+                file_path=file_path,
+                loaded=False,
+                error=str(e),
             )
             self._plugins[info.name] = info
             logger.error("Failed to load plugin %s: %s", file_path, e)
@@ -262,6 +270,7 @@ async def action_count_files(directory: str = ".") -> str:
 
 # ── Decorator for plugin actions ─────────────────────────────────────
 
+
 def pilot_action(func):
     """Decorator to mark a function as a Pilot plugin action."""
     func._is_pilot_action = True
@@ -312,6 +321,7 @@ async def plugin_reload(name: str) -> str:
 async def plugin_install(source: str) -> str:
     """Install a plugin from a URL or local path."""
     import shutil
+
     src = Path(source)
     if src.exists():
         dest = Path(_manager.DEFAULT_PLUGIN_DIR) / src.name

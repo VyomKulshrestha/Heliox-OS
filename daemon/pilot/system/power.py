@@ -6,7 +6,6 @@ macOS (pmset/osascript).
 
 from __future__ import annotations
 
-import asyncio
 import logging
 
 from pilot.system.platform_detect import CURRENT_PLATFORM, Platform, run_command, run_powershell
@@ -25,23 +24,15 @@ async def shutdown(delay_seconds: int = 0, force: bool = False) -> str:
     elif CURRENT_PLATFORM == Platform.MACOS:
         if delay_seconds > 0:
             minutes = max(1, delay_seconds // 60)
-            code, out, err = await run_command(
-                ["sudo", "shutdown", "-h", f"+{minutes}"]
-            )
+            code, out, err = await run_command(["sudo", "shutdown", "-h", f"+{minutes}"])
         else:
-            code, out, err = await run_command(
-                ["osascript", "-e", 'tell app "System Events" to shut down']
-            )
+            code, out, err = await run_command(["osascript", "-e", 'tell app "System Events" to shut down'])
     else:
         if delay_seconds > 0:
             minutes = max(1, delay_seconds // 60)
-            code, out, err = await run_command(
-                ["shutdown", "-h", f"+{minutes}"], root=True
-            )
+            code, out, err = await run_command(["shutdown", "-h", f"+{minutes}"], root=True)
         else:
-            code, out, err = await run_command(
-                ["systemctl", "poweroff"], root=True
-            )
+            code, out, err = await run_command(["systemctl", "poweroff"], root=True)
 
     if code != 0:
         raise RuntimeError(f"Shutdown failed: {err.strip()}")
@@ -57,13 +48,9 @@ async def restart(delay_seconds: int = 0, force: bool = False) -> str:
         args.extend(["/t", str(delay_seconds)])
         code, out, err = await run_command(args)
     elif CURRENT_PLATFORM == Platform.MACOS:
-        code, out, err = await run_command(
-            ["osascript", "-e", 'tell app "System Events" to restart']
-        )
+        code, out, err = await run_command(["osascript", "-e", 'tell app "System Events" to restart'])
     else:
-        code, out, err = await run_command(
-            ["systemctl", "reboot"], root=True
-        )
+        code, out, err = await run_command(["systemctl", "reboot"], root=True)
 
     if code != 0:
         raise RuntimeError(f"Restart failed: {err.strip()}")
@@ -91,14 +78,11 @@ async def sleep() -> str:
 async def lock_screen() -> str:
     """Lock the screen."""
     if CURRENT_PLATFORM == Platform.WINDOWS:
-        code, out, err = await run_command(
-            ["rundll32.exe", "user32.dll,LockWorkStation"]
-        )
+        code, out, err = await run_command(["rundll32.exe", "user32.dll,LockWorkStation"])
     elif CURRENT_PLATFORM == Platform.MACOS:
-        code, out, err = await run_command([
-            "osascript", "-e",
-            'tell application "System Events" to keystroke "q" using {command down, control down}'
-        ])
+        code, out, err = await run_command(
+            ["osascript", "-e", 'tell application "System Events" to keystroke "q" using {command down, control down}']
+        )
     else:
         code, out, err = await run_command(["loginctl", "lock-session"])
 
@@ -112,10 +96,7 @@ async def logout() -> str:
     if CURRENT_PLATFORM == Platform.WINDOWS:
         code, out, err = await run_command(["shutdown", "/l"])
     elif CURRENT_PLATFORM == Platform.MACOS:
-        code, out, err = await run_command([
-            "osascript", "-e",
-            'tell app "System Events" to log out'
-        ])
+        code, out, err = await run_command(["osascript", "-e", 'tell app "System Events" to log out'])
     else:
         code, out, err = await run_command(["loginctl", "terminate-session", "self"])
 

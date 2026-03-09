@@ -33,10 +33,7 @@ class LlamaCppClient:
         try:
             from llama_cpp import Llama
         except ImportError:
-            raise RuntimeError(
-                "llama-cpp-python is not installed. "
-                "Install it with: pip install llama-cpp-python"
-            )
+            raise RuntimeError("llama-cpp-python is not installed. Install it with: pip install llama-cpp-python")
 
         model_path = self._find_model()
         if not model_path:
@@ -58,6 +55,7 @@ class LlamaCppClient:
     def _find_model(self) -> Path | None:
         """Search for a GGUF model file in the standard location."""
         from pilot.config import DATA_DIR
+
         models_dir = DATA_DIR / "models"
         if not models_dir.exists():
             return None
@@ -72,9 +70,7 @@ class LlamaCppClient:
         temperature: float = 0.1,
     ) -> str:
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
-            None, self._generate_sync, prompt, system, temperature
-        )
+        return await loop.run_in_executor(None, self._generate_sync, prompt, system, temperature)
 
     def _generate_sync(self, prompt: str, system: str, temperature: float) -> str:
         self._ensure_loaded()

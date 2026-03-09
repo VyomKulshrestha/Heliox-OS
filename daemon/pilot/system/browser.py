@@ -6,11 +6,9 @@ manage tabs, and scrape web content programmatically.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import os
-import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -60,6 +58,7 @@ async def _get_page(tab_index: int = -1):
 
 # ── Navigation ───────────────────────────────────────────────────────
 
+
 async def browser_navigate(url: str, wait_until: str = "domcontentloaded") -> str:
     """Navigate to a URL."""
     if not url.startswith(("http://", "https://", "file://")):
@@ -90,6 +89,7 @@ async def browser_refresh() -> str:
 
 
 # ── Interaction ──────────────────────────────────────────────────────
+
 
 async def browser_click(
     selector: str,
@@ -179,6 +179,7 @@ async def browser_scroll(direction: str = "down", amount: int = 500) -> str:
 
 
 # ── Data Extraction ──────────────────────────────────────────────────
+
 
 async def browser_extract(
     selector: str = "body",
@@ -280,6 +281,7 @@ async def browser_get_page_info() -> str:
 
 # ── JavaScript Execution ─────────────────────────────────────────────
 
+
 async def browser_execute_js(script: str) -> str:
     """Execute arbitrary JavaScript in the browser and return the result."""
     page = await _get_page()
@@ -291,6 +293,7 @@ async def browser_execute_js(script: str) -> str:
 
 # ── Screenshots ──────────────────────────────────────────────────────
 
+
 async def browser_screenshot(
     output_path: str | None = None,
     full_page: bool = False,
@@ -301,6 +304,7 @@ async def browser_screenshot(
 
     if output_path is None:
         from datetime import datetime
+
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_path = os.path.expanduser(f"~/Pictures/browser_{ts}.png")
 
@@ -320,6 +324,7 @@ async def browser_screenshot(
 
 
 # ── Tab Management ───────────────────────────────────────────────────
+
 
 async def browser_new_tab(url: str | None = None) -> str:
     """Open a new browser tab."""
@@ -349,11 +354,13 @@ async def browser_list_tabs() -> str:
     ctx = await _ensure_browser()
     tabs = []
     for i, page in enumerate(ctx.pages):
-        tabs.append({
-            "index": i,
-            "url": page.url,
-            "title": await page.title(),
-        })
+        tabs.append(
+            {
+                "index": i,
+                "url": page.url,
+                "title": await page.title(),
+            }
+        )
     return json.dumps(tabs, indent=2)
 
 
@@ -369,6 +376,7 @@ async def browser_switch_tab(tab_index: int) -> str:
 
 
 # ── Wait / Sync ──────────────────────────────────────────────────────
+
 
 async def browser_wait(
     selector: str | None = None,
@@ -394,6 +402,7 @@ async def browser_wait_navigation(timeout: int = 30000) -> str:
 
 # ── Form Automation ──────────────────────────────────────────────────
 
+
 async def browser_fill_form(fields: dict[str, str], submit_selector: str | None = None) -> str:
     """Fill multiple form fields at once.
 
@@ -411,6 +420,7 @@ async def browser_fill_form(fields: dict[str, str], submit_selector: str | None 
 
 
 # ── Cleanup ──────────────────────────────────────────────────────────
+
 
 async def browser_close() -> str:
     """Close the browser completely."""

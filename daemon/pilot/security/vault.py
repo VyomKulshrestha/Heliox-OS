@@ -10,6 +10,7 @@ Keys are decrypted only at the moment of an API call.
 from __future__ import annotations
 
 import base64
+import contextlib
 import json
 import logging
 import os
@@ -40,9 +41,11 @@ class KeyVault:
         try:
             import keyring
             import keyring.backends
+
             kr = keyring.get_keyring()
             self._keyring_available = not isinstance(
-                kr, keyring.backends.fail.Keyring  # type: ignore[attr-defined]
+                kr,
+                keyring.backends.fail.Keyring,  # type: ignore[attr-defined]
             )
         except Exception:
             self._keyring_available = False
@@ -105,6 +108,7 @@ class KeyVault:
 
     def _read_from_keyring(self, provider: str) -> str | None:
         import keyring
+
         try:
             return keyring.get_password(VAULT_SERVICE, provider)
         except Exception:
@@ -113,18 +117,19 @@ class KeyVault:
 
     def _write_to_keyring(self, provider: str, api_key: str) -> None:
         import keyring
+
         keyring.set_password(VAULT_SERVICE, provider, api_key)
 
     def _remove_from_keyring(self, provider: str) -> None:
         import keyring
-        try:
+
+        with contextlib.suppress(Exception):
             keyring.delete_password(VAULT_SERVICE, provider)
-        except Exception:
-            pass
 
     def _list_keyring_providers(self) -> list[str]:
         known = ["openai", "claude", "gemini"]
         import keyring
+
         return [p for p in known if keyring.get_password(VAULT_SERVICE, p)]
 
     # -- Encrypted file backend --
@@ -168,8 +173,8 @@ class KeyVault:
         Uses machine-id as the passphrase for unattended operation.
         For maximum security, users should configure keyring instead.
         """
-        from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
         from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
         machine_id = self._get_machine_id()
         kdf = PBKDF2HMAC(

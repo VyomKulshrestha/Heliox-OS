@@ -10,8 +10,7 @@ import asyncio
 import json
 import logging
 import os
-import time
-from collections import Counter, defaultdict
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
@@ -22,6 +21,7 @@ logger = logging.getLogger("pilot.system.context")
 
 # ── Active Window ────────────────────────────────────────────────────
 
+
 async def get_active_window() -> str:
     """Get info about the currently focused window."""
     if CURRENT_PLATFORM == Platform.WINDOWS:
@@ -31,9 +31,9 @@ async def get_active_window() -> str:
             "using System.Runtime.InteropServices;\n"
             "using System.Text;\n"
             "public class WinAPI {\n"
-            "    [DllImport(\"user32.dll\")] public static extern IntPtr GetForegroundWindow();\n"
-            "    [DllImport(\"user32.dll\")] public static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count);\n"
-            "    [DllImport(\"user32.dll\")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);\n"
+            '    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();\n'
+            '    [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count);\n'
+            '    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);\n'
             "}\n"
             "'@\n"
             "$hwnd = [WinAPI]::GetForegroundWindow();\n"
@@ -49,15 +49,17 @@ async def get_active_window() -> str:
 
     elif CURRENT_PLATFORM == Platform.LINUX:
         proc = await asyncio.create_subprocess_exec(
-            "xdotool", "getactivewindow", "getwindowname",
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            "xdotool",
+            "getactivewindow",
+            "getwindowname",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
         stdout, _ = await proc.communicate()
         title = stdout.decode().strip()
 
         proc2 = await asyncio.create_subprocess_exec(
-            "xdotool", "getactivewindow", "getwindowpid",
-            stdout=asyncio.subprocess.PIPE
+            "xdotool", "getactivewindow", "getwindowpid", stdout=asyncio.subprocess.PIPE
         )
         stdout2, _ = await proc2.communicate()
         pid = stdout2.decode().strip()
@@ -66,9 +68,10 @@ async def get_active_window() -> str:
 
     elif CURRENT_PLATFORM == Platform.MACOS:
         proc = await asyncio.create_subprocess_exec(
-            "osascript", "-e",
+            "osascript",
+            "-e",
             'tell application "System Events" to get name of first application process whose frontmost is true',
-            stdout=asyncio.subprocess.PIPE
+            stdout=asyncio.subprocess.PIPE,
         )
         stdout, _ = await proc.communicate()
         return json.dumps({"app": stdout.decode().strip()})
@@ -77,6 +80,7 @@ async def get_active_window() -> str:
 
 
 # ── Time-of-Day Awareness ───────────────────────────────────────────
+
 
 async def get_time_context() -> str:
     """Get time-of-day context for proactive suggestions."""
@@ -105,18 +109,22 @@ async def get_time_context() -> str:
         period = "late_night"
         greeting = "It's very late. Get some rest!"
 
-    return json.dumps({
-        "time": now.strftime("%H:%M:%S"),
-        "date": now.strftime("%Y-%m-%d"),
-        "day_of_week": now.strftime("%A"),
-        "period": period,
-        "greeting": greeting,
-        "hour": hour,
-        "is_weekend": now.weekday() >= 5,
-    }, indent=2)
+    return json.dumps(
+        {
+            "time": now.strftime("%H:%M:%S"),
+            "date": now.strftime("%Y-%m-%d"),
+            "day_of_week": now.strftime("%A"),
+            "period": period,
+            "greeting": greeting,
+            "hour": hour,
+            "is_weekend": now.weekday() >= 5,
+        },
+        indent=2,
+    )
 
 
 # ── Usage Pattern Tracking ───────────────────────────────────────────
+
 
 class UsageTracker:
     """Track user patterns for proactive suggestions."""
@@ -144,12 +152,14 @@ class UsageTracker:
     def record_command(self, command: str):
         """Record a user command execution."""
         now = datetime.now()
-        self._patterns["commands"].append({
-            "command": command[:200],
-            "timestamp": now.isoformat(),
-            "hour": now.hour,
-            "day": now.strftime("%A"),
-        })
+        self._patterns["commands"].append(
+            {
+                "command": command[:200],
+                "timestamp": now.isoformat(),
+                "hour": now.hour,
+                "day": now.strftime("%A"),
+            }
+        )
         # Keep last 500 commands
         self._patterns["commands"] = self._patterns["commands"][-500:]
 
@@ -161,8 +171,7 @@ class UsageTracker:
 
         # Track frequent tasks
         task_key = command[:100].lower().strip()
-        self._patterns["frequent_tasks"][task_key] = \
-            self._patterns["frequent_tasks"].get(task_key, 0) + 1
+        self._patterns["frequent_tasks"][task_key] = self._patterns["frequent_tasks"].get(task_key, 0) + 1
 
         self._save()
 
@@ -179,16 +188,11 @@ class UsageTracker:
             top = counter.most_common(3)
             for cmd, count in top:
                 if count >= 3:
-                    suggestions.append(
-                        f"You usually run '{cmd}' around this time ({count} times before)"
-                    )
+                    suggestions.append(f"You usually run '{cmd}' around this time ({count} times before)")
 
         # Most frequent tasks
         if self._patterns["frequent_tasks"]:
-            top_tasks = sorted(
-                self._patterns["frequent_tasks"].items(),
-                key=lambda x: x[1], reverse=True
-            )[:5]
+            top_tasks = sorted(self._patterns["frequent_tasks"].items(), key=lambda x: x[1], reverse=True)[:5]
             for task, count in top_tasks:
                 if count >= 5:
                     suggestions.append(f"Frequent task: '{task}' ({count} times)")
@@ -200,10 +204,9 @@ class UsageTracker:
         return {
             "total_commands": len(self._patterns["commands"]),
             "unique_tasks": len(self._patterns["frequent_tasks"]),
-            "most_active_hours": sorted(
-                self._patterns["app_launches"].items(),
-                key=lambda x: len(x[1]), reverse=True
-            )[:5],
+            "most_active_hours": sorted(self._patterns["app_launches"].items(), key=lambda x: len(x[1]), reverse=True)[
+                :5
+            ],
         }
 
 

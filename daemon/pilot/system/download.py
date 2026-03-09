@@ -5,9 +5,7 @@ Cross-platform using httpx (preferred) or OS-native tools.
 
 from __future__ import annotations
 
-import asyncio
 import logging
-import os
 from pathlib import Path
 
 from pilot.system.platform_detect import CURRENT_PLATFORM, Platform, run_command, run_powershell
@@ -27,6 +25,7 @@ async def download_file(url: str, output_path: str, overwrite: bool = False) -> 
     # Try httpx first (in our deps)
     try:
         import httpx
+
         async with httpx.AsyncClient(follow_redirects=True, timeout=120) as client:
             resp = await client.get(url)
             resp.raise_for_status()

@@ -5,13 +5,14 @@ Cross-platform module using psutil (preferred) with OS command fallbacks.
 
 from __future__ import annotations
 
-import asyncio
 import logging
-import platform
 
 from pilot.system.platform_detect import (
-    CURRENT_PLATFORM, Platform, get_platform_info,
-    run_command, run_powershell,
+    CURRENT_PLATFORM,
+    Platform,
+    get_platform_info,
+    run_command,
+    run_powershell,
 )
 
 logger = logging.getLogger("pilot.system.sysinfo")
@@ -54,6 +55,7 @@ async def system_info(categories: list[str] | None = None) -> str:
 
 async def _time_info() -> str:
     import datetime
+
     now = datetime.datetime.now()
     return f"=== System Time ===\n  Current Local Time: {now.strftime('%A, %B %d, %Y %I:%M:%S %p')}\n  Timezone: {now.astimezone().tzname()}"
 
@@ -61,6 +63,7 @@ async def _time_info() -> str:
 async def _cpu_info() -> str:
     try:
         import psutil
+
         count = psutil.cpu_count()
         count_logical = psutil.cpu_count(logical=True)
         freq = psutil.cpu_freq()
@@ -73,7 +76,7 @@ async def _cpu_info() -> str:
         if freq:
             lines.append(f"  Frequency: {freq.current:.0f} MHz (max {freq.max:.0f} MHz)")
         lines.append(f"  Usage per core: {', '.join(f'{p:.1f}%' for p in percent)}")
-        lines.append(f"  Average usage: {sum(percent)/len(percent):.1f}%")
+        lines.append(f"  Average usage: {sum(percent) / len(percent):.1f}%")
         return "\n".join(lines)
     except ImportError:
         pass
@@ -92,6 +95,7 @@ async def _cpu_info() -> str:
 async def _memory_info() -> str:
     try:
         import psutil
+
         mem = psutil.virtual_memory()
         swap = psutil.swap_memory()
         return (
@@ -111,7 +115,7 @@ async def _memory_info() -> str:
             "$total = [math]::Round($os.TotalVisibleMemorySize/1MB, 1); "
             "$free = [math]::Round($os.FreePhysicalMemory/1MB, 1); "
             "$used = $total - $free; "
-            "\"Total: ${total} GB`nUsed: ${used} GB`nFree: ${free} GB\""
+            '"Total: ${total} GB`nUsed: ${used} GB`nFree: ${free} GB"'
         )
         return f"=== Memory ===\n{out.strip()}"
     else:
@@ -130,6 +134,7 @@ async def cpu_usage() -> str:
 async def _disk_info() -> str:
     try:
         import psutil
+
         lines = ["=== Disk ==="]
         for part in psutil.disk_partitions():
             try:
@@ -165,6 +170,7 @@ async def disk_usage() -> str:
 async def _network_info() -> str:
     try:
         import psutil
+
         addrs = psutil.net_if_addrs()
         stats = psutil.net_if_stats()
         lines = ["=== Network ==="]
@@ -196,25 +202,21 @@ async def network_info() -> str:
 async def _battery_info() -> str:
     try:
         import psutil
+
         batt = psutil.sensors_battery()
         if batt is None:
             return "=== Battery ===\n  No battery detected"
         plugged = "Plugged in" if batt.power_plugged else "On battery"
         secs = batt.secsleft
         time_left = f"{secs // 3600}h {(secs % 3600) // 60}m" if secs > 0 else "N/A"
-        return (
-            f"=== Battery ===\n"
-            f"  Charge: {batt.percent}%\n"
-            f"  Status: {plugged}\n"
-            f"  Time remaining: {time_left}"
-        )
+        return f"=== Battery ===\n  Charge: {batt.percent}%\n  Status: {plugged}\n  Time remaining: {time_left}"
     except ImportError:
         pass
 
     if CURRENT_PLATFORM == Platform.WINDOWS:
         code, out, _ = await run_powershell(
             "$b = Get-CimInstance Win32_Battery; "
-            "if ($b) { \"Charge: $($b.EstimatedChargeRemaining)%`n"
+            'if ($b) { "Charge: $($b.EstimatedChargeRemaining)%`n'
             "Status: $($b.BatteryStatus)\" } else { 'No battery detected' }"
         )
         return f"=== Battery ===\n{out.strip()}"

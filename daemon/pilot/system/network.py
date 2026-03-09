@@ -5,10 +5,9 @@ Cross-platform: Windows (netsh), Linux (nmcli), macOS (networksetup/airport).
 
 from __future__ import annotations
 
-import asyncio
 import logging
 
-from pilot.system.platform_detect import CURRENT_PLATFORM, Platform, run_command, run_powershell
+from pilot.system.platform_detect import CURRENT_PLATFORM, Platform, run_command
 
 logger = logging.getLogger("pilot.system.network")
 
@@ -18,10 +17,9 @@ async def wifi_list() -> str:
     if CURRENT_PLATFORM == Platform.WINDOWS:
         code, out, err = await run_command(["netsh", "wlan", "show", "networks", "mode=bssid"])
     elif CURRENT_PLATFORM == Platform.MACOS:
-        code, out, err = await run_command([
-            "/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport",
-            "-s"
-        ])
+        code, out, err = await run_command(
+            ["/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport", "-s"]
+        )
     else:  # Linux
         code, out, err = await run_command(["nmcli", "device", "wifi", "list"])
 
@@ -50,7 +48,9 @@ async def wifi_connect(ssid: str, password: str | None = None, interface: str | 
         <keyMaterial>{password}</keyMaterial></sharedKey>
     </security></MSM>
 </WLANProfile>"""
-            import tempfile, os
+            import os
+            import tempfile
+
             with tempfile.NamedTemporaryFile(mode="w", suffix=".xml", delete=False) as f:
                 f.write(profile_xml)
                 profile_path = f.name

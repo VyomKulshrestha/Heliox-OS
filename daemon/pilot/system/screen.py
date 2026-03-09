@@ -6,7 +6,6 @@ macOS (brightness/screencapture).
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 from datetime import datetime
@@ -30,10 +29,9 @@ async def brightness_get() -> str:
     elif CURRENT_PLATFORM == Platform.MACOS:
         code, out, err = await run_command(["brightness", "-l"])
         if code != 0:
-            code, out, err = await run_command([
-                "osascript", "-e",
-                'tell application "System Preferences" to get brightness'
-            ])
+            code, out, err = await run_command(
+                ["osascript", "-e", 'tell application "System Preferences" to get brightness']
+            )
         return f"Brightness: {out.strip()}"
 
     else:  # Linux
@@ -58,8 +56,7 @@ async def brightness_set(level: int) -> str:
 
     if CURRENT_PLATFORM == Platform.WINDOWS:
         code, out, err = await run_powershell(
-            f"(Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightnessMethods)"
-            f".WmiSetBrightness(1, {level})"
+            f"(Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightnessMethods).WmiSetBrightness(1, {level})"
         )
         if code != 0:
             code, out, err = await run_powershell(
@@ -78,9 +75,7 @@ async def brightness_set(level: int) -> str:
         if code != 0:
             # Fallback xrandr
             val = level / 100.0
-            code, out, err = await run_command([
-                "xrandr", "--output", "eDP-1", "--brightness", str(val)
-            ])
+            code, out, err = await run_command(["xrandr", "--output", "eDP-1", "--brightness", str(val)])
 
     if code != 0:
         raise RuntimeError(f"Brightness set failed: {err.strip()}")
@@ -125,18 +120,12 @@ async def screenshot(
 
     else:  # Linux
         if region == "active_window":
-            code, out, err = await run_command([
-                "gnome-screenshot", "-w", "-f", output_path
-            ])
+            code, out, err = await run_command(["gnome-screenshot", "-w", "-f", output_path])
         elif region and region != "fullscreen":
             # region format: "x,y,w,h"
-            code, out, err = await run_command([
-                "gnome-screenshot", "-a", "-f", output_path
-            ])
+            code, out, err = await run_command(["gnome-screenshot", "-a", "-f", output_path])
         else:
-            code, out, err = await run_command([
-                "gnome-screenshot", "-f", output_path
-            ])
+            code, out, err = await run_command(["gnome-screenshot", "-f", output_path])
 
         if code != 0:
             # Fallback to scrot

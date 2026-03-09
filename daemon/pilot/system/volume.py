@@ -6,7 +6,6 @@ Linux (pactl/amixer), macOS (osascript).
 
 from __future__ import annotations
 
-import asyncio
 import logging
 
 from pilot.system.platform_detect import CURRENT_PLATFORM, Platform, run_command, run_powershell
@@ -18,15 +17,14 @@ async def volume_get() -> str:
     """Get current system volume level."""
     if CURRENT_PLATFORM == Platform.WINDOWS:
         code, out, err = await run_powershell(
-            "$vol = [Audio]::Volume; $mute = [Audio]::Mute; "
-            "\"Volume: $([math]::Round($vol * 100))%`nMuted: $mute\"",
+            '$vol = [Audio]::Volume; $mute = [Audio]::Mute; "Volume: $([math]::Round($vol * 100))%`nMuted: $mute"',
         )
         if code != 0:
             # Fallback without Audio class
             code, out, err = await run_powershell(
                 "Add-Type -TypeDefinition '"
                 "using System.Runtime.InteropServices; "
-                "[Guid(\"5CDF2C82-841E-4546-9722-0CF74078229A\"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)] "
+                '[Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)] '
                 "interface IAudioEndpointVolume { int f(); int g(); int h(); int i(); "
                 "int SetMasterVolumeLevelScalar(float fLevel, System.Guid pguidEventContext); "
                 "int j(); int GetMasterVolumeLevelScalar(out float pfLevel); "
@@ -37,12 +35,8 @@ async def volume_get() -> str:
         return f"Current volume:\n{out.strip()}"
 
     elif CURRENT_PLATFORM == Platform.MACOS:
-        code, out, err = await run_command([
-            "osascript", "-e", "output volume of (get volume settings)"
-        ])
-        mute_code, mute_out, _ = await run_command([
-            "osascript", "-e", "output muted of (get volume settings)"
-        ])
+        code, out, err = await run_command(["osascript", "-e", "output volume of (get volume settings)"])
+        mute_code, mute_out, _ = await run_command(["osascript", "-e", "output muted of (get volume settings)"])
         return f"Volume: {out.strip()}%\nMuted: {mute_out.strip()}"
 
     else:  # Linux
@@ -69,23 +63,16 @@ async def volume_set(level: int) -> str:
         # More reliable approach
         if code != 0:
             code, out, err = await run_powershell(
-                f"(New-Object -ComObject WScript.Shell).SendKeys([char]173); "
-                f"'Attempted volume adjustment'"
+                "(New-Object -ComObject WScript.Shell).SendKeys([char]173); 'Attempted volume adjustment'"
             )
 
     elif CURRENT_PLATFORM == Platform.MACOS:
-        code, out, err = await run_command([
-            "osascript", "-e", f"set volume output volume {level}"
-        ])
+        code, out, err = await run_command(["osascript", "-e", f"set volume output volume {level}"])
 
     else:  # Linux
-        code, out, err = await run_command([
-            "pactl", "set-sink-volume", "@DEFAULT_SINK@", f"{level}%"
-        ])
+        code, out, err = await run_command(["pactl", "set-sink-volume", "@DEFAULT_SINK@", f"{level}%"])
         if code != 0:
-            code, out, err = await run_command([
-                "amixer", "set", "Master", f"{level}%"
-            ])
+            code, out, err = await run_command(["amixer", "set", "Master", f"{level}%"])
 
     if code != 0:
         raise RuntimeError(f"Volume set failed: {err.strip()}")
@@ -96,26 +83,19 @@ async def volume_mute(mute: bool = True) -> str:
     """Mute or unmute system volume."""
     if CURRENT_PLATFORM == Platform.WINDOWS:
         code, out, err = await run_powershell(
-            f"(New-Object -ComObject WScript.Shell).SendKeys([char]173); "
-            f"'Toggled mute'"
+            "(New-Object -ComObject WScript.Shell).SendKeys([char]173); 'Toggled mute'"
         )
 
     elif CURRENT_PLATFORM == Platform.MACOS:
         mute_val = "true" if mute else "false"
-        code, out, err = await run_command([
-            "osascript", "-e", f"set volume output muted {mute_val}"
-        ])
+        code, out, err = await run_command(["osascript", "-e", f"set volume output muted {mute_val}"])
 
     else:  # Linux
         toggle = "1" if mute else "0"
-        code, out, err = await run_command([
-            "pactl", "set-sink-mute", "@DEFAULT_SINK@", toggle
-        ])
+        code, out, err = await run_command(["pactl", "set-sink-mute", "@DEFAULT_SINK@", toggle])
         if code != 0:
             toggle_amixer = "mute" if mute else "unmute"
-            code, out, err = await run_command([
-                "amixer", "set", "Master", toggle_amixer
-            ])
+            code, out, err = await run_command(["amixer", "set", "Master", toggle_amixer])
 
     if code != 0:
         raise RuntimeError(f"Mute toggle failed: {err.strip()}")

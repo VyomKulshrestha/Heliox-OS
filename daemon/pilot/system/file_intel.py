@@ -9,8 +9,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import mimetypes
-import os
 from pathlib import Path
 
 logger = logging.getLogger("pilot.system.file_intel")
@@ -48,11 +46,38 @@ async def parse_file(file_path: str) -> str:
             return info + await _parse_video_meta(file_path)
         elif ext in (".zip", ".tar", ".gz", ".7z", ".rar"):
             return info + await _parse_archive(file_path)
-        elif ext in (".py", ".js", ".ts", ".java", ".cpp", ".c", ".h",
-                      ".cs", ".go", ".rs", ".rb", ".php", ".swift", ".kt",
-                      ".r", ".sql", ".sh", ".ps1", ".bat", ".toml", ".yaml",
-                      ".yml", ".ini", ".cfg", ".conf", ".md", ".rst", ".txt",
-                      ".log", ".env"):
+        elif ext in (
+            ".py",
+            ".js",
+            ".ts",
+            ".java",
+            ".cpp",
+            ".c",
+            ".h",
+            ".cs",
+            ".go",
+            ".rs",
+            ".rb",
+            ".php",
+            ".swift",
+            ".kt",
+            ".r",
+            ".sql",
+            ".sh",
+            ".ps1",
+            ".bat",
+            ".toml",
+            ".yaml",
+            ".yml",
+            ".ini",
+            ".cfg",
+            ".conf",
+            ".md",
+            ".rst",
+            ".txt",
+            ".log",
+            ".env",
+        ):
             return info + await _parse_text(file_path)
         else:
             # Try as text
@@ -78,7 +103,7 @@ async def _parse_pdf(path: str) -> str:
             for i, page in enumerate(reader.pages):
                 text = page.extract_text() or ""
                 if text.strip():
-                    pages.append(f"--- Page {i+1} ---\n{text}")
+                    pages.append(f"--- Page {i + 1} ---\n{text}")
             return f"Pages: {len(reader.pages)}\n\n" + "\n\n".join(pages)
 
         return await asyncio.to_thread(_do)
@@ -95,7 +120,7 @@ async def _parse_pdf(path: str) -> str:
                 for i, page in enumerate(pdf.pages):
                     text = page.extract_text() or ""
                     if text.strip():
-                        pages.append(f"--- Page {i+1} ---\n{text}")
+                        pages.append(f"--- Page {i + 1} ---\n{text}")
                 return f"Pages: {len(pdf.pages)}\n\n" + "\n\n".join(pages)
 
         return await asyncio.to_thread(_do)
@@ -116,7 +141,7 @@ async def _parse_docx(path: str) -> str:
             for row in table.rows:
                 cells = [cell.text.strip() for cell in row.cells]
                 rows.append(" | ".join(cells))
-            tables_text.append(f"--- Table {i+1} ---\n" + "\n".join(rows))
+            tables_text.append(f"--- Table {i + 1} ---\n" + "\n".join(rows))
 
         output = "\n\n".join(paragraphs)
         if tables_text:
@@ -153,7 +178,7 @@ async def _parse_csv(path: str) -> str:
     import csv
 
     def _do():
-        with open(path, "r", encoding="utf-8", errors="replace") as f:
+        with open(path, encoding="utf-8", errors="replace") as f:
             reader = csv.reader(f)
             rows = []
             for i, row in enumerate(reader):
@@ -180,12 +205,14 @@ async def _parse_xml(path: str) -> str:
     """Extract text from XML/HTML."""
     try:
         from bs4 import BeautifulSoup
+
         text = Path(path).read_text("utf-8", errors="replace")
         soup = BeautifulSoup(text, "html.parser")
         return soup.get_text(separator="\n", strip=True)[:5000]
     except ImportError:
         # Basic fallback
         import re
+
         text = Path(path).read_text("utf-8", errors="replace")
         clean = re.sub(r"<[^>]+>", "", text)
         return clean[:5000]
@@ -242,9 +269,9 @@ async def _parse_audio_meta(path: str) -> str:
             if audio is None:
                 return "Could not read audio metadata"
             parts = [f"Length: {audio.info.length:.1f}s"]
-            if hasattr(audio.info, 'bitrate'):
+            if hasattr(audio.info, "bitrate"):
                 parts.append(f"Bitrate: {audio.info.bitrate // 1000}kbps")
-            if hasattr(audio.info, 'sample_rate'):
+            if hasattr(audio.info, "sample_rate"):
                 parts.append(f"Sample Rate: {audio.info.sample_rate}Hz")
             for key, value in list(audio.items())[:20]:
                 parts.append(f"  {key}: {value}")
@@ -257,11 +284,16 @@ async def _parse_audio_meta(path: str) -> str:
 
 async def _parse_video_meta(path: str) -> str:
     """Get video file metadata."""
-    import subprocess
     try:
         proc = await asyncio.create_subprocess_exec(
-            "ffprobe", "-v", "quiet", "-print_format", "json",
-            "-show_format", "-show_streams", path,
+            "ffprobe",
+            "-v",
+            "quiet",
+            "-print_format",
+            "json",
+            "-show_format",
+            "-show_streams",
+            path,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -293,6 +325,7 @@ async def _parse_archive(path: str) -> str:
 
     if ext == ".zip":
         import zipfile
+
         with zipfile.ZipFile(path, "r") as zf:
             items = zf.namelist()
             total = sum(i.file_size for i in zf.infolist())
@@ -301,6 +334,7 @@ async def _parse_archive(path: str) -> str:
 
     elif ext in (".tar", ".gz"):
         import tarfile
+
         with tarfile.open(path, "r:*") as tf:
             members = tf.getmembers()
             listing = "\n".join(m.name for m in members[:100])
@@ -334,11 +368,13 @@ async def search_file_contents(
             try:
                 for i, line in enumerate(f.open("r", encoding="utf-8", errors="replace"), 1):
                     if search_text.lower() in line.lower():
-                        results.append({
-                            "file": str(f),
-                            "line": i,
-                            "content": line.strip()[:200],
-                        })
+                        results.append(
+                            {
+                                "file": str(f),
+                                "line": i,
+                                "content": line.strip()[:200],
+                            }
+                        )
                         count += 1
                         if count >= max_results:
                             break

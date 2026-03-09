@@ -7,12 +7,12 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
-from typing import Any, TYPE_CHECKING
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any
 
 import aiosqlite
 
-from pilot.config import DB_FILE, DATA_DIR
+from pilot.config import DATA_DIR, DB_FILE
 
 if TYPE_CHECKING:
     from pilot.actions import ActionPlan, ActionResult
@@ -61,6 +61,7 @@ class MemoryStore:
         """Initialize ChromaDB for semantic search (best-effort)."""
         try:
             import chromadb
+
             chroma_dir = DATA_DIR / "chroma"
             chroma_dir.mkdir(parents=True, exist_ok=True)
             client = chromadb.PersistentClient(path=str(chroma_dir))
@@ -84,7 +85,7 @@ class MemoryStore:
         if not self._db:
             return
 
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         plan_json = plan.model_dump_json()
         results_json = json.dumps([r.model_dump() for r in results])
         success = all(r.success for r in results)
@@ -101,11 +102,13 @@ class MemoryStore:
             try:
                 self._chroma_collection.add(
                     documents=[user_input],
-                    metadatas=[{
-                        "timestamp": now,
-                        "success": str(success),
-                        "explanation": plan.explanation[:500],
-                    }],
+                    metadatas=[
+                        {
+                            "timestamp": now,
+                            "success": str(success),
+                            "explanation": plan.explanation[:500],
+                        }
+                    ],
                     ids=[f"history-{now}"],
                 )
             except Exception:
@@ -117,15 +120,11 @@ class MemoryStore:
 
         if self._chroma_collection is not None:
             try:
-                results = self._chroma_collection.query(
-                    query_texts=[query], n_results=n_results
-                )
+                results = self._chroma_collection.query(query_texts=[query], n_results=n_results)
                 if results["documents"] and results["documents"][0]:
                     parts.append("Related past requests:")
-                    for doc, meta in zip(
-                        results["documents"][0], results["metadatas"][0]
-                    ):
-                        parts.append(f"  - \"{doc}\" (result: {meta.get('explanation', 'N/A')})")
+                    for doc, meta in zip(results["documents"][0], results["metadatas"][0], strict=False):
+                        parts.append(f'  - "{doc}" (result: {meta.get("explanation", "N/A")})')
             except Exception:
                 logger.debug("ChromaDB query failed", exc_info=True)
 
@@ -138,9 +137,7 @@ class MemoryStore:
 
         return "\n".join(parts) if parts else ""
 
-    async def get_history(
-        self, *, limit: int = 50, offset: int = 0
-    ) -> list[dict[str, Any]]:
+    async def get_history(self, *, limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
         if not self._db:
             return []
 
@@ -164,7 +161,7 @@ class MemoryStore:
     async def set_preference(self, key: str, value: str) -> None:
         if not self._db:
             return
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         await self._db.execute(
             """INSERT INTO user_preferences (key, value, updated_at)
                VALUES (?, ?, ?)

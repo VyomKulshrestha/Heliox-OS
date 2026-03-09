@@ -26,7 +26,9 @@ def _xdg(env_var: str, fallback: str) -> Path:
 CONFIG_DIR = _xdg("XDG_CONFIG_HOME", ".config") / "pilot"
 DATA_DIR = _xdg("XDG_DATA_HOME", ".local/share") / "pilot"
 STATE_DIR = _xdg("XDG_STATE_HOME", ".local/state") / "pilot"
-RUNTIME_DIR = Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid() if hasattr(os, 'getuid') else 1000}")) / "pilot"
+RUNTIME_DIR = (
+    Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid() if hasattr(os, 'getuid') else 1000}")) / "pilot"
+)
 
 CONFIG_FILE = CONFIG_DIR / "config.toml"
 RESTRICTIONS_FILE = CONFIG_DIR / "restrictions.toml"
@@ -129,6 +131,7 @@ def _parse_restrictions(raw: dict[str, Any]) -> Restrictions:
 
 def _config_to_dict(config: PilotConfig) -> dict[str, Any]:
     from dataclasses import asdict
+
     return asdict(config)
 
 

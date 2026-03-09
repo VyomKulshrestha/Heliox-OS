@@ -9,9 +9,6 @@ Updated for the expanded action set with cross-platform support.
 from __future__ import annotations
 
 import logging
-import sys
-import re
-from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import TYPE_CHECKING
 
 from pilot.actions import (
@@ -22,16 +19,16 @@ from pilot.actions import (
     DownloadParams,
     FileParams,
     GnomeSettingParams,
+    NotifyParams,
     OpenApplicationParams,
     OpenUrlParams,
-    NotifyParams,
     PackageParams,
     RegistryParams,
     ServiceParams,
     ShellCommandParams,
     ShellScriptParams,
 )
-from pilot.security.sanitizer import Sanitizer, SanitizationError
+from pilot.security.sanitizer import SanitizationError, Sanitizer
 
 if TYPE_CHECKING:
     from pilot.config import PilotConfig
@@ -47,61 +44,124 @@ class ValidationError(Exception):
 
 # Action types that don't need a target field
 NO_TARGET_REQUIRED = {
-    ActionType.OPEN_URL, ActionType.OPEN_APPLICATION,
-    ActionType.NOTIFY, ActionType.PACKAGE_UPDATE,
-    ActionType.SHELL_COMMAND, ActionType.SHELL_SCRIPT,
-    ActionType.PROCESS_LIST, ActionType.PROCESS_KILL, ActionType.PROCESS_INFO,
-    ActionType.CLIPBOARD_READ, ActionType.CLIPBOARD_WRITE,
-    ActionType.SYSTEM_INFO, ActionType.DISK_USAGE, ActionType.MEMORY_USAGE,
-    ActionType.CPU_USAGE, ActionType.NETWORK_INFO, ActionType.BATTERY_INFO,
-    ActionType.POWER_SHUTDOWN, ActionType.POWER_RESTART, ActionType.POWER_SLEEP,
-    ActionType.POWER_LOCK, ActionType.POWER_LOGOUT,
-    ActionType.SCHEDULE_CREATE, ActionType.SCHEDULE_LIST, ActionType.SCHEDULE_DELETE,
-    ActionType.ENV_GET, ActionType.ENV_SET, ActionType.ENV_LIST,
-    ActionType.WINDOW_LIST, ActionType.WINDOW_FOCUS, ActionType.WINDOW_CLOSE,
-    ActionType.WINDOW_MINIMIZE, ActionType.WINDOW_MAXIMIZE,
-    ActionType.VOLUME_GET, ActionType.VOLUME_SET, ActionType.VOLUME_MUTE,
-    ActionType.BRIGHTNESS_GET, ActionType.BRIGHTNESS_SET, ActionType.SCREENSHOT,
-    ActionType.WIFI_LIST, ActionType.WIFI_CONNECT, ActionType.WIFI_DISCONNECT,
-    ActionType.DISK_LIST, ActionType.DISK_MOUNT, ActionType.DISK_UNMOUNT,
-    ActionType.USER_LIST, ActionType.USER_INFO,
+    ActionType.OPEN_URL,
+    ActionType.OPEN_APPLICATION,
+    ActionType.NOTIFY,
+    ActionType.PACKAGE_UPDATE,
+    ActionType.SHELL_COMMAND,
+    ActionType.SHELL_SCRIPT,
+    ActionType.PROCESS_LIST,
+    ActionType.PROCESS_KILL,
+    ActionType.PROCESS_INFO,
+    ActionType.CLIPBOARD_READ,
+    ActionType.CLIPBOARD_WRITE,
+    ActionType.SYSTEM_INFO,
+    ActionType.DISK_USAGE,
+    ActionType.MEMORY_USAGE,
+    ActionType.CPU_USAGE,
+    ActionType.NETWORK_INFO,
+    ActionType.BATTERY_INFO,
+    ActionType.POWER_SHUTDOWN,
+    ActionType.POWER_RESTART,
+    ActionType.POWER_SLEEP,
+    ActionType.POWER_LOCK,
+    ActionType.POWER_LOGOUT,
+    ActionType.SCHEDULE_CREATE,
+    ActionType.SCHEDULE_LIST,
+    ActionType.SCHEDULE_DELETE,
+    ActionType.ENV_GET,
+    ActionType.ENV_SET,
+    ActionType.ENV_LIST,
+    ActionType.WINDOW_LIST,
+    ActionType.WINDOW_FOCUS,
+    ActionType.WINDOW_CLOSE,
+    ActionType.WINDOW_MINIMIZE,
+    ActionType.WINDOW_MAXIMIZE,
+    ActionType.VOLUME_GET,
+    ActionType.VOLUME_SET,
+    ActionType.VOLUME_MUTE,
+    ActionType.BRIGHTNESS_GET,
+    ActionType.BRIGHTNESS_SET,
+    ActionType.SCREENSHOT,
+    ActionType.WIFI_LIST,
+    ActionType.WIFI_CONNECT,
+    ActionType.WIFI_DISCONNECT,
+    ActionType.DISK_LIST,
+    ActionType.DISK_MOUNT,
+    ActionType.DISK_UNMOUNT,
+    ActionType.USER_LIST,
+    ActionType.USER_INFO,
     ActionType.DOWNLOAD_FILE,
-    ActionType.REGISTRY_READ, ActionType.REGISTRY_WRITE,
+    ActionType.REGISTRY_READ,
+    ActionType.REGISTRY_WRITE,
     # Tier 1: Game Changers
-    ActionType.MOUSE_CLICK, ActionType.MOUSE_DOUBLE_CLICK,
-    ActionType.MOUSE_RIGHT_CLICK, ActionType.MOUSE_MOVE,
-    ActionType.MOUSE_DRAG, ActionType.MOUSE_SCROLL, ActionType.MOUSE_POSITION,
-    ActionType.KEYBOARD_TYPE, ActionType.KEYBOARD_PRESS,
-    ActionType.KEYBOARD_HOTKEY, ActionType.KEYBOARD_HOLD,
-    ActionType.SCREEN_OCR, ActionType.SCREEN_FIND_TEXT,
-    ActionType.SCREEN_ANALYZE, ActionType.SCREEN_ELEMENT_MAP,
-    ActionType.BROWSER_NAVIGATE, ActionType.BROWSER_CLICK,
-    ActionType.BROWSER_CLICK_TEXT, ActionType.BROWSER_TYPE,
-    ActionType.BROWSER_SELECT, ActionType.BROWSER_HOVER,
-    ActionType.BROWSER_SCROLL, ActionType.BROWSER_EXTRACT,
-    ActionType.BROWSER_EXTRACT_TABLE, ActionType.BROWSER_EXTRACT_LINKS,
-    ActionType.BROWSER_EXECUTE_JS, ActionType.BROWSER_SCREENSHOT,
-    ActionType.BROWSER_FILL_FORM, ActionType.BROWSER_NEW_TAB,
-    ActionType.BROWSER_CLOSE_TAB, ActionType.BROWSER_LIST_TABS,
-    ActionType.BROWSER_SWITCH_TAB, ActionType.BROWSER_BACK,
-    ActionType.BROWSER_FORWARD, ActionType.BROWSER_REFRESH,
-    ActionType.BROWSER_WAIT, ActionType.BROWSER_CLOSE,
+    ActionType.MOUSE_CLICK,
+    ActionType.MOUSE_DOUBLE_CLICK,
+    ActionType.MOUSE_RIGHT_CLICK,
+    ActionType.MOUSE_MOVE,
+    ActionType.MOUSE_DRAG,
+    ActionType.MOUSE_SCROLL,
+    ActionType.MOUSE_POSITION,
+    ActionType.KEYBOARD_TYPE,
+    ActionType.KEYBOARD_PRESS,
+    ActionType.KEYBOARD_HOTKEY,
+    ActionType.KEYBOARD_HOLD,
+    ActionType.SCREEN_OCR,
+    ActionType.SCREEN_FIND_TEXT,
+    ActionType.SCREEN_ANALYZE,
+    ActionType.SCREEN_ELEMENT_MAP,
+    ActionType.BROWSER_NAVIGATE,
+    ActionType.BROWSER_CLICK,
+    ActionType.BROWSER_CLICK_TEXT,
+    ActionType.BROWSER_TYPE,
+    ActionType.BROWSER_SELECT,
+    ActionType.BROWSER_HOVER,
+    ActionType.BROWSER_SCROLL,
+    ActionType.BROWSER_EXTRACT,
+    ActionType.BROWSER_EXTRACT_TABLE,
+    ActionType.BROWSER_EXTRACT_LINKS,
+    ActionType.BROWSER_EXECUTE_JS,
+    ActionType.BROWSER_SCREENSHOT,
+    ActionType.BROWSER_FILL_FORM,
+    ActionType.BROWSER_NEW_TAB,
+    ActionType.BROWSER_CLOSE_TAB,
+    ActionType.BROWSER_LIST_TABS,
+    ActionType.BROWSER_SWITCH_TAB,
+    ActionType.BROWSER_BACK,
+    ActionType.BROWSER_FORWARD,
+    ActionType.BROWSER_REFRESH,
+    ActionType.BROWSER_WAIT,
+    ActionType.BROWSER_CLOSE,
     ActionType.BROWSER_PAGE_INFO,
-    ActionType.TRIGGER_CREATE, ActionType.TRIGGER_LIST,
-    ActionType.TRIGGER_DELETE, ActionType.TRIGGER_START, ActionType.TRIGGER_STOP,
+    ActionType.TRIGGER_CREATE,
+    ActionType.TRIGGER_LIST,
+    ActionType.TRIGGER_DELETE,
+    ActionType.TRIGGER_START,
+    ActionType.TRIGGER_STOP,
     # Tier 2: Massive Multipliers
-    ActionType.CODE_EXECUTE, ActionType.CODE_GENERATE_AND_RUN,
-    ActionType.FILE_PARSE, ActionType.FILE_SEARCH_CONTENT,
-    ActionType.API_REQUEST, ActionType.API_GITHUB,
-    ActionType.API_SEND_EMAIL, ActionType.API_WEBHOOK,
-    ActionType.API_SLACK, ActionType.API_DISCORD, ActionType.API_SCRAPE,
+    ActionType.CODE_EXECUTE,
+    ActionType.CODE_GENERATE_AND_RUN,
+    ActionType.FILE_PARSE,
+    ActionType.FILE_SEARCH_CONTENT,
+    ActionType.API_REQUEST,
+    ActionType.API_GITHUB,
+    ActionType.API_SEND_EMAIL,
+    ActionType.API_WEBHOOK,
+    ActionType.API_SLACK,
+    ActionType.API_DISCORD,
+    ActionType.API_SCRAPE,
 }
 
 # File action types
 FILE_ACTION_TYPES = {
-    ActionType.FILE_READ, ActionType.FILE_WRITE, ActionType.FILE_DELETE,
-    ActionType.FILE_MOVE, ActionType.FILE_COPY, ActionType.FILE_LIST,
-    ActionType.FILE_SEARCH, ActionType.FILE_PERMISSIONS,
+    ActionType.FILE_READ,
+    ActionType.FILE_WRITE,
+    ActionType.FILE_DELETE,
+    ActionType.FILE_MOVE,
+    ActionType.FILE_COPY,
+    ActionType.FILE_LIST,
+    ActionType.FILE_SEARCH,
+    ActionType.FILE_PERMISSIONS,
 }
 
 
@@ -130,9 +190,8 @@ class ActionValidator:
         self._validate_restrictions(action, index)
 
     def _validate_target(self, action: Action, idx: int) -> None:
-        if action.action_type not in NO_TARGET_REQUIRED:
-            if not action.target or not action.target.strip():
-                raise ValidationError(idx, "Empty target")
+        if action.action_type not in NO_TARGET_REQUIRED and (not action.target or not action.target.strip()):
+            raise ValidationError(idx, "Empty target")
 
         if action.action_type in FILE_ACTION_TYPES:
             self._sanitizer.validate_path(action.target, idx)
@@ -184,8 +243,7 @@ class ActionValidator:
         if action.requires_root and not self._config.security.root_enabled:
             raise ValidationError(
                 idx,
-                f"Action requires root but root access is disabled. "
-                f"Enable it in settings first.",
+                "Action requires root but root access is disabled. Enable it in settings first.",
             )
 
     def _validate_restrictions(self, action: Action, idx: int) -> None:
@@ -195,20 +253,15 @@ class ActionValidator:
             path_str = action.parameters.path
             for protected in restrictions.protected_folders:
                 if path_str.startswith(protected):
-                    raise ValidationError(
-                        idx, f"Path {path_str} is in protected folder {protected}"
-                    )
+                    raise ValidationError(idx, f"Path {path_str} is in protected folder {protected}")
 
-        if isinstance(action.parameters, PackageParams):
-            if action.action_type == ActionType.PACKAGE_REMOVE:
-                if action.parameters.name in restrictions.protected_packages:
-                    raise ValidationError(
-                        idx,
-                        f"Package '{action.parameters.name}' is protected and cannot be removed",
-                    )
+        if isinstance(action.parameters, PackageParams) and action.action_type == ActionType.PACKAGE_REMOVE:
+            if action.parameters.name in restrictions.protected_packages:
+                raise ValidationError(
+                    idx,
+                    f"Package '{action.parameters.name}' is protected and cannot be removed",
+                )
 
         if isinstance(action.parameters, ShellCommandParams):
             if action.parameters.command in restrictions.blocked_commands:
-                raise ValidationError(
-                    idx, f"Command '{action.parameters.command}' is blocked by policy"
-                )
+                raise ValidationError(idx, f"Command '{action.parameters.command}' is blocked by policy")

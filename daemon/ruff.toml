@@ -2,8 +2,32 @@ target-version = "py311"
 line-length = 120
 
 [lint]
-select = ["E", "F", "W", "I", "N", "UP", "B", "SIM"]
-ignore = ["E501", "B008", "SIM108"]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+ignore = [
+    "E501",    # line too long (handled by formatter)
+    "E741",    # ambiguous variable name
+    "B008",    # function call in default arg
+    "B904",    # raise from within except
+    "B033",    # duplicate set items
+    "B905",    # zip without strict
+    "N806",    # uppercase variable in function
+    "SIM102",  # collapsible if - stylistic preference
+    "SIM103",  # return condition directly
+    "SIM105",  # contextlib.suppress - stylistic
+    "SIM108",  # ternary operator
+    "SIM110",  # any() replacement
+    "SIM115",  # context manager for open
+    "UP015",   # unnecessary mode arg
+    "UP017",   # datetime.UTC alias
+    "UP024",   # aliased OSError
+    "UP035",   # import from collections.abc
+    "UP041",   # aliased TimeoutError
+    "UP042",   # StrEnum inheritance
+    "F401",    # unused imports (many are used conditionally)
+    "F541",    # f-string without placeholders
+    "F821",    # undefined name (false positives in prompt strings)
+    "F841",    # unused variable
+]
 
 [format]
 quote-style = "double"

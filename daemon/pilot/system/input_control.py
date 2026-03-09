@@ -16,6 +16,7 @@ logger = logging.getLogger("pilot.system.input_control")
 def _ensure_pyautogui():
     """Lazy import pyautogui with safety settings."""
     import pyautogui
+
     pyautogui.FAILSAFE = True  # Move mouse to corner to abort
     pyautogui.PAUSE = 0.05  # Small pause between actions
     return pyautogui
@@ -23,8 +24,10 @@ def _ensure_pyautogui():
 
 # ── Mouse ────────────────────────────────────────────────────────────
 
+
 async def mouse_click(
-    x: int, y: int,
+    x: int,
+    y: int,
     button: str = "left",
     clicks: int = 1,
     interval: float = 0.1,
@@ -50,7 +53,8 @@ async def mouse_right_click(x: int, y: int) -> str:
 
 
 async def mouse_move(
-    x: int, y: int,
+    x: int,
+    y: int,
     duration: float = 0.3,
     relative: bool = False,
 ) -> str:
@@ -69,8 +73,10 @@ async def mouse_move(
 
 
 async def mouse_drag(
-    start_x: int, start_y: int,
-    end_x: int, end_y: int,
+    start_x: int,
+    start_y: int,
+    end_x: int,
+    end_y: int,
     duration: float = 0.5,
     button: str = "left",
 ) -> str:
@@ -116,6 +122,7 @@ async def mouse_position() -> str:
 
 # ── Keyboard ─────────────────────────────────────────────────────────
 
+
 async def keyboard_type(
     text: str,
     interval: float = 0.03,
@@ -130,6 +137,7 @@ async def keyboard_type(
     if not text.isascii():
         try:
             import pyperclip
+
             pyperclip.copy(text)
             pag = _ensure_pyautogui()
             await asyncio.to_thread(lambda: pag.hotkey("ctrl", "v"))
@@ -161,10 +169,11 @@ async def keyboard_hotkey(*keys: str) -> str:
 
 async def keyboard_hold(key: str, duration: float = 0.5) -> str:
     """Hold a key down for a duration."""
-    pag = _ensure_pyautogui()
+    _ensure_pyautogui()
 
     def _do():
         import pyautogui
+
         with pyautogui.hold(key):
             time.sleep(duration)
 
@@ -173,6 +182,7 @@ async def keyboard_hold(key: str, duration: float = 0.5) -> str:
 
 
 # ── Screen Info ──────────────────────────────────────────────────────
+
 
 async def screen_size() -> str:
     """Get screen resolution."""

@@ -7,7 +7,6 @@ re-planning, with fallback chains and failure learning.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import os
@@ -43,11 +42,13 @@ class FailureMemory:
         if action_type not in self._failures:
             self._failures[action_type] = []
 
-        self._failures[action_type].append({
-            "error": error[:500],
-            "context": {k: str(v)[:200] for k, v in context.items()},
-            "timestamp": time.time(),
-        })
+        self._failures[action_type].append(
+            {
+                "error": error[:500],
+                "context": {k: str(v)[:200] for k, v in context.items()},
+                "timestamp": time.time(),
+            }
+        )
 
         # Keep last 20 per action type
         self._failures[action_type] = self._failures[action_type][-20:]
@@ -84,7 +85,10 @@ FALLBACK_CHAINS: dict[str, list[dict[str, Any]]] = {
     "file_delete": [
         {"strategy": "normal", "command": "Remove-Item '{path}'"},
         {"strategy": "force", "command": "Remove-Item '{path}' -Force"},
-        {"strategy": "admin", "command": "Start-Process powershell -Verb RunAs -ArgumentList 'Remove-Item \\\"{path}\\\" -Force'"},
+        {
+            "strategy": "admin",
+            "command": "Start-Process powershell -Verb RunAs -ArgumentList 'Remove-Item \\\"{path}\\\" -Force'",
+        },
     ],
     # Service management
     "service_restart": [
@@ -102,7 +106,10 @@ FALLBACK_CHAINS: dict[str, list[dict[str, Any]]] = {
     "wifi_connect": [
         {"strategy": "normal", "command": "netsh wlan connect name='{ssid}'"},
         {"strategy": "profile_add", "command": "netsh wlan connect ssid='{ssid}' name='{ssid}'"},
-        {"strategy": "disconnect_reconnect", "command": "netsh wlan disconnect; Start-Sleep 2; netsh wlan connect name='{ssid}'"},
+        {
+            "strategy": "disconnect_reconnect",
+            "command": "netsh wlan disconnect; Start-Sleep 2; netsh wlan connect name='{ssid}'",
+        },
     ],
 }
 
@@ -153,10 +160,7 @@ class SelfHealingWrapper:
         if fallbacks:
             remaining = fallbacks[attempt:] if attempt < len(fallbacks) else []
             if remaining:
-                context_parts.append(
-                    f"\nAvailable fallback strategies: "
-                    + ", ".join(f['strategy'] for f in remaining)
-                )
+                context_parts.append("\nAvailable fallback strategies: " + ", ".join(f["strategy"] for f in remaining))
 
         context_parts.append(
             "\nPlease generate an alternative approach to accomplish the same goal. "
@@ -209,6 +213,7 @@ async def self_heal_execute(
     for attempt in range(healer.max_retries + 1):
         try:
             from pilot.actions import ActionPlan
+
             plan = ActionPlan(actions=[action])
             results = await executor.execute(plan)
 
@@ -234,13 +239,12 @@ async def self_heal_execute(
                 if fallback:
                     logger.info(
                         "Action %s failed, trying fallback strategy: %s",
-                        action_type, fallback.get("strategy", "unknown")
+                        action_type,
+                        fallback.get("strategy", "unknown"),
                     )
                     # If we have a planner, ask it to re-plan
                     if planner:
-                        retry_ctx = healer.build_retry_context(
-                            action_type, error_str, {}, attempt + 1
-                        )
+                        retry_ctx = healer.build_retry_context(action_type, error_str, {}, attempt + 1)
                         try:
                             new_plan = await planner.plan(retry_ctx)
                             if new_plan.actions:
@@ -258,4 +262,9 @@ async def self_heal_execute(
                 "strategy": "exhausted",
             }
 
-    return {"success": False, "output": "Max retries exceeded", "attempts": healer.max_retries + 1, "strategy": "exhausted"}
+    return {
+        "success": False,
+        "output": "Max retries exceeded",
+        "attempts": healer.max_retries + 1,
+        "strategy": "exhausted",
+    }

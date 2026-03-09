@@ -7,10 +7,9 @@ macOS: brew
 
 from __future__ import annotations
 
-import asyncio
 import logging
 
-from pilot.system.platform_detect import CURRENT_PLATFORM, Platform, run_command, run_powershell
+from pilot.system.platform_detect import CURRENT_PLATFORM, Platform, run_command
 
 logger = logging.getLogger("pilot.system.package_mgr")
 
@@ -57,22 +56,14 @@ async def package_install(name: str, version: str | None = None) -> str:
         mgr = await _detect_linux_pkg_manager()
         if mgr == "apt-get":
             pkg = f"{name}={version}" if version else name
-            code, out, err = await run_command(
-                ["apt-get", "install", "-y", pkg], root=True, timeout=120
-            )
+            code, out, err = await run_command(["apt-get", "install", "-y", pkg], root=True, timeout=120)
         elif mgr == "dnf":
             pkg = f"{name}-{version}" if version else name
-            code, out, err = await run_command(
-                ["dnf", "install", "-y", pkg], root=True, timeout=120
-            )
+            code, out, err = await run_command(["dnf", "install", "-y", pkg], root=True, timeout=120)
         elif mgr == "pacman":
-            code, out, err = await run_command(
-                ["pacman", "-S", "--noconfirm", name], root=True, timeout=120
-            )
+            code, out, err = await run_command(["pacman", "-S", "--noconfirm", name], root=True, timeout=120)
         else:
-            code, out, err = await run_command(
-                ["apt-get", "install", "-y", name], root=True, timeout=120
-            )
+            code, out, err = await run_command(["apt-get", "install", "-y", name], root=True, timeout=120)
 
     if code != 0:
         raise RuntimeError(f"Package install failed: {err.strip()}")
@@ -95,21 +86,13 @@ async def package_remove(name: str) -> str:
     else:
         mgr = await _detect_linux_pkg_manager()
         if mgr == "apt-get":
-            code, out, err = await run_command(
-                ["apt-get", "remove", "-y", name], root=True, timeout=60
-            )
+            code, out, err = await run_command(["apt-get", "remove", "-y", name], root=True, timeout=60)
         elif mgr == "dnf":
-            code, out, err = await run_command(
-                ["dnf", "remove", "-y", name], root=True, timeout=60
-            )
+            code, out, err = await run_command(["dnf", "remove", "-y", name], root=True, timeout=60)
         elif mgr == "pacman":
-            code, out, err = await run_command(
-                ["pacman", "-R", "--noconfirm", name], root=True, timeout=60
-            )
+            code, out, err = await run_command(["pacman", "-R", "--noconfirm", name], root=True, timeout=60)
         else:
-            code, out, err = await run_command(
-                ["apt-get", "remove", "-y", name], root=True, timeout=60
-            )
+            code, out, err = await run_command(["apt-get", "remove", "-y", name], root=True, timeout=60)
 
     if code != 0:
         raise RuntimeError(f"Package remove failed: {err.strip()}")
@@ -119,9 +102,7 @@ async def package_remove(name: str) -> str:
 async def package_update() -> str:
     """Update package lists / upgrade packages."""
     if CURRENT_PLATFORM == Platform.WINDOWS:
-        code, out, err = await run_command(
-            ["winget", "upgrade", "--all", "--accept-package-agreements"], timeout=300
-        )
+        code, out, err = await run_command(["winget", "upgrade", "--all", "--accept-package-agreements"], timeout=300)
     elif CURRENT_PLATFORM == Platform.MACOS:
         code, out, err = await run_command(["brew", "update"], timeout=120)
         if code == 0:
@@ -130,21 +111,13 @@ async def package_update() -> str:
     else:
         mgr = await _detect_linux_pkg_manager()
         if mgr == "apt-get":
-            code, out, err = await run_command(
-                ["apt-get", "update"], root=True, timeout=120
-            )
+            code, out, err = await run_command(["apt-get", "update"], root=True, timeout=120)
         elif mgr == "dnf":
-            code, out, err = await run_command(
-                ["dnf", "check-update"], root=True, timeout=120
-            )
+            code, out, err = await run_command(["dnf", "check-update"], root=True, timeout=120)
         elif mgr == "pacman":
-            code, out, err = await run_command(
-                ["pacman", "-Sy"], root=True, timeout=120
-            )
+            code, out, err = await run_command(["pacman", "-Sy"], root=True, timeout=120)
         else:
-            code, out, err = await run_command(
-                ["apt-get", "update"], root=True, timeout=120
-            )
+            code, out, err = await run_command(["apt-get", "update"], root=True, timeout=120)
 
     if code != 0:
         raise RuntimeError(f"Package update failed: {err.strip()}")
@@ -154,9 +127,7 @@ async def package_update() -> str:
 async def package_search(name: str) -> str:
     """Search for packages."""
     if CURRENT_PLATFORM == Platform.WINDOWS:
-        code, out, err = await run_command(
-            ["winget", "search", name], timeout=30
-        )
+        code, out, err = await run_command(["winget", "search", name], timeout=30)
     elif CURRENT_PLATFORM == Platform.MACOS:
         code, out, err = await run_command(["brew", "search", name], timeout=30)
     else:

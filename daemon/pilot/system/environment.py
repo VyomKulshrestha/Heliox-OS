@@ -5,11 +5,10 @@ Cross-platform: handles both session and persistent environment variables.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 
-from pilot.system.platform_detect import CURRENT_PLATFORM, Platform, run_command, run_powershell
+from pilot.system.platform_detect import CURRENT_PLATFORM, Platform, run_command
 
 logger = logging.getLogger("pilot.system.environment")
 
@@ -58,7 +57,7 @@ async def _append_env_to_profile(profile_path: str, name: str, value: str) -> No
     marker = f"# pilot-env:{name}"
 
     try:
-        with open(profile_path, "r") as f:
+        with open(profile_path) as f:
             lines = f.readlines()
     except FileNotFoundError:
         lines = []

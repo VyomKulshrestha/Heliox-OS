@@ -11,8 +11,7 @@ import json
 import logging
 import os
 import time
-from dataclasses import dataclass, field, asdict
-from typing import Any
+from dataclasses import dataclass, field
 
 logger = logging.getLogger("pilot.agents.chain_planner")
 
@@ -20,6 +19,7 @@ logger = logging.getLogger("pilot.agents.chain_planner")
 @dataclass
 class ChainStep:
     """A single step in a multi-step chain."""
+
     id: str
     description: str
     action_type: str = ""
@@ -38,6 +38,7 @@ class ChainStep:
 @dataclass
 class ChainPlan:
     """A multi-step plan with dependencies and conditionals."""
+
     id: str
     name: str
     description: str
@@ -145,7 +146,8 @@ class ChainExecutor:
 
             # Execute the action
             if self._executor:
-                from pilot.actions import Action, ActionType, ActionPlan, EmptyParams
+                from pilot.actions import Action, ActionPlan, ActionType, EmptyParams
+
                 action_type = ActionType(step.action_type)
 
                 # Build action from step
@@ -196,28 +198,28 @@ class ChainExecutor:
         """
         try:
             if condition.startswith("output_contains("):
-                parts = condition[len("output_contains("):-1].split(",", 1)
+                parts = condition[len("output_contains(") : -1].split(",", 1)
                 step_id = parts[0].strip().strip("'\"")
                 text = parts[1].strip().strip("'\"") if len(parts) > 1 else ""
                 step = step_map.get(step_id)
                 return text.lower() in (step.output.lower() if step else "")
 
             elif condition.startswith("step_succeeded("):
-                step_id = condition[len("step_succeeded("):-1].strip().strip("'\"")
+                step_id = condition[len("step_succeeded(") : -1].strip().strip("'\"")
                 step = step_map.get(step_id)
                 return step.status == "completed" if step else False
 
             elif condition.startswith("step_failed("):
-                step_id = condition[len("step_failed("):-1].strip().strip("'\"")
+                step_id = condition[len("step_failed(") : -1].strip().strip("'\"")
                 step = step_map.get(step_id)
                 return step.status == "failed" if step else True
 
             elif condition.startswith("file_exists("):
-                path = condition[len("file_exists("):-1].strip().strip("'\"")
+                path = condition[len("file_exists(") : -1].strip().strip("'\"")
                 return os.path.exists(path)
 
             elif condition.startswith("var_equals("):
-                parts = condition[len("var_equals("):-1].split(",", 1)
+                parts = condition[len("var_equals(") : -1].split(",", 1)
                 var_name = parts[0].strip().strip("'\"")
                 expected = parts[1].strip().strip("'\"") if len(parts) > 1 else ""
                 return plan.variables.get(var_name, "") == expected
@@ -262,6 +264,7 @@ class ChainExecutor:
 
 
 # ── Helper to create chains from task descriptions ───────────────────
+
 
 def create_sequential_chain(
     name: str,

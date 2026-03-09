@@ -54,10 +54,7 @@ class PermissionChecker:
             allowed=True,
             tier=tier,
             requires_confirmation=tier >= PermissionTier.SYSTEM_MODIFY,
-            requires_snapshot=(
-                tier >= PermissionTier.DESTRUCTIVE
-                and self._config.security.snapshot_on_destructive
-            ),
+            requires_snapshot=(tier >= PermissionTier.DESTRUCTIVE and self._config.security.snapshot_on_destructive),
             requires_root_toggle=tier >= PermissionTier.ROOT_CRITICAL,
         )
 

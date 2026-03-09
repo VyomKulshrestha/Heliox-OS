@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import secrets
@@ -15,7 +16,7 @@ from typing import Any
 import websockets
 from websockets.asyncio.server import Server, ServerConnection
 
-from pilot.config import PilotConfig, ensure_dirs, LOG_FILE, STATE_DIR
+from pilot.config import LOG_FILE, STATE_DIR, PilotConfig, ensure_dirs
 
 logger = logging.getLogger("pilot.server")
 
@@ -55,6 +56,7 @@ def _notification(method: str, params: Any) -> str:
 @dataclass
 class PendingConfirmation:
     """Tracks a plan awaiting user confirmation."""
+
     plan_id: str
     event: asyncio.Event
     confirmed: bool = False
@@ -78,8 +80,8 @@ class PilotServer:
 
     async def initialize(self) -> None:
         """Initialize all agent components."""
-        from pilot.agents.planner import Planner
         from pilot.agents.executor import Executor
+        from pilot.agents.planner import Planner
         from pilot.agents.verifier import Verifier
         from pilot.memory.store import MemoryStore
         from pilot.models.router import ModelRouter
@@ -182,11 +184,16 @@ class PilotServer:
             last_explanation = plan.explanation
             plan_id = str(uuid.uuid4())[:8]
 
-            await ws.send(_notification("plan_preview", {
-                "plan_id": plan_id,
-                "actions": [a.model_dump() for a in plan.actions],
-                "explanation": plan.explanation,
-            }))
+            await ws.send(
+                _notification(
+                    "plan_preview",
+                    {
+                        "plan_id": plan_id,
+                        "actions": [a.model_dump() for a in plan.actions],
+                        "explanation": plan.explanation,
+                    },
+                )
+            )
 
             # Phase 2: Confirmation gate
             needs_confirm = any(a.requires_confirmation for a in plan.actions)
@@ -224,9 +231,14 @@ class PilotServer:
             error_context = "\n".join(failed_details + error_msgs)
 
             if attempt < self.MAX_RETRIES:
-                await ws.send(_notification("status", {
-                    "phase": f"retrying — previous attempt failed",
-                }))
+                await ws.send(
+                    _notification(
+                        "status",
+                        {
+                            "phase": "retrying — previous attempt failed",
+                        },
+                    )
+                )
             else:
                 break
 
@@ -243,14 +255,19 @@ class PilotServer:
         pending = PendingConfirmation(plan_id=plan_id, event=asyncio.Event())
         self._pending_confirms[plan_id] = pending
 
-        await ws.send(_notification("confirm_required", {
-            "plan_id": plan_id,
-            "actions": [a.model_dump() for a in plan.actions if a.requires_confirmation],
-        }))
+        await ws.send(
+            _notification(
+                "confirm_required",
+                {
+                    "plan_id": plan_id,
+                    "actions": [a.model_dump() for a in plan.actions if a.requires_confirmation],
+                },
+            )
+        )
 
         try:
             await asyncio.wait_for(pending.event.wait(), timeout=CONFIRM_TIMEOUT_SECONDS)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning("Confirmation timed out for plan %s", plan_id)
             return False
         finally:
@@ -275,6 +292,7 @@ class PilotServer:
 
     async def _handle_get_config(self, params: dict, ws: ServerConnection) -> dict:
         from dataclasses import asdict
+
         data = asdict(self.config)
         data.pop("server", None)
         return data
@@ -300,6 +318,7 @@ class PilotServer:
         if section == "model" and ("cloud_provider" in values or "provider" in values):
             if self.config.model.cloud_provider:
                 from pilot.models.cloud import CloudClient
+
                 self._planner._model._cloud = CloudClient(self.config, self._vault)
                 logger.info("Cloud client re-initialized for provider: %s", self.config.model.cloud_provider)
 
@@ -324,6 +343,7 @@ class PilotServer:
         # Re-init cloud client with the new provider
         if self.config.model.cloud_provider == provider:
             from pilot.models.cloud import CloudClient
+
             self._planner._model._cloud = CloudClient(self.config, self._vault)
         return {"status": "ok"}
 
@@ -342,6 +362,7 @@ class PilotServer:
 
     async def _handle_list_ollama_models(self, params: dict, ws: ServerConnection) -> dict:
         from pilot.models.ollama import OllamaClient
+
         client = OllamaClient(self.config.model.ollama_base_url)
         try:
             models = await client.list_models()
@@ -353,6 +374,7 @@ class PilotServer:
 
     async def _handle_health(self, params: dict, ws: ServerConnection) -> dict:
         from pilot.models.router import ModelRouter
+
         router: ModelRouter = self._planner._model
         backends = await router.check_health()
         return {"backends": backends}
@@ -362,7 +384,8 @@ class PilotServer:
 
     async def _handle_system_status(self, params: dict, ws: ServerConnection) -> dict:
         """Return current system information."""
-        from pilot.system.platform_detect import get_platform_info, CURRENT_PLATFORM
+        from pilot.system.platform_detect import get_platform_info
+
         info = get_platform_info()
         return {
             "platform": info,
@@ -372,6 +395,7 @@ class PilotServer:
     async def _handle_capabilities(self, params: dict, ws: ServerConnection) -> dict:
         """Return all available action types."""
         from pilot.actions import ActionType
+
         return {
             "action_types": [t.value for t in ActionType],
             "count": len(ActionType),
@@ -449,10 +473,8 @@ def main() -> None:
             stop_event.set()
 
         for sig in (signal.SIGTERM, signal.SIGINT):
-            try:
+            with contextlib.suppress(NotImplementedError):
                 loop.add_signal_handler(sig, _signal_handler)
-            except NotImplementedError:
-                pass
 
         await stop_event.wait()
         await server.stop()

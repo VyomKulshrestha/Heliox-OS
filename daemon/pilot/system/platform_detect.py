@@ -9,12 +9,12 @@ import asyncio
 import logging
 import platform
 import sys
-from enum import Enum
+from enum import StrEnum
 
 logger = logging.getLogger("pilot.system.platform")
 
 
-class Platform(str, Enum):
+class Platform(StrEnum):
     WINDOWS = "windows"
     LINUX = "linux"
     MACOS = "macos"
@@ -72,15 +72,13 @@ async def run_command(
             cwd=cwd,
             stdin=asyncio.subprocess.PIPE if input_data else None,
         )
-        stdout, stderr = await asyncio.wait_for(
-            proc.communicate(input_data), timeout=timeout
-        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(input_data), timeout=timeout)
         return (
             proc.returncode or 0,
             stdout.decode("utf-8", errors="replace"),
             stderr.decode("utf-8", errors="replace"),
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         if proc:
             proc.kill()
         return (-1, "", "Command timed out")

@@ -5,12 +5,11 @@ Cross-platform: Windows (schtasks), Linux (crontab), macOS (launchctl).
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 import tempfile
 
-from pilot.system.platform_detect import CURRENT_PLATFORM, Platform, run_command, run_powershell
+from pilot.system.platform_detect import CURRENT_PLATFORM, Platform, run_command
 
 logger = logging.getLogger("pilot.system.scheduler")
 
@@ -27,9 +26,12 @@ async def schedule_create(name: str, command: str, schedule: str) -> str:
     """
     if CURRENT_PLATFORM == Platform.WINDOWS:
         args = [
-            "schtasks", "/create",
-            "/tn", name,
-            "/tr", command,
+            "schtasks",
+            "/create",
+            "/tn",
+            name,
+            "/tr",
+            command,
             "/sc",
         ]
         # Parse schedule
@@ -106,9 +108,7 @@ async def schedule_create(name: str, command: str, schedule: str) -> str:
 async def schedule_list() -> str:
     """List scheduled tasks."""
     if CURRENT_PLATFORM == Platform.WINDOWS:
-        code, out, err = await run_command([
-            "schtasks", "/query", "/fo", "TABLE", "/nh"
-        ])
+        code, out, err = await run_command(["schtasks", "/query", "/fo", "TABLE", "/nh"])
         if code != 0:
             raise RuntimeError(f"Task list failed: {err.strip()}")
         # Filter to show manageable number of lines
@@ -138,9 +138,7 @@ async def schedule_delete(name: str = "", task_id: str | None = None) -> str:
     target = task_id or name
 
     if CURRENT_PLATFORM == Platform.WINDOWS:
-        code, out, err = await run_command([
-            "schtasks", "/delete", "/tn", target, "/f"
-        ])
+        code, out, err = await run_command(["schtasks", "/delete", "/tn", target, "/f"])
         if code != 0:
             raise RuntimeError(f"Task delete failed: {err.strip()}")
         return f"Deleted scheduled task: {target}"

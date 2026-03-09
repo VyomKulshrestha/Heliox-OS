@@ -7,21 +7,23 @@ File watchers, performance monitors, scheduled checks, custom triggers.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
 import time
 import uuid
-from dataclasses import dataclass, field, asdict
+from collections.abc import Callable, Coroutine
+from dataclasses import asdict, dataclass
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
-from typing import Any, Callable, Coroutine
+from typing import Any
 
 logger = logging.getLogger("pilot.system.triggers")
 
 
-class TriggerType(str, Enum):
+class TriggerType(StrEnum):
     FILE_CREATED = "file_created"
     FILE_MODIFIED = "file_modified"
     FILE_DELETED = "file_deleted"
@@ -56,9 +58,7 @@ class Trigger:
             return False
         if self.max_fires > 0 and self.fire_count >= self.max_fires:
             return False
-        if time.time() - self.last_fired < self.cooldown_seconds:
-            return False
-        return True
+        return not time.time() - self.last_fired < self.cooldown_seconds
 
 
 class TriggerEngine:
@@ -133,10 +133,8 @@ class TriggerEngine:
         self._running = False
         if self._task:
             self._task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._task
-            except asyncio.CancelledError:
-                pass
         logger.info("Trigger engine stopped")
 
     async def _run_loop(self) -> None:
@@ -153,7 +151,9 @@ class TriggerEngine:
                             trigger.last_fired = time.time()
                             logger.info(
                                 "Trigger fired: %s (%s) — fire #%d",
-                                trigger.name, trigger.id, trigger.fire_count,
+                                trigger.name,
+                                trigger.id,
+                                trigger.fire_count,
                             )
                             if self._fire_callback:
                                 asyncio.create_task(self._fire_callback(trigger))
@@ -196,6 +196,7 @@ class TriggerEngine:
     async def _check_cpu(self, condition: dict) -> bool:
         try:
             import psutil
+
             threshold = condition.get("threshold", 90)
             cpu = psutil.cpu_percent(interval=1)
             return cpu > threshold
@@ -205,6 +206,7 @@ class TriggerEngine:
     async def _check_memory(self, condition: dict) -> bool:
         try:
             import psutil
+
             threshold = condition.get("threshold", 90)
             mem = psutil.virtual_memory()
             return mem.percent > threshold
@@ -214,6 +216,7 @@ class TriggerEngine:
     async def _check_disk(self, condition: dict) -> bool:
         try:
             import psutil
+
             threshold = condition.get("threshold", 95)
             path = condition.get("path", "/")
             usage = psutil.disk_usage(path)
@@ -224,6 +227,7 @@ class TriggerEngine:
     async def _check_battery(self, condition: dict) -> bool:
         try:
             import psutil
+
             threshold = condition.get("threshold", 20)
             batt = psutil.sensors_battery()
             if batt is None:
@@ -244,15 +248,11 @@ class TriggerEngine:
             pattern = trigger.condition.get("pattern", "*")
             for f in p.glob(pattern):
                 if f.is_file():
-                    try:
+                    with contextlib.suppress(OSError):
                         current_files[str(f)] = f.stat().st_mtime
-                    except OSError:
-                        pass
         elif p.is_file():
-            try:
+            with contextlib.suppress(OSError):
                 current_files[str(p)] = p.stat().st_mtime
-            except OSError:
-                pass
 
         cache_key = trigger.id
         previous = self._file_cache.get(cache_key, {})
@@ -266,10 +266,7 @@ class TriggerEngine:
             return len(new_files) > 0
 
         elif trigger.trigger_type == TriggerType.FILE_MODIFIED:
-            for f, mtime in current_files.items():
-                if f in previous and mtime > previous[f]:
-                    return True
-            return False
+            return any(f in previous and mtime > previous[f] for f, mtime in current_files.items())
 
         elif trigger.trigger_type == TriggerType.FILE_DELETED:
             deleted = set(previous.keys()) - set(current_files.keys())
@@ -280,6 +277,7 @@ class TriggerEngine:
     async def _check_process_exists(self, condition: dict, expect: bool) -> bool:
         try:
             import psutil
+
             name = condition.get("name", "")
             for proc in psutil.process_iter(["name"]):
                 if name.lower() in proc.info["name"].lower():
@@ -321,8 +319,12 @@ async def trigger_create(
 ) -> str:
     """Create a reactive trigger."""
     trigger = _engine.create_trigger(
-        name, trigger_type, condition, action_command,
-        max_fires, cooldown_seconds,
+        name,
+        trigger_type,
+        condition,
+        action_command,
+        max_fires,
+        cooldown_seconds,
     )
 
     # Auto-start engine if not running

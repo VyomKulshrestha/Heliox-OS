@@ -5,7 +5,6 @@ Cross-platform: uses pyperclip if available, falls back to OS commands.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 
 from pilot.system.platform_detect import CURRENT_PLATFORM, Platform, run_command, run_powershell
@@ -17,6 +16,7 @@ async def clipboard_read() -> str:
     """Read text from the system clipboard."""
     try:
         import pyperclip
+
         return pyperclip.paste() or "(clipboard is empty)"
     except ImportError:
         pass
@@ -48,6 +48,7 @@ async def clipboard_write(content: str) -> str:
     """Write text to the system clipboard."""
     try:
         import pyperclip
+
         pyperclip.copy(content)
         return f"Copied {len(content)} characters to clipboard"
     except ImportError:
@@ -61,22 +62,16 @@ async def clipboard_write(content: str) -> str:
         return f"Copied {len(content)} characters to clipboard"
 
     elif CURRENT_PLATFORM == Platform.MACOS:
-        code, out, err = await run_command(
-            ["pbcopy"], input_data=content.encode("utf-8")
-        )
+        code, out, err = await run_command(["pbcopy"], input_data=content.encode("utf-8"))
         if code != 0:
             raise RuntimeError(f"Clipboard write failed: {err.strip()}")
         return f"Copied {len(content)} characters to clipboard"
 
     else:  # Linux
-        code, out, err = await run_command(
-            ["xclip", "-selection", "clipboard"], input_data=content.encode("utf-8")
-        )
+        code, out, err = await run_command(["xclip", "-selection", "clipboard"], input_data=content.encode("utf-8"))
         if code == 0:
             return f"Copied {len(content)} characters to clipboard"
-        code, out, err = await run_command(
-            ["xsel", "--clipboard", "--input"], input_data=content.encode("utf-8")
-        )
+        code, out, err = await run_command(["xsel", "--clipboard", "--input"], input_data=content.encode("utf-8"))
         if code == 0:
             return f"Copied {len(content)} characters to clipboard"
         raise RuntimeError("No clipboard tool available (install xclip or xsel)")

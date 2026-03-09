@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
-from enum import Enum
+from datetime import UTC, datetime
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger("pilot.system.snapshots")
 
 
-class SnapshotBackend(str, Enum):
+class SnapshotBackend(StrEnum):
     BTRFS = "btrfs"
     TIMESHIFT = "timeshift"
     NONE = "none"
@@ -69,7 +69,7 @@ class SnapshotManager:
     async def create_snapshot(self, action_id: str, description: str = "") -> str | None:
         """Create a pre-action snapshot. Returns snapshot ID or None."""
         backend = await self.detect_backend()
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
         tag = f"pilot-{action_id}-{timestamp}"
 
         if backend == SnapshotBackend.BTRFS:
@@ -135,9 +135,7 @@ class SnapshotManager:
 
     async def _btrfs_snapshot(self, tag: str, description: str) -> str:
         snapshot_path = f"/.snapshots/{tag}"
-        code, out, err = await _run(
-            ["btrfs", "subvolume", "snapshot", "/", snapshot_path], root=True
-        )
+        code, out, err = await _run(["btrfs", "subvolume", "snapshot", "/", snapshot_path], root=True)
         if code != 0:
             raise RuntimeError(f"Btrfs snapshot failed: {err.strip()}")
         logger.info("Created Btrfs snapshot: %s", snapshot_path)
@@ -173,7 +171,7 @@ class SnapshotManager:
     async def _timeshift_snapshot(self, tag: str, description: str) -> str:
         comment = description or f"Pilot pre-action snapshot: {tag}"
         code, out, err = await _run(
-            ["timeshift", "--create", f"--comments={comment}", f"--tags=D"],
+            ["timeshift", "--create", f"--comments={comment}", "--tags=D"],
             root=True,
         )
         if code != 0:

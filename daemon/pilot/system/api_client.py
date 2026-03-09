@@ -12,9 +12,8 @@ import logging
 import os
 import smtplib
 import ssl
-from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from pathlib import Path
+from email.mime.text import MIMEText
 from typing import Any
 
 import httpx
@@ -23,6 +22,7 @@ logger = logging.getLogger("pilot.system.api_client")
 
 
 # ── Generic REST API ─────────────────────────────────────────────────
+
 
 async def api_request(
     method: str,
@@ -43,9 +43,7 @@ async def api_request(
     # Try with SSL verification first, fallback without if cert issues
     for verify in (True, False):
         try:
-            async with httpx.AsyncClient(
-                timeout=timeout, follow_redirects=True, verify=verify
-            ) as client:
+            async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, verify=verify) as client:
                 kwargs: dict[str, Any] = {"params": params}
                 if headers:
                     kwargs["headers"] = headers
@@ -87,6 +85,7 @@ async def api_request(
 
 
 # ── GitHub API ───────────────────────────────────────────────────────
+
 
 async def github_api(
     endpoint: str,
@@ -144,6 +143,7 @@ async def github_list_prs(owner: str, repo: str, state: str = "open") -> str:
 
 # ── Email ────────────────────────────────────────────────────────────
 
+
 async def send_email(
     to: str,
     subject: str,
@@ -195,6 +195,7 @@ async def send_email(
 
 # ── Webhook ──────────────────────────────────────────────────────────
 
+
 async def send_webhook(
     url: str,
     payload: dict,
@@ -206,6 +207,7 @@ async def send_webhook(
 
 
 # ── Slack (Webhook) ──────────────────────────────────────────────────
+
 
 async def send_slack_message(
     message: str,
@@ -229,6 +231,7 @@ async def send_slack_message(
 
 # ── Discord (Webhook) ───────────────────────────────────────────────
 
+
 async def send_discord_message(
     message: str,
     webhook_url: str | None = None,
@@ -246,6 +249,7 @@ async def send_discord_message(
 
 # ── Web Scraping ─────────────────────────────────────────────────────
 
+
 async def scrape_url(
     url: str,
     selector: str | None = None,
@@ -257,10 +261,7 @@ async def scrape_url(
     extract: 'text', 'html', 'links', 'tables'
     """
     async with httpx.AsyncClient(
-        timeout=30,
-        follow_redirects=True,
-        verify=False,
-        headers={"User-Agent": "Mozilla/5.0 (compatible; Pilot/0.3)"}
+        timeout=30, follow_redirects=True, verify=False, headers={"User-Agent": "Mozilla/5.0 (compatible; Pilot/0.3)"}
     ) as client:
         resp = await client.get(url)
         html = resp.text
@@ -270,6 +271,7 @@ async def scrape_url(
 
     try:
         from bs4 import BeautifulSoup
+
         soup = BeautifulSoup(html, "html.parser")
 
         if selector:
@@ -301,6 +303,7 @@ async def scrape_url(
     except ImportError:
         # Fallback without BeautifulSoup
         import re
+
         text = re.sub(r"<[^>]+>", " ", html)
         text = re.sub(r"\s+", " ", text).strip()
         return text[:10000]

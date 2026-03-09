@@ -7,7 +7,6 @@ system TTS or edge-tts, and optional wake word detection.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import tempfile
@@ -20,6 +19,7 @@ logger = logging.getLogger("pilot.system.voice")
 
 
 # ── Text-to-Speech ───────────────────────────────────────────────────
+
 
 async def speak(
     text: str,
@@ -58,8 +58,8 @@ async def _tts_windows(text: str, voice: str | None, rate: int, volume: float, o
             script += f"$synth.SelectVoice('{voice}'); "
         script += f"$synth.SetOutputToWaveFile('{output_file}'); "
         script += f"$synth.Speak('{safe_text}'); "
-        script += f"$synth.SetOutputToDefaultAudioDevice(); "
-        script += f"$synth.Dispose()"
+        script += "$synth.SetOutputToDefaultAudioDevice(); "
+        script += "$synth.Dispose()"
 
         code, out, err = await run_powershell(script)
         if code != 0:
@@ -76,7 +76,7 @@ async def _tts_windows(text: str, voice: str | None, rate: int, volume: float, o
         if voice:
             script += f"$synth.SelectVoice('{voice}'); "
         script += f"$synth.Speak('{safe_text}'); "
-        script += f"$synth.Dispose()"
+        script += "$synth.Dispose()"
 
         code, out, err = await run_powershell(script)
         if code != 0:
@@ -93,9 +93,7 @@ async def _tts_linux(text: str, voice: str | None, rate: int, output_file: str |
         cmd.extend(["-w", output_file])
     cmd.append(text)
 
-    proc = await asyncio.create_subprocess_exec(
-        *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-    )
+    proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     await proc.communicate()
     if output_file:
         return f"Speech saved to {output_file}"
@@ -111,9 +109,7 @@ async def _tts_macos(text: str, voice: str | None, rate: int, output_file: str |
         cmd.extend(["-o", output_file])
     cmd.append(text)
 
-    proc = await asyncio.create_subprocess_exec(
-        *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-    )
+    proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     await proc.communicate()
     if output_file:
         return f"Speech saved to {output_file}"
@@ -131,22 +127,17 @@ async def list_voices() -> str:
         )
         return out.strip() if code == 0 else f"Error: {err}"
     elif CURRENT_PLATFORM == Platform.MACOS:
-        proc = await asyncio.create_subprocess_exec(
-            "say", "-v", "?",
-            stdout=asyncio.subprocess.PIPE
-        )
+        proc = await asyncio.create_subprocess_exec("say", "-v", "?", stdout=asyncio.subprocess.PIPE)
         out, _ = await proc.communicate()
         return out.decode("utf-8", errors="replace")
     else:
-        proc = await asyncio.create_subprocess_exec(
-            "espeak", "--voices",
-            stdout=asyncio.subprocess.PIPE
-        )
+        proc = await asyncio.create_subprocess_exec("espeak", "--voices", stdout=asyncio.subprocess.PIPE)
         out, _ = await proc.communicate()
         return out.decode("utf-8", errors="replace")
 
 
 # ── Speech-to-Text ───────────────────────────────────────────────────
+
 
 async def listen(
     duration: int = 5,
@@ -179,8 +170,8 @@ async def _record_audio(duration: int) -> str:
     output_path = os.path.join(tempfile.gettempdir(), f"pilot_audio_{os.getpid()}.wav")
 
     try:
-        import sounddevice as sd
         import numpy as np
+        import sounddevice as sd
 
         sample_rate = 16000
         data = sd.rec(int(duration * sample_rate), samplerate=sample_rate, channels=1, dtype="int16")
@@ -251,6 +242,7 @@ async def _transcribe_windows(audio_path: str) -> str:
 
 
 # ── Wake Word Detection ──────────────────────────────────────────────
+
 
 async def start_wake_word_listener(
     wake_word: str = "hey cortex",

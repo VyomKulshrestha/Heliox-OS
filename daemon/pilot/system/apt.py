@@ -31,9 +31,7 @@ async def _run(args: list[str], *, root: bool = False) -> tuple[int, str, str]:
 async def package_install(name: str, version: str | None = None) -> str:
     """Install a package via apt."""
     pkg = f"{name}={version}" if version else name
-    code, out, err = await _run(
-        ["apt-get", "install", "-y", pkg], root=True
-    )
+    code, out, err = await _run(["apt-get", "install", "-y", pkg], root=True)
     if code != 0:
         raise RuntimeError(f"apt install failed (exit {code}): {err.strip()}")
     return f"Installed package: {name}" + (f" (version {version})" if version else "")
@@ -41,9 +39,7 @@ async def package_install(name: str, version: str | None = None) -> str:
 
 async def package_remove(name: str) -> str:
     """Remove a package via apt."""
-    code, out, err = await _run(
-        ["apt-get", "remove", "-y", name], root=True
-    )
+    code, out, err = await _run(["apt-get", "remove", "-y", name], root=True)
     if code != 0:
         raise RuntimeError(f"apt remove failed (exit {code}): {err.strip()}")
     return f"Removed package: {name}"
