@@ -1,0 +1,22 @@
+# Maintainer: Vyom Kulshrestha <vyom@cortex-os.dev>
+
+pkgname=cortex-os-bin
+pkgver=0.2.0
+pkgrel=1
+pkgdesc="AI System Control Agent — control your computer with natural language, voice, and gestures"
+arch=('x86_64')
+url="https://github.com/VyomKulshrestha/Cortex-OS"
+license=('MIT')
+depends=('python>=3.11' 'webkit2gtk-4.1' 'gtk3')
+optdepends=(
+  'python-opencv: hand gesture recognition'
+  'python-mediapipe: hand gesture recognition'
+  'ollama: local LLM inference'
+)
+source=("${pkgname}-${pkgver}.deb::https://github.com/VyomKulshrestha/Cortex-OS/releases/download/v${pkgver}/cortex-os_${pkgver}_amd64.deb")
+sha256sums=('SKIP')
+
+package() {
+  bsdtar -xf data.tar.* -C "${pkgdir}/"
+  install -Dm644 "${pkgdir}/usr/share/doc/${pkgname}/copyright" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+}

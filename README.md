@@ -1,15 +1,26 @@
 # Cortex-OS — AI System Control Agent
 
 <p align="center">
+  <a href="https://github.com/VyomKulshrestha/Cortex-OS/releases"><img src="https://img.shields.io/github/v/release/VyomKulshrestha/Cortex-OS?style=for-the-badge&color=00f0ff&label=Release" alt="Release"></a>
+  <a href="https://github.com/VyomKulshrestha/Cortex-OS/releases"><img src="https://img.shields.io/github/downloads/VyomKulshrestha/Cortex-OS/total?style=for-the-badge&color=7c6fe0&label=Downloads" alt="Downloads"></a>
+  <a href="https://github.com/VyomKulshrestha/Cortex-OS/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/VyomKulshrestha/Cortex-OS/release.yml?style=for-the-badge&label=Build" alt="Build Status"></a>
+  <a href="https://github.com/VyomKulshrestha/Cortex-OS/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/VyomKulshrestha/Cortex-OS/ci.yml?style=for-the-badge&label=CI&color=44cc11" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/VyomKulshrestha/Cortex-OS?style=for-the-badge&color=blue" alt="License"></a>
+  <img src="https://img.shields.io/badge/Platform-Windows%20|%20macOS%20|%20Linux-333?style=for-the-badge" alt="Platform">
+</p>
+
+<p align="center">
   <strong>Control your entire computer with natural language, voice, and hand gestures.</strong><br>
   An open-source, privacy-first AI agent that plans, executes, and verifies complex multi-step tasks.
 </p>
 
 <p align="center">
   <a href="#quick-start">Quick Start</a> •
+  <a href="#-jarvis-mode-new">JARVIS Mode</a> •
   <a href="#features">Features</a> •
   <a href="#architecture">Architecture</a> •
-  <a href="#security">Security</a>
+  <a href="#security">Security</a> •
+  <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 
 ---
