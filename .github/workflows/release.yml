@@ -108,6 +108,6 @@ jobs:
             - 🎤 Voice control with "Hey Cortex" wake word
             - ✨ Particle burst effects
             - 🔊 Audio spectrum visualizer
-          releaseDraft: true
+          releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
