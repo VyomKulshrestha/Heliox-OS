@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/nickcernis/tauri-docs/refs/heads/next/src/content/docs/_schema/config.schema.json",
   "productName": "Cortex-OS",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "identifier": "com.cortexos.app",
   "build": {
     "frontendDist": "../ui/dist",
