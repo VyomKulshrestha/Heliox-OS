@@ -1,5 +1,5 @@
 {
-  "$schema": "https://raw.githubusercontent.com/nickcernis/tauri-docs/refs/heads/next/src/content/docs/_schema/config.schema.json",
+  "$schema": "https://schema.tauri.app/config/2",
   "productName": "Cortex-OS",
   "version": "0.2.4",
   "identifier": "com.cortexos.app",
