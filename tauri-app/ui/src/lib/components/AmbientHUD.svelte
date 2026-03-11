@@ -136,8 +136,8 @@
       <!-- Header -->
       <div class="hud-header">
         <div class="hud-title">
-          <span class="cortex-dot"></span>
-          CORTEX-OS
+          <span class="heliox-dot"></span>
+          HELIOX OS
         </div>
         <div class="hud-time">{currentTime}</div>
       </div>
@@ -275,7 +275,7 @@
     color: rgba(0, 200, 255, 0.9);
   }
 
-  .cortex-dot {
+  .heliox-dot {
     width: 6px;
     height: 6px;
     border-radius: 50%;

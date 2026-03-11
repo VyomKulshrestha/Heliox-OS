@@ -1,4 +1,4 @@
-"""Voice Input/Output — talk to Cortex-OS like JARVIS.
+"""Voice Input/Output — talk to Heliox OS like JARVIS.
 
 Speech-to-text via Whisper (local or API), text-to-speech via
 system TTS or edge-tts, and optional wake word detection.
@@ -245,13 +245,13 @@ async def _transcribe_windows(audio_path: str) -> str:
 
 
 async def start_wake_word_listener(
-    wake_word: str = "hey cortex",
+    wake_word: str = "hey heliox",
     callback_command: str = "",
 ) -> str:
     """Start listening for a wake word in the background.
 
     When the wake word is detected, executes the callback_command
-    via the Cortex-OS planner.
+    via the Heliox OS planner.
     """
     # This creates a background task
     return (

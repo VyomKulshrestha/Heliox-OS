@@ -1,11 +1,11 @@
-# Contributing to Cortex-OS
+# Contributing to Heliox OS
 
-Thanks for your interest in contributing to Cortex-OS! This guide will help you get started.
+Thanks for your interest in contributing to Heliox OS! This guide will help you get started.
 
 ## 🏗️ Architecture Overview
 
 ```
-cortex-os/
+heliox-os/
 ├── daemon/                  # Python backend (AI agent system)
 │   └── pilot/
 │       ├── agents/          # Planner, Executor, Verifier, Code Sanitizer
@@ -42,8 +42,8 @@ cortex-os/
 ### 1. Clone the repo
 
 ```bash
-git clone https://github.com/VyomKulshrestha/Cortex-OS.git
-cd Cortex-OS
+git clone https://github.com/VyomKulshrestha/Heliox-OS.git
+cd Heliox OS
 ```
 
 ### 2. Set up the Python daemon
@@ -123,7 +123,7 @@ cargo tauri dev
 
 ## 🐛 Reporting Bugs
 
-Please use the [Bug Report template](https://github.com/VyomKulshrestha/Cortex-OS/issues/new?template=bug_report.md) and include:
+Please use the [Bug Report template](https://github.com/VyomKulshrestha/Heliox-OS/issues/new?template=bug_report.md) and include:
 
 - OS and version
 - Steps to reproduce
@@ -132,11 +132,11 @@ Please use the [Bug Report template](https://github.com/VyomKulshrestha/Cortex-O
 
 ## 💡 Feature Requests
 
-Use the [Feature Request template](https://github.com/VyomKulshrestha/Cortex-OS/issues/new?template=feature_request.md).
+Use the [Feature Request template](https://github.com/VyomKulshrestha/Heliox-OS/issues/new?template=feature_request.md).
 
 ## 🔌 Writing Plugins
 
-Cortex-OS supports community plugins! See `daemon/pilot/system/plugins.py` for the plugin API. Plugins are Python modules placed in `~/.config/cortex-os/plugins/`.
+Heliox OS supports community plugins! See `daemon/pilot/system/plugins.py` for the plugin API. Plugins are Python modules placed in `~/.config/heliox-os/plugins/`.
 
 ## 📜 License
 

@@ -1,6 +1,6 @@
 ---
 name: Feature Request
-about: Suggest a new feature or improvement for Cortex-OS
+about: Suggest a new feature or improvement for Heliox OS
 title: "[FEATURE] "
 labels: enhancement
 assignees: ''

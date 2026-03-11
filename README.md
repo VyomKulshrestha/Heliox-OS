@@ -1,18 +1,18 @@
-# Cortex-OS — AI System Control Agent
+# Heliox OS — AI System Control Agent
 
 <p align="center">
-  <a href="https://github.com/VyomKulshrestha/Cortex-OS/releases"><img src="https://img.shields.io/github/v/release/VyomKulshrestha/Cortex-OS?style=for-the-badge&color=00f0ff&label=Release" alt="Release"></a>
-  <a href="https://github.com/VyomKulshrestha/Cortex-OS/releases"><img src="https://img.shields.io/github/downloads/VyomKulshrestha/Cortex-OS/total?style=for-the-badge&color=7c6fe0&label=Downloads" alt="Downloads"></a>
-  <a href="https://github.com/VyomKulshrestha/Cortex-OS/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/VyomKulshrestha/Cortex-OS/release.yml?style=for-the-badge&label=Build" alt="Build Status"></a>
-  <a href="https://github.com/VyomKulshrestha/Cortex-OS/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/VyomKulshrestha/Cortex-OS/ci.yml?style=for-the-badge&label=CI&color=44cc11" alt="CI"></a>
-  <a href="https://github.com/VyomKulshrestha/Cortex-OS/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22"><img src="https://img.shields.io/github/issues/VyomKulshrestha/Cortex-OS/good%20first%20issue?style=for-the-badge&color=purple&label=Good%20First%20Issues" alt="Good First Issues"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/VyomKulshrestha/Cortex-OS?style=for-the-badge&color=blue" alt="License"></a>
+  <a href="https://github.com/VyomKulshrestha/Heliox-OS/releases"><img src="https://img.shields.io/github/v/release/VyomKulshrestha/Heliox-OS?style=for-the-badge&color=00f0ff&label=Release" alt="Release"></a>
+  <a href="https://github.com/VyomKulshrestha/Heliox-OS/releases"><img src="https://img.shields.io/github/downloads/VyomKulshrestha/Heliox-OS/total?style=for-the-badge&color=7c6fe0&label=Downloads" alt="Downloads"></a>
+  <a href="https://github.com/VyomKulshrestha/Heliox-OS/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/VyomKulshrestha/Heliox-OS/release.yml?style=for-the-badge&label=Build" alt="Build Status"></a>
+  <a href="https://github.com/VyomKulshrestha/Heliox-OS/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/VyomKulshrestha/Heliox-OS/ci.yml?style=for-the-badge&label=CI&color=44cc11" alt="CI"></a>
+  <a href="https://github.com/VyomKulshrestha/Heliox-OS/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22"><img src="https://img.shields.io/github/issues/VyomKulshrestha/Heliox-OS/good%20first%20issue?style=for-the-badge&color=purple&label=Good%20First%20Issues" alt="Good First Issues"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/VyomKulshrestha/Heliox-OS?style=for-the-badge&color=blue" alt="License"></a>
   <img src="https://img.shields.io/badge/Platform-Windows%20|%20macOS%20|%20Linux-333?style=for-the-badge" alt="Platform">
 </p>
 
 <p align="center">
   <!-- Replace with your actual demo GIF path once recorded -->
-  <img src="https://raw.githubusercontent.com/VyomKulshrestha/Cortex-OS/main/assets/demo.gif" alt="Cortex-OS Jarvis Demo" width="800">
+  <img src="https://raw.githubusercontent.com/VyomKulshrestha/Heliox-OS/main/assets/demo.gif" alt="Heliox OS Jarvis Demo" width="800">
 </p>
 
 
@@ -32,9 +32,9 @@
 
 ---
 
-## Why Cortex-OS?
+## Why Heliox OS?
 
-Unlike simple command runners, Cortex-OS is a **true agentic system** with a Plan → Execute → Verify → Retry pipeline:
+Unlike simple command runners, Heliox OS is a **true agentic system** with a Plan → Execute → Verify → Retry pipeline:
 
 1. **Planner** — LLM converts your natural language into a structured multi-step action plan
 2. **Executor** — Each action is dispatched to native OS APIs (never GUI automation)
@@ -44,10 +44,10 @@ Unlike simple command runners, Cortex-OS is a **true agentic system** with a Pla
 
 ## 🤖 JARVIS Mode (New!)
 
-Cortex-OS now includes a futuristic, Iron Man-style interface:
+Heliox OS now includes a futuristic, Iron Man-style interface:
 
-- 🎤 **Voice Control**: Push-to-talk or use the always-on **"Hey Cortex"** wake word.
-- 🗣️ **Text-to-Speech**: Cortex-OS speaks its responses aloud to you.
+- 🎤 **Voice Control**: Push-to-talk or use the always-on **"Hey Heliox"** wake word.
+- 🗣️ **Text-to-Speech**: Heliox OS speaks its responses aloud to you.
 - 🤚 **12 Hand Gestures**: Control your PC via webcam using gestures (Open Palm, Thumbs Up/Down, Peace, Fist, Point, Rock, OK, Swipe, Finger Gun, Call Me).
 - 🖊️ **Air Drawing**: Point your index finger to draw glowing trails in the air.
 - 🌀 **Arc Reactor UI**: Animated spinning reactor logo, neural background, and particle explosion effects on task completion.
@@ -182,25 +182,25 @@ graph TD
 
 The easiest way to get started is to download the pre-compiled installer for your operating system.
 
-1. Go to the [GitHub Releases page](https://github.com/VyomKulshrestha/Cortex-OS/releases).
+1. Go to the [GitHub Releases page](https://github.com/VyomKulshrestha/Heliox-OS/releases).
 2. Download the installer for your OS:
-   - **Windows**: `Cortex-OS_x64-setup.exe`
-   - **macOS (Apple Silicon)**: `Cortex-OS_aarch64.dmg`
-   - **macOS (Intel)**: `Cortex-OS_x86_64.dmg`
+   - **Windows**: `Heliox OS_x64-setup.exe`
+   - **macOS (Apple Silicon)**: `Heliox OS_aarch64.dmg`
+   - **macOS (Intel)**: `Heliox OS_x86_64.dmg`
    - **Linux**: `.AppImage` or `.deb`
 3. Install the app.
-4. Open Cortex-OS and enter your API Key (e.g., Gemini, OpenAI, Claude) in the Settings tab.
+4. Open Heliox OS and enter your API Key (e.g., Gemini, OpenAI, Claude) in the Settings tab.
 
 *Note: The Python backend requires Python 3.11+ installed on your system. You must start the local daemon manually for now.*
 
 ### Option 2: Build from Source (For Developers)
 
-If you want to contribute or modify Cortex-OS, build it from the source code:
+If you want to contribute or modify Heliox OS, build it from the source code:
 
 **1. Install the Python daemon:**
 ```bash
-git clone https://github.com/VyomKulshrestha/Cortex-OS.git
-cd Cortex-OS/daemon
+git clone https://github.com/VyomKulshrestha/Heliox-OS.git
+cd Heliox OS/daemon
 pip install -e ".[full,dev]"
 ```
 
@@ -242,7 +242,7 @@ npm run dev
 
 > [!WARNING]
 > **PLEASE READ BEFORE USE: SYSTEM COMPROMISE RISK**
-> Cortex-OS is an autonomous agent with the ability to execute code, delete files, and run terminal commands directly on your host operating system. While we have provided sandbox measures, the AI has real system access. **Do NOT run Cortex-OS with root/Administrator privileges** unless absolutely necessary. We are not responsible for accidental data loss caused by LLM hallucinations.
+> Heliox OS is an autonomous agent with the ability to execute code, delete files, and run terminal commands directly on your host operating system. While we have provided sandbox measures, the AI has real system access. **Do NOT run Heliox OS with root/Administrator privileges** unless absolutely necessary. We are not responsible for accidental data loss caused by LLM hallucinations.
 
 - All AI outputs pass through structured schema validation before execution
 - Five-tier permission system (read-only through root-level)
@@ -289,9 +289,9 @@ port = 8785
 We love contributions! Whether it's adding a new gesture, fixing a bug, or building a new plugin, check out our guides to get started.
 
 1. Read our [Contributing Guide](CONTRIBUTING.md) to set up your dev environment.
-2. Check the [Good First Issues](https://github.com/VyomKulshrestha/Cortex-OS/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) tab on GitHub to find beginner-friendly tasks.
+2. Check the [Good First Issues](https://github.com/VyomKulshrestha/Heliox-OS/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) tab on GitHub to find beginner-friendly tasks.
 3. Review our [Code of Conduct](CODE_OF_CONDUCT.md).
-4. Join the community discussions in [GitHub Discussions](https://github.com/VyomKulshrestha/Cortex-OS/discussions).
+4. Join the community discussions in [GitHub Discussions](https://github.com/VyomKulshrestha/Heliox-OS/discussions).
 
 ## License
 

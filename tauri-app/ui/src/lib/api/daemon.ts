@@ -1,5 +1,5 @@
 /**
- * WebSocket client for communicating with the Cortex-OS Python daemon.
+ * WebSocket client for communicating with the Heliox OS Python daemon.
  * Uses JSON-RPC 2.0 protocol over a local WebSocket connection.
  */
 
@@ -82,7 +82,7 @@ export async function connect(): Promise<boolean> {
 export async function call<T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> {
   if (!isConnected()) {
     const connected = await connect();
-    if (!connected) throw new Error("Cannot connect to Cortex-OS daemon");
+    if (!connected) throw new Error("Cannot connect to Heliox OS daemon");
   }
 
   const id = ++messageId;

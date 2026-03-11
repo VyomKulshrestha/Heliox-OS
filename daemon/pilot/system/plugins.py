@@ -50,7 +50,7 @@ class PluginAction:
 class PluginManager:
     """Manages plugin discovery, loading, and execution."""
 
-    DEFAULT_PLUGIN_DIR = os.path.expanduser("~/.config/cortex-os/plugins")
+    DEFAULT_PLUGIN_DIR = os.path.expanduser("~/.config/heliox-os/plugins")
 
     def __init__(self, plugin_dirs: list[str] | None = None):
         self._plugin_dirs = plugin_dirs or [self.DEFAULT_PLUGIN_DIR]

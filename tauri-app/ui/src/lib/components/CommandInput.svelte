@@ -24,7 +24,7 @@
     <input
       type="text"
       bind:value={input}
-      placeholder="Tell Cortex-OS what to do..."
+      placeholder="Tell Heliox OS what to do..."
       onkeydown={handleKeydown}
       autocomplete="off"
       spellcheck="false"

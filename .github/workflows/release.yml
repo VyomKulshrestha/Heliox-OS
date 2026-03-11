@@ -1,4 +1,4 @@
-name: "Release Cortex-OS"
+name: "Release Heliox OS"
 
 on:
   push:
@@ -86,15 +86,15 @@ jobs:
         with:
           projectPath: "tauri-app"
           tagName: ${{ github.ref_name }}
-          releaseName: "Cortex-OS ${{ github.ref_name }}"
+          releaseName: "Heliox OS ${{ github.ref_name }}"
           releaseBody: |
-            ## Cortex-OS ${{ github.ref_name }}
+            ## Heliox OS ${{ github.ref_name }}
 
             ### Download & Install
             1. **Install Python 3.11+** on your system (if not already installed)
             2. Install the AI backend: `pip install pilot-daemon` or `pip install -e daemon/`
             3. Download the installer for your OS below
-            4. Run the installer and launch Cortex-OS
+            4. Run the installer and launch Heliox OS
             5. The app will **automatically start the AI daemon** in the background!
             6. Enter your API key (Gemini/OpenAI/Claude) in Settings
 
@@ -102,7 +102,7 @@ jobs:
             - 🌀 Arc Reactor animated logo
             - 🧠 Neural network background
             - 🤚 12 hand gestures via webcam
-            - 🎤 Voice control with "Hey Cortex" wake word
+            - 🎤 Voice control with "Hey Heliox" wake word
             - ✨ Particle burst effects
             - 🔊 Audio spectrum visualizer
           releaseDraft: false

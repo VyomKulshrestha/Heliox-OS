@@ -1,7 +1,7 @@
 <script lang="ts">
   /**
    * VoiceControl — JARVIS-like voice input using Web Speech API.
-   * Push-to-talk or continuous listening with wake word "Hey Cortex".
+   * Push-to-talk or continuous listening with wake word "Hey Heliox".
    * 
    * Features:
    *  - Real-time speech-to-text transcription
@@ -58,11 +58,11 @@
         // Check for wake word in continuous mode
         if (wakeWordActive) {
           const lower = final.toLowerCase().trim();
-          if (lower.includes("hey cortex") || lower.includes("hey cortex,") || lower.startsWith("cortex")) {
+          if (lower.includes("hey heliox") || lower.includes("hey heliox,") || lower.startsWith("heliox")) {
             // Extract command after wake word
             const command = lower
-              .replace(/hey cortex[,]?\s*/i, "")
-              .replace(/^cortex[,]?\s*/i, "")
+              .replace(/hey heliox[,]?\s*/i, "")
+              .replace(/^heliox[,]?\s*/i, "")
               .trim();
             if (command) {
               transcript = command;
@@ -262,14 +262,14 @@
     class:active={wakeWordActive}
     class:disabled={!voiceEnabled}
     onclick={toggleWakeWord}
-    title={wakeWordActive ? 'Disable "Hey Cortex"' : 'Enable "Hey Cortex" wake word'}
+    title={wakeWordActive ? 'Disable "Hey Heliox"' : 'Enable "Hey Heliox" wake word'}
   >
     <svg class="wave-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
       <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z" />
       <path d="M8 12a4 4 0 0 0 8 0" />
       <circle cx="12" cy="10" r="1.5" fill="currentColor" />
     </svg>
-    <span class="wake-label">{wakeWordActive ? "Cortex Active" : "Hey Cortex"}</span>
+    <span class="wake-label">{wakeWordActive ? "Heliox Active" : "Hey Heliox"}</span>
   </button>
 
   <!-- Speaking Indicator -->

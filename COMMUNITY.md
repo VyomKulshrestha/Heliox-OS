@@ -2,7 +2,7 @@
 
 ## 💬 Discussions
 
-We use [GitHub Discussions](https://github.com/VyomKulshrestha/Cortex-OS/discussions) for community conversations.
+We use [GitHub Discussions](https://github.com/VyomKulshrestha/Heliox-OS/discussions) for community conversations.
 
 ### Discussion Categories
 
@@ -23,7 +23,7 @@ We use [GitHub Discussions](https://github.com/VyomKulshrestha/Cortex-OS/discuss
 
 Created a cool plugin? Share it with the community:
 
-1. Create your plugin in `~/.config/cortex-os/plugins/`
+1. Create your plugin in `~/.config/heliox-os/plugins/`
 2. Test it thoroughly
 3. Share it in the **Show & Tell** discussion category
 4. Or submit it as a PR to the `community-plugins/` directory

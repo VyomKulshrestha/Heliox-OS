@@ -1,6 +1,6 @@
 ---
 name: Bug Report
-about: Report a bug or unexpected behavior in Cortex-OS
+about: Report a bug or unexpected behavior in Heliox OS
 title: "[BUG] "
 labels: bug
 assignees: ''
@@ -23,7 +23,7 @@ What actually happened.
 
 ## 🖥️ Environment
 - **OS**: [e.g., Windows 11, macOS 14, Ubuntu 22.04]
-- **Cortex-OS Version**: [e.g., v0.2.0]
+- **Heliox OS Version**: [e.g., v0.2.0]
 - **Python Version**: [e.g., 3.12.6]
 - **Node.js Version**: [e.g., 20.x]
 - **LLM Provider**: [e.g., Gemini, OpenAI, Ollama]

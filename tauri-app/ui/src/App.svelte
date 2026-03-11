@@ -30,11 +30,11 @@
   // JARVIS-style proactive greeting based on time
   function getJarvisGreeting(): string {
     const hour = new Date().getHours();
-    if (hour < 6) return "Good evening. Cortex-OS is online. All systems nominal.";
-    if (hour < 12) return "Good morning. Cortex-OS is online and ready for your commands.";
-    if (hour < 17) return "Good afternoon. Cortex-OS at your service. What shall we tackle?";
-    if (hour < 21) return "Good evening. Cortex-OS is ready. How can I assist you tonight?";
-    return "Burning the midnight oil? Cortex-OS is standing by.";
+    if (hour < 6) return "Good evening. Heliox OS is online. All systems nominal.";
+    if (hour < 12) return "Good morning. Heliox OS is online and ready for your commands.";
+    if (hour < 17) return "Good afternoon. Heliox OS at your service. What shall we tackle?";
+    if (hour < 21) return "Good evening. Heliox OS is ready. How can I assist you tonight?";
+    return "Burning the midnight oil? Heliox OS is standing by.";
   }
 
   // Handle gesture events for particle effects
@@ -99,7 +99,7 @@
   >
     <div class="titlebar-left">
       <ArcReactor />
-      <span class="title">Cortex-OS</span>
+      <span class="title">Heliox OS</span>
       <span class="badge" class:connected={$session.daemonConnected}>
         {$session.daemonConnected ? "Online" : "Connecting..."}
       </span>
@@ -130,7 +130,7 @@
           {#if $session.messages.length === 0 && !$session.loading}
             <div class="empty-state">
               <div class="empty-logo">C</div>
-              <h2>Cortex-OS</h2>
+              <h2>Heliox OS</h2>
               <p>Your AI system control agent. Type, speak, or gesture — I'm ready.</p>
               <div class="suggestions">
                 <button class="suggestion" onclick={() => session.sendCommand("Show system information")}>Show system info</button>

@@ -1,14 +1,14 @@
 # yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.4.0.schema.json
 
-PackageIdentifier: VyomKulshrestha.CortexOS
+PackageIdentifier: VyomKulshrestha.HelioxOS
 PackageVersion: 0.2.0
-PackageName: Cortex-OS
+PackageName: Heliox OS
 Publisher: Vyom Kulshrestha
 License: MIT
-LicenseUrl: https://github.com/VyomKulshrestha/Cortex-OS/blob/main/LICENSE
+LicenseUrl: https://github.com/VyomKulshrestha/Heliox-OS/blob/main/LICENSE
 ShortDescription: AI System Control Agent — control your computer with natural language, voice, and gestures.
 Description: |
-  Cortex-OS is an open-source AI agent that gives you full control over your computer
+  Heliox OS is an open-source AI agent that gives you full control over your computer
   through natural language, voice commands, and hand gestures. It features a Plan → Execute
   → Verify pipeline with 50+ action types across file management, process control,
   browser automation, and more.
@@ -23,7 +23,7 @@ Tags:
 InstallerType: exe
 Installers:
   - Architecture: x64
-    InstallerUrl: https://github.com/VyomKulshrestha/Cortex-OS/releases/latest/download/Cortex-OS_0.2.0_x64-setup.exe
+    InstallerUrl: https://github.com/VyomKulshrestha/Heliox-OS/releases/latest/download/Heliox OS_0.2.0_x64-setup.exe
     InstallerSha256: # Will be filled after release
 ManifestType: singleton
 ManifestVersion: 1.4.0

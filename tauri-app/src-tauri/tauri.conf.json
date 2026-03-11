@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Cortex-OS",
-  "version": "0.2.4",
-  "identifier": "com.cortexos.app",
+  "productName": "Heliox OS",
+  "version": "0.3.0",
+  "identifier": "com.helioxos.app",
   "build": {
     "frontendDist": "../ui/dist",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Cortex-OS",
+        "title": "Heliox OS",
         "width": 700,
         "height": 500,
         "resizable": true,

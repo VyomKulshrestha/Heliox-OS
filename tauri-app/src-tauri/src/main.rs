@@ -1,4 +1,4 @@
-// Cortex-OS — AI System Control Agent
+// Heliox OS — AI System Control Agent
 // Tauri v2 application entry point
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
@@ -31,7 +31,7 @@ fn spawn_daemon() -> Option<Child> {
     }
 
     if let Some(home) = dirs::home_dir() {
-        possible_dirs.push(home.join(".cortex-os").join("daemon"));
+        possible_dirs.push(home.join(".heliox-os").join("daemon"));
     }
 
     let daemon_dir = possible_dirs.into_iter().find(|d| d.join("pilot").exists());
@@ -55,9 +55,9 @@ fn spawn_daemon() -> Option<Child> {
     let child = cmd.spawn().ok();
 
     if child.is_some() {
-        println!("[Cortex-OS] Python daemon spawned successfully");
+        println!("[Heliox OS] Python daemon spawned successfully");
     } else {
-        eprintln!("[Cortex-OS] Warning: Could not spawn Python daemon. Is Python installed?");
+        eprintln!("[Heliox OS] Warning: Could not spawn Python daemon. Is Python installed?");
     }
 
     child
@@ -90,7 +90,7 @@ fn main() {
                     if let Ok(mut guard) = state.0.lock() {
                         if let Some(ref mut child) = *guard {
                             let _ = child.kill();
-                            println!("[Cortex-OS] Python daemon stopped");
+                            println!("[Heliox OS] Python daemon stopped");
                         }
                     }
                 }
@@ -103,5 +103,5 @@ fn main() {
             commands::confirm_action,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running Cortex-OS");
+        .expect("error while running Heliox OS");
 }

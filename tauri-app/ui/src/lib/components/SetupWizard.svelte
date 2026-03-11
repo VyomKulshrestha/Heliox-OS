@@ -82,7 +82,7 @@
 <div class="wizard-overlay">
   <div class="wizard">
     <div class="wizard-header">
-      <h1>Cortex-OS Setup</h1>
+      <h1>Heliox OS Setup</h1>
       <div class="progress">
         {#each steps as s, i}
           <div class="progress-step" class:active={i === step} class:done={i < step}>
@@ -99,8 +99,8 @@
     <div class="wizard-body">
       {#if step === 0}
         <div class="wizard-step">
-          <h2>Welcome to Cortex-OS</h2>
-          <p>Cortex-OS is your AI system control agent. It lets you control your computer using natural language, voice, or gestures while keeping you in full control.</p>
+          <h2>Welcome to Heliox OS</h2>
+          <p>Heliox OS is your AI system control agent. It lets you control your computer using natural language, voice, or gestures while keeping you in full control.</p>
           <p>This setup will configure a few essentials:</p>
           <ul>
             <li>Choose your AI model backend</li>
@@ -185,7 +185,7 @@
               placeholder={"~/Documents/private\n~/ssh"}
               rows={4}
             ></textarea>
-            <span class="hint">One path per line. Cortex-OS will never modify files in these folders.</span>
+            <span class="hint">One path per line. Heliox OS will never modify files in these folders.</span>
           </div>
 
           <div class="field">
@@ -195,7 +195,7 @@
               bind:value={protectedPackages}
               placeholder="firefox, nautilus, gnome-shell"
             />
-            <span class="hint">Comma-separated. Cortex-OS will refuse to uninstall these.</span>
+            <span class="hint">Comma-separated. Heliox OS will refuse to uninstall these.</span>
           </div>
 
           <div class="field">
@@ -209,7 +209,7 @@
       {:else}
         <div class="wizard-step">
           <h2>All Set</h2>
-          <p>Cortex-OS is configured and ready to use.</p>
+          <p>Heliox OS is configured and ready to use.</p>
           <div class="summary">
             <div class="summary-item">
               <span class="summary-label">Provider</span>
@@ -232,7 +232,7 @@
               <span>Disabled</span>
             </div>
           </div>
-          <p class="note">Press Super+J to toggle the Cortex-OS window at any time.</p>
+          <p class="note">Press Super+J to toggle the Heliox OS window at any time.</p>
         </div>
       {/if}
     </div>
@@ -248,7 +248,7 @@
         <button class="btn-next" onclick={() => step++}>Continue</button>
       {:else}
         <button class="btn-finish" onclick={finish} disabled={finishing}>
-          {finishing ? "Launching..." : "Launch Cortex-OS"}
+          {finishing ? "Launching..." : "Launch Heliox OS"}
         </button>
       {/if}
     </div>
