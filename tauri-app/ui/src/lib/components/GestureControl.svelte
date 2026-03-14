@@ -103,7 +103,7 @@
     try {
       // @ts-ignore — CDN import has no type declarations
       const module = await import(
-        /* @vite-ignore */
+        /* @ts-ignore */
         "https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js"
       );
       const Hands = module.Hands || (window as any).Hands;

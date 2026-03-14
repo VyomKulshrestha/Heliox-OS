@@ -49,7 +49,7 @@
     const ctx = canvasEl.getContext("2d");
     if (!ctx) return;
 
-    analyser.getByteFrequencyData(dataArray);
+    analyser.getByteFrequencyData(dataArray as any);
 
     const w = canvasEl.width;
     const h = canvasEl.height;

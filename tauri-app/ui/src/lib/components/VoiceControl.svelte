@@ -166,7 +166,7 @@
     // Speak the response if voice is enabled
     if (voiceEnabled) {
       // Wait for response, then speak it
-      const unsub = session.subscribe((s) => {
+      const unsub = session.subscribe((s: any) => {
         if (!s.loading && s.messages.length > 0) {
           const lastMsg = s.messages[s.messages.length - 1];
           if (lastMsg.type === "result" || lastMsg.type === "system") {
