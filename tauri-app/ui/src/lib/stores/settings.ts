@@ -73,7 +73,7 @@ function createSettings() {
       } else {
         update((s) => ({
           ...s,
-          [section]: { ...(s as Record<string, unknown>)[section] as Record<string, unknown>, ...values },
+          [section]: { ...(s as any)[section], ...values },
         }));
       }
     } catch (err) {
