@@ -60,6 +60,18 @@ Heliox OS now includes a futuristic, Iron Man-style interface:
 - 📊 **Ambient HUD**: Holographic system monitor overlay for CPU, RAM, and Disk metrics.
 - 🔬 **ReAct Pipeline Visualizer**: Real-time animated graph showing the AI's reasoning process — each stage (Memory → Planning → Routing → Execution → Verification → Reflection) lights up as it runs.
 
+## 🧠 TRIBE v2 Cognitive Engine Integrations (v0.5.1)
+
+Heliox OS is now fully neuro-adaptive, integrating Meta's **TRIBE v2 Cognitive Engine** directly into the operating logic:
+
+1. **Neural Cognitive HUD:** Tracks real-time *Saliency* and *Brain Load* via screen vision buffer, mapped onto the Svelte UI.
+2. **Dynamic TTS Stress-Pacing:** JARVIS automatically slows down voice generation if you are engaged in high cognitive-load tasks.
+3. **Neuro-Safe Destructive Gate:** High-risk actions (e.g., recursive deletes) evaluate cognitive stress first. If you are distracted, a strict 10-second auditory confirmation gate holds the process.
+4. **Subconscious Persona Fingerprint:** The Subconscious background loop learns your neural visual plasticity constraints and encodes them to `persona.md` to align UIs to your brain.
+5. **Attention-Optimized Notifications:** The notification pipeline dynamically buffers trivial background alerts until the system detects a "cortical transition" (a low-load resting state).
+6. **ReAct Neural Cost Estimator:** Tasks predict aggregate cognitive demand proactively logic. If executing a plan risks exceeding mental bandwidth, JARVIS pauses.
+7. **JARVIS Intent Classifier:** Fully integrated native intent fusion classifying spoken commands against current workload intensity.
+
 ## 🧠 Multi-Agent Orchestrator
 
 Heliox OS uses a **modular multi-agent architecture** where specialized agents collaborate to solve complex tasks:
