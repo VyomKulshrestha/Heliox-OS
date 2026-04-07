@@ -75,6 +75,9 @@ pilot-daemon = "pilot.server:main"
 [tool.hatch.build.targets.wheel]
 packages = ["pilot"]
 
+[tool.hatch.metadata]
+allow-direct-references = true
+
 [tool.ruff]
 target-version = "py311"
 line-length = 100
