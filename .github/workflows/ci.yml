@@ -32,10 +32,10 @@ jobs:
           pip install ruff pytest
 
       - name: Ruff lint
-        run: ruff check . --output-format=github
+        run: ruff check . --output-format=github --no-cache
 
       - name: Ruff format check
-        run: ruff format --check .
+        run: ruff format --check . --no-cache
 
       - name: Run tests
         run: pytest tests/ -v --tb=short || echo "No tests found, skipping"
