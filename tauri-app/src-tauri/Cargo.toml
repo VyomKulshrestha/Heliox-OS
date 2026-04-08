@@ -1,6 +1,6 @@
 [package]
 name = "heliox-os"
-version = "0.4.6"
+version = "0.6.1"
 edition = "2021"
 description = "Heliox OS — AI System Control Agent"
 license = "MIT"
