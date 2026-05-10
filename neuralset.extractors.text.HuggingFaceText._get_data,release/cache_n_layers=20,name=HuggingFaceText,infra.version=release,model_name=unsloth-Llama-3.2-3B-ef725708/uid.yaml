@@ -1,4 +1,0 @@
-cache_n_layers: 20
-infra.version: release
-model_name: unsloth/Llama-3.2-3B
-name: HuggingFaceText

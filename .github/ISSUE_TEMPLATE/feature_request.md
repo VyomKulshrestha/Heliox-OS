@@ -1,33 +1,28 @@
 ---
-name: Feature request
-about: Suggest an improvement or new capability for Heliox OS
-title: "[Feature] "
+name: Feature Request
+about: Suggest a new feature or improvement for Heliox OS
+title: "[FEATURE] "
 labels: enhancement
 assignees: ''
 ---
 
-## Problem / motivation
+## 💡 Feature Description
+A clear description of the feature you'd like to see.
 
-<!-- What problem does this solve? What limitation does it address?
-     e.g. "As a user I want to X so that Y" -->
+## 🎯 Problem it Solves
+What problem does this solve? Why is it needed?
 
-## Proposed solution
+## 📐 Proposed Solution
+Describe how you'd like this to work.
 
-<!-- Describe your proposed feature or change -->
+## 🔄 Alternatives Considered
+Any alternative solutions or workarounds you've considered.
 
-## Alternatives considered
+## 🖥️ Platform
+- [ ] Windows
+- [ ] macOS
+- [ ] Linux
+- [ ] All platforms
 
-<!-- Any other approaches you thought about? Why did you choose this one? -->
-
-## Implementation notes (optional)
-
-<!-- Any technical details, files, or modules that would be involved -->
-
-## Would you like to work on this?
-
-- [ ] Yes, I'd like to implement this (GSSoC contributor)
-- [ ] I'm suggesting it for someone else to pick up
-
-## Additional context
-
-<!-- Screenshots, mockups, links, or any other relevant context -->
+## 📝 Additional Context
+Mockups, screenshots, or links to similar features in other tools.
