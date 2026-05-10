@@ -31,6 +31,17 @@ class JsonRpcRequest:
 
     @classmethod
     def parse(cls, raw: str) -> JsonRpcRequest:
+        """Parse a raw JSON-RPC request string.
+
+        Args:
+            raw: The raw JSON string to parse.
+
+        Returns:
+            A JsonRpcRequest instance.
+
+        Raises:
+            ValueError: If the JSON-RPC version is not "2.0".
+        """
         data = json.loads(raw)
         if data.get("jsonrpc") != "2.0":
             raise ValueError("Invalid JSON-RPC version")
@@ -67,6 +78,11 @@ class PilotServer:
     """Main daemon server managing WebSocket connections and agent dispatch."""
 
     def __init__(self, config: PilotConfig) -> None:
+        """Initialize the PilotServer with the given configuration.
+
+        Args:
+            config: PilotConfig instance containing server and model settings.
+        """
         self.config = config
         self._server: Server | None = None
         self._clients: set[ServerConnection] = set()
@@ -100,7 +116,12 @@ class PilotServer:
         self._pending_confirms: dict[str, PendingConfirmation] = {}
 
     async def initialize(self) -> None:
-        """Initialize all agent components."""
+        """Initialize all agent components.
+
+        This method sets up all subsystems including the memory store,
+        planner, executor, verifier, orchestrator, multimodal fusion,
+        cognitive intelligence, and autonomous execution features.
+        """
         from pilot.agents.background import BackgroundTaskManager
         from pilot.agents.code_agent import CodeAgent
         from pilot.agents.comm_agent import CommunicationAgent
@@ -364,8 +385,12 @@ class PilotServer:
         }
 
     async def _broadcast_notification(self, method: str, params: Any) -> None:
-        """Broadcast a notification to all connected clients."""
+        """Broadcast a notification to all connected clients.
 
+        Args:
+            method: The notification method name.
+            params: The notification parameters.
+        """
         # ── Feature 5: Attention-Optimized Notification Timing ──
         if getattr(self, "_attention_ui", None) and self._attention_ui.enabled:
             try:
@@ -415,6 +440,11 @@ class PilotServer:
                 pass
 
     async def _handle_connection(self, websocket: ServerConnection) -> None:
+        """Handle a WebSocket connection from a client.
+
+        Args:
+            websocket: The WebSocket connection to the client.
+        """
         self._clients.add(websocket)
         remote = websocket.remote_address
         logger.info("Client connected: %s", remote)
@@ -437,6 +467,15 @@ class PilotServer:
             logger.info("Client disconnected: %s", remote)
 
     async def _dispatch(self, request: JsonRpcRequest, ws: ServerConnection) -> str | None:
+        """Dispatch a JSON-RPC request to the appropriate handler.
+
+        Args:
+            request: The parsed JSON-RPC request.
+            ws: The WebSocket connection.
+
+        Returns:
+            A JSON-RPC response string, or None for notifications.
+        """
         handler = self._handlers.get(request.method)
         if handler is None:
             return _error_response(request.id, -32601, f"Method not found: {request.method}")
@@ -813,7 +852,16 @@ class PilotServer:
         }
 
     async def _wait_for_confirmation(self, plan_id: str, plan: Any, ws: ServerConnection) -> bool:
-        """Send a confirmation request and block until the user responds or timeout."""
+        """Send a confirmation request and block until the user responds or timeout.
+
+        Args:
+            plan_id: Unique identifier for the plan requiring confirmation.
+            plan: The plan object containing actions to be confirmed.
+            ws: The WebSocket connection for sending/receiving messages.
+
+        Returns:
+            True if the user approved the plan, False otherwise.
+        """
         pending = PendingConfirmation(plan_id=plan_id, event=asyncio.Event())
         self._pending_confirms[plan_id] = pending
 
@@ -838,7 +886,15 @@ class PilotServer:
         return pending.confirmed
 
     async def _handle_confirm(self, params: dict[str, Any], ws: ServerConnection) -> dict:
-        """Resolve a pending confirmation request from the UI."""
+        """Resolve a pending confirmation request from the UI.
+
+        Args:
+            params: JSON-RPC parameters containing plan_id and confirmed status.
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with status and confirmation result.
+        """
         plan_id = params.get("plan_id", "")
         confirmed = params.get("confirmed", False)
 
@@ -853,6 +909,15 @@ class PilotServer:
     # -- Config --
 
     async def _handle_get_config(self, params: dict, ws: ServerConnection) -> dict:
+        """Get the current server configuration.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict containing the server configuration.
+        """
         from dataclasses import asdict
 
         data = asdict(self.config)
@@ -860,6 +925,15 @@ class PilotServer:
         return data
 
     async def _handle_update_config(self, params: dict, ws: ServerConnection) -> dict:
+        """Update server configuration.
+
+        Args:
+            params: JSON-RPC parameters with section and values.
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with status.
+        """
         section = params.get("section", "")
         values = params.get("values", {})
 
@@ -889,6 +963,15 @@ class PilotServer:
     # -- History --
 
     async def _handle_get_history(self, params: dict, ws: ServerConnection) -> dict:
+        """Get conversation history from memory store.
+
+        Args:
+            params: JSON-RPC parameters with optional limit and offset.
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with entries list containing historical interactions.
+        """
         limit = params.get("limit", 50)
         offset = params.get("offset", 0)
         entries = await self._memory.get_history(limit=limit, offset=offset)
@@ -897,6 +980,15 @@ class PilotServer:
     # -- API key management --
 
     async def _handle_store_api_key(self, params: dict, ws: ServerConnection) -> dict:
+        """Store an API key for a provider in the vault.
+
+        Args:
+            params: JSON-RPC parameters with provider and api_key.
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with status.
+        """
         provider = params.get("provider", "")
         key = params.get("api_key", "") or params.get("key", "")
         if not provider or not key:
@@ -910,6 +1002,15 @@ class PilotServer:
         return {"status": "ok"}
 
     async def _handle_delete_api_key(self, params: dict, ws: ServerConnection) -> dict:
+        """Delete a stored API key for a provider.
+
+        Args:
+            params: JSON-RPC parameters with provider.
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with status.
+        """
         provider = params.get("provider", "")
         if not provider:
             return {"status": "error", "message": "provider is required"}
@@ -917,12 +1018,30 @@ class PilotServer:
         return {"status": "ok"}
 
     async def _handle_list_api_keys(self, params: dict, ws: ServerConnection) -> dict:
+        """List all providers with stored API keys.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with providers list.
+        """
         providers = await self._vault.list_providers()
         return {"providers": providers}
 
     # -- Ollama model discovery --
 
     async def _handle_list_ollama_models(self, params: dict, ws: ServerConnection) -> dict:
+        """List available Ollama models.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with models list and availability status.
+        """
         from pilot.models.ollama import OllamaClient
 
         client = OllamaClient(self.config.model.ollama_base_url)
@@ -935,6 +1054,15 @@ class PilotServer:
     # -- Health --
 
     async def _handle_health(self, params: dict, ws: ServerConnection) -> dict:
+        """Check the health of all model backends.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with backends health status.
+        """
         from pilot.models.router import ModelRouter
 
         router: ModelRouter = self._planner._model
@@ -942,6 +1070,15 @@ class PilotServer:
         return {"backends": backends}
 
     async def _handle_ping(self, params: dict, ws: ServerConnection) -> dict:
+        """Ping the server to check connectivity.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with pong and version.
+        """
         return {"pong": True, "version": "0.7.1"}
 
     async def _handle_system_status(self, params: dict, ws: ServerConnection) -> dict:
@@ -966,27 +1103,67 @@ class PilotServer:
     # -- Advanced Agent Endpoints --
 
     async def _handle_reflection_stats(self, params: dict, ws: ServerConnection) -> dict:
-        """Return self-improvement reflection statistics."""
+        """Return self-improvement reflection statistics.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with reflection statistics from the reflector agent.
+        """
         return await self._reflector.get_stats()
 
     async def _handle_background_tasks(self, params: dict, ws: ServerConnection) -> dict:
-        """List all registered background monitoring tasks."""
+        """List all registered background monitoring tasks.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with list of background tasks.
+        """
         return {"tasks": self._background.list_tasks()}
 
     async def _handle_background_start(self, params: dict, ws: ServerConnection) -> dict:
-        """Start a background monitoring task."""
+        """Start a background monitoring task.
+
+        Args:
+            params: JSON-RPC parameters with task_id.
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with status and task_id.
+        """
         task_id = params.get("task_id", "")
         ok = self._background.start(task_id)
         return {"status": "started" if ok else "error", "task_id": task_id}
 
     async def _handle_background_stop(self, params: dict, ws: ServerConnection) -> dict:
-        """Stop a background monitoring task."""
+        """Stop a background monitoring task.
+
+        Args:
+            params: JSON-RPC parameters with task_id.
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with status and task_id.
+        """
         task_id = params.get("task_id", "")
         ok = self._background.stop(task_id)
         return {"status": "stopped" if ok else "error", "task_id": task_id}
 
     async def _handle_agent_routing(self, params: dict, ws: ServerConnection) -> dict:
-        """Analyze which specialist agent(s) would handle a given input."""
+        """Analyze which specialist agent(s) would handle a given input.
+
+        Args:
+            params: JSON-RPC parameters with input query.
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with routing summary and optionally orchestrator info.
+        """
         query = params.get("input", "")
         result = self._multi_agent.get_routing_summary(query)
         # Enrich with orchestrator info if available
@@ -995,19 +1172,43 @@ class PilotServer:
         return result
 
     async def _handle_agent_stats(self, params: dict, ws: ServerConnection) -> dict:
-        """Return performance stats for all registered agents."""
+        """Return performance stats for all registered agents.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with agent performance statistics.
+        """
         if self._orchestrator:
             return self._orchestrator.get_all_stats()
         return {"error": "Orchestrator not initialized"}
 
     async def _handle_agent_capabilities(self, params: dict, ws: ServerConnection) -> dict:
-        """Return all agent capabilities grouped by specialist."""
+        """Return all agent capabilities grouped by specialist.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with all agent capabilities.
+        """
         if self._orchestrator:
             return self._orchestrator.get_all_capabilities()
         return {"error": "Orchestrator not initialized"}
 
     async def _handle_agent_spawn(self, params: dict, ws: ServerConnection) -> dict:
-        """Dynamically spawn a new specialist agent."""
+        """Dynamically spawn a new specialist agent.
+
+        Args:
+            params: JSON-RPC parameters with role.
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with status and optionally agent_id.
+        """
         role_str = params.get("role", "")
         from pilot.agents.base_agent import AgentRole
 
@@ -1029,7 +1230,15 @@ class PilotServer:
     # -- Multimodal Fusion --
 
     async def _handle_voice_event(self, params: dict, ws: ServerConnection) -> dict:
-        """Receive a voice event from the frontend and feed it to fusion engine."""
+        """Receive a voice event from the frontend and feed it to fusion engine.
+
+        Args:
+            params: JSON-RPC parameters with transcript, confidence, is_final.
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with status and optionally fused intent.
+        """
         if not self._fusion:
             return {"status": "error", "message": "Fusion engine not initialized"}
 
@@ -1047,7 +1256,15 @@ class PilotServer:
         return {"status": "buffered"}
 
     async def _handle_gesture_event(self, params: dict, ws: ServerConnection) -> dict:
-        """Receive a gesture event from the frontend and feed it to fusion engine."""
+        """Receive a gesture event from the frontend and feed it to fusion engine.
+
+        Args:
+            params: JSON-RPC parameters with gesture, confidence, data.
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with status and optionally fused intent.
+        """
         if not self._fusion:
             return {"status": "error", "message": "Fusion engine not initialized"}
 
@@ -1065,7 +1282,15 @@ class PilotServer:
         return {"status": "buffered"}
 
     async def _handle_multimodal_stats(self, params: dict, ws: ServerConnection) -> dict:
-        """Return multimodal fusion engine statistics."""
+        """Return multimodal fusion engine statistics.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with fusion engine stats or error.
+        """
         if self._fusion:
             return self._fusion.get_stats()
         return {"error": "Fusion engine not initialized"}
@@ -1073,13 +1298,29 @@ class PilotServer:
     # -- Reasoning Visualization --
 
     async def _handle_reasoning_log(self, params: dict, ws: ServerConnection) -> dict:
-        """Return the full reasoning event log for the current session."""
+        """Return the full reasoning event log for the current session.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with events list or error.
+        """
         if self._reasoning:
             return {"events": self._reasoning.get_session_log()}
         return {"error": "Reasoning emitter not initialized"}
 
     async def _handle_reasoning_stats(self, params: dict, ws: ServerConnection) -> dict:
-        """Return reasoning emitter statistics."""
+        """Return reasoning emitter statistics.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with reasoning stats or error.
+        """
         if self._reasoning:
             return self._reasoning.get_stats()
         return {"error": "Reasoning emitter not initialized"}
@@ -1087,7 +1328,15 @@ class PilotServer:
     # -- Task Decomposition --
 
     async def _handle_decompose_task(self, params: dict, ws: ServerConnection) -> dict:
-        """Decompose a complex goal into subtasks."""
+        """Decompose a complex goal into subtasks.
+
+        Args:
+            params: JSON-RPC parameters with goal.
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with decomposed task structure or error.
+        """
         goal = params.get("goal", "")
         if not goal:
             return {"error": "No goal provided"}
@@ -1099,7 +1348,15 @@ class PilotServer:
     # -- Simulation Sandbox --
 
     async def _handle_simulate_plan(self, params: dict, ws: ServerConnection) -> dict:
-        """Simulate a plan and return an impact report without execution."""
+        """Simulate a plan and return an impact report without execution.
+
+        Args:
+            params: JSON-RPC parameters with optional plan_id.
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with impact report or error.
+        """
         if not self._sandbox:
             return {"error": "Sandbox not initialized"}
 
@@ -1115,7 +1372,15 @@ class PilotServer:
     # -- Self-Improving Prompt System --
 
     async def _handle_prompt_strategies(self, params: dict, ws: ServerConnection) -> dict:
-        """Get proven prompt strategies for a task."""
+        """Get proven prompt strategies for a task.
+
+        Args:
+            params: JSON-RPC parameters with query.
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with strategies or error.
+        """
         query = params.get("query", "")
         if not query:
             return {"strategies": ""}
@@ -1125,7 +1390,15 @@ class PilotServer:
         return {"error": "Prompt improver not initialized"}
 
     async def _handle_prompt_stats(self, params: dict, ws: ServerConnection) -> dict:
-        """Return prompt improvement statistics."""
+        """Return prompt improvement statistics.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with prompt improvement stats or error.
+        """
         if self._prompt_improver:
             return await self._prompt_improver.get_stats()
         return {"error": "Prompt improver not initialized"}
@@ -1133,19 +1406,43 @@ class PilotServer:
     # -- Plugin Ecosystem --
 
     async def _handle_plugin_list(self, params: dict, ws: ServerConnection) -> dict:
-        """List all loaded plugins."""
+        """List all loaded plugins.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with plugin statistics or error.
+        """
         if self._plugin_registry:
             return self._plugin_registry.get_stats()
         return {"error": "Plugin registry not initialized"}
 
     async def _handle_plugin_tools(self, params: dict, ws: ServerConnection) -> dict:
-        """List all available plugin tools."""
+        """List all available plugin tools.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with tools list or error.
+        """
         if self._plugin_registry:
             return {"tools": self._plugin_registry.get_all_tools()}
         return {"error": "Plugin registry not initialized"}
 
     async def _handle_plugin_toggle(self, params: dict, ws: ServerConnection) -> dict:
-        """Enable or disable a plugin."""
+        """Enable or disable a plugin.
+
+        Args:
+            params: JSON-RPC parameters with name and enabled status.
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with success status, plugin name, and enabled state.
+        """
         name = params.get("name", "")
         enabled = params.get("enabled", True)
         if not name:
@@ -1161,7 +1458,15 @@ class PilotServer:
     # ── Subconscious Agent Handlers ──
 
     async def _handle_persona_rules(self, params: dict, ws: ServerConnection) -> dict:
-        """Return all persona rules."""
+        """Return all persona rules.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with persona context and statistics.
+        """
         if self._subconscious:
             context = await self._subconscious.get_persona_context()
             stats = await self._subconscious.get_stats()
@@ -1169,14 +1474,30 @@ class PilotServer:
         return {"error": "Subconscious agent not initialized"}
 
     async def _handle_persona_consolidate(self, params: dict, ws: ServerConnection) -> dict:
-        """Force a consolidation cycle."""
+        """Force a consolidation cycle.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with consolidation result or error.
+        """
         if self._subconscious:
             result = await self._subconscious.consolidate()
             return result
         return {"error": "Subconscious agent not initialized"}
 
     async def _handle_persona_add_preference(self, params: dict, ws: ServerConnection) -> dict:
-        """Manually add a user preference."""
+        """Manually add a user preference.
+
+        Args:
+            params: JSON-RPC parameters with key and value.
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with status, key, and value.
+        """
         key = params.get("key", "")
         value = params.get("value", "")
         if not key or not value:
@@ -1187,7 +1508,15 @@ class PilotServer:
         return {"error": "Subconscious agent not initialized"}
 
     async def _handle_subconscious_stats(self, params: dict, ws: ServerConnection) -> dict:
-        """Return subconscious agent stats."""
+        """Return subconscious agent stats.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with subconscious agent statistics.
+        """
         if self._subconscious:
             return await self._subconscious.get_stats()
         return {"error": "Subconscious agent not initialized"}
@@ -1195,7 +1524,15 @@ class PilotServer:
     # ── Screen Vision Handlers ──
 
     async def _handle_screen_context(self, params: dict, ws: ServerConnection) -> dict:
-        """Return the current screen context summary."""
+        """Return the current screen context summary.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with screen context summary and details.
+        """
         if self._screen_vision:
             return {
                 "summary": self._screen_vision.get_context_for_planner(),
@@ -1204,19 +1541,43 @@ class PilotServer:
         return {"error": "Screen vision not initialized"}
 
     async def _handle_screen_current_app(self, params: dict, ws: ServerConnection) -> dict:
-        """Return the currently active application."""
+        """Return the currently active application.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with active_app name.
+        """
         if self._screen_vision:
             return {"active_app": self._screen_vision.get_current_app()}
         return {"error": "Screen vision not initialized"}
 
     async def _handle_screen_vision_stats(self, params: dict, ws: ServerConnection) -> dict:
-        """Return screen vision statistics."""
+        """Return screen vision statistics.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with screen vision statistics.
+        """
         if self._screen_vision:
             return self._screen_vision.get_stats()
         return {"error": "Screen vision not initialized"}
 
     async def _handle_screen_vision_toggle(self, params: dict, ws: ServerConnection) -> dict:
-        """Start or stop screen vision."""
+        """Start or stop screen vision.
+
+        Args:
+            params: JSON-RPC parameters with enabled, interval_seconds, enable_describe.
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with status and enabled state.
+        """
         enabled = params.get("enabled", True)
         if self._screen_vision:
             if enabled:
@@ -1231,6 +1592,12 @@ class PilotServer:
     # -- Broadcast --
 
     async def broadcast(self, method: str, params: Any) -> None:
+        """Broadcast a notification to all connected clients.
+
+        Args:
+            method: The notification method name.
+            params: The notification parameters.
+        """
         msg = _notification(method, params)
         for client in list(self._clients):
             try:
@@ -1241,6 +1608,11 @@ class PilotServer:
     # -- Lifecycle --
 
     async def start(self) -> None:
+        """Start the Pilot daemon server.
+
+        Initializes all subsystems, starts the WebSocket server on the
+        configured host and port, and announces new features to clients.
+        """
         self._running = True
         await self.initialize()
 
@@ -1353,6 +1725,9 @@ class PilotServer:
         """Called by ContinuousVoiceListener when a voice command is recognized.
 
         Runs the full ReAct pipeline and speaks the result back.
+
+        Args:
+            command_text: The recognized voice command text.
         """
         logger.info("Voice command received: '%s'", command_text)
         await self._broadcast_notification("voice_command", {"command": command_text, "status": "executing"})
@@ -1421,11 +1796,24 @@ class PilotServer:
             )
 
     async def _voice_status_broadcast(self, status: str, data: dict) -> None:
-        """Called by ContinuousVoiceListener for status updates."""
+        """Called by ContinuousVoiceListener for status updates.
+
+        Args:
+            status: The voice listener status.
+            data: Additional status data.
+        """
         await self._broadcast_notification("voice_status", {"status": status, **data})
 
     async def _handle_voice_listener_start(self, params: dict, ws: ServerConnection) -> dict:
-        """Start the continuous JARVIS-mode voice listener."""
+        """Start the continuous JARVIS-mode voice listener.
+
+        Args:
+            params: JSON-RPC parameters with wake_words.
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with status, message, and wake_words.
+        """
         from pilot.system.voice import ContinuousVoiceListener
 
         wake_words = params.get("wake_words", ["hey heliox", "heliox", "hey pilot"])
@@ -1442,7 +1830,15 @@ class PilotServer:
         return {"status": "started", "message": result, "wake_words": wake_words}
 
     async def _handle_voice_listener_stop(self, params: dict, ws: ServerConnection) -> dict:
-        """Stop the continuous voice listener."""
+        """Stop the continuous voice listener.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with status and message.
+        """
         if not self._voice_listener or not self._voice_listener.is_running:
             return {"status": "not_running"}
 
@@ -1450,7 +1846,15 @@ class PilotServer:
         return {"status": "stopped", "message": result}
 
     async def _handle_voice_listener_stats(self, params: dict, ws: ServerConnection) -> dict:
-        """Get voice listener statistics."""
+        """Get voice listener statistics.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with voice listener statistics.
+        """
         if not self._voice_listener:
             return {"running": False, "message": "Voice listener not initialized"}
         return self._voice_listener.get_stats()
@@ -1458,7 +1862,15 @@ class PilotServer:
     # ── Autonomous Executor Handlers ──
 
     async def _handle_autonomous_submit(self, params: dict, ws: ServerConnection) -> dict:
-        """Submit a task for autonomous background execution."""
+        """Submit a task for autonomous background execution.
+
+        Args:
+            params: JSON-RPC parameters with goal and source.
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with status and job information.
+        """
         if not self._autonomous:
             return {"error": "Autonomous executor not initialized"}
 
@@ -1471,7 +1883,15 @@ class PilotServer:
         return {"status": "submitted", "job": job.to_dict()}
 
     async def _handle_autonomous_cancel(self, params: dict, ws: ServerConnection) -> dict:
-        """Cancel a running autonomous job."""
+        """Cancel a running autonomous job.
+
+        Args:
+            params: JSON-RPC parameters with job_id.
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with cancelled status and job_id.
+        """
         if not self._autonomous:
             return {"error": "Autonomous executor not initialized"}
 
@@ -1480,13 +1900,29 @@ class PilotServer:
         return {"cancelled": success, "job_id": job_id}
 
     async def _handle_autonomous_jobs(self, params: dict, ws: ServerConnection) -> dict:
-        """List all autonomous jobs."""
+        """List all autonomous jobs.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with list of jobs.
+        """
         if not self._autonomous:
             return {"jobs": []}
         return {"jobs": self._autonomous.list_jobs()}
 
     async def _handle_autonomous_job(self, params: dict, ws: ServerConnection) -> dict:
-        """Get a specific autonomous job by ID."""
+        """Get a specific autonomous job by ID.
+
+        Args:
+            params: JSON-RPC parameters with job_id.
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with job information or error.
+        """
         if not self._autonomous:
             return {"error": "Autonomous executor not initialized"}
 
@@ -1499,27 +1935,59 @@ class PilotServer:
     # ── Proactive Suggestions Handlers ──
 
     async def _handle_proactive_start(self, params: dict, ws: ServerConnection) -> dict:
-        """Start the proactive suggestion engine."""
+        """Start the proactive suggestion engine.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with status and message.
+        """
         if not self._proactive:
             return {"error": "Proactive engine not initialized"}
         result = await self._proactive.start()
         return {"status": "started", "message": result}
 
     async def _handle_proactive_stop(self, params: dict, ws: ServerConnection) -> dict:
-        """Stop the proactive suggestion engine."""
+        """Stop the proactive suggestion engine.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with status and message.
+        """
         if not self._proactive:
             return {"error": "Proactive engine not initialized"}
         result = await self._proactive.stop()
         return {"status": "stopped", "message": result}
 
     async def _handle_proactive_stats(self, params: dict, ws: ServerConnection) -> dict:
-        """Get proactive engine statistics."""
+        """Get proactive engine statistics.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with proactive engine statistics.
+        """
         if not self._proactive:
             return {"running": False, "message": "Proactive engine not initialized"}
         return self._proactive.get_stats()
 
     async def _handle_proactive_accept(self, params: dict, ws: ServerConnection) -> dict:
-        """Accept a proactive suggestion — execute the suggested action."""
+        """Accept a proactive suggestion — execute the suggested action.
+
+        Args:
+            params: JSON-RPC parameters with suggestion_id.
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with execution status and results.
+        """
         if not self._proactive:
             return {"error": "Proactive engine not initialized"}
 
@@ -1551,7 +2019,15 @@ class PilotServer:
             }
 
     async def _handle_proactive_dismiss(self, params: dict, ws: ServerConnection) -> dict:
-        """Dismiss a proactive suggestion."""
+        """Dismiss a proactive suggestion.
+
+        Args:
+            params: JSON-RPC parameters with suggestion_id.
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with dismissed status and suggestion_id.
+        """
         if not self._proactive:
             return {"error": "Proactive engine not initialized"}
 
