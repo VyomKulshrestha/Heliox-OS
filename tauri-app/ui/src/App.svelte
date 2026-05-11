@@ -16,6 +16,8 @@
   import type { Message } from "./lib/stores/session";
   import { settings } from "./lib/stores/settings";
   import { tick } from "svelte";
+  import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+  import { Copy } from "lucide-svelte";
 
   let activeTab: "chat" | "log" | "settings" = $state("chat");
   let isDragging = $state(false);
@@ -93,6 +95,32 @@
     }
     prevMsgLen = msgs.length;
   });
+
+  let copiedMessageId = $state<number | null>(null);
+  let copiedTimeout: ReturnType<typeof setTimeout> | null = null;
+
+  function getCopyText(msg: Message): string {
+    if (msg.type === "plan" && msg.plan?.explanation) return msg.plan.explanation;
+    return msg.text || "";
+  }
+
+  async function copyMessage(msg: Message) {
+    const text = getCopyText(msg).trim();
+    if (!text) return;
+
+    try {
+      await writeText(text);
+    } catch {
+      return;
+    }
+    copiedMessageId = msg.timestamp;
+
+    if (copiedTimeout) clearTimeout(copiedTimeout);
+    copiedTimeout = setTimeout(() => {
+      copiedMessageId = null;
+      copiedTimeout = null;
+    }, 1500);
+  }
 </script>
 
 {#if showWizard}
@@ -203,7 +231,7 @@
     </div>
 
   {:else if msg.type === "plan" && msg.plan}
-    <div class="message plan-msg">
+    <div class="message plan-msg has-copy">
       <div class="msg-header">
         <span class="msg-label">PLAN</span>
         <span class="phase-badge">planning</span>
@@ -223,10 +251,14 @@
           </div>
         {/each}
       </div>
+      <button class="copy-button" type="button" aria-label="Copy message" onclick={() => copyMessage(msg)}>
+        <Copy size={14} />
+      </button>
+      <span class="copy-feedback" class:active={copiedMessageId === msg.timestamp}>Copied!</span>
     </div>
 
   {:else if msg.type === "result"}
-    <div class="message result-msg">
+    <div class="message result-msg has-copy">
       <div class="msg-header">
         <span class="msg-label">RESULT</span>
         {#if msg.verification}
@@ -270,18 +302,30 @@
           {/each}
         </div>
       {/if}
+      <button class="copy-button" type="button" aria-label="Copy message" onclick={() => copyMessage(msg)}>
+        <Copy size={14} />
+      </button>
+      <span class="copy-feedback" class:active={copiedMessageId === msg.timestamp}>Copied!</span>
     </div>
 
   {:else if msg.type === "error"}
-    <div class="message error-msg">
+    <div class="message error-msg has-copy">
       <span class="msg-label">ERROR</span>
       <span class="msg-text">{msg.text}</span>
+      <button class="copy-button" type="button" aria-label="Copy message" onclick={() => copyMessage(msg)}>
+        <Copy size={14} />
+      </button>
+      <span class="copy-feedback" class:active={copiedMessageId === msg.timestamp}>Copied!</span>
     </div>
 
   {:else}
-    <div class="message system-msg">
+    <div class="message system-msg has-copy">
       <span class="msg-label">HELIOX</span>
       <span class="msg-text">{msg.text}</span>
+      <button class="copy-button" type="button" aria-label="Copy message" onclick={() => copyMessage(msg)}>
+        <Copy size={14} />
+      </button>
+      <span class="copy-feedback" class:active={copiedMessageId === msg.timestamp}>Copied!</span>
     </div>
   {/if}
 {/snippet}
@@ -466,6 +510,68 @@
     border-radius: var(--radius-md);
     border: 1px solid var(--border);
     animation: fadeIn 0.2s ease-out;
+  }
+
+  .message.has-copy {
+    position: relative;
+    padding-right: 38px;
+  }
+
+  .copy-button {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 24px;
+    height: 24px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text-muted);
+    opacity: 0;
+    transform: translateY(-2px);
+    pointer-events: none;
+    transition: opacity 0.15s ease, transform 0.15s ease, background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  }
+
+  .message.has-copy:hover .copy-button,
+  .message.has-copy:focus-within .copy-button {
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+  }
+
+  .copy-button:hover {
+    background: var(--bg-hover);
+    border-color: var(--border);
+    color: var(--text-primary);
+  }
+
+  .copy-button:active {
+    transform: translateY(0) scale(0.98);
+  }
+
+  .copy-feedback {
+    position: absolute;
+    top: 10px;
+    right: 36px;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--success);
+    background: rgba(74, 222, 128, 0.12);
+    padding: 2px 6px;
+    border-radius: 10px;
+    opacity: 0;
+    transform: translateY(-2px);
+    transition: opacity 0.15s ease, transform 0.15s ease;
+    pointer-events: none;
+  }
+
+  .copy-feedback.active {
+    opacity: 1;
+    transform: translateY(0);
   }
 
   @keyframes fadeIn {
