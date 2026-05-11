@@ -15,7 +15,7 @@
   import { session } from "./lib/stores/session";
   import type { Message } from "./lib/stores/session";
   import { settings } from "./lib/stores/settings";
-  import { tick } from "svelte";
+  import { onDestroy, tick } from "svelte";
   import { writeText } from "@tauri-apps/plugin-clipboard-manager";
   import { Copy } from "lucide-svelte";
 
@@ -100,7 +100,30 @@
   let copiedTimeout: ReturnType<typeof setTimeout> | null = null;
 
   function getCopyText(msg: Message): string {
-    if (msg.type === "plan" && msg.plan?.explanation) return msg.plan.explanation;
+    if (msg.type === "plan") {
+      const parts = [];
+      if (msg.plan?.explanation) parts.push(msg.plan.explanation);
+      if (msg.plan?.actions?.length) {
+        parts.push(msg.plan.actions.map((a: any) => `• ${a.action_type}: ${a.target || ""}`).join("\n"));
+      }
+      return parts.join("\n\n");
+    }
+    if (msg.type === "result") {
+      const parts = [];
+      if (msg.text) parts.push(msg.text);
+      if (msg.actionResults?.length) {
+        parts.push(
+          msg.actionResults
+            .map((r: any) => r.output || r.error || "")
+            .filter(Boolean)
+            .join("\n")
+        );
+      }
+      if (msg.verification) {
+        parts.push(`Verification: ${msg.verification.passed ? "passed" : "failed"}`);
+      }
+      return parts.join("\n\n");
+    }
     return msg.text || "";
   }
 
@@ -121,6 +144,10 @@
       copiedTimeout = null;
     }, 1500);
   }
+
+  onDestroy(() => {
+    if (copiedTimeout) clearTimeout(copiedTimeout);
+  });
 </script>
 
 {#if showWizard}
@@ -254,7 +281,15 @@
       <button class="copy-button" type="button" aria-label="Copy message" onclick={() => copyMessage(msg)}>
         <Copy size={14} />
       </button>
-      <span class="copy-feedback" class:active={copiedMessageId === msg.timestamp}>Copied!</span>
+      <span
+        class="copy-feedback"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        class:active={copiedMessageId === msg.timestamp}
+      >
+        Copied!
+      </span>
     </div>
 
   {:else if msg.type === "result"}
@@ -305,7 +340,15 @@
       <button class="copy-button" type="button" aria-label="Copy message" onclick={() => copyMessage(msg)}>
         <Copy size={14} />
       </button>
-      <span class="copy-feedback" class:active={copiedMessageId === msg.timestamp}>Copied!</span>
+      <span
+        class="copy-feedback"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        class:active={copiedMessageId === msg.timestamp}
+      >
+        Copied!
+      </span>
     </div>
 
   {:else if msg.type === "error"}
@@ -315,7 +358,15 @@
       <button class="copy-button" type="button" aria-label="Copy message" onclick={() => copyMessage(msg)}>
         <Copy size={14} />
       </button>
-      <span class="copy-feedback" class:active={copiedMessageId === msg.timestamp}>Copied!</span>
+      <span
+        class="copy-feedback"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        class:active={copiedMessageId === msg.timestamp}
+      >
+        Copied!
+      </span>
     </div>
 
   {:else}
@@ -325,7 +376,15 @@
       <button class="copy-button" type="button" aria-label="Copy message" onclick={() => copyMessage(msg)}>
         <Copy size={14} />
       </button>
-      <span class="copy-feedback" class:active={copiedMessageId === msg.timestamp}>Copied!</span>
+      <span
+        class="copy-feedback"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        class:active={copiedMessageId === msg.timestamp}
+      >
+        Copied!
+      </span>
     </div>
   {/if}
 {/snippet}
