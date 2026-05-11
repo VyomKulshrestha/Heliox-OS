@@ -810,7 +810,7 @@
       <video bind:this={videoEl} class="cam-video" playsinline muted autoplay></video>
       <canvas bind:this={canvasEl} class="cam-overlay" width="320" height="240"></canvas>
       <canvas bind:this={trailCanvas} class="cam-trail" width="320" height="240"></canvas>
-      <button class="pip-close" onclick={stopGestures}>×</button>
+      <button class="pip-close" title="Close Camera" onclick={stopGestures}>×</button>
       {#if currentGesture}
         <div class="pip-gesture-tag">
           <span>{GESTURE_EMOJIS[currentGesture] || ""}</span>

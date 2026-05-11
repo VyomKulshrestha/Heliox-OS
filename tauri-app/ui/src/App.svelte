@@ -177,9 +177,9 @@
       </span>
     </div>
     <nav class="tabs">
-      <button class="tab" class:active={activeTab === "chat"} onclick={() => activeTab = "chat"}>Command</button>
-      <button class="tab" class:active={activeTab === "log"} onclick={() => activeTab = "log"}>Activity</button>
-      <button class="tab" class:active={activeTab === "settings"} onclick={() => activeTab = "settings"}>Settings</button>
+      <button class="tab" class:active={activeTab === "chat"} title="Open Command Panel" onclick={() => activeTab = "chat"}>Command</button>
+      <button class="tab" class:active={activeTab === "log"} title="Open activity log" onclick={() => activeTab = "log"}>Activity</button>
+      <button class="tab" class:active={activeTab === "settings"} title="Open Settings" onclick={() => activeTab = "settings"}>Settings</button>
     </nav>
     <div class="titlebar-right">
       <AmbientHUD />
@@ -282,7 +282,7 @@
           </div>
         {/each}
       </div>
-      <button class="copy-button" type="button" aria-label="Copy message" onclick={() => copyMessage(msg)}>
+      <button class="copy-button" type="button" aria-label="Copy message" title="Copy" onclick={() => copyMessage(msg)}>
         <Copy size={14} />
       </button>
       <span
@@ -341,7 +341,7 @@
           {/each}
         </div>
       {/if}
-      <button class="copy-button" type="button" aria-label="Copy message" onclick={() => copyMessage(msg)}>
+      <button class="copy-button" type="button" aria-label="Copy message" title="Copy" onclick={() => copyMessage(msg)}>
         <Copy size={14} />
       </button>
       <span
@@ -359,7 +359,7 @@
     <div class="message error-msg has-copy">
       <span class="msg-label">ERROR</span>
       <span class="msg-text">{msg.text}</span>
-      <button class="copy-button" type="button" aria-label="Copy message" onclick={() => copyMessage(msg)}>
+      <button class="copy-button" type="button" aria-label="Copy message" title="Copy" onclick={() => copyMessage(msg)}>
         <Copy size={14} />
       </button>
       <span
@@ -377,7 +377,7 @@
     <div class="message system-msg has-copy">
       <span class="msg-label">HELIOX</span>
       <span class="msg-text">{msg.text}</span>
-      <button class="copy-button" type="button" aria-label="Copy message" onclick={() => copyMessage(msg)}>
+      <button class="copy-button" type="button" aria-label="Copy message" title="Copy" onclick={() => copyMessage(msg)}>
         <Copy size={14} />
       </button>
       <span
