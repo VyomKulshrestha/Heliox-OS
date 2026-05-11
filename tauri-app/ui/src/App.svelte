@@ -77,6 +77,10 @@
     return "SAFE";
   }
 
+  function actionLabel(action: { action_type: string; dry_run?: boolean }, planDryRun = false): string {
+    return action.dry_run || planDryRun ? `${formatActionType(action.action_type)} (dry run)` : formatActionType(action.action_type);
+  }
+
   function tierClass(action: { requires_root?: boolean; destructive?: boolean }): string {
     if (action.requires_root) return "tier-root";
     if (action.destructive) return "tier-destructive";
@@ -206,7 +210,7 @@
     <div class="message plan-msg">
       <div class="msg-header">
         <span class="msg-label">PLAN</span>
-        <span class="phase-badge">planning</span>
+        <span class="phase-badge">{msg.plan.dry_run ? "dry run" : "planning"}</span>
       </div>
       {#if msg.plan.explanation}
         <p class="plan-explanation">{msg.plan.explanation}</p>
@@ -216,7 +220,7 @@
           <div class="action-item">
             <span class="action-index">{i + 1}</span>
             <div class="action-detail">
-              <span class="action-type">{formatActionType(action.action_type)}</span>
+              <span class="action-type">{actionLabel(action, Boolean(msg.plan.dry_run))}</span>
               <span class="action-target">{action.target}</span>
             </div>
             <span class="tier-badge {tierClass(action)}">{tierLabel(action)}</span>

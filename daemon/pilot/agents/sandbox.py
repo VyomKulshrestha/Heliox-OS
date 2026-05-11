@@ -171,24 +171,12 @@ class SimulationSandbox:
             )
 
             # ── Feature 6: ReAct Pipeline Neural Cost Estimator ──
-            try:
-                import asyncio
-
-                from pilot.cognitive.tribe_engine import TribeEngine
-
-                tribe = TribeEngine.get_instance()
-                if tribe.is_loaded:
-                    stimulus = f"Execute action {action_type} on {target}"
-                    # Try to use loop or run directly if safe
-                    cog_state = tribe.predict_cognitive_state(stimulus)
-                    # We can't await inside synchronous method directly if it doesn't support it,
-                    # but simulate might be sync. Let's check... wait, simulate is not async!
-                    # I'll just mock cognitive demand calculation mathematically if running sync.
-                    impact.cognitive_cost = min(
-                        1.0, len(stimulus) / 80.0 + (0.4 if action_type in HIGH_RISK_ACTIONS else 0.1)
-                    )
-            except Exception:
-                pass
+            # Skip TRIBE loading in dry-run mode (synchronous, blocking)
+            # Cognitive cost is estimated mathematically instead
+            stimulus = f"Execute action {action_type} on {target}"
+            impact.cognitive_cost = min(
+                1.0, len(stimulus) / 80.0 + (0.4 if action_type in HIGH_RISK_ACTIONS else 0.1)
+            )
             report.total_cognitive_cost += impact.cognitive_cost
 
             # Classify risk

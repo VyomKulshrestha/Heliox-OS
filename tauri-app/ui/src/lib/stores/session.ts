@@ -9,6 +9,7 @@ export interface PlanAction {
   requires_root: boolean;
   destructive: boolean;
   parameters: Record<string, unknown>;
+  dry_run?: boolean;
 }
 
 export interface ActionResultData {
@@ -28,6 +29,7 @@ export interface Plan {
   plan_id: string;
   explanation: string;
   actions: PlanAction[];
+  dry_run?: boolean;
 }
 
 export interface Message {
@@ -87,6 +89,7 @@ function createSession() {
           plan_id: String(p.plan_id ?? ""),
           explanation: String(p.explanation ?? ""),
           actions: (p.actions ?? []) as PlanAction[],
+          dry_run: Boolean(p.dry_run),
         };
         const newLiveActions: LiveActionState[] = plan.actions.map((a, i) => ({
           index: i,
@@ -181,6 +184,7 @@ function createSession() {
 
     try {
       const result = (await call("execute", { input })) as Record<string, unknown>;
+      const isDryRun = Boolean(result.dry_run);
 
       const rawResults = (result.results ?? []) as Array<Record<string, unknown>>;
       const actionResults: ActionResultData[] = rawResults.map((r) => {
@@ -244,7 +248,9 @@ function createSession() {
             ...s.messages,
             {
               type: "result" as MessageType,
-              text: String(result.explanation ?? ""),
+              text: isDryRun
+                ? String(result.explanation || "(dry run) No changes were made.")
+                : String(result.explanation ?? ""),
               timestamp: Date.now(),
               actionResults,
               verification,
