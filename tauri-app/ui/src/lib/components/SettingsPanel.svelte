@@ -435,7 +435,15 @@
   }
 
   .btn-save:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-  }
+  cursor: not-allowed;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+
+  .btn-group button:disabled {
+  cursor: not-allowed;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+}
 </style>
