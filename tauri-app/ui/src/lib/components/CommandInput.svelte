@@ -29,7 +29,7 @@
       autocomplete="off"
       spellcheck="false"
     />
-    <button type="submit" class="send-btn" disabled={!input.trim()}>
+    <button type="submit" class="send-btn" title="Send" disabled={!input.trim()}>
       Send
     </button>
   </div>

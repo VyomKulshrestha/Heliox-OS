@@ -53,6 +53,7 @@ class ModelConfig:
 class SecurityConfig:
     root_enabled: bool = False
     confirm_tier2: bool = True
+    dry_run: bool = False
     snapshot_on_destructive: bool = True
     snapshot_backend: str = "auto"  # "auto" | "btrfs" | "timeshift" | "none"
     snapshot_retention_count: int = 10

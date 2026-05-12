@@ -32,6 +32,9 @@
       "csp": "default-src 'self'; connect-src 'self' ws://127.0.0.1:* https://cdn.jsdelivr.net; script-src 'self' 'unsafe-eval' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; media-src 'self' mediastream:; img-src 'self' blob: data:"
     }
   },
+  "plugins": {
+    "clipboard-manager": {}
+  },
   "bundle": {
     "active": true,
     "targets": "all",

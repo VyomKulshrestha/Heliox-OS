@@ -51,6 +51,7 @@ from pilot.actions import (
     WifiParams,
     WindowParams,
 )
+from pilot.agents.sandbox import SimulationSandbox
 from pilot.security.audit import AuditLogger
 from pilot.security.permissions import PermissionChecker
 from pilot.security.validator import ActionValidator
@@ -77,6 +78,7 @@ class Executor:
         self._permissions = permissions
         self._audit = audit
         self._snapshot_mgr = SnapshotManager(config)
+        self._simulation_sandbox = SimulationSandbox()
         self._last_output: str = ""  # For output chaining between steps
         self._largest_output: str = ""  # Largest output from any step in the pipeline
 
@@ -311,6 +313,9 @@ class Executor:
                     )
                 ]
 
+        if self._config.security.dry_run:
+            return await self._execute_dry_run(plan, plan_id, on_action_start, on_action_complete)
+
         snapshot_id: str | None = None
         if plan.needs_snapshot and self._config.security.snapshot_on_destructive:
             try:
@@ -352,6 +357,44 @@ class Executor:
                 )
                 break
 
+        return results
+
+    async def _execute_dry_run(
+        self,
+        plan: ActionPlan,
+        plan_id: str,
+        on_action_start: typing.Callable[[Action], typing.Awaitable[None]] | None = None,
+        on_action_complete: typing.Callable[[ActionResult], typing.Awaitable[None]] | None = None,
+    ) -> list[ActionResult]:
+        """Simulate a plan without performing any side effects."""
+        results: list[ActionResult] = []
+        report = self._simulation_sandbox.simulate(plan)
+
+        for index, action in enumerate(plan.actions):
+            self._audit.log_action_start(action, plan_id, dry_run=True)
+
+            if on_action_start:
+                await on_action_start(action)
+
+            impact = report.impacts[index] if index < len(report.impacts) else None
+            if impact:
+                output = (
+                    f"(dry run) Would {impact.description}. "
+                    f"Risk: {impact.risk.upper()}. Scope: {impact.estimated_scope}."
+                )
+            else:
+                output = f"(dry run) Would execute {action.action_type.value} on {action.target or 'target'}"
+
+            result = ActionResult(action=action, success=True, output=output)
+            self._audit.log_action_result(result, plan_id, dry_run=True)
+
+            if on_action_complete:
+                await on_action_complete(result)
+
+            results.append(result)
+
+        self._last_output = ""
+        self._largest_output = ""
         return results
 
     # Placeholder patterns the LLM might use

@@ -54,24 +54,31 @@ class AuditLogger:
         self._file = audit_file or AUDIT_FILE
         DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-    def log_action_start(self, action: Action, plan_id: str) -> None:
+    def log_action_start(self, action: Action, plan_id: str, dry_run: bool = False) -> None:
+        action_type = action.action_type.value
+        if dry_run:
+            action_type = f"(dry run) {action_type}"
         entry = AuditEntry(
             event_type="action_start",
-            action_type=action.action_type.value,
+            action_type=action_type,
             target=action.target,
             details={
                 "plan_id": plan_id,
                 "requires_root": action.requires_root,
                 "destructive": action.destructive,
                 "permission_tier": action.permission_tier.value,
+                "dry_run": dry_run,
             },
         )
         self._write(entry)
 
-    def log_action_result(self, result: ActionResult, plan_id: str) -> None:
+    def log_action_result(self, result: ActionResult, plan_id: str, dry_run: bool = False) -> None:
+        action_type = result.action.action_type.value
+        if dry_run:
+            action_type = f"(dry run) {action_type}"
         entry = AuditEntry(
             event_type="action_complete",
-            action_type=result.action.action_type.value,
+            action_type=action_type,
             target=result.action.target,
             success=result.success,
             details={
@@ -79,6 +86,7 @@ class AuditLogger:
                 "output_preview": result.output[:200] if result.output else "",
                 "error": result.error,
                 "snapshot_id": result.snapshot_id,
+                "dry_run": dry_run,
             },
         )
         self._write(entry)

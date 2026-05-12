@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import contextlib
 import json
@@ -500,6 +501,7 @@ class PilotServer:
         user_input = params.get("input", "")
         if not user_input.strip():
             return {"status": "error", "message": "Empty input"}
+        dry_run = bool(params.get("dry_run", self.config.security.dry_run))
 
         import time
 
@@ -642,12 +644,13 @@ class PilotServer:
                         "plan_id": plan_id,
                         "actions": [a.model_dump() for a in plan.actions],
                         "explanation": plan.explanation,
+                        "dry_run": dry_run,
                     },
                 )
             )
 
             # ── Stage: Confirmation Gate ──
-            needs_confirm = any(a.requires_confirmation for a in plan.actions)
+            needs_confirm = any(a.requires_confirmation for a in plan.actions) and not dry_run
             if needs_confirm:
                 confirm_phase = ""
                 if emit:
@@ -674,7 +677,7 @@ class PilotServer:
                         "message": "Plan was denied by user.",
                         "explanation": plan.explanation,
                     }
-            else:
+            elif not dry_run:
                 if emit:
                     skip_phase = await emit.phase_start("confirmation", "confirmation_skipped")
                     await emit.phase_complete(
@@ -694,7 +697,10 @@ class PilotServer:
                 action: Any, _exec_phase: str = exec_phase, _total: int = _total_actions
             ) -> None:
                 nonlocal action_idx
-                await ws.send(_notification("action_start", {"action": action.model_dump()}))
+                action_payload = action.model_dump()
+                if dry_run:
+                    action_payload["dry_run"] = True
+                await ws.send(_notification("action_start", {"action": action_payload}))
                 if emit:
                     action_idx += 1
                     await emit.data_event(
@@ -708,7 +714,10 @@ class PilotServer:
                     )
 
             async def _on_action_complete(result: Any, _exec_phase: str = exec_phase) -> None:
-                await ws.send(_notification("action_complete", {"result": result.model_dump()}))
+                result_payload = result.model_dump()
+                if dry_run:
+                    result_payload["dry_run"] = True
+                await ws.send(_notification("action_complete", {"result": result_payload}))
                 if emit:
                     event_name = EXECUTOR_ACTION_COMPLETE if result.success else EXECUTOR_ERROR
                     await emit.data_event(
@@ -760,7 +769,17 @@ class PilotServer:
                 )
 
             await ws.send(_notification("status", {"phase": "verifying"}))
-            verification = await self._verifier.verify(plan, results)
+            if dry_run:
+                from pilot.actions import VerificationResult
+
+                verification = VerificationResult(
+                    passed=True,
+                    details=["Dry run completed: no actions were executed."],
+                    failed_actions=[],
+                    rollback_triggered=False,
+                )
+            else:
+                verification = await self._verifier.verify(plan, results)
             last_verification = verification
 
             if verification.passed:
@@ -810,9 +829,16 @@ class PilotServer:
 
                 return {
                     "status": "success",
+                    "dry_run": dry_run,
                     "results": [r.model_dump() for r in results],
                     "verification": verification.model_dump(),
-                    "explanation": plan.explanation,
+                    "explanation": (
+                        f"(dry run) {plan.explanation}"
+                        if dry_run and plan.explanation
+                        else "(dry run) Dry run completed: no changes were made."
+                        if dry_run
+                        else plan.explanation
+                    ),
                     "agent_routing": self._multi_agent.get_routing_summary(user_input),
                 }
 
@@ -850,9 +876,16 @@ class PilotServer:
         asyncio.create_task(self._memory.record(user_input, plan, all_results))
         return {
             "status": "partial_failure",
+            "dry_run": dry_run,
             "results": [r.model_dump() for r in all_results],
             "verification": last_verification.model_dump() if last_verification else {},
-            "explanation": last_explanation,
+            "explanation": (
+                f"(dry run) {last_explanation}"
+                if dry_run and last_explanation
+                else "(dry run) Dry run completed: no changes were made."
+                if dry_run
+                else last_explanation
+            ),
         }
 
     async def _wait_for_confirmation(self, plan_id: str, plan: Any, ws: ServerConnection) -> bool:
@@ -2155,6 +2188,12 @@ def main() -> None:
     ensure_dirs()
     _setup_logging()
     config = PilotConfig.load()
+    parser = argparse.ArgumentParser(prog="pilot.server")
+    parser.add_argument("--dry-run", action="store_true", help="Simulate actions without executing them")
+    args, _ = parser.parse_known_args()
+    if args.dry_run:
+        config.security.dry_run = True
+        logger.info("Dry-run mode enabled via CLI flag")
     server = PilotServer(config)
 
     loop = asyncio.new_event_loop()

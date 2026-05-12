@@ -14,6 +14,7 @@ export interface PilotSettings {
   security: {
     root_enabled: boolean;
     confirm_tier2: boolean;
+    dry_run: boolean;
     snapshot_on_destructive: boolean;
     snapshot_backend: string;
     snapshot_retention_count: number;
@@ -40,6 +41,7 @@ const defaultSettings: PilotSettings = {
   security: {
     root_enabled: false,
     confirm_tier2: true,
+    dry_run: false,
     snapshot_on_destructive: true,
     snapshot_backend: "auto",
     snapshot_retention_count: 10,

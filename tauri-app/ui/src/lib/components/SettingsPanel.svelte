@@ -10,6 +10,10 @@
     settings.updateSection("security", { root_enabled: !$settings.security.root_enabled });
   }
 
+  function toggleDryRun() {
+    settings.updateSection("security", { dry_run: !$settings.security.dry_run });
+  }
+
   function setMode(mode: string) {
     settings.updateSection("model", { mode });
   }
@@ -90,6 +94,20 @@
         onclick={() => settings.updateSection("security", {
           snapshot_on_destructive: !$settings.security.snapshot_on_destructive
         })}
+      >
+        <span class="toggle-knob"></span>
+      </button>
+    </div>
+
+    <div class="setting-row">
+      <div class="setting-info">
+        <span class="setting-label">Dry Run Mode</span>
+        <span class="setting-desc">Plan and log actions without changing the OS, files, or processes</span>
+      </div>
+      <button
+        class="toggle"
+        class:active={$settings.security.dry_run}
+        onclick={toggleDryRun}
       >
         <span class="toggle-knob"></span>
       </button>
@@ -417,7 +435,15 @@
   }
 
   .btn-save:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-  }
+  cursor: not-allowed;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+
+  .btn-group button:disabled {
+  cursor: not-allowed;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+}
 </style>
