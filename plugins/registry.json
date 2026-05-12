@@ -1,0 +1,73 @@
+{
+  "plugins": [
+    {
+      "name": "home-assistant",
+      "description": "Control smart home devices via Home Assistant API",
+      "version": "1.0.0",
+      "author": "VyomKulshrestha",
+      "url": "https://github.com/VyomKulshrestha/Heliox-OS/tree/main/plugins/homeassistant",
+      "tools": [
+        {
+          "name": "ha_lights",
+          "description": "List all lights in Home Assistant",
+          "inputs": [],
+          "outputs": ["lights"]
+        },
+        {
+          "name": "ha_set_light",
+          "description": "Turn a light on or off",
+          "inputs": ["entity_id", "state"],
+          "outputs": ["result"]
+        }
+      ]
+    },
+    {
+      "name": "spotify-control",
+      "description": "Control Spotify playback and manage playlists",
+      "version": "1.0.0",
+      "author": "community",
+      "url": "https://github.com/VyomKulshrestha/Heliox-OS/tree/main/plugins/spotify",
+      "tools": [
+        {
+          "name": "spotify_play",
+          "description": "Start or resume Spotify playback",
+          "inputs": [],
+          "outputs": ["result"]
+        },
+        {
+          "name": "spotify_pause",
+          "description": "Pause Spotify playback",
+          "inputs": [],
+          "outputs": ["result"]
+        },
+        {
+          "name": "spotify_now_playing",
+          "description": "Get currently playing track info",
+          "inputs": [],
+          "outputs": ["track", "artist", "album"]
+        }
+      ]
+    },
+    {
+      "name": "weather",
+      "description": "Get current weather and forecast for any location",
+      "version": "1.0.0",
+      "author": "community",
+      "url": "https://github.com/VyomKulshrestha/Heliox-OS/tree/main/plugins/weather",
+      "tools": [
+        {
+          "name": "get_weather",
+          "description": "Get current weather for a city",
+          "inputs": ["city"],
+          "outputs": ["temperature", "condition", "humidity"]
+        },
+        {
+          "name": "get_forecast",
+          "description": "Get 5-day weather forecast",
+          "inputs": ["city"],
+          "outputs": ["forecast"]
+        }
+      ]
+    }
+  ]
+}

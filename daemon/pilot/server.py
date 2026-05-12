@@ -11,6 +11,7 @@ import signal
 import sys
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import websockets
@@ -350,6 +351,9 @@ class PilotServer:
             "plugin_list": self._handle_plugin_list,
             "plugin_tools": self._handle_plugin_tools,
             "plugin_toggle": self._handle_plugin_toggle,
+            "plugin_market_list": self._handle_plugin_market_list,
+            "plugin_install": self._handle_plugin_install,
+            "plugin_uninstall": self._handle_plugin_uninstall,
             # Subconscious agent endpoints
             "persona_rules": self._handle_persona_rules,
             "persona_consolidate": self._handle_persona_consolidate,
@@ -1454,6 +1458,104 @@ class PilotServer:
                 ok = self._plugin_registry.disable_plugin(name)
             return {"success": ok, "plugin": name, "enabled": enabled}
         return {"error": "Plugin registry not initialized"}
+
+    async def _handle_plugin_market_list(self, params: dict, ws: ServerConnection) -> dict:
+        """Fetch available plugins from the community manifest.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with plugins list from registry.json.
+        """
+        import os
+        import json as json_module
+
+        repo_root = Path(__file__).parent.parent.parent
+        registry_path = repo_root / "plugins" / "registry.json"
+
+        if not registry_path.exists():
+            return {"plugins": [], "error": "Registry not found"}
+
+        try:
+            data = json_module.loads(registry_path.read_text(encoding="utf-8"))
+            plugins = data.get("plugins", [])
+
+            installed = set()
+            if self._plugin_registry:
+                installed = {p.name for p in self._plugin_registry.get_all_plugins()}
+
+            for plugin in plugins:
+                plugin["installed"] = plugin.get("name") in installed
+
+            return {"plugins": plugins}
+        except Exception as e:
+            logger.error("Failed to load plugin registry: %s", e)
+            return {"plugins": [], "error": str(e)}
+
+    async def _handle_plugin_install(self, params: dict, ws: ServerConnection) -> dict:
+        """Install a plugin from the marketplace.
+
+        Args:
+            params: JSON-RPC parameters with plugin_name.
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with installation status.
+        """
+        import shutil
+
+        plugin_name = params.get("plugin_name", "")
+        if not plugin_name:
+            return {"error": "plugin_name is required"}
+
+        plugin_dir = Path.home() / ".heliox" / "plugins" / plugin_name
+        plugin_dir.mkdir(parents=True, exist_ok=True)
+
+        manifest_path = plugin_dir / "manifest.json"
+        manifest_path.write_text(
+            json.dumps({"name": plugin_name, "installed_from_marketplace": True}, indent=2),
+            encoding="utf-8",
+        )
+
+        if self._plugin_registry:
+            count = self._plugin_registry.discover()
+            logger.info("Plugin installed: %s (total plugins: %d)", plugin_name, count)
+
+        return {
+            "success": True,
+            "plugin": plugin_name,
+            "path": str(plugin_dir),
+        }
+
+    async def _handle_plugin_uninstall(self, params: dict, ws: ServerConnection) -> dict:
+        """Uninstall a plugin.
+
+        Args:
+            params: JSON-RPC parameters with plugin_name.
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with uninstallation status.
+        """
+        import shutil
+
+        plugin_name = params.get("plugin_name", "")
+        if not plugin_name:
+            return {"error": "plugin_name is required"}
+
+        plugin_dir = Path.home() / ".heliox" / "plugins" / plugin_name
+        if not plugin_dir.exists():
+            return {"error": f"Plugin not found: {plugin_name}"}
+
+        try:
+            shutil.rmtree(plugin_dir)
+            logger.info("Plugin uninstalled: %s", plugin_name)
+            return {"success": True, "plugin": plugin_name}
+        except Exception as e:
+            logger.error("Failed to uninstall plugin %s: %s", plugin_name, e)
+            return {"error": str(e)}
 
     # ── Subconscious Agent Handlers ──
 

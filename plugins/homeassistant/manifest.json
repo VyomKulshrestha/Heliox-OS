@@ -1,0 +1,27 @@
+{
+  "name": "home-assistant",
+  "version": "1.0.0",
+  "description": "Control smart home devices via Home Assistant API",
+  "author": "VyomKulshrestha",
+  "tools": [
+    {
+      "name": "ha_lights",
+      "description": "List all lights in Home Assistant",
+      "inputs": [],
+      "outputs": ["lights"],
+      "permission_tier": 2,
+      "action_type": "api_call"
+    },
+    {
+      "name": "ha_set_light",
+      "description": "Turn a light on or off",
+      "inputs": ["entity_id", "state"],
+      "outputs": ["result"],
+      "permission_tier": 2,
+      "action_type": "api_call"
+    }
+  ],
+  "agent_type": "system",
+  "entry_point": "ha_plugin.py",
+  "dependencies": []
+}
