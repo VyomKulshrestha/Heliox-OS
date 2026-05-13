@@ -1,5 +1,6 @@
-import { writable } from "svelte/store";
+import { writable, get } from "svelte/store";
 import { call, connect, isConnected, onNotification } from "../api/daemon";
+import { settings } from "./settings";
 
 export type MessageType = "user" | "system" | "error" | "plan" | "result";
 
@@ -59,6 +60,8 @@ interface SessionState {
   confirmActions: PlanAction[];
   phase: string;
   liveActions: LiveActionState[];
+  totalTokens: number;
+  estimatedCost: number;
 }
 
 const initialState: SessionState = {
@@ -71,7 +74,19 @@ const initialState: SessionState = {
   confirmActions: [],
   phase: "",
   liveActions: [],
+  totalTokens: 0,
+  estimatedCost: 0,
 };
+
+const MODEL_RATES: Record<string, number> = {
+  "gemini-1.5-pro": 0.000003,
+  "gpt-4o": 0.000005,
+  "claude-sonnet": 0.000004,
+};
+
+function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 4);
+}
 
 function createSession() {
   const { subscribe, update, set } = writable<SessionState>(initialState);
@@ -112,7 +127,7 @@ function createSession() {
         }));
         break;
       }
-      
+
       case "action_start": {
         update(s => {
           const nextIdx = s.liveActions.findIndex(a => a.status === "pending");
@@ -125,7 +140,7 @@ function createSession() {
         });
         break;
       }
-      
+
       case "action_complete": {
         const resultObj = p.result as Record<string, unknown>;
         const success = Boolean(resultObj.success);
@@ -133,8 +148,8 @@ function createSession() {
           const runningIdx = s.liveActions.findIndex(a => a.status === "running");
           if (runningIdx !== -1) {
             const live = [...s.liveActions];
-            live[runningIdx] = { 
-              ...live[runningIdx], 
+            live[runningIdx] = {
+              ...live[runningIdx],
               status: success ? "success" : "error",
               output: String(resultObj.output || ""),
               error: String(resultObj.error || "")
@@ -201,9 +216,9 @@ function createSession() {
       const rawVerification = result.verification as Record<string, unknown> | undefined;
       const verification: VerificationData | undefined = rawVerification
         ? {
-            passed: Boolean(rawVerification.passed),
-            details: ((rawVerification.details ?? []) as string[]),
-          }
+          passed: Boolean(rawVerification.passed),
+          details: ((rawVerification.details ?? []) as string[]),
+        }
         : undefined;
 
       if (result.status === "error") {
@@ -238,19 +253,46 @@ function createSession() {
           ],
         }));
       } else {
+        const responseText = isDryRun
+          ? String(result.explanation || "(dry run) No changes were made.")
+          : String(result.explanation ?? "");
+
+        const estimatedTokens = estimateTokens(responseText);
+
+        const settingsState = get(settings);
+        const model =
+          settingsState?.model?.cloud_model ||
+          settingsState?.model?.cloud_provider ||
+          "ollama";
+
+        const normalizedModel = model.toLowerCase();
+
+        let rate = 0;
+
+        if (normalizedModel.includes("gemini")) {
+          rate = MODEL_RATES["gemini-1.5-pro"];
+        } else if (normalizedModel.includes("gpt-4o")) {
+          rate = MODEL_RATES["gpt-4o"];
+        } else if (normalizedModel.includes("claude")) {
+          rate = MODEL_RATES["claude-sonnet"];
+        }
+        const estimatedCost = Number((estimatedTokens * rate).toFixed(6));
+
         update((s) => ({
           ...s,
           loading: false,
           phase: "",
           currentPlan: null,
           confirmRequired: false,
+
+          totalTokens: s.totalTokens + estimatedTokens,
+          estimatedCost: s.estimatedCost + estimatedCost,
+
           messages: [
             ...s.messages,
             {
               type: "result" as MessageType,
-              text: isDryRun
-                ? String(result.explanation || "(dry run) No changes were made.")
-                : String(result.explanation ?? ""),
+              text: responseText,
               timestamp: Date.now(),
               actionResults,
               verification,
@@ -297,7 +339,7 @@ function createSession() {
       }));
     }
 
-    call("confirm", { plan_id: planId, confirmed: accepted }).catch(() => {});
+    call("confirm", { plan_id: planId, confirmed: accepted }).catch(() => { });
   }
 
   function addSystemMessage(text: string) {
@@ -314,6 +356,14 @@ function createSession() {
     update((s) => ({ ...s, messages: [] }));
   }
 
+  function resetUsage() {
+    update((s) => ({
+      ...s,
+      totalTokens: 0,
+      estimatedCost: 0,
+    }));
+  }
+
   init();
 
   return {
@@ -322,6 +372,7 @@ function createSession() {
     confirm,
     addSystemMessage,
     clearMessages,
+    resetUsage,
   };
 }
 
