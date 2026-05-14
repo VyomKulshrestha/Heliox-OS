@@ -311,9 +311,7 @@ class FileParams(BaseModel):
     pattern: str | None = None  # For file_search
     max_depth: int = 3  # For directory_summary
     max_entries: int = 200  # For directory_summary
-    ignore_dirs: list[str] = Field(
-        default_factory=lambda: [".git", "node_modules"]
-    )  # For directory_summary
+    ignore_dirs: list[str] = Field(default_factory=lambda: [".git", "node_modules"])  # For directory_summary
     permissions: str | None = None  # e.g. "755" for file_permissions
 
 
