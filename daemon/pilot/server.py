@@ -145,6 +145,7 @@ class PilotServer:
 
         self._vault = KeyVault(self.config)
         model_router = ModelRouter(self.config, self._vault)
+        await model_router.initialize()
         audit = AuditLogger()
         validator = ActionValidator(self.config)
         permissions = PermissionChecker(self.config)
