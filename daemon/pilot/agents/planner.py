@@ -285,6 +285,36 @@ IMPORTANT RULES FOR RETRY:
 Generate a NEW plan that avoids this error. Keep it SIMPLE — fewer actions is better.
 """
 
+AUTO_HEAL_RETRY_TEMPLATE = """\
+The previous LLM response FAILED JSON validation. Here is the error:
+
+{error}
+
+Raw LLM response (failed to parse):
+{raw_response}
+
+Original request: {request}
+
+User preferences and history:
+{context}
+
+Current screen context:
+{screen_context}
+
+IMPORTANT: Output ONLY a valid JSON object with this exact format:
+{{"explanation": "brief explanation", "actions": [{{"action_type": "action_name", "target": "target", "parameters": {{}}}}]}}
+
+IMPORTANT RULES:
+- This is a {os} system. Use {path_style} paths ONLY.
+- Home directory is "{home}".
+- Desktop is "{home}\\Desktop" (Windows) or "{home}/Desktop" (Linux/Mac).
+- NEVER use /mnt/ or /tmp/ or /home/ paths on Windows.
+- Output ONLY valid JSON - no markdown, no explanation outside the JSON.
+- The JSON must have exactly these keys: "explanation" (string) and "actions" (array).
+- Each action must have: "action_type", "target", and "parameters" keys.
+- Wrap your JSON in ```json code blocks if needed.
+"""
+
 
 class Planner:
     """Converts natural language to structured action plans."""
@@ -471,15 +501,45 @@ class Planner:
                     request=user_input,
                 )
 
-            raw_response = await self._model.generate(
-                prompt, system=self._system_prompt, json_mode=True, temperature=0.1, stream_callback=stream_callback
-            )
-            if self._orchestrator and not error_context:
-                if self._orchestrator.is_complex_prompt(user_input):
-                    await self._orchestrator.delegate_to_subagents(user_input)
-                    logger.info("[Planner] Delegated to sub-agents for complex prompt.")
+            max_retries = 3
+            last_raw_response = None
+            last_parse_error = None
 
-            return self._parse_response(raw_response, user_input)
+            for attempt in range(max_retries):
+                raw_response = await self._model.generate(
+                    prompt, system=self._system_prompt, json_mode=True, temperature=0.1, stream_callback=stream_callback
+                )
+                last_raw_response = raw_response
+
+                result = self._parse_response(raw_response, user_input)
+
+                if result.error is None:
+                    if self._orchestrator and attempt == 0 and not error_context:
+                        if self._orchestrator.is_complex_prompt(user_input):
+                            await self._orchestrator.delegate_to_subagents(user_input)
+                            logger.info("[Planner] Delegated to sub-agents for complex prompt.")
+                    return result
+
+                last_parse_error = result.error
+                logger.warning("Attempt %d/%d failed: %s", attempt + 1, max_retries, last_parse_error[:200] if last_parse_error else "Unknown")
+
+                if attempt < max_retries - 1:
+                    context = await self._memory.get_context(user_input)
+                    prompt = AUTO_HEAL_RETRY_TEMPLATE.format(
+                        error=last_parse_error or "Unknown parse error",
+                        raw_response=last_raw_response[:1000] if last_raw_response else "",
+                        request=user_input,
+                        context=context or "No prior context.",
+                        screen_context=screen_context or "Not available.",
+                        os=_detect_os(),
+                        path_style="Windows (C:\\Users\\...)" if sys.platform == "win32" else "Unix (/home/...)",
+                        home=str(__import__("pathlib").Path.home()),
+                    )
+
+            return ActionPlan(
+                error=f"Auto-healing failed after {max_retries} attempts. Last error: {last_parse_error}",
+                raw_input=user_input,
+            )
 
         except Exception as e:
             logger.exception("Planning failed for input: %s", user_input[:100])
