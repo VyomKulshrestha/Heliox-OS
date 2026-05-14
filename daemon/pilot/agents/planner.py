@@ -377,6 +377,41 @@ class Planner:
                 raw_input=user_input,
             )
 
+        # --- Fast local system usage queries ---
+        usage_patterns = (
+            (
+                re.compile(r"^(?:what(?:'s| is)|show|check|tell me)\s+(?:my\s+)?cpu\s+usage\??$"),
+                ActionType.CPU_USAGE,
+                "cpu",
+                "Check current CPU usage",
+            ),
+            (
+                re.compile(r"^(?:what(?:'s| is)|show|check|tell me)\s+(?:my\s+)?(?:memory|ram)\s+usage\??$"),
+                ActionType.MEMORY_USAGE,
+                "memory",
+                "Check current memory usage",
+            ),
+            (
+                re.compile(r"^(?:what(?:'s| is)|show|check|tell me)\s+(?:my\s+)?disk\s+usage\??$"),
+                ActionType.DISK_USAGE,
+                "disk",
+                "Check current disk usage",
+            ),
+        )
+        for pattern, action_type, target, explanation in usage_patterns:
+            if pattern.match(text):
+                return ActionPlan(
+                    actions=[
+                        Action(
+                            action_type=action_type,
+                            target=target,
+                            parameters=EmptyParams(),
+                        )
+                    ],
+                    explanation=explanation,
+                    raw_input=user_input,
+                )
+
         # --- "open <app>" (known apps) ---
         app_match = re.match(r"^(?:open|launch|start|run)\s+([\w\s]+)$", text)
         if app_match:
