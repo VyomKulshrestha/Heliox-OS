@@ -289,7 +289,7 @@ Generate a NEW plan that avoids this error. Keep it SIMPLE — fewer actions is 
 class Planner:
     """Converts natural language to structured action plans."""
 
-    def __init__(self, model_router: ModelRouter, memory: MemoryStore,orchestrator=None) -> None:
+    def __init__(self, model_router: ModelRouter, memory: MemoryStore, orchestrator=None) -> None:
         self._model = model_router
         self._memory = memory
         self._orchestrator = orchestrator
