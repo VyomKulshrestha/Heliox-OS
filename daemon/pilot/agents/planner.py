@@ -289,9 +289,10 @@ Generate a NEW plan that avoids this error. Keep it SIMPLE — fewer actions is 
 class Planner:
     """Converts natural language to structured action plans."""
 
-    def __init__(self, model_router: ModelRouter, memory: MemoryStore) -> None:
+    def __init__(self, model_router: ModelRouter, memory: MemoryStore,orchestrator=None) -> None:
         self._model = model_router
         self._memory = memory
+        self._orchestrator = orchestrator
         self._system_prompt = SYSTEM_PROMPT.format(
             os=_detect_os(),
             path_style="Windows (C:\\Users\\...)" if sys.platform == "win32" else "Unix (/home/...)",
@@ -429,6 +430,11 @@ class Planner:
             raw_response = await self._model.generate(
                 prompt, system=self._system_prompt, json_mode=True, temperature=0.1
             )
+            if self._orchestrator and not error_context:
+                if self._orchestrator.is_complex_prompt(user_input):
+                    await self._orchestrator.delegate_to_subagents(user_input)
+                    logger.info("[Planner] Delegated to sub-agents for complex prompt.")
+
 
             return self._parse_response(raw_response, user_input)
 
