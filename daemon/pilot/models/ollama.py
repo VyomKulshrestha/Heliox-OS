@@ -126,7 +126,7 @@ class OllamaClient:
                     token = data.get("response", "")
                     if token:
                         full_response += token
-                        stream_callback(token)
+                        await stream_callback(token)
                 except Exception:
                     continue
 

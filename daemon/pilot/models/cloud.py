@@ -82,19 +82,19 @@ class CloudClient:
                         max_retries=max_retries,
                     )
                     if stream_callback:
-                        stream_callback(result)
+                        await stream_callback(result)
                     return result
                 elif provider == "claude":
                     result = await self._call_anthropic(api_key, model, prompt, system, temperature)
                     if stream_callback:
-                        stream_callback(result)
+                        await stream_callback(result)
                     return result
                 else:
                     result = await self._call_openai_compat(
                         provider, api_key, model, prompt, system, json_mode, temperature
                     )
                     if stream_callback:
-                        stream_callback(result)
+                        await stream_callback(result)
                     return result
             except Exception as e:
                 last_error = e
