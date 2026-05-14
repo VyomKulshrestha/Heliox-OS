@@ -147,7 +147,8 @@ API INTEGRATION, MESSAGING & WEBHOOKS (OpenClaw-style Hub):
 
 FILE OPERATIONS:
 ... (all previously known standard operations)
-- file_read, file_write, file_delete, file_move, file_copy, file_list, file_search, file_permissions
+- file_read, file_write, file_delete, file_move, file_copy, file_list, file_search
+- directory_summary, file_permissions
 
 SYSTEM ADMINISTRATION / PACKAGE / SERVICE / PROCESS / POWER:
 ... (all standard commands apply)
@@ -1004,6 +1005,7 @@ class Planner:
             ActionType.FILE_COPY,
             ActionType.FILE_LIST,
             ActionType.FILE_SEARCH,
+            ActionType.DIRECTORY_SUMMARY,
             ActionType.FILE_PERMISSIONS,
         }
         if action_type in file_types and ("path" not in p or not p["path"]):
