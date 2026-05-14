@@ -522,6 +522,23 @@ cd Heliox OS/daemon
 pip install -e ".[full,dev]"
 ```
 
+#### Windows PyTorch/TRIBE v2 troubleshooting
+
+If the install fails while preparing PyTorch or the TRIBE v2 cognitive engine on Windows, check these common causes before reinstalling the whole project:
+
+- **Missing DLL errors:** Install the latest [Microsoft Visual C++ Redistributable](https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist) and restart the terminal so Python can load native PyTorch extensions.
+- **CUDA version mismatch:** Match the PyTorch wheel to the CUDA runtime installed on the machine. For example, use the CPU wheel if no NVIDIA GPU/CUDA toolkit is available, or choose the `cu121`/`cu124` wheel that matches your driver from the official [PyTorch install selector](https://pytorch.org/get-started/locally/).
+- **TRIBE v2 import failures:** Confirm that the virtual environment is active and that `torch` imports successfully before starting Heliox OS:
+  ```powershell
+  python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+  ```
+- **Stale dependency cache:** If pip keeps reusing a broken wheel, clear the cache and reinstall from inside `daemon`:
+  ```powershell
+  pip cache purge
+  pip install --upgrade pip setuptools wheel
+  pip install -e ".[full,dev]"
+  ```
+
 **2. Choose your LLM:**
 *   Local (Ollama): `ollama pull llama3.1:8b` -> `ollama serve`
 *   Cloud (Gemini/OpenAI/Claude): Add your API key in the app GUI.
