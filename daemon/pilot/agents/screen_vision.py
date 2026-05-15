@@ -403,3 +403,136 @@ def _get_active_window() -> tuple[str, str]:
 
     except Exception:
         return ("Unknown", "Unknown")
+    
+# ── Platform-Specific Window Detection ──
+
+
+def _get_active_window() -> tuple[str, str]:
+    """Get the active window's application name and title."""
+    os_name = platform.system()
+
+    try:
+        if os_name == "Windows":
+            return _get_active_window_windows()
+        elif os_name == "Darwin":
+            return _get_active_window_macos()
+        else:
+            return _get_active_window_linux()
+    except Exception:
+        return ("Unknown", "Unknown")
+
+
+def _get_active_window_windows() -> tuple[str, str]:
+    """Windows: Get active window via win32gui or ctypes."""
+    try:
+        import psutil
+        import win32gui
+        import win32process
+
+        hwnd = win32gui.GetForegroundWindow()
+        title = win32gui.GetWindowText(hwnd)
+        _, pid = win32process.GetWindowThreadProcessId(hwnd)
+        process = psutil.Process(pid)
+        app_name = process.name().replace(".exe", "")
+        return (app_name, title)
+
+    except ImportError:
+        # Fallback using ctypes
+        user32 = ctypes.windll.user32  # type: ignore[attr-defined]
+
+        hwnd = user32.GetForegroundWindow()
+
+        length = user32.GetWindowTextLengthW(hwnd) + 1
+        buf = ctypes.create_unicode_buffer(length)
+
+        user32.GetWindowTextW(hwnd, buf, length)
+
+        title = buf.value
+
+        # Extract app name from title heuristic
+        app = title.rsplit(" - ", 1)[-1] if " - " in title else title
+
+        return (app, title)
+
+
+def _get_active_window_macos() -> tuple[str, str]:
+    """macOS: Get active window via AppleScript."""
+
+    script = """
+    tell application "System Events"
+        set frontApp to name of first application process whose frontmost is true
+        set frontTitle to ""
+        try
+            tell process frontApp
+                set frontTitle to name of front window
+            end tell
+        end try
+        return frontApp & "|" & frontTitle
+    end tell
+    """
+
+    result = subprocess.run(
+        ["osascript", "-e", script],
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    if result.returncode == 0:
+        parts = result.stdout.strip().split("|", 1)
+        return (parts[0], parts[1] if len(parts) > 1 else "")
+
+    return ("Unknown", "Unknown")
+
+
+def _get_active_window_linux() -> tuple[str, str]:
+    """Linux: Get active window via xdotool."""
+
+    try:
+        wid = subprocess.run(
+            ["xdotool", "getactivewindow"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+
+        if wid.returncode != 0:
+            return ("Unknown", "Unknown")
+
+        window_id = wid.stdout.strip()
+
+        name_result = subprocess.run(
+            ["xdotool", "getactivewindow", "getwindowname"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+
+        title = (
+            name_result.stdout.strip()
+            if name_result.returncode == 0
+            else ""
+        )
+
+        # Get PID and process name
+        pid_result = subprocess.run(
+            ["xdotool", "getactivewindow", "getwindowpid"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+
+        app = "Unknown"
+
+        if pid_result.returncode == 0:
+            pid = pid_result.stdout.strip()
+
+            comm = Path(f"/proc/{pid}/comm")
+
+            if comm.exists():
+                app = comm.read_text().strip()
+
+        return (app, title)
+
+    except Exception:
+        return ("Unknown", "Unknown")    
