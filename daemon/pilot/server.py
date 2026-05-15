@@ -92,6 +92,7 @@ class PilotServer:
         self._planner: Any = None
         self._executor: Any = None
         self._verifier: Any = None
+        self._destructive_critic: Any = None
         self._reflector: Any = None
         self._multi_agent: Any = None
         self._background: Any = None
@@ -163,6 +164,13 @@ class PilotServer:
         self._planner = Planner(model_router, self._memory)
         self._executor = Executor(self.config, validator, permissions, audit)
         self._verifier = Verifier(model_router)
+
+        # Destructive Critic Agent — secondary safety reviewer for Tier 4 plans.
+        # Sits between the Planner and the confirmation gate so a BLOCK verdict
+        # aborts execution before the user is ever asked to approve.
+        from pilot.agents.destructive_critic import DestructiveCriticAgent
+
+        self._destructive_critic = DestructiveCriticAgent(model_router)
 
         # Advanced agent components
         self._reflector = Reflector(model_router)
@@ -521,6 +529,10 @@ class PilotServer:
             CONFIRMATION_APPROVED,
             CONFIRMATION_DENIED,
             CONFIRMATION_REQUIRED,
+            CRITIC_REVIEW_APPROVED,
+            CRITIC_REVIEW_BLOCKED,
+            CRITIC_REVIEW_STARTED,
+            CRITIC_REVIEW_WARNED,
             EXECUTOR_ACTION_COMPLETE,
             EXECUTOR_ACTION_STARTED,
             EXECUTOR_ALL_COMPLETE,
@@ -669,6 +681,61 @@ class PilotServer:
                     },
                 )
             )
+
+            # ── Stage: Destructive Critic Review (Tier 4 plans only) ──
+            # For any plan that contains ROOT_CRITICAL (Tier 4) actions, a
+            # second independent agent reviews the plan for safety before the
+            # user confirmation gate fires.  A BLOCK verdict aborts execution
+            # immediately; a WARN verdict surfaces issues alongside the normal
+            # confirmation prompt.
+            from pilot.actions import PermissionTier
+
+            plan_has_tier4 = any(a.permission_tier == PermissionTier.ROOT_CRITICAL for a in plan.actions)
+            if plan_has_tier4 and self._destructive_critic and not dry_run:
+                critic_phase = ""
+                await ws.send(_notification("status", {"phase": "critic review"}))
+                if emit:
+                    critic_phase = await emit.phase_start(
+                        "critic_review",
+                        CRITIC_REVIEW_STARTED,
+                        {"plan_id": plan_id, "action_count": len(plan.actions)},
+                    )
+                    await emit.thought(
+                        "critic_review",
+                        "Tier 4 actions detected — running independent safety review...",
+                        parent_id=critic_phase,
+                    )
+
+                verdict = await self._destructive_critic.review(user_input, plan)
+
+                # Broadcast the full verdict to the UI so the user can see it
+                await ws.send(_notification("critic_verdict", verdict.to_dict()))
+
+                if verdict.is_blocked:
+                    # Hard block — do not proceed to confirmation or execution
+                    if emit:
+                        await emit.phase_error(
+                            "critic_review",
+                            CRITIC_REVIEW_BLOCKED,
+                            verdict.recommendation,
+                            parent_id=critic_phase,
+                        )
+                    return {
+                        "status": "blocked_by_critic",
+                        "verdict": verdict.to_dict(),
+                        "message": (f"Plan blocked by safety critic: {verdict.recommendation}"),
+                        "explanation": plan.explanation,
+                    }
+
+                # WARN or APPROVE — continue, but surface issues if any
+                if emit:
+                    event_name = CRITIC_REVIEW_WARNED if verdict.has_warnings else CRITIC_REVIEW_APPROVED
+                    await emit.phase_complete(
+                        "critic_review",
+                        event_name,
+                        verdict.to_dict(),
+                        parent_id=critic_phase,
+                    )
 
             # ── Stage: Confirmation Gate ──
             needs_confirm = any(a.requires_confirmation for a in plan.actions) and not dry_run

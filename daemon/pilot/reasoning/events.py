@@ -48,6 +48,7 @@ class ReasoningStage(StrEnum):
     VERIFICATION = "verification"
     REFLECTION = "reflection"
     MEMORY_UPDATE = "memory_update"
+    CRITIC_REVIEW = "critic_review"
 
 
 class EventType(StrEnum):
@@ -141,6 +142,12 @@ VERIFICATION_FAILED = "verification_failed"
 REFLECTION_STARTED = "reflection_started"
 REFLECTION_INSIGHT = "reflection_insight"
 REFLECTION_COMPLETE = "reflection_complete"
+
+# Destructive critic stage — Tier 4 safety review
+CRITIC_REVIEW_STARTED = "critic_review_started"
+CRITIC_REVIEW_APPROVED = "critic_review_approved"
+CRITIC_REVIEW_WARNED = "critic_review_warned"
+CRITIC_REVIEW_BLOCKED = "critic_review_blocked"
 
 
 class ReasoningEmitter:
