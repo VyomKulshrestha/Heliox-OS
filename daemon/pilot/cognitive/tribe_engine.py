@@ -192,7 +192,7 @@ class TribeEngine:
                     local_dir,
                     cache_folder=cache_str,
                     device="auto",
-                    mmap=True,               # The zero-copy Memory Mapping flag
+                    mmap=True,  # The zero-copy Memory Mapping flag
                     low_cpu_mem_usage=True,  # Prevents double RAM allocation during load
                 )
 
