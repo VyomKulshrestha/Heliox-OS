@@ -30,7 +30,7 @@ full = [
     "pyperclip>=1.8",
     "SecretStorage>=3.3; sys_platform == 'linux'",
 ]
-llamacpp = ["llama-cpp-python>=0.3"]
+llamacpp = ["llama-cpp-python>=0.3", "pynvml>=11.5"]
 
 # Tier 1: Game Changers
 automation = [
