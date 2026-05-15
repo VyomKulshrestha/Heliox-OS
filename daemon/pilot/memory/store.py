@@ -49,6 +49,7 @@ class MemoryStore:
     def __init__(self) -> None:
         self._db: aiosqlite.Connection | None = None
         self._chroma_collection: Any = None
+        self._workspace_index = None
 
     async def initialize(self) -> None:
         DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -56,6 +57,14 @@ class MemoryStore:
         await self._db.executescript(SCHEMA_SQL)
         await self._db.commit()
         self._init_chroma()
+        self._init_workspace_index()
+        
+    def _init_workspace_index(self) -> None:
+        """Initialize the workspace RAG index."""
+        from pilot.memory.workspace_index import WorkspaceIndex
+        workspace_dir = DATA_DIR / "workspace_index"
+        self._workspace_index = WorkspaceIndex(workspace_dir)
+        logger.info("WorkspaceIndex initialized at %s", workspace_dir)
 
     def _init_chroma(self) -> None:
         """Initialize ChromaDB for semantic search (best-effort)."""
@@ -176,6 +185,18 @@ class MemoryStore:
         cursor = await self._db.execute("SELECT key, value FROM user_preferences")
         rows = await cursor.fetchall()
         return {r[0]: r[1] for r in rows}
+    
+    async def index_workspace(self, folder_path: str) -> dict:
+        """Index a workspace folder for semantic search."""
+        if self._workspace_index is None:
+            return {"success": False, "error": "Workspace index not initialized"}
+        return self._workspace_index.index_workspace(folder_path)
+
+    async def search_workspace(self, query: str, n_results: int = 5) -> list:
+        """Search the workspace index semantically."""
+        if self._workspace_index is None:
+            return []
+        return self._workspace_index.search(query, n_results) 
 
     async def close(self) -> None:
         if self._db:
