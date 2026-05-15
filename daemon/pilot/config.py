@@ -68,10 +68,10 @@ class SecurityConfig:
     snapshot_retention_days: int = 7
     unrestricted_shell: bool = False  # Allow ANY shell command (bypass whitelist)
     # Code execution sandbox — isolates agent-generated code from the host OS
-    sandbox_mode: str = "auto"       # "auto" | "docker" | "restricted" | "none"
-    sandbox_memory_mb: int = 128     # memory cap applied inside the sandbox (MB)
-    sandbox_timeout: int = 30        # max wall-clock seconds for sandboxed execution
-    sandbox_network: bool = False    # allow outbound network inside the sandbox
+    sandbox_mode: str = "auto"  # "auto" | "docker" | "restricted" | "none"
+    sandbox_memory_mb: int = 128  # memory cap applied inside the sandbox (MB)
+    sandbox_timeout: int = 30  # max wall-clock seconds for sandboxed execution
+    sandbox_network: bool = False  # allow outbound network inside the sandbox
 
 
 @dataclass
