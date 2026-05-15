@@ -1897,33 +1897,62 @@ class PilotServer:
     async def _voice_command_dispatch(self, command_text: str) -> None:
         """Called by ContinuousVoiceListener when a voice command is recognized.
 
-        Runs the full ReAct pipeline and speaks the result back.
+        Runs the full ReAct pipeline and speaks the result back with multilingual support.
 
         Args:
             command_text: The recognized voice command text.
         """
         logger.info("Voice command received: '%s'", command_text)
-        await self._broadcast_notification("voice_command", {"command": command_text, "status": "executing"})
+
+        language = getattr(
+            self._voice_listener,
+            "last_detected_language",
+            self.config.voice.language if self.config.voice.language != "auto" else "en",
+        )
+
+        await self._broadcast_notification(
+            "voice_command",
+            {
+                "command": command_text,
+                "status": "executing",
+                "language": language,
+            },
+        )
 
         try:
             # Get screen context
             screen_ctx = ""
             if self._screen_vision:
                 try:
-                    screen_ctx = self._screen_vision.get_context_for_planner()
+                    base_ctx = self._screen_vision.get_context_for_planner()
+                    screen_ctx = f"{base_ctx}\nUser language: {language}"
                 except Exception:
-                    pass
+                    screen_ctx = f"User language: {language}"
+            else:
+                screen_ctx = f"User language: {language}"
 
-            # Plan
-            plan = await self._planner.plan(command_text, screen_context=screen_ctx)
+            # Plan with multilingual context
+            plan = await self._planner.plan(
+                command_text,
+                screen_context=screen_ctx,
+            )
+
             if plan.error:
                 await self._broadcast_notification(
-                    "voice_result", {"command": command_text, "status": "error", "message": plan.error}
+                    "voice_result",
+                    {
+                        "command": command_text,
+                        "status": "error",
+                        "message": plan.error,
+                        "language": language,
+                    },
                 )
-                # Speak the error
+
                 from pilot.system.voice import speak
 
-                await speak(f"Sorry, I couldn't plan that. {plan.error[:100]}")
+                await speak(
+                    f"Sorry, I couldn't process that. {plan.error[:100]}"
+                )
                 return
 
             await self._broadcast_notification(
@@ -1933,41 +1962,76 @@ class PilotServer:
                     "actions": [a.model_dump() for a in plan.actions],
                     "explanation": plan.explanation,
                     "source": "voice",
+                    "language": language,
                 },
             )
 
-            # Execute (auto-approve safe actions from voice)
+            # Execute
             results = await self._executor.execute_plan(plan)
 
             # Verify
             verification = await self._verifier.verify(plan, results)
 
-            # Build response summary
+            # Build result summary
             output_parts = []
+
             for r in results:
                 if r.output:
                     output_parts.append(r.output[:200])
 
-            result_text = " ".join(output_parts) if output_parts else plan.explanation
+            result_text = (
+                " ".join(output_parts)
+                if output_parts
+                else plan.explanation
+            )
+
             status = "success" if verification.passed else "partial"
 
             await self._broadcast_notification(
                 "voice_result",
-                {"command": command_text, "status": status, "result": result_text[:500]},
+                {
+                    "command": command_text,
+                    "status": status,
+                    "result": result_text[:500],
+                    "language": language,
+                },
             )
 
-            # Speak the result (keep it short for voice)
+            # Speak response
             from pilot.system.voice import speak
 
-            spoken = result_text[:300] if len(result_text) < 300 else result_text[:297] + "..."
-            await speak(f"Done. {spoken}")
-
-        except Exception as e:
-            logger.error("Voice command execution failed: %s", e)
-            await self._broadcast_notification(
-                "voice_result", {"command": command_text, "status": "error", "message": str(e)}
+            spoken = (
+                result_text[:300]
+                if len(result_text) < 300
+                else result_text[:297] + "..."
             )
 
+            await speak(spoken)
+
+        except Exception as e:
+            logger.error(
+                "Voice command execution failed: %s",
+                e,
+            )
+
+            await self._broadcast_notification(
+                "voice_result",
+                {
+                    "command": command_text,
+                    "status": "error",
+                    "message": str(e),
+                    "language": language,
+                },
+            )
+
+            try:
+                from pilot.system.voice import speak
+
+                await speak(
+                    "Sorry, something went wrong while executing your request."
+                )
+            except Exception:
+                pass
     async def _voice_status_broadcast(self, status: str, data: dict) -> None:
         """Called by ContinuousVoiceListener for status updates.
 

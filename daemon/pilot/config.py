@@ -82,6 +82,12 @@ class ServerConfig:
 
 
 @dataclass
+class VoiceConfig:
+    language: str = "auto"  # auto detect or manual language code
+    whisper_model: str = "base"
+
+
+@dataclass
 class Restrictions:
     protected_folders: list[str] = field(default_factory=list)
     protected_packages: list[str] = field(default_factory=list)
@@ -93,6 +99,7 @@ class PilotConfig:
     model: ModelConfig = field(default_factory=ModelConfig)
     security: SecurityConfig = field(default_factory=SecurityConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
+    voice: VoiceConfig = field(default_factory=VoiceConfig)
     restrictions: Restrictions = field(default_factory=Restrictions)
     first_run_complete: bool = False
 
@@ -100,27 +107,40 @@ class PilotConfig:
     def load(cls) -> PilotConfig:
         """Load config from disk, creating defaults if missing."""
         config = cls()
+
         if CONFIG_FILE.exists():
             try:
                 raw = tomllib.loads(CONFIG_FILE.read_text(encoding="utf-8"))
                 _validate_config_types(raw)
                 config = _merge_config(config, raw)
             except Exception as e:
-                logger.error(f"Failed to load config.toml: {e}. Falling back to safe defaults.")
+                logger.error(
+                    f"Failed to load config.toml: {e}. Falling back to safe defaults."
+                )
 
         if RESTRICTIONS_FILE.exists():
             raw = tomllib.loads(RESTRICTIONS_FILE.read_text(encoding="utf-8"))
             config.restrictions = _parse_restrictions(raw)
+
         return config
 
     def save(self) -> None:
         """Persist current config to disk."""
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+
         data = _config_to_dict(self)
         restrictions = data.pop("restrictions", {})
-        CONFIG_FILE.write_text(tomli_w.dumps(data), encoding="utf-8")
+
+        CONFIG_FILE.write_text(
+            tomli_w.dumps(data),
+            encoding="utf-8",
+        )
+
         if restrictions:
-            RESTRICTIONS_FILE.write_text(tomli_w.dumps(restrictions), encoding="utf-8")
+            RESTRICTIONS_FILE.write_text(
+                tomli_w.dumps(restrictions),
+                encoding="utf-8",
+            )
 
 
 logger = logging.getLogger("pilot.config")
@@ -141,7 +161,6 @@ def _validate_config_types(raw: dict) -> None:
             "rate_limit_enabled": bool,
             "rate_limit_rpm": int,
             "rate_limit_burst": int,
-            # NEW: PR #98 Budget Keys
             "budget_enabled": bool,
             "budget_monthly_limit_usd": float,
         },
@@ -164,22 +183,32 @@ def _validate_config_types(raw: dict) -> None:
             "port": int,
             "auth_token": str,
         },
+        "voice": {
+            "language": str,
+            "whisper_model": str,
+        },
     }
 
     for section, expected_keys in expected_types.items():
         if section in raw and isinstance(raw[section], dict):
-            # We iterate over the USER'S keys to find typos
             for actual_key, actual_value in raw[section].items():
-                # 1. Catch Typos (Unknown Keys)
+                # Catch invalid keys
                 if actual_key not in expected_keys:
-                    error_msg = f"Invalid config key found: '{section}.{actual_key}'. Please check for typos."
+                    error_msg = (
+                        f"Invalid config key found: '{section}.{actual_key}'. "
+                        "Please check for typos."
+                    )
                     logger.error(error_msg)
                     raise ValueError(error_msg)
 
-                # 2. Catch Wrong Types
+                # Catch invalid types
                 expected_type = expected_keys[actual_key]
                 if not isinstance(actual_value, expected_type):
-                    error_msg = f"Invalid type: '{section}.{actual_key}' must be {expected_type.__name__}, got {type(actual_value).__name__}."
+                    error_msg = (
+                        f"Invalid type: '{section}.{actual_key}' must be "
+                        f"{expected_type.__name__}, got "
+                        f"{type(actual_value).__name__}."
+                    )
                     logger.error(error_msg)
                     raise ValueError(error_msg)
 
@@ -189,15 +218,27 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
         for k, v in raw["model"].items():
             if hasattr(config.model, k):
                 setattr(config.model, k, v)
+
     if "security" in raw:
         for k, v in raw["security"].items():
             if hasattr(config.security, k):
                 setattr(config.security, k, v)
+
     if "server" in raw:
         for k, v in raw["server"].items():
             if hasattr(config.server, k):
                 setattr(config.server, k, v)
-    config.first_run_complete = raw.get("first_run_complete", config.first_run_complete)
+
+    if "voice" in raw:
+        for k, v in raw["voice"].items():
+            if hasattr(config.voice, k):
+                setattr(config.voice, k, v)
+
+    config.first_run_complete = raw.get(
+        "first_run_complete",
+        config.first_run_complete,
+    )
+
     return config
 
 
