@@ -148,7 +148,6 @@ class AgentOrchestrator:
                break
             
             role, indices = batch
-            role, indices = batch
             agent = self._agents.get(role)
             if agent is None:
                 # Fallback to system agent

@@ -333,7 +333,6 @@ class Executor:
                 break
 
             await self._audit.log_action_start(action, plan_id)
-            await self._audit.log_action_start(action, plan_id)
 
             if on_action_start:
                 await on_action_start(action)
