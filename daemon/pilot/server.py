@@ -165,7 +165,7 @@ class PilotServer:
         self._executor = Executor(self.config, validator, permissions, audit)
         self._verifier = Verifier(model_router)
 
-        # Destructive Critic Agent — secondary safety reviewer for Tier 4 plans.
+        # Destructive Critic Agent Ã¢â‚¬â€ secondary safety reviewer for Tier 4 plans.
         # Sits between the Planner and the confirmation gate so a BLOCK verdict
         # aborts execution before the user is ever asked to approve.
         from pilot.agents.destructive_critic import DestructiveCriticAgent
@@ -180,7 +180,7 @@ class PilotServer:
         self._background.set_broadcast(self._broadcast_notification)
         self._background.register_builtin_monitors()
 
-        # Multi-Agent Orchestrator — register all specialist agents
+        # Multi-Agent Orchestrator Ã¢â‚¬â€ register all specialist agents
         self._orchestrator = AgentOrchestrator(model_router)
         self._orchestrator.set_broadcast(self._broadcast_notification)
         self._orchestrator.register_agent(SystemAgent(model_router, self._executor))
@@ -190,13 +190,13 @@ class PilotServer:
         self._orchestrator.register_agent(CommunicationAgent(model_router, self._executor))
         await self._orchestrator.start_all()
 
-        # Multimodal Fusion Engine — voice + gesture intent fusion
+        # Multimodal Fusion Engine Ã¢â‚¬â€ voice + gesture intent fusion
         from pilot.multimodal.fusion import MultimodalFusionEngine
 
         self._fusion = MultimodalFusionEngine()
         self._fusion.set_broadcast(self._broadcast_notification)
 
-        # Reasoning Event Emitter — thought visualization telemetry
+        # Reasoning Event Emitter Ã¢â‚¬â€ thought visualization telemetry
         from pilot.reasoning.events import ReasoningEmitter
 
         self._reasoning = ReasoningEmitter()
@@ -207,7 +207,7 @@ class PilotServer:
 
         self._decomposer = TaskDecomposer(model_router)
 
-        # Simulation Sandbox — pre-execution risk analysis
+        # Simulation Sandbox Ã¢â‚¬â€ pre-execution risk analysis
         from pilot.agents.sandbox import SimulationSandbox
 
         self._sandbox = SimulationSandbox()
@@ -225,19 +225,19 @@ class PilotServer:
         plugin_count = self._plugin_registry.discover()
         logger.info("Plugins loaded: %d", plugin_count)
 
-        # Subconscious Agent — long-term memory consolidation (lazy start)
+        # Subconscious Agent Ã¢â‚¬â€ long-term memory consolidation (lazy start)
         try:
             from pilot.agents.subconscious import SubconsciousAgent
 
             self._subconscious = SubconsciousAgent(model_router)
             await self._subconscious.initialize(str(DB_FILE))
-            # NOTE: Don't auto-start the consolidation loop — it can block
+            # NOTE: Don't auto-start the consolidation loop Ã¢â‚¬â€ it can block
             # the event loop with LLM calls. Users start it via API.
             logger.info("SubconsciousAgent initialized (idle, use persona_consolidate to trigger)")
         except Exception:
             logger.warning("SubconsciousAgent init failed (non-critical)", exc_info=True)
 
-        # Cognitive Hub — unified TRIBE v2 cognitive features
+        # Cognitive Hub Ã¢â‚¬â€ unified TRIBE v2 cognitive features
         try:
             from pilot.changelog import announce_new_features, mark_version_seen
             from pilot.cognitive.hub import CognitiveHub
@@ -256,7 +256,7 @@ class PilotServer:
             logger.warning("CognitiveHub init failed (non-critical)", exc_info=True)
             self._new_features_announcement = None
 
-        # Screen Vision Agent — continuous screen awareness (AUTO-START for JARVIS mode)
+        # Screen Vision Agent Ã¢â‚¬â€ continuous screen awareness (AUTO-START for JARVIS mode)
         try:
             from pilot.agents.screen_vision import ScreenVisionAgent
 
@@ -268,7 +268,7 @@ class PilotServer:
         except Exception:
             logger.warning("ScreenVisionAgent init failed (non-critical)", exc_info=True)
 
-        # ── Cognitive Intelligence (TRIBE v2) ──
+        # Ã¢â€â‚¬Ã¢â€â‚¬ Cognitive Intelligence (TRIBE v2) Ã¢â€â‚¬Ã¢â€â‚¬
         try:
             from pilot.cognitive.attention_scorer import AttentionAwareUI
             from pilot.cognitive.intent_predictor import IntentPredictor
@@ -300,7 +300,7 @@ class PilotServer:
 
         self._notification_buffer: list[tuple[str, dict[str, Any]]] = []
 
-        # ── Autonomous Executor (JARVIS fire-and-forget) ──
+        # Ã¢â€â‚¬Ã¢â€â‚¬ Autonomous Executor (JARVIS fire-and-forget) Ã¢â€â‚¬Ã¢â€â‚¬
         try:
             from pilot.agents.autonomous import AutonomousExecutor
 
@@ -316,7 +316,7 @@ class PilotServer:
         except Exception:
             logger.warning("AutonomousExecutor init failed (non-critical)", exc_info=True)
 
-        # ── Proactive Suggestion Engine (JARVIS anticipation) ──
+        # Ã¢â€â‚¬Ã¢â€â‚¬ Proactive Suggestion Engine (JARVIS anticipation) Ã¢â€â‚¬Ã¢â€â‚¬
         try:
             from pilot.agents.proactive import ProactiveSuggestionEngine
 
@@ -416,7 +416,7 @@ class PilotServer:
             method: The notification method name.
             params: The notification parameters.
         """
-        # ── Feature 5: Attention-Optimized Notification Timing ──
+        # Ã¢â€â‚¬Ã¢â€â‚¬ Feature 5: Attention-Optimized Notification Timing Ã¢â€â‚¬Ã¢â€â‚¬
         if getattr(self, "_attention_ui", None) and self._attention_ui.enabled:
             try:
                 content = params if isinstance(params, dict) else {"data": params}
@@ -563,7 +563,7 @@ class PilotServer:
         if emit:
             emit.reset()
 
-        # ── Stage: User Input ──
+        # Ã¢â€â‚¬Ã¢â€â‚¬ Stage: User Input Ã¢â€â‚¬Ã¢â€â‚¬
         input_phase = ""
         await ws.send(_notification("status", {"phase": "receiving input"}))
         if emit:
@@ -572,7 +572,7 @@ class PilotServer:
                 "user_input", "user_input_received", {"length": len(user_input)}, parent_id=input_phase
             )
 
-        # ── Stage: Memory Recall ──
+        # Ã¢â€â‚¬Ã¢â€â‚¬ Stage: Memory Recall Ã¢â€â‚¬Ã¢â€â‚¬
         mem_phase = ""
         await ws.send(_notification("status", {"phase": "recalling memory"}))
         if emit:
@@ -588,7 +588,7 @@ class PilotServer:
                 "memory_recall", MEMORY_CONTEXT_LOADED, {"has_context": bool(improvement_ctx)}, parent_id=mem_phase
             )
 
-        # ── Stage: Agent Routing ──
+        # Ã¢â€â‚¬Ã¢â€â‚¬ Stage: Agent Routing Ã¢â€â‚¬Ã¢â€â‚¬
         route_phase = ""
         await ws.send(_notification("status", {"phase": "routing agents"}))
         if emit:
@@ -613,7 +613,7 @@ class PilotServer:
         last_explanation = ""
 
         for attempt in range(1 + self.MAX_RETRIES):
-            # ── Stage: Planning ──
+            # Ã¢â€â‚¬Ã¢â€â‚¬ Stage: Planning Ã¢â€â‚¬Ã¢â€â‚¬
             plan_phase = ""
             if emit:
                 event_name = PLANNER_STARTED if attempt == 0 else PLANNER_REPLANNING
@@ -682,7 +682,7 @@ class PilotServer:
                 )
             )
 
-            # ── Stage: Destructive Critic Review (Tier 4 plans only) ──
+            # Ã¢â€â‚¬Ã¢â€â‚¬ Stage: Destructive Critic Review (Tier 4 plans only) Ã¢â€â‚¬Ã¢â€â‚¬
             # For any plan that contains ROOT_CRITICAL (Tier 4) actions, a
             # second independent agent reviews the plan for safety before the
             # user confirmation gate fires.  A BLOCK verdict aborts execution
@@ -702,7 +702,7 @@ class PilotServer:
                     )
                     await emit.thought(
                         "critic_review",
-                        "Tier 4 actions detected — running independent safety review...",
+                        "Tier 4 actions detected Ã¢â‚¬â€ running independent safety review...",
                         parent_id=critic_phase,
                     )
 
@@ -712,7 +712,7 @@ class PilotServer:
                 await ws.send(_notification("critic_verdict", verdict.to_dict()))
 
                 if verdict.is_blocked:
-                    # Hard block — do not proceed to confirmation or execution
+                    # Hard block Ã¢â‚¬â€ do not proceed to confirmation or execution
                     if emit:
                         await emit.phase_error(
                             "critic_review",
@@ -727,7 +727,7 @@ class PilotServer:
                         "explanation": plan.explanation,
                     }
 
-                # WARN or APPROVE — continue, but surface issues if any
+                # WARN or APPROVE Ã¢â‚¬â€ continue, but surface issues if any
                 if emit:
                     event_name = CRITIC_REVIEW_WARNED if verdict.has_warnings else CRITIC_REVIEW_APPROVED
                     await emit.phase_complete(
@@ -737,14 +737,16 @@ class PilotServer:
                         parent_id=critic_phase,
                     )
 
-            # ── Stage: Confirmation Gate ──
+            # Ã¢â€â‚¬Ã¢â€â‚¬ Stage: Confirmation Gate Ã¢â€â‚¬Ã¢â€â‚¬
             needs_confirm = any(a.requires_confirmation for a in plan.actions) and not dry_run
             if needs_confirm:
                 confirm_phase = ""
                 if emit:
                     confirm_phase = await emit.phase_start("confirmation", CONFIRMATION_REQUIRED, {"plan_id": plan_id})
                     await emit.thought(
-                        "confirmation", "Dangerous action detected — awaiting user approval...", parent_id=confirm_phase
+                        "confirmation",
+                        "Dangerous action detected Ã¢â‚¬â€ awaiting user approval...",
+                        parent_id=confirm_phase,
                     )
 
                 confirmed = await self._wait_for_confirmation(plan_id, plan, ws)
@@ -772,7 +774,7 @@ class PilotServer:
                         "confirmation", "confirmation_skipped", {"reason": "No dangerous actions"}, parent_id=skip_phase
                     )
 
-            # ── Stage: Execution ──
+            # Ã¢â€â‚¬Ã¢â€â‚¬ Stage: Execution Ã¢â€â‚¬Ã¢â€â‚¬
             exec_phase = ""
             if emit:
                 exec_phase = await emit.phase_start("execution", EXECUTOR_STARTED, {"action_count": len(plan.actions)})
@@ -848,7 +850,7 @@ class PilotServer:
                     parent_id=exec_phase,
                 )
 
-            # ── Stage: Verification ──
+            # Ã¢â€â‚¬Ã¢â€â‚¬ Stage: Verification Ã¢â€â‚¬Ã¢â€â‚¬
             verify_phase = ""
             if emit:
                 verify_phase = await emit.phase_start("verification", VERIFICATION_STARTED)
@@ -879,7 +881,7 @@ class PilotServer:
                         parent_id=verify_phase,
                     )
 
-                # ── Stage: Reflection ──
+                # Ã¢â€â‚¬Ã¢â€â‚¬ Stage: Reflection Ã¢â€â‚¬Ã¢â€â‚¬
                 if emit:
                     refl_phase = await emit.phase_start("reflection", REFLECTION_STARTED)
                     await emit.thought(
@@ -891,7 +893,7 @@ class PilotServer:
                         "reflection", REFLECTION_COMPLETE, {"retry_count": attempt}, parent_id=refl_phase
                     )
 
-                # ── Stage: Memory Update ──
+                # Ã¢â€â‚¬Ã¢â€â‚¬ Stage: Memory Update Ã¢â€â‚¬Ã¢â€â‚¬
                 if emit:
                     mem_store_phase = await emit.phase_start("memory_update", MEMORY_STORE_STARTED)
                     await emit.thought(
@@ -930,7 +932,7 @@ class PilotServer:
                     "agent_routing": self._multi_agent.get_routing_summary(user_input),
                 }
 
-            # Execution failed — build error context for retry
+            # Execution failed Ã¢â‚¬â€ build error context for retry
             if emit:
                 await emit.phase_error(
                     "verification", VERIFICATION_FAILED, "; ".join(verification.details[:3]), parent_id=verify_phase
@@ -945,7 +947,7 @@ class PilotServer:
                     _notification(
                         "status",
                         {
-                            "phase": "retrying — previous attempt failed",
+                            "phase": "retrying Ã¢â‚¬â€ previous attempt failed",
                         },
                     )
                 )
@@ -956,7 +958,7 @@ class PilotServer:
             else:
                 break
 
-        # ── Final memory save on partial failure ──
+        # Ã¢â€â‚¬Ã¢â€â‚¬ Final memory save on partial failure Ã¢â€â‚¬Ã¢â€â‚¬
         if emit:
             mem_final = await emit.phase_start("memory_update", MEMORY_STORE_STARTED)
             await emit.phase_complete("memory_update", MEMORY_STORE_COMPLETE, {"partial": True}, parent_id=mem_final)
@@ -1678,7 +1680,7 @@ class PilotServer:
             logger.error("Failed to uninstall plugin %s: %s", plugin_name, e)
             return {"error": str(e)}
 
-    # ── Subconscious Agent Handlers ──
+    # Ã¢â€â‚¬Ã¢â€â‚¬ Subconscious Agent Handlers Ã¢â€â‚¬Ã¢â€â‚¬
 
     async def _handle_persona_rules(self, params: dict, ws: ServerConnection) -> dict:
         """Return all persona rules.
@@ -1744,7 +1746,7 @@ class PilotServer:
             return await self._subconscious.get_stats()
         return {"error": "Subconscious agent not initialized"}
 
-    # ── Screen Vision Handlers ──
+    # Ã¢â€â‚¬Ã¢â€â‚¬ Screen Vision Handlers Ã¢â€â‚¬Ã¢â€â‚¬
 
     async def _handle_screen_context(self, params: dict, ws: ServerConnection) -> dict:
         """Return the current screen context summary.
@@ -1886,7 +1888,7 @@ class PilotServer:
             self._tribe_engine.unload_model()
         logger.info("Pilot daemon stopped")
 
-    # ── Budget Tracking Handlers ──
+    # Ã¢â€â‚¬Ã¢â€â‚¬ Budget Tracking Handlers Ã¢â€â‚¬Ã¢â€â‚¬
 
     async def _handle_budget_stats(self, params: dict, ws: ServerConnection) -> dict:
         """Return current-month token usage and cost summary."""
@@ -1901,7 +1903,7 @@ class PilotServer:
         await self._budget_tracker.reset_current_month()
         return {"status": "ok"}
 
-    # ── Cognitive Intelligence (TRIBE v2) Handlers ──
+    # Ã¢â€â‚¬Ã¢â€â‚¬ Cognitive Intelligence (TRIBE v2) Handlers Ã¢â€â‚¬Ã¢â€â‚¬
 
     async def _handle_cognitive_stats(self, params: dict, ws: ServerConnection) -> dict:
         """Get stats for all cognitive subsystems."""
@@ -1959,7 +1961,7 @@ class PilotServer:
             "available": self._tribe_engine.is_available,
         }
 
-    # ── Voice Listener (JARVIS Mode) Handlers ──
+    # Ã¢â€â‚¬Ã¢â€â‚¬ Voice Listener (JARVIS Mode) Handlers Ã¢â€â‚¬Ã¢â€â‚¬
 
     async def _voice_command_dispatch(self, command_text: str) -> None:
         """Called by ContinuousVoiceListener when a voice command is recognized.
@@ -2099,7 +2101,7 @@ class PilotServer:
             return {"running": False, "message": "Voice listener not initialized"}
         return self._voice_listener.get_stats()
 
-    # ── Autonomous Executor Handlers ──
+    # Ã¢â€â‚¬Ã¢â€â‚¬ Autonomous Executor Handlers Ã¢â€â‚¬Ã¢â€â‚¬
 
     async def _handle_autonomous_submit(self, params: dict, ws: ServerConnection) -> dict:
         """Submit a task for autonomous background execution.
@@ -2172,7 +2174,7 @@ class PilotServer:
             return {"error": f"Job not found: {job_id}"}
         return job.to_dict()
 
-    # ── Proactive Suggestions Handlers ──
+    # Ã¢â€â‚¬Ã¢â€â‚¬ Proactive Suggestions Handlers Ã¢â€â‚¬Ã¢â€â‚¬
 
     async def _handle_proactive_start(self, params: dict, ws: ServerConnection) -> dict:
         """Start the proactive suggestion engine.
@@ -2219,7 +2221,7 @@ class PilotServer:
         return self._proactive.get_stats()
 
     async def _handle_proactive_accept(self, params: dict, ws: ServerConnection) -> dict:
-        """Accept a proactive suggestion — execute the suggested action.
+        """Accept a proactive suggestion Ã¢â‚¬â€ execute the suggested action.
 
         Args:
             params: JSON-RPC parameters with suggestion_id.

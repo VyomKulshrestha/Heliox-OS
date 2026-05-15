@@ -1,14 +1,14 @@
-"""Destructive Critic Agent — safety reviewer for Tier 4 (ROOT_CRITICAL) plans.
+"""Destructive Critic Agent â€” safety reviewer for Tier 4 (ROOT_CRITICAL) plans.
 
 For any plan that contains Tier 4 destructive actions, the orchestration
 pipeline runs a two-agent handshake:
 
-  1. Planner              → produces the ActionPlan as normal.
-  2. DestructiveCriticAgent → independently reviews the plan and returns a
+  1. Planner              â†’ produces the ActionPlan as normal.
+  2. DestructiveCriticAgent â†’ independently reviews the plan and returns a
      structured safety verdict BEFORE the user confirmation gate fires.
 
 If the critic blocks the plan, execution is aborted immediately and the
-reason is surfaced to the user. The critic never executes anything — it
+reason is surfaced to the user. The critic never executes anything â€” it
 only reads the plan and reasons about it.
 """
 
@@ -39,17 +39,17 @@ with healthy skepticism.
 
 Evaluate the plan against these five criteria:
 
-1. INTENT ALIGNMENT  — Does every action directly serve the stated user request?
+1. INTENT ALIGNMENT  â€” Does every action directly serve the stated user request?
    Flag any action that seems unrelated or excessive.
-2. BLAST RADIUS      — What is the worst-case irreversible damage if something
+2. BLAST RADIUS      â€” What is the worst-case irreversible damage if something
    goes wrong? (e.g. deleting /home vs deleting a temp file)
-3. REVERSIBILITY     — Can the damage be undone without a snapshot?
-4. PRIVILEGE CREEP   — Does the plan request root/elevated access beyond what is
+3. REVERSIBILITY     â€” Can the damage be undone without a snapshot?
+4. PRIVILEGE CREEP   â€” Does the plan request root/elevated access beyond what is
    strictly necessary for the task?
-5. INJECTION RISK    — Could any parameter (path, command, script) be exploited
+5. INJECTION RISK    â€” Could any parameter (path, command, script) be exploited
    via path traversal, shell injection, or wildcard expansion?
 
-Respond with ONLY a JSON object — no markdown, no prose outside the JSON:
+Respond with ONLY a JSON object â€” no markdown, no prose outside the JSON:
 {
   "verdict": "APPROVE" | "WARN" | "BLOCK",
   "risk_score": 0.0-1.0,
@@ -62,7 +62,7 @@ Respond with ONLY a JSON object — no markdown, no prose outside the JSON:
 Verdict rules:
 - APPROVE : Plan is safe to proceed (risk_score < 0.4, no critical issues).
 - WARN    : Plan has concerns but can proceed with user awareness (0.4 <= risk_score < 0.75).
-- BLOCK   : Plan must NOT execute — too dangerous or misaligned (risk_score >= 0.75).
+- BLOCK   : Plan must NOT execute â€” too dangerous or misaligned (risk_score >= 0.75).
 """
 
 _CRITIC_USER_TEMPLATE = """\
@@ -121,7 +121,7 @@ class CriticVerdict:
 class DestructiveCriticAgent:
     """Secondary critic agent that reviews Tier 4 plans before execution.
 
-    This agent is intentionally stateless and has no side effects — it only
+    This agent is intentionally stateless and has no side effects â€” it only
     reads the plan and calls the LLM to produce a safety verdict.
 
     The critic is invoked by the server's execution pipeline whenever a plan
@@ -134,7 +134,7 @@ class DestructiveCriticAgent:
         critic = DestructiveCriticAgent(model_router)
         verdict = await critic.review(user_input, plan)
         if verdict.is_blocked:
-            # abort — surface verdict.recommendation to the user
+            # abort â€” surface verdict.recommendation to the user
         elif verdict.has_warnings:
             # surface warnings alongside the normal confirmation prompt
     """
@@ -164,7 +164,7 @@ class DestructiveCriticAgent:
         )
 
         logger.info(
-            "[DestructiveCritic] Reviewing plan — %d action(s), max_tier=%s",
+            "[DestructiveCritic] Reviewing plan â€” %d action(s), max_tier=%s",
             len(plan.actions),
             max_tier,
         )
@@ -186,13 +186,13 @@ class DestructiveCriticAgent:
 
         except Exception as exc:
             # Fail-safe: if the critic itself errors, emit WARN rather than
-            # silently approving or hard-blocking — let the user decide.
+            # silently approving or hard-blocking â€” let the user decide.
             logger.warning("[DestructiveCritic] Review failed (%s), defaulting to WARN", exc)
             return CriticVerdict(
                 verdict="WARN",
                 risk_score=0.5,
                 issues=[f"Critic agent encountered an error: {exc}"],
-                recommendation="Critic review failed — proceed with extra caution.",
+                recommendation="Critic review failed â€” proceed with extra caution.",
                 raw_response=raw,
             )
 
@@ -263,7 +263,7 @@ class DestructiveCriticAgent:
 
         data: dict[str, Any] = json.loads(text)
 
-        # Normalise verdict — default to WARN for any unexpected value
+        # Normalise verdict â€” default to WARN for any unexpected value
         verdict_str = str(data.get("verdict", "WARN")).upper()
         if verdict_str not in ("APPROVE", "WARN", "BLOCK"):
             verdict_str = "WARN"
