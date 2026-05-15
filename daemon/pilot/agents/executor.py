@@ -7,7 +7,7 @@ Now cross-platform with 50+ action types covering full system control.
 """
 
 from __future__ import annotations
-
+import asyncio
 import logging
 import typing
 import uuid
@@ -250,6 +250,7 @@ class Executor:
         plan: ActionPlan,
         on_action_start: typing.Callable[[Action], typing.Awaitable[None]] | None = None,
         on_action_complete: typing.Callable[[ActionResult], typing.Awaitable[None]] | None = None,
+        cancel_event: asyncio.Event | None = None,
     ) -> list[ActionResult]:
         """Execute all actions in a plan sequentially, with output chaining."""
         plan_id = str(uuid.uuid4())[:8]
@@ -327,6 +328,11 @@ class Executor:
                 logger.warning("Snapshot creation failed: %s", e)
 
         for i, action in enumerate(plan.actions):
+            if cancel_event and cancel_event.is_set():
+                logger.info("Executor: cancel_event set — stopping at action %d", i)
+                break
+
+            await self._audit.log_action_start(action, plan_id)
             await self._audit.log_action_start(action, plan_id)
 
             if on_action_start:
