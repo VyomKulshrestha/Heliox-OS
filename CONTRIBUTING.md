@@ -149,3 +149,24 @@ Heliox OS supports community plugins! See `daemon/pilot/system/plugins.py` for t
 ## 📜 License
 
 By contributing, you agree that your contributions will be licensed under the MIT License.
+
+---
+
+## 🎨 Svelte Component & CSS Standards
+
+To keep our components consistent and easy to maintain, please follow these guidelines:
+
+### 1. Naming Conventions
+* **Components:** Use **PascalCase** for all `.svelte` files (e.g., `NavButton.svelte`, `UserCard.svelte`).
+* **Why:** This distinguishes components from standard HTML tags and makes them easier to find.
+
+### 2. File Organization
+* **UI Elements:** Reusable items like buttons or inputs go in `src/lib/components/ui`.
+* **Feature Components:** Specific items (like a Login Form) go in `src/lib/components/[feature-name]`.
+
+### 3. CSS & Styling
+* **Scoped Styles:** Always use the `<style>` tag inside your Svelte file. Avoid global CSS unless absolutely necessary.
+* **Class Naming:** Use simple, descriptive classes. For variations, use a double-dash (e.g., `.btn` and `.btn--large`).
+* **Design Tokens:** Use our CSS variables (like `var(--primary-color)`) found in `app.css` instead of hardcoding hex codes.
+
+---
