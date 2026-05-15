@@ -147,7 +147,8 @@ API INTEGRATION, MESSAGING & WEBHOOKS (OpenClaw-style Hub):
 
 FILE OPERATIONS:
 ... (all previously known standard operations)
-- file_read, file_write, file_delete, file_move, file_copy, file_list, file_search, file_permissions
+- file_read, file_write, file_delete, file_move, file_copy, file_list, file_search
+- directory_summary, file_permissions
 
 SYSTEM ADMINISTRATION / PACKAGE / SERVICE / PROCESS / POWER:
 ... (all standard commands apply)
@@ -521,7 +522,12 @@ class Planner:
                     return result
 
                 last_parse_error = result.error
-                logger.warning("Attempt %d/%d failed: %s", attempt + 1, max_retries, last_parse_error[:200] if last_parse_error else "Unknown")
+                logger.warning(
+                    "Attempt %d/%d failed: %s",
+                    attempt + 1,
+                    max_retries,
+                    last_parse_error[:200] if last_parse_error else "Unknown",
+                )
 
                 if attempt < max_retries - 1:
                     context = await self._memory.get_context(user_input)
@@ -565,14 +571,23 @@ class Planner:
             data = json.loads(clean_raw)
         except json.JSONDecodeError as e:
             return ActionPlan(
-                error="JSON PARSING FAILED: " + str(e) + "\n\nThe LLM response was not valid JSON. Raw response:\n" + clean_raw[:800] + "\n\nIMPORTANT: Output ONLY a JSON object with this exact format: {\"explanation\": \"...\", \"actions\": [{\"action_type\": \"...\", \"target\": \"...\", \"parameters\": {}}]}",
+                error="JSON PARSING FAILED: "
+                + str(e)
+                + "\n\nThe LLM response was not valid JSON. Raw response:\n"
+                + clean_raw[:800]
+                + '\n\nIMPORTANT: Output ONLY a JSON object with this exact format: {"explanation": "...", "actions": [{"action_type": "...", "target": "...", "parameters": {}}]}',
                 raw_input=user_input,
             )
 
         if not isinstance(data, dict):
             expected = '{"explanation": "...", "actions": [{"action_type": "...", "target": "...", "parameters": {}}]}'
             return ActionPlan(
-                error="INVALID RESPONSE FORMAT: Expected a JSON object but got " + type(data).__name__ + "\n\nRaw response:\n" + clean_raw[:500] + "\n\nOutput ONLY: " + expected,
+                error="INVALID RESPONSE FORMAT: Expected a JSON object but got "
+                + type(data).__name__
+                + "\n\nRaw response:\n"
+                + clean_raw[:500]
+                + "\n\nOutput ONLY: "
+                + expected,
                 raw_input=user_input,
             )
 
@@ -581,7 +596,10 @@ class Planner:
         if not isinstance(raw_actions, list) or not raw_actions:
             expected = '{"explanation": "...", "actions": [{"action_type": "open_application", "target": "notepad", "parameters": {}}]}'
             return ActionPlan(
-                error="MISSING ACTIONS: The response must contain an 'actions' array.\n\nRaw response:\n" + clean_raw[:500] + "\n\nOutput: " + expected,
+                error="MISSING ACTIONS: The response must contain an 'actions' array.\n\nRaw response:\n"
+                + clean_raw[:500]
+                + "\n\nOutput: "
+                + expected,
                 explanation=explanation,
                 raw_input=user_input,
             )
@@ -596,12 +614,8 @@ class Planner:
 
         if not actions:
             return ActionPlan(
-                error="ACTION PARSING FAILED: Could not parse any actions from the response.\n\nThe 'actions' array must contain valid action objects with: action_type (string), target (string), parameters (object).\n\nRaw response:\n" + clean_raw[:500],
-                explanation=explanation,
-                raw_input=user_input,
-            )
-            return ActionPlan(
-                error="All actions failed to parse",
+                error="ACTION PARSING FAILED: Could not parse any actions from the response.\n\nThe 'actions' array must contain valid action objects with: action_type (string), target (string), parameters (object).\n\nRaw response:\n"
+                + clean_raw[:500],
                 explanation=explanation,
                 raw_input=user_input,
             )
@@ -1077,6 +1091,7 @@ class Planner:
             ActionType.FILE_COPY,
             ActionType.FILE_LIST,
             ActionType.FILE_SEARCH,
+            ActionType.DIRECTORY_SUMMARY,
             ActionType.FILE_PERMISSIONS,
         }
         if action_type in file_types and ("path" not in p or not p["path"]):

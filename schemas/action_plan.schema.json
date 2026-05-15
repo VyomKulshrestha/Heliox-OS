@@ -23,7 +23,7 @@
         "action_type": {
           "type": "string",
           "enum": [
-            "file_read", "file_write", "file_delete", "file_move", "file_copy", "file_list",
+            "file_read", "file_write", "file_delete", "file_move", "file_copy", "file_list", "file_search", "directory_summary",
             "package_install", "package_remove", "package_update", "package_search",
             "service_start", "service_stop", "service_restart", "service_enable", "service_disable", "service_status",
             "gnome_setting_read", "gnome_setting_write",

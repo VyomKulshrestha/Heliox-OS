@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 from dataclasses import dataclass, field
@@ -51,6 +52,9 @@ class ModelConfig:
     rate_limit_enabled: bool = True
     rate_limit_rpm: int = 60  # sustained requests per minute
     rate_limit_burst: int = 5  # token bucket burst capacity
+    # Budget tracking — cumulative monthly spend limit
+    budget_enabled: bool = True
+    budget_monthly_limit_usd: float = 10.0
 
 
 @dataclass
@@ -63,6 +67,11 @@ class SecurityConfig:
     snapshot_retention_count: int = 10
     snapshot_retention_days: int = 7
     unrestricted_shell: bool = False  # Allow ANY shell command (bypass whitelist)
+    # Code execution sandbox — isolates agent-generated code from the host OS
+    sandbox_mode: str = "auto"  # "auto" | "docker" | "restricted" | "none"
+    sandbox_memory_mb: int = 128  # memory cap applied inside the sandbox (MB)
+    sandbox_timeout: int = 30  # max wall-clock seconds for sandboxed execution
+    sandbox_network: bool = False  # allow outbound network inside the sandbox
 
 
 @dataclass
@@ -70,6 +79,12 @@ class ServerConfig:
     host: str = "127.0.0.1"
     port: int = 8785
     auth_token: str = ""
+
+
+@dataclass
+class VoiceConfig:
+    language: str = "auto"  # auto detect or manual language code
+    whisper_model: str = "base"
 
 
 @dataclass
@@ -84,6 +99,7 @@ class PilotConfig:
     model: ModelConfig = field(default_factory=ModelConfig)
     security: SecurityConfig = field(default_factory=SecurityConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
+    voice: VoiceConfig = field(default_factory=VoiceConfig)
     restrictions: Restrictions = field(default_factory=Restrictions)
     first_run_complete: bool = False
 
@@ -91,22 +107,105 @@ class PilotConfig:
     def load(cls) -> PilotConfig:
         """Load config from disk, creating defaults if missing."""
         config = cls()
+
         if CONFIG_FILE.exists():
-            raw = tomllib.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-            config = _merge_config(config, raw)
+            try:
+                raw = tomllib.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+                _validate_config_types(raw)
+                config = _merge_config(config, raw)
+            except Exception as e:
+                logger.error(f"Failed to load config.toml: {e}. Falling back to safe defaults.")
+
         if RESTRICTIONS_FILE.exists():
             raw = tomllib.loads(RESTRICTIONS_FILE.read_text(encoding="utf-8"))
             config.restrictions = _parse_restrictions(raw)
+
         return config
 
     def save(self) -> None:
         """Persist current config to disk."""
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+
         data = _config_to_dict(self)
         restrictions = data.pop("restrictions", {})
-        CONFIG_FILE.write_text(tomli_w.dumps(data), encoding="utf-8")
+
+        CONFIG_FILE.write_text(
+            tomli_w.dumps(data),
+            encoding="utf-8",
+        )
+
         if restrictions:
-            RESTRICTIONS_FILE.write_text(tomli_w.dumps(restrictions), encoding="utf-8")
+            RESTRICTIONS_FILE.write_text(
+                tomli_w.dumps(restrictions),
+                encoding="utf-8",
+            )
+
+
+logger = logging.getLogger("pilot.config")
+
+
+def _validate_config_types(raw: dict) -> None:
+    """Validate that the user's config has no typos and uses correct types."""
+    expected_types = {
+        "model": {
+            "provider": str,
+            "ollama_base_url": str,
+            "ollama_model": str,
+            "mode": str,
+            "gpu_memory_limit_mb": int,
+            "idle_unload_seconds": int,
+            "cloud_provider": str,
+            "cloud_model": str,
+            "rate_limit_enabled": bool,
+            "rate_limit_rpm": int,
+            "rate_limit_burst": int,
+            "budget_enabled": bool,
+            "budget_monthly_limit_usd": float,
+        },
+        "security": {
+            "root_enabled": bool,
+            "confirm_tier2": bool,
+            "dry_run": bool,
+            "snapshot_on_destructive": bool,
+            "snapshot_backend": str,
+            "snapshot_retention_count": int,
+            "snapshot_retention_days": int,
+            "unrestricted_shell": bool,
+            "sandbox_mode": str,
+            "sandbox_memory_mb": int,
+            "sandbox_timeout": int,
+            "sandbox_network": bool,
+        },
+        "server": {
+            "host": str,
+            "port": int,
+            "auth_token": str,
+        },
+        "voice": {
+            "language": str,
+            "whisper_model": str,
+        },
+    }
+
+    for section, expected_keys in expected_types.items():
+        if section in raw and isinstance(raw[section], dict):
+            for actual_key, actual_value in raw[section].items():
+                # Catch invalid keys
+                if actual_key not in expected_keys:
+                    error_msg = f"Invalid config key found: '{section}.{actual_key}'. Please check for typos."
+                    logger.error(error_msg)
+                    raise ValueError(error_msg)
+
+                # Catch invalid types
+                expected_type = expected_keys[actual_key]
+                if not isinstance(actual_value, expected_type):
+                    error_msg = (
+                        f"Invalid type: '{section}.{actual_key}' must be "
+                        f"{expected_type.__name__}, got "
+                        f"{type(actual_value).__name__}."
+                    )
+                    logger.error(error_msg)
+                    raise ValueError(error_msg)
 
 
 def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
@@ -114,15 +213,27 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
         for k, v in raw["model"].items():
             if hasattr(config.model, k):
                 setattr(config.model, k, v)
+
     if "security" in raw:
         for k, v in raw["security"].items():
             if hasattr(config.security, k):
                 setattr(config.security, k, v)
+
     if "server" in raw:
         for k, v in raw["server"].items():
             if hasattr(config.server, k):
                 setattr(config.server, k, v)
-    config.first_run_complete = raw.get("first_run_complete", config.first_run_complete)
+
+    if "voice" in raw:
+        for k, v in raw["voice"].items():
+            if hasattr(config.voice, k):
+                setattr(config.voice, k, v)
+
+    config.first_run_complete = raw.get(
+        "first_run_complete",
+        config.first_run_complete,
+    )
+
     return config
 
 
