@@ -327,7 +327,7 @@ class Executor:
                 logger.warning("Snapshot creation failed: %s", e)
 
         for i, action in enumerate(plan.actions):
-            self._audit.log_action_start(action, plan_id)
+            await self._audit.log_action_start(action, plan_id)
 
             if on_action_start:
                 await on_action_start(action)
@@ -336,7 +336,7 @@ class Executor:
             action = self._inject_previous_output(action)
 
             result = await self._execute_single(action, snapshot_id)
-            self._audit.log_action_result(result, plan_id)
+            await self._audit.log_action_result(result, plan_id)
 
             if on_action_complete:
                 await on_action_complete(result)
@@ -372,7 +372,7 @@ class Executor:
         report = self._simulation_sandbox.simulate(plan)
 
         for index, action in enumerate(plan.actions):
-            self._audit.log_action_start(action, plan_id, dry_run=True)
+            await self._audit.log_action_start(action, plan_id, dry_run=True)
 
             if on_action_start:
                 await on_action_start(action)
@@ -387,7 +387,7 @@ class Executor:
                 output = f"(dry run) Would execute {action.action_type.value} on {action.target or 'target'}"
 
             result = ActionResult(action=action, success=True, output=output)
-            self._audit.log_action_result(result, plan_id, dry_run=True)
+            await self._audit.log_action_result(result, plan_id, dry_run=True)
 
             if on_action_complete:
                 await on_action_complete(result)

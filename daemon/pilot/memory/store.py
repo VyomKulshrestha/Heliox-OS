@@ -5,11 +5,13 @@ Memory updates are asynchronous and never block the main execution pipeline.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+import aiofiles.os
 import aiosqlite
 
 from pilot.config import DATA_DIR, DB_FILE
@@ -51,11 +53,11 @@ class MemoryStore:
         self._chroma_collection: Any = None
 
     async def initialize(self) -> None:
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        await aiofiles.os.makedirs(DATA_DIR, exist_ok=True)
         self._db = await aiosqlite.connect(str(DB_FILE))
         await self._db.executescript(SCHEMA_SQL)
         await self._db.commit()
-        self._init_chroma()
+        await asyncio.to_thread(self._init_chroma)
 
     def _init_chroma(self) -> None:
         """Initialize ChromaDB for semantic search (best-effort)."""
@@ -100,7 +102,8 @@ class MemoryStore:
 
         if self._chroma_collection is not None:
             try:
-                self._chroma_collection.add(
+                await asyncio.to_thread(
+                    self._chroma_collection.add,
                     documents=[user_input],
                     metadatas=[
                         {
@@ -120,7 +123,11 @@ class MemoryStore:
 
         if self._chroma_collection is not None:
             try:
-                results = self._chroma_collection.query(query_texts=[query], n_results=n_results)
+                results = await asyncio.to_thread(
+                    self._chroma_collection.query,
+                    query_texts=[query],
+                    n_results=n_results,
+                )
                 if results["documents"] and results["documents"][0]:
                     parts.append("Related past requests:")
                     for doc, meta in zip(results["documents"][0], results["metadatas"][0], strict=False):
