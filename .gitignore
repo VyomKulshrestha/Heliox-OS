@@ -37,6 +37,7 @@ vault.enc
 # Test artifacts
 test_*.py
 !daemon/tests/test_react_latency.py
+!daemon/tests/test_ipc_integration.py
 test_*.txt
 test_*.json
 test_*.html
