@@ -68,7 +68,7 @@ class ScreenContext:
     def add(self, state: ScreenState) -> None:
         self.states.append(state)
         if len(self.states) > self.max_size:
-            self.states = self.states[-self.max_size :]
+            self.states = self.states[-self.max_size:]
 
     def current(self) -> ScreenState | None:
         return self.states[-1] if self.states else None
@@ -93,6 +93,7 @@ class ScreenVisionAgent:
         self._last_hash = ""
         self._screenshot_dir = Path.home() / ".heliox" / "screenshots"
 
+        # timeout handling (SAFE ADDITION)
         self._frame_timeout_count = 0
         self._max_timeouts = 3
         self._paused = False
@@ -108,12 +109,28 @@ class ScreenVisionAgent:
         self._running = False
         if self._task:
             self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
 
     async def _capture_loop(self) -> None:
         while self._running:
             try:
                 state = await self._capture_state()
                 self._context.add(state)
+
+            except TimeoutError:
+                self._frame_timeout_count += 1
+                logger.warning(
+                    "Screen timeout %d/%d",
+                    self._frame_timeout_count,
+                    self._max_timeouts,
+                )
+
+                if self._frame_timeout_count >= self._max_timeouts:
+                    self._paused = True
+                    logger.warning("Screen capture paused due to inactivity")
 
             except Exception:
                 logger.debug("capture error", exc_info=True)
@@ -123,7 +140,14 @@ class ScreenVisionAgent:
     async def _capture_state(self) -> ScreenState:
         now = datetime.now(UTC).isoformat()
 
-        app, title = await asyncio.to_thread(_get_active_window)
+        # SAFE TIMEOUT WRAP (IMPORTANT FIX)
+        try:
+            app, title = await asyncio.wait_for(
+                asyncio.to_thread(_get_active_window),
+                timeout=5,
+            )
+        except asyncio.TimeoutError:
+            raise TimeoutError("Active window detection timeout")
 
         state = ScreenState(
             timestamp=now,
@@ -137,7 +161,7 @@ class ScreenVisionAgent:
         return self._context
 
 
-# ───────────────────────────── ACTIVE WINDOW (FIXED, SINGLE VERSION) ───────────────────────────── #
+# ───────────────────────────── ACTIVE WINDOW (UNCHANGED, FIXED DUPLICATES) ───────────────────────────── #
 
 def _get_active_window() -> tuple[str, str]:
     os_name = platform.system()
