@@ -47,6 +47,13 @@ class ModelConfig:
     idle_unload_seconds: int = 60
     cloud_provider: str = ""  # "openai" | "claude" | "gemini"
     cloud_model: str = ""
+    # Rate limiting — applied to every LLM call via ModelRouter
+    rate_limit_enabled: bool = True
+    rate_limit_rpm: int = 60  # sustained requests per minute
+    rate_limit_burst: int = 5  # token bucket burst capacity
+    # Budget tracking — cumulative monthly spend limit
+    budget_enabled: bool = True
+    budget_monthly_limit_usd: float = 10.0
 
 
 @dataclass

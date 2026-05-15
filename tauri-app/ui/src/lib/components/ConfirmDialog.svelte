@@ -37,8 +37,8 @@
     </ul>
 
     <div class="confirm-actions">
-      <button class="btn-deny" onclick={ondeny}>Deny</button>
-      <button class="btn-confirm" onclick={onconfirm}>Approve & Execute</button>
+      <button class="btn-deny" title="Deny" onclick={ondeny}>Deny</button>
+      <button class="btn-confirm" title="Confirm" onclick={onconfirm}>Approve & Execute</button>
     </div>
   </div>
 </div>

@@ -96,12 +96,14 @@ class TribeEngine:
     """
 
     _instance: TribeEngine | None = None
+    _init_lock = asyncio.Lock()
 
     def __init__(self) -> None:
         self._model: Any = None
         self._loaded = False
         self._loading = False
         self._lock = asyncio.Lock()
+        self._load_cv = asyncio.Condition(self._lock)
         self._prediction_cache: dict[str, Any] = {}
         self._cache_ttl_s = 2.0  # predictions valid for 2 seconds
         self._total_predictions = 0
@@ -111,6 +113,13 @@ class TribeEngine:
         # Heuristic state (used when TRIBE v2 is not available)
         self._interaction_history: list[dict[str, Any]] = []
         self._max_history = 100
+
+    @classmethod
+    async def get_instance_async(cls) -> TribeEngine:
+        async with cls._init_lock:
+            if cls._instance is None:
+                cls._instance = cls()
+            return cls._instance
 
     @classmethod
     def get_instance(cls) -> TribeEngine:
@@ -142,99 +151,100 @@ class TribeEngine:
         """
         if self._loaded:
             return True
-        if self._loading:
-            return False
         if not _tribe_available:
             logger.info("TRIBE v2 not installed — using heuristic fallback mode")
             self._fallback_mode = True
             return False
 
-        async with self._lock:
+        async with self._load_cv:
             if self._loaded:
                 return True
-            self._loading = True
-            try:
-                logger.info("Loading TRIBE v2 model from facebook/tribev2...")
-                _CACHE_DIR.mkdir(parents=True, exist_ok=True)
-                cache_str = str(_CACHE_DIR)
-
-                def _load():
-                    """Download via huggingface_hub then load from local."""
-                    import pathlib
-                    import platform
-
-                    from huggingface_hub import hf_hub_download
-
-                    # Fix: torch.load on Windows fails when checkpoint was
-                    # saved on Linux with PosixPath objects. Monkey-patch
-                    # PosixPath to WindowsPath so unpickling works.
-                    if platform.system() == "Windows":
-                        pathlib.PosixPath = pathlib.WindowsPath
-
-                    repo_id = "facebook/tribev2"  # keep as raw string, never Path()
-                    config_path = hf_hub_download(repo_id, "config.yaml")
-                    ckpt_path = hf_hub_download(repo_id, "best.ckpt")
-
-                    # Load from the local directory containing both files
-                    import os
-
-                    local_dir = os.path.dirname(config_path)
-                    model = _TribeModel.from_pretrained(
-                        local_dir,
-                        cache_folder=cache_str,
-                        device="auto",  # auto-selects CUDA GPU if available
-                    )
-
-                    # ── Patch text extractor ──
-                    # TRIBE v2 config uses gated meta-llama/Llama-3.2-3B
-                    # which requires HuggingFace account + Meta license approval.
-                    # Replace with ungated community copy (same weights, same
-                    # hidden_size=3072, zero quality degradation).
-                    _UNGATED_LLAMA = "unsloth/Llama-3.2-3B"
-                    import torch as _torch
-
-                    _device = "cuda" if _torch.cuda.is_available() else "cpu"
-
-                    try:
-                        text_ext = model.data.text_feature
-                        if hasattr(text_ext, "model_name"):
-                            old_name = text_ext.model_name
-                            if "meta-llama" in old_name:
-                                logger.info(
-                                    "Patching text extractor: %s → %s (ungated)",
-                                    old_name,
-                                    _UNGATED_LLAMA,
-                                )
-                                text_ext.model_name = _UNGATED_LLAMA
-                            text_ext.device = _device
-
-                            # Pre-cache the tokenizer so predict() doesn't block the event loop
-                            from transformers import AutoTokenizer
-
-                            _ = AutoTokenizer.from_pretrained(_UNGATED_LLAMA)
-
-                    except Exception as patch_err:
-                        logger.debug("Text extractor patch skipped: %s", patch_err)
-
-                    # Fix Windows multiprocessing crash in DataLoader
-                    if platform.system() == "Windows":
-                        if hasattr(model, "data") and hasattr(model.data, "num_workers"):
-                            model.data.num_workers = 0
-
-                    return model
-
-                loop = asyncio.get_event_loop()
-                self._model = await loop.run_in_executor(None, _load)
-                self._loaded = True
-                self._fallback_mode = False
-                logger.info("TRIBE v2 model loaded successfully")
+            while self._loading:
+                await self._load_cv.wait()
+            if self._loaded:
                 return True
-            except Exception as e:
-                logger.warning("Failed to load TRIBE v2 model: %s — using fallback", e)
-                self._fallback_mode = True
-                return False
-            finally:
+
+        self._loading = True
+
+        try:
+            logger.info("Loading TRIBE v2 model from facebook/tribev2...")
+            _CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            cache_str = str(_CACHE_DIR)
+
+            def _load():
+                """Download via huggingface_hub then load from local."""
+                import pathlib
+                import platform
+
+                from huggingface_hub import hf_hub_download
+
+                if platform.system() == "Windows":
+                    pathlib.PosixPath = pathlib.WindowsPath
+
+                repo_id = "facebook/tribev2"
+                config_path = hf_hub_download(repo_id, "config.yaml")
+                ckpt_path = hf_hub_download(repo_id, "best.ckpt")
+
+                import os
+
+                local_dir = os.path.dirname(config_path)
+                model = _TribeModel.from_pretrained(
+                    local_dir,
+                    cache_folder=cache_str,
+                    device="auto",
+                )
+
+                _UNGATED_LLAMA = "unsloth/Llama-3.2-3B"
+                import torch as _torch
+
+                _device = "cuda" if _torch.cuda.is_available() else "cpu"
+
+                try:
+                    text_ext = model.data.text_feature
+                    if hasattr(text_ext, "model_name"):
+                        old_name = text_ext.model_name
+                        if "meta-llama" in old_name:
+                            logger.info(
+                                "Patching text extractor: %s → %s (ungated)",
+                                old_name,
+                                _UNGATED_LLAMA,
+                            )
+                        text_ext.model_name = _UNGATED_LLAMA
+                        text_ext.device = _device
+
+                        from transformers import AutoTokenizer
+
+                        _ = AutoTokenizer.from_pretrained(_UNGATED_LLAMA)
+
+                except Exception as patch_err:
+                    logger.debug("Text extractor patch skipped: %s", patch_err)
+
+                if platform.system() == "Windows":
+                    if hasattr(model, "data") and hasattr(model.data, "num_workers"):
+                        model.data.num_workers = 0
+
+                return model
+
+            loop = asyncio.get_event_loop()
+            self._model = await loop.run_in_executor(None, _load)
+            self._loaded = True
+            self._fallback_mode = False
+            logger.info("TRIBE v2 model loaded successfully")
+
+            async with self._load_cv:
                 self._loading = False
+                self._load_cv.notify_all()
+
+            return True
+        except Exception as e:
+            logger.warning("Failed to load TRIBE v2 model: %s — using fallback", e)
+            self._fallback_mode = True
+
+            async with self._load_cv:
+                self._loading = False
+                self._load_cv.notify_all()
+
+            return False
 
     def unload_model(self) -> None:
         """Free the TRIBE v2 model from memory."""

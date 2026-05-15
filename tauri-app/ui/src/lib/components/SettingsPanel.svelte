@@ -1,5 +1,6 @@
 <script lang="ts">
   import { settings } from "../stores/settings";
+  import { session } from "../stores/session";
   import { call } from "../api/daemon";
 
   let apiKeyInput = $state("");
@@ -54,7 +55,9 @@
       await call("store_api_key", { provider, api_key: apiKeyInput.trim() });
       apiKeySaved = true;
       apiKeyInput = "";
-      setTimeout(() => { apiKeySaved = false; }, 3000);
+      setTimeout(() => {
+        apiKeySaved = false;
+      }, 3000);
     } catch (err) {
       console.error("Failed to save API key:", err);
     } finally {
@@ -78,6 +81,8 @@
         class="toggle"
         class:active={$settings.security.root_enabled}
         onclick={toggleRoot}
+        aria-label="Toggle Root Access"
+        title="Toggle Root Access"
       >
         <span class="toggle-knob"></span>
       </button>
@@ -91,9 +96,12 @@
       <button
         class="toggle"
         class:active={$settings.security.snapshot_on_destructive}
-        onclick={() => settings.updateSection("security", {
-          snapshot_on_destructive: !$settings.security.snapshot_on_destructive
-        })}
+        onclick={() =>
+          settings.updateSection("security", {
+            snapshot_on_destructive: !$settings.security.snapshot_on_destructive,
+          })}
+        aria-label="Toggle Auto Snapshot"
+        title="Toggle Auto Snapshot"
       >
         <span class="toggle-knob"></span>
       </button>
@@ -108,6 +116,8 @@
         class="toggle"
         class:active={$settings.security.dry_run}
         onclick={toggleDryRun}
+        aria-label="Toggle Dry Run Mode"
+        title="Toggle Dry Run Mode"
       >
         <span class="toggle-knob"></span>
       </button>
@@ -130,6 +140,33 @@
   </section>
 
   <section class="settings-group">
+    <h3>Usage</h3>
+
+    <div class="setting-row">
+      <div class="setting-info">
+        <span class="setting-label">Total Tokens</span>
+        <span class="setting-desc">Estimated session token usage</span>
+      </div>
+      <span>{$session.totalTokens}</span>
+    </div>
+
+    <div class="setting-row">
+      <div class="setting-info">
+        <span class="setting-label">Estimated Cost</span>
+        <span class="setting-desc">Approximate API usage cost</span>
+      </div>
+
+      <span>
+        {$settings.model.provider === "ollama" ? "Free (local)" : `$${$session.estimatedCost.toFixed(4)}`}
+      </span>
+    </div>
+
+    <div class="setting-row">
+      <button class="btn-save" onclick={() => session.resetUsage()}> Reset Session Usage </button>
+    </div>
+  </section>
+
+  <section class="settings-group">
     <h3>Model</h3>
 
     <div class="setting-row">
@@ -138,14 +175,10 @@
         <span class="setting-desc">Primary model backend</span>
       </div>
       <div class="btn-group">
-        <button
-          class:active={$settings.model.provider === "ollama"}
-          onclick={() => setProvider("ollama")}
-        >Ollama</button>
-        <button
-          class:active={$settings.model.provider === "cloud"}
-          onclick={() => setProvider("cloud")}
-        >Cloud</button>
+        <button class:active={$settings.model.provider === "ollama"} onclick={() => setProvider("ollama")}
+          >Ollama</button
+        >
+        <button class:active={$settings.model.provider === "cloud"} onclick={() => setProvider("cloud")}>Cloud</button>
       </div>
     </div>
 
@@ -155,14 +188,10 @@
         <span class="setting-desc">Trade speed for accuracy</span>
       </div>
       <div class="btn-group">
-        <button
-          class:active={$settings.model.mode === "lightweight"}
-          onclick={() => setMode("lightweight")}
-        >Light</button>
-        <button
-          class:active={$settings.model.mode === "full"}
-          onclick={() => setMode("full")}
-        >Full</button>
+        <button class:active={$settings.model.mode === "lightweight"} onclick={() => setMode("lightweight")}
+          >Light</button
+        >
+        <button class:active={$settings.model.mode === "full"} onclick={() => setMode("full")}>Full</button>
       </div>
     </div>
 
@@ -205,18 +234,15 @@
         <span class="setting-desc">Select your cloud LLM provider</span>
       </div>
       <div class="btn-group">
-        <button
-          class:active={$settings.model.cloud_provider === "gemini"}
-          onclick={() => setCloudProvider("gemini")}
-        >Gemini</button>
-        <button
-          class:active={$settings.model.cloud_provider === "openai"}
-          onclick={() => setCloudProvider("openai")}
-        >OpenAI</button>
-        <button
-          class:active={$settings.model.cloud_provider === "claude"}
-          onclick={() => setCloudProvider("claude")}
-        >Claude</button>
+        <button class:active={$settings.model.cloud_provider === "gemini"} onclick={() => setCloudProvider("gemini")}
+          >Gemini</button
+        >
+        <button class:active={$settings.model.cloud_provider === "openai"} onclick={() => setCloudProvider("openai")}
+          >OpenAI</button
+        >
+        <button class:active={$settings.model.cloud_provider === "claude"} onclick={() => setCloudProvider("claude")}
+          >Claude</button
+        >
       </div>
     </div>
 
@@ -240,12 +266,7 @@
         <span class="setting-desc">Stored securely in system keyring</span>
       </div>
       <div class="api-key-row">
-        <input
-          type="password"
-          class="input-md"
-          bind:value={apiKeyInput}
-          placeholder="Paste API key..."
-        />
+        <input type="password" class="input-md" bind:value={apiKeyInput} placeholder="Paste API key..." />
         <button class="btn-save" onclick={saveApiKey} disabled={apiKeySaving}>
           {apiKeySaved ? "✓ Saved!" : apiKeySaving ? "Saving..." : "Save"}
         </button>
@@ -256,16 +277,16 @@
   <section class="settings-group">
     <h3>Restrictions</h3>
     <div class="restriction-info">
-      <p>Protected folders: {$settings.restrictions.protected_folders.length} configured</p>
-      <p>Protected packages: {$settings.restrictions.protected_packages.length} configured</p>
-      <p>Blocked commands: {$settings.restrictions.blocked_commands.length} configured</p>
+      <p>Protected folders: {$settings.restrictions?.protected_folders?.length || 0} configured</p>
+      <p>Protected packages: {$settings.restrictions?.protected_packages?.length || 0} configured</p>
+      <p>Blocked commands: {$settings.restrictions?.blocked_commands?.length || 0} configured</p>
     </div>
   </section>
 </div>
 
 <style>
   .settings-panel {
-    height: 100%;
+    height: 100%; 
     overflow-y: auto;
     padding: 16px;
   }
@@ -435,7 +456,15 @@
   }
 
   .btn-save:disabled {
-    opacity: 0.6;
     cursor: not-allowed;
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+  }
+
+  .btn-group button:disabled {
+    cursor: not-allowed;
+    color: var(--text-secondary);
+    background: var(--bg-tertiary);
   }
 </style>

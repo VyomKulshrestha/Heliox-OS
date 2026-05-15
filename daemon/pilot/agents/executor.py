@@ -91,6 +91,7 @@ class Executor:
             ActionType.FILE_COPY: self._exec_file_copy,
             ActionType.FILE_LIST: self._exec_file_list,
             ActionType.FILE_SEARCH: self._exec_file_search,
+            ActionType.DIRECTORY_SUMMARY: self._exec_directory_summary,
             ActionType.FILE_PERMISSIONS: self._exec_file_permissions,
             # -- Package operations --
             ActionType.PACKAGE_INSTALL: self._exec_package_install,
@@ -571,6 +572,17 @@ class Executor:
 
         params: FileParams = action.parameters  # type: ignore[assignment]
         return await file_search(params.path, params.pattern or "*")
+
+    async def _exec_directory_summary(self, action: Action) -> str:
+        from pilot.system.filesystem import directory_summary
+
+        params: FileParams = action.parameters  # type: ignore[assignment]
+        return await directory_summary(
+            params.path,
+            max_depth=params.max_depth,
+            max_entries=params.max_entries,
+            ignore_dirs=params.ignore_dirs,
+        )
 
     async def _exec_file_permissions(self, action: Action) -> str:
         from pilot.system.filesystem import file_permissions

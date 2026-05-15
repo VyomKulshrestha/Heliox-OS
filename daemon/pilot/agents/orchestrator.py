@@ -398,3 +398,25 @@ class AgentOrchestrator:
             "assigned_agents": assigned,
             "is_multi_agent": len(assigned) > 1,
         }
+
+    def is_complex_prompt(self, user_input: str) -> bool:
+        summary = self.get_input_routing_summary(user_input)
+        assigned = summary.get("assigned_agents", [])
+        return len(assigned) > 1
+
+    async def delegate_to_subagents(self, user_input: str, **kwargs: Any) -> dict[str, Any]:
+        """Spawn Researcher and Coder sub-agents in parallel for complex prompts."""
+        logger.info("[Orchestrator] Complex prompt detected — spawning sub-agents")
+
+        # Spawn both sub-agents in parallel
+        researcher, coder = await asyncio.gather(
+            self.spawn_agent(AgentRole.WEB, **kwargs),
+            self.spawn_agent(AgentRole.CODE, **kwargs),
+        )
+
+        return {
+            "researcher": researcher.role.value if researcher else None,
+            "coder": coder.role.value if coder else None,
+            "status": "delegated",
+            "input": user_input,
+        }

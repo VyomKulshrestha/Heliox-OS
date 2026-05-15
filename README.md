@@ -237,7 +237,7 @@ Heliox OS uses a **modular multi-agent architecture** where specialized agents c
 ## ⚡ 50+ Action Types
 
 ### File Operations
-`file_read` · `file_write` · `file_delete` · `file_move` · `file_copy` · `file_list` · `file_search` · `file_permissions`
+`file_read` · `file_write` · `file_delete` · `file_move` · `file_copy` · `file_list` · `file_search` · `directory_summary` · `file_permissions`
 
 ### Process Management
 `process_list` · `process_kill` · `process_info`

@@ -21,6 +21,7 @@ class ActionType(StrEnum):
     FILE_COPY = "file_copy"
     FILE_LIST = "file_list"
     FILE_SEARCH = "file_search"
+    DIRECTORY_SUMMARY = "directory_summary"
     FILE_PERMISSIONS = "file_permissions"
 
     # -- Package management --
@@ -216,6 +217,7 @@ READ_ONLY_ACTIONS = {
     ActionType.FILE_READ,
     ActionType.FILE_LIST,
     ActionType.FILE_SEARCH,
+    ActionType.DIRECTORY_SUMMARY,
     ActionType.PACKAGE_SEARCH,
     ActionType.SERVICE_STATUS,
     ActionType.GNOME_SETTING_READ,
@@ -307,6 +309,9 @@ class FileParams(BaseModel):
     destination: str | None = None
     recursive: bool = False
     pattern: str | None = None  # For file_search
+    max_depth: int = 3  # For directory_summary
+    max_entries: int = 200  # For directory_summary
+    ignore_dirs: list[str] = Field(default_factory=lambda: [".git", "node_modules"])  # For directory_summary
     permissions: str | None = None  # e.g. "755" for file_permissions
 
 

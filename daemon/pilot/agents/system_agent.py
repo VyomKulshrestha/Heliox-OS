@@ -29,6 +29,7 @@ SYSTEM_ACTION_TYPES: set[ActionType] = {
     ActionType.FILE_COPY,
     ActionType.FILE_LIST,
     ActionType.FILE_SEARCH,
+    ActionType.DIRECTORY_SUMMARY,
     ActionType.FILE_PERMISSIONS,
     # Package management
     ActionType.PACKAGE_INSTALL,

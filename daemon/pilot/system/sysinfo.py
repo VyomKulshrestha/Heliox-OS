@@ -5,6 +5,7 @@ Cross-platform module using psutil (preferred) with OS command fallbacks.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from pilot.system.platform_detect import (
@@ -60,24 +61,29 @@ async def _time_info() -> str:
     return f"=== System Time ===\n  Current Local Time: {now.strftime('%A, %B %d, %Y %I:%M:%S %p')}\n  Timezone: {now.astimezone().tzname()}"
 
 
-async def _cpu_info() -> str:
-    try:
-        import psutil
+def _collect_cpu_info(sample_interval: float | None = 0.5) -> str:
+    import psutil
 
-        count = psutil.cpu_count()
-        count_logical = psutil.cpu_count(logical=True)
-        freq = psutil.cpu_freq()
-        percent = psutil.cpu_percent(interval=0.5, percpu=True)
-        lines = [
-            "=== CPU ===",
-            f"  Physical cores: {count}",
-            f"  Logical cores: {count_logical}",
-        ]
-        if freq:
-            lines.append(f"  Frequency: {freq.current:.0f} MHz (max {freq.max:.0f} MHz)")
+    count = psutil.cpu_count()
+    count_logical = psutil.cpu_count(logical=True)
+    freq = psutil.cpu_freq()
+    percent = psutil.cpu_percent(interval=sample_interval, percpu=True)
+    lines = [
+        "=== CPU ===",
+        f"  Physical cores: {count}",
+        f"  Logical cores: {count_logical}",
+    ]
+    if freq:
+        lines.append(f"  Frequency: {freq.current:.0f} MHz (max {freq.max:.0f} MHz)")
+    if percent:
         lines.append(f"  Usage per core: {', '.join(f'{p:.1f}%' for p in percent)}")
         lines.append(f"  Average usage: {sum(percent) / len(percent):.1f}%")
-        return "\n".join(lines)
+    return "\n".join(lines)
+
+
+async def _cpu_info(sample_interval: float | None = 0.5) -> str:
+    try:
+        return await asyncio.to_thread(_collect_cpu_info, sample_interval)
     except ImportError:
         pass
 
@@ -128,7 +134,7 @@ async def memory_usage() -> str:
 
 
 async def cpu_usage() -> str:
-    return await _cpu_info()
+    return await _cpu_info(sample_interval=0.1)
 
 
 async def _disk_info() -> str:

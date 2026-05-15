@@ -99,6 +99,14 @@ cargo tauri dev
 - Formatter: **rustfmt** (`cargo fmt`)
 - Linter: **Clippy** (`cargo clippy`)
 
+## 🤝 GSSoC '26 Guidelines & Issue Assignment
+
+To ensure a fair and organized environment for all GirlScript Summer of Code (GSSoC) 2026 contributors, we strictly enforce the following rules:
+
+1. **One Active Issue Per Person**: You may only be assigned to **one** issue at a time. 
+2. **Complete Before Requesting**: You **cannot** request to be assigned to a second issue until you have submitted a Pull Request for your currently assigned issue.
+3. **No Spamming**: Do not spam "please assign me" on every open issue. Contributors who spam issue threads or attempt to hoard issues will be reported to GSSoC management and banned from the repository.
+
 ## 🔀 Submitting a Pull Request
 
 1. **Fork** the repository
