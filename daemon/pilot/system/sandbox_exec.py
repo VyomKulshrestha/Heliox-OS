@@ -3,18 +3,18 @@
 Provides OS-level isolation so untrusted code cannot harm the host system.
 Two backends are supported, selected automatically or via config:
 
-  docker      — ephemeral container per execution (best isolation)
+  docker     — ephemeral container per execution (best isolation)
   restricted  — ulimit + stripped env subprocess (fallback, no Docker needed)
   none        — direct execution, no isolation (legacy / opt-out)
 
 Architecture
 ------------
   execute_code()  ──►  SecureExecutionSandbox.run()
-                            │
+                           │
                   ┌─────────┴──────────┐
                   ▼                    ▼
-           DockerBackend       RestrictedBackend
-         (container per run)  (ulimit + stripped env)
+               DockerBackend        RestrictedBackend
+             (container per run)  (ulimit + stripped env)
 """
 
 from __future__ import annotations
@@ -76,36 +76,31 @@ _DOCKER_LANG_MAP: dict[str, tuple[str, str, list[str]]] = {
 
 
 class DockerBackend(_SandboxBackend):
-    """Runs code inside a disposable Docker container.
-
-    Security properties
-    -------------------
-    - ``--network none``          no outbound network (unless config.network=True)
-    - ``--memory``                hard memory cap
-    - ``--cpus 0.5``              half a CPU core max
-    - ``--read-only``             root filesystem is read-only
-    - ``--tmpfs /tmp``            writable scratch space only in /tmp
-    - ``--no-new-privileges``     prevents privilege escalation
-    - ``--cap-drop ALL``          drops all Linux capabilities
-    - ``--rm``                    container auto-removed on exit
-    - ``--user nobody``           runs as unprivileged user
-    - no host mounts              host filesystem is never exposed
-    """
+    """Runs code inside a disposable Docker container."""
 
     async def run(self, code: str, language: str, config: SandboxConfig) -> str:
         lang = _normalise_language(language)
         if lang not in _DOCKER_LANG_MAP:
+            logger.warning("Unsupported language requested for Docker sandbox: %s", language)
             return f"ERROR: Docker sandbox does not support language '{language}'"
 
         image, ext, cmd = _DOCKER_LANG_MAP[lang]
+        script_path = None
 
-        # Write code to a temp file that we'll COPY into the container via stdin
-        with tempfile.NamedTemporaryFile(mode="w", suffix=ext, delete=False, encoding="utf-8", prefix="pilot_sb_") as f:
-            if lang == "bash":
-                f.write("#!/bin/bash\nset -e\n" + code)
-            else:
-                f.write(code)
-            script_path = f.name
+        # Robust creation of temporary script files with graceful fallbacks
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", suffix=ext, delete=False, encoding="utf-8", prefix="pilot_sb_") as f:
+                if lang == "bash":
+                    f.write("#!/bin/bash\nset -e\n" + code)
+                else:
+                    f.write(code)
+                script_path = f.name
+        except PermissionError as exc:
+            logger.error("🚫 Disk write permission denied when generating sandbox script container: %s", exc)
+            return f"ERROR: Sandbox execution failed due to host filesystem permission restrictions."
+        except OSError as exc:
+            logger.error("💻 OS System IO Error encountered during script generation: %s", exc)
+            return f"ERROR: Sandbox environment encountered an underlying storage subsystem error."
 
         try:
             network_flag = "bridge" if config.network else "none"
@@ -120,7 +115,7 @@ class DockerBackend(_SandboxBackend):
                 "--memory",
                 memory_flag,
                 "--memory-swap",
-                memory_flag,  # disable swap
+                memory_flag,
                 "--cpus",
                 "0.5",
                 "--read-only",
@@ -146,7 +141,11 @@ class DockerBackend(_SandboxBackend):
             try:
                 stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=config.timeout)
             except TimeoutError:
-                proc.kill()
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
+                logger.warning("⚠️ Docker sandbox execution timed out after %ds", config.timeout)
                 return f"ERROR: Sandbox timed out after {config.timeout}s"
 
             output = ""
@@ -157,22 +156,24 @@ class DockerBackend(_SandboxBackend):
                 if err:
                     output += f"\n[STDERR]\n{err}"
             if proc.returncode not in (0, None):
+                logger.info("Sandbox container exited with non-zero code: %d", proc.returncode)
                 output += f"\n[EXIT CODE: {proc.returncode}]"
 
             return output.strip() or "(no output)"
 
+        except Exception as exc:
+            logger.exception("Unexpected error inside Docker sandbox engine execution loop: %s", exc)
+            return f"ERROR: Internal sandbox error occurred during runtime lifecycle setup."
+
         finally:
-            try:
-                os.unlink(script_path)
-            except OSError:
-                pass
+            if script_path:
+                _safe_unlink(script_path)
 
 
 # ---------------------------------------------------------------------------
 # Restricted subprocess backend  (no Docker required)
 # ---------------------------------------------------------------------------
 
-# Minimal safe environment — strips credentials, tokens, paths to sensitive dirs
 _SAFE_ENV_KEYS = frozenset(
     {
         "PATH",
@@ -193,26 +194,12 @@ _SAFE_ENV_KEYS = frozenset(
 def _build_safe_env() -> dict[str, str]:
     """Return a stripped copy of os.environ with only safe keys."""
     env = {k: v for k, v in os.environ.items() if k in _SAFE_ENV_KEYS}
-    # Prevent .pyc files cluttering the temp dir
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     return env
 
 
 class RestrictedBackend(_SandboxBackend):
-    """Runs code in a subprocess with resource limits and a stripped environment.
-
-    Security properties
-    -------------------
-    - Stripped environment (no API keys, tokens, or sensitive vars)
-    - ``ulimit -v`` virtual memory cap  (Linux/macOS)
-    - ``ulimit -t`` CPU time cap        (Linux/macOS)
-    - ``ulimit -f`` file size cap       (Linux/macOS)
-    - Timeout enforced via asyncio
-    - No network restriction (OS-level network namespaces need root)
-
-    This backend is weaker than Docker but far better than bare execution.
-    On Windows, only the stripped environment and timeout apply.
-    """
+    """Runs code in a subprocess with resource limits and a stripped environment."""
 
     async def run(self, code: str, language: str, config: SandboxConfig) -> str:
         lang = _normalise_language(language)
@@ -229,85 +216,109 @@ class RestrictedBackend(_SandboxBackend):
         elif lang == "cmd":
             return await self._run_cmd(code, config, safe_env)
         else:
+            logger.warning("Unsupported language requested for Restricted sandbox: %s", language)
             return f"ERROR: Restricted sandbox does not support language '{language}'"
 
     # -- helpers -----------------------------------------------------------
 
     async def _run_python(self, code: str, config: SandboxConfig, env: dict[str, str]) -> str:
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".py", delete=False, encoding="utf-8", prefix="pilot_sb_"
-        ) as f:
-            f.write(code)
-            script_path = f.name
+        script_path = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8", prefix="pilot_sb_") as f:
+                f.write(code)
+                script_path = f.name
+        except (PermissionError, OSError) as exc:
+            logger.error("🚫 Python script staging failed due to filesystem access boundaries: %s", exc)
+            return "ERROR: Subprocess staging blocked by filesystem host constraints."
 
         try:
             cmd = self._wrap_with_ulimit([sys.executable, script_path], config)
             return await self._run_proc(cmd, config.timeout, env)
         finally:
-            _safe_unlink(script_path)
+            if script_path:
+                _safe_unlink(script_path)
 
     async def _run_bash(self, code: str, config: SandboxConfig, env: dict[str, str]) -> str:
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".sh", delete=False, encoding="utf-8", prefix="pilot_sb_"
-        ) as f:
-            f.write("#!/bin/bash\nset -e\n" + code)
-            script_path = f.name
+        script_path = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".sh", delete=False, encoding="utf-8", prefix="pilot_sb_") as f:
+                f.write("#!/bin/bash\nset -e\n" + code)
+                script_path = f.name
+        except (PermissionError, OSError) as exc:
+            logger.error("🚫 Bash script staging failed due to filesystem access boundaries: %s", exc)
+            return "ERROR: Subprocess staging blocked by filesystem host constraints."
 
         try:
-            os.chmod(script_path, 0o700)
+            try:
+                os.chmod(script_path, 0o700)
+            except PermissionError as exc:
+                logger.warning("⚠️ Failed to adjust execute bits on script %s: %s. Attempting raw execute fallback.", script_path, exc)
+            
             cmd = self._wrap_with_ulimit(["bash", script_path], config)
             return await self._run_proc(cmd, config.timeout, env)
         finally:
-            _safe_unlink(script_path)
+            if script_path:
+                _safe_unlink(script_path)
 
     async def _run_powershell(self, code: str, config: SandboxConfig, env: dict[str, str]) -> str:
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".ps1", delete=False, encoding="utf-8", prefix="pilot_sb_"
-        ) as f:
-            f.write(code)
-            script_path = f.name
+        script_path = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".ps1", delete=False, encoding="utf-8", prefix="pilot_sb_") as f:
+                f.write(code)
+                script_path = f.name
+        except (PermissionError, OSError) as exc:
+            logger.error("🚫 PowerShell script staging failed due to filesystem access boundaries: %s", exc)
+            return "ERROR: Subprocess staging blocked by filesystem host constraints."
 
         try:
             shell = "pwsh" if shutil.which("pwsh") else "powershell"
             cmd = [shell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script_path]
             return await self._run_proc(cmd, config.timeout, env)
         finally:
-            _safe_unlink(script_path)
+            if script_path:
+                _safe_unlink(script_path)
 
     async def _run_node(self, code: str, config: SandboxConfig, env: dict[str, str]) -> str:
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".js", delete=False, encoding="utf-8", prefix="pilot_sb_"
-        ) as f:
-            f.write(code)
-            script_path = f.name
+        script_path = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".js", delete=False, encoding="utf-8", prefix="pilot_sb_") as f:
+                f.write(code)
+                script_path = f.name
+        except (PermissionError, OSError) as exc:
+            logger.error("🚫 Node script staging failed due to filesystem access boundaries: %s", exc)
+            return "ERROR: Subprocess staging blocked by filesystem host constraints."
 
         try:
             cmd = self._wrap_with_ulimit(["node", script_path], config)
             return await self._run_proc(cmd, config.timeout, env)
         finally:
-            _safe_unlink(script_path)
+            if script_path:
+                _safe_unlink(script_path)
 
     async def _run_cmd(self, code: str, config: SandboxConfig, env: dict[str, str]) -> str:
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".cmd", delete=False, encoding="utf-8", prefix="pilot_sb_"
-        ) as f:
-            f.write("@echo off\n" + code)
-            script_path = f.name
+        script_path = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".cmd", delete=False, encoding="utf-8", prefix="pilot_sb_") as f:
+                f.write("@echo off\n" + code)
+                script_path = f.name
+        except (PermissionError, OSError) as exc:
+            logger.error("🚫 Batch script staging failed due to filesystem access boundaries: %s", exc)
+            return "ERROR: Subprocess staging blocked by filesystem host constraints."
 
         try:
             return await self._run_proc(["cmd", "/c", script_path], config.timeout, env)
         finally:
-            _safe_unlink(script_path)
+            if script_path:
+                _safe_unlink(script_path)
 
     @staticmethod
     def _wrap_with_ulimit(cmd: list[str], config: SandboxConfig) -> list[str]:
         """Prepend ulimit constraints on POSIX systems."""
         if sys.platform == "win32":
-            return cmd  # ulimit not available on Windows
+            return cmd
 
         mem_kb = config.memory_mb * 1024
         cpu_seconds = max(config.timeout, 5)
-        # ulimit flags: -v virtual mem (KB), -t CPU time (s), -f file size (512-byte blocks = 50MB)
         return [
             "bash",
             "-c",
@@ -317,16 +328,25 @@ class RestrictedBackend(_SandboxBackend):
 
     @staticmethod
     async def _run_proc(cmd: list[str], timeout: int, env: dict[str, str]) -> str:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=env,
-        )
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=env,
+            )
+        except (FileNotFoundError, PermissionError) as exc:
+            logger.error("🚫 Subprocess initialization blocked by target execution runtime boundary: %s", exc)
+            return f"ERROR: Failed to initialize environment runtime context."
+
         try:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         except TimeoutError:
-            proc.kill()
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+            logger.warning("⚠️ Restricted process isolation lifecycle exceeded wall-clock timeout of %ds", timeout)
             return f"ERROR: Sandbox timed out after {timeout}s"
 
         output = ""
@@ -337,6 +357,7 @@ class RestrictedBackend(_SandboxBackend):
             if err:
                 output += f"\n[STDERR]\n{err}"
         if proc.returncode not in (0, None):
+            logger.info("Restricted isolated subprocess exited with code: %s", proc.returncode)
             output += f"\n[EXIT CODE: {proc.returncode}]"
 
         return output.strip() or "(no output)"
@@ -348,13 +369,7 @@ class RestrictedBackend(_SandboxBackend):
 
 
 class SecureExecutionSandbox:
-    """Selects and caches the appropriate backend based on config.mode.
-
-    Usage::
-
-        sandbox = SecureExecutionSandbox(config)
-        output  = await sandbox.run(code, language="python")
-    """
+    """Selects and caches the appropriate backend based on config.mode."""
 
     def __init__(self, config: SandboxConfig) -> None:
         self._config = config
@@ -365,7 +380,11 @@ class SecureExecutionSandbox:
 
     def _resolve_backend(self) -> tuple[_SandboxBackend | None, str]:
         """Return (backend, mode_name). Returns (None, 'none') for passthrough."""
-        mode = self._config.mode.lower().strip()
+        try:
+            mode = self._config.mode.lower().strip()
+        except AttributeError:
+            logger.error("Invalid configuration schema detected inside mode mapping properties.")
+            mode = "auto"
 
         if mode == "none":
             return None, "none"
@@ -381,7 +400,6 @@ class SecureExecutionSandbox:
         if mode == "restricted":
             return RestrictedBackend(), "restricted"
 
-        # mode == "auto": prefer Docker, fall back to restricted
         if _docker_available():
             return DockerBackend(), "docker"
         return RestrictedBackend(), "restricted"
@@ -395,15 +413,11 @@ class SecureExecutionSandbox:
     # -- public API --------------------------------------------------------
 
     async def run(self, code: str, language: str) -> str | None:
-        """Execute *code* in the sandbox.
-
-        Returns the captured output string, or ``None`` if sandbox_mode is
-        'none' (caller should fall back to direct execution).
-        """
+        """Execute *code* in the sandbox safely."""
         backend, mode = self._get_backend()
 
         if mode == "none" or backend is None:
-            return None  # signal: use legacy direct execution
+            return None
 
         logger.info(
             "Sandbox[%s]: executing %d chars of %s code",
@@ -416,12 +430,12 @@ class SecureExecutionSandbox:
             logger.info("Sandbox[%s]: execution complete (%d chars output)", mode, len(result))
             return result
         except Exception as exc:
-            logger.exception("Sandbox[%s] execution error: %s", mode, exc)
+            logger.exception("Critical unexpected recovery trace inside Sandbox[%s]: %s", mode, exc)
             return f"ERROR: Sandbox execution failed — {exc}"
 
     @property
     def active_mode(self) -> str:
-        """The resolved backend mode (available after first call to run())."""
+        """The resolved backend mode."""
         _, mode = self._get_backend()
         return mode
 
@@ -433,7 +447,10 @@ class SecureExecutionSandbox:
 
 def _normalise_language(language: str) -> str:
     """Normalise language aliases to a canonical name."""
-    lang = language.lower().strip()
+    try:
+        lang = language.lower().strip()
+    except AttributeError:
+        return ""
     aliases: dict[str, str] = {
         "py": "python",
         "python3": "python",
@@ -460,13 +477,17 @@ def _docker_available() -> bool:
             timeout=5,
         )
         return result.returncode == 0
-    except Exception:
+    except Exception as exc:
+        logger.debug("Docker daemon status check failed: %s", exc)
         return False
 
 
 def _safe_unlink(path: str) -> None:
-    """Delete a file, ignoring errors."""
+    """Delete a file, logging anomalies while catching permissions and system blocks."""
     try:
-        os.unlink(path)
-    except OSError:
-        pass
+        if os.path.exists(path):
+            os.unlink(path)
+    except PermissionError:
+        logger.warning("⚠️ Restricted disk access denied cleanup tracking for workspace file descriptor: %s", path)
+    except OSError as e:
+        logger.debug("Minor context IO block during scratch space unlinking: %s", e)
