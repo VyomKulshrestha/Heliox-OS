@@ -37,9 +37,16 @@ class SandboxPreview:
 class SandboxEnvironment:
     """Manages dry-run simulations and temporary workspaces."""
 
-    def __init__(self, workspace_dir: str | None = None):
+    def __init__(self, workspace_dir: str | None = None, allowed_commands: list[str] | None = None):
         self._workspace = workspace_dir or os.path.join(tempfile.gettempdir(), "pilot_sandbox")
         os.makedirs(self._workspace, exist_ok=True)
+        
+        if allowed_commands is None:
+            from pilot.config import PilotConfig
+            config = PilotConfig.load()
+            self.allowed_commands = config.restrictions.sandbox_allowed_commands
+        else:
+            self.allowed_commands = allowed_commands
 
     async def preview_file_delete(self, target_path: str, recursive: bool = False) -> SandboxPreview:
         """Simulate deleting a file or directory."""
@@ -95,6 +102,12 @@ class SandboxEnvironment:
             risk_level="medium",
             warnings=[],
         )
+
+        base_cmd = command.strip().split()[0].lower() if command.strip() else ""
+        if base_cmd and base_cmd not in self.allowed_commands:
+            preview.risk_level = "critical"
+            preview.warnings.append(f"Command '{base_cmd}' is not in the sandbox allowlist.")
+            return preview
 
         # Basic dumb heuristics
         if any(w in command_lower for w in ["rm ", "del ", "format ", "diskpart"]):
