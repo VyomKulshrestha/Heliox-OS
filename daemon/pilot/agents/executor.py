@@ -246,9 +246,7 @@ class Executor:
             ActionType.API_SCRAPE: self._exec_api_scrape,
         }
 
-    def _analyze_dependencies(
-        self, actions: list[Action]
-    ) -> list[list[Action]]:
+    def _analyze_dependencies(self, actions: list[Action]) -> list[list[Action]]:
         """Analyze action dependencies and return batches that can run in parallel.
 
         Returns a list of batches, where each batch contains actions that can run
@@ -418,40 +416,35 @@ class Executor:
                 return idx, result
 
             batch_results = await asyncio.gather(
-                *[execute_single_action(action, i) for i, action in enumerate(batch)],
-                return_exceptions=True
+                *[execute_single_action(action, i) for i, action in enumerate(batch)], return_exceptions=True
             )
 
             failed = False
             for item in batch_results:
                 if isinstance(item, Exception):
-                    results.append(ActionResult(
-                        action=batch[0],
-                        success=False,
-                        error=str(item)
-                    ))
+                    results.append(ActionResult(action=batch[0], success=False, error=str(item)))
                     failed = True
                 else:
                     idx, result = item
                     results.append(result)
                     if result.success:
                         self._last_output = result.output
-                        if not hasattr(self, "_largest_output") or len(result.output or "") > len(self._largest_output or ""):
+                        if not hasattr(self, "_largest_output") or len(result.output or "") > len(
+                            self._largest_output or ""
+                        ):
                             self._largest_output = result.output
                     else:
                         failed = True
                         logger.error("Action in batch failed: %s", result.error)
 
             if failed and batch_idx < len(batches) - 1:
-                remaining = sum(len(b) for b in batches[batch_idx + 1:])
+                remaining = sum(len(b) for b in batches[batch_idx + 1 :])
                 logger.warning("Stopping execution - %d action(s) in later batches will be skipped", remaining)
-                for remaining_batch in batches[batch_idx + 1:]:
+                for remaining_batch in batches[batch_idx + 1 :]:
                     for action in remaining_batch:
-                        results.append(ActionResult(
-                            action=action,
-                            success=False,
-                            error="Skipped due to earlier batch failure"
-                        ))
+                        results.append(
+                            ActionResult(action=action, success=False, error="Skipped due to earlier batch failure")
+                        )
                 break
 
         return results
