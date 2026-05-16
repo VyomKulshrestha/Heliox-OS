@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import aiosqlite
 import websockets
 from websockets.asyncio.server import Server, ServerConnection
 
