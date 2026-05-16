@@ -40,7 +40,7 @@ class SandboxEnvironment:
     def __init__(self, workspace_dir: str | None = None, allowed_commands: list[str] | None = None):
         self._workspace = workspace_dir or os.path.join(tempfile.gettempdir(), "pilot_sandbox")
         os.makedirs(self._workspace, exist_ok=True)
-        
+
         if allowed_commands is None:
             from pilot.config import PilotConfig
             config = PilotConfig.load()

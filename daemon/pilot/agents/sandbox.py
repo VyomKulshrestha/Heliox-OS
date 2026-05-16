@@ -228,12 +228,12 @@ class SimulationSandbox:
                 command = ""
                 if params:
                     command = getattr(params, "command", "") or getattr(params, "script", "") or ""
-                
+
                 # Verify against the sandbox allowlist
                 base_cmd = command.strip().split()[0].lower() if command.strip() else ""
                 if base_cmd and base_cmd not in self.allowed_commands:
                     return RiskLevel.CRITICAL
-                
+
                 if any(pattern in command.lower() for pattern in DANGEROUS_SHELL_PATTERNS):
                     return RiskLevel.CRITICAL
             return RiskLevel.HIGH
