@@ -32,6 +32,7 @@
   <a href="#features">Features</a> •
   <a href="#architecture">Architecture</a> •
   <a href="#security">Security</a> •
+  <a href="#️-troubleshooting">Troubleshooing</a> •
   <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 
