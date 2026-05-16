@@ -1,0 +1,287 @@
+﻿diff --git a/IPC_MESSAGE_FORMATS.md b/IPC_MESSAGE_FORMATS.md
+index 54a0ff5..4304f07 100644
+--- a/IPC_MESSAGE_FORMATS.md
++++ b/IPC_MESSAGE_FORMATS.md
+@@ -862,7 +862,7 @@ Defined in `schemas/action_plan.schema.json` and `daemon/pilot/actions.py`.
+ 
+ | Tier | Action types |
+ |------|-------------|
+-| Read-only | `file_read`, `file_list`, `file_search`, `package_search`, `service_status`, `gnome_setting_read`, `open_url`, `open_application`, `notify`, `process_list`, `process_info`, `clipboard_read`, `system_info`, `disk_usage`, `memory_usage`, `cpu_usage`, `network_info`, `battery_info`, `env_get`, `env_list`, `window_list`, `volume_get`, `brightness_get`, `screenshot`, `wifi_list`, `disk_list`, `user_list`, `user_info`, `schedule_list`, `mouse_position`, `screen_ocr`, `screen_find_text`, `screen_analyze`, `screen_element_map`, `browser_extract`, `browser_extract_table`, `browser_extract_links`, `browser_screenshot`, `browser_list_tabs`, `browser_page_info`, `trigger_list`, `file_parse`, `file_search_content`, `api_scrape`, `registry_read` |
++| Read-only | `file_read`, `file_list`, `file_search`, `directory_summary`, `package_search`, `service_status`, `gnome_setting_read`, `open_url`, `open_application`, `notify`, `process_list`, `process_info`, `clipboard_read`, `system_info`, `disk_usage`, `memory_usage`, `cpu_usage`, `network_info`, `battery_info`, `env_get`, `env_list`, `window_list`, `volume_get`, `brightness_get`, `screenshot`, `wifi_list`, `disk_list`, `user_list`, `user_info`, `schedule_list`, `mouse_position`, `screen_ocr`, `screen_find_text`, `screen_analyze`, `screen_element_map`, `browser_extract`, `browser_extract_table`, `browser_extract_links`, `browser_screenshot`, `browser_list_tabs`, `browser_page_info`, `trigger_list`, `file_parse`, `file_search_content`, `api_scrape`, `registry_read` |
+ | User write | `file_write`, `file_move`, `file_copy`, `clipboard_write`, `keyboard_type`, `keyboard_press`, `keyboard_hotkey`, `keyboard_hold`, `mouse_click`, `mouse_double_click`, `mouse_right_click`, `mouse_move`, `mouse_drag`, `mouse_scroll`, `volume_set`, `volume_mute`, `brightness_set`, `window_focus`, `window_minimize`, `window_maximize`, `browser_navigate`, `browser_click`, `browser_type`, `browser_select`, `browser_hover`, `browser_scroll`, `browser_execute_js`, `browser_fill_form`, `browser_new_tab`, `browser_close_tab`, `browser_switch_tab`, `browser_back`, `browser_forward`, `browser_refresh`, `browser_wait`, `browser_close`, `env_set`, `download_file`, `api_request`, `api_github`, `code_execute`, `code_generate_and_run`, `trigger_create`, `trigger_start`, `trigger_stop` |
+ | System modify | `package_install`, `package_update`, `service_start`, `service_stop`, `service_restart`, `service_enable`, `service_disable`, `gnome_setting_write`, `shell_command`, `shell_script`, `schedule_create`, `file_permissions`, `wifi_connect`, `wifi_disconnect`, `disk_mount`, `registry_write`, `api_send_email`, `api_webhook`, `api_slack`, `api_discord` |
+ | Destructive | `file_delete`, `package_remove`, `process_kill`, `power_shutdown`, `power_restart`, `power_logout`, `schedule_delete`, `disk_unmount`, `window_close`, `trigger_delete`, `browser_click_text` |
+diff --git a/README.md b/README.md
+index 44663af..3494bed 100644
+--- a/README.md
++++ b/README.md
+@@ -237,7 +237,7 @@ Heliox OS uses a **modular multi-agent architecture** where specialized agents c
+ ## ΓÜí 50+ Action Types
+ 
+ ### File Operations
+-`file_read` ┬╖ `file_write` ┬╖ `file_delete` ┬╖ `file_move` ┬╖ `file_copy` ┬╖ `file_list` ┬╖ `file_search` ┬╖ `file_permissions`
++`file_read` ┬╖ `file_write` ┬╖ `file_delete` ┬╖ `file_move` ┬╖ `file_copy` ┬╖ `file_list` ┬╖ `file_search` ┬╖ `directory_summary` ┬╖ `file_permissions`
+ 
+ ### Process Management
+ `process_list` ┬╖ `process_kill` ┬╖ `process_info`
+@@ -613,4 +613,4 @@ We love contributions! Whether it's adding a new gesture, fixing a bug, or build
+ 
+ ## License
+ 
+-MIT
+\ No newline at end of file
++MIT
+diff --git a/daemon/pilot/actions.py b/daemon/pilot/actions.py
+index 9bda4a4..8fc8fd0 100644
+--- a/daemon/pilot/actions.py
++++ b/daemon/pilot/actions.py
+@@ -21,6 +21,7 @@ class ActionType(StrEnum):
+     FILE_COPY = "file_copy"
+     FILE_LIST = "file_list"
+     FILE_SEARCH = "file_search"
++    DIRECTORY_SUMMARY = "directory_summary"
+     FILE_PERMISSIONS = "file_permissions"
+ 
+     # -- Package management --
+@@ -216,6 +217,7 @@ class PermissionTier(int, Enum):
+     ActionType.FILE_READ,
+     ActionType.FILE_LIST,
+     ActionType.FILE_SEARCH,
++    ActionType.DIRECTORY_SUMMARY,
+     ActionType.PACKAGE_SEARCH,
+     ActionType.SERVICE_STATUS,
+     ActionType.GNOME_SETTING_READ,
+@@ -307,6 +309,11 @@ class FileParams(BaseModel):
+     destination: str | None = None
+     recursive: bool = False
+     pattern: str | None = None  # For file_search
++    max_depth: int = 3  # For directory_summary
++    max_entries: int = 200  # For directory_summary
++    ignore_dirs: list[str] = Field(
++        default_factory=lambda: [".git", "node_modules"]
++    )  # For directory_summary
+     permissions: str | None = None  # e.g. "755" for file_permissions
+ 
+ 
+diff --git a/daemon/pilot/agents/executor.py b/daemon/pilot/agents/executor.py
+index 0b5d5b8..94e5e60 100644
+--- a/daemon/pilot/agents/executor.py
++++ b/daemon/pilot/agents/executor.py
+@@ -91,6 +91,7 @@ def __init__(
+             ActionType.FILE_COPY: self._exec_file_copy,
+             ActionType.FILE_LIST: self._exec_file_list,
+             ActionType.FILE_SEARCH: self._exec_file_search,
++            ActionType.DIRECTORY_SUMMARY: self._exec_directory_summary,
+             ActionType.FILE_PERMISSIONS: self._exec_file_permissions,
+             # -- Package operations --
+             ActionType.PACKAGE_INSTALL: self._exec_package_install,
+@@ -572,6 +573,17 @@ async def _exec_file_search(self, action: Action) -> str:
+         params: FileParams = action.parameters  # type: ignore[assignment]
+         return await file_search(params.path, params.pattern or "*")
+ 
++    async def _exec_directory_summary(self, action: Action) -> str:
++        from pilot.system.filesystem import directory_summary
++
++        params: FileParams = action.parameters  # type: ignore[assignment]
++        return await directory_summary(
++            params.path,
++            max_depth=params.max_depth,
++            max_entries=params.max_entries,
++            ignore_dirs=params.ignore_dirs,
++        )
++
+     async def _exec_file_permissions(self, action: Action) -> str:
+         from pilot.system.filesystem import file_permissions
+ 
+diff --git a/daemon/pilot/agents/planner.py b/daemon/pilot/agents/planner.py
+index cef72a8..33cc5ea 100644
+--- a/daemon/pilot/agents/planner.py
++++ b/daemon/pilot/agents/planner.py
+@@ -147,7 +147,8 @@ def _detect_os() -> str:
+ 
+ FILE OPERATIONS:
+ ... (all previously known standard operations)
+-- file_read, file_write, file_delete, file_move, file_copy, file_list, file_search, file_permissions
++- file_read, file_write, file_delete, file_move, file_copy, file_list, file_search
++- directory_summary, file_permissions
+ 
+ SYSTEM ADMINISTRATION / PACKAGE / SERVICE / PROCESS / POWER:
+ ... (all standard commands apply)
+@@ -1004,6 +1005,7 @@ def _normalize_params(action_type: ActionType, params: dict, target: str) -> dic
+             ActionType.FILE_COPY,
+             ActionType.FILE_LIST,
+             ActionType.FILE_SEARCH,
++            ActionType.DIRECTORY_SUMMARY,
+             ActionType.FILE_PERMISSIONS,
+         }
+         if action_type in file_types and ("path" not in p or not p["path"]):
+diff --git a/daemon/pilot/agents/system_agent.py b/daemon/pilot/agents/system_agent.py
+index a8c5605..2f1c20e 100644
+--- a/daemon/pilot/agents/system_agent.py
++++ b/daemon/pilot/agents/system_agent.py
+@@ -29,6 +29,7 @@
+     ActionType.FILE_COPY,
+     ActionType.FILE_LIST,
+     ActionType.FILE_SEARCH,
++    ActionType.DIRECTORY_SUMMARY,
+     ActionType.FILE_PERMISSIONS,
+     # Package management
+     ActionType.PACKAGE_INSTALL,
+diff --git a/daemon/pilot/system/filesystem.py b/daemon/pilot/system/filesystem.py
+index 0b18bc8..da29e1e 100644
+--- a/daemon/pilot/system/filesystem.py
++++ b/daemon/pilot/system/filesystem.py
+@@ -134,6 +134,85 @@ def _search() -> list[str]:
+     return f"Found {len(items)} matches:\n" + "\n".join(items)
+ 
+ 
++def _format_size(size: int) -> str:
++    """Return a compact human-readable file size."""
++    units = ("B", "KB", "MB", "GB", "TB")
++    value = float(size)
++    for unit in units:
++        if value < 1024 or unit == units[-1]:
++            if unit == "B":
++                return f"{int(value)} B"
++            return f"{value:.1f} {unit}"
++        value /= 1024
++    return f"{size} B"
++
++
++async def directory_summary(
++    path: str,
++    max_depth: int = 3,
++    max_entries: int = 200,
++    ignore_dirs: list[str] | None = None,
++) -> str:
++    """Return a token-efficient directory tree with file sizes."""
++    p = Path(path)
++    if not p.exists():
++        raise FileNotFoundError(f"Path not found: {path}")
++    if not p.is_dir():
++        raise ValueError(f"Not a directory: {path}")
++
++    ignored = set([".git", "node_modules"] if ignore_dirs is None else ignore_dirs)
++    depth_limit = max(0, max_depth)
++    entry_limit = max(1, max_entries)
++
++    def _summarize() -> list[str]:
++        lines = [f"{p.name or str(p)}/"]
++        emitted = 0
++        omitted = 0
++
++        def walk(directory: Path, depth: int, prefix: str) -> None:
++            nonlocal emitted, omitted
++            if depth >= depth_limit or emitted >= entry_limit:
++                return
++
++            try:
++                children = sorted(
++                    directory.iterdir(),
++                    key=lambda item: (not item.is_dir(), item.name.lower()),
++                )
++            except PermissionError:
++                lines.append(f"{prefix}[access denied]")
++                return
++
++            visible = [item for item in children if not (item.is_dir() and item.name in ignored)]
++            for index, item in enumerate(visible):
++                if emitted >= entry_limit:
++                    omitted += len(visible) - index
++                    break
++
++                connector = "`-- " if index == len(visible) - 1 else "|-- "
++                child_prefix = "    " if index == len(visible) - 1 else "|   "
++
++                try:
++                    if item.is_dir():
++                        lines.append(f"{prefix}{connector}{item.name}/")
++                        emitted += 1
++                        walk(item, depth + 1, prefix + child_prefix)
++                    else:
++                        size = _format_size(item.stat().st_size)
++                        lines.append(f"{prefix}{connector}{item.name} ({size})")
++                        emitted += 1
++                except PermissionError:
++                    lines.append(f"{prefix}{connector}{item.name} [access denied]")
++                    emitted += 1
++
++        walk(p, 0, "")
++        if omitted:
++            lines.append(f"... {omitted} more entr{'y' if omitted == 1 else 'ies'} omitted")
++        return lines
++
++    return "\n".join(await asyncio.to_thread(_summarize))
++
++
+ async def file_permissions(path: str, permissions: str | None = None) -> str:
+     """Get or set file permissions. On Windows, this is limited.
+ 
+diff --git a/daemon/tests/test_directory_summary.py b/daemon/tests/test_directory_summary.py
+new file mode 100644
+index 0000000..f176e5a
+--- /dev/null
++++ b/daemon/tests/test_directory_summary.py
+@@ -0,0 +1,49 @@
++"""Tests for the directory_summary filesystem action."""
++
++from __future__ import annotations
++
++import pytest
++
++from pilot.system.filesystem import directory_summary
++
++
++@pytest.mark.asyncio
++async def test_directory_summary_includes_tree_and_file_sizes(tmp_path):
++    (tmp_path / "src").mkdir()
++    (tmp_path / "src" / "main.py").write_text("print('hello')\n", encoding="utf-8")
++    (tmp_path / "README.md").write_text("Project readme", encoding="utf-8")
++
++    summary = await directory_summary(str(tmp_path))
++
++    assert "src/" in summary
++    assert "main.py (15 B)" in summary
++    assert "README.md (14 B)" in summary
++
++
++@pytest.mark.asyncio
++async def test_directory_summary_ignores_git_and_node_modules_by_default(tmp_path):
++    (tmp_path / ".git").mkdir()
++    (tmp_path / ".git" / "config").write_text("secret", encoding="utf-8")
++    (tmp_path / "node_modules").mkdir()
++    (tmp_path / "node_modules" / "pkg.js").write_text("module", encoding="utf-8")
++    (tmp_path / "app.py").write_text("print('ok')", encoding="utf-8")
++
++    summary = await directory_summary(str(tmp_path))
++
++    assert "app.py" in summary
++    assert ".git" not in summary
++    assert "node_modules" not in summary
++
++
++@pytest.mark.asyncio
++async def test_directory_summary_respects_depth_and_entry_limits(tmp_path):
++    (tmp_path / "a" / "b").mkdir(parents=True)
++    (tmp_path / "a" / "b" / "deep.txt").write_text("deep", encoding="utf-8")
++    for index in range(3):
++        (tmp_path / f"file_{index}.txt").write_text("x", encoding="utf-8")
++
++    summary = await directory_summary(str(tmp_path), max_depth=1, max_entries=2)
++
++    assert "a/" in summary
++    assert "deep.txt" not in summary
++    assert "more entries omitted" in summary
+diff --git a/schemas/action_plan.schema.json b/schemas/action_plan.schema.json
+index 861dce4..7d248dd 100644
+--- a/schemas/action_plan.schema.json
++++ b/schemas/action_plan.schema.json
+@@ -23,7 +23,7 @@
+         "action_type": {
+           "type": "string",
+           "enum": [
+-            "file_read", "file_write", "file_delete", "file_move", "file_copy", "file_list",
++            "file_read", "file_write", "file_delete", "file_move", "file_copy", "file_list", "file_search", "directory_summary",
+             "package_install", "package_remove", "package_update", "package_search",
+             "service_start", "service_stop", "service_restart", "service_enable", "service_disable", "service_status",
+             "gnome_setting_read", "gnome_setting_write",

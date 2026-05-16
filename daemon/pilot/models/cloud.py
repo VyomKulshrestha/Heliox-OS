@@ -45,7 +45,9 @@ class CloudClient:
         system: str = "",
         json_mode: bool = False,
         temperature: float = 0.1,
+        stream_callback: callable | None = None,
     ) -> str:
+        """Generate a completion. If stream_callback is provided, tokens are streamed via callback."""
         provider = self._config.model.cloud_provider
         model = self._config.model.cloud_model or DEFAULT_MODELS.get(provider, "")
 
@@ -70,7 +72,7 @@ class CloudClient:
                 if provider == "gemini":
                     # When we have backup keys, reduce retries per key to rotate faster
                     max_retries = 1 if (has_backups and key_idx < len(api_keys) - 1) else MAX_RETRIES
-                    return await self._call_gemini_native(
+                    result = await self._call_gemini_native(
                         api_key,
                         model,
                         prompt,
@@ -79,12 +81,21 @@ class CloudClient:
                         temperature,
                         max_retries=max_retries,
                     )
+                    if stream_callback:
+                        await stream_callback(result)
+                    return result
                 elif provider == "claude":
-                    return await self._call_anthropic(api_key, model, prompt, system, temperature)
+                    result = await self._call_anthropic(api_key, model, prompt, system, temperature)
+                    if stream_callback:
+                        await stream_callback(result)
+                    return result
                 else:
-                    return await self._call_openai_compat(
+                    result = await self._call_openai_compat(
                         provider, api_key, model, prompt, system, json_mode, temperature
                     )
+                    if stream_callback:
+                        await stream_callback(result)
+                    return result
             except Exception as e:
                 last_error = e
                 err_str = str(e).lower()

@@ -28,11 +28,31 @@
     children?: PipelineStage[];
   }
 
+  interface ThoughtEntry {
+    seq: number;
+    stage: string;
+    stageId: string;
+    text: string;
+    type: string;
+  }
+
   // ── State ──
 
   let isVisible = $state(false);
   let totalDuration = $state(0);
   let agentRouting = $state<{ assigned_agents: string[]; is_multi_agent: boolean } | null>(null);
+  let showSkeleton = $state(false);
+
+  const skeletonStages = ["Memory", "Planning", "Routing", "Execution", "Verification", "Reflection"];
+  const pipelineMethods = new Set([
+    "status",
+    "agent_routing",
+    "plan_preview",
+    "action_start",
+    "action_complete",
+    "confirm_required",
+    "reasoning_event",
+  ]);
 
   let stages = $state<PipelineStage[]>([
     { id: "user_input", label: "User Request", emoji: "💬", status: "idle", detail: "", startTime: 0, endTime: 0 },
@@ -49,24 +69,26 @@
   let executionActions = $state<{ type: string; target: string; status: string }[]>([]);
   let pipelineStartTime = 0;
   let showThoughts = $state(false);
+  let expandedThoughtStages = $state<Record<string, boolean>>({});
   let collapsed = $state(false);
   let autoCollapseTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Reasoning event state
-  let stageThoughts = $state<Record<string, string>>({});
   let stageDecisions = $state<Record<string, string>>({});
   let stageTiming = $state<Record<string, number>>({});
-  let thoughtStream = $state<{ seq: number; stage: string; text: string; type: string }[]>([]);
+  let thoughtStream = $state<ThoughtEntry[]>([]);
 
   function resetPipeline() {
     stages = stages.map(s => ({ ...s, status: "idle" as StageStatus, detail: "", startTime: 0, endTime: 0 }));
     executionActions = [];
     totalDuration = 0;
     agentRouting = null;
-    stageThoughts = {};
     stageDecisions = {};
     stageTiming = {};
     thoughtStream = [];
+    showSkeleton = false;
+    showThoughts = false;
+    expandedThoughtStages = {};
     collapsed = false;
     if (autoCollapseTimer) { clearTimeout(autoCollapseTimer); autoCollapseTimer = null; }
   }
@@ -91,6 +113,10 @@
 
   function handleNotification(method: string, params: unknown) {
     const p = params as Record<string, any>;
+
+    if (showSkeleton && pipelineMethods.has(method)) {
+      showSkeleton = false;
+    }
 
     switch (method) {
       case "status": {
@@ -244,17 +270,16 @@
           setStage(stageId, "error", errText);
           thoughtStream = [
             ...thoughtStream.slice(-19),
-            { seq: evt.sequence, stage: evt.stage, text: `❌ ${errText}`, type: "error" },
+            { seq: evt.sequence, stage: evt.stage, stageId, text: `❌ ${errText}`, type: "error" },
           ];
         }
 
         // ── Thoughts, decisions, progress, metrics ──
         if (evt.event_type === "thought") {
           const text = evt.data?.text || "";
-          stageThoughts = { ...stageThoughts, [stageId]: text };
           thoughtStream = [
             ...thoughtStream.slice(-19),
-            { seq: evt.sequence, stage: evt.stage, text, type: "thought" },
+            { seq: evt.sequence, stage: evt.stage, stageId, text, type: "thought" },
           ];
         }
 
@@ -264,7 +289,7 @@
           stageDecisions = { ...stageDecisions, [stageId]: `${desc}: ${chosen}` };
           thoughtStream = [
             ...thoughtStream.slice(-19),
-            { seq: evt.sequence, stage: evt.stage, text: `Decision: ${desc} → ${chosen}`, type: "decision" },
+            { seq: evt.sequence, stage: evt.stage, stageId, text: `Decision: ${desc} → ${chosen}`, type: "decision" },
           ];
         }
 
@@ -277,7 +302,13 @@
         if (evt.event_type === "metric") {
           thoughtStream = [
             ...thoughtStream.slice(-19),
-            { seq: evt.sequence, stage: evt.stage, text: `📊 ${evt.data?.name}: ${evt.data?.value}${evt.data?.unit || ""}`, type: "metric" },
+            {
+              seq: evt.sequence,
+              stage: evt.stage,
+              stageId,
+              text: `📊 ${evt.data?.name}: ${evt.data?.value}${evt.data?.unit || ""}`,
+              type: "metric",
+            },
           ];
         }
 
@@ -300,6 +331,7 @@
       if (lastMsg) {
         // Defer state mutations out of the $effect tracking context
         queueMicrotask(() => {
+          showSkeleton = false;
           if (lastMsg.type === "result") {
             setStage("executing", "success", `${executionActions.length} action(s) completed`);
             setStage("verifying", lastMsg.verification?.passed ? "success" : "error",
@@ -324,8 +356,8 @@
       queueMicrotask(() => {
         resetPipeline();
         isVisible = true;
+        showSkeleton = true;
         pipelineStartTime = Date.now();
-        setStage("user_input", "active", "Processing...");
       });
     }
   });
@@ -342,6 +374,29 @@
 
   let dismiss = () => { isVisible = false; };
   let toggleCollapse = () => { collapsed = !collapsed; };
+  let toggleThoughts = () => { showThoughts = !showThoughts; };
+  let toggleThoughtStage = (stageId: string) => {
+    expandedThoughtStages = {
+      ...expandedThoughtStages,
+      [stageId]: !expandedThoughtStages[stageId],
+    };
+  };
+
+  const thoughtStageLabels: Record<string, string> = {
+    user_input: "User Request",
+    memory_recall: "Memory Recall",
+    agent_routing: "Agent Routing",
+    planning: "Planning",
+    confirmation: "Confirmation",
+    executing: "Execution",
+    verifying: "Verification",
+    reflection: "Reflection",
+    memory_update: "Memory Update",
+  };
+
+  function thoughtTypeLabel(type: string) {
+    return type.replace(/_/g, " ");
+  }
 
   // Computed: progress percentage
   let progress = $derived(
@@ -349,6 +404,20 @@
       (stages.filter(s => s.status === "success" || s.status === "skipped").length / stages.length) * 100
     )
   );
+
+  let thoughtGroups = $derived.by(() => {
+    const grouped = new Map<string, ThoughtEntry[]>();
+    for (const thought of thoughtStream) {
+      const key = thought.stageId || thought.stage;
+      grouped.set(key, [...(grouped.get(key) || []), thought]);
+    }
+    return [...grouped.entries()].map(([stageId, entries]) => ({
+      stageId,
+      label: thoughtStageLabels[stageId] || stageId.replace(/_/g, " "),
+      entries,
+      latest: entries[entries.length - 1],
+    }));
+  });
 </script>
 
 {#if isVisible}
@@ -373,19 +442,48 @@
         <button class="collapse-toggle" onclick={(e) => { e.stopPropagation(); toggleCollapse(); }} title={collapsed ? 'Expand' : 'Collapse'}>
           {collapsed ? '▼' : '▲'}
         </button>
-        <button class="thought-toggle" class:active={showThoughts} onclick={(e) => { e.stopPropagation(); showThoughts = !showThoughts; }} title="Toggle thought stream">
-          🧠
+        <button
+          class="thought-toggle"
+          class:active={showThoughts}
+          onclick={(e) => { e.stopPropagation(); toggleThoughts(); }}
+          title={showThoughts ? "Hide agent thoughts" : "Show agent thoughts"}
+          aria-label={showThoughts ? "Hide agent thoughts" : "Show agent thoughts"}
+          aria-expanded={showThoughts}
+        >
+          ◫
         </button>
         <button class="dismiss-btn" onclick={(e) => { e.stopPropagation(); dismiss(); }} title="Dismiss">✕</button>
       </div>
     </div>
 
     <!-- Progress bar -->
-    <div class="progress-track">
-      <div class="progress-fill" style="width: {progress}%"></div>
+    <div class="progress-track" class:skeleton={showSkeleton}>
+      <div class="progress-fill" style="width: {showSkeleton ? 0 : progress}%"></div>
     </div>
 
   {#if !collapsed}
+    {#if showSkeleton}
+      <div class="pipeline-graph skeleton-graph" aria-label="Preparing ReAct pipeline">
+        {#each skeletonStages as stage, i}
+          <div class="stage-wrapper skeleton-stage" transition:fade={{ duration: 180, delay: i * 30 }}>
+            {#if i > 0}
+              <div class="connector skeleton-connector"></div>
+            {/if}
+
+            <div class="stage-node skeleton-node">
+              <div class="skeleton-emoji" aria-hidden="true"></div>
+              <div class="stage-info">
+                <div class="stage-label">{stage}</div>
+                <div class="skeleton-detail" aria-hidden="true"></div>
+              </div>
+              <div class="stage-indicator">
+                <span class="skeleton-dot" aria-hidden="true"></span>
+              </div>
+            </div>
+          </div>
+        {/each}
+      </div>
+    {:else}
     <!-- Pipeline nodes -->
     <div class="pipeline-graph">
       {#each stages as stage, i (stage.id)}
@@ -401,15 +499,8 @@
               {#if stage.detail}
                 <div class="stage-detail" transition:fade={{ duration: 150 }}>{stage.detail}</div>
               {/if}
-              <!-- Thought bubble for this stage -->
-              {#if showThoughts && stageThoughts[stage.id]}
-                <div class="thought-bubble" transition:fade={{ duration: 200 }}>
-                  <span class="thought-icon">💭</span>
-                  <span class="thought-text">{stageThoughts[stage.id]}</span>
-                </div>
-              {/if}
               <!-- Decision badge -->
-              {#if stageDecisions[stage.id]}
+              {#if showThoughts && stageDecisions[stage.id]}
                 <div class="decision-badge" transition:fade={{ duration: 200 }}>
                   <span class="decision-icon">⚖️</span>
                   <span class="decision-text">{stageDecisions[stage.id]}</span>
@@ -452,29 +543,71 @@
         </div>
       {/each}
     </div>
+    {/if}
 
-    <!-- Live Thought Stream -->
-    {#if showThoughts && thoughtStream.length > 0}
+    <!-- Collapsible Thought Stream -->
+    {#if !showSkeleton && showThoughts && thoughtStream.length > 0}
       <div class="thought-stream" transition:slide={{ duration: 200 }}>
         <div class="thought-stream-header">
-          <span class="thought-stream-icon">🧠</span>
-          <span class="thought-stream-title">Live Reasoning</span>
+          <span class="thought-stream-icon">◫</span>
+          <span class="thought-stream-title">Agent Thoughts</span>
           <span class="thought-count">{thoughtStream.length}</span>
         </div>
-        <div class="thought-stream-list">
-          {#each thoughtStream as thought, k}
-            <div class="thought-entry {thought.type}" transition:fade={{ duration: 150 }}>
-              <span class="thought-seq">#{thought.seq}</span>
-              <span class="thought-stage-chip">{thought.stage}</span>
-              <span class="thought-content">{thought.text}</span>
-            </div>
+        <div class="thought-accordion-list">
+          {#each thoughtGroups as group (group.stageId)}
+            <section class="thought-accordion" class:open={expandedThoughtStages[group.stageId]}>
+              <button
+                type="button"
+                class="thought-accordion-header"
+                onclick={() => toggleThoughtStage(group.stageId)}
+                aria-expanded={Boolean(expandedThoughtStages[group.stageId])}
+              >
+                <span class="thought-stage-chip">{group.label}</span>
+                <span class="thought-preview">{group.latest.text}</span>
+                <span class="thought-count">{group.entries.length}</span>
+                <span class="thought-chevron">{expandedThoughtStages[group.stageId] ? "▲" : "▼"}</span>
+              </button>
+              {#if expandedThoughtStages[group.stageId]}
+                <div class="thought-stream-list" transition:slide={{ duration: 160 }}>
+                  {#each group.entries as thought (thought.seq)}
+                    <div class="thought-entry {thought.type}" transition:fade={{ duration: 120 }}>
+                      <span class="thought-seq">#{thought.seq}</span>
+                      <span class="thought-type">{thoughtTypeLabel(thought.type)}</span>
+                      <span class="thought-content">{thought.text}</span>
+                    </div>
+                  {/each}
+                </div>
+              {/if}
+            </section>
           {/each}
+        </div>
+      </div>
+    {:else if showThoughts}
+      <div class="thought-stream empty" transition:fade={{ duration: 160 }}>
+        <div class="thought-stream-header">
+          <span class="thought-stream-icon">◫</span>
+          <span class="thought-stream-title">Agent Thoughts</span>
+        </div>
+        <div class="thought-empty">
+          Intermediate agent thoughts will appear here.
         </div>
       </div>
     {/if}
 
+    {#if !showThoughts && thoughtStream.length > 0}
+      <button
+        type="button"
+        class="thought-summary"
+        onclick={toggleThoughts}
+        aria-label="Show grouped agent thoughts"
+      >
+        <span>Agent thoughts hidden</span>
+        <span class="thought-count">{thoughtStream.length}</span>
+      </button>
+    {/if}
+
     <!-- Agent routing info -->
-    {#if agentRouting}
+    {#if !showSkeleton && agentRouting}
       <div class="routing-info" transition:fade>
         <span class="routing-label">Agents:</span>
         {#each agentRouting.assigned_agents as agent}
@@ -634,6 +767,10 @@
     box-shadow: 0 0 8px rgba(0, 240, 255, 0.4);
   }
 
+  .progress-track.skeleton {
+    background: rgba(255, 255, 255, 0.07);
+  }
+
   /* Pipeline graph */
   .pipeline-graph {
     display: flex;
@@ -677,6 +814,55 @@
     border: 1px solid rgba(255, 255, 255, 0.04);
     transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
     position: relative;
+  }
+
+  .skeleton-node {
+    background: rgba(255, 255, 255, 0.035);
+    border-color: rgba(255, 255, 255, 0.08);
+    opacity: 0.72;
+    overflow: hidden;
+  }
+
+  .skeleton-node::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.08), transparent);
+    animation: skeleton-shimmer 1.4s ease-in-out infinite;
+    transform: translateX(-100%);
+  }
+
+  .skeleton-connector {
+    background: rgba(255, 255, 255, 0.09);
+  }
+
+  .skeleton-emoji,
+  .skeleton-dot {
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.16);
+    flex-shrink: 0;
+  }
+
+  .skeleton-emoji {
+    width: 28px;
+    height: 28px;
+  }
+
+  .skeleton-dot {
+    width: 8px;
+    height: 8px;
+  }
+
+  .skeleton-node .stage-label {
+    color: rgba(255, 255, 255, 0.42);
+  }
+
+  .skeleton-detail {
+    width: min(140px, 55%);
+    height: 6px;
+    margin-top: 6px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.12);
   }
 
   .stage-node.active {
@@ -864,6 +1050,10 @@
     100% { box-shadow: 0 0 8px rgba(0, 240, 255, 0.1), inset 0 0 8px rgba(0, 240, 255, 0.02); }
   }
 
+  @keyframes skeleton-shimmer {
+    100% { transform: translateX(100%); }
+  }
+
   @keyframes spin {
     100% { transform: rotate(360deg); }
   }
@@ -890,23 +1080,6 @@
     border-color: rgba(120, 100, 255, 0.4);
   }
 
-  .thought-bubble {
-    display: flex;
-    align-items: flex-start;
-    gap: 0.3rem;
-    margin-top: 4px;
-    padding: 0.25rem 0.5rem;
-    background: rgba(120, 100, 255, 0.06);
-    border-left: 2px solid rgba(120, 100, 255, 0.3);
-    border-radius: 0 4px 4px 0;
-    font-size: 0.65rem;
-    color: rgba(180, 160, 255, 0.8);
-    font-style: italic;
-  }
-
-  .thought-icon { font-size: 0.7rem; flex-shrink: 0; }
-  .thought-text { line-height: 1.3; }
-
   .decision-badge {
     display: flex;
     align-items: center;
@@ -929,15 +1102,19 @@
     font-family: 'JetBrains Mono', monospace;
   }
 
-  /* Live Thought Stream */
+  /* Collapsible Thought Stream */
   .thought-stream {
     margin-top: 0.75rem;
     padding: 0.5rem;
     background: rgba(0, 0, 0, 0.2);
     border: 1px solid rgba(120, 100, 255, 0.15);
     border-radius: 8px;
-    max-height: 200px;
+    max-height: 260px;
     overflow-y: auto;
+  }
+
+  .thought-stream.empty {
+    max-height: none;
   }
 
   .thought-stream-header {
@@ -968,10 +1145,64 @@
     font-weight: 600;
   }
 
+  .thought-accordion-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+
+  .thought-accordion {
+    border: 1px solid rgba(120, 100, 255, 0.12);
+    border-radius: 6px;
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.02);
+  }
+
+  .thought-accordion.open {
+    border-color: rgba(120, 100, 255, 0.28);
+    background: rgba(120, 100, 255, 0.05);
+  }
+
+  .thought-accordion-header {
+    width: 100%;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.4rem 0.5rem;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    text-align: left;
+  }
+
+  .thought-accordion-header:hover {
+    background: rgba(120, 100, 255, 0.08);
+  }
+
+  .thought-preview {
+    min-width: 0;
+    color: rgba(255, 255, 255, 0.52);
+    font-size: 0.64rem;
+    line-height: 1.3;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .thought-chevron {
+    color: rgba(180, 160, 255, 0.65);
+    font-size: 0.55rem;
+    width: 12px;
+    text-align: center;
+  }
+
   .thought-stream-list {
     display: flex;
     flex-direction: column;
     gap: 3px;
+    padding: 0.2rem 0.45rem 0.45rem;
   }
 
   .thought-entry {
@@ -1010,9 +1241,43 @@
     flex-shrink: 0;
   }
 
+  .thought-type {
+    color: rgba(255, 255, 255, 0.35);
+    font-size: 0.55rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    min-width: 48px;
+    flex-shrink: 0;
+  }
+
   .thought-content {
     flex: 1;
     min-width: 0;
     word-break: break-word;
+  }
+
+  .thought-empty {
+    color: rgba(255, 255, 255, 0.42);
+    font-size: 0.68rem;
+    padding: 0.2rem 0.1rem;
+  }
+
+  .thought-summary {
+    margin-top: 0.65rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    border: 1px solid rgba(120, 100, 255, 0.16);
+    border-radius: 999px;
+    background: rgba(120, 100, 255, 0.06);
+    color: rgba(180, 160, 255, 0.72);
+    padding: 0.25rem 0.55rem;
+    font-size: 0.66rem;
+    cursor: pointer;
+  }
+
+  .thought-summary:hover {
+    border-color: rgba(120, 100, 255, 0.35);
+    background: rgba(120, 100, 255, 0.1);
   }
 </style>

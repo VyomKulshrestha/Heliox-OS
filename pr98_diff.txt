@@ -1,0 +1,523 @@
+﻿diff --git a/daemon/pilot/config.py b/daemon/pilot/config.py
+index 630f78b..f24eabf 100644
+--- a/daemon/pilot/config.py
++++ b/daemon/pilot/config.py
+@@ -51,6 +51,9 @@ class ModelConfig:
+     rate_limit_enabled: bool = True
+     rate_limit_rpm: int = 60  # sustained requests per minute
+     rate_limit_burst: int = 5  # token bucket burst capacity
++    # Budget tracking ΓÇö cumulative monthly spend limit
++    budget_enabled: bool = True
++    budget_monthly_limit_usd: float = 10.0
+ 
+ 
+ @dataclass
+diff --git a/daemon/pilot/models/budget_tracker.py b/daemon/pilot/models/budget_tracker.py
+new file mode 100644
+index 0000000..82d1864
+--- /dev/null
++++ b/daemon/pilot/models/budget_tracker.py
+@@ -0,0 +1,173 @@
++"""Global API budget tracker ΓÇö records token usage and enforces monthly spend limits."""
++
++from __future__ import annotations
++
++import asyncio
++import logging
++from datetime import UTC, datetime
++from typing import TYPE_CHECKING
++
++import aiosqlite
++
++if TYPE_CHECKING:
++    from pilot.config import ModelConfig
++
++logger = logging.getLogger("pilot.models.budget_tracker")
++
++# (input_usd, output_usd) per 1 000 tokens
++COST_PER_1K_TOKENS: dict[str, tuple[float, float]] = {
++    "openai": (0.005, 0.015),
++    "claude": (0.003, 0.015),
++    "gemini": (0.000075, 0.0003),
++    "ollama": (0.0, 0.0),
++    "local": (0.0, 0.0),
++}
++
++SCHEMA_SQL = """
++CREATE TABLE IF NOT EXISTS token_usage (
++    id            INTEGER PRIMARY KEY AUTOINCREMENT,
++    timestamp     TEXT NOT NULL,
++    month         TEXT NOT NULL,
++    provider      TEXT NOT NULL,
++    model         TEXT NOT NULL DEFAULT '',
++    input_tokens  INTEGER NOT NULL DEFAULT 0,
++    output_tokens INTEGER NOT NULL DEFAULT 0,
++    cost_usd      REAL NOT NULL DEFAULT 0.0
++);
++CREATE INDEX IF NOT EXISTS idx_token_usage_month ON token_usage(month);
++"""
++
++
++class BudgetExceededError(RuntimeError):
++    """Raised when the monthly spend limit has been reached."""
++
++
++def _current_month() -> str:
++    return datetime.now(UTC).strftime("%Y-%m")
++
++
++def _estimate_cost(provider: str, input_tokens: int, output_tokens: int) -> float:
++    rates = COST_PER_1K_TOKENS.get(provider, (0.0, 0.0))
++    return (input_tokens * rates[0] + output_tokens * rates[1]) / 1000.0
++
++
++class BudgetTracker:
++    """Tracks cumulative LLM token spend and enforces a monthly USD limit."""
++
++    def __init__(self, config: ModelConfig, db_path: str) -> None:
++        self._enabled: bool = config.budget_enabled
++        self._monthly_limit: float = config.budget_monthly_limit_usd
++        self._db_path = db_path
++        self._db: aiosqlite.Connection | None = None
++        self._monthly_cost: float = 0.0
++        self._lock = asyncio.Lock()
++
++    async def initialize(self) -> None:
++        self._db = await aiosqlite.connect(self._db_path)
++        await self._db.executescript(SCHEMA_SQL)
++        await self._db.commit()
++        self._monthly_cost = await self._load_monthly_cost()
++        logger.info(
++            "BudgetTracker ready ΓÇö month=%s spent=%.4f limit=%.2f enabled=%s",
++            _current_month(),
++            self._monthly_cost,
++            self._monthly_limit,
++            self._enabled,
++        )
++
++    async def _load_monthly_cost(self) -> float:
++        if not self._db:
++            return 0.0
++        cursor = await self._db.execute(
++            "SELECT COALESCE(SUM(cost_usd), 0.0) FROM token_usage WHERE month = ?",
++            (_current_month(),),
++        )
++        row = await cursor.fetchone()
++        return float(row[0]) if row else 0.0
++
++    # ------------------------------------------------------------------
++    # Public API
++    # ------------------------------------------------------------------
++
++    def check_budget(self, provider: str) -> None:
++        """Synchronous budget gate ΓÇö raises BudgetExceededError if limit reached.
++
++        Uses the in-memory cached monthly total so there is zero I/O on the
++        hot path.  Free providers (ollama/local) are never blocked.
++        """
++        if not self._enabled:
++            return
++        if provider in ("ollama", "local"):
++            return
++        if self._monthly_limit > 0 and self._monthly_cost >= self._monthly_limit:
++            raise BudgetExceededError(
++                f"Monthly API budget of ${self._monthly_limit:.2f} exceeded "
++                f"(spent ${self._monthly_cost:.4f}). "
++                "Increase budget_monthly_limit_usd or reset via budget_reset."
++            )
++
++    async def record_usage(
++        self,
++        provider: str,
++        model: str,
++        input_tokens: int,
++        output_tokens: int,
++    ) -> None:
++        """Persist one call's token usage and update the in-memory monthly total."""
++        if not self._db:
++            return
++        cost = _estimate_cost(provider, input_tokens, output_tokens)
++        now = datetime.now(UTC).isoformat()
++        month = _current_month()
++        async with self._lock:
++            await self._db.execute(
++                """INSERT INTO token_usage
++                   (timestamp, month, provider, model, input_tokens, output_tokens, cost_usd)
++                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
++                (now, month, provider, model, input_tokens, output_tokens, cost),
++            )
++            await self._db.commit()
++            self._monthly_cost += cost
++
++    async def get_stats(self) -> dict:
++        """Return current-month usage summary."""
++        if not self._db:
++            return {}
++        month = _current_month()
++        cursor = await self._db.execute(
++            """SELECT
++                   COUNT(*) AS calls,
++                   COALESCE(SUM(input_tokens), 0) AS total_input,
++                   COALESCE(SUM(output_tokens), 0) AS total_output,
++                   COALESCE(SUM(cost_usd), 0.0) AS total_cost
++               FROM token_usage WHERE month = ?""",
++            (month,),
++        )
++        row = await cursor.fetchone()
++        calls, total_input, total_output, total_cost = row if row else (0, 0, 0, 0.0)
++        remaining = max(0.0, self._monthly_limit - float(total_cost)) if self._monthly_limit > 0 else None
++        return {
++            "enabled": self._enabled,
++            "month": month,
++            "calls": calls,
++            "input_tokens": total_input,
++            "output_tokens": total_output,
++            "cost_usd": round(float(total_cost), 6),
++            "limit_usd": self._monthly_limit,
++            "remaining_usd": round(remaining, 6) if remaining is not None else None,
++        }
++
++    async def reset_current_month(self) -> None:
++        """Delete all records for the current month and reset the in-memory cache."""
++        if not self._db:
++            return
++        async with self._lock:
++            await self._db.execute("DELETE FROM token_usage WHERE month = ?", (_current_month(),))
++            await self._db.commit()
++            self._monthly_cost = 0.0
++        logger.info("BudgetTracker: current month reset")
++
++    async def close(self) -> None:
++        if self._db:
++            await self._db.close()
++            self._db = None
+diff --git a/daemon/pilot/models/router.py b/daemon/pilot/models/router.py
+index b3ce5ba..4b377cf 100644
+--- a/daemon/pilot/models/router.py
++++ b/daemon/pilot/models/router.py
+@@ -2,6 +2,7 @@
+ 
+ from __future__ import annotations
+ 
++import asyncio
+ import logging
+ from typing import TYPE_CHECKING, Any
+ 
+@@ -13,6 +14,7 @@
+ 
+ if TYPE_CHECKING:
+     from pilot.config import PilotConfig
++    from pilot.models.budget_tracker import BudgetTracker
+     from pilot.security.vault import KeyVault
+ 
+ logger = logging.getLogger("pilot.models.router")
+@@ -35,6 +37,7 @@ def __init__(self, config: PilotConfig, vault: KeyVault) -> None:
+         self._llamacpp: object | None = None
+         self._resolved_ollama_model: str | None = None
+         self._cache = LLMCache(DATA_DIR / "llm_cache.db")
++        self._budget_tracker: BudgetTracker | None = None
+ 
+         if config.model.cloud_provider:
+             self._cloud = CloudClient(config, vault)
+@@ -45,6 +48,9 @@ async def initialize(self) -> None:
+         """Initialize the cache. Must be called before using generate()."""
+         await self._cache.initialize()
+ 
++    def set_budget_tracker(self, tracker: BudgetTracker) -> None:
++        self._budget_tracker = tracker
++
+     async def generate(
+         self,
+         prompt: str,
+@@ -62,7 +68,33 @@ async def generate(
+         4. Call backend (cloud or local)
+         5. Store successful response in cache
+         """
+-        # Determine which backend and model we'll use, and check cache
++        if self._budget_tracker:
++            self._budget_tracker.check_budget(self._config.model.provider)
++
++        result = await self._generate_with_cache(prompt, system=system, json_mode=json_mode, temperature=temperature)
++
++        if self._budget_tracker:
++            in_tokens = len(prompt) // 4
++            out_tokens = len(result) // 4
++            provider_key = (
++                self._config.model.cloud_provider
++                if self._config.model.provider == "cloud"
++                else self._config.model.provider
++            )
++            model_name = self._config.model.cloud_model or self._config.model.ollama_model
++            asyncio.create_task(self._budget_tracker.record_usage(provider_key, model_name, in_tokens, out_tokens))
++
++        return result
++
++    async def _generate_with_cache(
++        self,
++        prompt: str,
++        *,
++        system: str = "",
++        json_mode: bool = False,
++        temperature: float = 0.1,
++    ) -> str:
++        """Dispatch to the appropriate backend with cache and rate limiting."""
+         provider = self._config.model.provider
+         model: str | None = None
+         response: str | None = None
+@@ -105,7 +137,7 @@ async def generate(
+                 return response
+ 
+             if self._try_llamacpp():
+-                model = "llamacpp"  # Use generic name for llamacpp
++                model = "llamacpp"
+                 response = await self._cache.get(prompt, model, provider, temperature, json_mode, system)
+                 if response is not None:
+                     return response
+@@ -198,6 +230,12 @@ def rate_limit_stats(self) -> dict[str, Any]:
+         """Return current rate limiter state and lifetime counters."""
+         return self._rate_limiter.get_stats()
+ 
++    async def budget_stats(self) -> dict:
++        """Return current budget tracker stats, or empty dict if not configured."""
++        if self._budget_tracker:
++            return await self._budget_tracker.get_stats()
++        return {}
++
+     async def check_health(self) -> dict[str, bool]:
+         """Check which backends are available."""
+         status: dict[str, bool] = {}
+diff --git a/daemon/pilot/server.py b/daemon/pilot/server.py
+index 194b27d..0a9afd3 100644
+--- a/daemon/pilot/server.py
++++ b/daemon/pilot/server.py
+@@ -114,6 +114,7 @@ def __init__(self, config: PilotConfig) -> None:
+         self._voice_listener: Any = None
+         self._autonomous: Any = None
+         self._proactive: Any = None
++        self._budget_tracker: Any = None
+         self._running = False
+         self._pending_confirms: dict[str, PendingConfirmation] = {}
+ 
+@@ -146,6 +147,13 @@ async def initialize(self) -> None:
+         self._vault = KeyVault(self.config)
+         model_router = ModelRouter(self.config, self._vault)
+         await model_router.initialize()
++
++        from pilot.models.budget_tracker import BudgetTracker
++
++        self._budget_tracker = BudgetTracker(self.config.model, str(DB_FILE))
++        await self._budget_tracker.initialize()
++        model_router.set_budget_tracker(self._budget_tracker)
++
+         audit = AuditLogger()
+         validator = ActionValidator(self.config)
+         permissions = PermissionChecker(self.config)
+@@ -388,6 +396,9 @@ async def initialize(self) -> None:
+             "proactive_stats": self._handle_proactive_stats,
+             "proactive_accept": self._handle_proactive_accept,
+             "proactive_dismiss": self._handle_proactive_dismiss,
++            # Budget tracking endpoints
++            "budget_stats": self._handle_budget_stats,
++            "budget_reset": self._handle_budget_reset,
+         }
+ 
+     async def _broadcast_notification(self, method: str, params: Any) -> None:
+@@ -1792,11 +1803,28 @@ async def stop(self) -> None:
+             await self._reflector.close()
+         if self._memory:
+             await self._memory.close()
++        if self._budget_tracker:
++            await self._budget_tracker.close()
+         # Unload TRIBE v2 model
+         if self._tribe_engine and self._tribe_engine.is_loaded:
+             self._tribe_engine.unload_model()
+         logger.info("Pilot daemon stopped")
+ 
++    # ΓöÇΓöÇ Budget Tracking Handlers ΓöÇΓöÇ
++
++    async def _handle_budget_stats(self, params: dict, ws: ServerConnection) -> dict:
++        """Return current-month token usage and cost summary."""
++        if not self._budget_tracker:
++            return {}
++        return await self._budget_tracker.get_stats()
++
++    async def _handle_budget_reset(self, params: dict, ws: ServerConnection) -> dict:
++        """Delete all token-usage records for the current month."""
++        if not self._budget_tracker:
++            return {"status": "ok"}
++        await self._budget_tracker.reset_current_month()
++        return {"status": "ok"}
++
+     # ΓöÇΓöÇ Cognitive Intelligence (TRIBE v2) Handlers ΓöÇΓöÇ
+ 
+     async def _handle_cognitive_stats(self, params: dict, ws: ServerConnection) -> dict:
+diff --git a/daemon/tests/test_budget_tracker.py b/daemon/tests/test_budget_tracker.py
+new file mode 100644
+index 0000000..5b36fee
+--- /dev/null
++++ b/daemon/tests/test_budget_tracker.py
+@@ -0,0 +1,164 @@
++"""Unit tests for pilot.models.budget_tracker.BudgetTracker.
++
++Run with:
++    cd daemon
++    pytest tests/test_budget_tracker.py -v --tb=short
++"""
++
++from __future__ import annotations
++
++from dataclasses import dataclass
++
++import pytest
++
++from pilot.models.budget_tracker import BudgetExceededError, BudgetTracker
++
++
++# ---------------------------------------------------------------------------
++# Minimal config stub
++# ---------------------------------------------------------------------------
++
++
++@dataclass
++class FakeModelConfig:
++    budget_enabled: bool = True
++    budget_monthly_limit_usd: float = 1.0
++
++
++# ---------------------------------------------------------------------------
++# Helpers
++# ---------------------------------------------------------------------------
++
++
++async def make_tracker(tmp_path, **kwargs) -> BudgetTracker:
++    cfg = FakeModelConfig(**kwargs)
++    tracker = BudgetTracker(cfg, str(tmp_path / "budget.db"))
++    await tracker.initialize()
++    return tracker
++
++
++# ---------------------------------------------------------------------------
++# Tests
++# ---------------------------------------------------------------------------
++
++
++@pytest.mark.asyncio
++async def test_record_usage_accumulates(tmp_path):
++    """record_usage() persists rows and accumulates the monthly cost."""
++    tracker = await make_tracker(tmp_path)
++    await tracker.record_usage("openai", "gpt-4", 1000, 500)
++    await tracker.record_usage("openai", "gpt-4", 1000, 500)
++    stats = await tracker.get_stats()
++    assert stats["calls"] == 2
++    assert stats["input_tokens"] == 2000
++    assert stats["output_tokens"] == 1000
++    # 2 ├ù ((1000├ù0.005 + 500├ù0.015) / 1000) = 2 ├ù 0.0125 = 0.025
++    assert abs(stats["cost_usd"] - 0.025) < 1e-6
++    await tracker.close()
++
++
++@pytest.mark.asyncio
++async def test_check_budget_raises_when_exceeded(tmp_path):
++    """check_budget() raises BudgetExceededError once the limit is hit."""
++    tracker = await make_tracker(tmp_path, budget_monthly_limit_usd=0.001)
++    # Record enough usage to exceed the $0.001 limit
++    await tracker.record_usage("openai", "gpt-4", 1000, 1000)
++    with pytest.raises(BudgetExceededError):
++        tracker.check_budget("cloud")
++    await tracker.close()
++
++
++@pytest.mark.asyncio
++async def test_check_budget_noop_when_disabled(tmp_path):
++    """check_budget() never raises when budget_enabled=False."""
++    tracker = await make_tracker(tmp_path, budget_enabled=False, budget_monthly_limit_usd=0.0)
++    await tracker.record_usage("openai", "gpt-4", 100_000, 100_000)
++    tracker.check_budget("cloud")  # must not raise
++    await tracker.close()
++
++
++@pytest.mark.asyncio
++async def test_check_budget_noop_for_free_providers(tmp_path):
++    """check_budget() never blocks ollama or local providers."""
++    tracker = await make_tracker(tmp_path, budget_monthly_limit_usd=0.0)
++    tracker.check_budget("ollama")  # must not raise
++    tracker.check_budget("local")   # must not raise
++    await tracker.close()
++
++
++@pytest.mark.asyncio
++async def test_get_stats_shape(tmp_path):
++    """get_stats() returns all expected keys."""
++    tracker = await make_tracker(tmp_path)
++    stats = await tracker.get_stats()
++    for key in ("enabled", "month", "calls", "input_tokens", "output_tokens", "cost_usd", "limit_usd", "remaining_usd"):
++        assert key in stats, f"Missing key: {key}"
++    await tracker.close()
++
++
++@pytest.mark.asyncio
++async def test_get_stats_remaining_decreases(tmp_path):
++    """remaining_usd decreases after recording usage."""
++    tracker = await make_tracker(tmp_path, budget_monthly_limit_usd=1.0)
++    before = (await tracker.get_stats())["remaining_usd"]
++    await tracker.record_usage("openai", "gpt-4", 1000, 500)
++    after = (await tracker.get_stats())["remaining_usd"]
++    assert after < before
++    await tracker.close()
++
++
++@pytest.mark.asyncio
++async def test_reset_current_month(tmp_path):
++    """reset_current_month() zeroes the cached total and removes DB rows."""
++    tracker = await make_tracker(tmp_path, budget_monthly_limit_usd=0.001)
++    await tracker.record_usage("openai", "gpt-4", 1000, 1000)
++    # Verify limit is exceeded before reset
++    with pytest.raises(BudgetExceededError):
++        tracker.check_budget("cloud")
++
++    await tracker.reset_current_month()
++
++    stats = await tracker.get_stats()
++    assert stats["calls"] == 0
++    assert stats["cost_usd"] == 0.0
++    # After reset the budget check must pass again
++    tracker.check_budget("cloud")
++    await tracker.close()
++
++
++@pytest.mark.asyncio
++async def test_cross_month_isolation(tmp_path):
++    """Usage from a different month is not counted against the current month."""
++    import aiosqlite
++    from datetime import UTC, datetime
++
++    tracker = await make_tracker(tmp_path)
++    db_path = str(tmp_path / "budget.db")
++
++    # Directly insert a row for a past month to simulate historical data
++    async with aiosqlite.connect(db_path) as db:
++        await db.execute(
++            """INSERT INTO token_usage
++               (timestamp, month, provider, model, input_tokens, output_tokens, cost_usd)
++               VALUES (?, ?, ?, ?, ?, ?, ?)""",
++            (datetime.now(UTC).isoformat(), "2000-01", "openai", "gpt-4", 100000, 100000, 999.0),
++        )
++        await db.commit()
++
++    # Re-initialize a fresh tracker ΓÇö it should only load the current month
++    tracker2 = await make_tracker(tmp_path, budget_monthly_limit_usd=1.0)
++    stats = await tracker2.get_stats()
++    assert stats["cost_usd"] == 0.0
++    tracker2.check_budget("cloud")  # must not raise despite $999 in past month
++    await tracker2.close()
++    await tracker.close()
++
++
++@pytest.mark.asyncio
++async def test_ollama_cost_is_zero(tmp_path):
++    """Ollama usage records $0 cost."""
++    tracker = await make_tracker(tmp_path)
++    await tracker.record_usage("ollama", "llama3", 10000, 10000)
++    stats = await tracker.get_stats()
++    assert stats["cost_usd"] == 0.0
++    await tracker.close()

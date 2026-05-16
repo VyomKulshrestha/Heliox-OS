@@ -5,11 +5,13 @@ Memory updates are asynchronous and never block the main execution pipeline.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+import aiofiles.os
 import aiosqlite
 
 from pilot.config import DATA_DIR, DB_FILE
@@ -52,16 +54,17 @@ class MemoryStore:
         self._workspace_index = None
 
     async def initialize(self) -> None:
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        await aiofiles.os.makedirs(DATA_DIR, exist_ok=True)
         self._db = await aiosqlite.connect(str(DB_FILE))
         await self._db.executescript(SCHEMA_SQL)
         await self._db.commit()
-        self._init_chroma()
+        await asyncio.to_thread(self._init_chroma)
         self._init_workspace_index()
-        
+
     def _init_workspace_index(self) -> None:
         """Initialize the workspace RAG index."""
         from pilot.memory.workspace_index import WorkspaceIndex
+
         workspace_dir = DATA_DIR / "workspace_index"
         self._workspace_index = WorkspaceIndex(workspace_dir)
         logger.info("WorkspaceIndex initialized at %s", workspace_dir)
@@ -109,7 +112,8 @@ class MemoryStore:
 
         if self._chroma_collection is not None:
             try:
-                self._chroma_collection.add(
+                await asyncio.to_thread(
+                    self._chroma_collection.add,
                     documents=[user_input],
                     metadatas=[
                         {
@@ -129,7 +133,11 @@ class MemoryStore:
 
         if self._chroma_collection is not None:
             try:
-                results = self._chroma_collection.query(query_texts=[query], n_results=n_results)
+                results = await asyncio.to_thread(
+                    self._chroma_collection.query,
+                    query_texts=[query],
+                    n_results=n_results,
+                )
                 if results["documents"] and results["documents"][0]:
                     parts.append("Related past requests:")
                     for doc, meta in zip(results["documents"][0], results["metadatas"][0], strict=False):
@@ -185,12 +193,13 @@ class MemoryStore:
         cursor = await self._db.execute("SELECT key, value FROM user_preferences")
         rows = await cursor.fetchall()
         return {r[0]: r[1] for r in rows}
-    
+
     async def index_workspace(self, folder_path: str) -> dict:
         """Index a workspace folder for semantic search."""
         if self._workspace_index is None:
             return {"success": False, "error": "Workspace index not initialized"}
         import asyncio
+
         return await asyncio.to_thread(self._workspace_index.index_workspace, folder_path)
 
     async def search_workspace(self, query: str, n_results: int = 5) -> list:
@@ -198,9 +207,9 @@ class MemoryStore:
         if self._workspace_index is None:
             return []
         import asyncio
+
         return await asyncio.to_thread(self._workspace_index.search, query, n_results)
-    
-    
+
     async def close(self) -> None:
         if self._db:
             await self._db.close()

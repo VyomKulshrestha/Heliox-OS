@@ -62,6 +62,7 @@ interface SessionState {
   liveActions: LiveActionState[];
   totalTokens: number;
   estimatedCost: number;
+  streamingText: string;
 }
 
 const initialState: SessionState = {
@@ -76,6 +77,7 @@ const initialState: SessionState = {
   liveActions: [],
   totalTokens: 0,
   estimatedCost: 0,
+  streamingText: "",
 };
 
 const MODEL_RATES: Record<string, number> = {
@@ -169,6 +171,13 @@ function createSession() {
           confirmActions: (p.actions ?? []) as PlanAction[],
         }));
         break;
+
+      case "token_stream":
+        update((s) => ({
+          ...s,
+          streamingText: s.streamingText + String(p.token ?? ""),
+        }));
+        break;
     }
   });
 
@@ -191,6 +200,7 @@ function createSession() {
       liveActions: [],
       confirmRequired: false,
       confirmPlanId: "",
+      streamingText: "",
       messages: [
         ...s.messages,
         { type: "user", text: input, timestamp: Date.now() },
@@ -222,16 +232,18 @@ function createSession() {
         : undefined;
 
       if (result.status === "error") {
+        const streamingContent = get(session).streamingText;
         update((s) => ({
           ...s,
           loading: false,
           phase: "",
           currentPlan: null,
+          streamingText: "",
           messages: [
             ...s.messages,
             {
               type: "error" as MessageType,
-              text: String(result.message ?? result.explanation ?? "Unknown error"),
+              text: streamingContent || String(result.message ?? result.explanation ?? "Unknown error"),
               timestamp: Date.now(),
             },
           ],
@@ -243,6 +255,7 @@ function createSession() {
           phase: "",
           currentPlan: null,
           confirmRequired: false,
+          streamingText: "",
           messages: [
             ...s.messages,
             {
@@ -278,12 +291,15 @@ function createSession() {
         }
         const estimatedCost = Number((estimatedTokens * rate).toFixed(6));
 
+        const finalText = get(session).streamingText || responseText;
+
         update((s) => ({
           ...s,
           loading: false,
           phase: "",
           currentPlan: null,
           confirmRequired: false,
+          streamingText: "",
 
           totalTokens: s.totalTokens + estimatedTokens,
           estimatedCost: s.estimatedCost + estimatedCost,
@@ -292,7 +308,7 @@ function createSession() {
             ...s.messages,
             {
               type: "result" as MessageType,
-              text: responseText,
+              text: finalText,
               timestamp: Date.now(),
               actionResults,
               verification,
@@ -305,6 +321,7 @@ function createSession() {
         ...s,
         loading: false,
         phase: "",
+        streamingText: "",
         messages: [
           ...s.messages,
           {

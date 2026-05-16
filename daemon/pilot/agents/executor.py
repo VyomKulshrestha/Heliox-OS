@@ -49,9 +49,8 @@ from pilot.actions import (
     TriggerParams,
     VolumeParams,
     WifiParams,
-    WorkspaceParams,
     WindowParams,
-    
+    WorkspaceParams,
 )
 from pilot.agents.sandbox import SimulationSandbox
 from pilot.security.audit import AuditLogger
@@ -80,7 +79,7 @@ class Executor:
         self._permissions = permissions
         self._audit = audit
         self._snapshot_mgr = SnapshotManager(config)
-        self._simulation_sandbox = SimulationSandbox()
+        self._simulation_sandbox = SimulationSandbox(allowed_commands=config.restrictions.sandbox_allowed_commands)
         self._last_output: str = ""  # For output chaining between steps
         self._largest_output: str = ""  # Largest output from any step in the pipeline
 
@@ -93,6 +92,7 @@ class Executor:
             ActionType.FILE_COPY: self._exec_file_copy,
             ActionType.FILE_LIST: self._exec_file_list,
             ActionType.FILE_SEARCH: self._exec_file_search,
+            ActionType.DIRECTORY_SUMMARY: self._exec_directory_summary,
             ActionType.FILE_PERMISSIONS: self._exec_file_permissions,
             # -- Package operations --
             ActionType.PACKAGE_INSTALL: self._exec_package_install,
@@ -330,7 +330,7 @@ class Executor:
                 logger.warning("Snapshot creation failed: %s", e)
 
         for i, action in enumerate(plan.actions):
-            self._audit.log_action_start(action, plan_id)
+            await self._audit.log_action_start(action, plan_id)
 
             if on_action_start:
                 await on_action_start(action)
@@ -339,7 +339,7 @@ class Executor:
             action = self._inject_previous_output(action)
 
             result = await self._execute_single(action, snapshot_id)
-            self._audit.log_action_result(result, plan_id)
+            await self._audit.log_action_result(result, plan_id)
 
             if on_action_complete:
                 await on_action_complete(result)
@@ -375,7 +375,7 @@ class Executor:
         report = self._simulation_sandbox.simulate(plan)
 
         for index, action in enumerate(plan.actions):
-            self._audit.log_action_start(action, plan_id, dry_run=True)
+            await self._audit.log_action_start(action, plan_id, dry_run=True)
 
             if on_action_start:
                 await on_action_start(action)
@@ -390,7 +390,7 @@ class Executor:
                 output = f"(dry run) Would execute {action.action_type.value} on {action.target or 'target'}"
 
             result = ActionResult(action=action, success=True, output=output)
-            self._audit.log_action_result(result, plan_id, dry_run=True)
+            await self._audit.log_action_result(result, plan_id, dry_run=True)
 
             if on_action_complete:
                 await on_action_complete(result)
@@ -575,6 +575,17 @@ class Executor:
 
         params: FileParams = action.parameters  # type: ignore[assignment]
         return await file_search(params.path, params.pattern or "*")
+
+    async def _exec_directory_summary(self, action: Action) -> str:
+        from pilot.system.filesystem import directory_summary
+
+        params: FileParams = action.parameters  # type: ignore[assignment]
+        return await directory_summary(
+            params.path,
+            max_depth=params.max_depth,
+            max_entries=params.max_entries,
+            ignore_dirs=params.ignore_dirs,
+        )
 
     async def _exec_file_permissions(self, action: Action) -> str:
         from pilot.system.filesystem import file_permissions
@@ -1449,9 +1460,18 @@ class Executor:
         import tempfile
 
         from pilot.system.code_exec import execute_code
+        from pilot.system.sandbox_exec import SandboxConfig
 
         p: CodeExecParams = action.parameters  # type: ignore[assignment]
         code = p.code
+
+        # Build sandbox config from live security settings
+        sandbox_cfg = SandboxConfig(
+            mode=getattr(self._config.security, "sandbox_mode", "auto"),
+            memory_mb=getattr(self._config.security, "sandbox_memory_mb", 128),
+            timeout=getattr(self._config.security, "sandbox_timeout", p.timeout),
+            network=getattr(self._config.security, "sandbox_network", False),
+        )
 
         # If there's previous output available, inject it as Python variables
         if p.language.lower().strip() in ("python", "py", "python3"):
@@ -1484,7 +1504,7 @@ class Executor:
             code = sanitize_python_code(code)
 
         logger.info("Code execute: running %d chars of code", len(code))
-        result = await execute_code(code, p.language, p.timeout)
+        result = await execute_code(code, p.language, p.timeout, sandbox_cfg=sandbox_cfg)
         logger.info("Code execute result (%d chars): %s", len(result), result[:200] if result else "(empty)")
 
         # --- Auto-retry on failure: ask LLM to fix the code ---
@@ -1524,7 +1544,7 @@ class Executor:
                     fixed_code = sanitize_python_code(fixed_code)
 
                 logger.info("Auto-fix: retrying with LLM-fixed code (%d chars)", len(fixed_code))
-                retry_result = await execute_code(fixed_code, p.language, p.timeout)
+                retry_result = await execute_code(fixed_code, p.language, p.timeout, sandbox_cfg=sandbox_cfg)
 
                 # Only use the retry if it's better (no error)
                 if "[STDERR]" not in retry_result and "[EXIT CODE:" not in retry_result:
@@ -1543,9 +1563,17 @@ class Executor:
 
     async def _exec_code_generate(self, action: Action) -> str:
         from pilot.system.code_exec import generate_and_execute
+        from pilot.system.sandbox_exec import SandboxConfig
 
         p: CodeExecParams = action.parameters  # type: ignore[assignment]
-        return await generate_and_execute(p.task_description, p.language, p.timeout)
+
+        sandbox_cfg = SandboxConfig(
+            mode=getattr(self._config.security, "sandbox_mode", "auto"),
+            memory_mb=getattr(self._config.security, "sandbox_memory_mb", 128),
+            timeout=getattr(self._config.security, "sandbox_timeout", p.timeout),
+            network=getattr(self._config.security, "sandbox_network", False),
+        )
+        return await generate_and_execute(p.task_description, p.language, p.timeout, sandbox_cfg=sandbox_cfg)
 
     # ======================================================================
     # TIER 2: FILE CONTENT INTELLIGENCE
@@ -1608,13 +1636,14 @@ class Executor:
 
         p: ApiRequestParams = action.parameters  # type: ignore[assignment]
         return await scrape_url(p.url, p.selector, p.extract)
-    
+
     # ======================================================================
     # WORKSPACE SEMANTIC SEARCH (RAG)
     # ======================================================================
 
     async def _exec_workspace_index(self, action: Action) -> str:
         import asyncio
+
         from pilot.config import DATA_DIR
         from pilot.memory.workspace_index import WorkspaceIndex
 
@@ -1635,6 +1664,7 @@ class Executor:
 
     async def _exec_workspace_search(self, action: Action) -> str:
         import asyncio
+
         from pilot.config import DATA_DIR
         from pilot.memory.workspace_index import WorkspaceIndex
 

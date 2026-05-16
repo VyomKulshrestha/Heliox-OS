@@ -1,0 +1,510 @@
+﻿diff --git a/daemon/pilot/agents/planner.py b/daemon/pilot/agents/planner.py
+index 0155587..cef72a8 100644
+--- a/daemon/pilot/agents/planner.py
++++ b/daemon/pilot/agents/planner.py
+@@ -435,8 +435,17 @@ def _try_fast_path(user_input: str) -> ActionPlan | None:
+ 
+         return None  # Not a simple command ΓÇö use LLM
+ 
+-    async def plan(self, user_input: str, error_context: str = "", screen_context: str = "") -> ActionPlan:
+-        """Generate an action plan from a natural language request."""
++    async def plan(
++        self,
++        user_input: str,
++        error_context: str = "",
++        screen_context: str = "",
++        stream_callback: callable | None = None,
++    ) -> ActionPlan:
++        """Generate an action plan from a natural language request.
++
++        If stream_callback is provided, LLM tokens will be streamed via callback.
++        """
+         try:
+             # Fast-path: skip LLM for simple, pattern-matchable commands
+             if not error_context:
+@@ -463,7 +472,7 @@ async def plan(self, user_input: str, error_context: str = "", screen_context: s
+                 )
+ 
+             raw_response = await self._model.generate(
+-                prompt, system=self._system_prompt, json_mode=True, temperature=0.1
++                prompt, system=self._system_prompt, json_mode=True, temperature=0.1, stream_callback=stream_callback
+             )
+             if self._orchestrator and not error_context:
+                 if self._orchestrator.is_complex_prompt(user_input):
+diff --git a/daemon/pilot/models/cloud.py b/daemon/pilot/models/cloud.py
+index 99b712d..5a0f75c 100644
+--- a/daemon/pilot/models/cloud.py
++++ b/daemon/pilot/models/cloud.py
+@@ -45,7 +45,9 @@ async def generate(
+         system: str = "",
+         json_mode: bool = False,
+         temperature: float = 0.1,
++        stream_callback: callable | None = None,
+     ) -> str:
++        """Generate a completion. If stream_callback is provided, tokens are streamed via callback."""
+         provider = self._config.model.cloud_provider
+         model = self._config.model.cloud_model or DEFAULT_MODELS.get(provider, "")
+ 
+@@ -70,7 +72,7 @@ async def generate(
+                 if provider == "gemini":
+                     # When we have backup keys, reduce retries per key to rotate faster
+                     max_retries = 1 if (has_backups and key_idx < len(api_keys) - 1) else MAX_RETRIES
+-                    return await self._call_gemini_native(
++                    result = await self._call_gemini_native(
+                         api_key,
+                         model,
+                         prompt,
+@@ -79,12 +81,21 @@ async def generate(
+                         temperature,
+                         max_retries=max_retries,
+                     )
++                    if stream_callback:
++                        stream_callback(result)
++                    return result
+                 elif provider == "claude":
+-                    return await self._call_anthropic(api_key, model, prompt, system, temperature)
++                    result = await self._call_anthropic(api_key, model, prompt, system, temperature)
++                    if stream_callback:
++                        stream_callback(result)
++                    return result
+                 else:
+-                    return await self._call_openai_compat(
++                    result = await self._call_openai_compat(
+                         provider, api_key, model, prompt, system, json_mode, temperature
+                     )
++                    if stream_callback:
++                        stream_callback(result)
++                    return result
+             except Exception as e:
+                 last_error = e
+                 err_str = str(e).lower()
+diff --git a/daemon/pilot/models/ollama.py b/daemon/pilot/models/ollama.py
+index 5375337..cb326de 100644
+--- a/daemon/pilot/models/ollama.py
++++ b/daemon/pilot/models/ollama.py
+@@ -55,12 +55,17 @@ async def generate(
+         json_mode: bool = False,
+         temperature: float = 0.1,
+         stream: bool = False,
++        stream_callback: callable | None = None,
+     ) -> str:
+-        """Generate a completion. Returns the full response text."""
++        """Generate a completion. Returns the full response text.
++
++        If stream_callback is provided, tokens are streamed via the callback
++        and the full response is returned at the end.
++        """
+         payload: dict = {
+             "model": model,
+             "prompt": prompt,
+-            "stream": stream,
++            "stream": stream_callback is not None,
+             "options": {"temperature": temperature},
+         }
+         if system:
+@@ -68,6 +73,9 @@ async def generate(
+         if json_mode:
+             payload["format"] = "json"
+ 
++        if stream_callback is not None:
++            return await self._generate_stream(model, prompt, system, json_mode, temperature, stream_callback)
++
+         resp = await self._client.post(
+             f"{self._base_url}/api/generate",
+             json=payload,
+@@ -81,6 +89,49 @@ async def generate(
+         data = resp.json()
+         return data.get("response", "")
+ 
++    async def _generate_stream(
++        self,
++        model: str,
++        prompt: str,
++        system: str,
++        json_mode: bool,
++        temperature: float,
++        stream_callback: callable,
++    ) -> str:
++        """Generate with streaming - calls stream_callback for each token."""
++        payload: dict = {
++            "model": model,
++            "prompt": prompt,
++            "stream": True,
++            "options": {"temperature": temperature},
++        }
++        if system:
++            payload["system"] = system
++        if json_mode:
++            payload["format"] = "json"
++
++        full_response = ""
++        async with self._client.stream("POST", f"{self._base_url}/api/generate", json=payload) as resp:
++            if resp.status_code == 404:
++                available = await self.list_models()
++                raise OllamaModelNotFoundError(model, available)
++
++            resp.raise_for_status()
++
++            async for line in resp.aiter_lines():
++                if not line.strip():
++                    continue
++                try:
++                    data = __import__("json").loads(line)
++                    token = data.get("response", "")
++                    if token:
++                        full_response += token
++                        stream_callback(token)
++                except Exception:
++                    continue
++
++        return full_response
++
+     async def chat(
+         self,
+         model: str,
+diff --git a/daemon/pilot/models/router.py b/daemon/pilot/models/router.py
+index b3ce5ba..07c13b9 100644
+--- a/daemon/pilot/models/router.py
++++ b/daemon/pilot/models/router.py
+@@ -52,34 +52,71 @@ async def generate(
+         system: str = "",
+         json_mode: bool = False,
+         temperature: float = 0.1,
++        stream_callback: callable | None = None,
+     ) -> str:
+         """Generate a completion from the best available model.
+ 
++        If stream_callback is provided, tokens will be streamed via the callback
++        instead of waiting for the full response.
++
+         Flow:
+         1. Determine model and provider
+-        2. Check cache for exact match
++        2. Check cache for exact match (skip cache if streaming)
+         3. On cache miss, acquire rate limit token
+         4. Call backend (cloud or local)
+-        5. Store successful response in cache
++        5. Store successful response in cache (skip if streaming)
+         """
+-        # Determine which backend and model we'll use, and check cache
+         provider = self._config.model.provider
+         model: str | None = None
+         response: str | None = None
+ 
+-        # Try cloud backend first if configured
+-        if provider == "cloud" and self._cloud:
+-            model = self._config.model.cloud_model or "unknown"
+-            response = await self._cache.get(prompt, model, provider, temperature, json_mode, system)
+-            if response is not None:
+-                return response
++        # Skip cache when streaming - can't cache partial tokens
++        if not stream_callback:
++            # Try cloud backend first if configured
++            if provider == "cloud" and self._cloud:
++                model = self._config.model.cloud_model or "unknown"
++                response = await self._cache.get(prompt, model, provider, temperature, json_mode, system)
++                if response is not None:
++                    return response
++
++            # Try ollama or local backend
++            if provider in ("ollama", "local"):
++                if await self._ollama.is_available():
++                    model = await self._resolve_ollama_model()
++                    response = await self._cache.get(prompt, model, provider, temperature, json_mode, system)
++                    if response is not None:
++                        return response
++
++                if self._try_llamacpp():
++                    model = "llamacpp"
++                    response = await self._cache.get(prompt, model, provider, temperature, json_mode, system)
++                    if response is not None:
++                        return response
++
++            # Fallback: try ollama if not already tried
++            if provider != "ollama" and await self._ollama.is_available():
++                model = await self._resolve_ollama_model()
++                response = await self._cache.get(prompt, model, "ollama", temperature, json_mode, system)
++                if response is not None:
++                    return response
++
++            # Final fallback: cloud API
++            if self._cloud and provider not in ("ollama", "local"):
++                model = self._config.model.cloud_model or "unknown"
++                response = await self._cache.get(prompt, model, "cloud", temperature, json_mode, system)
++                if response is not None:
++                    return response
++
++        # Now do the actual generation with rate limiting
++        await self._rate_limiter.acquire()
+ 
++        if provider == "cloud" and self._cloud:
+             try:
+-                await self._rate_limiter.acquire()
+                 response = await self._cloud.generate(
+-                    prompt, system=system, json_mode=json_mode, temperature=temperature
++                    prompt, system=system, json_mode=json_mode, temperature=temperature, stream_callback=stream_callback
+                 )
+-                await self._cache.set(prompt, model, provider, temperature, json_mode, response, system)
++                if not stream_callback and model:
++                    await self._cache.set(prompt, model, provider, temperature, json_mode, response, system)
+                 return response
+             except Exception as e:
+                 logger.error("Cloud API failed: %s", e)
+@@ -89,61 +126,39 @@ async def generate(
+         if provider in ("ollama", "local"):
+             if await self._ollama.is_available():
+                 model = await self._resolve_ollama_model()
+-                response = await self._cache.get(prompt, model, provider, temperature, json_mode, system)
+-                if response is not None:
+-                    return response
+-
+-                await self._rate_limiter.acquire()
+                 response = await self._ollama.generate(
+-                    model,
+-                    prompt,
+-                    system=system,
+-                    json_mode=json_mode,
+-                    temperature=temperature,
++                    model, prompt, system=system, json_mode=json_mode, temperature=temperature, stream_callback=stream_callback
+                 )
+-                await self._cache.set(prompt, model, provider, temperature, json_mode, response, system)
++                if not stream_callback and model:
++                    await self._cache.set(prompt, model, provider, temperature, json_mode, response, system)
+                 return response
+ 
+             if self._try_llamacpp():
+-                model = "llamacpp"  # Use generic name for llamacpp
+-                response = await self._cache.get(prompt, model, provider, temperature, json_mode, system)
+-                if response is not None:
+-                    return response
+-
+-                await self._rate_limiter.acquire()
++                model = "llamacpp"
+                 response = await self._llamacpp_generate(prompt, system=system, temperature=temperature)
+-                await self._cache.set(prompt, model, provider, temperature, json_mode, response, system)
++                if not stream_callback and model:
++                    await self._cache.set(prompt, model, provider, temperature, json_mode, response, system)
+                 return response
+ 
+         # Fallback: try ollama if not already tried
+         if provider != "ollama" and await self._ollama.is_available():
+             model = await self._resolve_ollama_model()
+-            response = await self._cache.get(prompt, model, "ollama", temperature, json_mode, system)
+-            if response is not None:
+-                return response
+-
+-            await self._rate_limiter.acquire()
+             response = await self._ollama.generate(
+-                model,
+-                prompt,
+-                system=system,
+-                json_mode=json_mode,
+-                temperature=temperature,
++                model, prompt, system=system, json_mode=json_mode, temperature=temperature, stream_callback=stream_callback
+             )
+-            await self._cache.set(prompt, model, "ollama", temperature, json_mode, response, system)
++            if not stream_callback and model:
++                await self._cache.set(prompt, model, "ollama", temperature, json_mode, response, system)
+             return response
+ 
+         # Final fallback: cloud API
+         if self._cloud:
+             model = self._config.model.cloud_model or "unknown"
+-            response = await self._cache.get(prompt, model, "cloud", temperature, json_mode, system)
+-            if response is not None:
+-                return response
+-
+             logger.warning("Falling back to cloud API ΓÇö Ollama unavailable")
+-            await self._rate_limiter.acquire()
+-            response = await self._cloud.generate(prompt, system=system, json_mode=json_mode, temperature=temperature)
+-            await self._cache.set(prompt, model, "cloud", temperature, json_mode, response, system)
++            response = await self._cloud.generate(
++                prompt, system=system, json_mode=json_mode, temperature=temperature, stream_callback=stream_callback
++            )
++            if not stream_callback and model:
++                await self._cache.set(prompt, model, "cloud", temperature, json_mode, response, system)
+             return response
+ 
+         raise RuntimeError("No model backend available. Start Ollama or configure a cloud API key.")
+diff --git a/daemon/pilot/server.py b/daemon/pilot/server.py
+index 194b27d..955b10f 100644
+--- a/daemon/pilot/server.py
++++ b/daemon/pilot/server.py
+@@ -613,7 +613,16 @@ async def _handle_execute(self, params: dict[str, Any], ws: ServerConnection) ->
+                 except Exception:
+                     pass
+ 
+-            plan = await self._planner.plan(user_input, error_context=error_context, screen_context=_screen_ctx)
++            # Create token stream callback for real-time LLM response streaming
++            async def stream_token(token: str) -> None:
++                await ws.send(_notification("token_stream", {"token": token}))
++
++            # Only enable streaming on the first attempt (not on retries)
++            stream_callback = stream_token if attempt == 0 else None
++
++            plan = await self._planner.plan(
++                user_input, error_context=error_context, screen_context=_screen_ctx, stream_callback=stream_callback
++            )
+             if plan.error:
+                 if emit:
+                     await emit.phase_error("planning", PLANNER_ERROR, plan.error, parent_id=plan_phase)
+diff --git a/tauri-app/ui/src/App.svelte b/tauri-app/ui/src/App.svelte
+index 2e6b9fb..23a7400 100644
+--- a/tauri-app/ui/src/App.svelte
++++ b/tauri-app/ui/src/App.svelte
+@@ -226,15 +226,25 @@
+             {#if $session.loading}
+               <ExecutionGraph />
+               
+-              <div class="message system">
+-                <div class="msg-header">
+-                  <span class="msg-label">HELIOX</span>
+-                  <span class="phase-badge">{$session.phase || "thinking"}</span>
++              {#if $session.streamingText}
++                <div class="message system streaming">
++                  <div class="msg-header">
++                    <span class="msg-label">HELIOX</span>
++                    <span class="phase-badge">streaming</span>
++                  </div>
++                  <span class="msg-text">{$session.streamingText}</span>
+                 </div>
+-                <span class="msg-text loading-dots">
+-                  {$session.phase ? `${$session.phase}` : "Thinking"}
+-                </span>
+-              </div>
++              {:else}
++                <div class="message system">
++                  <div class="msg-header">
++                    <span class="msg-label">HELIOX</span>
++                    <span class="phase-badge">{$session.phase || "thinking"}</span>
++                  </div>
++                  <span class="msg-text loading-dots">
++                    {$session.phase ? `${$session.phase}` : "Thinking"}
++                  </span>
++                </div>
++              {/if}
+             {/if}
+           {/if}
+         </div>
+@@ -686,6 +696,18 @@
+ 
+   .error-msg .msg-label { color: var(--danger); }
+ 
++  /* Streaming messages */
++  .message.system.streaming {
++    background: var(--bg-tertiary);
++    border-left: 3px solid var(--accent);
++    animation: pulse-glow 2s ease-in-out infinite;
++  }
++
++  @keyframes pulse-glow {
++    0%, 100% { border-left-color: var(--accent); }
++    50% { border-left-color: var(--accent-hover); }
++  }
++
+   /* Plan messages */
+   .plan-msg {
+     background: var(--bg-tertiary);
+diff --git a/tauri-app/ui/src/lib/stores/session.ts b/tauri-app/ui/src/lib/stores/session.ts
+index 3f17910..080e0d0 100644
+--- a/tauri-app/ui/src/lib/stores/session.ts
++++ b/tauri-app/ui/src/lib/stores/session.ts
+@@ -62,6 +62,7 @@ interface SessionState {
+   liveActions: LiveActionState[];
+   totalTokens: number;
+   estimatedCost: number;
++  streamingText: string;
+ }
+ 
+ const initialState: SessionState = {
+@@ -76,6 +77,7 @@ const initialState: SessionState = {
+   liveActions: [],
+   totalTokens: 0,
+   estimatedCost: 0,
++  streamingText: "",
+ };
+ 
+ const MODEL_RATES: Record<string, number> = {
+@@ -169,6 +171,13 @@ function createSession() {
+           confirmActions: (p.actions ?? []) as PlanAction[],
+         }));
+         break;
++
++      case "token_stream":
++        update((s) => ({
++          ...s,
++          streamingText: s.streamingText + String(p.token ?? ""),
++        }));
++        break;
+     }
+   });
+ 
+@@ -191,6 +200,7 @@ function createSession() {
+       liveActions: [],
+       confirmRequired: false,
+       confirmPlanId: "",
++      streamingText: "",
+       messages: [
+         ...s.messages,
+         { type: "user", text: input, timestamp: Date.now() },
+@@ -222,16 +232,18 @@ function createSession() {
+         : undefined;
+ 
+       if (result.status === "error") {
++        const streamingContent = get(session).streamingText;
+         update((s) => ({
+           ...s,
+           loading: false,
+           phase: "",
+           currentPlan: null,
++          streamingText: "",
+           messages: [
+             ...s.messages,
+             {
+               type: "error" as MessageType,
+-              text: String(result.message ?? result.explanation ?? "Unknown error"),
++              text: streamingContent || String(result.message ?? result.explanation ?? "Unknown error"),
+               timestamp: Date.now(),
+             },
+           ],
+@@ -243,6 +255,7 @@ function createSession() {
+           phase: "",
+           currentPlan: null,
+           confirmRequired: false,
++          streamingText: "",
+           messages: [
+             ...s.messages,
+             {
+@@ -278,12 +291,15 @@ function createSession() {
+         }
+         const estimatedCost = Number((estimatedTokens * rate).toFixed(6));
+ 
++        const finalText = get(session).streamingText || responseText;
++
+         update((s) => ({
+           ...s,
+           loading: false,
+           phase: "",
+           currentPlan: null,
+           confirmRequired: false,
++          streamingText: "",
+ 
+           totalTokens: s.totalTokens + estimatedTokens,
+           estimatedCost: s.estimatedCost + estimatedCost,
+@@ -292,7 +308,7 @@ function createSession() {
+             ...s.messages,
+             {
+               type: "result" as MessageType,
+-              text: responseText,
++              text: finalText,
+               timestamp: Date.now(),
+               actionResults,
+               verification,
+@@ -305,6 +321,7 @@ function createSession() {
+         ...s,
+         loading: false,
+         phase: "",
++        streamingText: "",
+         messages: [
+           ...s.messages,
+           {
