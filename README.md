@@ -601,6 +601,95 @@ snapshot_on_destructive = true
 host = "127.0.0.1"
 port = 8785
 ```
+## 🛠️ Troubleshooting
+
+### Python Version Issues:
+Heliox OS requires **Python 3.11+**.
+
+Check your Python version:
+```bash
+python --version
+```
+
+If the version is lower than 3.11, install the latest Python version from the official website.
+
+---
+
+### `npm install` Fails:
+
+Try clearing the npm cache and reinstalling dependencies:
+
+```bash
+npm cache clean --force
+npm install
+```
+
+Also ensure that Node.js and npm are installed correctly.
+
+---
+
+### Ollama Not Running:
+
+If local models are not responding, make sure Ollama is installed and running:
+
+```bash
+ollama serve
+```
+
+You can verify installation using:
+
+```bash
+ollama --version
+```
+
+---
+
+### Port Already in Use:
+
+If the backend server fails because the port is already occupied:
+
+#### Linux/macOS
+
+```bash
+lsof -i :8785
+kill -9 <PID>
+```
+
+#### Windows
+
+```powershell
+netstat -ano | findstr :8785
+taskkill /PID <PID> /F
+```
+
+---
+
+### Missing API Key Errors:
+
+If cloud models like Gemini, OpenAI, or Claude are not working:
+- Ensure your API key is added correctly in the application settings
+- Restart the application after updating the key
+
+---
+
+### Permission Errors on Linux/macOS:
+
+If commands fail due to permission restrictions:
+- Avoid running Heliox OS as root unless necessary
+- Ensure Python and npm packages are installed with proper permissions
+
+---
+
+### Frontend Not Starting:
+
+If the UI fails to launch:
+
+```bash
+npm install
+npm run dev
+```
+
+Ensure all frontend dependencies are installed successfully before starting the app.
 
 ## 🤝 Contributing
 
