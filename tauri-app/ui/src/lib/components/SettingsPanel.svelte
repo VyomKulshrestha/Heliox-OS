@@ -2,6 +2,7 @@
   import { settings } from "../stores/settings";
   import { session } from "../stores/session";
   import { call } from "../api/daemon";
+  import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 
   let apiKeyInput = $state("");
   let apiKeySaved = $state(false);
@@ -62,6 +63,19 @@
       console.error("Failed to save API key:", err);
     } finally {
       apiKeySaving = false;
+    }
+  }
+
+  async function testNotification() {
+    try {
+      let granted = await isPermissionGranted();
+      if (!granted) {
+        const permission = await requestPermission();
+        granted = permission === "granted";
+      }
+      sendNotification({ title: "Heliox OS", body: "Test notification working correctly!" });
+    } catch (err) {
+      console.error("[Heliox] test notification failed:", err);
     }
   }
 </script>
@@ -280,6 +294,17 @@
       <p>Protected folders: {$settings.restrictions?.protected_folders?.length || 0} configured</p>
       <p>Protected packages: {$settings.restrictions?.protected_packages?.length || 0} configured</p>
       <p>Blocked commands: {$settings.restrictions?.blocked_commands?.length || 0} configured</p>
+    </div>
+  </section>
+
+  <section class="settings-group">
+    <h3>Debug</h3>
+    <div class="setting-row">
+      <div class="setting-info">
+        <span class="setting-label">Notifications</span>
+        <span class="setting-desc">Test native OS desktop popup</span>
+      </div>
+      <button class="btn-save" onclick={testNotification}>Test Popup</button>
     </div>
   </section>
 </div>

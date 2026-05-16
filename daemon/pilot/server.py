@@ -396,12 +396,19 @@ class PilotServer:
             method: The notification method name.
             params: The notification parameters.
         """
-        if getattr(self, "_attention_ui", None) and self._attention_ui.enabled:
+        # ── Feature 5: Attention-Optimized Notification Timing ──
+        # task_complete always bypasses the attention gate — it is the user-facing
+        # completion signal and must never be buffered or suppressed.
+        if method == "task_complete":
+            pass
+        elif getattr(self, "_attention_ui", None) and self._attention_ui.enabled:
             try:
                 content = params if isinstance(params, dict) else {"data": params}
                 scored = await self._attention_ui.score_event(method, content)
 
-                if not scored.should_display and scored.priority.value != "critical":
+                # Buffer non-critical notifications when user is highly focused
+                # Fix: scored.priority is a plain str, not an enum — compare directly.
+                if not scored.should_display and scored.priority != "critical":
                     if not hasattr(self, "_notification_buffer"):
                         self._notification_buffer = []
                     self._notification_buffer.append((method, params.copy() if isinstance(params, dict) else params))
@@ -539,6 +546,28 @@ class PilotServer:
         )
 
         _start_time = time.time()
+        last_plan_id = ""
+
+        def _sanitize_summary(text: str, limit: int = 160) -> str:
+            clean = " ".join(str(text).split())
+            if len(clean) <= limit:
+                return clean
+            return clean[: max(0, limit - 3)] + "..."
+
+        async def _emit_task_complete(status: str, summary: str) -> None:
+            try:
+                duration_ms = int((time.time() - _start_time) * 1000)
+                payload = {
+                    "status": status,
+                    "summary": _sanitize_summary(summary),
+                    "duration_ms": duration_ms,
+                    "dry_run": dry_run,
+                }
+                if last_plan_id:
+                    payload["plan_id"] = last_plan_id
+                await self._broadcast_notification("task_complete", payload)
+            except Exception:
+                pass
         emit = self._reasoning
         if emit:
             emit.reset()
@@ -630,10 +659,12 @@ class PilotServer:
                 if attempt < self.MAX_RETRIES:
                     error_context = plan.error
                     continue
+                await _emit_task_complete("error", plan.error)
                 return {"status": "error", "message": plan.error}
 
             last_explanation = plan.explanation
             plan_id = str(uuid.uuid4())[:8]
+            last_plan_id = plan_id
 
             if emit:
                 await emit.phase_complete(
@@ -729,6 +760,7 @@ class PilotServer:
                         )
 
                 if not confirmed:
+                    await _emit_task_complete("cancelled", "Plan was denied by user.")
                     return {
                         "status": "cancelled",
                         "message": "Plan was denied by user.",
@@ -891,6 +923,7 @@ class PilotServer:
                         "memory_update", MEMORY_STORE_COMPLETE, {"saved": True}, parent_id=mem_store_phase
                     )
 
+                await _emit_task_complete("success", plan.explanation or "Task completed successfully.")
                 return {
                     "status": "success",
                     "dry_run": dry_run,
@@ -934,6 +967,7 @@ class PilotServer:
             await emit.phase_complete("memory_update", MEMORY_STORE_COMPLETE, {"partial": True}, parent_id=mem_final)
 
         asyncio.create_task(self._memory.record(user_input, plan, all_results))
+        await _emit_task_complete("partial_failure", last_explanation or "Task completed with errors.")
         return {
             "status": "partial_failure",
             "dry_run": dry_run,
