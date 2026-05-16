@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import shutil
 import logging
 import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
 
 if sys.version_info >= (3, 12):
     import tomllib
@@ -24,18 +26,33 @@ def _xdg(env_var: str, fallback: str) -> Path:
     return Path(os.environ.get(env_var, Path.home() / fallback))
 
 
-CONFIG_DIR = _xdg("XDG_CONFIG_HOME", ".config") / "pilot"
-DATA_DIR = _xdg("XDG_DATA_HOME", ".local/share") / "pilot"
-STATE_DIR = _xdg("XDG_STATE_HOME", ".local/state") / "pilot"
+OLD_CONFIG_DIR = _xdg("XDG_CONFIG_HOME", ".config") / "pilot"
+OLD_DATA_DIR = _xdg("XDG_DATA_HOME", ".local/share") / "pilot"
+OLD_STATE_DIR = _xdg("XDG_STATE_HOME", ".local/state") / "pilot"
+
+CONFIG_DIR = _xdg("XDG_CONFIG_HOME", ".config") / "heliox"
+DATA_DIR = _xdg("XDG_DATA_HOME", ".local/share") / "heliox"
+STATE_DIR = _xdg("XDG_STATE_HOME", ".local/state") / "heliox"
 RUNTIME_DIR = (
-    Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid() if hasattr(os, 'getuid') else 1000}")) / "pilot"
+    Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid() if hasattr(os, 'getuid') else 1000}")) / "heliox"
 )
+
+# Backward compatibility migration
+if OLD_CONFIG_DIR.exists() and not CONFIG_DIR.exists():
+    shutil.copytree(OLD_CONFIG_DIR, CONFIG_DIR)
+
+if OLD_DATA_DIR.exists() and not DATA_DIR.exists():
+    shutil.copytree(OLD_DATA_DIR, DATA_DIR)
+
+if OLD_STATE_DIR.exists() and not STATE_DIR.exists():
+    shutil.copytree(OLD_STATE_DIR, STATE_DIR)
+
 
 CONFIG_FILE = CONFIG_DIR / "config.toml"
 RESTRICTIONS_FILE = CONFIG_DIR / "restrictions.toml"
-DB_FILE = DATA_DIR / "pilot.db"
+DB_FILE = DATA_DIR / "heliox.db"
 AUDIT_FILE = DATA_DIR / "audit.jsonl"
-LOG_FILE = STATE_DIR / "pilot.log"
+LOG_FILE = STATE_DIR / "heliox.log"
 
 
 @dataclass

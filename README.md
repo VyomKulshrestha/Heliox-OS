@@ -583,7 +583,7 @@ npm run dev
 
 ## Configuration
 
-Config file: `~/.config/pilot/config.toml`
+Config file: `~/.config/heliox/config.toml`
 
 ```toml
 [model]

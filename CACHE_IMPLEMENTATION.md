@@ -141,7 +141,7 @@ await model_router.close()
 
 ## Database
 
-**Location**: `~/.local/share/pilot/llm_cache.db`
+**Location**: `~/.local/share/heliox/llm_cache.db`
 
 **Schema**:
 ```sql

@@ -26,7 +26,7 @@ desktop.ini
 
 # Logs
 *.log
-pilot_*.log
+heliox_*.log
 
 # Vault / Secrets
 vault.enc

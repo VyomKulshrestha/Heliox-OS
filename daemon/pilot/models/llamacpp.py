@@ -42,7 +42,7 @@ class LlamaCppClient:
 
         model_path = self._find_model()
         if not model_path:
-            raise RuntimeError("No GGUF model file found. Download one to ~/.local/share/pilot/models/")
+            raise RuntimeError("No GGUF model file found. Download one to ~/.local/share/heliox/models/")
 
         gpu_layers = calculate_gpu_layers(
             model_path,

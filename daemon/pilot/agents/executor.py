@@ -62,7 +62,7 @@ from pilot.system.snapshots import SnapshotManager
 if TYPE_CHECKING:
     from pilot.config import PilotConfig
 
-logger = logging.getLogger("pilot.agents.executor")
+logger = logging.getLogger("heliox.agents.executor")
 
 
 class Executor:

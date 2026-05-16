@@ -29,7 +29,7 @@ console = Console()
 PT_STYLE = PtStyle.from_dict(
     {
         "prompt": "ansiwhite bold",
-        "pilot": "ansiyellow bold",
+        "heliox": "ansicyan bold",
     }
 )
 
@@ -45,7 +45,7 @@ BANNER = """[bold cyan]
 
 
 class PilotCLI:
-    def __init__(self, uri: str = "ws://127.0.0.1:8765"):
+    def __init__(self, uri: str = "ws://127.0.0.1:8785"):
         self.uri = uri
         self.ws = None
         self.session = PromptSession(style=PT_STYLE)
@@ -56,10 +56,10 @@ class PilotCLI:
         try:
             self.ws = await websockets.connect(self.uri)
             self.connected = True
-            console.print("[green]Connected to Pilot daemon.[/green]")
+            console.print("[green]Connected to Heliox daemon.[/green]")
         except Exception as e:
             console.print(f"[bold red]Failed to connect to daemon:[/bold red] {e}")
-            console.print("Make sure 'python -m pilot.server' is running in another terminal.")
+            console.print("Make sure the Heliox daemon ('python -m pilot.server') is running in another terminal.")
             sys.exit(1)
 
     async def send_request(self, method: str, params: dict = None):
@@ -139,7 +139,7 @@ class PilotCLI:
 
                     if method == "status":
                         phase = params.get("phase", "thinking")
-                        live.update(Spinner("dots", text=f"[cyan]Pilot is {phase}...[/cyan]"))
+                        live.update(Spinner("dots", text=f"[cyan]Heliox is {phase}...[/cyan]"))
 
                     elif method == "plan_preview":
                         live.stop()
@@ -217,7 +217,7 @@ class PilotCLI:
         while self.connected:
             try:
                 # Get user input
-                user_input = await self.session.prompt_async(HTML("<ansiblue>pilot></ansiblue> "))
+                user_input = await self.session.prompt_async(HTML("<ansiblue>heliox></ansiblue> "))
 
                 if not user_input.strip():
                     continue

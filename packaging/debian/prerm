@@ -29,7 +29,7 @@ case "$1" in
 
         echo "Pilot removed."
         echo "User data in ~/.config/pilot and ~/.local/share/pilot was preserved."
-        echo "To remove user data: rm -rf ~/.config/pilot ~/.local/share/pilot ~/.local/state/pilot"
+        echo "To remove user data: rm -rf ~/.config/heliox ~/.local/share/pilot ~/.local/state/pilot"
         ;;
 esac
 
