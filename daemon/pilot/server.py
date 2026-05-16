@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import csv
 import json
 import logging
 import secrets
@@ -12,10 +13,9 @@ import signal
 import sys
 import uuid
 from dataclasses import dataclass, field
-from typing import Any
-import csv
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import websockets
 from websockets.asyncio.server import Server, ServerConnection
@@ -1013,6 +1013,7 @@ class PilotServer:
         offset = params.get("offset", 0)
         entries = await self._memory.get_history(limit=limit, offset=offset)
         return {"entries": entries}
+
     async def _handle_export_session_chat(self, params: dict, ws: ServerConnection) -> dict:
         """Export current UI session chat messages to JSON or CSV."""
         fmt = str(params.get("format", "json")).lower()
@@ -1041,6 +1042,7 @@ class PilotServer:
                         [
                             "timestamp_iso",
                             "timestamp_ms",
+                            "msg_type",
                             "text",
                             "plan_id",
                             "plan_explanation",
@@ -1050,6 +1052,7 @@ class PilotServer:
                             "result_success_count",
                             "result_error_count",
                             "result_outputs",
+                            "verification_passed",
                             "verification_details",
                         ]
                     )
@@ -1090,7 +1093,7 @@ class PilotServer:
                         )
                         result_error_count = result_count - result_success_count
                         result_outputs = " | ".join(
-                            str((r.get("output") or r.get("error") or "")).strip()
+                            str(r.get("output") or r.get("error") or "").strip()
                             for r in action_results
                             if isinstance(r, dict) and (r.get("output") or r.get("error"))
                         )
@@ -1099,9 +1102,7 @@ class PilotServer:
                         if not isinstance(verification, dict):
                             verification = {}
                         verification_passed = (
-                            verification.get("passed")
-                            if isinstance(verification.get("passed"), bool)
-                            else ""
+                            verification.get("passed") if isinstance(verification.get("passed"), bool) else ""
                         )
                         verification_details_raw = verification.get("details", [])
                         if not isinstance(verification_details_raw, list):
