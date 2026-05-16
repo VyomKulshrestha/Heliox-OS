@@ -26,6 +26,7 @@ from pilot.memory.store import SCHEMA_SQL, MemoryStore
 # Minimal stubs for ActionPlan and ActionResult
 # ---------------------------------------------------------------------------
 
+
 class _FakePlan:
     explanation = "open browser"
 
@@ -44,6 +45,7 @@ class _FakeResult:
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def fake_plan() -> _FakePlan:
@@ -103,11 +105,12 @@ async def _fetch_one(store, query: str, params: tuple = ()):
 # Tests: initialization
 # ---------------------------------------------------------------------------
 
-class TestMemoryStoreInit:
 
+class TestMemoryStoreInit:
     def test_initial_state_is_none(self):
         """MemoryStore attributes start as None before initialize() is called."""
         from pilot.memory.store import MemoryStore
+
         s = MemoryStore()
         assert s._pool is None
         assert s._chroma_collection is None
@@ -132,8 +135,8 @@ class TestMemoryStoreInit:
 # Tests: record()
 # ---------------------------------------------------------------------------
 
-class TestRecord:
 
+class TestRecord:
     @pytest.mark.asyncio
     async def test_record_stores_entry(self, store, fake_plan, fake_results):
         """record() inserts a row into action_history."""
@@ -185,6 +188,7 @@ class TestRecord:
     async def test_record_skips_when_pool_none(self, fake_plan, fake_results):
         """record() returns silently when _pool is None (no crash)."""
         from pilot.memory.store import MemoryStore
+
         s = MemoryStore()
         s._pool = None
         await s.record("test input", fake_plan, fake_results)
@@ -207,8 +211,8 @@ class TestRecord:
 # Tests: get_history()
 # ---------------------------------------------------------------------------
 
-class TestGetHistory:
 
+class TestGetHistory:
     @pytest.mark.asyncio
     async def test_get_history_empty(self, store):
         """get_history() returns empty list when no records exist."""
@@ -275,6 +279,7 @@ class TestGetHistory:
     async def test_get_history_returns_empty_when_pool_none(self):
         """get_history() returns [] when _pool is None."""
         from pilot.memory.store import MemoryStore
+
         s = MemoryStore()
         s._pool = None
         result = await s.get_history()
@@ -285,8 +290,8 @@ class TestGetHistory:
 # Tests: set_preference() and _get_preferences()
 # ---------------------------------------------------------------------------
 
-class TestPreferences:
 
+class TestPreferences:
     @pytest.mark.asyncio
     async def test_set_and_get_preference(self, store):
         """set_preference() stores a key-value pair retrievable by _get_preferences()."""
@@ -321,6 +326,7 @@ class TestPreferences:
     async def test_set_preference_skips_when_pool_none(self):
         """set_preference() returns silently when _pool is None."""
         from pilot.memory.store import MemoryStore
+
         s = MemoryStore()
         s._pool = None
         await s.set_preference("key", "value")  # should not raise
@@ -329,6 +335,7 @@ class TestPreferences:
     async def test_get_preferences_returns_empty_when_pool_none(self):
         """_get_preferences() returns {} when _pool is None."""
         from pilot.memory.store import MemoryStore
+
         s = MemoryStore()
         s._pool = None
         result = await s._get_preferences()
@@ -339,8 +346,8 @@ class TestPreferences:
 # Tests: get_context()
 # ---------------------------------------------------------------------------
 
-class TestGetContext:
 
+class TestGetContext:
     @pytest.mark.asyncio
     async def test_get_context_empty_store_returns_empty_string(self, store):
         """get_context() returns empty string when no history or preferences."""
@@ -376,6 +383,7 @@ class TestGetContext:
     @pytest.mark.asyncio
     async def test_get_context_chroma_failure_does_not_crash(self, store):
         """get_context() handles ChromaDB query failure gracefully."""
+
         async def fail_to_thread(fn, *args, **kwargs):
             raise Exception("ChromaDB connection error")
 
@@ -389,12 +397,13 @@ class TestGetContext:
 # Tests: close()
 # ---------------------------------------------------------------------------
 
-class TestClose:
 
+class TestClose:
     @pytest.mark.asyncio
     async def test_close_sets_pool_to_none(self, tmp_path):
         """close() sets _pool to None after closing the pool."""
         from pilot.memory.store import MemoryStore
+
         s = MemoryStore()
         s._pool = AsyncSqlitePool(tmp_path / "memory.db")
         await s._pool.start()
@@ -405,6 +414,7 @@ class TestClose:
     async def test_close_is_safe_when_already_none(self):
         """close() does not raise when _pool is already None."""
         from pilot.memory.store import MemoryStore
+
         s = MemoryStore()
         s._pool = None
         await s.close()  # should not raise
