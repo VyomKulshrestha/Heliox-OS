@@ -258,8 +258,9 @@ class PilotServer:
             from pilot.agents.screen_vision import ScreenVisionAgent
 
             self._screen_vision = ScreenVisionAgent(model_router)
-            asyncio.create_task(self._screen_vision.start(interval_seconds=3.0, enable_describe=False))
-            logger.info("ScreenVisionAgent auto-started (every 3s, JARVIS mode)")
+            interval_seconds = self.config.screen_vision.capture_interval_seconds
+            asyncio.create_task(self._screen_vision.start(interval_seconds=interval_seconds, enable_describe=False))
+            logger.info("ScreenVisionAgent auto-started (every %.1fs, JARVIS mode)", interval_seconds)
         except Exception:
             logger.warning("ScreenVisionAgent init failed (non-critical)", exc_info=True)
 
@@ -1099,8 +1100,13 @@ class PilotServer:
             return {"status": "error", "message": f"Unknown config section: {section}"}
         for k, v in values.items():
             if hasattr(target, k):
+                if section == "screen_vision" and k == "capture_interval_seconds":
+                    v = float(v)
                 setattr(target, k, v)
         self.config.save()
+
+        if section == "screen_vision" and "capture_interval_seconds" in values and self._screen_vision:
+            self._screen_vision.set_interval(self.config.screen_vision.capture_interval_seconds)
 
         if section == "model" and ("cloud_provider" in values or "provider" in values):
             if self.config.model.cloud_provider:
@@ -1840,7 +1846,7 @@ class PilotServer:
         enabled = params.get("enabled", True)
         if self._screen_vision:
             if enabled:
-                interval = params.get("interval_seconds", 2.0)
+                interval = params.get("interval_seconds", self.config.screen_vision.capture_interval_seconds)
                 describe = params.get("enable_describe", False)
                 await self._screen_vision.start(interval, describe)
             else:

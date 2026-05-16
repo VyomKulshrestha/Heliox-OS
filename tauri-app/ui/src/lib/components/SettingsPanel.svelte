@@ -43,6 +43,13 @@
     settings.updateSection("security", { snapshot_retention_count: val });
   }
 
+  function updateScreenVisionInterval(e: Event) {
+    const rawValue = Number((e.target as HTMLInputElement).value);
+    if (!Number.isFinite(rawValue)) return;
+    const capture_interval_seconds = Math.min(60, Math.max(0.5, rawValue));
+    settings.updateSection("screen_vision", { capture_interval_seconds });
+  }
+
   function updateOllamaModel(e: Event) {
     const val = (e.target as HTMLInputElement).value;
     settings.updateSection("model", { ollama_model: val });
@@ -177,6 +184,26 @@
 
     <div class="setting-row">
       <button class="btn-save" onclick={() => session.resetUsage()}> Reset Session Usage </button>
+    </div>
+  </section>
+
+  <section class="settings-group">
+    <h3>Screen Vision</h3>
+
+    <div class="setting-row">
+      <div class="setting-info">
+        <span class="setting-label">Capture Interval</span>
+        <span class="setting-desc">Seconds between screen awareness captures</span>
+      </div>
+      <input
+        type="number"
+        class="input-sm"
+        value={$settings.screen_vision?.capture_interval_seconds ?? 3}
+        onchange={updateScreenVisionInterval}
+        min="0.5"
+        max="60"
+        step="0.5"
+      />
     </div>
   </section>
 
