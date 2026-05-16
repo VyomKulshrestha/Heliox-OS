@@ -15,9 +15,28 @@ from typing import Any
 logger = logging.getLogger("pilot.memory.workspace_index")
 
 SUPPORTED_EXTENSIONS = {
-    ".py", ".js", ".ts", ".jsx", ".tsx", ".java", ".cpp", ".c",
-    ".h", ".cs", ".go", ".rs", ".rb", ".php", ".swift", ".kt",
-    ".md", ".txt", ".yaml", ".yml", ".toml", ".json",
+    ".py",
+    ".js",
+    ".ts",
+    ".jsx",
+    ".tsx",
+    ".java",
+    ".cpp",
+    ".c",
+    ".h",
+    ".cs",
+    ".go",
+    ".rs",
+    ".rb",
+    ".php",
+    ".swift",
+    ".kt",
+    ".md",
+    ".txt",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".json",
 }
 
 MAX_FILE_SIZE_BYTES = 500_000
@@ -44,6 +63,7 @@ class WorkspaceIndex:
             return True
         try:
             from sentence_transformers import SentenceTransformer
+
             self._model = SentenceTransformer("all-MiniLM-L6-v2")
             logger.info("Embedding model loaded: all-MiniLM-L6-v2")
             return True
@@ -71,15 +91,17 @@ class WorkspaceIndex:
         lines = content.splitlines()
         chunks = []
         for i in range(0, len(lines), CHUNK_SIZE // 2):
-            chunk_lines = lines[i: i + CHUNK_SIZE]
+            chunk_lines = lines[i : i + CHUNK_SIZE]
             if not any(l.strip() for l in chunk_lines):
                 continue
-            chunks.append({
-                "file": str(path),
-                "start_line": i + 1,
-                "end_line": i + len(chunk_lines),
-                "text": "\n".join(chunk_lines),
-            })
+            chunks.append(
+                {
+                    "file": str(path),
+                    "start_line": i + 1,
+                    "end_line": i + len(chunk_lines),
+                    "text": "\n".join(chunk_lines),
+                }
+            )
         return chunks
 
     def index_workspace(self, folder_path: str) -> dict[str, Any]:
@@ -110,8 +132,10 @@ class WorkspaceIndex:
             if file_path.stat().st_size > MAX_FILE_SIZE_BYTES:
                 files_skipped += 1
                 continue
-            if any(p.startswith(".") or p in ("node_modules", "__pycache__", ".git", "venv", ".venv")
-                   for p in file_path.parts):
+            if any(
+                p.startswith(".") or p in ("node_modules", "__pycache__", ".git", "venv", ".venv")
+                for p in file_path.parts
+            ):
                 continue
 
             try:
@@ -119,9 +143,7 @@ class WorkspaceIndex:
                 str_path = str(file_path)
 
                 if self._file_hashes.get(str_path) == current_hash:
-                    unchanged_chunks.extend(
-                        c for c in self._chunks if c["file"] == str_path
-                    )
+                    unchanged_chunks.extend(c for c in self._chunks if c["file"] == str_path)
                     continue
 
                 content = file_path.read_text(encoding="utf-8", errors="ignore")
@@ -192,13 +214,15 @@ class WorkspaceIndex:
             if idx < 0:
                 continue
             chunk = self._chunks[idx]
-            results.append({
-                "file": chunk["file"],
-                "start_line": chunk["start_line"],
-                "end_line": chunk["end_line"],
-                "score": float(score),
-                "text": chunk["text"],
-            })
+            results.append(
+                {
+                    "file": chunk["file"],
+                    "start_line": chunk["start_line"],
+                    "end_line": chunk["end_line"],
+                    "score": float(score),
+                    "text": chunk["text"],
+                }
+            )
         return results
 
     def is_ready(self) -> bool:
