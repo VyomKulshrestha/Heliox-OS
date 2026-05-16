@@ -20,6 +20,9 @@ export interface PilotSettings {
     snapshot_retention_count: number;
     snapshot_retention_days: number;
   };
+  screen_vision: {
+    capture_interval_seconds: number;
+  };
   restrictions: {
     protected_folders: string[];
     protected_packages: string[];
@@ -46,6 +49,9 @@ const defaultSettings: PilotSettings = {
     snapshot_backend: "auto",
     snapshot_retention_count: 10,
     snapshot_retention_days: 7,
+  },
+  screen_vision: {
+    capture_interval_seconds: 3,
   },
   restrictions: {
     protected_folders: [],
