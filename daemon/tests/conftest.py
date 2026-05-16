@@ -16,9 +16,9 @@ def config_factory() -> Callable[..., PilotConfig]:
     default configuration values, ensuring each test gets a fresh state.
     """
     def _factory(**kwargs: Any) -> PilotConfig:
-    cfg = PilotConfig()
-    cfg.security.root_enabled = kwargs.get("allow_root", False)
-    return cfg
+        cfg = PilotConfig()
+        cfg.security.root_enabled = kwargs.get("allow_root", False)
+        return cfg
 
     return _factory
 
