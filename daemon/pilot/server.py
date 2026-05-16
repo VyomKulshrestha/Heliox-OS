@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import aiosqlite
 import websockets
 from websockets.asyncio.server import Server, ServerConnection
 
@@ -1883,6 +1884,24 @@ class PilotServer:
             await self._memory.close()
         if self._budget_tracker:
             await self._budget_tracker.close()
+
+        if self._prompt_improver:
+            await self._prompt_improver.close()
+
+        if self._subconscious:
+            await self._subconscious.close()
+
+        try:
+            async with aiosqlite.connect(str(DB_FILE)) as db:
+                await db.execute("PRAGMA wal_checkpoint(FULL)")
+                await db.execute("VACUUM")
+                await db.commit()
+
+            logger.info("SQLite database vacuum completed successfully")
+
+        except Exception:
+            logger.exception("Failed to vacuum SQLite database during shutdown")
+
         # Unload TRIBE v2 model
         if self._tribe_engine and self._tribe_engine.is_loaded:
             self._tribe_engine.unload_model()
