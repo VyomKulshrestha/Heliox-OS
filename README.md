@@ -464,7 +464,11 @@ Heliox OS ships with **3 flagship plugins** and supports community-built extensi
 | **media-control** | System | Spotify (play/pause/skip), system volume, YouTube, media keys |
 | **home-assistant** | IoT | Smart lights, switches, thermostats, scenes, device discovery |
 
-Drop custom plugins into `~/.heliox/plugins/` — they're auto-discovered at startup.
+Drop custom plugins into `~/.heliox/plugins/` — they're auto-discovered at startup
+after Ed25519 signature verification. Production registries can verify against
+bundled trusted public keys; local plugin packages can include
+`plugin.ed25519.pub` with `plugin.ed25519.sig`. Unsigned, untrusted, or tampered
+plugins are rejected before their manifest or code is loaded.
 
 ```json
 {
