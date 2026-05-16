@@ -190,14 +190,17 @@ class MemoryStore:
         """Index a workspace folder for semantic search."""
         if self._workspace_index is None:
             return {"success": False, "error": "Workspace index not initialized"}
-        return self._workspace_index.index_workspace(folder_path)
+        import asyncio
+        return await asyncio.to_thread(self._workspace_index.index_workspace, folder_path)
 
     async def search_workspace(self, query: str, n_results: int = 5) -> list:
         """Search the workspace index semantically."""
         if self._workspace_index is None:
             return []
-        return self._workspace_index.search(query, n_results) 
-
+        import asyncio
+        return await asyncio.to_thread(self._workspace_index.search, query, n_results)
+    
+    
     async def close(self) -> None:
         if self._db:
             await self._db.close()
