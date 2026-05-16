@@ -111,6 +111,7 @@ class PilotServer:
         self._memory: Any = None
         self._vault: Any = None
         self._permission_audit: Any = None
+        self._checkpoint_store: Any = None
         # Cognitive intelligence (TRIBE v2)
         self._tribe_engine: Any = None
         self._attention_ui: Any = None
@@ -151,6 +152,7 @@ class PilotServer:
         from pilot.security.permissions import PermissionChecker
         from pilot.security.validator import ActionValidator
         from pilot.security.vault import KeyVault
+        from pilot.workflows.checkpoints import WorkflowCheckpointStore
 
         self._vault = KeyVault(self.config)
         model_router = ModelRouter(self.config, self._vault)
@@ -165,6 +167,8 @@ class PilotServer:
         audit = AuditLogger()
         self._permission_audit = PermissionEscalationAuditStore()
         await self._permission_audit.initialize()
+        self._checkpoint_store = WorkflowCheckpointStore()
+        await self._checkpoint_store.initialize()
         validator = ActionValidator(self.config)
         permissions = PermissionChecker(self.config)
         self._memory = MemoryStore()
@@ -333,6 +337,7 @@ class PilotServer:
 
         self._handlers = {
             "execute": self._handle_execute,
+            "resume_plan": self._handle_resume_plan,
             "export_session_chat": self._handle_export_session_chat,
             "confirm": self._handle_confirm,
             # ── Cancel Token (Issue #92) ──
@@ -678,6 +683,8 @@ class PilotServer:
             last_explanation = plan.explanation
             plan_id = str(uuid.uuid4())[:8]
             last_plan_id = plan_id
+            if self._checkpoint_store:
+                await self._checkpoint_store.start_plan(plan_id, user_input, plan)
 
             if emit:
                 await emit.phase_complete(
@@ -832,11 +839,13 @@ class PilotServer:
                         "execution", action_idx, _total, label=action.action_type.value, parent_id=_exec_phase
                     )
 
-            async def _on_action_complete(result: Any, _exec_phase: str = exec_phase) -> None:
+            async def _on_action_complete(result: Any, _exec_phase: str = exec_phase, _plan_id: str = plan_id) -> None:
                 result_payload = result.model_dump()
                 if dry_run:
                     result_payload["dry_run"] = True
                 await ws.send(_notification("action_complete", {"result": result_payload}))
+                if self._checkpoint_store and result.success:
+                    await self._checkpoint_store.record_result(_plan_id, result)
                 if emit:
                     event_name = EXECUTOR_ACTION_COMPLETE if result.success else EXECUTOR_ERROR
                     await emit.data_event(
@@ -861,6 +870,7 @@ class PilotServer:
                     on_action_start=_on_action_start,
                     on_action_complete=_on_action_complete,
                     cancel_event=cancel_event,  # ── Cancel Token (Issue #92) ──
+                    plan_id=plan_id,
                 )
             else:
                 results = await self._executor.execute(
@@ -868,6 +878,7 @@ class PilotServer:
                     on_action_start=_on_action_start,
                     on_action_complete=_on_action_complete,
                     cancel_event=cancel_event,  # ── Cancel Token (Issue #92) ──
+                    plan_id=plan_id,
                 )
             all_results = results
             if needs_confirm and not dry_run:
@@ -883,6 +894,8 @@ class PilotServer:
             if cancel_event.is_set():
                 logger.info("Execution was cancelled mid-plan after %d result(s)", len(results))
                 await ws.send(_notification("status", {"phase": "aborted"}))
+                if self._checkpoint_store:
+                    await self._checkpoint_store.mark_status(plan_id, "cancelled")
                 return {
                     "status": "cancelled",
                     "message": "Execution was aborted by user.",
@@ -946,6 +959,8 @@ class PilotServer:
                     )
 
                 asyncio.create_task(self._memory.record(user_input, plan, results))
+                if self._checkpoint_store:
+                    await self._checkpoint_store.mark_status(plan_id, "complete")
                 asyncio.create_task(
                     self._reflector.reflect(
                         user_input,
@@ -1006,6 +1021,8 @@ class PilotServer:
             await emit.phase_complete("memory_update", MEMORY_STORE_COMPLETE, {"partial": True}, parent_id=mem_final)
 
         asyncio.create_task(self._memory.record(user_input, plan, all_results))
+        if self._checkpoint_store and last_plan_id:
+            await self._checkpoint_store.mark_status(last_plan_id, "failed")
         await _emit_task_complete("partial_failure", last_explanation or "Task completed with errors.")
         return {
             "status": "partial_failure",
@@ -1019,6 +1036,110 @@ class PilotServer:
                 if dry_run
                 else last_explanation
             ),
+        }
+
+    async def _handle_resume_plan(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """Resume a previously checkpointed plan from its last completed action."""
+        plan_id = str(params.get("plan_id", "")).strip()
+        if not plan_id:
+            return {"status": "error", "message": "resume_plan requires plan_id"}
+        if not self._checkpoint_store:
+            return {"status": "error", "message": "Workflow checkpoint store is not initialized"}
+
+        checkpoint = await self._checkpoint_store.get(plan_id)
+        if checkpoint is None:
+            return {"status": "error", "message": f"No checkpoint found for plan_id: {plan_id}"}
+
+        completed_count = max(0, min(checkpoint.completed_count, len(checkpoint.plan.actions)))
+        remaining_actions = checkpoint.plan.actions[completed_count:]
+        await ws.send(
+            _notification(
+                "status",
+                {
+                    "phase": "resuming",
+                    "plan_id": plan_id,
+                    "completed_actions": completed_count,
+                    "remaining_actions": len(remaining_actions),
+                },
+            )
+        )
+
+        if not remaining_actions:
+            await self._checkpoint_store.mark_status(plan_id, "complete")
+            return {
+                "status": "success",
+                "plan_id": plan_id,
+                "resumed": False,
+                "message": "Plan already completed.",
+                "results": [result.model_dump() for result in checkpoint.results],
+            }
+
+        self._cancel_event = asyncio.Event()
+        cancel_event = self._cancel_event
+
+        from pilot.actions import ActionPlan
+
+        remaining_plan = ActionPlan(
+            actions=remaining_actions,
+            explanation=checkpoint.plan.explanation,
+            raw_input=checkpoint.plan.raw_input,
+        )
+
+        async def _on_action_start(action: Any) -> None:
+            await ws.send(_notification("action_start", {"action": action.model_dump(), "resumed": True}))
+
+        async def _on_action_complete(result: Any) -> None:
+            await ws.send(_notification("action_complete", {"result": result.model_dump(), "resumed": True}))
+            if result.success:
+                await self._checkpoint_store.record_result(plan_id, result)
+
+        await self._checkpoint_store.mark_status(plan_id, "resuming")
+        results = await self._executor.execute(
+            remaining_plan,
+            on_action_start=_on_action_start,
+            on_action_complete=_on_action_complete,
+            cancel_event=cancel_event,
+            plan_id=plan_id,
+            initial_last_output=checkpoint.last_output,
+        )
+
+        updated = await self._checkpoint_store.get(plan_id)
+        combined_results = [
+            *(updated.results if updated else checkpoint.results),
+            *[r for r in results if not r.success],
+        ]
+
+        if cancel_event.is_set():
+            await self._checkpoint_store.mark_status(plan_id, "cancelled")
+            return {
+                "status": "cancelled",
+                "plan_id": plan_id,
+                "resumed": True,
+                "completed_actions": updated.completed_count if updated else completed_count,
+                "results": [result.model_dump() for result in combined_results],
+            }
+
+        failed = any(not result.success for result in results)
+        final_status = "failed" if failed else "complete"
+        await self._checkpoint_store.mark_status(plan_id, final_status)
+
+        verification_payload: dict[str, Any] = {}
+        if not failed and len(combined_results) >= len(checkpoint.plan.actions):
+            verification = await self._verifier.verify(checkpoint.plan, combined_results)
+            verification_payload = verification.model_dump()
+            if not verification.passed:
+                final_status = "partial_failure"
+                await self._checkpoint_store.mark_status(plan_id, "failed")
+
+        return {
+            "status": "partial_failure" if final_status in {"failed", "partial_failure"} else "success",
+            "plan_id": plan_id,
+            "resumed": True,
+            "skipped_actions": completed_count,
+            "executed_actions": len(results),
+            "results": [result.model_dump() for result in combined_results],
+            "verification": verification_payload,
+            "explanation": checkpoint.plan.explanation,
         }
 
     async def _record_permission_escalations(

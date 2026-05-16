@@ -323,12 +323,14 @@ class Executor:
         on_action_start: typing.Callable[[Action], typing.Awaitable[None]] | None = None,
         on_action_complete: typing.Callable[[ActionResult], typing.Awaitable[None]] | None = None,
         cancel_event: asyncio.Event | None = None,
+        plan_id: str | None = None,
+        initial_last_output: str = "",
     ) -> list[ActionResult]:
         """Execute all actions in a plan sequentially, with output chaining."""
-        plan_id = str(uuid.uuid4())[:8]
+        plan_id = plan_id or str(uuid.uuid4())[:8]
         results: list[ActionResult] = []
-        self._last_output = ""
-        self._largest_output = ""
+        self._last_output = initial_last_output
+        self._largest_output = initial_last_output
 
         allowed, reasons = self._permissions.plan_allowed(plan)
         if not allowed:
