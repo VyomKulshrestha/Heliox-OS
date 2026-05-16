@@ -20,14 +20,24 @@
   import { onDestroy, tick } from "svelte";
   import { writeText } from "@tauri-apps/plugin-clipboard-manager";
   import { Copy } from "lucide-svelte";
+  import ScrollToBottom from "./lib/components/ScrollToBottom.svelte";
 
   let activeTab: "chat" | "log" | "settings" | "plugins" = $state("chat");
   let isDragging = $state(false);
   let showWizard = $derived(
     !$settings.first_run_complete && localStorage.getItem("heliox_first_run_complete") !== "true"
   );
+
+  let showScrollFAB = $state(false);
+  let isAtBottom = $state(true);
+
   let virtualListEl: VirtualList<Message> | undefined = $state();
   let particleBurst: ParticleBurst | undefined = $state();
+
+  // Show FAB whenever the user scrolls away from the bottom
+  $effect(() => {
+    showScrollFAB = !isAtBottom;
+  });
 
   async function onSetupComplete() {
     await settings.updateSection("", { first_run_complete: true });
@@ -60,7 +70,10 @@
   }
 
   function scrollToBottom() {
-    tick().then(() => virtualListEl?.scrollToBottom());
+    tick().then(() => {
+      virtualListEl?.scrollToBottom();
+      showScrollFAB = false;
+    });
   }
 
   $effect(() => {
@@ -218,7 +231,7 @@
               </div>
             </div>
           {:else}
-            <VirtualList bind:this={virtualListEl} items={$session.messages}>
+            <VirtualList bind:this={virtualListEl} items={$session.messages} bind:atBottom={isAtBottom}>
               {#snippet item(msg)}
                 {@render messageBlock(msg)}
               {/snippet}
@@ -250,6 +263,7 @@
               {/snippet}
             </VirtualList>
           {/if}
+          <ScrollToBottom show={showScrollFAB} onclick={scrollToBottom} />
         </div>
 
         <div class="input-row">
@@ -529,6 +543,7 @@
     overflow: hidden;
     display: flex;
     flex-direction: column;
+    position: relative;
   }
 
   /* Empty state */

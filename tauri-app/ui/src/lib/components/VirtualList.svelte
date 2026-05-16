@@ -31,6 +31,8 @@
     item: Snippet<[T, number]>;
     /** Optional footer rendered below all items. */
     footer?: Snippet;
+    /** Bindable — true when the list is scrolled to (or near) the bottom. */
+    atBottom?: boolean;
   }
 
   let {
@@ -39,6 +41,7 @@
     overscan = 5,
     item: itemSnippet,
     footer: footerSnippet,
+    atBottom = $bindable(true),
   }: Props<T> = $props();
 
   // ── Internal state ─────────────────────────────────────────────────────────
@@ -146,6 +149,7 @@
     wasAtBottom =
       scrollerEl.scrollTop + scrollerEl.clientHeight >=
       scrollerEl.scrollHeight - 8;
+    atBottom = wasAtBottom;
 
     // Walk the heights array to find the first and last visible item
     let cumulative = 0;
