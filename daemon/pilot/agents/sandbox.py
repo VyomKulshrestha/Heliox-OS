@@ -158,7 +158,16 @@ class SimulationSandbox:
 
     def __init__(self, allowed_commands: list[str] | None = None):
         self.allowed_commands = allowed_commands or [
-            "echo", "ls", "dir", "cat", "type", "ping", "whoami", "pwd", "grep", "find"
+            "echo",
+            "ls",
+            "dir",
+            "cat",
+            "type",
+            "ping",
+            "whoami",
+            "pwd",
+            "grep",
+            "find",
         ]
 
     def simulate(self, plan: Any) -> SimulationReport:

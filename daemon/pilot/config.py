@@ -245,9 +245,9 @@ def _parse_restrictions(raw: dict[str, Any]) -> Restrictions:
         protected_folders=raw.get("protected_folders", []),
         protected_packages=raw.get("protected_packages", []),
         blocked_commands=raw.get("blocked_commands", []),
-        sandbox_allowed_commands=raw.get("sandbox_allowed_commands", [
-            "echo", "ls", "dir", "cat", "type", "ping", "whoami", "pwd", "grep", "find"
-        ]),
+        sandbox_allowed_commands=raw.get(
+            "sandbox_allowed_commands", ["echo", "ls", "dir", "cat", "type", "ping", "whoami", "pwd", "grep", "find"]
+        ),
     )
 
 

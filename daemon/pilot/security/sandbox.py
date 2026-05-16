@@ -43,6 +43,7 @@ class SandboxEnvironment:
 
         if allowed_commands is None:
             from pilot.config import PilotConfig
+
             config = PilotConfig.load()
             self.allowed_commands = config.restrictions.sandbox_allowed_commands
         else:
