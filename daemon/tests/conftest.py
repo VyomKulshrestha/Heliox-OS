@@ -1,9 +1,10 @@
+"""Shared test fixtures."""
 import pytest
 from typing import Callable, Any
 
 # Assuming PilotConfig is importable from the daemon config module.
 # Adjust the import path if necessary based on your project's structure.
-from daemon.config import PilotConfig
+from pilot.config import PilotConfig
 
 
 @pytest.fixture
@@ -15,13 +16,9 @@ def config_factory() -> Callable[..., PilotConfig]:
     default configuration values, ensuring each test gets a fresh state.
     """
     def _factory(**kwargs: Any) -> PilotConfig:
-        # Define baseline defaults for isolated tests here
-        default_data = {
-            "allow_root": False,
-        }
-        # Override baseline with any kwargs passed to the factory
-        default_data.update(kwargs)
-        return PilotConfig(**default_data)
+    cfg = PilotConfig()
+    cfg.security.root_enabled = kwargs.get("allow_root", False)
+    return cfg
 
     return _factory
 
