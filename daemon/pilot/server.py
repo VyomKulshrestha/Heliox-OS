@@ -183,11 +183,14 @@ class PilotServer:
         # Multi-Agent Orchestrator Ã¢â‚¬â€ register all specialist agents
         self._orchestrator = AgentOrchestrator(model_router)
         self._orchestrator.set_broadcast(self._broadcast_notification)
-        self._orchestrator.register_agent(SystemAgent(model_router, self._executor))
-        self._orchestrator.register_agent(CodeAgent(model_router, self._executor))
-        self._orchestrator.register_agent(WebAgent(model_router, self._executor))
-        self._orchestrator.register_agent(MonitorAgent(model_router, self._background))
-        self._orchestrator.register_agent(CommunicationAgent(model_router, self._executor))
+        from pilot.agents.registry import AgentRegistry
+        AgentRegistry.discover_agents()
+        registered = self._orchestrator.auto_register_all_agents(
+            executor=self._executor,
+            background_manager=self._background,
+            model_router=model_router,
+        )
+        logger.info("Auto-registered %d agents via dynamic discovery", registered)
         await self._orchestrator.start_all()
 
         # Multimodal Fusion Engine Ã¢â‚¬â€ voice + gesture intent fusion
