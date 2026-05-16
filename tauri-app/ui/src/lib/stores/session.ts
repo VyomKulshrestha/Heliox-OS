@@ -1,6 +1,7 @@
 import { writable, get } from "svelte/store";
 import { call, connect, isConnected, onNotification, listenToLLMStream } from "../api/daemon";
 import { settings } from "./settings";
+import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 
 export type MessageType = "user" | "system" | "error" | "plan" | "result" | "assistant";
 
@@ -86,6 +87,54 @@ const MODEL_RATES: Record<string, number> = {
   "gpt-4o": 0.000005,
   "claude-sonnet": 0.000004,
 };
+
+const NOTIFY_MIN_DURATION_MS = 15000;
+let _lastNotifyPlanId = "";
+let _lastNotifyTime = 0;
+
+function isTauriRuntime(): boolean {
+  // Tauri v2: __TAURI_INTERNALS__ is always injected into the webview.
+  // __TAURI__ only exists if withGlobalTauri:true is set — do NOT use it.
+  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
+async function notifyTaskComplete(payload: Record<string, unknown>) {
+  if (!isTauriRuntime()) return;
+
+  // Deduplicate: multiple WS connections can broadcast the same completion event.
+  const planId = String(payload.plan_id ?? "");
+  const now = Date.now();
+  if (planId && planId === _lastNotifyPlanId && now - _lastNotifyTime < 2000) return;
+  _lastNotifyPlanId = planId;
+  _lastNotifyTime = now;
+
+  const durationMs = Number(payload.duration_ms ?? 0);
+  if (durationMs > 0 && durationMs < NOTIFY_MIN_DURATION_MS) return;
+
+  const status = String(payload.status ?? "completed");
+  const summary = String(payload.summary ?? "");
+  const dryRun = Boolean(payload.dry_run);
+
+  let title = "Heliox OS task complete";
+  if (status === "error") title = "Heliox OS task failed";
+  else if (status === "partial_failure") title = "Heliox OS task completed with issues";
+  else if (status === "cancelled") title = "Heliox OS task cancelled";
+  else if (dryRun) title = "Heliox OS dry run complete";
+
+  const body = summary || "The task has finished.";
+
+  try {
+    let granted = await isPermissionGranted();
+    if (!granted) {
+      const permission = await requestPermission();
+      granted = permission === "granted";
+    }
+    // On Windows, desktop apps are typically always allowed — try even if denied.
+    sendNotification({ title, body });
+  } catch (err) {
+    console.error("[Heliox] notification error:", err);
+  }
+}
 
 function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
@@ -181,6 +230,10 @@ function createSession() {
           ...s,
           streamingText: s.streamingText + String(p.token ?? ""),
         }));
+        break;
+
+      case "task_complete":
+        void notifyTaskComplete(p);
         break;
     }
   });
