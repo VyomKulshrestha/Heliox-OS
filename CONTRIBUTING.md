@@ -95,6 +95,39 @@ cargo tauri dev
 - Linter: **ESLint** (`npx eslint .`)
 - Use Svelte 5 runes (`$state`, `$derived`, `$effect`)
 
+### Svelte Component Naming Conventions
+- Use PascalCase for all Svelte component filenames.
+  Example: `VoiceControl.svelte`, `SettingsModal.svelte`
+- Component names should clearly describe their functionality and purpose.
+- Avoid generic or temporary names such as `Component.svelte`, `Temp.svelte`, or `Test.svelte`.
+- Keep one primary component per file.
+- Prefer reusable and modular component design whenever possible.
+- Follow existing naming patterns already used in the project for consistency.
+
+### Frontend Folder Organization
+- Store reusable UI components inside `src/lib/components/`.
+- Store shared Svelte stores inside `src/lib/stores/`.
+- Group related components into subfolders when a feature grows in complexity.
+- Keep component-specific helper utilities close to their related feature/module.
+- Avoid deeply nested folder structures unless necessary.
+
+### CSS & Styling Standards
+- Prefer scoped styles inside Svelte components whenever possible.
+- Maintain consistent spacing, typography, and layout patterns across the UI.
+- Use meaningful and readable class names.
+- Avoid excessive CSS nesting and overly complex selectors.
+- Minimize inline styles unless required for dynamic behavior.
+- Reuse existing design patterns and utility styles before creating new ones.
+- Ensure responsive layouts and proper alignment across different screen sizes.
+
+### Reusable UI Components
+- Design components to be modular and reusable.
+- Use props for configurable behavior instead of duplicating components.
+- Keep components focused on a single responsibility.
+- Avoid tightly coupling components with unrelated business logic.
+- Maintain consistent behavior and styling across reusable UI elements.
+- Follow Svelte 5 conventions and use runes consistently where applicable.
+
 ### Rust (tauri-app/src-tauri/)
 - Formatter: **rustfmt** (`cargo fmt`)
 - Linter: **Clippy** (`cargo clippy`)

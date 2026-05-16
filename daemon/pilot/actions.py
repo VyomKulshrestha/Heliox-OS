@@ -203,6 +203,9 @@ class ActionType(StrEnum):
     API_SLACK = "api_slack"
     API_DISCORD = "api_discord"
     API_SCRAPE = "api_scrape"
+    # -- Workspace semantic search (RAG) --
+    WORKSPACE_INDEX = "workspace_index"
+    WORKSPACE_SEARCH = "workspace_search"
 
 
 class PermissionTier(int, Enum):
@@ -262,6 +265,7 @@ READ_ONLY_ACTIONS = {
     ActionType.FILE_PARSE,
     ActionType.FILE_SEARCH_CONTENT,
     ActionType.API_SCRAPE,
+    ActionType.WORKSPACE_SEARCH,
 }
 
 DESTRUCTIVE_ACTIONS = {
@@ -605,6 +609,14 @@ class ApiRequestParams(BaseModel):
     labels: list[str] = Field(default_factory=list)
 
 
+class WorkspaceParams(BaseModel):
+    """For workspace indexing and semantic search."""
+
+    folder_path: str = ""
+    query: str = ""
+    n_results: int = 5
+
+
 class EmptyParams(BaseModel):
     """For actions that need no parameters."""
 
@@ -645,6 +657,7 @@ ActionParameters = (
     | CodeExecParams
     | FileIntelParams
     | ApiRequestParams
+    | WorkspaceParams
     | EmptyParams
 )
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import csv
 import json
 import logging
 import secrets
@@ -12,13 +13,15 @@ import signal
 import sys
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import aiosqlite
 import websockets
 from websockets.asyncio.server import Server, ServerConnection
 
-from pilot.config import DB_FILE, LOG_FILE, STATE_DIR, PilotConfig, ensure_dirs
+from pilot.config import DATA_DIR, DB_FILE, LOG_FILE, STATE_DIR, PilotConfig, ensure_dirs
 
 logger = logging.getLogger("pilot.server")
 
@@ -92,6 +95,7 @@ class PilotServer:
         self._planner: Any = None
         self._executor: Any = None
         self._verifier: Any = None
+        self._destructive_critic: Any = None
         self._reflector: Any = None
         self._multi_agent: Any = None
         self._background: Any = None
@@ -106,6 +110,7 @@ class PilotServer:
         self._screen_vision: Any = None
         self._memory: Any = None
         self._vault: Any = None
+        self._permission_audit: Any = None
         # Cognitive intelligence (TRIBE v2)
         self._tribe_engine: Any = None
         self._attention_ui: Any = None
@@ -117,6 +122,8 @@ class PilotServer:
         self._budget_tracker: Any = None
         self._running = False
         self._pending_confirms: dict[str, PendingConfirmation] = {}
+        # ── Cancel Token (Issue #92) ──
+        self._cancel_event: asyncio.Event | None = None
 
     async def initialize(self) -> None:
         """Initialize all agent components.
@@ -140,6 +147,7 @@ class PilotServer:
         from pilot.memory.store import MemoryStore
         from pilot.models.router import ModelRouter
         from pilot.security.audit import AuditLogger
+        from pilot.security.permission_audit import PermissionEscalationAuditStore
         from pilot.security.permissions import PermissionChecker
         from pilot.security.validator import ActionValidator
         from pilot.security.vault import KeyVault
@@ -155,6 +163,8 @@ class PilotServer:
         model_router.set_budget_tracker(self._budget_tracker)
 
         audit = AuditLogger()
+        self._permission_audit = PermissionEscalationAuditStore()
+        await self._permission_audit.initialize()
         validator = ActionValidator(self.config)
         permissions = PermissionChecker(self.config)
         self._memory = MemoryStore()
@@ -163,6 +173,11 @@ class PilotServer:
         self._planner = Planner(model_router, self._memory)
         self._executor = Executor(self.config, validator, permissions, audit)
         self._verifier = Verifier(model_router)
+
+        # Destructive Critic Agent — secondary safety reviewer for Tier 4 plans.
+        from pilot.agents.destructive_critic import DestructiveCriticAgent
+
+        self._destructive_critic = DestructiveCriticAgent(model_router)
 
         # Advanced agent components
         self._reflector = Reflector(model_router)
@@ -223,8 +238,6 @@ class PilotServer:
 
             self._subconscious = SubconsciousAgent(model_router)
             await self._subconscious.initialize(str(DB_FILE))
-            # NOTE: Don't auto-start the consolidation loop — it can block
-            # the event loop with LLM calls. Users start it via API.
             logger.info("SubconsciousAgent initialized (idle, use persona_consolidate to trigger)")
         except Exception:
             logger.warning("SubconsciousAgent init failed (non-critical)", exc_info=True)
@@ -237,11 +250,9 @@ class PilotServer:
             self._cognitive_hub = CognitiveHub()
             logger.info("CognitiveHub initialized with TRIBE v2")
 
-            # Check for new features and announce
             announcement = announce_new_features()
             if announcement:
                 logger.info("New features announcement: %s", announcement)
-                # Will be spoken by voice.py
                 self._new_features_announcement = announcement
                 mark_version_seen()
         except Exception:
@@ -253,10 +264,9 @@ class PilotServer:
             from pilot.agents.screen_vision import ScreenVisionAgent
 
             self._screen_vision = ScreenVisionAgent(model_router)
-            # Auto-start the screen watcher for always-on context awareness.
-            # Uses asyncio.to_thread() internally so it won't block the event loop.
-            asyncio.create_task(self._screen_vision.start(interval_seconds=3.0, enable_describe=False))
-            logger.info("ScreenVisionAgent auto-started (every 3s, JARVIS mode)")
+            interval_seconds = self.config.screen_vision.capture_interval_seconds
+            asyncio.create_task(self._screen_vision.start(interval_seconds=interval_seconds, enable_describe=False))
+            logger.info("ScreenVisionAgent auto-started (every %.1fs, JARVIS mode)", interval_seconds)
         except Exception:
             logger.warning("ScreenVisionAgent init failed (non-critical)", exc_info=True)
 
@@ -273,7 +283,6 @@ class PilotServer:
             self._stress_gate = StressGate(self._tribe_engine)
             self._intent_predictor = IntentPredictor(self._tribe_engine)
 
-            # Inject cognitive modules into subsystem architectures
             if self._executor:
                 self._executor._stress_gate = self._stress_gate
             if self._fusion:
@@ -281,7 +290,6 @@ class PilotServer:
             if getattr(self, "_screen_vision", None):
                 self._screen_vision._tribe_engine = self._tribe_engine
 
-            # Attempt background model load (non-blocking)
             asyncio.create_task(self._tribe_engine.load_model())
             logger.info(
                 "Cognitive intelligence initialized (TRIBE v2 %s)",
@@ -321,7 +329,10 @@ class PilotServer:
 
         self._handlers = {
             "execute": self._handle_execute,
+            "export_session_chat": self._handle_export_session_chat,
             "confirm": self._handle_confirm,
+            # ── Cancel Token (Issue #92) ──
+            "abort": self._handle_abort,
             "get_config": self._handle_get_config,
             "update_config": self._handle_update_config,
             "get_history": self._handle_get_history,
@@ -333,70 +344,55 @@ class PilotServer:
             "ping": self._handle_ping,
             "system_status": self._handle_system_status,
             "capabilities": self._handle_capabilities,
-            # Advanced agent endpoints
             "reflection_stats": self._handle_reflection_stats,
             "background_tasks": self._handle_background_tasks,
             "background_start": self._handle_background_start,
             "background_stop": self._handle_background_stop,
             "agent_routing": self._handle_agent_routing,
-            # Multi-agent orchestrator endpoints
             "agent_stats": self._handle_agent_stats,
             "agent_capabilities": self._handle_agent_capabilities,
             "agent_spawn": self._handle_agent_spawn,
-            # Multimodal fusion endpoints
             "voice_event": self._handle_voice_event,
             "gesture_event": self._handle_gesture_event,
             "multimodal_stats": self._handle_multimodal_stats,
-            # Reasoning visualization endpoints
             "reasoning_log": self._handle_reasoning_log,
             "reasoning_stats": self._handle_reasoning_stats,
-            # Task decomposition endpoints
             "decompose_task": self._handle_decompose_task,
-            # Simulation sandbox endpoints
             "simulate_plan": self._handle_simulate_plan,
-            # Prompt improvement endpoints
             "prompt_strategies": self._handle_prompt_strategies,
             "prompt_stats": self._handle_prompt_stats,
-            # Plugin ecosystem endpoints
             "plugin_list": self._handle_plugin_list,
             "plugin_tools": self._handle_plugin_tools,
             "plugin_toggle": self._handle_plugin_toggle,
             "plugin_market_list": self._handle_plugin_market_list,
             "plugin_install": self._handle_plugin_install,
             "plugin_uninstall": self._handle_plugin_uninstall,
-            # Subconscious agent endpoints
             "persona_rules": self._handle_persona_rules,
             "persona_consolidate": self._handle_persona_consolidate,
             "persona_add_preference": self._handle_persona_add_preference,
             "subconscious_stats": self._handle_subconscious_stats,
-            # Screen vision endpoints
             "screen_context": self._handle_screen_context,
             "screen_current_app": self._handle_screen_current_app,
             "screen_vision_stats": self._handle_screen_vision_stats,
             "screen_vision_toggle": self._handle_screen_vision_toggle,
-            # Cognitive intelligence (TRIBE v2) endpoints
             "cognitive_stats": self._handle_cognitive_stats,
             "cognitive_state": self._handle_cognitive_state,
             "attention_toggle": self._handle_attention_toggle,
             "stress_gate_toggle": self._handle_stress_gate_toggle,
             "intent_predictor_toggle": self._handle_intent_predictor_toggle,
             "tribe_model_toggle": self._handle_tribe_model_toggle,
-            # Voice listener (JARVIS mode) endpoints
             "voice_listener_start": self._handle_voice_listener_start,
             "voice_listener_stop": self._handle_voice_listener_stop,
             "voice_listener_stats": self._handle_voice_listener_stats,
-            # Autonomous executor (fire-and-forget) endpoints
             "autonomous_submit": self._handle_autonomous_submit,
             "autonomous_cancel": self._handle_autonomous_cancel,
             "autonomous_jobs": self._handle_autonomous_jobs,
             "autonomous_job": self._handle_autonomous_job,
-            # Proactive suggestions endpoints
             "proactive_start": self._handle_proactive_start,
             "proactive_stop": self._handle_proactive_stop,
             "proactive_stats": self._handle_proactive_stats,
             "proactive_accept": self._handle_proactive_accept,
             "proactive_dismiss": self._handle_proactive_dismiss,
-            # Budget tracking endpoints
             "budget_stats": self._handle_budget_stats,
             "budget_reset": self._handle_budget_reset,
         }
@@ -409,19 +405,23 @@ class PilotServer:
             params: The notification parameters.
         """
         # ── Feature 5: Attention-Optimized Notification Timing ──
-        if getattr(self, "_attention_ui", None) and self._attention_ui.enabled:
+        # task_complete always bypasses the attention gate — it is the user-facing
+        # completion signal and must never be buffered or suppressed.
+        if method == "task_complete":
+            pass
+        elif getattr(self, "_attention_ui", None) and self._attention_ui.enabled:
             try:
                 content = params if isinstance(params, dict) else {"data": params}
                 scored = await self._attention_ui.score_event(method, content)
 
                 # Buffer non-critical notifications when user is highly focused
-                if not scored.should_display and scored.priority.value != "critical":
+                # Fix: scored.priority is a plain str, not an enum — compare directly.
+                if not scored.should_display and scored.priority != "critical":
                     if not hasattr(self, "_notification_buffer"):
                         self._notification_buffer = []
                     self._notification_buffer.append((method, params.copy() if isinstance(params, dict) else params))
                     return
 
-                # Flush buffer during 'cortical transition' moments (low activation)
                 if scored.attention_score < 0.4 and getattr(self, "_notification_buffer", []):
                     logger.info(
                         f"Flushing {len(self._notification_buffer)} buffered notifications during low cognitive load."
@@ -438,7 +438,6 @@ class PilotServer:
                                 pass
                     self._notification_buffer.clear()
 
-                # Embed cognitive hints directly into outgoing parameters
                 if isinstance(params, dict):
                     params["_cognitive"] = {
                         "priority": scored.priority,
@@ -515,12 +514,20 @@ class PilotServer:
             return {"status": "error", "message": "Empty input"}
         dry_run = bool(params.get("dry_run", self.config.security.dry_run))
 
+        # ── Cancel Token (Issue #92): fresh event per execution session ──
+        self._cancel_event = asyncio.Event()
+        cancel_event = self._cancel_event
+
         import time
 
         from pilot.reasoning.events import (
             CONFIRMATION_APPROVED,
             CONFIRMATION_DENIED,
             CONFIRMATION_REQUIRED,
+            CRITIC_REVIEW_APPROVED,
+            CRITIC_REVIEW_BLOCKED,
+            CRITIC_REVIEW_STARTED,
+            CRITIC_REVIEW_WARNED,
             EXECUTOR_ACTION_COMPLETE,
             EXECUTOR_ACTION_STARTED,
             EXECUTOR_ALL_COMPLETE,
@@ -547,11 +554,33 @@ class PilotServer:
         )
 
         _start_time = time.time()
+        last_plan_id = ""
+
+        def _sanitize_summary(text: str, limit: int = 160) -> str:
+            clean = " ".join(str(text).split())
+            if len(clean) <= limit:
+                return clean
+            return clean[: max(0, limit - 3)] + "..."
+
+        async def _emit_task_complete(status: str, summary: str) -> None:
+            try:
+                duration_ms = int((time.time() - _start_time) * 1000)
+                payload = {
+                    "status": status,
+                    "summary": _sanitize_summary(summary),
+                    "duration_ms": duration_ms,
+                    "dry_run": dry_run,
+                }
+                if last_plan_id:
+                    payload["plan_id"] = last_plan_id
+                await self._broadcast_notification("task_complete", payload)
+            except Exception:
+                pass
+
         emit = self._reasoning
         if emit:
             emit.reset()
 
-        # ── Stage: User Input ──
         input_phase = ""
         await ws.send(_notification("status", {"phase": "receiving input"}))
         if emit:
@@ -560,7 +589,6 @@ class PilotServer:
                 "user_input", "user_input_received", {"length": len(user_input)}, parent_id=input_phase
             )
 
-        # ── Stage: Memory Recall ──
         mem_phase = ""
         await ws.send(_notification("status", {"phase": "recalling memory"}))
         if emit:
@@ -576,7 +604,6 @@ class PilotServer:
                 "memory_recall", MEMORY_CONTEXT_LOADED, {"has_context": bool(improvement_ctx)}, parent_id=mem_phase
             )
 
-        # ── Stage: Agent Routing ──
         route_phase = ""
         await ws.send(_notification("status", {"phase": "routing agents"}))
         if emit:
@@ -601,7 +628,11 @@ class PilotServer:
         last_explanation = ""
 
         for attempt in range(1 + self.MAX_RETRIES):
-            # ── Stage: Planning ──
+            # ── Cancel Token: check before each planning attempt ──
+            if cancel_event.is_set():
+                logger.info("Execution cancelled before attempt %d", attempt + 1)
+                return {"status": "cancelled", "message": "Execution was aborted by user."}
+
             plan_phase = ""
             if emit:
                 event_name = PLANNER_STARTED if attempt == 0 else PLANNER_REPLANNING
@@ -616,7 +647,6 @@ class PilotServer:
             if emit:
                 await emit.data_event("planning", PLANNER_LLM_CALL, {"model": "active"}, parent_id=plan_phase)
 
-            # Inject live screen context so planner knows what user is looking at
             _screen_ctx = ""
             if self._screen_vision:
                 try:
@@ -624,11 +654,9 @@ class PilotServer:
                 except Exception:
                     pass
 
-            # Create token stream callback for real-time LLM response streaming
             async def stream_token(token: str) -> None:
                 await ws.send(_notification("token_stream", {"token": token}))
 
-            # Only enable streaming on the first attempt (not on retries)
             stream_callback = stream_token if attempt == 0 else None
 
             plan = await self._planner.plan(
@@ -640,10 +668,12 @@ class PilotServer:
                 if attempt < self.MAX_RETRIES:
                     error_context = plan.error
                     continue
+                await _emit_task_complete("error", plan.error)
                 return {"status": "error", "message": plan.error}
 
             last_explanation = plan.explanation
             plan_id = str(uuid.uuid4())[:8]
+            last_plan_id = plan_id
 
             if emit:
                 await emit.phase_complete(
@@ -670,14 +700,70 @@ class PilotServer:
                 )
             )
 
-            # ── Stage: Confirmation Gate ──
+            from pilot.actions import PermissionTier
+
+            critic_verdict_payload: dict[str, Any] | None = None
+            plan_has_tier4 = any(a.permission_tier == PermissionTier.ROOT_CRITICAL for a in plan.actions)
+            if plan_has_tier4 and self._destructive_critic and not dry_run:
+                critic_phase = ""
+                await ws.send(_notification("status", {"phase": "critic review"}))
+                if emit:
+                    critic_phase = await emit.phase_start(
+                        "critic_review",
+                        CRITIC_REVIEW_STARTED,
+                        {"plan_id": plan_id, "action_count": len(plan.actions)},
+                    )
+                    await emit.thought(
+                        "critic_review",
+                        "Tier 4 actions detected — running independent safety review...",
+                        parent_id=critic_phase,
+                    )
+
+                verdict = await self._destructive_critic.review(user_input, plan)
+                critic_verdict_payload = verdict.to_dict()
+                await ws.send(_notification("critic_verdict", verdict.to_dict()))
+
+                if verdict.is_blocked:
+                    await self._record_permission_escalations(
+                        plan_id=plan_id,
+                        plan=plan,
+                        confirmation_decision="blocked_by_critic",
+                        critic_verdict=critic_verdict_payload,
+                        results=[],
+                        execution_error=verdict.recommendation,
+                    )
+                    if emit:
+                        await emit.phase_error(
+                            "critic_review",
+                            CRITIC_REVIEW_BLOCKED,
+                            verdict.recommendation,
+                            parent_id=critic_phase,
+                        )
+                    return {
+                        "status": "blocked_by_critic",
+                        "verdict": verdict.to_dict(),
+                        "message": (f"Plan blocked by safety critic: {verdict.recommendation}"),
+                        "explanation": plan.explanation,
+                    }
+
+                if emit:
+                    event_name = CRITIC_REVIEW_WARNED if verdict.has_warnings else CRITIC_REVIEW_APPROVED
+                    await emit.phase_complete(
+                        "critic_review",
+                        event_name,
+                        verdict.to_dict(),
+                        parent_id=critic_phase,
+                    )
+
             needs_confirm = any(a.requires_confirmation for a in plan.actions) and not dry_run
             if needs_confirm:
                 confirm_phase = ""
                 if emit:
                     confirm_phase = await emit.phase_start("confirmation", CONFIRMATION_REQUIRED, {"plan_id": plan_id})
                     await emit.thought(
-                        "confirmation", "Dangerous action detected — awaiting user approval...", parent_id=confirm_phase
+                        "confirmation",
+                        "Dangerous action detected — awaiting user approval...",
+                        parent_id=confirm_phase,
                     )
 
                 confirmed = await self._wait_for_confirmation(plan_id, plan, ws)
@@ -693,6 +779,15 @@ class PilotServer:
                         )
 
                 if not confirmed:
+                    await self._record_permission_escalations(
+                        plan_id=plan_id,
+                        plan=plan,
+                        confirmation_decision="denied",
+                        critic_verdict=critic_verdict_payload,
+                        results=[],
+                        execution_error="Plan was denied by user.",
+                    )
+                    await _emit_task_complete("cancelled", "Plan was denied by user.")
                     return {
                         "status": "cancelled",
                         "message": "Plan was denied by user.",
@@ -705,7 +800,6 @@ class PilotServer:
                         "confirmation", "confirmation_skipped", {"reason": "No dangerous actions"}, parent_id=skip_phase
                     )
 
-            # ── Stage: Execution ──
             exec_phase = ""
             if emit:
                 exec_phase = await emit.phase_start("execution", EXECUTOR_STARTED, {"action_count": len(plan.actions)})
@@ -748,7 +842,6 @@ class PilotServer:
                         parent_id=_exec_phase,
                     )
 
-            # Route through multi-agent orchestrator
             if self._orchestrator:
                 orch_routing = self._orchestrator.get_routing_summary(plan)
                 await ws.send(_notification("orchestrator_routing", orch_routing))
@@ -763,14 +856,34 @@ class PilotServer:
                     plan,
                     on_action_start=_on_action_start,
                     on_action_complete=_on_action_complete,
+                    cancel_event=cancel_event,  # ── Cancel Token (Issue #92) ──
                 )
             else:
                 results = await self._executor.execute(
                     plan,
                     on_action_start=_on_action_start,
                     on_action_complete=_on_action_complete,
+                    cancel_event=cancel_event,  # ── Cancel Token (Issue #92) ──
                 )
             all_results = results
+            if needs_confirm and not dry_run:
+                await self._record_permission_escalations(
+                    plan_id=plan_id,
+                    plan=plan,
+                    confirmation_decision="approved",
+                    critic_verdict=critic_verdict_payload,
+                    results=results,
+                )
+
+            # ── Cancel Token: if aborted mid-execution, return immediately ──
+            if cancel_event.is_set():
+                logger.info("Execution was cancelled mid-plan after %d result(s)", len(results))
+                await ws.send(_notification("status", {"phase": "aborted"}))
+                return {
+                    "status": "cancelled",
+                    "message": "Execution was aborted by user.",
+                    "results": [r.model_dump() for r in results],
+                }
 
             if emit:
                 successes = sum(1 for r in results if r.success)
@@ -781,7 +894,6 @@ class PilotServer:
                     parent_id=exec_phase,
                 )
 
-            # ── Stage: Verification ──
             verify_phase = ""
             if emit:
                 verify_phase = await emit.phase_start("verification", VERIFICATION_STARTED)
@@ -812,7 +924,6 @@ class PilotServer:
                         parent_id=verify_phase,
                     )
 
-                # ── Stage: Reflection ──
                 if emit:
                     refl_phase = await emit.phase_start("reflection", REFLECTION_STARTED)
                     await emit.thought(
@@ -824,7 +935,6 @@ class PilotServer:
                         "reflection", REFLECTION_COMPLETE, {"retry_count": attempt}, parent_id=refl_phase
                     )
 
-                # ── Stage: Memory Update ──
                 if emit:
                     mem_store_phase = await emit.phase_start("memory_update", MEMORY_STORE_STARTED)
                     await emit.thought(
@@ -848,6 +958,7 @@ class PilotServer:
                         "memory_update", MEMORY_STORE_COMPLETE, {"saved": True}, parent_id=mem_store_phase
                     )
 
+                await _emit_task_complete("success", plan.explanation or "Task completed successfully.")
                 return {
                     "status": "success",
                     "dry_run": dry_run,
@@ -863,7 +974,6 @@ class PilotServer:
                     "agent_routing": self._multi_agent.get_routing_summary(user_input),
                 }
 
-            # Execution failed — build error context for retry
             if emit:
                 await emit.phase_error(
                     "verification", VERIFICATION_FAILED, "; ".join(verification.details[:3]), parent_id=verify_phase
@@ -877,9 +987,7 @@ class PilotServer:
                 await ws.send(
                     _notification(
                         "status",
-                        {
-                            "phase": "retrying — previous attempt failed",
-                        },
+                        {"phase": "retrying — previous attempt failed"},
                     )
                 )
                 if emit:
@@ -889,12 +997,12 @@ class PilotServer:
             else:
                 break
 
-        # ── Final memory save on partial failure ──
         if emit:
             mem_final = await emit.phase_start("memory_update", MEMORY_STORE_STARTED)
             await emit.phase_complete("memory_update", MEMORY_STORE_COMPLETE, {"partial": True}, parent_id=mem_final)
 
         asyncio.create_task(self._memory.record(user_input, plan, all_results))
+        await _emit_task_complete("partial_failure", last_explanation or "Task completed with errors.")
         return {
             "status": "partial_failure",
             "dry_run": dry_run,
@@ -908,6 +1016,61 @@ class PilotServer:
                 else last_explanation
             ),
         }
+
+    async def _record_permission_escalations(
+        self,
+        *,
+        plan_id: str,
+        plan: Any,
+        confirmation_decision: str,
+        critic_verdict: dict[str, Any] | None,
+        results: list[Any],
+        execution_error: str = "",
+    ) -> None:
+        """Persist tamper-evident records for elevated permission decisions."""
+        if not self._permission_audit:
+            return
+
+        from pilot.actions import PermissionTier
+
+        result_by_action: dict[str, list[Any]] = {}
+        for result in results:
+            action_key = self._action_signature(result.action)
+            result_by_action.setdefault(action_key, []).append(result)
+
+        for index, action in enumerate(plan.actions):
+            if action.permission_tier < PermissionTier.SYSTEM_MODIFY:
+                continue
+
+            matched_result = None
+            matches = result_by_action.get(self._action_signature(action))
+            if matches:
+                matched_result = matches.pop(0)
+
+            if matched_result is None:
+                execution_success = None
+                action_error = execution_error
+            else:
+                execution_success = bool(matched_result.success)
+                action_error = matched_result.error or ""
+
+            await self._permission_audit.record_event(
+                plan_id=plan_id,
+                action_index=index,
+                action_type=action.action_type.value,
+                target=action.target,
+                permission_tier=action.permission_tier.name,
+                requires_root=action.requires_root,
+                destructive=action.destructive,
+                confirmation_decision=confirmation_decision,
+                critic_verdict=critic_verdict,
+                execution_success=execution_success,
+                execution_error=action_error,
+            )
+
+    @staticmethod
+    def _action_signature(action: Any) -> str:
+        return json.dumps(action.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
 
     async def _wait_for_confirmation(self, plan_id: str, plan: Any, ws: ServerConnection) -> bool:
         """Send a confirmation request and block until the user responds or timeout.
@@ -964,6 +1127,26 @@ class PilotServer:
         pending.event.set()
         return {"status": "ok", "confirmed": pending.confirmed}
 
+    async def _handle_abort(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """Signal the current execution to stop gracefully (Issue #92).
+
+        Sets the per-session cancel_event so the Orchestrator and Executor
+        halt at the next action boundary. Returns immediately — cancellation
+        propagates asynchronously.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with status indicating whether an active execution was aborted.
+        """
+        if self._cancel_event and not self._cancel_event.is_set():
+            self._cancel_event.set()
+            logger.info("Abort signal received — cancel_event set, propagating to agents")
+            return {"status": "aborted"}
+        return {"status": "no_active_execution"}
+
     # -- Config --
 
     async def _handle_get_config(self, params: dict, ws: ServerConnection) -> dict:
@@ -1005,10 +1188,14 @@ class PilotServer:
             return {"status": "error", "message": f"Unknown config section: {section}"}
         for k, v in values.items():
             if hasattr(target, k):
+                if section == "screen_vision" and k == "capture_interval_seconds":
+                    v = float(v)
                 setattr(target, k, v)
         self.config.save()
 
-        # Re-init cloud client if cloud provider changed
+        if section == "screen_vision" and "capture_interval_seconds" in values and self._screen_vision:
+            self._screen_vision.set_interval(self.config.screen_vision.capture_interval_seconds)
+
         if section == "model" and ("cloud_provider" in values or "provider" in values):
             if self.config.model.cloud_provider:
                 from pilot.models.cloud import CloudClient
@@ -1035,6 +1222,130 @@ class PilotServer:
         entries = await self._memory.get_history(limit=limit, offset=offset)
         return {"entries": entries}
 
+    async def _handle_export_session_chat(self, params: dict, ws: ServerConnection) -> dict:
+        """Export current UI session chat messages to JSON or CSV."""
+        fmt = str(params.get("format", "json")).lower()
+        messages = params.get("messages", [])
+
+        if fmt not in {"json", "csv"}:
+            return {"status": "error", "message": "format must be 'json' or 'csv'"}
+        if not isinstance(messages, list):
+            return {"status": "error", "message": "messages must be a list"}
+
+        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+        filename = f"heliox-chat-{ts}.{fmt}"
+
+        downloads_dir = Path.home() / "Downloads"
+        export_dir = downloads_dir if downloads_dir.exists() else (DATA_DIR / "exports")
+        export_dir.mkdir(parents=True, exist_ok=True)
+        out_path = export_dir / filename
+
+        try:
+            if fmt == "json":
+                out_path.write_text(json.dumps(messages, ensure_ascii=False, indent=2), encoding="utf-8")
+            else:
+                with out_path.open("w", newline="", encoding="utf-8") as f:
+                    writer = csv.writer(f)
+                    writer.writerow(
+                        [
+                            "timestamp_iso",
+                            "timestamp_ms",
+                            "msg_type",
+                            "text",
+                            "plan_id",
+                            "plan_explanation",
+                            "plan_action_count",
+                            "plan_actions",
+                            "result_count",
+                            "result_success_count",
+                            "result_error_count",
+                            "result_outputs",
+                            "verification_passed",
+                            "verification_details",
+                        ]
+                    )
+
+                    for m in messages:
+                        if not isinstance(m, dict):
+                            continue
+
+                        raw_ts = m.get("timestamp")
+                        iso_ts = ""
+                        if isinstance(raw_ts, (int, float)):
+                            iso_ts = datetime.fromtimestamp(raw_ts / 1000).isoformat()
+
+                        msg_type = str(m.get("type", ""))
+                        text = str(m.get("text", ""))
+
+                        plan = m.get("plan", {})
+                        if not isinstance(plan, dict):
+                            plan = {}
+                        plan_id = str(plan.get("plan_id", ""))
+                        plan_explanation = str(plan.get("explanation", ""))
+                        plan_actions = plan.get("actions", [])
+                        if not isinstance(plan_actions, list):
+                            plan_actions = []
+                        plan_action_count = len(plan_actions)
+                        plan_actions_str = " | ".join(
+                            f"{idx + 1}. {str(a.get('action_type', ''))} -> {str(a.get('target', ''))}"
+                            for idx, a in enumerate(plan_actions)
+                            if isinstance(a, dict)
+                        )
+
+                        action_results = m.get("actionResults", [])
+                        if not isinstance(action_results, list):
+                            action_results = []
+                        result_count = len(action_results)
+                        result_success_count = sum(
+                            1 for r in action_results if isinstance(r, dict) and bool(r.get("success", False))
+                        )
+                        result_error_count = result_count - result_success_count
+                        result_outputs = " | ".join(
+                            str(r.get("output") or r.get("error") or "").strip()
+                            for r in action_results
+                            if isinstance(r, dict) and (r.get("output") or r.get("error"))
+                        )
+
+                        verification = m.get("verification", {})
+                        if not isinstance(verification, dict):
+                            verification = {}
+                        verification_passed = (
+                            verification.get("passed") if isinstance(verification.get("passed"), bool) else ""
+                        )
+                        verification_details_raw = verification.get("details", [])
+                        if not isinstance(verification_details_raw, list):
+                            verification_details_raw = []
+                        verification_details = " | ".join(str(d) for d in verification_details_raw)
+
+                        writer.writerow(
+                            [
+                                iso_ts,
+                                raw_ts if isinstance(raw_ts, (int, float)) else "",
+                                msg_type,
+                                text,
+                                plan_id,
+                                plan_explanation,
+                                plan_action_count,
+                                plan_actions_str,
+                                result_count,
+                                result_success_count,
+                                result_error_count,
+                                result_outputs,
+                                verification_passed,
+                                verification_details,
+                            ]
+                        )
+        except Exception as e:
+            logger.exception("Failed to export session chat")
+            return {"status": "error", "message": f"Export failed: {e}"}
+
+        return {
+            "status": "ok",
+            "path": str(out_path),
+            "count": len(messages),
+            "format": fmt,
+        }
+
     # -- API key management --
 
     async def _handle_store_api_key(self, params: dict, ws: ServerConnection) -> dict:
@@ -1052,7 +1363,6 @@ class PilotServer:
         if not provider or not key:
             return {"status": "error", "message": "provider and api_key are required"}
         await self._vault.store_key(provider, key)
-        # Re-init cloud client with the new provider
         if self.config.model.cloud_provider == provider:
             from pilot.models.cloud import CloudClient
 
@@ -1140,7 +1450,15 @@ class PilotServer:
         return {"pong": True, "version": "0.7.1"}
 
     async def _handle_system_status(self, params: dict, ws: ServerConnection) -> dict:
-        """Return current system information."""
+        """Return current system information.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with platform info and capabilities count.
+        """
         from pilot.system.platform_detect import get_platform_info
 
         info = get_platform_info()
@@ -1150,7 +1468,15 @@ class PilotServer:
         }
 
     async def _handle_capabilities(self, params: dict, ws: ServerConnection) -> dict:
-        """Return all available action types."""
+        """Return all available action types.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with action_types list and count.
+        """
         from pilot.actions import ActionType
 
         return {
@@ -1224,7 +1550,6 @@ class PilotServer:
         """
         query = params.get("input", "")
         result = self._multi_agent.get_routing_summary(query)
-        # Enrich with orchestrator info if available
         if self._orchestrator:
             result["orchestrator"] = self._orchestrator.get_input_routing_summary(query)
         return result
@@ -1418,7 +1743,6 @@ class PilotServer:
         if not self._sandbox:
             return {"error": "Sandbox not initialized"}
 
-        # Reconstruct plan from params or use last plan
         plan_id = params.get("plan_id", "")
         pending = self._pending_confirms.get(plan_id)
         if pending and pending.plan:
@@ -1524,7 +1848,6 @@ class PilotServer:
             A dict with plugins list from registry.json.
         """
         import json as json_module
-        import os
 
         repo_root = Path(__file__).parent.parent.parent
         registry_path = repo_root / "plugins" / "registry.json"
@@ -1558,8 +1881,6 @@ class PilotServer:
         Returns:
             A dict with installation status.
         """
-        import shutil
-
         plugin_name = params.get("plugin_name", "")
         if not plugin_name:
             return {"error": "plugin_name is required"}
@@ -1737,7 +2058,7 @@ class PilotServer:
         enabled = params.get("enabled", True)
         if self._screen_vision:
             if enabled:
-                interval = params.get("interval_seconds", 2.0)
+                interval = params.get("interval_seconds", self.config.screen_vision.capture_interval_seconds)
                 describe = params.get("enable_describe", False)
                 await self._screen_vision.start(interval, describe)
             else:
@@ -1785,9 +2106,8 @@ class PilotServer:
         )
         logger.info("Pilot daemon ready")
 
-        # Announce new features to connected clients
         if hasattr(self, "_new_features_announcement") and self._new_features_announcement:
-            await asyncio.sleep(1)  # Give clients time to connect
+            await asyncio.sleep(1)
             await self._broadcast_notification(
                 "feature_announcement",
                 {
@@ -1797,6 +2117,7 @@ class PilotServer:
             )
 
     async def stop(self) -> None:
+        """Stop the Pilot daemon server and clean up all resources."""
         self._running = False
         if self._orchestrator:
             await self._orchestrator.stop_all()
@@ -1814,7 +2135,6 @@ class PilotServer:
             await self._memory.close()
         if self._budget_tracker:
             await self._budget_tracker.close()
-        # Unload TRIBE v2 model
         if self._tribe_engine and self._tribe_engine.is_loaded:
             self._tribe_engine.unload_model()
         logger.info("Pilot daemon stopped")
@@ -1822,13 +2142,29 @@ class PilotServer:
     # ── Budget Tracking Handlers ──
 
     async def _handle_budget_stats(self, params: dict, ws: ServerConnection) -> dict:
-        """Return current-month token usage and cost summary."""
+        """Return current-month token usage and cost summary.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with token usage and cost statistics.
+        """
         if not self._budget_tracker:
             return {}
         return await self._budget_tracker.get_stats()
 
     async def _handle_budget_reset(self, params: dict, ws: ServerConnection) -> dict:
-        """Delete all token-usage records for the current month."""
+        """Delete all token-usage records for the current month.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with status.
+        """
         if not self._budget_tracker:
             return {"status": "ok"}
         await self._budget_tracker.reset_current_month()
@@ -1837,7 +2173,15 @@ class PilotServer:
     # ── Cognitive Intelligence (TRIBE v2) Handlers ──
 
     async def _handle_cognitive_stats(self, params: dict, ws: ServerConnection) -> dict:
-        """Get stats for all cognitive subsystems."""
+        """Get stats for all cognitive subsystems.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with stats for tribe_engine, attention_ui, stress_gate, intent_predictor.
+        """
         return {
             "tribe_engine": self._tribe_engine.get_stats() if self._tribe_engine else None,
             "attention_ui": self._attention_ui.get_stats() if self._attention_ui else None,
@@ -1846,7 +2190,15 @@ class PilotServer:
         }
 
     async def _handle_cognitive_state(self, params: dict, ws: ServerConnection) -> dict:
-        """Get current predicted cognitive state."""
+        """Get current predicted cognitive state.
+
+        Args:
+            params: JSON-RPC parameters with optional stimulus description.
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with current cognitive state or error.
+        """
         if not self._tribe_engine:
             return {"error": "Cognitive engine not initialized"}
         state = await self._tribe_engine.predict_cognitive_state(
@@ -1855,28 +2207,60 @@ class PilotServer:
         return state.to_dict()
 
     async def _handle_attention_toggle(self, params: dict, ws: ServerConnection) -> dict:
-        """Toggle attention-aware UI scoring."""
+        """Toggle attention-aware UI scoring.
+
+        Args:
+            params: JSON-RPC parameters with optional enabled flag.
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with enabled state or error.
+        """
         if not self._attention_ui:
             return {"error": "Attention UI not initialized"}
         enabled = self._attention_ui.toggle(params.get("enabled"))
         return {"enabled": enabled}
 
     async def _handle_stress_gate_toggle(self, params: dict, ws: ServerConnection) -> dict:
-        """Toggle stress-aware task gating."""
+        """Toggle stress-aware task gating.
+
+        Args:
+            params: JSON-RPC parameters with optional enabled flag.
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with enabled state or error.
+        """
         if not self._stress_gate:
             return {"error": "Stress gate not initialized"}
         enabled = self._stress_gate.toggle(params.get("enabled"))
         return {"enabled": enabled}
 
     async def _handle_intent_predictor_toggle(self, params: dict, ws: ServerConnection) -> dict:
-        """Toggle JARVIS mode intent prediction."""
+        """Toggle JARVIS mode intent prediction.
+
+        Args:
+            params: JSON-RPC parameters with optional enabled flag.
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with enabled state or error.
+        """
         if not self._intent_predictor:
             return {"error": "Intent predictor not initialized"}
         enabled = self._intent_predictor.toggle(params.get("enabled"))
         return {"enabled": enabled}
 
     async def _handle_tribe_model_toggle(self, params: dict, ws: ServerConnection) -> dict:
-        """Load or unload the TRIBE v2 model."""
+        """Load or unload the TRIBE v2 model.
+
+        Args:
+            params: JSON-RPC parameters with action (load/unload/status).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with loaded state, fallback, and availability status.
+        """
         if not self._tribe_engine:
             return {"error": "TRIBE engine not initialized"}
         action = params.get("action", "status")
@@ -1903,27 +2287,48 @@ class PilotServer:
             command_text: The recognized voice command text.
         """
         logger.info("Voice command received: '%s'", command_text)
-        await self._broadcast_notification("voice_command", {"command": command_text, "status": "executing"})
+
+        language = getattr(
+            self._voice_listener,
+            "last_detected_language",
+            self.config.voice.language if self.config.voice.language != "auto" else "en",
+        )
+
+        await self._broadcast_notification(
+            "voice_command",
+            {
+                "command": command_text,
+                "status": "executing",
+                "language": language,
+            },
+        )
 
         try:
-            # Get screen context
             screen_ctx = ""
             if self._screen_vision:
                 try:
-                    screen_ctx = self._screen_vision.get_context_for_planner()
+                    base_ctx = self._screen_vision.get_context_for_planner()
+                    screen_ctx = f"{base_ctx}\nUser language: {language}"
                 except Exception:
-                    pass
+                    screen_ctx = f"User language: {language}"
+            else:
+                screen_ctx = f"User language: {language}"
 
-            # Plan
+            # Plan with multilingual context — single call only
             plan = await self._planner.plan(command_text, screen_context=screen_ctx)
             if plan.error:
                 await self._broadcast_notification(
-                    "voice_result", {"command": command_text, "status": "error", "message": plan.error}
+                    "voice_result",
+                    {
+                        "command": command_text,
+                        "status": "error",
+                        "message": plan.error,
+                        "language": language,
+                    },
                 )
-                # Speak the error
                 from pilot.system.voice import speak
 
-                await speak(f"Sorry, I couldn't plan that. {plan.error[:100]}")
+                await speak(f"Sorry, I couldn't process that. {plan.error[:100]}")
                 return
 
             await self._broadcast_notification(
@@ -1933,16 +2338,13 @@ class PilotServer:
                     "actions": [a.model_dump() for a in plan.actions],
                     "explanation": plan.explanation,
                     "source": "voice",
+                    "language": language,
                 },
             )
 
-            # Execute (auto-approve safe actions from voice)
             results = await self._executor.execute_plan(plan)
-
-            # Verify
             verification = await self._verifier.verify(plan, results)
 
-            # Build response summary
             output_parts = []
             for r in results:
                 if r.output:
@@ -1953,20 +2355,38 @@ class PilotServer:
 
             await self._broadcast_notification(
                 "voice_result",
-                {"command": command_text, "status": status, "result": result_text[:500]},
+                {
+                    "command": command_text,
+                    "status": status,
+                    "result": result_text[:500],
+                    "language": language,
+                },
             )
 
-            # Speak the result (keep it short for voice)
             from pilot.system.voice import speak
 
             spoken = result_text[:300] if len(result_text) < 300 else result_text[:297] + "..."
-            await speak(f"Done. {spoken}")
+            await speak(spoken)
 
         except Exception as e:
             logger.error("Voice command execution failed: %s", e)
+
             await self._broadcast_notification(
-                "voice_result", {"command": command_text, "status": "error", "message": str(e)}
+                "voice_result",
+                {
+                    "command": command_text,
+                    "status": "error",
+                    "message": str(e),
+                    "language": language,
+                },
             )
+
+            try:
+                from pilot.system.voice import speak
+
+                await speak("Sorry, something went wrong while executing your request.")
+            except Exception:
+                pass
 
     async def _voice_status_broadcast(self, status: str, data: dict) -> None:
         """Called by ContinuousVoiceListener for status updates.
@@ -2169,12 +2589,10 @@ class PilotServer:
         if not action_command:
             return {"error": f"Suggestion not found: {suggestion_id}"}
 
-        # Execute the suggested action via autonomous executor or direct pipeline
         if self._autonomous:
             job = await self._autonomous.submit(action_command, source="proactive")
             return {"status": "executing", "action": action_command, "job": job.to_dict()}
         else:
-            # Fallback: run directly through planner
             screen_ctx = ""
             if self._screen_vision:
                 try:

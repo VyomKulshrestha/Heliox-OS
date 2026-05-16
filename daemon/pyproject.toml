@@ -13,6 +13,7 @@ license = "MIT"
 dependencies = [
     "websockets>=13.0",
     "pydantic>=2.6",
+    "aiofiles>=24.1",
     "aiosqlite>=0.20",
     "httpx>=0.27",
     "tomli>=2.0; python_version < '3.12'",
@@ -29,7 +30,7 @@ full = [
     "pyperclip>=1.8",
     "SecretStorage>=3.3; sys_platform == 'linux'",
 ]
-llamacpp = ["llama-cpp-python>=0.3"]
+llamacpp = ["llama-cpp-python>=0.3", "pynvml>=11.5"]
 
 # Tier 1: Game Changers
 automation = [

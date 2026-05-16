@@ -77,6 +77,7 @@ EVENT_PRIORITIES: dict[str, str] = {
     "confirmation_required": PRIORITY_CRITICAL,
     # High — show unless extreme stress
     "execution_complete": PRIORITY_HIGH,
+    "task_complete": PRIORITY_HIGH,
     "plan_ready": PRIORITY_HIGH,
     "verification_result": PRIORITY_HIGH,
     # Medium — may defer
