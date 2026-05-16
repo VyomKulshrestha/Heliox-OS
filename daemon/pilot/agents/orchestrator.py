@@ -146,6 +146,7 @@ class AgentOrchestrator:
         plan: ActionPlan,
         on_action_start: Callable | None = None,
         on_action_complete: Callable | None = None,
+        cancel_event: asyncio.Event | None = None,  # ← add this
     ) -> list[ActionResult]:
         """Execute a plan by routing actions to specialist agents.
 
@@ -165,11 +166,15 @@ class AgentOrchestrator:
                     "is_multi_agent": len(routing) > 1,
                 },
             )
-
         # Process actions in order, grouping consecutive same-agent actions
         action_order = self._build_execution_order(plan, routing)
 
         for batch in action_order:
+            # ── Cancellation check ──
+            if cancel_event and cancel_event.is_set():
+                logger.info("Orchestrator: cancel_event set — halting plan execution")
+                break
+
             role, indices = batch
             agent = self._agents.get(role)
             if agent is None:

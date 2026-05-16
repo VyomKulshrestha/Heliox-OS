@@ -35,6 +35,8 @@ CONFIG_FILE = CONFIG_DIR / "config.toml"
 RESTRICTIONS_FILE = CONFIG_DIR / "restrictions.toml"
 DB_FILE = DATA_DIR / "pilot.db"
 AUDIT_FILE = DATA_DIR / "audit.jsonl"
+PERMISSION_AUDIT_DB_FILE = DATA_DIR / "permission_audit.db"
+PERMISSION_AUDIT_KEY_FILE = DATA_DIR / "permission_audit.key"
 LOG_FILE = STATE_DIR / "pilot.log"
 
 
@@ -88,10 +90,18 @@ class VoiceConfig:
 
 
 @dataclass
+class ScreenVisionConfig:
+    capture_interval_seconds: float = 3.0
+
+
+@dataclass
 class Restrictions:
     protected_folders: list[str] = field(default_factory=list)
     protected_packages: list[str] = field(default_factory=list)
     blocked_commands: list[str] = field(default_factory=list)
+    sandbox_allowed_commands: list[str] = field(
+        default_factory=lambda: ["echo", "ls", "dir", "cat", "type", "ping", "whoami", "pwd", "grep", "find"]
+    )
 
 
 @dataclass
@@ -100,6 +110,7 @@ class PilotConfig:
     security: SecurityConfig = field(default_factory=SecurityConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
     voice: VoiceConfig = field(default_factory=VoiceConfig)
+    screen_vision: ScreenVisionConfig = field(default_factory=ScreenVisionConfig)
     restrictions: Restrictions = field(default_factory=Restrictions)
     first_run_complete: bool = False
 
@@ -185,6 +196,9 @@ def _validate_config_types(raw: dict) -> None:
             "language": str,
             "whisper_model": str,
         },
+        "screen_vision": {
+            "capture_interval_seconds": (int, float),
+        },
     }
 
     for section, expected_keys in expected_types.items():
@@ -201,11 +215,17 @@ def _validate_config_types(raw: dict) -> None:
                 if not isinstance(actual_value, expected_type):
                     error_msg = (
                         f"Invalid type: '{section}.{actual_key}' must be "
-                        f"{expected_type.__name__}, got "
+                        f"{_format_type_name(expected_type)}, got "
                         f"{type(actual_value).__name__}."
                     )
                     logger.error(error_msg)
                     raise ValueError(error_msg)
+
+
+def _format_type_name(expected_type: type | tuple[type, ...]) -> str:
+    if isinstance(expected_type, tuple):
+        return " or ".join(t.__name__ for t in expected_type)
+    return expected_type.__name__
 
 
 def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
@@ -229,6 +249,11 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
             if hasattr(config.voice, k):
                 setattr(config.voice, k, v)
 
+    if "screen_vision" in raw:
+        for k, v in raw["screen_vision"].items():
+            if hasattr(config.screen_vision, k):
+                setattr(config.screen_vision, k, float(v))
+
     config.first_run_complete = raw.get(
         "first_run_complete",
         config.first_run_complete,
@@ -242,6 +267,9 @@ def _parse_restrictions(raw: dict[str, Any]) -> Restrictions:
         protected_folders=raw.get("protected_folders", []),
         protected_packages=raw.get("protected_packages", []),
         blocked_commands=raw.get("blocked_commands", []),
+        sandbox_allowed_commands=raw.get(
+            "sandbox_allowed_commands", ["echo", "ls", "dir", "cat", "type", "ping", "whoami", "pwd", "grep", "find"]
+        ),
     )
 
 

@@ -2,6 +2,7 @@
   import { settings } from "../stores/settings";
   import { session } from "../stores/session";
   import { call } from "../api/daemon";
+  import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 
   let apiKeyInput = $state("");
   let apiKeySaved = $state(false);
@@ -42,6 +43,13 @@
     settings.updateSection("security", { snapshot_retention_count: val });
   }
 
+  function updateScreenVisionInterval(e: Event) {
+    const rawValue = Number((e.target as HTMLInputElement).value);
+    if (!Number.isFinite(rawValue)) return;
+    const capture_interval_seconds = Math.min(60, Math.max(0.5, rawValue));
+    settings.updateSection("screen_vision", { capture_interval_seconds });
+  }
+
   function updateOllamaModel(e: Event) {
     const val = (e.target as HTMLInputElement).value;
     settings.updateSection("model", { ollama_model: val });
@@ -62,6 +70,19 @@
       console.error("Failed to save API key:", err);
     } finally {
       apiKeySaving = false;
+    }
+  }
+
+  async function testNotification() {
+    try {
+      let granted = await isPermissionGranted();
+      if (!granted) {
+        const permission = await requestPermission();
+        granted = permission === "granted";
+      }
+      sendNotification({ title: "Heliox OS", body: "Test notification working correctly!" });
+    } catch (err) {
+      console.error("[Heliox] test notification failed:", err);
     }
   }
 </script>
@@ -163,6 +184,26 @@
 
     <div class="setting-row">
       <button class="btn-save" onclick={() => session.resetUsage()}> Reset Session Usage </button>
+    </div>
+  </section>
+
+  <section class="settings-group">
+    <h3>Screen Vision</h3>
+
+    <div class="setting-row">
+      <div class="setting-info">
+        <span class="setting-label">Capture Interval</span>
+        <span class="setting-desc">Seconds between screen awareness captures</span>
+      </div>
+      <input
+        type="number"
+        class="input-sm"
+        value={$settings.screen_vision?.capture_interval_seconds ?? 3}
+        onchange={updateScreenVisionInterval}
+        min="0.5"
+        max="60"
+        step="0.5"
+      />
     </div>
   </section>
 
@@ -280,6 +321,17 @@
       <p>Protected folders: {$settings.restrictions?.protected_folders?.length || 0} configured</p>
       <p>Protected packages: {$settings.restrictions?.protected_packages?.length || 0} configured</p>
       <p>Blocked commands: {$settings.restrictions?.blocked_commands?.length || 0} configured</p>
+    </div>
+  </section>
+
+  <section class="settings-group">
+    <h3>Debug</h3>
+    <div class="setting-row">
+      <div class="setting-info">
+        <span class="setting-label">Notifications</span>
+        <span class="setting-desc">Test native OS desktop popup</span>
+      </div>
+      <button class="btn-save" onclick={testNotification}>Test Popup</button>
     </div>
   </section>
 </div>
