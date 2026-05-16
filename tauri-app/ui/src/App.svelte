@@ -241,6 +241,8 @@
           <VoiceControl />
           <CommandInput />
           <GestureControl onGesture={onGestureDetected} />
+          <button class="tab" type="button" onclick={() => session.exportChat("json")}>Export JSON</button>
+          <button class="tab" type="button" onclick={() => session.exportChat("csv")}>Export CSV</button>
         </div>
       </div>
     {:else if activeTab === "log"}

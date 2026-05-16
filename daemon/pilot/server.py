@@ -13,11 +13,14 @@ import sys
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
+import csv
+from datetime import datetime
+from pathlib import Path
 
 import websockets
 from websockets.asyncio.server import Server, ServerConnection
 
-from pilot.config import DB_FILE, LOG_FILE, STATE_DIR, PilotConfig, ensure_dirs
+from pilot.config import DATA_DIR, DB_FILE, LOG_FILE, STATE_DIR, PilotConfig, ensure_dirs
 
 logger = logging.getLogger("pilot.server")
 
@@ -311,6 +314,7 @@ class PilotServer:
 
         self._handlers = {
             "execute": self._handle_execute,
+            "export_session_chat": self._handle_export_session_chat,
             "confirm": self._handle_confirm,
             "get_config": self._handle_get_config,
             "update_config": self._handle_update_config,
@@ -1009,6 +1013,129 @@ class PilotServer:
         offset = params.get("offset", 0)
         entries = await self._memory.get_history(limit=limit, offset=offset)
         return {"entries": entries}
+    async def _handle_export_session_chat(self, params: dict, ws: ServerConnection) -> dict:
+        """Export current UI session chat messages to JSON or CSV."""
+        fmt = str(params.get("format", "json")).lower()
+        messages = params.get("messages", [])
+
+        if fmt not in {"json", "csv"}:
+            return {"status": "error", "message": "format must be 'json' or 'csv'"}
+        if not isinstance(messages, list):
+            return {"status": "error", "message": "messages must be a list"}
+
+        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+        filename = f"heliox-chat-{ts}.{fmt}"
+
+        downloads_dir = Path.home() / "Downloads"
+        export_dir = downloads_dir if downloads_dir.exists() else (DATA_DIR / "exports")
+        export_dir.mkdir(parents=True, exist_ok=True)
+        out_path = export_dir / filename
+
+        try:
+            if fmt == "json":
+                out_path.write_text(json.dumps(messages, ensure_ascii=False, indent=2), encoding="utf-8")
+            else:
+                with out_path.open("w", newline="", encoding="utf-8") as f:
+                    writer = csv.writer(f)
+                    writer.writerow(
+                        [
+                            "timestamp_iso",
+                            "timestamp_ms",
+                            "text",
+                            "plan_id",
+                            "plan_explanation",
+                            "plan_action_count",
+                            "plan_actions",
+                            "result_count",
+                            "result_success_count",
+                            "result_error_count",
+                            "result_outputs",
+                            "verification_details",
+                        ]
+                    )
+
+                    for m in messages:
+                        if not isinstance(m, dict):
+                            continue
+
+                        raw_ts = m.get("timestamp")
+                        iso_ts = ""
+                        if isinstance(raw_ts, (int, float)):
+                            iso_ts = datetime.fromtimestamp(raw_ts / 1000).isoformat()
+
+                        msg_type = str(m.get("type", ""))
+                        text = str(m.get("text", ""))
+
+                        plan = m.get("plan", {})
+                        if not isinstance(plan, dict):
+                            plan = {}
+                        plan_id = str(plan.get("plan_id", ""))
+                        plan_explanation = str(plan.get("explanation", ""))
+                        plan_actions = plan.get("actions", [])
+                        if not isinstance(plan_actions, list):
+                            plan_actions = []
+                        plan_action_count = len(plan_actions)
+                        plan_actions_str = " | ".join(
+                            f"{idx + 1}. {str(a.get('action_type', ''))} -> {str(a.get('target', ''))}"
+                            for idx, a in enumerate(plan_actions)
+                            if isinstance(a, dict)
+                        )
+
+                        action_results = m.get("actionResults", [])
+                        if not isinstance(action_results, list):
+                            action_results = []
+                        result_count = len(action_results)
+                        result_success_count = sum(
+                            1 for r in action_results if isinstance(r, dict) and bool(r.get("success", False))
+                        )
+                        result_error_count = result_count - result_success_count
+                        result_outputs = " | ".join(
+                            str((r.get("output") or r.get("error") or "")).strip()
+                            for r in action_results
+                            if isinstance(r, dict) and (r.get("output") or r.get("error"))
+                        )
+
+                        verification = m.get("verification", {})
+                        if not isinstance(verification, dict):
+                            verification = {}
+                        verification_passed = (
+                            verification.get("passed")
+                            if isinstance(verification.get("passed"), bool)
+                            else ""
+                        )
+                        verification_details_raw = verification.get("details", [])
+                        if not isinstance(verification_details_raw, list):
+                            verification_details_raw = []
+                        verification_details = " | ".join(str(d) for d in verification_details_raw)
+
+                        writer.writerow(
+                            [
+                                iso_ts,
+                                raw_ts if isinstance(raw_ts, (int, float)) else "",
+                                msg_type,
+                                text,
+                                plan_id,
+                                plan_explanation,
+                                plan_action_count,
+                                plan_actions_str,
+                                result_count,
+                                result_success_count,
+                                result_error_count,
+                                result_outputs,
+                                verification_passed,
+                                verification_details,
+                            ]
+                        )
+        except Exception as e:
+            logger.exception("Failed to export session chat")
+            return {"status": "error", "message": f"Export failed: {e}"}
+
+        return {
+            "status": "ok",
+            "path": str(out_path),
+            "count": len(messages),
+            "format": fmt,
+        }
 
     # -- API key management --
 
