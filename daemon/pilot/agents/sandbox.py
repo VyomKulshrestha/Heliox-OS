@@ -156,6 +156,11 @@ DANGEROUS_SHELL_PATTERNS = [
 class SimulationSandbox:
     """Pre-execution impact analysis and risk assessment."""
 
+    def __init__(self, allowed_commands: list[str] | None = None):
+        self.allowed_commands = allowed_commands or [
+            "echo", "ls", "dir", "cat", "type", "ping", "whoami", "pwd", "grep", "find"
+        ]
+
     def simulate(self, plan: Any) -> SimulationReport:
         """Analyze a plan and produce an impact report without executing anything."""
         report = SimulationReport(plan_id=getattr(plan, "plan_id", "unknown"))
@@ -219,10 +224,16 @@ class SimulationSandbox:
         if action_type in HIGH_RISK_ACTIONS:
             # Check for especially dangerous shell patterns
             if action_type in ("shell_command", "shell_script"):
-                params = getattr(action, "params", None)
+                params = getattr(action, "parameters", getattr(action, "params", None))
                 command = ""
                 if params:
                     command = getattr(params, "command", "") or getattr(params, "script", "") or ""
+                
+                # Verify against the sandbox allowlist
+                base_cmd = command.strip().split()[0].lower() if command.strip() else ""
+                if base_cmd and base_cmd not in self.allowed_commands:
+                    return RiskLevel.CRITICAL
+                
                 if any(pattern in command.lower() for pattern in DANGEROUS_SHELL_PATTERNS):
                     return RiskLevel.CRITICAL
             return RiskLevel.HIGH

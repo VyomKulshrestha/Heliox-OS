@@ -78,7 +78,9 @@ class Executor:
         self._permissions = permissions
         self._audit = audit
         self._snapshot_mgr = SnapshotManager(config)
-        self._simulation_sandbox = SimulationSandbox()
+        self._simulation_sandbox = SimulationSandbox(
+            allowed_commands=config.restrictions.sandbox_allowed_commands
+        )
         self._last_output: str = ""  # For output chaining between steps
         self._largest_output: str = ""  # Largest output from any step in the pipeline
 

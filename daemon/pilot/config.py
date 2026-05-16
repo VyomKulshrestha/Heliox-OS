@@ -92,6 +92,9 @@ class Restrictions:
     protected_folders: list[str] = field(default_factory=list)
     protected_packages: list[str] = field(default_factory=list)
     blocked_commands: list[str] = field(default_factory=list)
+    sandbox_allowed_commands: list[str] = field(
+        default_factory=lambda: ["echo", "ls", "dir", "cat", "type", "ping", "whoami", "pwd", "grep", "find"]
+    )
 
 
 @dataclass
@@ -242,6 +245,9 @@ def _parse_restrictions(raw: dict[str, Any]) -> Restrictions:
         protected_folders=raw.get("protected_folders", []),
         protected_packages=raw.get("protected_packages", []),
         blocked_commands=raw.get("blocked_commands", []),
+        sandbox_allowed_commands=raw.get("sandbox_allowed_commands", [
+            "echo", "ls", "dir", "cat", "type", "ping", "whoami", "pwd", "grep", "find"
+        ]),
     )
 
 
