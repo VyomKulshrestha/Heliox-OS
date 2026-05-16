@@ -1,9 +1,10 @@
 import { writable, get } from "svelte/store";
-import { call, connect, isConnected, onNotification } from "../api/daemon";
+import { call, connect, isConnected, onNotification, listenToLLMStream } from "../api/daemon";
 import { settings } from "./settings";
 
-export type MessageType = "user" | "system" | "error" | "plan" | "result";
+export type MessageType = "user" | "system" | "error" | "plan" | "result" | "assistant";
 
+// 1. Definition interfaces for structuring session data models
 export interface PlanAction {
   action_type: string;
   target: string;
@@ -90,9 +91,11 @@ function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
+// 2. Custom store creation managing real-time core states
 function createSession() {
   const { subscribe, update, set } = writable<SessionState>(initialState);
 
+  // Background daemon message channel routing
   onNotification((method, params) => {
     const p = params as Record<string, unknown>;
 
@@ -173,6 +176,7 @@ function createSession() {
         break;
 
       case "token_stream":
+        // Fallback for generic tokens
         update((s) => ({
           ...s,
           streamingText: s.streamingText + String(p.token ?? ""),
@@ -191,6 +195,34 @@ function createSession() {
     }, 5000);
   }
 
+  // Hooking up text generator stream listener
+  function handleStreamingResponse() {
+    // Inject empty container block for assistant text buffer
+    update((s) => ({
+      ...s,
+      messages: [...s.messages, { type: "assistant", text: "", timestamp: Date.now() }]
+    }));
+
+    listenToLLMStream(
+      (chunk: any) => {
+        const newText = chunk?.result?.explanation || chunk?.explanation || chunk?.result?.text || chunk?.text || "";
+        
+        // Append characters to current active assistant index
+        update((s) => {
+          const updatedMessages = [...s.messages];
+          const lastIdx = updatedMessages.length - 1;
+          if (lastIdx >= 0) {
+            updatedMessages[lastIdx].text += newText;
+          }
+          return { ...s, messages: updatedMessages };
+        });
+      },
+      () => {
+        console.log("Stream capture cycle completed cleanly.");
+      }
+    );
+  }
+
   async function sendCommand(input: string) {
     update((s) => ({
       ...s,
@@ -206,6 +238,9 @@ function createSession() {
         { type: "user", text: input, timestamp: Date.now() },
       ],
     }));
+
+    // Trigger instant real-time layout stream hooks before payload dispatch
+    handleStreamingResponse();
 
     try {
       const result = (await call("execute", { input })) as Record<string, unknown>;
@@ -271,7 +306,6 @@ function createSession() {
           : String(result.explanation ?? "");
 
         const estimatedTokens = estimateTokens(responseText);
-
         const settingsState = get(settings);
         const model =
           settingsState?.model?.cloud_model ||
@@ -279,7 +313,6 @@ function createSession() {
           "ollama";
 
         const normalizedModel = model.toLowerCase();
-
         let rate = 0;
 
         if (normalizedModel.includes("gemini")) {
@@ -290,7 +323,6 @@ function createSession() {
           rate = MODEL_RATES["claude-sonnet"];
         }
         const estimatedCost = Number((estimatedTokens * rate).toFixed(6));
-
         const finalText = get(session).streamingText || responseText;
 
         update((s) => ({
