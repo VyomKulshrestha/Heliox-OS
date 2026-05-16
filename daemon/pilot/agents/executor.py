@@ -406,6 +406,8 @@ class Executor:
 
             await self._audit.log_action_start(action, plan_id)
 
+        batches = self._analyze_dependencies(plan.actions)
+
         for batch_idx, batch in enumerate(batches):
             if not batch:
                 continue

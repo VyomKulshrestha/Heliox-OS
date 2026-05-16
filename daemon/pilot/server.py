@@ -108,6 +108,7 @@ class PilotServer:
         self._screen_vision: Any = None
         self._memory: Any = None
         self._vault: Any = None
+        self._permission_audit: Any = None
         # Cognitive intelligence (TRIBE v2)
         self._tribe_engine: Any = None
         self._attention_ui: Any = None
@@ -144,6 +145,7 @@ class PilotServer:
         from pilot.memory.store import MemoryStore
         from pilot.models.router import ModelRouter
         from pilot.security.audit import AuditLogger
+        from pilot.security.permission_audit import PermissionEscalationAuditStore
         from pilot.security.permissions import PermissionChecker
         from pilot.security.validator import ActionValidator
         from pilot.security.vault import KeyVault
@@ -159,6 +161,8 @@ class PilotServer:
         model_router.set_budget_tracker(self._budget_tracker)
 
         audit = AuditLogger()
+        self._permission_audit = PermissionEscalationAuditStore()
+        await self._permission_audit.initialize()
         validator = ActionValidator(self.config)
         permissions = PermissionChecker(self.config)
         self._memory = MemoryStore()
@@ -695,6 +699,7 @@ class PilotServer:
 
             from pilot.actions import PermissionTier
 
+            critic_verdict_payload: dict[str, Any] | None = None
             plan_has_tier4 = any(a.permission_tier == PermissionTier.ROOT_CRITICAL for a in plan.actions)
             if plan_has_tier4 and self._destructive_critic and not dry_run:
                 critic_phase = ""
@@ -712,9 +717,18 @@ class PilotServer:
                     )
 
                 verdict = await self._destructive_critic.review(user_input, plan)
+                critic_verdict_payload = verdict.to_dict()
                 await ws.send(_notification("critic_verdict", verdict.to_dict()))
 
                 if verdict.is_blocked:
+                    await self._record_permission_escalations(
+                        plan_id=plan_id,
+                        plan=plan,
+                        confirmation_decision="blocked_by_critic",
+                        critic_verdict=critic_verdict_payload,
+                        results=[],
+                        execution_error=verdict.recommendation,
+                    )
                     if emit:
                         await emit.phase_error(
                             "critic_review",
@@ -762,6 +776,14 @@ class PilotServer:
                         )
 
                 if not confirmed:
+                    await self._record_permission_escalations(
+                        plan_id=plan_id,
+                        plan=plan,
+                        confirmation_decision="denied",
+                        critic_verdict=critic_verdict_payload,
+                        results=[],
+                        execution_error="Plan was denied by user.",
+                    )
                     await _emit_task_complete("cancelled", "Plan was denied by user.")
                     return {
                         "status": "cancelled",
@@ -841,6 +863,14 @@ class PilotServer:
                     cancel_event=cancel_event,  # ── Cancel Token (Issue #92) ──
                 )
             all_results = results
+            if needs_confirm and not dry_run:
+                await self._record_permission_escalations(
+                    plan_id=plan_id,
+                    plan=plan,
+                    confirmation_decision="approved",
+                    critic_verdict=critic_verdict_payload,
+                    results=results,
+                )
 
             # ── Cancel Token: if aborted mid-execution, return immediately ──
             if cancel_event.is_set():
@@ -983,6 +1013,61 @@ class PilotServer:
                 else last_explanation
             ),
         }
+
+    async def _record_permission_escalations(
+        self,
+        *,
+        plan_id: str,
+        plan: Any,
+        confirmation_decision: str,
+        critic_verdict: dict[str, Any] | None,
+        results: list[Any],
+        execution_error: str = "",
+    ) -> None:
+        """Persist tamper-evident records for elevated permission decisions."""
+        if not self._permission_audit:
+            return
+
+        from pilot.actions import PermissionTier
+
+        result_by_action: dict[str, list[Any]] = {}
+        for result in results:
+            action_key = self._action_signature(result.action)
+            result_by_action.setdefault(action_key, []).append(result)
+
+        for index, action in enumerate(plan.actions):
+            if action.permission_tier < PermissionTier.SYSTEM_MODIFY:
+                continue
+
+            matched_result = None
+            matches = result_by_action.get(self._action_signature(action))
+            if matches:
+                matched_result = matches.pop(0)
+
+            if matched_result is None:
+                execution_success = None
+                action_error = execution_error
+            else:
+                execution_success = bool(matched_result.success)
+                action_error = matched_result.error or ""
+
+            await self._permission_audit.record_event(
+                plan_id=plan_id,
+                action_index=index,
+                action_type=action.action_type.value,
+                target=action.target,
+                permission_tier=action.permission_tier.name,
+                requires_root=action.requires_root,
+                destructive=action.destructive,
+                confirmation_decision=confirmation_decision,
+                critic_verdict=critic_verdict,
+                execution_success=execution_success,
+                execution_error=action_error,
+            )
+
+    @staticmethod
+    def _action_signature(action: Any) -> str:
+        return json.dumps(action.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
 
     async def _wait_for_confirmation(self, plan_id: str, plan: Any, ws: ServerConnection) -> bool:
         """Send a confirmation request and block until the user responds or timeout.
