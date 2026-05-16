@@ -16,9 +16,11 @@ from __future__ import annotations
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import aiosqlite
 import pytest
 import pytest_asyncio
+
+from pilot.db.sqlite_pool import AsyncSqlitePool
+from pilot.memory.store import SCHEMA_SQL, MemoryStore
 
 # ---------------------------------------------------------------------------
 # Minimal stubs for ActionPlan and ActionResult
@@ -59,7 +61,7 @@ def fake_results_failed() -> list[_FakeResult]:
 
 
 @pytest_asyncio.fixture
-async def store():
+async def store(tmp_path):
     """
     Return an initialised MemoryStore backed by a real in-memory SQLite DB.
     ChromaDB and WorkspaceIndex are fully mocked — no external services needed.
@@ -67,27 +69,34 @@ async def store():
     Key fix: the real aiosqlite connection is created BEFORE any patching
     so the patch on aiosqlite.connect never intercepts our own :memory: call.
     """
-    from pilot.memory.store import MemoryStore, SCHEMA_SQL
-
-    # Create the real in-memory DB BEFORE entering any patch context
-    real_conn = await aiosqlite.connect(":memory:")
-    await real_conn.executescript(SCHEMA_SQL)
-    await real_conn.commit()
+    pool = AsyncSqlitePool(tmp_path / "memory.db")
+    await pool.start()
+    async with pool.write() as db:
+        await db.executescript(SCHEMA_SQL)
+        await db.commit()
 
     chroma_mock = MagicMock()
     chroma_mock.add = MagicMock()
     chroma_mock.query = MagicMock(return_value={"documents": [[]], "metadatas": [[]]})
 
     s = MemoryStore()
-    s._db = real_conn
+    s._pool = pool
     s._chroma_collection = chroma_mock
     s._workspace_index = None
 
     yield s
 
-    if s._db:
-        await s._db.close()
-        s._db = None
+    if s._pool:
+        await s._pool.close()
+        s._pool = None
+
+
+async def _fetch_one(store, query: str, params: tuple = ()):
+    async with store._pool.read() as db:
+        cursor = await db.execute(query, params)
+        row = await cursor.fetchone()
+        await cursor.close()
+        return row
 
 
 # ---------------------------------------------------------------------------
@@ -100,22 +109,23 @@ class TestMemoryStoreInit:
         """MemoryStore attributes start as None before initialize() is called."""
         from pilot.memory.store import MemoryStore
         s = MemoryStore()
-        assert s._db is None
+        assert s._pool is None
         assert s._chroma_collection is None
         assert s._workspace_index is None
 
     @pytest.mark.asyncio
-    async def test_initialize_sets_up_db(self):
-        """After manually wiring a DB, _db is not None."""
-        from pilot.memory.store import MemoryStore, SCHEMA_SQL
-        real_conn = await aiosqlite.connect(":memory:")
-        await real_conn.executescript(SCHEMA_SQL)
-        await real_conn.commit()
+    async def test_initialize_sets_up_pool(self, tmp_path):
+        """After manually wiring a pool, _pool is not None."""
+        pool = AsyncSqlitePool(tmp_path / "memory.db")
+        await pool.start()
+        async with pool.write() as db:
+            await db.executescript(SCHEMA_SQL)
+            await db.commit()
 
         s = MemoryStore()
-        s._db = real_conn
-        assert s._db is not None
-        await real_conn.close()
+        s._pool = pool
+        assert s._pool is not None
+        await pool.close()
 
 
 # ---------------------------------------------------------------------------
@@ -130,8 +140,7 @@ class TestRecord:
         with patch("pilot.memory.store.asyncio.to_thread", new_callable=AsyncMock):
             await store.record("open browser", fake_plan, fake_results)
 
-        cursor = await store._db.execute("SELECT COUNT(*) FROM action_history")
-        row = await cursor.fetchone()
+        row = await _fetch_one(store, "SELECT COUNT(*) FROM action_history")
         assert row[0] == 1
 
     @pytest.mark.asyncio
@@ -140,8 +149,7 @@ class TestRecord:
         with patch("pilot.memory.store.asyncio.to_thread", new_callable=AsyncMock):
             await store.record("close window", fake_plan, fake_results)
 
-        cursor = await store._db.execute("SELECT user_input FROM action_history")
-        row = await cursor.fetchone()
+        row = await _fetch_one(store, "SELECT user_input FROM action_history")
         assert row[0] == "close window"
 
     @pytest.mark.asyncio
@@ -150,8 +158,7 @@ class TestRecord:
         with patch("pilot.memory.store.asyncio.to_thread", new_callable=AsyncMock):
             await store.record("open terminal", fake_plan, fake_results)
 
-        cursor = await store._db.execute("SELECT success FROM action_history")
-        row = await cursor.fetchone()
+        row = await _fetch_one(store, "SELECT success FROM action_history")
         assert row[0] == 1
 
     @pytest.mark.asyncio
@@ -160,8 +167,7 @@ class TestRecord:
         with patch("pilot.memory.store.asyncio.to_thread", new_callable=AsyncMock):
             await store.record("delete file", fake_plan, fake_results_failed)
 
-        cursor = await store._db.execute("SELECT success FROM action_history")
-        row = await cursor.fetchone()
+        row = await _fetch_one(store, "SELECT success FROM action_history")
         assert row[0] == 0
 
     @pytest.mark.asyncio
@@ -172,16 +178,15 @@ class TestRecord:
             await store.record("task two", fake_plan, fake_results)
             await store.record("task three", fake_plan, fake_results)
 
-        cursor = await store._db.execute("SELECT COUNT(*) FROM action_history")
-        row = await cursor.fetchone()
+        row = await _fetch_one(store, "SELECT COUNT(*) FROM action_history")
         assert row[0] == 3
 
     @pytest.mark.asyncio
-    async def test_record_skips_when_db_none(self, fake_plan, fake_results):
-        """record() returns silently when _db is None (no crash)."""
+    async def test_record_skips_when_pool_none(self, fake_plan, fake_results):
+        """record() returns silently when _pool is None (no crash)."""
         from pilot.memory.store import MemoryStore
         s = MemoryStore()
-        s._db = None
+        s._pool = None
         await s.record("test input", fake_plan, fake_results)
 
     @pytest.mark.asyncio
@@ -267,11 +272,11 @@ class TestGetHistory:
             assert key in entry
 
     @pytest.mark.asyncio
-    async def test_get_history_returns_empty_when_db_none(self):
-        """get_history() returns [] when _db is None."""
+    async def test_get_history_returns_empty_when_pool_none(self):
+        """get_history() returns [] when _pool is None."""
         from pilot.memory.store import MemoryStore
         s = MemoryStore()
-        s._db = None
+        s._pool = None
         result = await s.get_history()
         assert result == []
 
@@ -313,19 +318,19 @@ class TestPreferences:
         assert prefs == {}
 
     @pytest.mark.asyncio
-    async def test_set_preference_skips_when_db_none(self):
-        """set_preference() returns silently when _db is None."""
+    async def test_set_preference_skips_when_pool_none(self):
+        """set_preference() returns silently when _pool is None."""
         from pilot.memory.store import MemoryStore
         s = MemoryStore()
-        s._db = None
+        s._pool = None
         await s.set_preference("key", "value")  # should not raise
 
     @pytest.mark.asyncio
-    async def test_get_preferences_returns_empty_when_db_none(self):
-        """_get_preferences() returns {} when _db is None."""
+    async def test_get_preferences_returns_empty_when_pool_none(self):
+        """_get_preferences() returns {} when _pool is None."""
         from pilot.memory.store import MemoryStore
         s = MemoryStore()
-        s._db = None
+        s._pool = None
         result = await s._get_preferences()
         assert result == {}
 
@@ -387,18 +392,19 @@ class TestGetContext:
 class TestClose:
 
     @pytest.mark.asyncio
-    async def test_close_sets_db_to_none(self):
-        """close() sets _db to None after closing the connection."""
+    async def test_close_sets_pool_to_none(self, tmp_path):
+        """close() sets _pool to None after closing the pool."""
         from pilot.memory.store import MemoryStore
         s = MemoryStore()
-        s._db = await aiosqlite.connect(":memory:")
+        s._pool = AsyncSqlitePool(tmp_path / "memory.db")
+        await s._pool.start()
         await s.close()
-        assert s._db is None
+        assert s._pool is None
 
     @pytest.mark.asyncio
     async def test_close_is_safe_when_already_none(self):
-        """close() does not raise when _db is already None."""
+        """close() does not raise when _pool is already None."""
         from pilot.memory.store import MemoryStore
         s = MemoryStore()
-        s._db = None
+        s._pool = None
         await s.close()  # should not raise
