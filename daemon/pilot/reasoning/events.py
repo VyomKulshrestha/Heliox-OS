@@ -1,10 +1,10 @@
-"""Thought Visualization Event System — granular reasoning telemetry.
+"""Thought Visualization Event System â€” granular reasoning telemetry.
 
 Defines the event schema, emitter, and stream manager for broadcasting
 real-time AI reasoning events to the frontend.
 
 Event Flow:
-  Agent Runtime → ReasoningEmitter → WebSocket → ThoughtGraph UI
+  Agent Runtime â†’ ReasoningEmitter â†’ WebSocket â†’ ThoughtGraph UI
 
 Each reasoning event carries:
   - event_type: Categorized phase (memory, planning, routing, etc.)
@@ -32,7 +32,7 @@ from typing import Any, Callable, Coroutine
 logger = logging.getLogger("pilot.reasoning.events")
 
 
-# ── Event Schema ──
+# â”€â”€ Event Schema â”€â”€
 
 
 class ReasoningStage(StrEnum):
@@ -48,6 +48,7 @@ class ReasoningStage(StrEnum):
     VERIFICATION = "verification"
     REFLECTION = "reflection"
     MEMORY_UPDATE = "memory_update"
+    CRITIC_REVIEW = "critic_review"
 
 
 class EventType(StrEnum):
@@ -91,7 +92,7 @@ class ReasoningEvent:
         }
 
 
-# ── Predefined event names ──
+# â”€â”€ Predefined event names â”€â”€
 
 # Memory stage
 MEMORY_SEARCH_STARTED = "memory_search_started"
@@ -142,6 +143,12 @@ REFLECTION_STARTED = "reflection_started"
 REFLECTION_INSIGHT = "reflection_insight"
 REFLECTION_COMPLETE = "reflection_complete"
 
+# Destructive critic stage â€” Tier 4 safety review
+CRITIC_REVIEW_STARTED = "critic_review_started"
+CRITIC_REVIEW_APPROVED = "critic_review_approved"
+CRITIC_REVIEW_WARNED = "critic_review_warned"
+CRITIC_REVIEW_BLOCKED = "critic_review_blocked"
+
 
 class ReasoningEmitter:
     """Emits structured reasoning events to the WebSocket stream.
@@ -177,7 +184,7 @@ class ReasoningEmitter:
         self._session_id = uuid.uuid4().hex[:8]
         self._event_log.clear()
 
-    # ── High-level emitters ──
+    # â”€â”€ High-level emitters â”€â”€
 
     async def phase_start(
         self,
@@ -342,7 +349,7 @@ class ReasoningEmitter:
         )
         await self._emit(event)
 
-    # ── Internal ──
+    # â”€â”€ Internal â”€â”€
 
     async def _emit(self, event: ReasoningEvent) -> None:
         """Broadcast the event to all connected frontends."""
@@ -362,7 +369,7 @@ class ReasoningEmitter:
         if self._broadcast_fn:
             await self._broadcast_fn("reasoning_event", event.to_dict())
 
-    # ── Stats ──
+    # â”€â”€ Stats â”€â”€
 
     def get_session_log(self) -> list[dict[str, Any]]:
         """Return the full event log for the current session."""

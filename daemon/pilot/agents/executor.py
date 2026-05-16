@@ -1459,9 +1459,18 @@ class Executor:
         import tempfile
 
         from pilot.system.code_exec import execute_code
+        from pilot.system.sandbox_exec import SandboxConfig
 
         p: CodeExecParams = action.parameters  # type: ignore[assignment]
         code = p.code
+
+        # Build sandbox config from live security settings
+        sandbox_cfg = SandboxConfig(
+            mode=getattr(self._config.security, "sandbox_mode", "auto"),
+            memory_mb=getattr(self._config.security, "sandbox_memory_mb", 128),
+            timeout=getattr(self._config.security, "sandbox_timeout", p.timeout),
+            network=getattr(self._config.security, "sandbox_network", False),
+        )
 
         # If there's previous output available, inject it as Python variables
         if p.language.lower().strip() in ("python", "py", "python3"):
@@ -1494,7 +1503,7 @@ class Executor:
             code = sanitize_python_code(code)
 
         logger.info("Code execute: running %d chars of code", len(code))
-        result = await execute_code(code, p.language, p.timeout)
+        result = await execute_code(code, p.language, p.timeout, sandbox_cfg=sandbox_cfg)
         logger.info("Code execute result (%d chars): %s", len(result), result[:200] if result else "(empty)")
 
         # --- Auto-retry on failure: ask LLM to fix the code ---
@@ -1534,7 +1543,7 @@ class Executor:
                     fixed_code = sanitize_python_code(fixed_code)
 
                 logger.info("Auto-fix: retrying with LLM-fixed code (%d chars)", len(fixed_code))
-                retry_result = await execute_code(fixed_code, p.language, p.timeout)
+                retry_result = await execute_code(fixed_code, p.language, p.timeout, sandbox_cfg=sandbox_cfg)
 
                 # Only use the retry if it's better (no error)
                 if "[STDERR]" not in retry_result and "[EXIT CODE:" not in retry_result:
@@ -1553,9 +1562,17 @@ class Executor:
 
     async def _exec_code_generate(self, action: Action) -> str:
         from pilot.system.code_exec import generate_and_execute
+        from pilot.system.sandbox_exec import SandboxConfig
 
         p: CodeExecParams = action.parameters  # type: ignore[assignment]
-        return await generate_and_execute(p.task_description, p.language, p.timeout)
+
+        sandbox_cfg = SandboxConfig(
+            mode=getattr(self._config.security, "sandbox_mode", "auto"),
+            memory_mb=getattr(self._config.security, "sandbox_memory_mb", 128),
+            timeout=getattr(self._config.security, "sandbox_timeout", p.timeout),
+            network=getattr(self._config.security, "sandbox_network", False),
+        )
+        return await generate_and_execute(p.task_description, p.language, p.timeout, sandbox_cfg=sandbox_cfg)
 
     # ======================================================================
     # TIER 2: FILE CONTENT INTELLIGENCE
