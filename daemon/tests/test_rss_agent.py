@@ -1,4 +1,5 @@
 """Unit tests for pilot.agents.rss_agent.RssAgent."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -124,6 +125,7 @@ def test_background_task_registered_when_enabled():
     bg_manager.start.assert_called_once_with("rss_feed_poller")
 
 
+@pytest.mark.asyncio
 async def test_poll_feeds_stores_digest():
     """_poll_feeds fetches feed XML, calls LLM, and stores digest via set_preference."""
     agent, _, memory = make_agent(

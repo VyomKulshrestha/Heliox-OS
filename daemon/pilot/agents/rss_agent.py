@@ -1,4 +1,5 @@
 """RSS/Atom feed polling agent with background news summarization."""
+
 from __future__ import annotations
 
 import logging
@@ -86,11 +87,13 @@ class RssAgent(BaseAgent):
             digest = await self._memory.get_preference(key)
             if digest:
                 return [ActionResult(action_type=ActionType.API_REQUEST, success=True, output=digest)]
-            return [ActionResult(
-                action_type=ActionType.API_REQUEST,
-                success=False,
-                output="No RSS digest available for today. Try 'summarize feeds now' to fetch one.",
-            )]
+            return [
+                ActionResult(
+                    action_type=ActionType.API_REQUEST,
+                    success=False,
+                    output="No RSS digest available for today. Try 'summarize feeds now' to fetch one.",
+                )
+            ]
 
         if "summarize" in lower or "fetch" in lower or "poll" in lower:
             result = await self._poll_feeds()
@@ -101,41 +104,51 @@ class RssAgent(BaseAgent):
             words = user_input.split()
             urls = [w for w in words if w.startswith("http")]
             if not urls:
-                return [ActionResult(
-                    action_type=ActionType.API_REQUEST,
-                    success=False,
-                    output="Please provide a feed URL to subscribe to.",
-                )]
+                return [
+                    ActionResult(
+                        action_type=ActionType.API_REQUEST,
+                        success=False,
+                        output="Please provide a feed URL to subscribe to.",
+                    )
+                ]
             self._config.rss.feeds.extend(urls)
             if not self._config.rss.enabled:
                 self._config.rss.enabled = True
                 self._register_background_task()
             self._config.save()
-            return [ActionResult(
-                action_type=ActionType.API_REQUEST,
-                success=True,
-                output=f"Subscribed to: {', '.join(urls)}",
-            )]
+            return [
+                ActionResult(
+                    action_type=ActionType.API_REQUEST,
+                    success=True,
+                    output=f"Subscribed to: {', '.join(urls)}",
+                )
+            ]
 
         if "list" in lower or "feeds" in lower:
             feeds = self._config.rss.feeds
             if not feeds:
-                return [ActionResult(
+                return [
+                    ActionResult(
+                        action_type=ActionType.API_REQUEST,
+                        success=True,
+                        output="No feeds subscribed yet.",
+                    )
+                ]
+            return [
+                ActionResult(
                     action_type=ActionType.API_REQUEST,
                     success=True,
-                    output="No feeds subscribed yet.",
-                )]
-            return [ActionResult(
-                action_type=ActionType.API_REQUEST,
-                success=True,
-                output="Subscribed feeds:\n" + "\n".join(f"  - {f}" for f in feeds),
-            )]
+                    output="Subscribed feeds:\n" + "\n".join(f"  - {f}" for f in feeds),
+                )
+            ]
 
-        return [ActionResult(
-            action_type=ActionType.API_REQUEST,
-            success=False,
-            output="RSS Agent: unrecognized request. Try 'show today's digest', 'list my feeds', or 'subscribe to <url>'.",
-        )]
+        return [
+            ActionResult(
+                action_type=ActionType.API_REQUEST,
+                success=False,
+                output="RSS Agent: unrecognized request. Try 'show today's digest', 'list my feeds', or 'subscribe to <url>'.",
+            )
+        ]
 
     # ------------------------------------------------------------------
     # Background task
@@ -143,17 +156,22 @@ class RssAgent(BaseAgent):
 
     def _register_background_task(self) -> None:
         interval = self._config.rss.poll_interval_hours * 3600
-        self._bg.register(BackgroundTask(
-            task_id="rss_feed_poller",
-            name="RSS Feed Poller",
-            description="Polls subscribed RSS/Atom feeds and stores daily summaries",
-            interval_seconds=interval,
-            action_fn=self._poll_feeds,
-            on_trigger=self._on_new_digest,
-        ))
+        self._bg.register(
+            BackgroundTask(
+                task_id="rss_feed_poller",
+                name="RSS Feed Poller",
+                description="Polls subscribed RSS/Atom feeds and stores daily summaries",
+                interval_seconds=interval,
+                action_fn=self._poll_feeds,
+                on_trigger=self._on_new_digest,
+            )
+        )
         self._bg.start("rss_feed_poller")
-        logger.info("RSS Feed Poller registered (%d feeds, %.1fh interval)",
-                    len(self._config.rss.feeds), self._config.rss.poll_interval_hours)
+        logger.info(
+            "RSS Feed Poller registered (%d feeds, %.1fh interval)",
+            len(self._config.rss.feeds),
+            self._config.rss.poll_interval_hours,
+        )
 
     async def _poll_feeds(self) -> dict[str, Any]:
         items: list[str] = []
