@@ -68,6 +68,43 @@ jobs:
       - name: Build check
         run: npx vite build
 
+  # ── Visual Regression Tests ──
+  visual-regression:
+    name: Visual Regression (Playwright)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tauri-app/ui
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: tauri-app/ui/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci || npm install
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Run visual regression tests
+        run: npx playwright test --reporter=github
+        env:
+          CI: "true"
+
+      - name: Upload diff artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-regression-diffs
+          path: tauri-app/ui/test-results/
+          retention-days: 7
+
   # ── Rust Linting ──
   rust:
     name: Rust (Clippy + Fmt)
