@@ -24,6 +24,8 @@
   import { marked } from "marked";
   import DOMPurify from "dompurify";
   import { highlight } from "./lib/highlighter";
+  import ScrollToBottom from "./lib/components/ScrollToBottom.svelte";
+  import ConnectionStatus from "./lib/components/ConnectionStatus.svelte";
 
   const renderer = new marked.Renderer();
   renderer.code = function(code, language) {
@@ -31,7 +33,7 @@
     const result = highlight(code, lang);
     const langLabel = result.language !== "plaintext" ? result.language : "";
     const langBadge = langLabel ? `<span class="hlx-lang-badge">${langLabel}</span>` : "";
-    return `<div class="hlx-code-wrapper"><div class="hlx-code-header">${langBadge}<button class="hlx-copy-btn" data-        code="${encodeURIComponent(code)}">Copy</button></div><pre class="hlx-pre"><code class="hljs language-${result.language}">${result.value}         </code></pre></div>`;
+    return `<div class="hlx-code-wrapper"><div class="hlx-code-header">${langBadge}<button class="hlx-copy-btn" data-code="${encodeURIComponent(code)}">Copy</button></div><pre class="hlx-pre"><code class="hljs language-${result.language}">${result.value}</code></pre></div>`;
   };
   marked.setOptions({ renderer, gfm: true, breaks: true });
 
@@ -46,8 +48,17 @@
   let showWizard = $derived(
     !$settings.first_run_complete && localStorage.getItem("heliox_first_run_complete") !== "true"
   );
+
+  let showScrollFAB = $state(false);
+  let isAtBottom = $state(true);
+
   let virtualListEl: VirtualList<Message> | undefined = $state();
   let particleBurst: ParticleBurst | undefined = $state();
+
+  // Show FAB whenever the user scrolls away from the bottom
+  $effect(() => {
+    showScrollFAB = !isAtBottom;
+  });
 
   async function onSetupComplete() {
     await settings.updateSection("", { first_run_complete: true });
@@ -80,7 +91,10 @@
   }
 
   function scrollToBottom() {
-    tick().then(() => virtualListEl?.scrollToBottom());
+    tick().then(() => {
+      virtualListEl?.scrollToBottom();
+      showScrollFAB = false;
+    });
   }
 
   $effect(() => {
@@ -203,8 +217,9 @@
       <button class="tab" class:active={activeTab === "settings"} title="Open Settings" onclick={() => activeTab = "settings"}>Settings</button>
     </nav>
     <div class="titlebar-right">
-      <AmbientHUD />
-    </div>
+  <ConnectionStatus />
+  <AmbientHUD />
+</div>
   </header>
 
     <div class="content">
@@ -238,7 +253,7 @@
               </div>
             </div>
           {:else}
-            <VirtualList bind:this={virtualListEl} items={$session.messages}>
+            <VirtualList bind:this={virtualListEl} items={$session.messages} bind:atBottom={isAtBottom}>
               {#snippet item(msg)}
                 {@render messageBlock(msg)}
               {/snippet}
@@ -270,12 +285,15 @@
               {/snippet}
             </VirtualList>
           {/if}
+          <ScrollToBottom show={showScrollFAB} onclick={scrollToBottom} />
         </div>
 
         <div class="input-row">
           <VoiceControl />
           <CommandInput />
           <GestureControl onGesture={onGestureDetected} />
+          <button class="tab" type="button" onclick={() => session.exportChat("json")}>Export JSON</button>
+          <button class="tab" type="button" onclick={() => session.exportChat("csv")}>Export CSV</button>
         </div>
       </div>
     {:else if activeTab === "log"}
@@ -553,6 +571,7 @@
     overflow: hidden;
     display: flex;
     flex-direction: column;
+    position: relative;
   }
 
   /* Empty state */

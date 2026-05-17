@@ -12,9 +12,9 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import aiofiles.os
-import aiosqlite
 
 from pilot.config import DATA_DIR, DB_FILE
+from pilot.db.sqlite_pool import AsyncSqlitePool
 
 if TYPE_CHECKING:
     from pilot.actions import ActionPlan, ActionResult
@@ -49,15 +49,17 @@ class MemoryStore:
     """Persistent memory with action history and semantic preference learning."""
 
     def __init__(self) -> None:
-        self._db: aiosqlite.Connection | None = None
+        self._pool: AsyncSqlitePool | None = None
         self._chroma_collection: Any = None
         self._workspace_index = None
 
     async def initialize(self) -> None:
         await aiofiles.os.makedirs(DATA_DIR, exist_ok=True)
-        self._db = await aiosqlite.connect(str(DB_FILE))
-        await self._db.executescript(SCHEMA_SQL)
-        await self._db.commit()
+        self._pool = AsyncSqlitePool(DB_FILE)
+        await self._pool.start()
+        async with self._pool.write() as db:
+            await db.executescript(SCHEMA_SQL)
+            await db.commit()
         await asyncio.to_thread(self._init_chroma)
         self._init_workspace_index()
 
@@ -94,7 +96,7 @@ class MemoryStore:
         results: list[ActionResult],
     ) -> None:
         """Record an executed plan and its results."""
-        if not self._db:
+        if not self._pool:
             return
 
         now = datetime.now(UTC).isoformat()
@@ -102,13 +104,14 @@ class MemoryStore:
         results_json = json.dumps([r.model_dump() for r in results])
         success = all(r.success for r in results)
 
-        await self._db.execute(
-            """INSERT INTO action_history
-               (timestamp, user_input, plan_json, results_json, success, explanation)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (now, user_input, plan_json, results_json, int(success), plan.explanation),
-        )
-        await self._db.commit()
+        async with self._pool.write() as db:
+            await db.execute(
+                """INSERT INTO action_history
+                   (timestamp, user_input, plan_json, results_json, success, explanation)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (now, user_input, plan_json, results_json, int(success), plan.explanation),
+            )
+            await db.commit()
 
         if self._chroma_collection is not None:
             try:
@@ -145,7 +148,7 @@ class MemoryStore:
             except Exception:
                 logger.debug("ChromaDB query failed", exc_info=True)
 
-        if self._db:
+        if self._pool:
             prefs = await self._get_preferences()
             if prefs:
                 parts.append("User preferences:")
@@ -155,15 +158,17 @@ class MemoryStore:
         return "\n".join(parts) if parts else ""
 
     async def get_history(self, *, limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
-        if not self._db:
+        if not self._pool:
             return []
 
-        cursor = await self._db.execute(
-            """SELECT id, timestamp, user_input, success, explanation
-               FROM action_history ORDER BY id DESC LIMIT ? OFFSET ?""",
-            (limit, offset),
-        )
-        rows = await cursor.fetchall()
+        async with self._pool.read() as db:
+            cursor = await db.execute(
+                """SELECT id, timestamp, user_input, success, explanation
+                   FROM action_history ORDER BY id DESC LIMIT ? OFFSET ?""",
+                (limit, offset),
+            )
+            rows = await cursor.fetchall()
+            await cursor.close()
         return [
             {
                 "id": r[0],
@@ -176,22 +181,25 @@ class MemoryStore:
         ]
 
     async def set_preference(self, key: str, value: str) -> None:
-        if not self._db:
+        if not self._pool:
             return
         now = datetime.now(UTC).isoformat()
-        await self._db.execute(
-            """INSERT INTO user_preferences (key, value, updated_at)
-               VALUES (?, ?, ?)
-               ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at""",
-            (key, value, now),
-        )
-        await self._db.commit()
+        async with self._pool.write() as db:
+            await db.execute(
+                """INSERT INTO user_preferences (key, value, updated_at)
+                   VALUES (?, ?, ?)
+                   ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at""",
+                (key, value, now),
+            )
+            await db.commit()
 
     async def _get_preferences(self) -> dict[str, str]:
-        if not self._db:
+        if not self._pool:
             return {}
-        cursor = await self._db.execute("SELECT key, value FROM user_preferences")
-        rows = await cursor.fetchall()
+        async with self._pool.read() as db:
+            cursor = await db.execute("SELECT key, value FROM user_preferences")
+            rows = await cursor.fetchall()
+            await cursor.close()
         return {r[0]: r[1] for r in rows}
 
     async def index_workspace(self, folder_path: str) -> dict:
@@ -211,6 +219,6 @@ class MemoryStore:
         return await asyncio.to_thread(self._workspace_index.search, query, n_results)
 
     async def close(self) -> None:
-        if self._db:
-            await self._db.close()
-            self._db = None
+        if self._pool:
+            await self._pool.close()
+            self._pool = None
