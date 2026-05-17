@@ -68,7 +68,7 @@
 
   let executionActions = $state<{ type: string; target: string; status: string }[]>([]);
   let pipelineStartTime = 0;
-  let showThoughts = $state(true);
+  let showThoughts = $state(false);
   let expandedThoughtStages = $state<Record<string, boolean>>({});
   let collapsed = $state(false);
   let autoCollapseTimer: ReturnType<typeof setTimeout> | null = null;
