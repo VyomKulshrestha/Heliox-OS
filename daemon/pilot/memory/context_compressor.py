@@ -1,8 +1,9 @@
 """Rolling context-window compression for long-running ReAct loops."""
 
 import logging
-import tiktoken
 from typing import Any
+
+import tiktoken
 
 from pilot.models.router import ModelRouter
 
