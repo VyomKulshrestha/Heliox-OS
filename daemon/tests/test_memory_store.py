@@ -131,6 +131,19 @@ class TestMemoryStoreInit:
         await pool.close()
 
 
+class TestCheckpoint:
+    @pytest.mark.asyncio
+    async def test_checkpoint_returns_ok_status(self, store):
+        """checkpoint() manually flushes the SQLite WAL and returns stats."""
+        result = await store.checkpoint()
+
+        assert result["status"] == "ok"
+        assert result["mode"] == "TRUNCATE"
+        assert "busy" in result
+        assert "log_frames" in result
+        assert "checkpointed_frames" in result
+
+
 # ---------------------------------------------------------------------------
 # Tests: record()
 # ---------------------------------------------------------------------------
