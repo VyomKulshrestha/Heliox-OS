@@ -85,9 +85,9 @@ class PtySession:
 
         env = {
             **os.environ,
-            "TERM": "dumb",                      # no ANSI escape sequences
-            "BASH_ENV": "/dev/null",              # no ENV file
-            "VIRTUAL_ENV_DISABLE_PROMPT": "1",   # venv must not prepend to PS1
+            "TERM": "dumb",  # no ANSI escape sequences
+            "BASH_ENV": "/dev/null",  # no ENV file
+            "VIRTUAL_ENV_DISABLE_PROMPT": "1",  # venv must not prepend to PS1
         }
 
         self._proc = ptyprocess.PtyProcess.spawn(
@@ -163,9 +163,7 @@ class PtySession:
 
     def is_alive(self) -> bool:
         return (
-            self._alive
-            and self._proc is not None
-            and self._proc.isalive()  # type: ignore[attr-defined]
+            self._alive and self._proc is not None and self._proc.isalive()  # type: ignore[attr-defined]
         )
 
 
@@ -177,9 +175,7 @@ class PtySessionManager:
     @classmethod
     def get_session(cls, session_id: str = "default") -> PtySession:
         if sys.platform == "win32":
-            raise RuntimeError(
-                "PTY sessions are not supported on Windows; use SHELL_COMMAND instead"
-            )
+            raise RuntimeError("PTY sessions are not supported on Windows; use SHELL_COMMAND instead")
         if session_id not in cls._sessions or not cls._sessions[session_id].is_alive():
             logger.info("Creating new PTY session: %s", session_id)
             cls._sessions[session_id] = PtySession()
