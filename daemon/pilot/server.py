@@ -1817,6 +1817,9 @@ class PilotServer:
         # Unload TRIBE v2 model
         if self._tribe_engine and self._tribe_engine.is_loaded:
             self._tribe_engine.unload_model()
+        from pilot.system.pty_session import PtySessionManager
+
+        PtySessionManager.close_all()
         logger.info("Pilot daemon stopped")
 
     # ── Budget Tracking Handlers ──
