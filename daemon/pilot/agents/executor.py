@@ -1397,6 +1397,7 @@ class Executor:
     def _get_browser_backend(self):
         if not hasattr(self, "_browser_backend"):
             from pilot.system.browser import PlaywrightBackend
+
             self._browser_backend = PlaywrightBackend()
         return self._browser_backend
 

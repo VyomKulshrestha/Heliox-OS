@@ -12,6 +12,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+from pilot.system.browser_backend import BrowserBackend
+
 logger = logging.getLogger("pilot.system.browser")
 
 # Global browser instance for session persistence
@@ -432,3 +434,76 @@ async def browser_close() -> str:
         await _playwright_instance.stop()
         _playwright_instance = None
     return "Browser closed"
+
+
+class PlaywrightBackend(BrowserBackend):
+    async def navigate(self, url: str, wait_until: str = "domcontentloaded") -> str:
+        return await browser_navigate(url, wait_until)
+
+    async def click(self, selector: str, button: str = "left", timeout: int = 5000) -> str:
+        return await browser_click(selector, button=button, timeout=timeout)
+
+    async def click_text(self, text: str, exact: bool = False) -> str:
+        return await browser_click_text(text, exact)
+
+    async def type(self, selector: str, text: str, clear_first: bool = True, press_enter: bool = False) -> str:
+        return await browser_type(selector, text, clear_first, press_enter)
+
+    async def select(self, selector: str, value: str) -> str:
+        return await browser_select(selector, value)
+
+    async def hover(self, selector: str) -> str:
+        return await browser_hover(selector)
+
+    async def scroll(self, direction: str = "down", amount: int = 500) -> str:
+        return await browser_scroll(direction, amount)
+
+    async def extract(self, selector: str = "body", attribute: str = "innerText", multiple: bool = False) -> str:
+        return await browser_extract(selector, attribute, multiple)
+
+    async def extract_table(self, selector: str = "table") -> str:
+        return await browser_extract_table(selector)
+
+    async def extract_links(self) -> str:
+        return await browser_extract_links()
+
+    async def execute_js(self, script: str) -> str:
+        return await browser_execute_js(script)
+
+    async def screenshot(
+        self, output_path: str | None = None, full_page: bool = False, selector: str | None = None
+    ) -> str:
+        return await browser_screenshot(output_path, full_page, selector)
+
+    async def fill_form(self, fields: dict[str, str], submit_selector: str | None = None) -> str:
+        return await browser_fill_form(fields, submit_selector)
+
+    async def new_tab(self, url: str | None = None) -> str:
+        return await browser_new_tab(url)
+
+    async def close_tab(self, tab_index: int = -1) -> str:
+        return await browser_close_tab(tab_index)
+
+    async def list_tabs(self) -> str:
+        return await browser_list_tabs()
+
+    async def switch_tab(self, tab_index: int) -> str:
+        return await browser_switch_tab(tab_index)
+
+    async def back(self) -> str:
+        return await browser_back()
+
+    async def forward(self) -> str:
+        return await browser_forward()
+
+    async def refresh(self) -> str:
+        return await browser_refresh()
+
+    async def wait(self, selector: str | None = None, timeout: int = 10000, state: str = "visible") -> str:
+        return await browser_wait(selector, timeout, state)
+
+    async def close(self) -> str:
+        return await browser_close()
+
+    async def get_page_info(self) -> str:
+        return await browser_get_page_info()
