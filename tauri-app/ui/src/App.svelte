@@ -33,7 +33,6 @@
     const result = highlight(code, lang);
     const langLabel = result.language !== "plaintext" ? result.language : "";
     const langBadge = langLabel ? `<span class="hlx-lang-badge">${langLabel}</span>` : "";
-    return `<div class="hlx-code-wrapper"><div class="hlx-code-header">${langBadge}<button class="hlx-copy-btn" data-        code="${encodeURIComponent(code)}">Copy</button></div><pre class="hlx-pre"><code class="hljs language-${result.language}">${result.value}         </code></pre></div>`;
     return `<div class="hlx-code-wrapper"><div class="hlx-code-header">${langBadge}<button class="hlx-copy-btn" data-code="${encodeURIComponent(code)}">Copy</button></div><pre class="hlx-pre"><code class="hljs language-${result.language}">${result.value}</code></pre></div>`;
   };
   marked.setOptions({ renderer, gfm: true, breaks: true });
