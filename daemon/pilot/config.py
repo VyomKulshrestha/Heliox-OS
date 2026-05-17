@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -155,6 +157,10 @@ class PilotConfig:
 logger = logging.getLogger("pilot.config")
 
 
+class DataDirNotWritableError(RuntimeError):
+    """Raised when the daemon data directory cannot safely store runtime state."""
+
+
 def _validate_config_types(raw: dict) -> None:
     """Validate that the user's config has no typos and uses correct types."""
     expected_types = {
@@ -280,6 +286,49 @@ def _config_to_dict(config: PilotConfig) -> dict[str, Any]:
 
 
 def ensure_dirs() -> None:
-    """Create all required XDG directories."""
-    for d in (CONFIG_DIR, DATA_DIR, STATE_DIR, RUNTIME_DIR):
+    """Create and validate all required XDG directories."""
+    for d in (CONFIG_DIR, STATE_DIR, RUNTIME_DIR):
         d.mkdir(parents=True, exist_ok=True)
+    validate_data_dir_writable(DATA_DIR)
+
+
+def validate_data_dir_writable(data_dir: Path = DATA_DIR) -> None:
+    """Ensure the data directory can persist SQLite databases and audit files."""
+    if data_dir.exists() and not data_dir.is_dir():
+        message = f"DATA_DIR is not writable: {data_dir} exists but is not a directory"
+        logger.error(message)
+        raise DataDirNotWritableError(message)
+
+    try:
+        data_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        message = f"DATA_DIR is not writable: failed to create {data_dir}: {exc}"
+        logger.error(message)
+        raise DataDirNotWritableError(message) from exc
+
+    if not data_dir.is_dir():
+        message = f"DATA_DIR is not writable: {data_dir} exists but is not a directory"
+        logger.error(message)
+        raise DataDirNotWritableError(message)
+
+    probe_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            prefix=".pilot-write-test-",
+            dir=data_dir,
+            delete=False,
+        ) as probe:
+            probe.write("ok")
+            probe.flush()
+            os.fsync(probe.fileno())
+            probe_path = Path(probe.name)
+    except OSError as exc:
+        message = f"DATA_DIR is not writable: failed write probe in {data_dir}: {exc}"
+        logger.error(message)
+        raise DataDirNotWritableError(message) from exc
+    finally:
+        if probe_path is not None:
+            with contextlib.suppress(OSError):
+                probe_path.unlink()

@@ -21,7 +21,15 @@ import aiosqlite
 import websockets
 from websockets.asyncio.server import Server, ServerConnection
 
-from pilot.config import DATA_DIR, DB_FILE, LOG_FILE, STATE_DIR, PilotConfig, ensure_dirs
+from pilot.config import (
+    DATA_DIR,
+    DB_FILE,
+    LOG_FILE,
+    STATE_DIR,
+    DataDirNotWritableError,
+    PilotConfig,
+    ensure_dirs,
+)
 
 logger = logging.getLogger("pilot.server")
 
@@ -2766,8 +2774,13 @@ def _setup_logging() -> None:
 
 def main() -> None:
     """Entry point for the pilot-daemon command."""
-    ensure_dirs()
     _setup_logging()
+    try:
+        ensure_dirs()
+    except DataDirNotWritableError as exc:
+        logger.critical("Pilot daemon cannot start: %s", exc)
+        raise SystemExit(1) from exc
+
     config = PilotConfig.load()
     parser = argparse.ArgumentParser(prog="pilot.server")
     parser.add_argument("--dry-run", action="store_true", help="Simulate actions without executing them")
