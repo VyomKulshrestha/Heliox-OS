@@ -93,9 +93,7 @@ class DaemonManager:
         """Get recent crash records."""
         async with aiosqlite.connect(CRASH_DB_PATH) as db:
             db.row_factory = aiosqlite.Row
-            async with db.execute(
-                "SELECT * FROM crashes ORDER BY timestamp DESC LIMIT ?", (limit,)
-            ) as cursor:
+            async with db.execute("SELECT * FROM crashes ORDER BY timestamp DESC LIMIT ?", (limit,)) as cursor:
                 rows = await cursor.fetchall()
                 return [
                     CrashRecord(
@@ -173,7 +171,8 @@ After=network.target
 
 [Service]
 Type=simple
-User={os.environ.get('USER', 'root')}
+<<<<<<< HEAD
+User={os.environ.get("USER", "root")}
 WorkingDirectory={daemon_path}
 ExecStart={sys.executable} -m pilot.server
 Restart=always
