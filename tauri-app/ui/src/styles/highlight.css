@@ -1,0 +1,90 @@
+/*
+ * highlight.css
+ * -------------
+ * Imports highlight.js's atom-one-dark theme and applies minor overrides
+ * to blend seamlessly with Heliox OS's Arc Reactor dark UI palette.
+ *
+ * Place at: tauri-app/ui/src/styles/highlight.css
+ * Import in: tauri-app/ui/src/app.css  (or main entry)
+ *
+ *   @import './styles/highlight.css';
+ */
+
+@import "highlight.js/styles/atom-one-dark.css";
+
+/* ── Heliox palette overrides ─────────────────────────────────────────────
+   atom-one-dark uses #282c34 as background which matches Heliox perfectly.
+   We only adjust a handful of tokens to align with the cyan accent (#7c6fe0)
+   used in the Arc Reactor UI.
+   ─────────────────────────────────────────────────────────────────────── */
+
+.hljs {
+  background: transparent; /* wrapper .hlx-code-wrapper sets the bg */
+  color: #abb2bf;
+}
+
+/* Keywords → Heliox cyan */
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-built_in,
+.hljs-name,
+.hljs-tag {
+  color: #7c6fe0;
+}
+
+/* Strings → soft green (matches Heliox terminal palette) */
+.hljs-string,
+.hljs-title,
+.hljs-section,
+.hljs-attribute,
+.hljs-literal,
+.hljs-template-tag,
+.hljs-template-variable,
+.hljs-type,
+.hljs-addition {
+  color: #86efac;
+}
+
+/* Numbers, booleans */
+.hljs-number,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-variable,
+.hljs-constant {
+  color: #fb923c;
+}
+
+/* Comments → muted */
+.hljs-comment,
+.hljs-quote,
+.hljs-deletion,
+.hljs-meta {
+  color: #5c6370;
+  font-style: italic;
+}
+
+/* Functions / class names */
+.hljs-function .hljs-keyword,
+.hljs-class .hljs-keyword {
+  color: #c084fc;
+}
+
+.hljs-title.function_,
+.hljs-title.class_ {
+  color: #fbbf24;
+}
+
+/* JSON keys */
+.hljs-attr {
+  color: #7c6fe0;
+}
+
+/* Punctuation / operators */
+.hljs-punctuation,
+.hljs-operator {
+  color: #abb2bf;
+}
+
+/* Emphasis / strong inside comments */
+.hljs-emphasis { font-style: italic; }
+.hljs-strong   { font-weight: 700; }

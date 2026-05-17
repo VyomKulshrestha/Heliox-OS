@@ -1,3 +1,4 @@
+
 <script lang="ts">
   import CommandInput from "./lib/components/CommandInput.svelte";
   import ConfirmDialog from "./lib/components/ConfirmDialog.svelte";
@@ -20,7 +21,27 @@
   import { onDestroy, tick } from "svelte";
   import { writeText } from "@tauri-apps/plugin-clipboard-manager";
   import { Copy } from "lucide-svelte";
+  import { marked } from "marked";
+  import DOMPurify from "dompurify";
+  import { highlight } from "./lib/highlighter";
   import ScrollToBottom from "./lib/components/ScrollToBottom.svelte";
+  import ConnectionStatus from "./lib/components/ConnectionStatus.svelte";
+
+  const renderer = new marked.Renderer();
+  renderer.code = function(code, language) {
+    const lang = language || "";
+    const result = highlight(code, lang);
+    const langLabel = result.language !== "plaintext" ? result.language : "";
+    const langBadge = langLabel ? `<span class="hlx-lang-badge">${langLabel}</span>` : "";
+    return `<div class="hlx-code-wrapper"><div class="hlx-code-header">${langBadge}<button class="hlx-copy-btn" data-code="${encodeURIComponent(code)}">Copy</button></div><pre class="hlx-pre"><code class="hljs language-${result.language}">${result.value}</code></pre></div>`;
+  };
+  marked.setOptions({ renderer, gfm: true, breaks: true });
+
+  function renderMarkdown(text) {
+    if (!text) return "";
+    const raw = marked.parse(text);
+    return DOMPurify.sanitize(raw);
+  }
 
   let activeTab: "chat" | "log" | "settings" | "plugins" = $state("chat");
   let isDragging = $state(false);
@@ -196,8 +217,9 @@
       <button class="tab" class:active={activeTab === "settings"} title="Open Settings" onclick={() => activeTab = "settings"}>Settings</button>
     </nav>
     <div class="titlebar-right">
-      <AmbientHUD />
-    </div>
+  <ConnectionStatus />
+  <AmbientHUD />
+</div>
   </header>
 
     <div class="content">
@@ -353,9 +375,11 @@
               </span>
             </div>
             {#if ar.success && ar.output}
-              <pre class="ar-output">{ar.output.trim()}</pre>
-            {/if}
-            {#if !ar.success && ar.error}
+  		<div class="ar-output">
+    		      {@html renderMarkdown(ar.output.trim())}
+  		</div>
+	    {/if}            
+	    {#if !ar.success && ar.error}
               <pre class="ar-error">{ar.error}</pre>
             {/if}
           </div>
@@ -409,7 +433,9 @@
   {:else}
     <div class="message system-msg has-copy">
       <span class="msg-label">HELIOX</span>
-      <span class="msg-text">{msg.text}</span>
+      <div class="msg-text">
+           {@html renderMarkdown(msg.text || "")}
+      </div>
       <button class="copy-button" type="button" aria-label="Copy message" title="Copy" onclick={() => copyMessage(msg)}>
         <Copy size={14} />
       </button>
@@ -950,5 +976,60 @@
     0%, 20% { content: "."; }
     40% { content: ".."; }
     60%, 100% { content: "..."; }
+  }
+  
+  .hlx-code-wrapper {
+    margin: 8px 0;
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    border: 1px solid var(--border);
+    background: #1a1a24;
+  }
+  .hlx-code-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 10px;
+    background: rgba(0,0,0,0.3);
+    border-bottom: 1px solid var(--border);
+    min-height: 26px;
+  }
+  .hlx-lang-badge {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent);
+    opacity: 0.85;
+  }
+  .hlx-copy-btn {
+    font-size: 10px;
+    padding: 2px 8px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-family: var(--font-sans);
+    transition: all 0.15s;
+  }
+  .hlx-copy-btn:hover {
+    background: var(--accent-muted);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .hlx-pre {
+    margin: 0;
+    padding: 12px 14px;
+    overflow-x: auto;
+    font-size: 12px;
+    line-height: 1.6;
+    background: transparent;
+  }
+  .hlx-pre code {
+    font-family: var(--font-mono);
+    background: none;
+    border: none;
+    padding: 0;
   }
 </style>
