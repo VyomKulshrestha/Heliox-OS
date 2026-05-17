@@ -22,6 +22,7 @@ def isolate_sessions():
     PtySessionManager.close_all()
 
 
+@pytest.mark.asyncio
 async def test_session_exec_basic():
     session = PtySession()
     output = await session.exec("echo hello")
@@ -29,6 +30,7 @@ async def test_session_exec_basic():
     assert "hello" in output
 
 
+@pytest.mark.asyncio
 async def test_session_state_persistence():
     session = PtySession()
     await session.exec("export PILOT_TEST_VAR=persistent")
@@ -37,6 +39,7 @@ async def test_session_state_persistence():
     assert "persistent" in output
 
 
+@pytest.mark.asyncio
 async def test_session_cwd_persistence():
     session = PtySession()
     await session.exec("cd /tmp")
@@ -45,6 +48,7 @@ async def test_session_cwd_persistence():
     assert "/tmp" in output
 
 
+@pytest.mark.asyncio
 async def test_separate_sessions_are_isolated():
     session_a = PtySessionManager.get_session("a")
     session_b = PtySessionManager.get_session("b")
@@ -55,6 +59,7 @@ async def test_separate_sessions_are_isolated():
     assert "only_in_a" not in output_b
 
 
+@pytest.mark.asyncio
 async def test_session_timeout():
     session = PtySession()
     output = await session.exec("sleep 60", timeout=1)
@@ -62,6 +67,7 @@ async def test_session_timeout():
     assert "timed out" in output.lower() or "error" in output.lower()
 
 
+@pytest.mark.asyncio
 async def test_close_and_reopen():
     session_id = "reopen_test"
     session = PtySessionManager.get_session(session_id)
