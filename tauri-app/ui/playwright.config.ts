@@ -9,13 +9,19 @@ import { defineConfig, devices } from "@playwright/test";
  *
  * Baseline snapshots are stored in tests/visual/__snapshots__/ and committed
  * to the repo so every PR diffs against the last known-good state.
+ *
+ * First run behaviour
+ * -------------------
+ * When no baselines exist yet, the CI job runs with --update-snapshots to
+ * generate them, commits them back to the branch, then subsequent runs do
+ * the actual pixel comparison.
  */
 export default defineConfig({
   testDir: "./tests/visual",
   snapshotDir: "./tests/visual/__snapshots__",
 
-  /* Fail fast on CI — no retries for visual tests */
-  retries: process.env.CI ? 0 : 0,
+  /* No retries — visual diffs are deterministic */
+  retries: 0,
   workers: 1, // serial to avoid race conditions on the dev server
 
   use: {
@@ -32,8 +38,9 @@ export default defineConfig({
     },
 
     /* Capture full trace on failure for debugging */
-    trace: "on-first-retry",
+    trace: "retain-on-failure",
     screenshot: "only-on-failure",
+    video: "off",
   },
 
   projects: [
