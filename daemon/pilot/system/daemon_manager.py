@@ -11,9 +11,11 @@ from pathlib import Path
 
 import aiosqlite
 
+from pilot.config import DATA_DIR
+
 logger = logging.getLogger("pilot.system.daemon_manager")
 
-CRASH_DB_PATH = Path(__file__).parent.parent / "crashes.db"
+CRASH_DB_PATH = DATA_DIR / "crashes.db"
 
 MAX_RESTART_ATTEMPTS = 5
 INITIAL_BACKOFF_SECONDS = 1
