@@ -49,6 +49,7 @@ class AgentRole(StrEnum):
     WEB = "web_agent"
     MONITOR = "monitor_agent"
     COMMUNICATION = "comm_agent"
+    RSS = "rss_agent"
     ORCHESTRATOR = "orchestrator"
     GENERAL = "general"
 

@@ -275,6 +275,18 @@ class MemoryStore:
 
             await db.commit()
 
+    async def get_preference(self, key: str) -> str | None:
+        """Return the stored value for *key*, or None if not found."""
+        if not self._pool:
+            return None
+
+        async with self._pool.read() as db:
+            cursor = await db.execute("SELECT value FROM user_preferences WHERE key = ?", (key,))
+            row = await cursor.fetchone()
+            await cursor.close()
+
+        return row[0] if row else None
+
     async def _get_preferences(self) -> dict[str, str]:
         if not self._pool:
             return {}

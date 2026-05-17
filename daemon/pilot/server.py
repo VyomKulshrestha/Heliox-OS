@@ -126,6 +126,7 @@ class PilotServer:
         self._pending_confirms: dict[str, PendingConfirmation] = {}
         # ── Cancel Token (Issue #92) ──
         self._cancel_event: asyncio.Event | None = None
+        self._rss_agent: Any = None
 
     async def initialize(self) -> None:
         """Initialize all agent components.
@@ -205,6 +206,11 @@ class PilotServer:
         )
         logger.info("Auto-registered %d agents via dynamic discovery", registered)
         await self._orchestrator.start_all()
+
+        from pilot.agents.rss_agent import RssAgent
+
+        self._rss_agent = RssAgent(model_router, self._memory, self.config, self._background)
+        self._orchestrator.register_agent(self._rss_agent)
 
         # Multimodal Fusion Engine — voice + gesture intent fusion
         from pilot.multimodal.fusion import MultimodalFusionEngine
