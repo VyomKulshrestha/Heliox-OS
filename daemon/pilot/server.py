@@ -12,8 +12,9 @@ import secrets
 import signal
 import sys
 import uuid
+import zipfile
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -21,7 +22,17 @@ import aiosqlite
 import websockets
 from websockets.asyncio.server import Server, ServerConnection
 
-from pilot.config import DATA_DIR, DB_FILE, LOG_FILE, STATE_DIR, PilotConfig, ensure_dirs
+from pilot.config import (
+    AUDIT_FILE,
+    CONFIG_FILE,
+    DATA_DIR,
+    DB_FILE,
+    LOG_FILE,
+    PERMISSION_AUDIT_DB_FILE,
+    STATE_DIR,
+    PilotConfig,
+    ensure_dirs,
+)
 
 logger = logging.getLogger("pilot.server")
 
@@ -2764,6 +2775,59 @@ def _setup_logging() -> None:
     )
 
 
+def _default_export_dir() -> Path:
+    desktop = Path.home() / "Desktop"
+    return desktop if desktop.exists() else Path.cwd()
+
+
+def _add_file_to_archive(archive: zipfile.ZipFile, path: Path, arcname: str) -> bool:
+    if not path.is_file():
+        return False
+    archive.write(path, arcname)
+    return True
+
+
+def export_logs_archive(destination_dir: Path | None = None) -> Path:
+    """Package logs and diagnostic state into a zip for issue reports."""
+    destination = destination_dir or _default_export_dir()
+    destination.mkdir(parents=True, exist_ok=True)
+    now = datetime.now(UTC)
+    timestamp = now.strftime("%Y%m%d-%H%M%S")
+    archive_path = destination / f"heliox-diagnostics-{timestamp}.zip"
+
+    included: list[str] = []
+    with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        if STATE_DIR.exists():
+            for path in sorted(STATE_DIR.rglob("*")):
+                if path.is_file():
+                    arcname = Path("logs") / path.relative_to(STATE_DIR)
+                    archive.write(path, arcname.as_posix())
+                    included.append(arcname.as_posix())
+
+        diagnostic_files = (
+            (CONFIG_FILE, "config/config.toml"),
+            (AUDIT_FILE, "audit/audit.jsonl"),
+            (PERMISSION_AUDIT_DB_FILE, "audit/permission_audit.db"),
+        )
+        for path, arcname in diagnostic_files:
+            if _add_file_to_archive(archive, path, arcname):
+                included.append(arcname)
+
+        manifest = {
+            "created_at": now.isoformat(timespec="seconds").replace("+00:00", "Z"),
+            "included_files": included,
+            "source_paths": {
+                "state_dir": str(STATE_DIR),
+                "config_file": str(CONFIG_FILE),
+                "audit_file": str(AUDIT_FILE),
+                "permission_audit_db": str(PERMISSION_AUDIT_DB_FILE),
+            },
+        }
+        archive.writestr("manifest.json", json.dumps(manifest, indent=2, sort_keys=True))
+
+    return archive_path
+
+
 def main() -> None:
     """Entry point for the pilot-daemon command."""
     ensure_dirs()
@@ -2771,7 +2835,16 @@ def main() -> None:
     config = PilotConfig.load()
     parser = argparse.ArgumentParser(prog="pilot.server")
     parser.add_argument("--dry-run", action="store_true", help="Simulate actions without executing them")
+    parser.add_argument(
+        "--export-logs",
+        action="store_true",
+        help="Create a diagnostics zip with logs, config, and audit trails, then exit",
+    )
     args, _ = parser.parse_known_args()
+    if args.export_logs:
+        archive_path = export_logs_archive()
+        print(f"Exported diagnostics archive: {archive_path}")
+        return
     if args.dry_run:
         config.security.dry_run = True
         logger.info("Dry-run mode enabled via CLI flag")
