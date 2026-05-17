@@ -48,10 +48,12 @@ CREATE INDEX IF NOT EXISTS idx_prefs_key ON user_preferences(key);
 class MemoryStore:
     """Persistent memory with action history and semantic preference learning."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, checkpoint_interval_seconds: int = 300) -> None:
         self._pool: AsyncSqlitePool | None = None
         self._chroma_collection: Any = None
         self._workspace_index = None
+        self._checkpoint_interval_seconds = checkpoint_interval_seconds
+        self._checkpoint_task: asyncio.Task[None] | None = None
 
     async def initialize(self) -> None:
         await aiofiles.os.makedirs(DATA_DIR, exist_ok=True)
@@ -62,6 +64,47 @@ class MemoryStore:
             await db.commit()
         await asyncio.to_thread(self._init_chroma)
         self._init_workspace_index()
+        self._start_periodic_checkpoint()
+
+    def _start_periodic_checkpoint(self) -> None:
+        if self._checkpoint_interval_seconds <= 0:
+            return
+        self._checkpoint_task = asyncio.create_task(self._periodic_checkpoint_loop())
+
+    async def _periodic_checkpoint_loop(self) -> None:
+        try:
+            while True:
+                await asyncio.sleep(self._checkpoint_interval_seconds)
+                try:
+                    await self.checkpoint()
+                except Exception:
+                    logger.exception("Periodic memory checkpoint failed")
+        except asyncio.CancelledError:
+            raise
+
+    async def checkpoint(self, *, mode: str = "TRUNCATE") -> dict[str, int | str]:
+        """Run a SQLite WAL checkpoint for the memory database."""
+        if not self._pool:
+            return {"status": "skipped", "reason": "memory store is not initialized"}
+
+        normalized_mode = mode.upper()
+        if normalized_mode not in {"PASSIVE", "FULL", "RESTART", "TRUNCATE"}:
+            raise ValueError("checkpoint mode must be PASSIVE, FULL, RESTART, or TRUNCATE")
+
+        async with self._pool.write() as db:
+            cursor = await db.execute(f"PRAGMA wal_checkpoint({normalized_mode})")
+            row = await cursor.fetchone()
+            await cursor.close()
+            await db.commit()
+
+        busy, log_frames, checkpointed_frames = row if row is not None else (0, 0, 0)
+        return {
+            "status": "ok",
+            "mode": normalized_mode,
+            "busy": int(busy),
+            "log_frames": int(log_frames),
+            "checkpointed_frames": int(checkpointed_frames),
+        }
 
     def _init_workspace_index(self) -> None:
         """Initialize the workspace RAG index."""
@@ -219,6 +262,14 @@ class MemoryStore:
         return await asyncio.to_thread(self._workspace_index.search, query, n_results)
 
     async def close(self) -> None:
+        if self._checkpoint_task:
+            self._checkpoint_task.cancel()
+            try:
+                await self._checkpoint_task
+            except asyncio.CancelledError:
+                pass
+            self._checkpoint_task = None
         if self._pool:
+            await self.checkpoint()
             await self._pool.close()
             self._pool = None

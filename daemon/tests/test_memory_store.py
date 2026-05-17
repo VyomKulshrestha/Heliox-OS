@@ -207,6 +207,33 @@ class TestRecord:
         assert len(called) >= 1
 
 
+class TestCheckpoint:
+    @pytest.mark.asyncio
+    async def test_checkpoint_returns_sqlite_wal_stats(self, store, fake_plan, fake_results):
+        """checkpoint() runs PRAGMA wal_checkpoint and returns normalized stats."""
+        with patch("pilot.memory.store.asyncio.to_thread", new_callable=AsyncMock):
+            await store.record("checkpoint me", fake_plan, fake_results)
+
+        result = await store.checkpoint()
+
+        assert result["status"] == "ok"
+        assert result["mode"] == "TRUNCATE"
+        assert {"busy", "log_frames", "checkpointed_frames"}.issubset(result)
+
+    @pytest.mark.asyncio
+    async def test_checkpoint_skips_when_store_is_not_initialized(self):
+        """checkpoint() is safe before initialize() wires the SQLite pool."""
+        result = await MemoryStore().checkpoint()
+
+        assert result == {"status": "skipped", "reason": "memory store is not initialized"}
+
+    @pytest.mark.asyncio
+    async def test_checkpoint_rejects_unknown_mode(self, store):
+        """checkpoint() only accepts SQLite WAL checkpoint modes."""
+        with pytest.raises(ValueError, match="checkpoint mode"):
+            await store.checkpoint(mode="VACUUM")
+
+
 # ---------------------------------------------------------------------------
 # Tests: get_history()
 # ---------------------------------------------------------------------------

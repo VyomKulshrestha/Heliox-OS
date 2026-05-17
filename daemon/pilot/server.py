@@ -171,7 +171,9 @@ class PilotServer:
         await self._checkpoint_store.initialize()
         validator = ActionValidator(self.config)
         permissions = PermissionChecker(self.config)
-        self._memory = MemoryStore()
+        self._memory = MemoryStore(
+            checkpoint_interval_seconds=self.config.memory.checkpoint_interval_seconds,
+        )
         await self._memory.initialize()
 
         self._planner = Planner(model_router, self._memory)
@@ -345,6 +347,7 @@ class PilotServer:
             "get_config": self._handle_get_config,
             "update_config": self._handle_update_config,
             "get_history": self._handle_get_history,
+            "memory_checkpoint": self._handle_memory_checkpoint,
             "store_api_key": self._handle_store_api_key,
             "delete_api_key": self._handle_delete_api_key,
             "list_api_keys": self._handle_list_api_keys,
@@ -1346,6 +1349,11 @@ class PilotServer:
         offset = params.get("offset", 0)
         entries = await self._memory.get_history(limit=limit, offset=offset)
         return {"entries": entries}
+
+    async def _handle_memory_checkpoint(self, params: dict, ws: ServerConnection) -> dict:
+        """Run a manual WAL checkpoint for the memory database."""
+        mode = str(params.get("mode", "TRUNCATE"))
+        return await self._memory.checkpoint(mode=mode)
 
     async def _handle_export_session_chat(self, params: dict, ws: ServerConnection) -> dict:
         """Export current UI session chat messages to JSON or CSV."""
