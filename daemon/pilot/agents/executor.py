@@ -39,6 +39,7 @@ from pilot.actions import (
     PackageParams,
     PowerParams,
     ProcessParams,
+    PtyExecParams,
     RegistryParams,
     ScheduleParams,
     ScreenshotParams,
@@ -115,6 +116,7 @@ class Executor:
             # -- Shell commands --
             ActionType.SHELL_COMMAND: self._exec_shell_command,
             ActionType.SHELL_SCRIPT: self._exec_shell_script,
+            ActionType.PTY_EXEC: self._exec_pty_exec,
             # -- Open URL / App / Notify --
             ActionType.OPEN_URL: self._exec_open_url,
             ActionType.OPEN_APPLICATION: self._exec_open_application,
@@ -323,12 +325,14 @@ class Executor:
         on_action_start: typing.Callable[[Action], typing.Awaitable[None]] | None = None,
         on_action_complete: typing.Callable[[ActionResult], typing.Awaitable[None]] | None = None,
         cancel_event: asyncio.Event | None = None,
+        plan_id: str | None = None,
+        initial_last_output: str = "",
     ) -> list[ActionResult]:
         """Execute all actions in a plan sequentially, with output chaining."""
-        plan_id = str(uuid.uuid4())[:8]
+        plan_id = plan_id or str(uuid.uuid4())[:8]
         results: list[ActionResult] = []
-        self._last_output = ""
-        self._largest_output = ""
+        self._last_output = initial_last_output
+        self._largest_output = initial_last_output
 
         allowed, reasons = self._permissions.plan_allowed(plan)
         if not allowed:
@@ -403,12 +407,23 @@ class Executor:
             if cancel_event and cancel_event.is_set():
                 logger.info("Executor: cancel_event set — stopping at action %d", i)
                 break
-
             await self._audit.log_action_start(action, plan_id)
+
+        batches = self._analyze_dependencies(plan.actions)
+        logger.info("Executing %d action(s) in %d parallel batch(es)", len(plan.actions), len(batches))
 
         for batch_idx, batch in enumerate(batches):
             if not batch:
                 continue
+
+            if cancel_event and cancel_event.is_set():
+                logger.info("Executor: cancel_event set — stopping at batch %d", batch_idx)
+                for remaining_batch in batches[batch_idx + 1 :]:
+                    for action in remaining_batch:
+                        results.append(
+                            ActionResult(action=action, success=False, error="Skipped due to cancel request")
+                        )
+                break
 
             logger.info("Batch %d: executing %d action(s) in parallel", batch_idx + 1, len(batch))
 
@@ -453,7 +468,6 @@ class Executor:
                         results.append(
                             ActionResult(action=action, success=False, error="Skipped due to earlier batch failure")
                         )
-                break
 
         return results
 
@@ -826,6 +840,13 @@ class Executor:
         if code != 0:
             raise RuntimeError(f"Script failed (exit {code}): {err.strip()}")
         return out
+
+    async def _exec_pty_exec(self, action: Action) -> str:
+        params: PtyExecParams = action.parameters  # type: ignore[assignment]
+        from pilot.system.pty_session import PtySessionManager
+
+        session = PtySessionManager.get_session(params.session_id)
+        return await session.exec(params.command, timeout=params.timeout)
 
     # ======================================================================
     # OPEN URL / APPLICATION / NOTIFY

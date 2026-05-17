@@ -443,6 +443,28 @@ function createSession() {
 
     call("confirm", { plan_id: planId, confirmed: accepted }).catch(() => { });
   }
+  async function exportChat(format: "json" | "csv") {
+    let msgs: Message[] = [];
+    const unsub = subscribe((s) => {
+      msgs = s.messages;
+    });
+    unsub();
+
+    try {
+      const res = (await call("export_session_chat", {
+        format,
+        messages: msgs,
+      })) as { status: string; path?: string; message?: string };
+
+      if (res.status === "ok") {
+        addSystemMessage(`Chat exported (${format.toUpperCase()}) to: ${res.path}`);
+      } else {
+        addSystemMessage(`Export failed: ${res.message ?? "unknown error"}`);
+      }
+    } catch (err) {
+      addSystemMessage(`Export failed: ${String(err instanceof Error ? err.message : err)}`);
+    }
+  }
 
   function addSystemMessage(text: string) {
     update((s) => ({
@@ -472,6 +494,7 @@ function createSession() {
     subscribe,
     sendCommand,
     confirm,
+    exportChat,
     addSystemMessage,
     clearMessages,
     resetUsage,

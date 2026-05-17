@@ -156,6 +156,14 @@ class BaseAgent(ABC):
         """Return True if this agent handles the given action type."""
         ...
 
+    def get_permission_tier(self) -> int:
+        """Return the minimum permission tier required (default: 1)."""
+        return 1
+
+    def get_resource_needs(self) -> set[str]:
+        """Return set of resource requirements (e.g., 'browser', 'screen', 'audio')."""
+        return set()
+
     # ── Lifecycle ──
 
     async def start(self) -> None:

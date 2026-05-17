@@ -78,6 +78,34 @@ class AgentOrchestrator:
         """Get a registered agent by role."""
         return self._agents.get(role)
 
+    def auto_register_all_agents(
+        self,
+        executor: Any = None,
+        background_manager: Any = None,
+        model_router: Any = None,
+    ) -> int:
+        """Auto-register all discovered agents from the registry."""
+        from pilot.agents.registry import AgentRegistry
+
+        count = 0
+        for name, agent_class in AgentRegistry.get_all_agents().items():
+            try:
+                kwargs = {}
+                if executor:
+                    kwargs["executor"] = executor
+                if background_manager:
+                    kwargs["background_manager"] = background_manager
+                if model_router:
+                    kwargs["model_router"] = model_router
+
+                agent = agent_class(**kwargs)
+                self.register_agent(agent)
+                count += 1
+            except Exception as e:
+                logger.warning("Failed to auto-register agent %s: %s", name, e)
+
+        return count
+
     def set_broadcast(self, fn: Callable[..., Coroutine]) -> None:
         """Set the WebSocket broadcast function for UI notifications."""
         self._broadcast_fn = fn
