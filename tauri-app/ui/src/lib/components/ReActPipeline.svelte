@@ -11,7 +11,7 @@
   import { session } from "../stores/session";
   import { onNotification, offNotification } from "../api/daemon";
   import { fade, slide } from "svelte/transition";
-  import { onDestroy } from "svelte";
+  import { onMount, onDestroy } from "svelte";
 
   // ── Pipeline Stage Types ──
 
@@ -68,7 +68,7 @@
 
   let executionActions = $state<{ type: string; target: string; status: string }[]>([]);
   let pipelineStartTime = 0;
-  let showThoughts = $state(false);
+  let showThoughts = $state(true);
   let expandedThoughtStages = $state<Record<string, boolean>>({});
   let collapsed = $state(false);
   let autoCollapseTimer: ReturnType<typeof setTimeout> | null = null;
@@ -375,6 +375,16 @@
   let dismiss = () => { isVisible = false; };
   let toggleCollapse = () => { collapsed = !collapsed; };
   let toggleThoughts = () => { showThoughts = !showThoughts; };
+
+  // ── Keyboard Shortcut: Ctrl+Shift+L toggles the ReAct Pipeline panel ──
+  function handleKeydown(e: KeyboardEvent): void {
+    if (e.ctrlKey && e.shiftKey && e.key === 'L') {
+      e.preventDefault();
+      toggleCollapse();
+    }
+  }
+  onMount(() => window.addEventListener('keydown', handleKeydown));
+  onDestroy(() => window.removeEventListener('keydown', handleKeydown));
   let toggleThoughtStage = (stageId: string) => {
     expandedThoughtStages = {
       ...expandedThoughtStages,
@@ -439,7 +449,7 @@
         {#if agentRouting?.is_multi_agent}
           <span class="multi-agent-badge">Multi-Agent</span>
         {/if}
-        <button class="collapse-toggle" onclick={(e) => { e.stopPropagation(); toggleCollapse(); }} title={collapsed ? 'Expand' : 'Collapse'}>
+        <button class="collapse-toggle" onclick={(e) => { e.stopPropagation(); toggleCollapse(); }} title={collapsed ? 'Expand pipeline (Ctrl+Shift+L)' : 'Collapse pipeline (Ctrl+Shift+L)'}>
           {collapsed ? '▼' : '▲'}
         </button>
         <button
