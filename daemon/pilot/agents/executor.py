@@ -39,6 +39,7 @@ from pilot.actions import (
     PackageParams,
     PowerParams,
     ProcessParams,
+    PtyExecParams,
     RegistryParams,
     ScheduleParams,
     ScreenshotParams,
@@ -115,6 +116,7 @@ class Executor:
             # -- Shell commands --
             ActionType.SHELL_COMMAND: self._exec_shell_command,
             ActionType.SHELL_SCRIPT: self._exec_shell_script,
+            ActionType.PTY_EXEC: self._exec_pty_exec,
             # -- Open URL / App / Notify --
             ActionType.OPEN_URL: self._exec_open_url,
             ActionType.OPEN_APPLICATION: self._exec_open_application,
@@ -838,6 +840,13 @@ class Executor:
         if code != 0:
             raise RuntimeError(f"Script failed (exit {code}): {err.strip()}")
         return out
+
+    async def _exec_pty_exec(self, action: Action) -> str:
+        params: PtyExecParams = action.parameters  # type: ignore[assignment]
+        from pilot.system.pty_session import PtySessionManager
+
+        session = PtySessionManager.get_session(params.session_id)
+        return await session.exec(params.command, timeout=params.timeout)
 
     # ======================================================================
     # OPEN URL / APPLICATION / NOTIFY

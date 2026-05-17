@@ -48,6 +48,7 @@ class ActionType(StrEnum):
     # -- Shell / command execution --
     SHELL_COMMAND = "shell_command"
     SHELL_SCRIPT = "shell_script"  # Run a multi-line script
+    PTY_EXEC = "pty_exec"  # Run command in a persistent PTY shell session
 
     # -- Open URL / Application / Notify (original) --
     OPEN_URL = "open_url"
@@ -373,6 +374,14 @@ class ShellScriptParams(BaseModel):
     elevated: bool = False
 
 
+class PtyExecParams(BaseModel):
+    """Run a command inside a persistent PTY shell session."""
+
+    session_id: str = "default"
+    command: str = ""
+    timeout: int = 30
+
+
 class OpenUrlParams(BaseModel):
     url: str = ""
 
@@ -667,6 +676,7 @@ ActionParameters = (
     | DBusParams
     | ShellCommandParams
     | ShellScriptParams
+    | PtyExecParams
     | OpenUrlParams
     | OpenApplicationParams
     | NotifyParams
