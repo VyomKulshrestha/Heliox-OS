@@ -21,6 +21,7 @@
   import { writeText } from "@tauri-apps/plugin-clipboard-manager";
   import { Copy } from "lucide-svelte";
   import ScrollToBottom from "./lib/components/ScrollToBottom.svelte";
+  import ConnectionStatus from "./lib/components/ConnectionStatus.svelte";
 
   let activeTab: "chat" | "log" | "settings" | "plugins" = $state("chat");
   let isDragging = $state(false);
@@ -196,8 +197,9 @@
       <button class="tab" class:active={activeTab === "settings"} title="Open Settings" onclick={() => activeTab = "settings"}>Settings</button>
     </nav>
     <div class="titlebar-right">
-      <AmbientHUD />
-    </div>
+  <ConnectionStatus />
+  <AmbientHUD />
+</div>
   </header>
 
     <div class="content">
