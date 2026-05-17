@@ -22,6 +22,25 @@
   --font-sans: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
 }
 
+:root.light-mode {
+  --bg-primary: #f8f9fa;
+  --bg-secondary: #ffffff;
+  --bg-tertiary: #edf0f5;
+  --bg-hover: #e2e8f0;
+  --border: #d1d5db;
+  --text-primary: #1e1e2a;
+  --text-secondary: #4b5563;
+  --text-muted: #9ca3af;
+  --accent: #5b4ec2;
+  --accent-hover: #473cb0;
+  --accent-muted: rgba(91, 78, 194, 0.1);
+  --success: #16a34a;
+  --warning: #d97706;
+  --danger: #dc2626;
+  --danger-bg: rgba(220, 38, 38, 0.08);
+  --shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -34,11 +53,16 @@ html, body, #app {
   font-family: var(--font-sans);
   font-size: 14px;
   color: var(--text-primary);
-  background: transparent;
+  background: var(--bg-primary);
 }
 
 body {
   -webkit-font-smoothing: antialiased;
+  transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+}
+
+#app, header, sidebar, main, div, button {
+  transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
 }
 
 ::-webkit-scrollbar {
@@ -63,10 +87,14 @@ button {
   cursor: pointer;
   border: none;
   outline: none;
+  background: transparent;
+  color: inherit;
 }
 
 input, textarea {
   font-family: inherit;
   outline: none;
   border: none;
+  background: transparent;
+  color: inherit;
 }

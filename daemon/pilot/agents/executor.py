@@ -8,6 +8,7 @@ Now cross-platform with 50+ action types covering full system control.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import typing
 import uuid
@@ -51,6 +52,7 @@ from pilot.actions import (
     VolumeParams,
     WifiParams,
     WindowParams,
+    WorkspaceParams,
 )
 from pilot.agents.sandbox import SimulationSandbox
 from pilot.security.audit import AuditLogger
@@ -79,7 +81,7 @@ class Executor:
         self._permissions = permissions
         self._audit = audit
         self._snapshot_mgr = SnapshotManager(config)
-        self._simulation_sandbox = SimulationSandbox()
+        self._simulation_sandbox = SimulationSandbox(allowed_commands=config.restrictions.sandbox_allowed_commands)
         self._last_output: str = ""  # For output chaining between steps
         self._largest_output: str = ""  # Largest output from any step in the pipeline
 
@@ -245,19 +247,92 @@ class Executor:
             ActionType.API_SLACK: self._exec_api_slack,
             ActionType.API_DISCORD: self._exec_api_discord,
             ActionType.API_SCRAPE: self._exec_api_scrape,
+            ActionType.WORKSPACE_INDEX: self._exec_workspace_index,
+            ActionType.WORKSPACE_SEARCH: self._exec_workspace_search,
         }
+
+    def _analyze_dependencies(self, actions: list[Action]) -> list[list[Action]]:
+        """Analyze action dependencies and return batches that can run in parallel.
+
+        Returns a list of batches, where each batch contains actions that can run
+        concurrently. Actions in later batches may depend on earlier batches.
+        """
+        if not actions:
+            return []
+
+        if len(actions) == 1:
+            return [actions]
+
+        action_resources: dict[int, set[str]] = {}
+        for i, action in enumerate(actions):
+            resources = set()
+            target = action.target or ""
+            if target:
+                resources.add(target)
+            params = action.parameters
+            if params:
+                if hasattr(params, "path") and params.path:
+                    resources.add(str(params.path))
+                if hasattr(params, "paths") and params.paths:
+                    for p in params.paths:
+                        resources.add(str(p))
+                if hasattr(params, "content") and params.content:
+                    pass
+            action_resources[i] = resources
+
+        batches: list[list[Action]] = []
+        assigned: set[int] = set()
+
+        for i, action in enumerate(actions):
+            if i in assigned:
+                continue
+
+            depends_on: set[int] = set()
+            for j in range(i):
+                if j in assigned:
+                    continue
+                if action_resources[i] & action_resources[j]:
+                    depends_on.add(j)
+
+            if not depends_on:
+                batch = [action]
+                assigned.add(i)
+                for j in range(i + 1, len(actions)):
+                    if j in assigned:
+                        continue
+                    if not (action_resources[j] & action_resources[i]):
+                        for dep in range(i):
+                            if dep in assigned and action_resources[j] & action_resources[dep]:
+                                break
+                        else:
+                            if not action_resources[j]:
+                                batch.append(actions[j])
+                                assigned.add(j)
+                batches.append(batch)
+            else:
+                if batches and not any(j in assigned for j in depends_on):
+                    batches[-1].append(action)
+                    assigned.add(i)
+                else:
+                    batches.append([action])
+                    assigned.add(i)
+
+        return batches if batches else [[a] for a in actions]
 
     async def execute(
         self,
         plan: ActionPlan,
         on_action_start: typing.Callable[[Action], typing.Awaitable[None]] | None = None,
         on_action_complete: typing.Callable[[ActionResult], typing.Awaitable[None]] | None = None,
+        cancel_event: asyncio.Event | None = None,
+        plan_id: str | None = None,
+        initial_last_output: str = "",
     ) -> list[ActionResult]:
         """Execute all actions in a plan sequentially, with output chaining."""
-        plan_id = str(uuid.uuid4())[:8]
+        plan_id = plan_id or str(uuid.uuid4())[:8]
         results: list[ActionResult] = []
-        self._last_output = ""
-        self._largest_output = ""
+        self._last_output = initial_last_output
+        self._largest_output = initial_last_output
 
         allowed, reasons = self._permissions.plan_allowed(plan)
         if not allowed:
@@ -329,36 +404,70 @@ class Executor:
                 logger.warning("Snapshot creation failed: %s", e)
 
         for i, action in enumerate(plan.actions):
+            if cancel_event and cancel_event.is_set():
+                logger.info("Executor: cancel_event set — stopping at action %d", i)
+                break
             await self._audit.log_action_start(action, plan_id)
 
-            if on_action_start:
-                await on_action_start(action)
+        batches = self._analyze_dependencies(plan.actions)
+        logger.info("Executing %d action(s) in %d parallel batch(es)", len(plan.actions), len(batches))
 
-            # Auto-inject previous output into action content/code
-            action = self._inject_previous_output(action)
+        for batch_idx, batch in enumerate(batches):
+            if not batch:
+                continue
 
-            result = await self._execute_single(action, snapshot_id)
-            await self._audit.log_action_result(result, plan_id)
-
-            if on_action_complete:
-                await on_action_complete(result)
-
-            results.append(result)
-
-            # Store output for chaining
-            if result.success:
-                self._last_output = result.output
-                # Track the largest output from any step (for data-heavy actions like browser_extract)
-                if not hasattr(self, "_largest_output") or len(result.output or "") > len(self._largest_output or ""):
-                    self._largest_output = result.output
-
-            if not result.success:
-                logger.error(
-                    "Action %d failed: %s — stopping plan execution",
-                    i,
-                    result.error,
-                )
+            if cancel_event and cancel_event.is_set():
+                logger.info("Executor: cancel_event set — stopping at batch %d", batch_idx)
+                for remaining_batch in batches[batch_idx + 1 :]:
+                    for action in remaining_batch:
+                        results.append(
+                            ActionResult(action=action, success=False, error="Skipped due to cancel request")
+                        )
                 break
+
+            logger.info("Batch %d: executing %d action(s) in parallel", batch_idx + 1, len(batch))
+
+            async def execute_single_action(action: Action, idx: int):
+                await self._audit.log_action_start(action, plan_id)
+                if on_action_start:
+                    await on_action_start(action)
+                action = self._inject_previous_output(action)
+                result = await self._execute_single(action, snapshot_id)
+                await self._audit.log_action_result(result, plan_id)
+                if on_action_complete:
+                    await on_action_complete(result)
+                return idx, result
+
+            batch_results = await asyncio.gather(
+                *[execute_single_action(action, i) for i, action in enumerate(batch)], return_exceptions=True
+            )
+
+            failed = False
+            for item in batch_results:
+                if isinstance(item, Exception):
+                    results.append(ActionResult(action=batch[0], success=False, error=str(item)))
+                    failed = True
+                else:
+                    idx, result = item
+                    results.append(result)
+                    if result.success:
+                        self._last_output = result.output
+                        if not hasattr(self, "_largest_output") or len(result.output or "") > len(
+                            self._largest_output or ""
+                        ):
+                            self._largest_output = result.output
+                    else:
+                        failed = True
+                        logger.error("Action in batch failed: %s", result.error)
+
+            if failed and batch_idx < len(batches) - 1:
+                remaining = sum(len(b) for b in batches[batch_idx + 1 :])
+                logger.warning("Stopping execution - %d action(s) in later batches will be skipped", remaining)
+                for remaining_batch in batches[batch_idx + 1 :]:
+                    for action in remaining_batch:
+                        results.append(
+                            ActionResult(action=action, success=False, error="Skipped due to earlier batch failure")
+                        )
 
         return results
 
@@ -1642,3 +1751,51 @@ class Executor:
 
         p: ApiRequestParams = action.parameters  # type: ignore[assignment]
         return await scrape_url(p.url, p.selector, p.extract)
+
+    # ======================================================================
+    # WORKSPACE SEMANTIC SEARCH (RAG)
+    # ======================================================================
+
+    async def _exec_workspace_index(self, action: Action) -> str:
+        import asyncio
+
+        from pilot.config import DATA_DIR
+        from pilot.memory.workspace_index import WorkspaceIndex
+
+        p: WorkspaceParams = action.parameters  # type: ignore[assignment]
+        if not p.folder_path:
+            raise ValueError("workspace_index requires a folder_path")
+
+        index_dir = DATA_DIR / "workspace_index"
+        idx = WorkspaceIndex(index_dir)
+        result = await asyncio.to_thread(idx.index_workspace, p.folder_path)
+        if not result.get("success"):
+            raise RuntimeError(result.get("error", "Indexing failed"))
+        return (
+            f"Indexed workspace: {result['files_indexed']} new files, "
+            f"{result.get('files_unchanged', 0)} unchanged, "
+            f"{result['total_chunks']} total chunks"
+        )
+
+    async def _exec_workspace_search(self, action: Action) -> str:
+        import asyncio
+
+        from pilot.config import DATA_DIR
+        from pilot.memory.workspace_index import WorkspaceIndex
+
+        p: WorkspaceParams = action.parameters  # type: ignore[assignment]
+        if not p.query:
+            raise ValueError("workspace_search requires a query")
+
+        index_dir = DATA_DIR / "workspace_index"
+        idx = WorkspaceIndex(index_dir)
+        results = await asyncio.to_thread(idx.search, p.query, p.n_results)
+        if not results:
+            return "No results found in workspace index."
+
+        lines = []
+        for r in results:
+            lines.append(f"File: {r['file']} (lines {r['start_line']}-{r['end_line']}, score: {r['score']:.3f})")
+            lines.append(r["text"])
+            lines.append("---")
+        return "\n".join(lines)

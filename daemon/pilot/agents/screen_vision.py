@@ -38,6 +38,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("pilot.agents.screen_vision")
 
+MIN_CAPTURE_INTERVAL_SECONDS = 0.5
+MAX_CAPTURE_INTERVAL_SECONDS = 60.0
+
 
 @dataclass
 class ScreenState:
@@ -130,19 +133,28 @@ class ScreenVisionAgent:
         self._context = ScreenContext()
         self._task: asyncio.Task[None] | None = None
         self._running = False
-        self._interval_seconds: float = 2.0
+        self._interval_seconds: float = 3.0
         self._last_hash: str = ""
         self._screenshot_dir = Path.home() / ".heliox" / "screenshots"
         self._enable_llm_describe = False  # Disabled by default (expensive)
 
-    async def start(self, interval_seconds: float = 2.0, enable_describe: bool = False) -> None:
+    def set_interval(self, interval_seconds: float) -> None:
+        """Update the capture cadence while keeping it inside safe bounds."""
+        self._interval_seconds = max(
+            MIN_CAPTURE_INTERVAL_SECONDS,
+            min(float(interval_seconds), MAX_CAPTURE_INTERVAL_SECONDS),
+        )
+
+    async def start(self, interval_seconds: float = 3.0, enable_describe: bool = False) -> None:
         """Start the screen monitoring loop."""
-        self._interval_seconds = interval_seconds
+        self.set_interval(interval_seconds)
         self._enable_llm_describe = enable_describe
+        if self._task and not self._task.done():
+            await self.stop()
         self._running = True
         self._screenshot_dir.mkdir(parents=True, exist_ok=True)
         self._task = asyncio.create_task(self._capture_loop())
-        logger.info("Screen vision started (every %.1fs, describe=%s)", interval_seconds, enable_describe)
+        logger.info("Screen vision started (every %.1fs, describe=%s)", self._interval_seconds, enable_describe)
 
     async def stop(self) -> None:
         """Stop the monitoring loop."""

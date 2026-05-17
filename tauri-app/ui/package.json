@@ -21,6 +21,7 @@
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/plugin-clipboard-manager": "^2.0.0",
+    "@tauri-apps/plugin-notification": "^2.0.0",
     "lucide-svelte": "^0.577.0"
   }
 }

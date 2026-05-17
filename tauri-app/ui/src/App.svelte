@@ -12,6 +12,7 @@
   import ParticleBurst from "./lib/components/ParticleBurst.svelte";
   import ExecutionGraph from "./lib/components/ExecutionGraph.svelte";
   import ReActPipeline from "./lib/components/ReActPipeline.svelte";
+  import VirtualList from "./lib/components/VirtualList.svelte";
   import PluginsTab from "./lib/components/PluginsTab.svelte";
   import { session } from "./lib/stores/session";
   import type { Message } from "./lib/stores/session";
@@ -19,14 +20,24 @@
   import { onDestroy, tick } from "svelte";
   import { writeText } from "@tauri-apps/plugin-clipboard-manager";
   import { Copy } from "lucide-svelte";
+  import ScrollToBottom from "./lib/components/ScrollToBottom.svelte";
 
   let activeTab: "chat" | "log" | "settings" | "plugins" = $state("chat");
   let isDragging = $state(false);
   let showWizard = $derived(
     !$settings.first_run_complete && localStorage.getItem("heliox_first_run_complete") !== "true"
   );
-  let resultsEl: HTMLDivElement | undefined = $state();
+
+  let showScrollFAB = $state(false);
+  let isAtBottom = $state(true);
+
+  let virtualListEl: VirtualList<Message> | undefined = $state();
   let particleBurst: ParticleBurst | undefined = $state();
+
+  // Show FAB whenever the user scrolls away from the bottom
+  $effect(() => {
+    showScrollFAB = !isAtBottom;
+  });
 
   async function onSetupComplete() {
     await settings.updateSection("", { first_run_complete: true });
@@ -60,7 +71,8 @@
 
   function scrollToBottom() {
     tick().then(() => {
-      if (resultsEl) resultsEl.scrollTop = resultsEl.scrollHeight;
+      virtualListEl?.scrollToBottom();
+      showScrollFAB = false;
     });
   }
 
@@ -206,7 +218,7 @@
           />
         {/if}
 
-        <div class="results" bind:this={resultsEl}>
+        <div class="results">
           {#if $session.messages.length === 0 && !$session.loading}
             <div class="empty-state">
               <div class="empty-logo">C</div>
@@ -219,40 +231,47 @@
               </div>
             </div>
           {:else}
-            {#each $session.messages as msg (msg.timestamp)}
-              {@render messageBlock(msg)}
-            {/each}
-
-            {#if $session.loading}
-              <ExecutionGraph />
+            <VirtualList bind:this={virtualListEl} items={$session.messages} bind:atBottom={isAtBottom}>
+              {#snippet item(msg)}
+                {@render messageBlock(msg)}
+              {/snippet}
               
-              {#if $session.streamingText}
-                <div class="message system streaming">
-                  <div class="msg-header">
-                    <span class="msg-label">HELIOX</span>
-                    <span class="phase-badge">streaming</span>
-                  </div>
-                  <span class="msg-text">{$session.streamingText}</span>
-                </div>
-              {:else}
-                <div class="message system">
-                  <div class="msg-header">
-                    <span class="msg-label">HELIOX</span>
-                    <span class="phase-badge">{$session.phase || "thinking"}</span>
-                  </div>
-                  <span class="msg-text loading-dots">
-                    {$session.phase ? `${$session.phase}` : "Thinking"}
-                  </span>
-                </div>
-              {/if}
-            {/if}
+              {#snippet footer()}
+                {#if $session.loading}
+                  <ExecutionGraph />
+                  
+                  {#if $session.streamingText}
+                    <div class="message system streaming">
+                      <div class="msg-header">
+                        <span class="msg-label">HELIOX</span>
+                        <span class="phase-badge">streaming</span>
+                      </div>
+                      <span class="msg-text">{$session.streamingText}</span>
+                    </div>
+                  {:else}
+                    <div class="message system">
+                      <div class="msg-header">
+                        <span class="msg-label">HELIOX</span>
+                        <span class="phase-badge">{$session.phase || "thinking"}</span>
+                      </div>
+                      <span class="msg-text loading-dots">
+                        {$session.phase ? `${$session.phase}` : "Thinking"}
+                      </span>
+                    </div>
+                  {/if}
+                {/if}
+              {/snippet}
+            </VirtualList>
           {/if}
+          <ScrollToBottom show={showScrollFAB} onclick={scrollToBottom} />
         </div>
 
         <div class="input-row">
           <VoiceControl />
           <CommandInput />
           <GestureControl onGesture={onGestureDetected} />
+          <button class="tab" type="button" onclick={() => session.exportChat("json")}>Export JSON</button>
+          <button class="tab" type="button" onclick={() => session.exportChat("csv")}>Export CSV</button>
         </div>
       </div>
     {:else if activeTab === "log"}
@@ -523,11 +542,10 @@
 
   .results {
     flex: 1;
-    overflow-y: auto;
-    padding: 12px 16px;
+    overflow: hidden;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    position: relative;
   }
 
   /* Empty state */

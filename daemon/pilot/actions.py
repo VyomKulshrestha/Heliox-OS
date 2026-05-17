@@ -1,7 +1,7 @@
 """Pydantic models for structured action plans.
 
 Every LLM output is parsed into these models. The Executor only accepts
-validated Action objects — there is no path from raw LLM text to system calls.
+validated Action objects ΓÇö there is no path from raw LLM text to system calls.
 """
 
 from __future__ import annotations
@@ -204,6 +204,14 @@ class ActionType(StrEnum):
     API_SLACK = "api_slack"
     API_DISCORD = "api_discord"
     API_SCRAPE = "api_scrape"
+    # -- Workspace semantic search (RAG) --
+    WORKSPACE_INDEX = "workspace_index"
+    WORKSPACE_SEARCH = "workspace_search"
+
+    # -- Email (IMAP/SMTP) --
+    EMAIL_FETCH = "email_fetch"
+    EMAIL_SUMMARIZE = "email_summarize"
+    EMAIL_REPLY = "email_reply"
 
 
 class PermissionTier(int, Enum):
@@ -263,6 +271,10 @@ READ_ONLY_ACTIONS = {
     ActionType.FILE_PARSE,
     ActionType.FILE_SEARCH_CONTENT,
     ActionType.API_SCRAPE,
+    ActionType.WORKSPACE_SEARCH,
+    # Email agent read-only
+    ActionType.EMAIL_FETCH,
+    ActionType.EMAIL_SUMMARIZE,
 }
 
 DESTRUCTIVE_ACTIONS = {
@@ -298,6 +310,8 @@ SYSTEM_MODIFY_ACTIONS = {
     ActionType.API_WEBHOOK,
     ActionType.API_SLACK,
     ActionType.API_DISCORD,
+    # Email agent actions (IMAP fetch is read-only; reply/send require confirmation)
+    ActionType.EMAIL_REPLY,
 }
 
 
@@ -614,6 +628,39 @@ class ApiRequestParams(BaseModel):
     labels: list[str] = Field(default_factory=list)
 
 
+class WorkspaceParams(BaseModel):
+    """For workspace indexing and semantic search."""
+
+    folder_path: str = ""
+    query: str = ""
+    n_results: int = 5
+
+
+class EmailParams(BaseModel):
+    """Parameters for IMAP/SMTP email operations."""
+
+    # Connection settings
+    imap_host: str = ""  # e.g. imap.gmail.com
+    smtp_host: str = ""  # e.g. smtp.gmail.com
+    smtp_port: int = 587
+    username: str = ""  # full email address
+    app_password: str = ""  # App Password (not account password)
+
+    # Fetch options
+    mailbox: str = "INBOX"
+    max_emails: int = 10  # max unread emails to fetch
+    mark_as_read: bool = False  # mark fetched emails as read
+
+    # Reply / send options
+    reply_to_uid: str = ""  # UID of the email to reply to
+    reply_body: str = ""  # pre-written reply body (empty = LLM drafts it)
+    subject: str = ""  # subject override for new emails
+    to: str = ""  # recipient for new emails
+
+    # Summarise options
+    emails_json: str = ""  # JSON-serialised list of fetched emails to summarise
+
+
 class EmptyParams(BaseModel):
     """For actions that need no parameters."""
 
@@ -655,6 +702,8 @@ ActionParameters = (
     | CodeExecParams
     | FileIntelParams
     | ApiRequestParams
+    | WorkspaceParams
+    | EmailParams
     | EmptyParams
 )
 
@@ -673,7 +722,7 @@ class Action(BaseModel):
 
     @property
     def permission_tier(self) -> PermissionTier:
-        # These actions are ALWAYS safe — never require confirmation
+        # These actions are ALWAYS safe ΓÇö never require confirmation
         ALWAYS_SAFE = {
             ActionType.FILE_READ,
             ActionType.FILE_WRITE,

@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import websockets
 
-from pilot.config import PilotConfig
+from pilot.config import PilotConfig, _merge_config
 from pilot.server import PilotServer
 
 
@@ -30,6 +30,8 @@ async def daemon_server(server_port, tmp_path, monkeypatch):
     state_dir.mkdir()
 
     monkeypatch.setattr("pilot.config.CONFIG_DIR", config_dir)
+    monkeypatch.setattr("pilot.config.CONFIG_FILE", config_dir / "config.toml")
+    monkeypatch.setattr("pilot.config.RESTRICTIONS_FILE", config_dir / "restrictions.toml")
     monkeypatch.setattr("pilot.config.DATA_DIR", data_dir)
     monkeypatch.setattr("pilot.config.STATE_DIR", state_dir)
     monkeypatch.setattr("pilot.config.DB_FILE", data_dir / "pilot.db")
@@ -114,7 +116,56 @@ async def test_ipc_get_config(daemon_server):
         result = response["result"]
         assert "model" in result
         assert "security" in result
+        assert result["screen_vision"]["capture_interval_seconds"] == 3.0
         assert "first_run_complete" in result
+
+
+@pytest.mark.asyncio
+async def test_ipc_update_screen_vision_interval(daemon_server):
+    """Verify screen vision interval updates round-trip through config IPC."""
+    async with websockets.connect(daemon_server) as ws:
+        request = {
+            "jsonrpc": "2.0",
+            "method": "update_config",
+            "params": {
+                "section": "screen_vision",
+                "values": {"capture_interval_seconds": 7.5},
+            },
+            "id": "screen-cfg-1",
+        }
+        await ws.send(json.dumps(request))
+
+        response = json.loads(await ws.recv())
+        assert response["result"]["status"] == "ok"
+
+        await ws.send(json.dumps({"jsonrpc": "2.0", "method": "get_config", "id": "screen-cfg-2"}))
+        response = json.loads(await ws.recv())
+        assert response["result"]["screen_vision"]["capture_interval_seconds"] == 7.5
+
+
+@pytest.mark.asyncio
+async def test_screen_vision_toggle_uses_configured_interval_by_default():
+    """Verify toggling screen vision without params uses the persisted interval."""
+    config = PilotConfig()
+    config.screen_vision.capture_interval_seconds = 8.5
+    server = PilotServer(config)
+    screen_vision = MagicMock()
+    screen_vision.start = AsyncMock()
+    server._screen_vision = screen_vision
+
+    result = await server._handle_screen_vision_toggle({"enabled": True}, MagicMock())
+
+    assert result == {"status": "ok", "enabled": True}
+    screen_vision.start.assert_awaited_once_with(8.5, False)
+
+
+def test_screen_vision_config_merges_numeric_interval():
+    config = PilotConfig()
+    raw = {"screen_vision": {"capture_interval_seconds": 12}}
+
+    merged = _merge_config(config, raw)
+
+    assert merged.screen_vision.capture_interval_seconds == 12.0
 
 
 @pytest.mark.asyncio
