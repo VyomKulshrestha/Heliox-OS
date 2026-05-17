@@ -20,9 +20,9 @@ from typing import Any
 import aiosqlite
 import websockets
 from websockets.asyncio.server import Server, ServerConnection
+
 from pilot.config import DATA_DIR, DB_FILE, LOG_FILE, STATE_DIR, PilotConfig, ensure_dirs
 from pilot.export_logs import export_logs
-from pilot.config import DATA_DIR, DB_FILE, LOG_FILE, STATE_DIR, PilotConfig, ensure_dirs
 
 logger = logging.getLogger("pilot.server")
 
