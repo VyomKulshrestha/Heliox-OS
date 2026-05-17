@@ -45,6 +45,7 @@ class AgentRole(StrEnum):
     """Canonical agent roles in the system."""
 
     SYSTEM = "system_agent"
+    SSH = "ssh_agent"
     CODE = "code_agent"
     WEB = "web_agent"
     MONITOR = "monitor_agent"

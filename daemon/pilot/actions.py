@@ -213,6 +213,10 @@ class ActionType(StrEnum):
     EMAIL_SUMMARIZE = "email_summarize"
     EMAIL_REPLY = "email_reply"
 
+    # -- Remote execution (SSH) --
+    SSH_COMMAND = "ssh_command"
+    SSH_SCRIPT = "ssh_script"
+
 
 class PermissionTier(int, Enum):
     READ_ONLY = 0
@@ -312,6 +316,9 @@ SYSTEM_MODIFY_ACTIONS = {
     ActionType.API_DISCORD,
     # Email agent actions (IMAP fetch is read-only; reply/send require confirmation)
     ActionType.EMAIL_REPLY,
+    # SSH is always a remote system modification surface
+    ActionType.SSH_COMMAND,
+    ActionType.SSH_SCRIPT,
 }
 
 
@@ -661,6 +668,22 @@ class EmailParams(BaseModel):
     emails_json: str = ""  # JSON-serialised list of fetched emails to summarise
 
 
+class SshCommandParams(BaseModel):
+    """Parameters for executing a single command over SSH on a configured host."""
+
+    host: str = ""  # Host alias from config.ssh.allowed_hosts
+    command: str = ""  # Single shell command to run
+    timeout_seconds: int = 60
+
+
+class SshScriptParams(BaseModel):
+    """Parameters for executing a multi-line bash script over SSH on a configured host."""
+
+    host: str = ""  # Host alias from config.ssh.allowed_hosts
+    script: str = ""  # Multi-line script (executed via bash -lc)
+    timeout_seconds: int = 300
+
+
 class EmptyParams(BaseModel):
     """For actions that need no parameters."""
 
@@ -704,6 +727,8 @@ ActionParameters = (
     | ApiRequestParams
     | WorkspaceParams
     | EmailParams
+    | SshCommandParams
+    | SshScriptParams
     | EmptyParams
 )
 

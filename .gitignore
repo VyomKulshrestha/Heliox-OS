@@ -40,6 +40,7 @@ test_*.py
 !daemon/tests/test_ipc_integration.py
 !daemon/tests/test_pty_session.py
 !daemon/tests/test_dom_diff.py
+!daemon/tests/test_ssh_agent_schema.py
 test_*.txt
 test_*.json
 test_*.html

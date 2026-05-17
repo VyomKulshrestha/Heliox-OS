@@ -51,6 +51,12 @@ class ModelRouter:
     def set_budget_tracker(self, tracker: BudgetTracker) -> None:
         self._budget_tracker = tracker
 
+    def get_config(self) -> "PilotConfig":
+        return self._config
+
+    def get_vault(self) -> "KeyVault":
+        return self._vault
+
     async def generate(
         self,
         prompt: str,

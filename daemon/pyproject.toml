@@ -49,6 +49,11 @@ pty = [
     "ptyprocess>=0.7; sys_platform != 'win32'",
 ]
 
+# Remote execution
+ssh = [
+    "paramiko>=3.4",
+]
+
 # Tier 2: Multipliers
 documents = [
     "pypdf>=4.0",
@@ -64,7 +69,7 @@ cognitive = [
 
 # Everything
 all = [
-    "pilot-daemon[full,automation,vision,browser,documents,cognitive]",
+    "pilot-daemon[full,automation,vision,browser,documents,cognitive,ssh]",
 ]
 
 dev = [
