@@ -1394,140 +1394,101 @@ class Executor:
 
         return await screen_element_map()
 
+    def _get_browser_backend(self):
+        if not hasattr(self, "_browser_backend"):
+            from pilot.system.browser import PlaywrightBackend
+
+            self._browser_backend = PlaywrightBackend()
+        return self._browser_backend
+
     # ======================================================================
     # TIER 1: BROWSER AUTOMATION
     # ======================================================================
 
     async def _exec_browser_navigate(self, action: Action) -> str:
-        from pilot.system.browser import browser_navigate
-
         p: BrowserParams = action.parameters  # type: ignore[assignment]
-        return await browser_navigate(p.url, p.wait_until)
+        return await self._get_browser_backend().navigate(p.url, p.wait_until)
 
     async def _exec_browser_click(self, action: Action) -> str:
-        from pilot.system.browser import browser_click
-
         p: BrowserParams = action.parameters  # type: ignore[assignment]
-        return await browser_click(p.selector, p.button, timeout=p.timeout)
+        return await self._get_browser_backend().click(p.selector, p.button, timeout=p.timeout)
 
     async def _exec_browser_click_text(self, action: Action) -> str:
-        from pilot.system.browser import browser_click_text
-
         p: BrowserParams = action.parameters  # type: ignore[assignment]
-        return await browser_click_text(p.text, p.exact)
+        return await self._get_browser_backend().click_text(p.text, p.exact)
 
     async def _exec_browser_type(self, action: Action) -> str:
-        from pilot.system.browser import browser_type
-
         p: BrowserParams = action.parameters  # type: ignore[assignment]
-        return await browser_type(p.selector, p.text, p.clear_first, p.press_enter)
+        return await self._get_browser_backend().type(p.selector, p.text, p.clear_first, p.press_enter)
 
     async def _exec_browser_select(self, action: Action) -> str:
-        from pilot.system.browser import browser_select
-
         p: BrowserParams = action.parameters  # type: ignore[assignment]
-        return await browser_select(p.selector, p.value)
+        return await self._get_browser_backend().select(p.selector, p.value)
 
     async def _exec_browser_hover(self, action: Action) -> str:
-        from pilot.system.browser import browser_hover
-
         p: BrowserParams = action.parameters  # type: ignore[assignment]
-        return await browser_hover(p.selector)
+        return await self._get_browser_backend().hover(p.selector)
 
     async def _exec_browser_scroll(self, action: Action) -> str:
-        from pilot.system.browser import browser_scroll
-
         p: BrowserParams = action.parameters  # type: ignore[assignment]
-        return await browser_scroll(p.direction, p.amount)
+        return await self._get_browser_backend().scroll(p.direction, p.amount)
 
     async def _exec_browser_extract(self, action: Action) -> str:
-        from pilot.system.browser import browser_extract
-
         p: BrowserParams = action.parameters  # type: ignore[assignment]
-        return await browser_extract(p.selector or "body", p.attribute, p.multiple)
+        return await self._get_browser_backend().extract(p.selector or "body", p.attribute, p.multiple)
 
     async def _exec_browser_extract_table(self, action: Action) -> str:
-        from pilot.system.browser import browser_extract_table
-
         p: BrowserParams = action.parameters  # type: ignore[assignment]
-        return await browser_extract_table(p.selector or "table")
+        return await self._get_browser_backend().extract_table(p.selector or "table")
 
     async def _exec_browser_extract_links(self, action: Action) -> str:
-        from pilot.system.browser import browser_extract_links
-
-        return await browser_extract_links()
+        return await self._get_browser_backend().extract_links()
 
     async def _exec_browser_execute_js(self, action: Action) -> str:
-        from pilot.system.browser import browser_execute_js
-
         p: BrowserParams = action.parameters  # type: ignore[assignment]
-        return await browser_execute_js(p.script)
+        return await self._get_browser_backend().execute_js(p.script)
 
     async def _exec_browser_screenshot(self, action: Action) -> str:
-        from pilot.system.browser import browser_screenshot
-
         p: BrowserParams = action.parameters  # type: ignore[assignment]
-        return await browser_screenshot(p.output_path, p.full_page, p.selector or None)
+        return await self._get_browser_backend().screenshot(p.output_path, p.full_page, p.selector or None)
 
     async def _exec_browser_fill_form(self, action: Action) -> str:
-        from pilot.system.browser import browser_fill_form
-
         p: BrowserParams = action.parameters  # type: ignore[assignment]
-        return await browser_fill_form(p.fields, p.submit_selector)
+        return await self._get_browser_backend().fill_form(p.fields, p.submit_selector)
 
     async def _exec_browser_new_tab(self, action: Action) -> str:
-        from pilot.system.browser import browser_new_tab
-
         p: BrowserParams = action.parameters  # type: ignore[assignment]
-        return await browser_new_tab(p.url or None)
+        return await self._get_browser_backend().new_tab(p.url or None)
 
     async def _exec_browser_close_tab(self, action: Action) -> str:
-        from pilot.system.browser import browser_close_tab
-
         p: BrowserParams = action.parameters  # type: ignore[assignment]
-        return await browser_close_tab(p.tab_index)
+        return await self._get_browser_backend().close_tab(p.tab_index)
 
     async def _exec_browser_list_tabs(self, action: Action) -> str:
-        from pilot.system.browser import browser_list_tabs
-
-        return await browser_list_tabs()
+        return await self._get_browser_backend().list_tabs()
 
     async def _exec_browser_switch_tab(self, action: Action) -> str:
-        from pilot.system.browser import browser_switch_tab
-
         p: BrowserParams = action.parameters  # type: ignore[assignment]
-        return await browser_switch_tab(p.tab_index)
+        return await self._get_browser_backend().switch_tab(p.tab_index)
 
     async def _exec_browser_back(self, action: Action) -> str:
-        from pilot.system.browser import browser_back
-
-        return await browser_back()
+        return await self._get_browser_backend().back()
 
     async def _exec_browser_forward(self, action: Action) -> str:
-        from pilot.system.browser import browser_forward
-
-        return await browser_forward()
+        return await self._get_browser_backend().forward()
 
     async def _exec_browser_refresh(self, action: Action) -> str:
-        from pilot.system.browser import browser_refresh
-
-        return await browser_refresh()
+        return await self._get_browser_backend().refresh()
 
     async def _exec_browser_wait(self, action: Action) -> str:
-        from pilot.system.browser import browser_wait
-
         p: BrowserParams = action.parameters  # type: ignore[assignment]
-        return await browser_wait(p.selector or None, p.timeout, p.state)
+        return await self._get_browser_backend().wait(p.selector or None, p.timeout, p.state)
 
     async def _exec_browser_close(self, action: Action) -> str:
-        from pilot.system.browser import browser_close
-
-        return await browser_close()
+        return await self._get_browser_backend().close()
 
     async def _exec_browser_page_info(self, action: Action) -> str:
-        from pilot.system.browser import browser_get_page_info
-
-        return await browser_get_page_info()
+        return await self._get_browser_backend().get_page_info()
 
     # ======================================================================
     # TIER 1: REACTIVE TRIGGERS

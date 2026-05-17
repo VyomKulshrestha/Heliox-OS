@@ -10,10 +10,10 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from pilot.memory.context_compressor import (
+    COMPRESSION_THRESHOLD,
+    DEFAULT_MAX_TOKENS,
     ContextCompressor,
     RollingContextWindow,
-    DEFAULT_MAX_TOKENS,
-    COMPRESSION_THRESHOLD,
 )
 
 
@@ -81,15 +81,17 @@ class TestContextCompressor:
         """Test compression triggers when over threshold."""
         large_history = []
         for i in range(100):
-            large_history.append({
-                "user_input": f"Task {i}",
-                "plan": {
-                    "explanation": f"Explanation for task {i} with lots of text",
-                    "actions": [
-                        {"action_type": "action", "target": f"target_{i}", "parameters": {"key": "value"}},
-                    ],
-                },
-            })
+            large_history.append(
+                {
+                    "user_input": f"Task {i}",
+                    "plan": {
+                        "explanation": f"Explanation for task {i} with lots of text",
+                        "actions": [
+                            {"action_type": "action", "target": f"target_{i}", "parameters": {"key": "value"}},
+                        ],
+                    },
+                }
+            )
 
         result = await compressor.compress_conversation(large_history)
         assert len(result) < len(large_history)
