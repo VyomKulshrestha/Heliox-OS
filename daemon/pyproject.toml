@@ -45,6 +45,9 @@ vision = [
 browser = [
     "playwright>=1.40",
 ]
+pty = [
+    "ptyprocess>=0.7; sys_platform != 'win32'",
+]
 
 # Tier 2: Multipliers
 documents = [

@@ -84,3 +84,21 @@ async def test_sqlite_pool_close_rejects_new_leases(tmp_path):
     with pytest.raises(RuntimeError, match="not started"):
         async with pool.read():
             pass
+
+
+@pytest.mark.asyncio
+async def test_sqlite_pool_checkpoint_returns_wal_stats(tmp_path):
+    pool = AsyncSqlitePool(tmp_path / "pool.db")
+    await pool.start()
+    try:
+        async with pool.write() as db:
+            await db.execute("CREATE TABLE demo (id INTEGER PRIMARY KEY, value TEXT NOT NULL)")
+            await db.execute("INSERT INTO demo (value) VALUES (?)", ("ready",))
+            await db.commit()
+
+        result = await pool.checkpoint()
+
+        assert result["mode"] == "TRUNCATE"
+        assert set(result) == {"mode", "busy", "log_frames", "checkpointed_frames"}
+    finally:
+        await pool.close()

@@ -7,11 +7,15 @@
     "dev": "vite dev",
     "build": "vite build",
     "preview": "vite preview",
-    "check": "svelte-check --tsconfig ./tsconfig.json"
+    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "test:visual": "playwright test",
+    "test:visual:update": "playwright test --update-snapshots"
   },
   "devDependencies": {
+    "@playwright/test": "^1.44.0",
     "@sveltejs/vite-plugin-svelte": "^5.0.0",
     "@tsconfig/svelte": "^5.0.0",
+    "@types/dompurify": "^3.0.5",
     "svelte": "^5.0.0",
     "svelte-check": "^4.0.0",
     "tslib": "^2.7.0",
@@ -22,6 +26,9 @@
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/plugin-clipboard-manager": "^2.0.0",
     "@tauri-apps/plugin-notification": "^2.0.0",
-    "lucide-svelte": "^0.577.0"
+    "dompurify": "^3.4.3",
+    "highlight.js": "^11.11.1",
+    "lucide-svelte": "^0.577.0",
+    "marked": "^18.0.3"
   }
 }

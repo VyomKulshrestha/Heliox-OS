@@ -95,6 +95,19 @@ class ScreenVisionConfig:
 
 
 @dataclass
+class MemoryConfig:
+    checkpoint_interval_seconds: int = 300
+
+
+@dataclass
+class RSSConfig:
+    enabled: bool = False
+    feeds: list[str] = field(default_factory=list)
+    poll_interval_hours: float = 24.0
+    max_items_per_feed: int = 10
+
+
+@dataclass
 class Restrictions:
     protected_folders: list[str] = field(default_factory=list)
     protected_packages: list[str] = field(default_factory=list)
@@ -111,6 +124,8 @@ class PilotConfig:
     server: ServerConfig = field(default_factory=ServerConfig)
     voice: VoiceConfig = field(default_factory=VoiceConfig)
     screen_vision: ScreenVisionConfig = field(default_factory=ScreenVisionConfig)
+    memory: MemoryConfig = field(default_factory=MemoryConfig)
+    rss: RSSConfig = field(default_factory=RSSConfig)
     restrictions: Restrictions = field(default_factory=Restrictions)
     first_run_complete: bool = False
 
@@ -199,6 +214,15 @@ def _validate_config_types(raw: dict) -> None:
         "screen_vision": {
             "capture_interval_seconds": (int, float),
         },
+        "memory": {
+            "checkpoint_interval_seconds": int,
+        },
+        "rss": {
+            "enabled": bool,
+            "feeds": list,
+            "poll_interval_hours": (int, float),
+            "max_items_per_feed": int,
+        },
     }
 
     for section, expected_keys in expected_types.items():
@@ -253,6 +277,16 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
         for k, v in raw["screen_vision"].items():
             if hasattr(config.screen_vision, k):
                 setattr(config.screen_vision, k, float(v))
+
+    if "memory" in raw:
+        for k, v in raw["memory"].items():
+            if hasattr(config.memory, k):
+                setattr(config.memory, k, v)
+
+    if "rss" in raw:
+        for k, v in raw["rss"].items():
+            if hasattr(config.rss, k):
+                setattr(config.rss, k, v)
 
     config.first_run_complete = raw.get(
         "first_run_complete",
