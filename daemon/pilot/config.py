@@ -35,6 +35,8 @@ CONFIG_FILE = CONFIG_DIR / "config.toml"
 RESTRICTIONS_FILE = CONFIG_DIR / "restrictions.toml"
 DB_FILE = DATA_DIR / "pilot.db"
 AUDIT_FILE = DATA_DIR / "audit.jsonl"
+PERMISSION_AUDIT_DB_FILE = DATA_DIR / "permission_audit.db"
+PERMISSION_AUDIT_KEY_FILE = DATA_DIR / "permission_audit.key"
 LOG_FILE = STATE_DIR / "pilot.log"
 
 

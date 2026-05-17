@@ -1,5 +1,5 @@
 import { listen } from '@tauri-apps/api/event';
-import { invoke } from '@tauri-apps/api/core'; // Top par invoke function import kiya
+import { invoke } from '@tauri-apps/api/core';
 
 /**
  * WebSocket client for communicating with the Heliox OS Python daemon.

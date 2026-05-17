@@ -7,7 +7,7 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-import aiosqlite
+from pilot.db.sqlite_pool import AsyncSqlitePool
 
 if TYPE_CHECKING:
     from pilot.config import ModelConfig
@@ -58,14 +58,16 @@ class BudgetTracker:
         self._enabled: bool = config.budget_enabled
         self._monthly_limit: float = config.budget_monthly_limit_usd
         self._db_path = db_path
-        self._db: aiosqlite.Connection | None = None
+        self._pool: AsyncSqlitePool | None = None
         self._monthly_cost: float = 0.0
         self._lock = asyncio.Lock()
 
     async def initialize(self) -> None:
-        self._db = await aiosqlite.connect(self._db_path)
-        await self._db.executescript(SCHEMA_SQL)
-        await self._db.commit()
+        self._pool = AsyncSqlitePool(self._db_path, read_pool_size=2)
+        await self._pool.start()
+        async with self._pool.write() as db:
+            await db.executescript(SCHEMA_SQL)
+            await db.commit()
         self._monthly_cost = await self._load_monthly_cost()
         logger.info(
             "BudgetTracker ready — month=%s spent=%.4f limit=%.2f enabled=%s",
@@ -76,13 +78,15 @@ class BudgetTracker:
         )
 
     async def _load_monthly_cost(self) -> float:
-        if not self._db:
+        if not self._pool:
             return 0.0
-        cursor = await self._db.execute(
-            "SELECT COALESCE(SUM(cost_usd), 0.0) FROM token_usage WHERE month = ?",
-            (_current_month(),),
-        )
-        row = await cursor.fetchone()
+        async with self._pool.read() as db:
+            cursor = await db.execute(
+                "SELECT COALESCE(SUM(cost_usd), 0.0) FROM token_usage WHERE month = ?",
+                (_current_month(),),
+            )
+            row = await cursor.fetchone()
+            await cursor.close()
         return float(row[0]) if row else 0.0
 
     # ------------------------------------------------------------------
@@ -114,36 +118,39 @@ class BudgetTracker:
         output_tokens: int,
     ) -> None:
         """Persist one call's token usage and update the in-memory monthly total."""
-        if not self._db:
+        if not self._pool:
             return
         cost = _estimate_cost(provider, input_tokens, output_tokens)
         now = datetime.now(UTC).isoformat()
         month = _current_month()
         async with self._lock:
-            await self._db.execute(
-                """INSERT INTO token_usage
-                   (timestamp, month, provider, model, input_tokens, output_tokens, cost_usd)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (now, month, provider, model, input_tokens, output_tokens, cost),
-            )
-            await self._db.commit()
+            async with self._pool.write() as db:
+                await db.execute(
+                    """INSERT INTO token_usage
+                       (timestamp, month, provider, model, input_tokens, output_tokens, cost_usd)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (now, month, provider, model, input_tokens, output_tokens, cost),
+                )
+                await db.commit()
             self._monthly_cost += cost
 
     async def get_stats(self) -> dict:
         """Return current-month usage summary."""
-        if not self._db:
+        if not self._pool:
             return {}
         month = _current_month()
-        cursor = await self._db.execute(
-            """SELECT
-                   COUNT(*) AS calls,
-                   COALESCE(SUM(input_tokens), 0) AS total_input,
-                   COALESCE(SUM(output_tokens), 0) AS total_output,
-                   COALESCE(SUM(cost_usd), 0.0) AS total_cost
-               FROM token_usage WHERE month = ?""",
-            (month,),
-        )
-        row = await cursor.fetchone()
+        async with self._pool.read() as db:
+            cursor = await db.execute(
+                """SELECT
+                       COUNT(*) AS calls,
+                       COALESCE(SUM(input_tokens), 0) AS total_input,
+                       COALESCE(SUM(output_tokens), 0) AS total_output,
+                       COALESCE(SUM(cost_usd), 0.0) AS total_cost
+                   FROM token_usage WHERE month = ?""",
+                (month,),
+            )
+            row = await cursor.fetchone()
+            await cursor.close()
         calls, total_input, total_output, total_cost = row if row else (0, 0, 0, 0.0)
         remaining = max(0.0, self._monthly_limit - float(total_cost)) if self._monthly_limit > 0 else None
         return {
@@ -159,15 +166,16 @@ class BudgetTracker:
 
     async def reset_current_month(self) -> None:
         """Delete all records for the current month and reset the in-memory cache."""
-        if not self._db:
+        if not self._pool:
             return
         async with self._lock:
-            await self._db.execute("DELETE FROM token_usage WHERE month = ?", (_current_month(),))
-            await self._db.commit()
+            async with self._pool.write() as db:
+                await db.execute("DELETE FROM token_usage WHERE month = ?", (_current_month(),))
+                await db.commit()
             self._monthly_cost = 0.0
         logger.info("BudgetTracker: current month reset")
 
     async def close(self) -> None:
-        if self._db:
-            await self._db.close()
-            self._db = None
+        if self._pool:
+            await self._pool.close()
+            self._pool = None
