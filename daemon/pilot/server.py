@@ -20,7 +20,7 @@ import websockets
 from websockets.asyncio.server import Server, ServerConnection
 
 from pilot.config import DB_FILE, LOG_FILE, STATE_DIR, PilotConfig, ensure_dirs
-
+from pilot.export_logs import export_logs
 logger = logging.getLogger("pilot.server")
 
 CONFIRM_TIMEOUT_SECONDS = 300
@@ -2434,7 +2434,15 @@ def main() -> None:
     config = PilotConfig.load()
     parser = argparse.ArgumentParser(prog="pilot.server")
     parser.add_argument("--dry-run", action="store_true", help="Simulate actions without executing them")
+    parser.add_argument(
+        "--export-logs",
+        action="store_true",
+        help="Package all logs, config.toml, and audit trails into a zip on the Desktop for bug reporting.",
+    )
     args, _ = parser.parse_known_args()
+    if args.export_logs:
+        export_logs()
+        return
     if args.dry_run:
         config.security.dry_run = True
         logger.info("Dry-run mode enabled via CLI flag")
