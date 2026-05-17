@@ -171,7 +171,6 @@ After=network.target
 
 [Service]
 Type=simple
-<<<<<<< HEAD
 User={os.environ.get("USER", "root")}
 WorkingDirectory={daemon_path}
 ExecStart={sys.executable} -m pilot.server
