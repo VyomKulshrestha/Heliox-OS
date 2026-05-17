@@ -5,13 +5,13 @@ import warnings
 
 import pytest
 
+from pilot.system.pty_session import PtySession, PtySessionManager
+
 # forkpty() warning is a pytest multi-threading artefact; the daemon is single-threaded
 warnings.filterwarnings("ignore", message=".*forkpty.*", category=DeprecationWarning)
 
 if sys.platform == "win32":
     pytest.skip("PTY sessions are Unix-only", allow_module_level=True)
-
-from pilot.system.pty_session import PtySession, PtySessionManager
 
 
 @pytest.fixture(autouse=True)
