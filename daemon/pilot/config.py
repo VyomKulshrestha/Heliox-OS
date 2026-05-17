@@ -74,6 +74,8 @@ class SecurityConfig:
     sandbox_memory_mb: int = 128  # memory cap applied inside the sandbox (MB)
     sandbox_timeout: int = 30  # max wall-clock seconds for sandboxed execution
     sandbox_network: bool = False  # allow outbound network inside the sandbox
+    sandbox_kernel_guard: bool = True  # Linux seccomp-BPF syscall denylist for restricted mode
+    sandbox_blocked_syscalls: list[str] = field(default_factory=lambda: ["unlink", "unlinkat"])
 
 
 @dataclass
@@ -201,6 +203,8 @@ def _validate_config_types(raw: dict) -> None:
             "sandbox_memory_mb": int,
             "sandbox_timeout": int,
             "sandbox_network": bool,
+            "sandbox_kernel_guard": bool,
+            "sandbox_blocked_syscalls": list,
         },
         "server": {
             "host": str,
