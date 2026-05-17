@@ -1,10 +1,12 @@
 """Runtime configuration loader and manager."""
+# Issue #181: Startup DATA_DIR write-permission validation.
 
 from __future__ import annotations
 
 import logging
 import os
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -279,7 +281,73 @@ def _config_to_dict(config: PilotConfig) -> dict[str, Any]:
     return asdict(config)
 
 
+def validate_data_dir_writable() -> None:
+    """Fast-fail check: verify that every critical data directory is writable.
+
+    Called at daemon startup (via :func:`ensure_dirs`) before any SQLite
+    connections or audit-log writes are attempted.  If *any* directory is not
+    writable, a clear human-readable error is emitted and a
+    ``PermissionError`` is raised so the process exits with a non-zero code
+    instead of crashing mid-execution with a cryptic I/O failure.
+
+    Raises:
+        PermissionError: If one or more critical directories are not writable
+            by the current process.
+    """
+    _critical_dirs = {
+        "CONFIG_DIR": CONFIG_DIR,
+        "DATA_DIR": DATA_DIR,
+        "STATE_DIR": STATE_DIR,
+    }
+    failures: list[str] = []
+
+    for name, directory in _critical_dirs.items():
+        try:
+            # Use a temporary file inside the directory to probe write access.
+            # NamedTemporaryFile with delete=True cleans up automatically.
+            with tempfile.NamedTemporaryFile(dir=directory, prefix=".pilot_write_probe_", delete=True):
+                pass
+        except OSError as exc:
+            failures.append(
+                f"  • {name} ({directory}): {exc.strerror} [errno {exc.errno}]"
+            )
+            logger.error(
+                "Startup permission check FAILED for %s (%s): %s",
+                name,
+                directory,
+                exc.strerror,
+            )
+
+    if failures:
+        hint = (
+            f"Run: sudo chown -R $USER {DATA_DIR.parent}  "
+            f"(or set XDG_DATA_HOME to a writable path)"
+        )
+        msg = (
+            "Pilot daemon cannot start — the following directories are not writable:\n"
+            + "\n".join(failures)
+            + "\n"
+            + hint
+        )
+        logger.critical(msg)
+        raise PermissionError(msg)
+
+    logger.debug(
+        "Startup write-permission check passed for: %s",
+        ", ".join(_critical_dirs.keys()),
+    )
+
+
 def ensure_dirs() -> None:
-    """Create all required XDG directories."""
+    """Create all required XDG directories and verify they are writable.
+
+    This is the single call-site for all directory bootstrap logic.  It must
+    be invoked before any agent subsystem or database is initialised so that
+    permission failures surface at startup rather than mid-execution.
+    """
     for d in (CONFIG_DIR, DATA_DIR, STATE_DIR, RUNTIME_DIR):
         d.mkdir(parents=True, exist_ok=True)
+
+    # Fast-fail: ensure the daemon can actually write to its own directories
+    # before SQLite checkpoints (PR #165) or audit logs attempt to do so.
+    validate_data_dir_writable()
