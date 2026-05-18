@@ -193,13 +193,27 @@ class CollabExecutor:
 
         try:
             results = await asyncio.wait_for(future, timeout=_REMOTE_TIMEOUT)
-        except asyncio.TimeoutError:
+            # Integrity check: if the peer returned fewer results than actions
+            # in the batch (e.g. due to silent deserialisation failures), fall
+            # back to local execution to avoid silent task truncation.
+            if len(results) != len(batch):
+                logger.warning(
+                    "CollabExecutor: peer %s returned %d result(s) for %d action(s) "
+                    "(task %s) — falling back to local execution",
+                    peer_id,
+                    len(results),
+                    len(batch),
+                    task_id,
+                )
+                raise ValueError(f"Incomplete results from peer {peer_id}: expected {len(batch)}, got {len(results)}")
+        except (asyncio.TimeoutError, ValueError) as exc:
             logger.warning(
-                "CollabExecutor: peer %s timed out for task %s — running locally",
+                "CollabExecutor: peer %s failed for task %s (%s) — running locally",
                 peer_id,
                 task_id,
+                exc,
             )
-            del self._pending[task_id]
+            self._pending.pop(task_id, None)
             sub_plan = ActionPlan(
                 actions=batch,
                 explanation=plan.explanation,

@@ -6,8 +6,10 @@ When a peer sends a plugin payload it is validated and installed into
 
 Security model
 --------------
+- Full filename validated against ``^[a-zA-Z0-9_]{1,64}\\.py$`` — prevents
+  directory traversal attacks (e.g. ``../../evil.py``) that would bypass a
+  stem-only check
 - Plugin source is validated as syntactically correct Python before writing
-- File names are sanitised (alphanumeric + underscore only)
 - Plugins received from peers are stored in a dedicated ``peer_plugins/``
   sub-directory so they can be audited or removed independently
 - No arbitrary code is executed during sync — the plugin is only *installed*;
@@ -27,7 +29,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("pilot.network.skill_sync")
 
-_SAFE_NAME_RE = re.compile(r"^[a-zA-Z0-9_]{1,64}$")
 _PEER_PLUGIN_SUBDIR = "peer_plugins"
 
 
@@ -90,14 +91,15 @@ class SkillSync:
         filename = payload.get("filename", "")
         source = payload.get("source", "")
 
-        # Validate name and filename
-        stem = Path(filename).stem
-        if not _SAFE_NAME_RE.match(stem):
-            logger.warning("SkillSync: rejected plugin from %s — unsafe filename '%s'", peer_id, filename)
-            return
-
-        if not filename.endswith(".py"):
-            logger.warning("SkillSync: rejected plugin from %s — not a .py file", peer_id)
+        # Validate the full filename with a strict regex — this prevents directory
+        # traversal attacks (e.g. "../../evil.py") where Path().stem would pass the
+        # stem check but the full path would escape the peer_plugins directory.
+        if not re.match(r"^[a-zA-Z0-9_]{1,64}\.py$", filename):
+            logger.warning(
+                "SkillSync: rejected plugin from %s — unsafe or malformed filename '%s'",
+                peer_id,
+                filename,
+            )
             return
 
         # Validate Python syntax before writing
