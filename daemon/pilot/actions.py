@@ -213,9 +213,14 @@ class ActionType(StrEnum):
     EMAIL_SUMMARIZE = "email_summarize"
     EMAIL_REPLY = "email_reply"
 
-    # -- Remote execution (SSH) --
-    SSH_COMMAND = "ssh_command"
-    SSH_SCRIPT = "ssh_script"
+
+# -- Calendar reconciliation --
+CALENDAR_FETCH = "calendar_fetch"
+CALENDAR_RECONCILE = "calendar_reconcile"
+
+# -- Remote execution (SSH) --
+SSH_COMMAND = "ssh_command"
+SSH_SCRIPT = "ssh_script"
 
 
 class PermissionTier(int, Enum):
@@ -279,6 +284,9 @@ READ_ONLY_ACTIONS = {
     # Email agent read-only
     ActionType.EMAIL_FETCH,
     ActionType.EMAIL_SUMMARIZE,
+    # Calendar reconciliation (read-only — only reads ICS data)
+    ActionType.CALENDAR_FETCH,
+    ActionType.CALENDAR_RECONCILE,
 }
 
 DESTRUCTIVE_ACTIONS = {
@@ -668,19 +676,29 @@ class EmailParams(BaseModel):
     emails_json: str = ""  # JSON-serialised list of fetched emails to summarise
 
 
+class CalendarParams(BaseModel):
+    """Parameters for calendar reconciliation actions."""
+
+    emails_json: str = ""
+    lookahead_hours: int = 24
+    check_conflicts: bool = True
+    check_missing_links: bool = True
+    notify: bool = True
+
+
 class SshCommandParams(BaseModel):
     """Parameters for executing a single command over SSH on a configured host."""
 
-    host: str = ""  # Host alias from config.ssh.allowed_hosts
-    command: str = ""  # Single shell command to run
+    host: str = ""
+    command: str = ""
     timeout_seconds: int = 60
 
 
 class SshScriptParams(BaseModel):
     """Parameters for executing a multi-line bash script over SSH on a configured host."""
 
-    host: str = ""  # Host alias from config.ssh.allowed_hosts
-    script: str = ""  # Multi-line script (executed via bash -lc)
+    host: str = ""
+    script: str = ""
     timeout_seconds: int = 300
 
 
@@ -727,6 +745,7 @@ ActionParameters = (
     | ApiRequestParams
     | WorkspaceParams
     | EmailParams
+    | CalendarParams
     | SshCommandParams
     | SshScriptParams
     | EmptyParams
