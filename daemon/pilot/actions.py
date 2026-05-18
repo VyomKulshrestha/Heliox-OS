@@ -213,14 +213,13 @@ class ActionType(StrEnum):
     EMAIL_SUMMARIZE = "email_summarize"
     EMAIL_REPLY = "email_reply"
 
+    # -- Calendar reconciliation --
+    CALENDAR_FETCH = "calendar_fetch"
+    CALENDAR_RECONCILE = "calendar_reconcile"
 
-# -- Calendar reconciliation --
-CALENDAR_FETCH = "calendar_fetch"
-CALENDAR_RECONCILE = "calendar_reconcile"
-
-# -- Remote execution (SSH) --
-SSH_COMMAND = "ssh_command"
-SSH_SCRIPT = "ssh_script"
+    # -- Remote execution (SSH) --
+    SSH_COMMAND = "ssh_command"
+    SSH_SCRIPT = "ssh_script"
 
 
 class PermissionTier(int, Enum):
