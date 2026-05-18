@@ -638,8 +638,8 @@ class PilotServer:
             async with aiosqlite.connect(DB_PATH) as conn:
                 conn.row_factory = aiosqlite.Row
                 async with conn.execute(
-                    """SELECT plan_id, critic_verdict, user_confirmation_decision, execution_outcome, timestamp 
-                    FROM plan_history 
+                    """SELECT plan_id, critic_verdict, user_confirmation_decision, execution_outcome, timestamp
+                    FROM plan_history
                     ORDER BY timestamp DESC
                     LIMIT ? OFFSET ?""",
                     (limit, offset),
@@ -661,7 +661,7 @@ class PilotServer:
             async with aiosqlite.connect(DB_PATH) as conn:
                 conn.row_factory = aiosqlite.Row
                 async with conn.execute(
-                    """SELECT plan_id, action_plan, critic_verdict, user_confirmation_decision, execution_outcome, timestamp 
+                    """SELECT plan_id, action_plan, critic_verdict, user_confirmation_decision, execution_outcome, timestamp
                     FROM plan_history
                     WHERE plan_id = ?""",
                     (plan_id,),
@@ -742,5 +742,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
-    
+    main()   
