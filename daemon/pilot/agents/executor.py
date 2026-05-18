@@ -1548,9 +1548,7 @@ class Executor:
             timeout=getattr(self._config.security, "sandbox_timeout", p.timeout),
             network=getattr(self._config.security, "sandbox_network", False),
             kernel_guard=getattr(self._config.security, "sandbox_kernel_guard", True),
-            blocked_syscalls=tuple(
-                getattr(self._config.security, "sandbox_blocked_syscalls", ["unlink", "unlinkat"])
-            ),
+            blocked_syscalls=tuple(getattr(self._config.security, "sandbox_blocked_syscalls", ["unlink", "unlinkat"])),
         )
 
         # If there's previous output available, inject it as Python variables
@@ -1653,9 +1651,7 @@ class Executor:
             timeout=getattr(self._config.security, "sandbox_timeout", p.timeout),
             network=getattr(self._config.security, "sandbox_network", False),
             kernel_guard=getattr(self._config.security, "sandbox_kernel_guard", True),
-            blocked_syscalls=tuple(
-                getattr(self._config.security, "sandbox_blocked_syscalls", ["unlink", "unlinkat"])
-            ),
+            blocked_syscalls=tuple(getattr(self._config.security, "sandbox_blocked_syscalls", ["unlink", "unlinkat"])),
         )
         return await generate_and_execute(p.task_description, p.language, p.timeout, sandbox_cfg=sandbox_cfg)
 
