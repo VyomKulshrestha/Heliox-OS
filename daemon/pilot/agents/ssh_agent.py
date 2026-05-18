@@ -230,9 +230,7 @@ class SshAgent(BaseAgent):
                 )
 
                 if command is not None:
-                    stdout_text, stderr_text, exit_code = self._exec_command(
-                        client, command, timeout_seconds=timeout
-                    )
+                    stdout_text, stderr_text, exit_code = self._exec_command(client, command, timeout_seconds=timeout)
                     ok = exit_code == 0
                     out = stdout_text.strip()
                     err = stderr_text.strip() or None
@@ -299,4 +297,3 @@ class SshAgent(BaseAgent):
         err = stderr.read().decode("utf-8", errors="replace")
         exit_code = stdout.channel.recv_exit_status()
         return out, err, int(exit_code)
-

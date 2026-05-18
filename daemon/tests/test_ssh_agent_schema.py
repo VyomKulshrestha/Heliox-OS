@@ -27,4 +27,3 @@ def test_ssh_validator_rejects_empty_host(default_config) -> None:
     )
     errors = validator.validate_plan(plan)
     assert any("Empty SSH host alias" in e for e in errors)
-
