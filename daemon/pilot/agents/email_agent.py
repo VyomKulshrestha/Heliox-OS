@@ -412,10 +412,7 @@ class EmailAgent(BaseAgent):
                     "type": "conflict",
                     "severity": "high",
                     "title": "Scheduling Conflict Detected",
-                    "detail": (
-                        f'"{a["summary"]}" and "{b["summary"]}" overlap. '
-                        "Check your calendar."
-                    ),
+                    "detail": (f'"{a["summary"]}" and "{b["summary"]}" overlap. Check your calendar.'),
                     "event_uids": [a["uid"], b["uid"]],
                 }
                 issues.append(issue)
@@ -436,10 +433,7 @@ class EmailAgent(BaseAgent):
                     if params.notify:
                         _send_os_notification(issue["title"], issue["detail"])
 
-        summary = (
-            f"Reconciled {len(upcoming)} upcoming event(s); "
-            f"found {len(issues)} issue(s)."
-        )
+        summary = f"Reconciled {len(upcoming)} upcoming event(s); found {len(issues)} issue(s)."
         logger.info(summary)
         return ActionResult(
             action=action,
@@ -553,12 +547,14 @@ def _parse_ics_datetime(s: str) -> datetime | None:
 
 def _has_meeting_link(event: dict[str, Any]) -> bool:
     """Return True if the event contains a recognised video-call URL."""
-    haystack = " ".join([
-        event.get("summary", ""),
-        event.get("description", ""),
-        event.get("location", ""),
-        event.get("url", ""),
-    ]).lower()
+    haystack = " ".join(
+        [
+            event.get("summary", ""),
+            event.get("description", ""),
+            event.get("location", ""),
+            event.get("url", ""),
+        ]
+    ).lower()
     return any(pat in haystack for pat in _MEETING_LINK_PATTERNS)
 
 

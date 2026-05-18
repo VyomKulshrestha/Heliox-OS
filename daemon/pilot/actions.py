@@ -678,7 +678,7 @@ class CalendarParams(BaseModel):
     lookahead_hours: int = 24
 
     # What to check
-    check_conflicts: bool = True      # detect overlapping events
+    check_conflicts: bool = True  # detect overlapping events
     check_missing_links: bool = True  # detect events with no video-call URL
 
     # Whether to fire an OS-native notification for each issue found
