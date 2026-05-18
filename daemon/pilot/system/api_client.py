@@ -16,7 +16,8 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Any
 
-import httpx
+from pilot.config import PilotConfig
+from pilot.system.http_client import create_httpx_client
 
 logger = logging.getLogger("pilot.system.api_client")
 
@@ -43,7 +44,7 @@ async def api_request(
     # Try with SSL verification first, fallback without if cert issues
     for verify in (True, False):
         try:
-            async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, verify=verify) as client:
+            async with create_httpx_client(PilotConfig.load(), timeout=timeout, follow_redirects=True, verify=verify) as client:
                 kwargs: dict[str, Any] = {"params": params}
                 if headers:
                     kwargs["headers"] = headers
@@ -260,8 +261,12 @@ async def scrape_url(
     selector: CSS selector to target specific elements (requires BeautifulSoup)
     extract: 'text', 'html', 'links', 'tables'
     """
-    async with httpx.AsyncClient(
-        timeout=30, follow_redirects=True, verify=False, headers={"User-Agent": "Mozilla/5.0 (compatible; Pilot/0.3)"}
+    async with create_httpx_client(
+        PilotConfig.load(),
+        timeout=30,
+        follow_redirects=True,
+        verify=False,
+        headers={"User-Agent": "Mozilla/5.0 (compatible; Pilot/0.3)"},
     ) as client:
         resp = await client.get(url)
         html = resp.text

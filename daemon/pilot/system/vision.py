@@ -19,6 +19,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+from pilot.config import PilotConfig
+from pilot.system.http_client import create_httpx_client
 from pilot.system.platform_detect import CURRENT_PLATFORM, Platform, run_command
 
 logger = logging.getLogger("pilot.system.vision")
@@ -490,8 +492,6 @@ async def screen_analyze(
     img_bytes = await _capture_screenshot_bytes(region)
     b64_image = base64.b64encode(img_bytes).decode("utf-8")
 
-    import httpx
-
     cloud_errors: list[str] = []
 
     # ── 1. Cloud Vision (Gemini / OpenAI / Claude) ───────────────────
@@ -542,7 +542,7 @@ async def screen_analyze(
         except Exception:
             pass
 
-        async with httpx.AsyncClient(timeout=60) as client:
+        async with create_httpx_client(PilotConfig.load(), timeout=60) as client:
             for model_name in ["llava:7b", "llava", "bakllava", "moondream"]:
                 try:
                     resp = await client.post(
@@ -575,7 +575,7 @@ async def screen_analyze(
 
 async def _gemini_vision(api_key: str, b64_image: str, prompt: str, configured_model: str | None = None) -> str | None:
     """Call Gemini Vision API with model fallback and retry on 503/429."""
-    import httpx
+    from pilot.config import PilotConfig
 
     models_to_try = []
     primary = configured_model or "gemini-2.5-flash"
@@ -605,7 +605,7 @@ async def _gemini_vision(api_key: str, b64_image: str, prompt: str, configured_m
         "generationConfig": {"temperature": 0.1},
     }
 
-    async with httpx.AsyncClient(timeout=90) as client:
+    async with create_httpx_client(PilotConfig.load(), timeout=90) as client:
         for model_name in models_to_try:
             endpoint = f"{base_url}/models/{model_name}:generateContent?key={api_key}"
             # Retry up to 2 times on transient errors (503, 429)
@@ -643,7 +643,7 @@ async def _gemini_vision(api_key: str, b64_image: str, prompt: str, configured_m
 
 async def _openai_vision(api_key: str, b64_image: str, prompt: str, configured_model: str | None = None) -> str | None:
     """Call OpenAI Vision API."""
-    import httpx
+    from pilot.config import PilotConfig
 
     model = configured_model or "gpt-4o"
     endpoint = "https://api.openai.com/v1/chat/completions"
@@ -668,7 +668,7 @@ async def _openai_vision(api_key: str, b64_image: str, prompt: str, configured_m
         "max_tokens": 1000,
     }
 
-    async with httpx.AsyncClient(timeout=90) as client:
+    async with create_httpx_client(PilotConfig.load(), timeout=90) as client:
         for attempt in range(3):
             try:
                 resp = await client.post(endpoint, json=payload, headers={"Authorization": f"Bearer {api_key}"})
@@ -690,7 +690,7 @@ async def _openai_vision(api_key: str, b64_image: str, prompt: str, configured_m
 
 async def _claude_vision(api_key: str, b64_image: str, prompt: str, configured_model: str | None = None) -> str | None:
     """Call Anthropic Claude Vision API."""
-    import httpx
+    from pilot.config import PilotConfig
 
     model = configured_model or "claude-3-5-sonnet-20241022"
     endpoint = "https://api.anthropic.com/v1/messages"
@@ -715,7 +715,7 @@ async def _claude_vision(api_key: str, b64_image: str, prompt: str, configured_m
         ],
     }
 
-    async with httpx.AsyncClient(timeout=90) as client:
+    async with create_httpx_client(PilotConfig.load(), timeout=90) as client:
         for attempt in range(3):
             try:
                 resp = await client.post(

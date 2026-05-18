@@ -8,6 +8,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 if sys.version_info >= (3, 12):
     import tomllib
@@ -93,6 +94,13 @@ class ScreenVisionConfig:
 
 
 @dataclass
+class ProxyConfig:
+    http: str | None = None
+    https: str | None = None
+    no_proxy: str | None = None
+
+
+@dataclass
 class Restrictions:
     protected_folders: list[str] = field(default_factory=list)
     protected_packages: list[str] = field(default_factory=list)
@@ -109,6 +117,7 @@ class PilotConfig:
     server: ServerConfig = field(default_factory=ServerConfig)
     voice: VoiceConfig = field(default_factory=VoiceConfig)
     screen_vision: ScreenVisionConfig = field(default_factory=ScreenVisionConfig)
+    proxy: ProxyConfig = field(default_factory=ProxyConfig)
     restrictions: Restrictions = field(default_factory=Restrictions)
     first_run_complete: bool = False
 
@@ -197,6 +206,11 @@ def _validate_config_types(raw: dict) -> None:
         "screen_vision": {
             "capture_interval_seconds": (int, float),
         },
+        "proxy": {
+            "http": str,
+            "https": str,
+            "no_proxy": str,
+        },
     }
 
     for section, expected_keys in expected_types.items():
@@ -218,6 +232,23 @@ def _validate_config_types(raw: dict) -> None:
                     )
                     logger.error(error_msg)
                     raise ValueError(error_msg)
+
+    if "proxy" in raw and isinstance(raw["proxy"], dict):
+        _validate_proxy_section(raw["proxy"])
+
+
+def _validate_proxy_section(raw: dict[str, Any]) -> None:
+    for key in ("http", "https"):
+        value = raw.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, str):
+            raise ValueError(f"Invalid proxy configuration: proxy.{key} must be a string.")
+        _validate_proxy_url(value, key)
+
+    no_proxy_value = raw.get("no_proxy")
+    if no_proxy_value is not None and not isinstance(no_proxy_value, str):
+        raise ValueError("Invalid proxy configuration: proxy.no_proxy must be a string.")
 
 
 def _format_type_name(expected_type: type | tuple[type, ...]) -> str:
@@ -252,12 +283,30 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
             if hasattr(config.screen_vision, k):
                 setattr(config.screen_vision, k, float(v))
 
+    if "proxy" in raw and isinstance(raw["proxy"], dict):
+        for k, v in raw["proxy"].items():
+            if hasattr(config.proxy, k):
+                if k in ("http", "https", "no_proxy"):
+                    if not isinstance(v, str):
+                        error_msg = f"Invalid type: 'proxy.{k}' must be str, got {type(v).__name__}."
+                        logger.error(error_msg)
+                        raise ValueError(error_msg)
+                if k in ("http", "https") and v:
+                    _validate_proxy_url(v, k)
+                setattr(config.proxy, k, v)
+
     config.first_run_complete = raw.get(
         "first_run_complete",
         config.first_run_complete,
     )
 
     return config
+
+
+def _validate_proxy_url(url: str, key: str) -> None:
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError(f"Invalid proxy URL for proxy.{key}: {url}")
 
 
 def _parse_restrictions(raw: dict[str, Any]) -> Restrictions:
