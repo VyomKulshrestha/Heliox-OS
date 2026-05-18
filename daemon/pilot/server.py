@@ -750,6 +750,8 @@ class PilotServer:
                     on_action_complete=_on_action_complete,
                 )
             all_results = results
+            _original_plan = None
+            _successful_results: list = []
 
             if emit:
                 successes = sum(1 for r in results if r.success)
@@ -781,6 +783,10 @@ class PilotServer:
             else:
                 verification = await self._verifier.verify(plan, results)
             last_verification = verification
+            if _original_plan is not None and _successful_results:
+                all_results = PlanDiffer.merge_results(
+                    _successful_results, results, _original_plan, verification
+                )
 
             if verification.passed:
                 if emit:
@@ -865,6 +871,8 @@ class PilotServer:
                     len(plan.actions),
                 )
                 plan = retry_plan
+                _original_plan = plan
+                _successful_results = successful_results
                 all_results = list(successful_results)
 
             if attempt < self.MAX_RETRIES:
