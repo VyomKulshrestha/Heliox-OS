@@ -11,6 +11,7 @@ import logging
 import secrets
 import signal
 import sys
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -27,6 +28,7 @@ from pilot.export_logs import export_logs
 logger = logging.getLogger("pilot.server")
 
 CONFIRM_TIMEOUT_SECONDS = 300
+START_TIME = time.time()
 
 
 @dataclass
@@ -358,6 +360,7 @@ class PilotServer:
             "list_api_keys": self._handle_list_api_keys,
             "list_ollama_models": self._handle_list_ollama_models,
             "health": self._handle_health,
+            "ready": self._handle_ready,
             "ping": self._handle_ping,
             "system_status": self._handle_system_status,
             "capabilities": self._handle_capabilities,
@@ -1568,21 +1571,66 @@ class PilotServer:
 
     # -- Health --
 
-    async def _handle_health(self, params: dict, ws: ServerConnection) -> dict:
-        """Check the health of all model backends.
+    async def _handle_health(self, params: dict[str, Any], ws: ServerConnection) -> dict[str, Any]:
+        """Return health status of the daemon.
 
         Args:
             params: JSON-RPC parameters (unused).
             ws: The WebSocket connection.
 
         Returns:
-            A dict with backends health status.
+            A dict with uptime, memory usage, active connections, and loaded agents.
         """
-        from pilot.models.router import ModelRouter
+        import psutil
 
-        router: ModelRouter = self._planner._model
-        backends = await router.check_health()
-        return {"backends": backends}
+        # Calculate uptime
+        uptime = time.time() - START_TIME
+
+        # Get memory usage in MB
+        process = psutil.Process()
+        memory_mb = process.memory_info().rss / (1024**2)
+
+        # Count active connections
+        active_connections = len(self._clients)
+
+        # Get loaded agent names
+        loaded_agents: list[str] = []
+        if self._orchestrator:
+            loaded_agents = [agent.role.value for agent in self._orchestrator._agents.values()]
+
+        return {
+            "uptime": uptime,
+            "memory_usage_mb": memory_mb,
+            "active_connections": active_connections,
+            "loaded_agents": loaded_agents,
+        }
+
+    async def _handle_ready(self, params: dict[str, Any], ws: ServerConnection) -> dict[str, Any]:
+        """Check if all agents are fully initialized and ready.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with ready status (True only if all agents are initialized).
+        """
+        from pilot.agents.base_agent import AgentStatus
+
+        # If orchestrator is not initialized, not ready
+        if not self._orchestrator:
+            return {"ready": False}
+
+        # If no agents are registered, not ready
+        if not self._orchestrator._agents:
+            return {"ready": False}
+
+        # Check if all agents are not in STOPPED state
+        for agent in self._orchestrator._agents.values():
+            if agent.status == AgentStatus.STOPPED:
+                return {"ready": False}
+
+        return {"ready": True}
 
     async def _handle_ping(self, params: dict, ws: ServerConnection) -> dict:
         """Ping the server to check connectivity.
