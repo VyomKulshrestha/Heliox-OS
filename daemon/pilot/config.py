@@ -110,6 +110,17 @@ class RSSConfig:
 
 
 @dataclass
+class NetworkConfig:
+    """LAN mesh network configuration for multi-instance collaboration."""
+
+    enabled: bool = False
+    port: int = 8786  # peer-to-peer WebSocket port (separate from client port)
+    peer_timeout_s: int = 30  # seconds before a silent peer is considered gone
+    skill_sync_enabled: bool = True  # broadcast/receive plugins from peers
+    collab_exec_enabled: bool = True  # distribute parallelizable action batches
+
+
+@dataclass
 class SshHostConfig:
     """One allowed SSH destination (referenced by alias in ssh_* actions)."""
 
@@ -148,6 +159,7 @@ class PilotConfig:
     screen_vision: ScreenVisionConfig = field(default_factory=ScreenVisionConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     rss: RSSConfig = field(default_factory=RSSConfig)
+    network: NetworkConfig = field(default_factory=NetworkConfig)
     ssh: SshConfig = field(default_factory=SshConfig)
     restrictions: Restrictions = field(default_factory=Restrictions)
     first_run_complete: bool = False
@@ -248,6 +260,13 @@ def _validate_config_types(raw: dict) -> None:
             "poll_interval_hours": (int, float),
             "max_items_per_feed": int,
         },
+        "network": {
+            "enabled": bool,
+            "port": int,
+            "peer_timeout_s": int,
+            "skill_sync_enabled": bool,
+            "collab_exec_enabled": bool,
+        },
         "ssh": {
             "enabled": bool,
             "connect_timeout_seconds": int,
@@ -317,6 +336,11 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
         for k, v in raw["rss"].items():
             if hasattr(config.rss, k):
                 setattr(config.rss, k, v)
+
+    if "network" in raw:
+        for k, v in raw["network"].items():
+            if hasattr(config.network, k):
+                setattr(config.network, k, v)
 
     if "ssh" in raw and isinstance(raw["ssh"], dict):
         ssh_raw = raw["ssh"]
