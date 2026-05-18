@@ -346,6 +346,7 @@ class PilotServer:
             "execute": self._handle_execute,
             "resume_plan": self._handle_resume_plan,
             "export_session_chat": self._handle_export_session_chat,
+            "export_react_trace": self._handle_export_react_trace,
             "confirm": self._handle_confirm,
             # ── Cancel Token (Issue #92) ──
             "abort": self._handle_abort,
@@ -1491,6 +1492,36 @@ class PilotServer:
             "path": str(out_path),
             "count": len(messages),
             "format": fmt,
+        }
+
+    async def _handle_export_react_trace(self, params: dict, ws: ServerConnection) -> dict:
+        """Export the UI ReAct pipeline trace (stages, thoughts, events) to JSON."""
+        trace = params.get("trace")
+        if not isinstance(trace, dict):
+            return {"status": "error", "message": "trace must be an object"}
+
+        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+        filename = f"heliox-react-trace-{ts}.json"
+
+        downloads_dir = Path.home() / "Downloads"
+        export_dir = downloads_dir if downloads_dir.exists() else (DATA_DIR / "exports")
+        export_dir.mkdir(parents=True, exist_ok=True)
+        out_path = export_dir / filename
+
+        try:
+            out_path.write_text(json.dumps(trace, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception as e:
+            logger.exception("Failed to export ReAct trace")
+            return {"status": "error", "message": f"Export failed: {e}"}
+
+        summary = trace.get("summary", {})
+        event_count = summary.get("eventCount") if isinstance(summary, dict) else len(trace.get("events", []))
+
+        return {
+            "status": "ok",
+            "path": str(out_path),
+            "event_count": event_count,
+            "format": "json",
         }
 
     # -- API key management --

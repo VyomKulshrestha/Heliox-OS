@@ -9,7 +9,8 @@
    */
 
   import { session } from "../stores/session";
-  import { onNotification, offNotification } from "../api/daemon";
+  import { call, onNotification, offNotification } from "../api/daemon";
+  import { buildReactTraceExport, type TraceEventRecord } from "../utils/reactTraceExport";
   import { fade, slide } from "svelte/transition";
   import { onMount, onDestroy } from "svelte";
 
@@ -77,6 +78,15 @@
   let stageDecisions = $state<Record<string, string>>({});
   let stageTiming = $state<Record<string, number>>({});
   let thoughtStream = $state<ThoughtEntry[]>([]);
+  let traceEvents = $state<TraceEventRecord[]>([]);
+  let exportInFlight = $state(false);
+
+  function appendTraceEvent(method: string, payload: Record<string, unknown>) {
+    traceEvents = [
+      ...traceEvents,
+      { timestamp: Date.now(), method, payload },
+    ];
+  }
 
   function resetPipeline() {
     stages = stages.map(s => ({ ...s, status: "idle" as StageStatus, detail: "", startTime: 0, endTime: 0 }));
@@ -86,6 +96,7 @@
     stageDecisions = {};
     stageTiming = {};
     thoughtStream = [];
+    traceEvents = [];
     showSkeleton = false;
     showThoughts = false;
     expandedThoughtStages = {};
@@ -113,6 +124,10 @@
 
   function handleNotification(method: string, params: unknown) {
     const p = params as Record<string, any>;
+
+    if (pipelineMethods.has(method)) {
+      appendTraceEvent(method, p);
+    }
 
     if (showSkeleton && pipelineMethods.has(method)) {
       showSkeleton = false;
@@ -376,6 +391,47 @@
   let toggleCollapse = () => { collapsed = !collapsed; };
   let toggleThoughts = () => { showThoughts = !showThoughts; };
 
+  const canExportTrace = $derived(
+    stages.some((s) => s.status !== "idle") || thoughtStream.length > 0 || traceEvents.length > 0
+  );
+
+  async function exportReactTrace() {
+    if (exportInFlight || !canExportTrace) return;
+
+    exportInFlight = true;
+    const payload = buildReactTraceExport({
+      stages,
+      stageTiming,
+      stageDecisions,
+      executionActions,
+      thoughtStream,
+      traceEvents,
+      agentRouting,
+      progress,
+      totalDuration,
+    });
+
+    try {
+      const res = (await call("export_react_trace", { trace: payload })) as {
+        status: string;
+        path?: string;
+        message?: string;
+      };
+
+      if (res.status === "ok" && res.path) {
+        session.addSystemMessage(`ReAct trace exported to: ${res.path}`);
+      } else {
+        session.addSystemMessage(`ReAct export failed: ${res.message ?? "unknown error"}`);
+      }
+    } catch (err) {
+      session.addSystemMessage(
+        `ReAct export failed: ${String(err instanceof Error ? err.message : err)}`
+      );
+    } finally {
+      exportInFlight = false;
+    }
+  }
+
   // ── Keyboard Shortcut: Ctrl+Shift+L toggles the ReAct Pipeline panel ──
   function handleKeydown(e: KeyboardEvent): void {
     if (e.ctrlKey && e.shiftKey && e.key === 'L') {
@@ -485,6 +541,15 @@
           aria-expanded={showThoughts}
         >
           ◫
+        </button>
+        <button
+          class="export-trace-btn"
+          onclick={(e) => { e.stopPropagation(); void exportReactTrace(); }}
+          disabled={!canExportTrace || exportInFlight}
+          title="Export ReAct trace to JSON"
+          aria-label="Export ReAct trace to JSON"
+        >
+          {exportInFlight ? "…" : "⤓"}
         </button>
         <button class="dismiss-btn" onclick={(e) => { e.stopPropagation(); dismiss(); }} title="Dismiss">✕</button>
       </div>
@@ -786,6 +851,32 @@
     background: rgba(255, 50, 50, 0.2);
     color: #ff5555;
     border-color: rgba(255, 50, 50, 0.3);
+  }
+
+  .export-trace-btn {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(0, 240, 255, 0.2);
+    color: rgba(0, 240, 255, 0.65);
+    border-radius: 4px;
+    width: 22px;
+    height: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 0.7rem;
+    transition: all 0.2s;
+  }
+
+  .export-trace-btn:hover:not(:disabled) {
+    background: rgba(0, 240, 255, 0.12);
+    color: #00f0ff;
+    border-color: rgba(0, 240, 255, 0.45);
+  }
+
+  .export-trace-btn:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
   }
 
   /* Progress bar */
