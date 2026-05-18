@@ -562,6 +562,20 @@ class PilotServer:
         Tier 2+ actions.
         """
         user_input = params.get("input", "")
+        attachments = params.get("attachments", [])
+
+        if attachments:
+            formatted_attachments = []
+
+            for attachment in attachments:
+                name = attachment.get("name", "unknown")
+                content = attachment.get("content", "")
+
+                formatted_attachments.append(f"[Attached File: {name}]\n{content}")
+
+            user_input += "\n\nAttached Context:\n"
+            user_input += "\n\n".join(formatted_attachments)
+
         if not user_input.strip():
             return {"status": "error", "message": "Empty input"}
         dry_run = bool(params.get("dry_run", self.config.security.dry_run))
