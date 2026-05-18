@@ -17,6 +17,48 @@ async def server_port(unused_tcp_port):
     return unused_tcp_port
 
 
+async def _wait_for_port(
+    host: str,
+    port: int,
+    server_task: asyncio.Task,
+    timeout_seconds: float = 10.0,
+) -> None:
+    """
+    Poll host:port until a TCP connection succeeds, the server task dies,
+    or the timeout expires — whichever comes first.
+
+    Raises
+    ------
+    RuntimeError
+        If the server task finishes (crashed or was cancelled) before the
+        port became reachable.
+    TimeoutError
+        If the port is still not reachable after *timeout_seconds*.
+    """
+    deadline = asyncio.get_running_loop().time() + timeout_seconds
+    while True:
+        # Abort early if the server itself died — the port will never open.
+        if server_task.done():
+            if server_task.cancelled():
+                raise RuntimeError("Server task was cancelled before port became ready.")
+            raise RuntimeError(
+                "Server task failed before port became ready."
+            ) from server_task.exception()
+
+        try:
+            _, writer = await asyncio.open_connection(host, port)
+            writer.close()
+            await writer.wait_closed()
+            return  # Port accepted a connection — safe to proceed.
+        except OSError:
+            # OSError covers ConnectionRefusedError and WinError 1225.
+            if asyncio.get_running_loop().time() >= deadline:
+                raise TimeoutError(
+                    f"Server did not bind on {host}:{port} within {timeout_seconds}s."
+                ) from None
+            await asyncio.sleep(0.05)
+
+
 @pytest.fixture
 async def daemon_server(server_port, tmp_path, monkeypatch):
     """
@@ -42,8 +84,9 @@ async def daemon_server(server_port, tmp_path, monkeypatch):
     config.server.host = "127.0.0.1"
     config.server.port = server_port
 
-    # Mock heavy subsystems to avoid requiring a real LLM or OCR
-    # Only patch classes/methods that are directly importable at module level
+    # Mock heavy subsystems to avoid requiring a real LLM or OCR.
+    # CodeAgent is patched to prevent an AttributeError on ActionType.CALENDAR_FETCH
+    # that occurs when code_agent.py is imported during server startup.
     with (
         patch("pilot.models.router.ModelRouter.initialize", new_callable=AsyncMock),
         patch("pilot.models.cache.LLMCache.initialize", new_callable=AsyncMock),
@@ -51,12 +94,15 @@ async def daemon_server(server_port, tmp_path, monkeypatch):
         patch("pilot.cognitive.tribe_engine.TribeEngine.load_model", new_callable=AsyncMock),
         patch("pilot.models.budget_tracker.BudgetTracker.initialize", new_callable=AsyncMock),
         patch("pilot.agents.prompt_improver.PromptImprover.initialize", new_callable=AsyncMock),
+        patch("pilot.agents.code_agent.CodeAgent", new_callable=MagicMock),
     ):
         server = PilotServer(config)
         server_task = asyncio.create_task(server.start())
 
-        # Give the server a moment to start the websocket listener
-        await asyncio.sleep(0.2)
+        # Block until the WebSocket port accepts a real TCP connection.
+        # Replaces the former hardcoded `asyncio.sleep(0.2)` that caused
+        # ConnectionRefusedError / WinError 1225 on slow or Windows machines.
+        await _wait_for_port("127.0.0.1", server_port, server_task)
 
         uri = f"ws://127.0.0.1:{server_port}"
         yield uri
