@@ -10,10 +10,10 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from pilot.system.daemon_manager import (
-    CrashRecord,
-    DaemonManager,
     MAX_BACKOFF_SECONDS,
     MAX_RESTART_ATTEMPTS,
+    CrashRecord,
+    DaemonManager,
 )
 
 
@@ -59,7 +59,7 @@ class TestDaemonManager:
         """Test exponential backoff calculation."""
         manager._restart_count = 0
         backoffs = []
-        for i in range(5):
+        for _i in range(5):
             backoffs.append(manager.calculate_backoff())
             manager._restart_count += 1
         assert backoffs[0] == 1
@@ -89,13 +89,13 @@ class TestDaemonManager:
             await manager.initialize()
             import aiosqlite
 
-            async with aiosqlite.connect(tmp_path / "test.db") as db:
-                async with db.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table'"
-                ) as cursor:
-                    rows = await cursor.fetchall()
-                    table_names = [r[0] for r in rows]
-                    assert "crashes" in table_names
+            async with (
+                aiosqlite.connect(tmp_path / "test.db") as db,
+                db.execute("SELECT name FROM sqlite_master WHERE type='table'") as cursor,
+            ):
+                rows = await cursor.fetchall()
+                table_names = [r[0] for r in rows]
+                assert "crashes" in table_names
 
     @pytest.mark.asyncio
     async def test_save_and_get_crashes(self, manager, tmp_path):

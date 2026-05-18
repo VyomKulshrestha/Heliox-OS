@@ -48,6 +48,7 @@ class ActionType(StrEnum):
     # -- Shell / command execution --
     SHELL_COMMAND = "shell_command"
     SHELL_SCRIPT = "shell_script"  # Run a multi-line script
+    PTY_EXEC = "pty_exec"  # Run command in a persistent PTY shell session
 
     # -- Open URL / Application / Notify (original) --
     OPEN_URL = "open_url"
@@ -213,6 +214,15 @@ class ActionType(StrEnum):
     EMAIL_REPLY = "email_reply"
 
 
+# -- Calendar reconciliation --
+CALENDAR_FETCH = "calendar_fetch"
+CALENDAR_RECONCILE = "calendar_reconcile"
+
+# -- Remote execution (SSH) --
+SSH_COMMAND = "ssh_command"
+SSH_SCRIPT = "ssh_script"
+
+
 class PermissionTier(int, Enum):
     READ_ONLY = 0
     USER_WRITE = 1
@@ -274,6 +284,9 @@ READ_ONLY_ACTIONS = {
     # Email agent read-only
     ActionType.EMAIL_FETCH,
     ActionType.EMAIL_SUMMARIZE,
+    # Calendar reconciliation (read-only — only reads ICS data)
+    ActionType.CALENDAR_FETCH,
+    ActionType.CALENDAR_RECONCILE,
 }
 
 DESTRUCTIVE_ACTIONS = {
@@ -311,6 +324,9 @@ SYSTEM_MODIFY_ACTIONS = {
     ActionType.API_DISCORD,
     # Email agent actions (IMAP fetch is read-only; reply/send require confirmation)
     ActionType.EMAIL_REPLY,
+    # SSH is always a remote system modification surface
+    ActionType.SSH_COMMAND,
+    ActionType.SSH_SCRIPT,
 }
 
 
@@ -371,6 +387,14 @@ class ShellScriptParams(BaseModel):
     working_directory: str | None = None
     timeout: int = 60
     elevated: bool = False
+
+
+class PtyExecParams(BaseModel):
+    """Run a command inside a persistent PTY shell session."""
+
+    session_id: str = "default"
+    command: str = ""
+    timeout: int = 30
 
 
 class OpenUrlParams(BaseModel):
@@ -652,6 +676,32 @@ class EmailParams(BaseModel):
     emails_json: str = ""  # JSON-serialised list of fetched emails to summarise
 
 
+class CalendarParams(BaseModel):
+    """Parameters for calendar reconciliation actions."""
+
+    emails_json: str = ""
+    lookahead_hours: int = 24
+    check_conflicts: bool = True
+    check_missing_links: bool = True
+    notify: bool = True
+
+
+class SshCommandParams(BaseModel):
+    """Parameters for executing a single command over SSH on a configured host."""
+
+    host: str = ""
+    command: str = ""
+    timeout_seconds: int = 60
+
+
+class SshScriptParams(BaseModel):
+    """Parameters for executing a multi-line bash script over SSH on a configured host."""
+
+    host: str = ""
+    script: str = ""
+    timeout_seconds: int = 300
+
+
 class EmptyParams(BaseModel):
     """For actions that need no parameters."""
 
@@ -667,6 +717,7 @@ ActionParameters = (
     | DBusParams
     | ShellCommandParams
     | ShellScriptParams
+    | PtyExecParams
     | OpenUrlParams
     | OpenApplicationParams
     | NotifyParams
@@ -694,6 +745,9 @@ ActionParameters = (
     | ApiRequestParams
     | WorkspaceParams
     | EmailParams
+    | CalendarParams
+    | SshCommandParams
+    | SshScriptParams
     | EmptyParams
 )
 

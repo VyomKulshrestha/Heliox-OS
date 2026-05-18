@@ -93,7 +93,7 @@ class WebAgent(BaseAgent):
             "You are the WEB AGENT for Heliox OS. "
             "You handle all web-related tasks: browser automation, web scraping, "
             "HTTP API calls, file downloads, and online information retrieval. "
-            "For complex web pages, use browser automation with Playwright. "
+            "For complex web pages, use browser automation tools. "
             "For simple data fetching, use direct HTTP requests. "
             "Always respect robots.txt and rate limits. "
             "When extracting data, return it in structured format (JSON/tables)."

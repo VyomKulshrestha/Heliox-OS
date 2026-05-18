@@ -74,6 +74,8 @@ class SecurityConfig:
     sandbox_memory_mb: int = 128  # memory cap applied inside the sandbox (MB)
     sandbox_timeout: int = 30  # max wall-clock seconds for sandboxed execution
     sandbox_network: bool = False  # allow outbound network inside the sandbox
+    sandbox_kernel_guard: bool = True  # Linux seccomp-BPF syscall denylist for restricted mode
+    sandbox_blocked_syscalls: list[str] = field(default_factory=lambda: ["unlink", "unlinkat"])
 
 
 @dataclass
@@ -95,6 +97,39 @@ class ScreenVisionConfig:
 
 
 @dataclass
+class MemoryConfig:
+    checkpoint_interval_seconds: int = 300
+
+
+@dataclass
+class RSSConfig:
+    enabled: bool = False
+    feeds: list[str] = field(default_factory=list)
+    poll_interval_hours: float = 24.0
+    max_items_per_feed: int = 10
+
+
+@dataclass
+class SshHostConfig:
+    """One allowed SSH destination (referenced by alias in ssh_* actions)."""
+
+    name: str = ""
+    hostname: str = ""
+    port: int = 22
+    username: str = ""
+    private_key_provider: str = ""  # KeyVault provider name containing the private key (PEM)
+    passphrase_provider: str = ""  # Optional KeyVault provider name for key passphrase
+    strict_host_key_checking: bool = True
+
+
+@dataclass
+class SshConfig:
+    enabled: bool = False
+    connect_timeout_seconds: int = 10
+    allowed_hosts: list[SshHostConfig] = field(default_factory=list)
+
+
+@dataclass
 class Restrictions:
     protected_folders: list[str] = field(default_factory=list)
     protected_packages: list[str] = field(default_factory=list)
@@ -111,6 +146,9 @@ class PilotConfig:
     server: ServerConfig = field(default_factory=ServerConfig)
     voice: VoiceConfig = field(default_factory=VoiceConfig)
     screen_vision: ScreenVisionConfig = field(default_factory=ScreenVisionConfig)
+    memory: MemoryConfig = field(default_factory=MemoryConfig)
+    rss: RSSConfig = field(default_factory=RSSConfig)
+    ssh: SshConfig = field(default_factory=SshConfig)
     restrictions: Restrictions = field(default_factory=Restrictions)
     first_run_complete: bool = False
 
@@ -186,6 +224,8 @@ def _validate_config_types(raw: dict) -> None:
             "sandbox_memory_mb": int,
             "sandbox_timeout": int,
             "sandbox_network": bool,
+            "sandbox_kernel_guard": bool,
+            "sandbox_blocked_syscalls": list,
         },
         "server": {
             "host": str,
@@ -198,6 +238,20 @@ def _validate_config_types(raw: dict) -> None:
         },
         "screen_vision": {
             "capture_interval_seconds": (int, float),
+        },
+        "memory": {
+            "checkpoint_interval_seconds": int,
+        },
+        "rss": {
+            "enabled": bool,
+            "feeds": list,
+            "poll_interval_hours": (int, float),
+            "max_items_per_feed": int,
+        },
+        "ssh": {
+            "enabled": bool,
+            "connect_timeout_seconds": int,
+            "allowed_hosts": list,
         },
     }
 
@@ -253,6 +307,41 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
         for k, v in raw["screen_vision"].items():
             if hasattr(config.screen_vision, k):
                 setattr(config.screen_vision, k, float(v))
+
+    if "memory" in raw:
+        for k, v in raw["memory"].items():
+            if hasattr(config.memory, k):
+                setattr(config.memory, k, v)
+
+    if "rss" in raw:
+        for k, v in raw["rss"].items():
+            if hasattr(config.rss, k):
+                setattr(config.rss, k, v)
+
+    if "ssh" in raw and isinstance(raw["ssh"], dict):
+        ssh_raw = raw["ssh"]
+        config.ssh.enabled = bool(ssh_raw.get("enabled", config.ssh.enabled))
+        if "connect_timeout_seconds" in ssh_raw:
+            config.ssh.connect_timeout_seconds = int(ssh_raw["connect_timeout_seconds"])
+
+        hosts_raw = ssh_raw.get("allowed_hosts", [])
+        if isinstance(hosts_raw, list):
+            parsed_hosts: list[SshHostConfig] = []
+            for item in hosts_raw:
+                if not isinstance(item, dict):
+                    continue
+                parsed_hosts.append(
+                    SshHostConfig(
+                        name=str(item.get("name", "")),
+                        hostname=str(item.get("hostname", "")),
+                        port=int(item.get("port", 22)),
+                        username=str(item.get("username", "")),
+                        private_key_provider=str(item.get("private_key_provider", "")),
+                        passphrase_provider=str(item.get("passphrase_provider", "")),
+                        strict_host_key_checking=bool(item.get("strict_host_key_checking", True)),
+                    )
+                )
+            config.ssh.allowed_hosts = parsed_hosts
 
     config.first_run_complete = raw.get(
         "first_run_complete",

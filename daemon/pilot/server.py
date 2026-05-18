@@ -22,6 +22,7 @@ import websockets
 from websockets.asyncio.server import Server, ServerConnection
 
 from pilot.config import DATA_DIR, DB_FILE, LOG_FILE, STATE_DIR, PilotConfig, ensure_dirs
+from pilot.export_logs import export_logs
 
 logger = logging.getLogger("pilot.server")
 
@@ -125,6 +126,7 @@ class PilotServer:
         self._pending_confirms: dict[str, PendingConfirmation] = {}
         # ── Cancel Token (Issue #92) ──
         self._cancel_event: asyncio.Event | None = None
+        self._rss_agent: Any = None
 
     async def initialize(self) -> None:
         """Initialize all agent components.
@@ -171,7 +173,7 @@ class PilotServer:
         await self._checkpoint_store.initialize()
         validator = ActionValidator(self.config)
         permissions = PermissionChecker(self.config)
-        self._memory = MemoryStore()
+        self._memory = MemoryStore(checkpoint_interval_seconds=self.config.memory.checkpoint_interval_seconds)
         await self._memory.initialize()
 
         self._planner = Planner(model_router, self._memory)
@@ -204,6 +206,11 @@ class PilotServer:
         )
         logger.info("Auto-registered %d agents via dynamic discovery", registered)
         await self._orchestrator.start_all()
+
+        from pilot.agents.rss_agent import RssAgent
+
+        self._rss_agent = RssAgent(model_router, self._memory, self.config, self._background)
+        self._orchestrator.register_agent(self._rss_agent)
 
         # Multimodal Fusion Engine — voice + gesture intent fusion
         from pilot.multimodal.fusion import MultimodalFusionEngine
@@ -345,6 +352,7 @@ class PilotServer:
             "get_config": self._handle_get_config,
             "update_config": self._handle_update_config,
             "get_history": self._handle_get_history,
+            "memory_checkpoint": self._handle_memory_checkpoint,
             "store_api_key": self._handle_store_api_key,
             "delete_api_key": self._handle_delete_api_key,
             "list_api_keys": self._handle_list_api_keys,
@@ -1347,6 +1355,20 @@ class PilotServer:
         entries = await self._memory.get_history(limit=limit, offset=offset)
         return {"entries": entries}
 
+    async def _handle_memory_checkpoint(self, params: dict, ws: ServerConnection) -> dict:
+        """Manually trigger a SQLite WAL checkpoint for the memory store.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with checkpoint status and WAL checkpoint statistics.
+        """
+        if not self._memory:
+            return {"status": "error", "message": "Memory store is not initialized"}
+        return await self._memory.checkpoint()
+
     async def _handle_export_session_chat(self, params: dict, ws: ServerConnection) -> dict:
         """Export current UI session chat messages to JSON or CSV."""
         fmt = str(params.get("format", "json")).lower()
@@ -2262,6 +2284,9 @@ class PilotServer:
             await self._budget_tracker.close()
         if self._tribe_engine and self._tribe_engine.is_loaded:
             self._tribe_engine.unload_model()
+        from pilot.system.pty_session import PtySessionManager
+
+        PtySessionManager.close_all()
         logger.info("Pilot daemon stopped")
 
     # ── Budget Tracking Handlers ──
@@ -2771,7 +2796,15 @@ def main() -> None:
     config = PilotConfig.load()
     parser = argparse.ArgumentParser(prog="pilot.server")
     parser.add_argument("--dry-run", action="store_true", help="Simulate actions without executing them")
+    parser.add_argument(
+        "--export-logs",
+        action="store_true",
+        help="Package all logs, config.toml, and audit trails into a zip on the Desktop for bug reporting.",
+    )
     args, _ = parser.parse_known_args()
+    if args.export_logs:
+        export_logs()
+        return
     if args.dry_run:
         config.security.dry_run = True
         logger.info("Dry-run mode enabled via CLI flag")

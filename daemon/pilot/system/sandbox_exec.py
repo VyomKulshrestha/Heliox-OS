@@ -43,6 +43,8 @@ class SandboxConfig:
     memory_mb: int = 128  # memory cap (docker & restricted)
     timeout: int = 30  # max wall-clock seconds
     network: bool = False  # allow outbound network inside sandbox
+    kernel_guard: bool = True  # apply Linux seccomp-BPF syscall denylist when available
+    blocked_syscalls: tuple[str, ...] = ("unlink", "unlinkat")
 
 
 # ---------------------------------------------------------------------------
@@ -237,7 +239,7 @@ class RestrictedBackend(_SandboxBackend):
 
         try:
             cmd = self._wrap_with_ulimit([sys.executable, script_path], config)
-            return await self._run_proc(cmd, config.timeout, env)
+            return await self._run_proc(cmd, config.timeout, env, config)
         finally:
             if script_path:
                 _safe_unlink(script_path)
@@ -265,7 +267,7 @@ class RestrictedBackend(_SandboxBackend):
                 )
 
             cmd = self._wrap_with_ulimit(["bash", script_path], config)
-            return await self._run_proc(cmd, config.timeout, env)
+            return await self._run_proc(cmd, config.timeout, env, config)
         finally:
             if script_path:
                 _safe_unlink(script_path)
@@ -285,7 +287,7 @@ class RestrictedBackend(_SandboxBackend):
         try:
             shell = "pwsh" if shutil.which("pwsh") else "powershell"
             cmd = [shell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script_path]
-            return await self._run_proc(cmd, config.timeout, env)
+            return await self._run_proc(cmd, config.timeout, env, config)
         finally:
             if script_path:
                 _safe_unlink(script_path)
@@ -304,7 +306,7 @@ class RestrictedBackend(_SandboxBackend):
 
         try:
             cmd = self._wrap_with_ulimit(["node", script_path], config)
-            return await self._run_proc(cmd, config.timeout, env)
+            return await self._run_proc(cmd, config.timeout, env, config)
         finally:
             if script_path:
                 _safe_unlink(script_path)
@@ -322,7 +324,7 @@ class RestrictedBackend(_SandboxBackend):
             return "ERROR: Subprocess staging blocked by filesystem host constraints."
 
         try:
-            return await self._run_proc(["cmd", "/c", script_path], config.timeout, env)
+            return await self._run_proc(["cmd", "/c", script_path], config.timeout, env, config)
         finally:
             if script_path:
                 _safe_unlink(script_path)
@@ -343,7 +345,16 @@ class RestrictedBackend(_SandboxBackend):
         ]
 
     @staticmethod
-    async def _run_proc(cmd: list[str], timeout: int, env: dict[str, str]) -> str:
+    async def _run_proc(
+        cmd: list[str],
+        timeout: int,
+        env: dict[str, str],
+        config: SandboxConfig,
+    ) -> str:
+        from pilot.system.linux_syscall_guard import guard_command
+
+        if config.kernel_guard:
+            cmd = guard_command(cmd, blocked_syscalls=config.blocked_syscalls)
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
