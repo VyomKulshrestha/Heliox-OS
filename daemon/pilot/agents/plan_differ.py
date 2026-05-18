@@ -22,7 +22,7 @@ FULL_REPLAN_THRESHOLD = 0.5
 
 class PlanDiffer:
     """Compares a failed plan against verification results.
-    
+
     Returns a minimal retry plan with only the failed actions,
     preserving successful action outputs for context.
     """
@@ -63,14 +63,8 @@ class PlanDiffer:
             return original_plan, []
 
         # Separate successful and failed actions
-        successful_results = [
-            results[i] for i in range(len(results))
-            if i not in failed_indices
-        ]
-        failed_actions = [
-            original_plan.actions[i] for i in sorted(failed_indices)
-            if i < total
-        ]
+        successful_results = [results[i] for i in range(len(results)) if i not in failed_indices]
+        failed_actions = [original_plan.actions[i] for i in sorted(failed_indices) if i < total]
 
         if not failed_actions:
             # Nothing to retry
