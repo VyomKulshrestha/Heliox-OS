@@ -1,6 +1,7 @@
 """Swarm Manager - distributed multi-daemon execution with hardware-aware routing."""
 
 import asyncio
+import json
 import logging
 import secrets
 import socket
@@ -125,7 +126,7 @@ class SwarmManager:
             while True:
                 try:
                     data, addr = sock.recvfrom(1024)
-                    msg = eval(data.decode())
+                    msg = json.loads(data.decode())
                     if msg.get("type") == "DISCOVERY_RESPONSE":
                         node = DaemonNode(
                             node_id=msg.get("node_id", ""),

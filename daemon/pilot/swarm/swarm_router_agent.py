@@ -108,6 +108,17 @@ class SwarmRouterAgent(BaseAgent):
         if not self._executor:
             self._executor = await self._get_executor()
 
+        # Handle case where executor is still None
+        if not self._executor:
+            logger.warning("Executor not available, using local fallback execution")
+            return [
+                ActionResult(
+                    action=plan.actions[0] if plan.actions else None,
+                    success=False,
+                    error="Swarm executor not initialized - using local fallback",
+                )
+            ]
+
         # Execute the plan
         results = await self._executor.execute(plan)
 
