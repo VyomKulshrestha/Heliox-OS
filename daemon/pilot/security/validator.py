@@ -25,10 +25,10 @@ from pilot.actions import (
     PackageParams,
     RegistryParams,
     ServiceParams,
-    SshCommandParams,
-    SshScriptParams,
     ShellCommandParams,
     ShellScriptParams,
+    SshCommandParams,
+    SshScriptParams,
 )
 from pilot.security.sanitizer import SanitizationError, Sanitizer
 

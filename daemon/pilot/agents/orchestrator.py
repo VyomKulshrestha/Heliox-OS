@@ -85,8 +85,9 @@ class AgentOrchestrator:
         model_router: Any = None,
     ) -> int:
         """Auto-register all discovered agents from the registry."""
-        from pilot.agents.registry import AgentRegistry
         import inspect
+
+        from pilot.agents.registry import AgentRegistry
 
         count = 0
         for name, agent_class in AgentRegistry.get_all_agents().items():
@@ -105,7 +106,7 @@ class AgentOrchestrator:
                 if accepts_var_kw:
                     filtered = kwargs
                 else:
-                    accepted = {k for k in sig.parameters.keys() if k != "self"}
+                    accepted = {k for k in sig.parameters if k != "self"}
                     filtered = {k: v for k, v in kwargs.items() if k in accepted}
 
                 agent = agent_class(**filtered)
