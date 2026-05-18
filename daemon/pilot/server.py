@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import csv
 import json
 import logging
 import os
@@ -278,7 +279,7 @@ class PilotServer:
         enabled = params.get("enabled", True)
         if self._screen_vision:
             if enabled:
-                interval = params.get("interval_seconds", 2.0)
+                interval = params.get("interval_seconds", self.config.screen_vision.capture_interval_seconds)
                 describe = params.get("enable_describe", False)
                 await self._screen_vision.start(interval, describe)
             else:
@@ -320,7 +321,11 @@ class PilotServer:
             )
 
     async def stop(self) -> None:
+        """Stop the Pilot daemon server and clean up all resources."""
         self._running = False
+        # ── Stop LAN mesh ──
+        if self._mesh:
+            await self._mesh.stop()
         if self._orchestrator:
             await self._orchestrator.stop_all()
         if self._background:
@@ -418,9 +423,12 @@ class PilotServer:
             screen_ctx = ""
             if self._screen_vision:
                 try:
-                    screen_ctx = self._screen_vision.get_context_for_planner()
+                    base_ctx = self._screen_vision.get_context_for_planner()
+                    screen_ctx = f"{base_ctx}\nUser language: {language}"
                 except Exception:
-                    pass
+                    screen_ctx = f"User language: {language}"
+            else:
+                screen_ctx = f"User language: {language}"
 
             plan = await self._planner.plan(command_text, screen_context=screen_ctx)
             if plan.error:
@@ -430,7 +438,7 @@ class PilotServer:
                 )
                 from pilot.system.voice import speak
 
-                await speak(f"Sorry, I couldn't plan that. {plan.error[:100]}")
+                await speak(f"Sorry, I couldn't process that. {plan.error[:100]}")
                 return
 
             await self.broadcast(
@@ -440,6 +448,7 @@ class PilotServer:
                     "actions": [a.model_dump() for a in plan.actions],
                     "explanation": plan.explanation,
                     "source": "voice",
+                    "language": language,
                 },
             )
 
@@ -456,7 +465,12 @@ class PilotServer:
 
             await self.broadcast(
                 "voice_result",
-                {"command": command_text, "status": status, "result": result_text[:500]},
+                {
+                    "command": command_text,
+                    "status": status,
+                    "result": result_text[:500],
+                    "language": language,
+                },
             )
 
             from pilot.system.voice import speak
@@ -472,6 +486,13 @@ class PilotServer:
                 "voice_result",
                 {"command": command_text, "status": "error", "message": str(e)},
             )
+
+            try:
+                from pilot.system.voice import speak
+
+                await speak("Sorry, something went wrong while executing your request.")
+            except Exception:
+                pass
 
     async def _voice_status_broadcast(self, status: str, data: dict) -> None:
         await self.broadcast("voice_status", {"status": status, **data})
@@ -691,6 +712,9 @@ def main() -> None:
         help="Simulate actions without running execution blocks",
     )
     args, _ = parser.parse_known_args()
+    if args.export_logs:
+        export_logs()
+        return
     if args.dry_run:
         config.security.dry_run = True
         logger.info("Dry-run execution mode assigned over CLI flags")

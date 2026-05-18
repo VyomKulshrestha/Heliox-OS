@@ -29,7 +29,6 @@ from pilot.agents.decomposer import (
     TaskDecomposition,
 )
 
-
 # ---------------------------------------------------------------------------
 # Stub ModelRouter — pre-canned JSON responses, zero network calls
 # ---------------------------------------------------------------------------
@@ -125,14 +124,14 @@ CYCLE_RESPONSE = json.dumps(
                 "title": "Step A",
                 "description": "A",
                 "agent": "system",
-                "depends_on": ["1"],   # depends on B
+                "depends_on": ["1"],  # depends on B
                 "estimated_complexity": 0.4,
             },
             {
                 "title": "Step B",
                 "description": "B",
                 "agent": "system",
-                "depends_on": ["0"],   # depends on A → cycle
+                "depends_on": ["0"],  # depends on A → cycle
                 "estimated_complexity": 0.4,
             },
         ],
@@ -178,9 +177,7 @@ def assert_no_cycle(subtasks: list[Subtask]) -> None:
 
     for st in subtasks:
         if colour[st.order] == WHITE:
-            assert not dfs(st.order), (
-                f"Cycle detected in dependency graph (subtask order={st.order})"
-            )
+            assert not dfs(st.order), f"Cycle detected in dependency graph (subtask order={st.order})"
 
 
 # ---------------------------------------------------------------------------
@@ -522,9 +519,7 @@ class TestTaskDecompositionToDict:
 
         required = {"id", "title", "description", "agent", "depends_on", "status", "estimated_complexity", "order"}
         for sub_dict in d["subtasks"]:
-            assert required <= set(sub_dict.keys()), (
-                f"Subtask dict missing keys: {required - set(sub_dict.keys())}"
-            )
+            assert required <= set(sub_dict.keys()), f"Subtask dict missing keys: {required - set(sub_dict.keys())}"
 
 
 # ---------------------------------------------------------------------------

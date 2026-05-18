@@ -154,6 +154,11 @@ SYSTEM ADMINISTRATION / PACKAGE / SERVICE / PROCESS / POWER:
 ... (all standard commands apply)
 - You have full access to shell_command, shell_script, system_info, registry_read, dbus_call, etc.
 
+REMOTE EXECUTION (SSH):
+- ssh_command Params: {{"host": "prod-1", "command": "uname -a", "timeout_seconds": 60}}
+- ssh_script Params: {{"host": "prod-1", "script": "whoami\\nuptime\\n", "timeout_seconds": 300}}
+- IMPORTANT: "host" MUST be an alias from config.ssh.allowed_hosts (never a raw hostname/IP).
+
 ENVIRONMENT VARIABLES:
 - env_get Params: {{"name": "PATH"}}
 - env_set Params: {{"name": "MY_VAR", "value": "hello", "persistent": false}}
