@@ -28,7 +28,6 @@ from pilot.export_logs import export_logs
 logger = logging.getLogger("pilot.server")
 
 CONFIRM_TIMEOUT_SECONDS = 300
-START_TIME = time.time()
 
 
 @dataclass
@@ -92,6 +91,7 @@ class PilotServer:
             config: PilotConfig instance containing server and model settings.
         """
         self.config = config
+        self._start_time = time.time()
         self._server: Server | None = None
         self._clients: set[ServerConnection] = set()
         self._handlers: dict[str, Any] = {}
@@ -1584,7 +1584,7 @@ class PilotServer:
         import psutil
 
         # Calculate uptime
-        uptime = time.time() - START_TIME
+        uptime = time.time() - self._start_time
 
         # Get memory usage in MB
         process = psutil.Process()
@@ -1596,7 +1596,7 @@ class PilotServer:
         # Get loaded agent names
         loaded_agents: list[str] = []
         if self._orchestrator:
-            loaded_agents = [agent.role.value for agent in self._orchestrator._agents.values()]
+            loaded_agents = [role.value for role in self._orchestrator._agents]
 
         return {
             "uptime": uptime,
@@ -1625,9 +1625,8 @@ class PilotServer:
         if not self._orchestrator._agents:
             return {"ready": False}
 
-        # Check if all agents are not in STOPPED state
         for agent in self._orchestrator._agents.values():
-            if agent.status == AgentStatus.STOPPED:
+            if not agent._running or agent.status in {AgentStatus.STOPPED, AgentStatus.ERROR}:
                 return {"ready": False}
 
         return {"ready": True}
