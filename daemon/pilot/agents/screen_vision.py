@@ -23,11 +23,13 @@ from __future__ import annotations
 import asyncio
 import ctypes
 import hashlib
+import json
 import logging
 import platform
+import re
 import subprocess
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
@@ -123,6 +125,66 @@ class ScreenContext:
             if len(seen) >= 10:
                 break
         return seen
+
+
+@dataclass(frozen=True)
+class GuiBoundingBox:
+    """Pixel-space bounding box for a visual UI target."""
+
+    x: int
+    y: int
+    width: int
+    height: int
+
+    @property
+    def center_x(self) -> int:
+        return self.x + self.width // 2
+
+    @property
+    def center_y(self) -> int:
+        return self.y + self.height // 2
+
+    def clipped(self, screen_width: int | None, screen_height: int | None) -> GuiBoundingBox:
+        x = max(0, self.x)
+        y = max(0, self.y)
+        width = max(1, self.width)
+        height = max(1, self.height)
+        if screen_width is not None:
+            x = min(x, max(0, screen_width - 1))
+            width = min(width, max(1, screen_width - x))
+        if screen_height is not None:
+            y = min(y, max(0, screen_height - 1))
+            height = min(height, max(1, screen_height - y))
+        return GuiBoundingBox(x=x, y=y, width=width, height=height)
+
+
+@dataclass(frozen=True)
+class GuiActionTarget:
+    """Actionable visual target returned by the native GUI VLM layer."""
+
+    action: str
+    label: str
+    bounding_box: GuiBoundingBox
+    confidence: float
+    text: str = ""
+    rationale: str = ""
+
+    @property
+    def x(self) -> int:
+        return self.bounding_box.center_x
+
+    @property
+    def y(self) -> int:
+        return self.bounding_box.center_y
+
+    def to_dict(self) -> dict[str, Any]:
+        data = asdict(self)
+        data["x"] = self.x
+        data["y"] = self.y
+        return data
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), sort_keys=True)
 
 
 class ScreenVisionAgent:
@@ -281,6 +343,69 @@ class ScreenVisionAgent:
         # Simple text-based description from metadata
         return f"User is viewing {state.active_app}: {state.active_window_title}"
 
+    async def locate_gui_target(
+        self,
+        instruction: str,
+        *,
+        screen_width: int | None = None,
+        screen_height: int | None = None,
+    ) -> GuiActionTarget:
+        """Ask a vision model for direct click/type coordinates for a native GUI task."""
+        from pilot.system.vision import screen_analyze
+
+        prompt = self._build_vlm_target_prompt(instruction, screen_width, screen_height)
+        response = await screen_analyze(prompt)
+        return self.parse_gui_target_response(response, screen_width=screen_width, screen_height=screen_height)
+
+    @staticmethod
+    def _build_vlm_target_prompt(
+        instruction: str,
+        screen_width: int | None,
+        screen_height: int | None,
+    ) -> str:
+        bounds = "unknown screen size"
+        if screen_width is not None and screen_height is not None:
+            bounds = f"{screen_width}x{screen_height} screen"
+        return (
+            "You are a native GUI targeting model. Inspect the screenshot and return one JSON object only. "
+            "Find the single best UI target for the user's instruction and include pixel coordinates in "
+            f"the {bounds}. Use this schema: "
+            '{"action":"click|type|observe","label":"target name","bbox":{"x":0,"y":0,"width":1,"height":1},'
+            '"confidence":0.0,"text":"","rationale":"short reason"}. '
+            f"Instruction: {instruction}"
+        )
+
+    @staticmethod
+    def parse_gui_target_response(
+        response: str,
+        *,
+        screen_width: int | None = None,
+        screen_height: int | None = None,
+    ) -> GuiActionTarget:
+        """Parse and validate a JSON GUI target emitted by a VLM."""
+        payload = _extract_json_object(response)
+        bbox = payload.get("bbox") or payload.get("bounding_box") or {}
+        if not isinstance(bbox, dict):
+            raise ValueError("VLM target response must include a bbox object.")
+
+        box = GuiBoundingBox(
+            x=_coerce_int(bbox.get("x"), "bbox.x"),
+            y=_coerce_int(bbox.get("y"), "bbox.y"),
+            width=_coerce_int(bbox.get("width", bbox.get("w")), "bbox.width"),
+            height=_coerce_int(bbox.get("height", bbox.get("h")), "bbox.height"),
+        ).clipped(screen_width, screen_height)
+        confidence = float(payload.get("confidence", 0.0))
+        confidence = max(0.0, min(confidence, 1.0))
+
+        return GuiActionTarget(
+            action=str(payload.get("action") or "click").strip().lower(),
+            label=str(payload.get("label") or payload.get("target") or "visual target").strip(),
+            bounding_box=box,
+            confidence=confidence,
+            text=str(payload.get("text") or ""),
+            rationale=str(payload.get("rationale") or ""),
+        )
+
     # ── Public API ──
 
     def get_context(self) -> ScreenContext:
@@ -417,3 +542,25 @@ def _get_active_window_linux() -> tuple[str, str]:
         return (app, title)
     except Exception:
         return ("Unknown", "Unknown")
+
+
+def _extract_json_object(response: str) -> dict[str, Any]:
+    """Extract the first JSON object from a model response."""
+    cleaned = response.strip()
+    fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", cleaned, flags=re.DOTALL | re.IGNORECASE)
+    if fenced:
+        cleaned = fenced.group(1)
+    elif "{" in cleaned and "}" in cleaned:
+        cleaned = cleaned[cleaned.index("{") : cleaned.rindex("}") + 1]
+
+    data = json.loads(cleaned)
+    if not isinstance(data, dict):
+        raise ValueError("VLM target response must be a JSON object.")
+    return data
+
+
+def _coerce_int(value: Any, field_name: str) -> int:
+    try:
+        return int(round(float(value)))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"VLM target response has invalid {field_name}.") from exc
