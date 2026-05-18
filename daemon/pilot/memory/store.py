@@ -13,9 +13,12 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import aiofiles.os
+import numpy as np
+from sklearn.cluster import DBSCAN
 
 from pilot.config import DATA_DIR, DB_FILE
 from pilot.db.sqlite_pool import AsyncSqlitePool
+from pilot.models.router import ModelRouter
 
 if TYPE_CHECKING:
     from pilot.actions import ActionPlan, ActionResult
@@ -57,7 +60,10 @@ class MemoryStore:
         self._checkpoint_task: asyncio.Task[None] | None = None
         self._checkpoint_interval_seconds = checkpoint_interval_seconds
 
-    async def initialize(self) -> None:
+        self._pruning_task: asyncio.Task[None] | None = None
+        self._pruning_interval_seconds = 3600  # 1 hour
+
+    async def initialize(self, router: ModelRouter = None) -> None:
         await aiofiles.os.makedirs(DATA_DIR, exist_ok=True)
 
         self._pool = AsyncSqlitePool(DB_FILE)
@@ -72,11 +78,19 @@ class MemoryStore:
         self._init_workspace_index()
 
         if self._checkpoint_interval_seconds > 0:
-            self._checkpoint_task = asyncio.create_task(self._periodic_checkpoint_loop())
+            self._checkpoint_task = asyncio.create_task(
+                self._periodic_checkpoint_loop()
+            )
             logger.info(
                 "Memory WAL checkpoint scheduler started (interval=%ss)",
                 self._checkpoint_interval_seconds,
             )
+
+        if router and self._pruning_interval_seconds > 0:
+            self._pruning_task = asyncio.create_task(
+                self._periodic_pruning_loop(router)
+            )
+            logger.info("Semantic memory pruning scheduler started.")
 
     def _init_workspace_index(self) -> None:
         """Initialize the workspace RAG index."""
@@ -133,6 +147,116 @@ class MemoryStore:
 
             except Exception:
                 logger.exception("Periodic memory WAL checkpoint failed")
+
+    async def _periodic_pruning_loop(self, router: ModelRouter) -> None:
+        """Periodically cluster and prune semantic memory."""
+        # Set a reasonable interval, e.g., every 1 hour (3600 seconds)
+        # In a real implementation, this might come from pilot.config
+        pruning_interval = 3600
+
+        while True:
+            await asyncio.sleep(pruning_interval)
+
+            try:
+                logger.info("Starting background semantic memory pruning...")
+                await self._cluster_and_prune(router)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Background semantic memory pruning failed")
+
+    async def _cluster_and_prune(self, router: ModelRouter) -> None:
+        """Identify semantic clusters in ChromaDB, summarize, and prune SQLite/Chroma."""
+        if self._chroma_collection is None or not self._pool:
+            return
+
+        # 1. Fetch unsummarized memories from ChromaDB
+        # We assume we add a metadata flag like "is_macro: false" to raw logs
+        chroma_data = await asyncio.to_thread(
+            self._chroma_collection.get,
+            where={"is_macro": {"$ne": True}},  # Fetch granular logs only
+            include=["embeddings", "documents", "metadatas"],
+        )
+
+        if not chroma_data["documents"] or len(chroma_data["documents"]) < 10:
+            logger.debug("Not enough granular memories to justify pruning.")
+            return
+
+        embeddings = chroma_data["embeddings"]
+        documents = chroma_data["documents"]
+        ids = chroma_data["ids"]
+
+        # 2. Apply Clustering (e.g., DBSCAN via scikit-learn)
+        X = np.array(embeddings)
+        # eps defines the semantic proximity threshold
+        clustering = DBSCAN(eps=0.3, min_samples=3, metric="cosine").fit(X)
+
+        # 3. Process each cluster
+        clusters = set(clustering.labels_)
+        for cluster_id in clusters:
+            if cluster_id == -1:
+                continue  # Skip noise/unclustered items
+
+            # Gather the memories belonging to this cluster
+            cluster_indices = np.where(clustering.labels_ == cluster_id)[0]
+            cluster_docs = [documents[i] for i in cluster_indices]
+            cluster_ids = [ids[i] for i in cluster_indices]
+
+            # Extract SQLite IDs from the Chroma IDs (assuming format "history-{id}")
+            # Ensure safe parsing based on how they format IDs
+
+            # 4. Synthesize the Macro-Learning using the ModelRouter
+            # We construct a prompt asking the LLM to summarize the patterns
+            synthesis_prompt = (
+                "Identify the core user preference or workflow pattern from "
+                "these related historical actions:\n" + "\n".join(cluster_docs)
+            )
+
+            # Pass to the local LLM router
+            macro_summary = await router.generate(prompt=synthesis_prompt)
+
+            # 5. Commit Macro-Node & Prune Granular Logs
+            await self._commit_and_prune(macro_summary, cluster_ids)
+
+    async def _commit_and_prune(
+        self, macro_summary: str, old_chroma_ids: list[str]
+    ) -> None:
+        """Insert the new macro-learning and delete the granular logs."""
+        now = datetime.now(UTC).isoformat()
+        macro_id_str = f"macro-{now}"
+
+        # A. Update SQLite
+        async with self._pool.write() as db:
+            # 1. Insert the new macro summary as a high-level plan
+            await db.execute(
+                """INSERT INTO action_history
+                   (timestamp, user_input, plan_json, results_json, success, explanation)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (now, "MACRO_LEARNING", "{}", "[]", 1, macro_summary),
+            )
+
+            # 2. Prune old records (Extracting SQLite timestamps/IDs from old_chroma_ids)
+            # You will need to parse the timestamp out of the 'history-{timestamp}' string
+            for c_id in old_chroma_ids:
+                ts = c_id.replace("history-", "")
+                await db.execute(
+                    "DELETE FROM action_history WHERE timestamp = ?", (ts,)
+                )
+
+            await db.commit()
+
+        # B. Update ChromaDB
+        if self._chroma_collection is not None:
+            # Delete the granular embeddings
+            await asyncio.to_thread(self._chroma_collection.delete, ids=old_chroma_ids)
+
+            # Add the new macro embedding
+            await asyncio.to_thread(
+                self._chroma_collection.add,
+                documents=[macro_summary],
+                metadatas=[{"timestamp": now, "is_macro": True}],
+                ids=[macro_id_str],
+            )
 
     async def record(
         self,
@@ -206,7 +330,9 @@ class MemoryStore:
                         results["metadatas"][0],
                         strict=False,
                     ):
-                        parts.append(f'  - "{doc}" (result: {meta.get("explanation", "N/A")})')
+                        parts.append(
+                            f'  - "{doc}" (result: {meta.get("explanation", "N/A")})'
+                        )
 
             except Exception:
                 logger.debug("ChromaDB query failed", exc_info=True)
@@ -281,7 +407,9 @@ class MemoryStore:
             return None
 
         async with self._pool.read() as db:
-            cursor = await db.execute("SELECT value FROM user_preferences WHERE key = ?", (key,))
+            cursor = await db.execute(
+                "SELECT value FROM user_preferences WHERE key = ?", (key,)
+            )
             row = await cursor.fetchone()
             await cursor.close()
 
@@ -344,3 +472,9 @@ class MemoryStore:
             await self._pool.close()
 
             self._pool = None
+
+        if self._pruning_task:
+            self._pruning_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._pruning_task
+            self._pruning_task = None
