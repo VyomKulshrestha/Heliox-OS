@@ -82,6 +82,33 @@ We'll do our best to resolve it as quickly as possible.
 
 ---
 
+## Linux Syscall Guard
+
+Restricted sandbox mode can enable a Linux-only seccomp-BPF guard for generated
+code. The first guard blocks `unlink` and `unlinkat`, which prevents sandboxed
+code from deleting files even if it reaches the subprocess runtime. Unsupported
+platforms and Linux architectures fall back to the existing restricted sandbox
+without blocking startup.
+
+Config keys:
+
+- `security.sandbox_kernel_guard`: enable or disable the guard. Defaults to
+  `true`.
+- `security.sandbox_blocked_syscalls`: syscall denylist. Defaults to
+  `["unlink", "unlinkat"]`.
+
+Manual verification on a supported Linux host:
+
+```bash
+cd daemon
+python -m pilot.system.linux_syscall_guard --block unlink,unlinkat -- \
+  python -c 'import os, pathlib; p=pathlib.Path("/tmp/heliox-guard.txt"); p.write_text("x"); os.unlink(p)'
+```
+
+The command should fail with `PermissionError` and leave the file in place.
+
+---
+
 ## 📬 Contact
 
 - **Maintainer**: [@VyomKulshrestha](https://github.com/VyomKulshrestha)
