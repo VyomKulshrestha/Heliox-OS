@@ -160,16 +160,13 @@ class ReplayCursor:
 
     def pop(self, expected_type: str) -> ReplayEvent:
         if self._index >= len(self._events):
-            raise ReplayMismatchError(
-                f"Expected {expected_type}, but the recording is exhausted."
-            )
+            raise ReplayMismatchError(f"Expected {expected_type}, but the recording is exhausted.")
 
         event = self._events[self._index]
         self._index += 1
         if event.event_type != expected_type:
             raise ReplayMismatchError(
-                f"Expected {expected_type}, found {event.event_type} "
-                f"at sequence {event.sequence}."
+                f"Expected {expected_type}, found {event.event_type} at sequence {event.sequence}."
             )
         return event
 
@@ -241,8 +238,7 @@ class ReplayModelRouter:
         }
         if actual != expected:
             raise ReplayMismatchError(
-                f"LLM replay mismatch at sequence {event.sequence}: "
-                f"expected {expected!r}, recorded {actual!r}."
+                f"LLM replay mismatch at sequence {event.sequence}: expected {expected!r}, recorded {actual!r}."
             )
 
         response = payload["response"]
@@ -267,9 +263,7 @@ class RecordingExecutor:
         plan_id: str | None = None,
         initial_last_output: str = "",
     ) -> list[ActionResult]:
-        existing_action_events = sum(
-            1 for event in self._recorder.events if event.event_type == "action_result"
-        )
+        existing_action_events = sum(1 for event in self._recorder.events if event.event_type == "action_result")
 
         async def _recording_complete(result: ActionResult) -> None:
             self._recorder.record_action_result(result)
@@ -286,9 +280,7 @@ class RecordingExecutor:
         )
 
         # Some lightweight executor doubles do not call on_action_complete.
-        current_action_events = sum(
-            1 for event in self._recorder.events if event.event_type == "action_result"
-        )
+        current_action_events = sum(1 for event in self._recorder.events if event.event_type == "action_result")
         recorded_during_call = current_action_events - existing_action_events
         if recorded_during_call < len(results):
             for result in results[recorded_during_call:]:
