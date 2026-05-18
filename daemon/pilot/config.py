@@ -28,7 +28,12 @@ CONFIG_DIR = _xdg("XDG_CONFIG_HOME", ".config") / "pilot"
 DATA_DIR = _xdg("XDG_DATA_HOME", ".local/share") / "pilot"
 STATE_DIR = _xdg("XDG_STATE_HOME", ".local/state") / "pilot"
 RUNTIME_DIR = (
-    Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid() if hasattr(os, 'getuid') else 1000}")) / "pilot"
+    Path(
+        os.environ.get(
+            "XDG_RUNTIME_DIR",
+            str(Path.home() / ".pilot_runtime")
+        )
+    )
 )
 
 CONFIG_FILE = CONFIG_DIR / "config.toml"
@@ -393,6 +398,17 @@ def _config_to_dict(config: PilotConfig) -> dict[str, Any]:
 
 
 def ensure_dirs() -> None:
-    """Create all required XDG directories."""
+    """Create all required XDG directories and validate write access."""
     for d in (CONFIG_DIR, DATA_DIR, STATE_DIR, RUNTIME_DIR):
         d.mkdir(parents=True, exist_ok=True)
+
+    test_file = DATA_DIR / ".write_test"
+
+    try:
+        test_file.write_text("test")
+        test_file.unlink()
+    except Exception as e:
+        logger.error(f"DATA_DIR is not writable: {DATA_DIR}")
+        raise RuntimeError(
+            f"DATA_DIR is not writable: {DATA_DIR}"
+        ) from e
