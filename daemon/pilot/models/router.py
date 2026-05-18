@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from pilot.config import PilotConfig
     from pilot.models.budget_tracker import BudgetTracker
     from pilot.security.vault import KeyVault
+    from pilot.workflows.replay import ReplayRecorder, ReplaySession
 
 logger = logging.getLogger("pilot.models.router")
 
@@ -38,6 +39,8 @@ class ModelRouter:
         self._resolved_ollama_model: str | None = None
         self._cache = LLMCache(DATA_DIR / "llm_cache.db")
         self._budget_tracker: BudgetTracker | None = None
+        self._replay_recorder: ReplayRecorder | None = None
+        self._replay_session: ReplaySession | None = None
 
         if config.model.cloud_provider:
             self._cloud = CloudClient(config, vault)
@@ -50,6 +53,14 @@ class ModelRouter:
 
     def set_budget_tracker(self, tracker: BudgetTracker) -> None:
         self._budget_tracker = tracker
+
+    def set_replay_recorder(self, recorder: ReplayRecorder | None) -> None:
+        """Capture successful model generations for deterministic replays."""
+        self._replay_recorder = recorder
+
+    def set_replay_session(self, session: ReplaySession | None) -> None:
+        """Replay model generations from a captured fixture instead of calling backends."""
+        self._replay_session = session
 
     async def generate(
         self,
@@ -72,12 +83,42 @@ class ModelRouter:
         4. Call backend (cloud or local)
         5. Store successful response in cache (skip if streaming)
         """
+        if self._replay_session is not None:
+            result = self._replay_session.next_llm_completion(
+                prompt=prompt,
+                system=system,
+                json_mode=json_mode,
+                temperature=temperature,
+            )
+            if stream_callback is not None:
+                maybe_awaitable = stream_callback(result)
+                if asyncio.iscoroutine(maybe_awaitable):
+                    await maybe_awaitable
+            return result
+
         if self._budget_tracker:
             self._budget_tracker.check_budget(self._config.model.provider)
 
         result = await self._generate_with_cache(
             prompt, system=system, json_mode=json_mode, temperature=temperature, stream_callback=stream_callback
         )
+
+        if self._replay_recorder is not None:
+            provider_key = (
+                self._config.model.cloud_provider
+                if self._config.model.provider == "cloud"
+                else self._config.model.provider
+            )
+            model_name = self._config.model.cloud_model or self._config.model.ollama_model
+            self._replay_recorder.record_llm_completion(
+                prompt=prompt,
+                output=result,
+                system=system,
+                json_mode=json_mode,
+                temperature=temperature,
+                provider=provider_key,
+                model=model_name,
+            )
 
         if self._budget_tracker:
             in_tokens = len(prompt) // 4
