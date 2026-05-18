@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import csv
 import json
 import logging
 import secrets
@@ -12,6 +13,7 @@ import signal
 import sys
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +21,8 @@ import aiosqlite
 import websockets
 from websockets.asyncio.server import Server, ServerConnection
 
-from pilot.config import DB_FILE, LOG_FILE, STATE_DIR, PilotConfig, ensure_dirs
+from pilot.config import DATA_DIR, DB_FILE, LOG_FILE, STATE_DIR, PilotConfig, ensure_dirs
+from pilot.export_logs import export_logs
 
 logger = logging.getLogger("pilot.server")
 
@@ -108,6 +111,8 @@ class PilotServer:
         self._screen_vision: Any = None
         self._memory: Any = None
         self._vault: Any = None
+        self._permission_audit: Any = None
+        self._checkpoint_store: Any = None
         # Cognitive intelligence (TRIBE v2)
         self._tribe_engine: Any = None
         self._attention_ui: Any = None
@@ -121,6 +126,9 @@ class PilotServer:
         self._pending_confirms: dict[str, PendingConfirmation] = {}
         # ── Cancel Token (Issue #92) ──
         self._cancel_event: asyncio.Event | None = None
+        self._rss_agent: Any = None
+        # ── LAN Mesh Network ──
+        self._mesh: Any = None
 
     async def initialize(self) -> None:
         """Initialize all agent components.
@@ -144,9 +152,11 @@ class PilotServer:
         from pilot.memory.store import MemoryStore
         from pilot.models.router import ModelRouter
         from pilot.security.audit import AuditLogger
+        from pilot.security.permission_audit import PermissionEscalationAuditStore
         from pilot.security.permissions import PermissionChecker
         from pilot.security.validator import ActionValidator
         from pilot.security.vault import KeyVault
+        from pilot.workflows.checkpoints import WorkflowCheckpointStore
 
         self._vault = KeyVault(self.config)
         model_router = ModelRouter(self.config, self._vault)
@@ -159,9 +169,13 @@ class PilotServer:
         model_router.set_budget_tracker(self._budget_tracker)
 
         audit = AuditLogger()
+        self._permission_audit = PermissionEscalationAuditStore()
+        await self._permission_audit.initialize()
+        self._checkpoint_store = WorkflowCheckpointStore()
+        await self._checkpoint_store.initialize()
         validator = ActionValidator(self.config)
         permissions = PermissionChecker(self.config)
-        self._memory = MemoryStore()
+        self._memory = MemoryStore(checkpoint_interval_seconds=self.config.memory.checkpoint_interval_seconds)
         await self._memory.initialize()
 
         self._planner = Planner(model_router, self._memory)
@@ -184,12 +198,21 @@ class PilotServer:
         # Multi-Agent Orchestrator — register all specialist agents
         self._orchestrator = AgentOrchestrator(model_router)
         self._orchestrator.set_broadcast(self._broadcast_notification)
-        self._orchestrator.register_agent(SystemAgent(model_router, self._executor))
-        self._orchestrator.register_agent(CodeAgent(model_router, self._executor))
-        self._orchestrator.register_agent(WebAgent(model_router, self._executor))
-        self._orchestrator.register_agent(MonitorAgent(model_router, self._background))
-        self._orchestrator.register_agent(CommunicationAgent(model_router, self._executor))
+        from pilot.agents.registry import AgentRegistry
+
+        AgentRegistry.discover_agents()
+        registered = self._orchestrator.auto_register_all_agents(
+            executor=self._executor,
+            background_manager=self._background,
+            model_router=model_router,
+        )
+        logger.info("Auto-registered %d agents via dynamic discovery", registered)
         await self._orchestrator.start_all()
+
+        from pilot.agents.rss_agent import RssAgent
+
+        self._rss_agent = RssAgent(model_router, self._memory, self.config, self._background)
+        self._orchestrator.register_agent(self._rss_agent)
 
         # Multimodal Fusion Engine — voice + gesture intent fusion
         from pilot.multimodal.fusion import MultimodalFusionEngine
@@ -323,12 +346,15 @@ class PilotServer:
 
         self._handlers = {
             "execute": self._handle_execute,
+            "resume_plan": self._handle_resume_plan,
+            "export_session_chat": self._handle_export_session_chat,
             "confirm": self._handle_confirm,
             # ── Cancel Token (Issue #92) ──
             "abort": self._handle_abort,
             "get_config": self._handle_get_config,
             "update_config": self._handle_update_config,
             "get_history": self._handle_get_history,
+            "memory_checkpoint": self._handle_memory_checkpoint,
             "store_api_key": self._handle_store_api_key,
             "delete_api_key": self._handle_delete_api_key,
             "list_api_keys": self._handle_list_api_keys,
@@ -388,7 +414,25 @@ class PilotServer:
             "proactive_dismiss": self._handle_proactive_dismiss,
             "budget_stats": self._handle_budget_stats,
             "budget_reset": self._handle_budget_reset,
+            # ── LAN Mesh Network ──
+            "mesh_peers": self._handle_mesh_peers,
+            "mesh_status": self._handle_mesh_status,
         }
+
+        # ── LAN Mesh Network (opt-in via config) ──
+        if self.config.network.enabled:
+            try:
+                from pilot.network.mesh import HelioxMesh
+                from pilot.system.plugins import get_manager as get_plugin_manager
+
+                self._mesh = HelioxMesh(
+                    config=self.config.network,
+                    executor=self._executor,
+                    plugin_manager=get_plugin_manager(),
+                )
+                logger.info("HelioxMesh initialised (will start with server)")
+            except Exception:
+                logger.warning("HelioxMesh init failed (non-critical)", exc_info=True)
 
     async def _broadcast_notification(self, method: str, params: Any) -> None:
         """Broadcast a notification to all connected clients.
@@ -667,6 +711,8 @@ class PilotServer:
             last_explanation = plan.explanation
             plan_id = str(uuid.uuid4())[:8]
             last_plan_id = plan_id
+            if self._checkpoint_store:
+                await self._checkpoint_store.start_plan(plan_id, user_input, plan)
 
             if emit:
                 await emit.phase_complete(
@@ -695,6 +741,7 @@ class PilotServer:
 
             from pilot.actions import PermissionTier
 
+            critic_verdict_payload: dict[str, Any] | None = None
             plan_has_tier4 = any(a.permission_tier == PermissionTier.ROOT_CRITICAL for a in plan.actions)
             if plan_has_tier4 and self._destructive_critic and not dry_run:
                 critic_phase = ""
@@ -712,9 +759,18 @@ class PilotServer:
                     )
 
                 verdict = await self._destructive_critic.review(user_input, plan)
+                critic_verdict_payload = verdict.to_dict()
                 await ws.send(_notification("critic_verdict", verdict.to_dict()))
 
                 if verdict.is_blocked:
+                    await self._record_permission_escalations(
+                        plan_id=plan_id,
+                        plan=plan,
+                        confirmation_decision="blocked_by_critic",
+                        critic_verdict=critic_verdict_payload,
+                        results=[],
+                        execution_error=verdict.recommendation,
+                    )
                     if emit:
                         await emit.phase_error(
                             "critic_review",
@@ -762,6 +818,14 @@ class PilotServer:
                         )
 
                 if not confirmed:
+                    await self._record_permission_escalations(
+                        plan_id=plan_id,
+                        plan=plan,
+                        confirmation_decision="denied",
+                        critic_verdict=critic_verdict_payload,
+                        results=[],
+                        execution_error="Plan was denied by user.",
+                    )
                     await _emit_task_complete("cancelled", "Plan was denied by user.")
                     return {
                         "status": "cancelled",
@@ -803,11 +867,13 @@ class PilotServer:
                         "execution", action_idx, _total, label=action.action_type.value, parent_id=_exec_phase
                     )
 
-            async def _on_action_complete(result: Any, _exec_phase: str = exec_phase) -> None:
+            async def _on_action_complete(result: Any, _exec_phase: str = exec_phase, _plan_id: str = plan_id) -> None:
                 result_payload = result.model_dump()
                 if dry_run:
                     result_payload["dry_run"] = True
                 await ws.send(_notification("action_complete", {"result": result_payload}))
+                if self._checkpoint_store and result.success:
+                    await self._checkpoint_store.record_result(_plan_id, result)
                 if emit:
                     event_name = EXECUTOR_ACTION_COMPLETE if result.success else EXECUTOR_ERROR
                     await emit.data_event(
@@ -832,6 +898,7 @@ class PilotServer:
                     on_action_start=_on_action_start,
                     on_action_complete=_on_action_complete,
                     cancel_event=cancel_event,  # ── Cancel Token (Issue #92) ──
+                    plan_id=plan_id,
                 )
             else:
                 results = await self._executor.execute(
@@ -839,13 +906,24 @@ class PilotServer:
                     on_action_start=_on_action_start,
                     on_action_complete=_on_action_complete,
                     cancel_event=cancel_event,  # ── Cancel Token (Issue #92) ──
+                    plan_id=plan_id,
                 )
             all_results = results
+            if needs_confirm and not dry_run:
+                await self._record_permission_escalations(
+                    plan_id=plan_id,
+                    plan=plan,
+                    confirmation_decision="approved",
+                    critic_verdict=critic_verdict_payload,
+                    results=results,
+                )
 
             # ── Cancel Token: if aborted mid-execution, return immediately ──
             if cancel_event.is_set():
                 logger.info("Execution was cancelled mid-plan after %d result(s)", len(results))
                 await ws.send(_notification("status", {"phase": "aborted"}))
+                if self._checkpoint_store:
+                    await self._checkpoint_store.mark_status(plan_id, "cancelled")
                 return {
                     "status": "cancelled",
                     "message": "Execution was aborted by user.",
@@ -909,6 +987,8 @@ class PilotServer:
                     )
 
                 asyncio.create_task(self._memory.record(user_input, plan, results))
+                if self._checkpoint_store:
+                    await self._checkpoint_store.mark_status(plan_id, "complete")
                 asyncio.create_task(
                     self._reflector.reflect(
                         user_input,
@@ -969,6 +1049,8 @@ class PilotServer:
             await emit.phase_complete("memory_update", MEMORY_STORE_COMPLETE, {"partial": True}, parent_id=mem_final)
 
         asyncio.create_task(self._memory.record(user_input, plan, all_results))
+        if self._checkpoint_store and last_plan_id:
+            await self._checkpoint_store.mark_status(last_plan_id, "failed")
         await _emit_task_complete("partial_failure", last_explanation or "Task completed with errors.")
         return {
             "status": "partial_failure",
@@ -983,6 +1065,165 @@ class PilotServer:
                 else last_explanation
             ),
         }
+
+    async def _handle_resume_plan(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """Resume a previously checkpointed plan from its last completed action."""
+        plan_id = str(params.get("plan_id", "")).strip()
+        if not plan_id:
+            return {"status": "error", "message": "resume_plan requires plan_id"}
+        if not self._checkpoint_store:
+            return {"status": "error", "message": "Workflow checkpoint store is not initialized"}
+
+        checkpoint = await self._checkpoint_store.get(plan_id)
+        if checkpoint is None:
+            return {"status": "error", "message": f"No checkpoint found for plan_id: {plan_id}"}
+
+        completed_count = max(0, min(checkpoint.completed_count, len(checkpoint.plan.actions)))
+        remaining_actions = checkpoint.plan.actions[completed_count:]
+        await ws.send(
+            _notification(
+                "status",
+                {
+                    "phase": "resuming",
+                    "plan_id": plan_id,
+                    "completed_actions": completed_count,
+                    "remaining_actions": len(remaining_actions),
+                },
+            )
+        )
+
+        if not remaining_actions:
+            await self._checkpoint_store.mark_status(plan_id, "complete")
+            return {
+                "status": "success",
+                "plan_id": plan_id,
+                "resumed": False,
+                "message": "Plan already completed.",
+                "results": [result.model_dump() for result in checkpoint.results],
+            }
+
+        self._cancel_event = asyncio.Event()
+        cancel_event = self._cancel_event
+
+        from pilot.actions import ActionPlan
+
+        remaining_plan = ActionPlan(
+            actions=remaining_actions,
+            explanation=checkpoint.plan.explanation,
+            raw_input=checkpoint.plan.raw_input,
+        )
+
+        async def _on_action_start(action: Any) -> None:
+            await ws.send(_notification("action_start", {"action": action.model_dump(), "resumed": True}))
+
+        async def _on_action_complete(result: Any) -> None:
+            await ws.send(_notification("action_complete", {"result": result.model_dump(), "resumed": True}))
+            if result.success:
+                await self._checkpoint_store.record_result(plan_id, result)
+
+        await self._checkpoint_store.mark_status(plan_id, "resuming")
+        results = await self._executor.execute(
+            remaining_plan,
+            on_action_start=_on_action_start,
+            on_action_complete=_on_action_complete,
+            cancel_event=cancel_event,
+            plan_id=plan_id,
+            initial_last_output=checkpoint.last_output,
+        )
+
+        updated = await self._checkpoint_store.get(plan_id)
+        combined_results = [
+            *(updated.results if updated else checkpoint.results),
+            *[r for r in results if not r.success],
+        ]
+
+        if cancel_event.is_set():
+            await self._checkpoint_store.mark_status(plan_id, "cancelled")
+            return {
+                "status": "cancelled",
+                "plan_id": plan_id,
+                "resumed": True,
+                "completed_actions": updated.completed_count if updated else completed_count,
+                "results": [result.model_dump() for result in combined_results],
+            }
+
+        failed = any(not result.success for result in results)
+        final_status = "failed" if failed else "complete"
+        await self._checkpoint_store.mark_status(plan_id, final_status)
+
+        verification_payload: dict[str, Any] = {}
+        if not failed and len(combined_results) >= len(checkpoint.plan.actions):
+            verification = await self._verifier.verify(checkpoint.plan, combined_results)
+            verification_payload = verification.model_dump()
+            if not verification.passed:
+                final_status = "partial_failure"
+                await self._checkpoint_store.mark_status(plan_id, "failed")
+
+        return {
+            "status": "partial_failure" if final_status in {"failed", "partial_failure"} else "success",
+            "plan_id": plan_id,
+            "resumed": True,
+            "skipped_actions": completed_count,
+            "executed_actions": len(results),
+            "results": [result.model_dump() for result in combined_results],
+            "verification": verification_payload,
+            "explanation": checkpoint.plan.explanation,
+        }
+
+    async def _record_permission_escalations(
+        self,
+        *,
+        plan_id: str,
+        plan: Any,
+        confirmation_decision: str,
+        critic_verdict: dict[str, Any] | None,
+        results: list[Any],
+        execution_error: str = "",
+    ) -> None:
+        """Persist tamper-evident records for elevated permission decisions."""
+        if not self._permission_audit:
+            return
+
+        from pilot.actions import PermissionTier
+
+        result_by_action: dict[str, list[Any]] = {}
+        for result in results:
+            action_key = self._action_signature(result.action)
+            result_by_action.setdefault(action_key, []).append(result)
+
+        for index, action in enumerate(plan.actions):
+            if action.permission_tier < PermissionTier.SYSTEM_MODIFY:
+                continue
+
+            matched_result = None
+            matches = result_by_action.get(self._action_signature(action))
+            if matches:
+                matched_result = matches.pop(0)
+
+            if matched_result is None:
+                execution_success = None
+                action_error = execution_error
+            else:
+                execution_success = bool(matched_result.success)
+                action_error = matched_result.error or ""
+
+            await self._permission_audit.record_event(
+                plan_id=plan_id,
+                action_index=index,
+                action_type=action.action_type.value,
+                target=action.target,
+                permission_tier=action.permission_tier.name,
+                requires_root=action.requires_root,
+                destructive=action.destructive,
+                confirmation_decision=confirmation_decision,
+                critic_verdict=critic_verdict,
+                execution_success=execution_success,
+                execution_error=action_error,
+            )
+
+    @staticmethod
+    def _action_signature(action: Any) -> str:
+        return json.dumps(action.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
 
     async def _wait_for_confirmation(self, plan_id: str, plan: Any, ws: ServerConnection) -> bool:
         """Send a confirmation request and block until the user responds or timeout.
@@ -1133,6 +1374,144 @@ class PilotServer:
         offset = params.get("offset", 0)
         entries = await self._memory.get_history(limit=limit, offset=offset)
         return {"entries": entries}
+
+    async def _handle_memory_checkpoint(self, params: dict, ws: ServerConnection) -> dict:
+        """Manually trigger a SQLite WAL checkpoint for the memory store.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with checkpoint status and WAL checkpoint statistics.
+        """
+        if not self._memory:
+            return {"status": "error", "message": "Memory store is not initialized"}
+        return await self._memory.checkpoint()
+
+    async def _handle_export_session_chat(self, params: dict, ws: ServerConnection) -> dict:
+        """Export current UI session chat messages to JSON or CSV."""
+        fmt = str(params.get("format", "json")).lower()
+        messages = params.get("messages", [])
+
+        if fmt not in {"json", "csv"}:
+            return {"status": "error", "message": "format must be 'json' or 'csv'"}
+        if not isinstance(messages, list):
+            return {"status": "error", "message": "messages must be a list"}
+
+        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+        filename = f"heliox-chat-{ts}.{fmt}"
+
+        downloads_dir = Path.home() / "Downloads"
+        export_dir = downloads_dir if downloads_dir.exists() else (DATA_DIR / "exports")
+        export_dir.mkdir(parents=True, exist_ok=True)
+        out_path = export_dir / filename
+
+        try:
+            if fmt == "json":
+                out_path.write_text(json.dumps(messages, ensure_ascii=False, indent=2), encoding="utf-8")
+            else:
+                with out_path.open("w", newline="", encoding="utf-8") as f:
+                    writer = csv.writer(f)
+                    writer.writerow(
+                        [
+                            "timestamp_iso",
+                            "timestamp_ms",
+                            "msg_type",
+                            "text",
+                            "plan_id",
+                            "plan_explanation",
+                            "plan_action_count",
+                            "plan_actions",
+                            "result_count",
+                            "result_success_count",
+                            "result_error_count",
+                            "result_outputs",
+                            "verification_passed",
+                            "verification_details",
+                        ]
+                    )
+
+                    for m in messages:
+                        if not isinstance(m, dict):
+                            continue
+
+                        raw_ts = m.get("timestamp")
+                        iso_ts = ""
+                        if isinstance(raw_ts, (int, float)):
+                            iso_ts = datetime.fromtimestamp(raw_ts / 1000).isoformat()
+
+                        msg_type = str(m.get("type", ""))
+                        text = str(m.get("text", ""))
+
+                        plan = m.get("plan", {})
+                        if not isinstance(plan, dict):
+                            plan = {}
+                        plan_id = str(plan.get("plan_id", ""))
+                        plan_explanation = str(plan.get("explanation", ""))
+                        plan_actions = plan.get("actions", [])
+                        if not isinstance(plan_actions, list):
+                            plan_actions = []
+                        plan_action_count = len(plan_actions)
+                        plan_actions_str = " | ".join(
+                            f"{idx + 1}. {str(a.get('action_type', ''))} -> {str(a.get('target', ''))}"
+                            for idx, a in enumerate(plan_actions)
+                            if isinstance(a, dict)
+                        )
+
+                        action_results = m.get("actionResults", [])
+                        if not isinstance(action_results, list):
+                            action_results = []
+                        result_count = len(action_results)
+                        result_success_count = sum(
+                            1 for r in action_results if isinstance(r, dict) and bool(r.get("success", False))
+                        )
+                        result_error_count = result_count - result_success_count
+                        result_outputs = " | ".join(
+                            str(r.get("output") or r.get("error") or "").strip()
+                            for r in action_results
+                            if isinstance(r, dict) and (r.get("output") or r.get("error"))
+                        )
+
+                        verification = m.get("verification", {})
+                        if not isinstance(verification, dict):
+                            verification = {}
+                        verification_passed = (
+                            verification.get("passed") if isinstance(verification.get("passed"), bool) else ""
+                        )
+                        verification_details_raw = verification.get("details", [])
+                        if not isinstance(verification_details_raw, list):
+                            verification_details_raw = []
+                        verification_details = " | ".join(str(d) for d in verification_details_raw)
+
+                        writer.writerow(
+                            [
+                                iso_ts,
+                                raw_ts if isinstance(raw_ts, (int, float)) else "",
+                                msg_type,
+                                text,
+                                plan_id,
+                                plan_explanation,
+                                plan_action_count,
+                                plan_actions_str,
+                                result_count,
+                                result_success_count,
+                                result_error_count,
+                                result_outputs,
+                                verification_passed,
+                                verification_details,
+                            ]
+                        )
+        except Exception as e:
+            logger.exception("Failed to export session chat")
+            return {"status": "error", "message": f"Export failed: {e}"}
+
+        return {
+            "status": "ok",
+            "path": str(out_path),
+            "count": len(messages),
+            "format": fmt,
+        }
 
     # -- API key management --
 
@@ -1894,6 +2273,10 @@ class PilotServer:
         )
         logger.info("Pilot daemon ready")
 
+        # ── Start LAN mesh if enabled ──
+        if self._mesh:
+            asyncio.create_task(self._mesh.start())
+
         if hasattr(self, "_new_features_announcement") and self._new_features_announcement:
             await asyncio.sleep(1)
             await self._broadcast_notification(
@@ -1907,6 +2290,9 @@ class PilotServer:
     async def stop(self) -> None:
         """Stop the Pilot daemon server and clean up all resources."""
         self._running = False
+        # ── Stop LAN mesh ──
+        if self._mesh:
+            await self._mesh.stop()
         if self._orchestrator:
             await self._orchestrator.stop_all()
         if self._background:
@@ -1925,6 +2311,9 @@ class PilotServer:
             await self._budget_tracker.close()
         if self._tribe_engine and self._tribe_engine.is_loaded:
             self._tribe_engine.unload_model()
+        from pilot.system.pty_session import PtySessionManager
+
+        PtySessionManager.close_all()
         logger.info("Pilot daemon stopped")
 
     # ── Budget Tracking Handlers ──
@@ -1957,6 +2346,60 @@ class PilotServer:
             return {"status": "ok"}
         await self._budget_tracker.reset_current_month()
         return {"status": "ok"}
+
+    # ── LAN Mesh Network Handlers ──
+
+    async def _handle_mesh_peers(self, params: dict, ws: ServerConnection) -> dict:
+        """Return a list of currently connected LAN peers.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with ``enabled`` flag and ``peers`` list.
+        """
+        if not self._mesh:
+            return {"enabled": False, "peers": []}
+
+        peers = []
+        for pid in self._mesh.peer_ids:
+            conn = self._mesh.get_connection(pid)
+            caps = conn.peer_capabilities if conn else None
+            peers.append(
+                {
+                    "peer_id": pid,
+                    "hostname": caps.hostname if caps else "",
+                    "can_execute": caps.can_execute if caps else False,
+                    "cpu_load": caps.cpu_load if caps else 0.0,
+                    "plugin_count": len(caps.plugin_names) if caps else 0,
+                }
+            )
+        return {"enabled": True, "peers": peers}
+
+    async def _handle_mesh_status(self, params: dict, ws: ServerConnection) -> dict:
+        """Return overall mesh status and configuration.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with mesh status, instance ID, and config summary.
+        """
+        if not self._mesh:
+            return {
+                "enabled": False,
+                "reason": "Set [network] enabled = true in config.toml to activate",
+            }
+        return {
+            "enabled": True,
+            "instance_id": self._mesh.instance_id,
+            "peer_count": len(self._mesh.peer_ids),
+            "skill_sync_enabled": self.config.network.skill_sync_enabled,
+            "collab_exec_enabled": self.config.network.collab_exec_enabled,
+            "port": self.config.network.port,
+        }
 
     # ── Cognitive Intelligence (TRIBE v2) Handlers ──
 
@@ -2434,7 +2877,15 @@ def main() -> None:
     config = PilotConfig.load()
     parser = argparse.ArgumentParser(prog="pilot.server")
     parser.add_argument("--dry-run", action="store_true", help="Simulate actions without executing them")
+    parser.add_argument(
+        "--export-logs",
+        action="store_true",
+        help="Package all logs, config.toml, and audit trails into a zip on the Desktop for bug reporting.",
+    )
     args, _ = parser.parse_known_args()
+    if args.export_logs:
+        export_logs()
+        return
     if args.dry_run:
         config.security.dry_run = True
         logger.info("Dry-run mode enabled via CLI flag")

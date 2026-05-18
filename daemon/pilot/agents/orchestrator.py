@@ -78,6 +78,45 @@ class AgentOrchestrator:
         """Get a registered agent by role."""
         return self._agents.get(role)
 
+    def auto_register_all_agents(
+        self,
+        executor: Any = None,
+        background_manager: Any = None,
+        model_router: Any = None,
+    ) -> int:
+        """Auto-register all discovered agents from the registry."""
+        import inspect
+
+        from pilot.agents.registry import AgentRegistry
+
+        count = 0
+        for name, agent_class in AgentRegistry.get_all_agents().items():
+            try:
+                kwargs = {}
+                if executor:
+                    kwargs["executor"] = executor
+                if background_manager:
+                    kwargs["background_manager"] = background_manager
+                if model_router:
+                    kwargs["model_router"] = model_router
+
+                # Only pass supported kwargs to avoid breaking agents with narrower constructors.
+                sig = inspect.signature(agent_class.__init__)
+                accepts_var_kw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+                if accepts_var_kw:
+                    filtered = kwargs
+                else:
+                    accepted = {k for k in sig.parameters if k != "self"}
+                    filtered = {k: v for k, v in kwargs.items() if k in accepted}
+
+                agent = agent_class(**filtered)
+                self.register_agent(agent)
+                count += 1
+            except Exception as e:
+                logger.warning("Failed to auto-register agent %s: %s", name, e)
+
+        return count
+
     def set_broadcast(self, fn: Callable[..., Coroutine]) -> None:
         """Set the WebSocket broadcast function for UI notifications."""
         self._broadcast_fn = fn
@@ -270,6 +309,10 @@ class AgentOrchestrator:
                 from pilot.agents.system_agent import SystemAgent
 
                 agent = SystemAgent(self._model, kwargs.get("executor"))
+            elif role == AgentRole.SSH:
+                from pilot.agents.ssh_agent import SshAgent
+
+                agent = SshAgent(self._model)
             elif role == AgentRole.CODE:
                 from pilot.agents.code_agent import CodeAgent
 
@@ -345,6 +388,15 @@ class AgentOrchestrator:
                 "wifi",
                 "screenshot",
                 "registry",
+            ],
+            AgentRole.SSH: [
+                "ssh",
+                "remote",
+                "server",
+                "hostname",
+                "host",
+                "bastion",
+                "jump host",
             ],
             AgentRole.CODE: [
                 "code",

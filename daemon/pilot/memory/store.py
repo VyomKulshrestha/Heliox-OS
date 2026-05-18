@@ -6,15 +6,16 @@ Memory updates are asynchronous and never block the main execution pipeline.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import aiofiles.os
-import aiosqlite
 
 from pilot.config import DATA_DIR, DB_FILE
+from pilot.db.sqlite_pool import AsyncSqlitePool
 
 if TYPE_CHECKING:
     from pilot.actions import ActionPlan, ActionResult
@@ -48,18 +49,34 @@ CREATE INDEX IF NOT EXISTS idx_prefs_key ON user_preferences(key);
 class MemoryStore:
     """Persistent memory with action history and semantic preference learning."""
 
-    def __init__(self) -> None:
-        self._db: aiosqlite.Connection | None = None
+    def __init__(self, checkpoint_interval_seconds: int = 300) -> None:
+        self._pool: AsyncSqlitePool | None = None
         self._chroma_collection: Any = None
         self._workspace_index = None
 
+        self._checkpoint_task: asyncio.Task[None] | None = None
+        self._checkpoint_interval_seconds = checkpoint_interval_seconds
+
     async def initialize(self) -> None:
         await aiofiles.os.makedirs(DATA_DIR, exist_ok=True)
-        self._db = await aiosqlite.connect(str(DB_FILE))
-        await self._db.executescript(SCHEMA_SQL)
-        await self._db.commit()
+
+        self._pool = AsyncSqlitePool(DB_FILE)
+        await self._pool.start()
+
+        async with self._pool.write() as db:
+            await db.executescript(SCHEMA_SQL)
+            await db.commit()
+
         await asyncio.to_thread(self._init_chroma)
+
         self._init_workspace_index()
+
+        if self._checkpoint_interval_seconds > 0:
+            self._checkpoint_task = asyncio.create_task(self._periodic_checkpoint_loop())
+            logger.info(
+                "Memory WAL checkpoint scheduler started (interval=%ss)",
+                self._checkpoint_interval_seconds,
+            )
 
     def _init_workspace_index(self) -> None:
         """Initialize the workspace RAG index."""
@@ -67,6 +84,7 @@ class MemoryStore:
 
         workspace_dir = DATA_DIR / "workspace_index"
         self._workspace_index = WorkspaceIndex(workspace_dir)
+
         logger.info("WorkspaceIndex initialized at %s", workspace_dir)
 
     def _init_chroma(self) -> None:
@@ -76,16 +94,45 @@ class MemoryStore:
 
             chroma_dir = DATA_DIR / "chroma"
             chroma_dir.mkdir(parents=True, exist_ok=True)
+
             client = chromadb.PersistentClient(path=str(chroma_dir))
+
             self._chroma_collection = client.get_or_create_collection(
                 name="pilot_memory",
                 metadata={"hnsw:space": "cosine"},
             )
+
             logger.info("ChromaDB initialized at %s", chroma_dir)
+
         except ImportError:
             logger.warning("ChromaDB not available — semantic memory disabled")
+
         except Exception:
             logger.exception("ChromaDB initialization failed")
+
+    async def checkpoint(self) -> dict[str, Any]:
+        """Trigger a manual SQLite WAL checkpoint."""
+        if not self._pool:
+            return {"status": "error", "message": "Memory store is not initialized"}
+
+        result = await self._pool.checkpoint()
+
+        logger.info("Memory WAL checkpoint completed: %s", result)
+        return {"status": "ok", **result}
+
+    async def _periodic_checkpoint_loop(self) -> None:
+        """Periodically checkpoint SQLite WAL data."""
+        while True:
+            await asyncio.sleep(self._checkpoint_interval_seconds)
+
+            try:
+                await self.checkpoint()
+
+            except asyncio.CancelledError:
+                raise
+
+            except Exception:
+                logger.exception("Periodic memory WAL checkpoint failed")
 
     async def record(
         self,
@@ -94,21 +141,32 @@ class MemoryStore:
         results: list[ActionResult],
     ) -> None:
         """Record an executed plan and its results."""
-        if not self._db:
+        if not self._pool:
             return
 
         now = datetime.now(UTC).isoformat()
         plan_json = plan.model_dump_json()
+
         results_json = json.dumps([r.model_dump() for r in results])
+
         success = all(r.success for r in results)
 
-        await self._db.execute(
-            """INSERT INTO action_history
-               (timestamp, user_input, plan_json, results_json, success, explanation)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (now, user_input, plan_json, results_json, int(success), plan.explanation),
-        )
-        await self._db.commit()
+        async with self._pool.write() as db:
+            await db.execute(
+                """INSERT INTO action_history
+                   (timestamp, user_input, plan_json, results_json, success, explanation)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (
+                    now,
+                    user_input,
+                    plan_json,
+                    results_json,
+                    int(success),
+                    plan.explanation,
+                ),
+            )
+
+            await db.commit()
 
         if self._chroma_collection is not None:
             try:
@@ -124,6 +182,7 @@ class MemoryStore:
                     ],
                     ids=[f"history-{now}"],
                 )
+
             except Exception:
                 logger.debug("ChromaDB write failed", exc_info=True)
 
@@ -138,32 +197,54 @@ class MemoryStore:
                     query_texts=[query],
                     n_results=n_results,
                 )
+
                 if results["documents"] and results["documents"][0]:
                     parts.append("Related past requests:")
-                    for doc, meta in zip(results["documents"][0], results["metadatas"][0], strict=False):
+
+                    for doc, meta in zip(
+                        results["documents"][0],
+                        results["metadatas"][0],
+                        strict=False,
+                    ):
                         parts.append(f'  - "{doc}" (result: {meta.get("explanation", "N/A")})')
+
             except Exception:
                 logger.debug("ChromaDB query failed", exc_info=True)
 
-        if self._db:
+        if self._pool:
             prefs = await self._get_preferences()
+
             if prefs:
                 parts.append("User preferences:")
+
                 for k, v in prefs.items():
                     parts.append(f"  - {k}: {v}")
 
         return "\n".join(parts) if parts else ""
 
-    async def get_history(self, *, limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
-        if not self._db:
+    async def get_history(
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        if not self._pool:
             return []
 
-        cursor = await self._db.execute(
-            """SELECT id, timestamp, user_input, success, explanation
-               FROM action_history ORDER BY id DESC LIMIT ? OFFSET ?""",
-            (limit, offset),
-        )
-        rows = await cursor.fetchall()
+        async with self._pool.read() as db:
+            cursor = await db.execute(
+                """SELECT id, timestamp, user_input, success, explanation
+                   FROM action_history
+                   ORDER BY id DESC
+                   LIMIT ?
+                   OFFSET ?""",
+                (limit, offset),
+            )
+
+            rows = await cursor.fetchall()
+
+            await cursor.close()
+
         return [
             {
                 "id": r[0],
@@ -176,41 +257,90 @@ class MemoryStore:
         ]
 
     async def set_preference(self, key: str, value: str) -> None:
-        if not self._db:
+        if not self._pool:
             return
+
         now = datetime.now(UTC).isoformat()
-        await self._db.execute(
-            """INSERT INTO user_preferences (key, value, updated_at)
-               VALUES (?, ?, ?)
-               ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at""",
-            (key, value, now),
-        )
-        await self._db.commit()
+
+        async with self._pool.write() as db:
+            await db.execute(
+                """INSERT INTO user_preferences (key, value, updated_at)
+                   VALUES (?, ?, ?)
+                   ON CONFLICT(key)
+                   DO UPDATE SET
+                       value=excluded.value,
+                       updated_at=excluded.updated_at""",
+                (key, value, now),
+            )
+
+            await db.commit()
+
+    async def get_preference(self, key: str) -> str | None:
+        """Return the stored value for *key*, or None if not found."""
+        if not self._pool:
+            return None
+
+        async with self._pool.read() as db:
+            cursor = await db.execute("SELECT value FROM user_preferences WHERE key = ?", (key,))
+            row = await cursor.fetchone()
+            await cursor.close()
+
+        return row[0] if row else None
 
     async def _get_preferences(self) -> dict[str, str]:
-        if not self._db:
+        if not self._pool:
             return {}
-        cursor = await self._db.execute("SELECT key, value FROM user_preferences")
-        rows = await cursor.fetchall()
+
+        async with self._pool.read() as db:
+            cursor = await db.execute("SELECT key, value FROM user_preferences")
+
+            rows = await cursor.fetchall()
+
+            await cursor.close()
+
         return {r[0]: r[1] for r in rows}
 
     async def index_workspace(self, folder_path: str) -> dict:
         """Index a workspace folder for semantic search."""
         if self._workspace_index is None:
-            return {"success": False, "error": "Workspace index not initialized"}
-        import asyncio
+            return {
+                "success": False,
+                "error": "Workspace index not initialized",
+            }
 
-        return await asyncio.to_thread(self._workspace_index.index_workspace, folder_path)
+        return await asyncio.to_thread(
+            self._workspace_index.index_workspace,
+            folder_path,
+        )
 
-    async def search_workspace(self, query: str, n_results: int = 5) -> list:
+    async def search_workspace(
+        self,
+        query: str,
+        n_results: int = 5,
+    ) -> list:
         """Search the workspace index semantically."""
         if self._workspace_index is None:
             return []
-        import asyncio
 
-        return await asyncio.to_thread(self._workspace_index.search, query, n_results)
+        return await asyncio.to_thread(
+            self._workspace_index.search,
+            query,
+            n_results,
+        )
 
     async def close(self) -> None:
-        if self._db:
-            await self._db.close()
-            self._db = None
+        if self._checkpoint_task:
+            self._checkpoint_task.cancel()
+
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._checkpoint_task
+
+            self._checkpoint_task = None
+
+        if self._pool:
+            # Final checkpoint before shutdown
+            await self.checkpoint()
+
+            await self._pool.close()
+
+            self._pool = None

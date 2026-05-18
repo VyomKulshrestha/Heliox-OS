@@ -1,14 +1,33 @@
 [Unit]
-Description=Pilot AI Command Center Daemon
-Documentation=https://github.com/pilot/pilot
-After=default.target
+Description=Heliox OS Pilot Daemon - AI System Control Agent
+Documentation=https://github.com/VyomKulshrestha/Heliox-OS
+After=network.target
 
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/pilot-daemon
-Restart=on-failure
+Restart=always
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
 
+# Memory limits to prevent OOM kills
+MemoryMax=2G
+MemoryHigh=1G
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=heliox-pilot
+
+# Security
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+
+# Resource limits
+LimitNOFILE=65536
+CPUSchedulingPolicy=other
+
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target

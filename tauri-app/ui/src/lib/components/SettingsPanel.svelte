@@ -73,22 +73,57 @@
     }
   }
 
+  // Toggle between dark and light mode targeting root settings configuration state
+  function toggleTheme() {
+    const currentTheme = $settings.theme || "dark";
+    const nextTheme = currentTheme === "dark" ? "light" : "dark";
+    
+    // Update the central store root section directly
+    // The store's internal side-effects will automatically manage document classes and localStorage synchronization
+    settings.updateSection("", { theme: nextTheme });
+  }
   async function testNotification() {
     try {
       let granted = await isPermissionGranted();
       if (!granted) {
         const permission = await requestPermission();
-        granted = permission === "granted";
+        granted = permission === 'granted';
       }
-      sendNotification({ title: "Heliox OS", body: "Test notification working correctly!" });
+      if (granted) {
+        sendNotification({
+          title: 'Heliox OS',
+          body: 'Test notification — desktop notifications are working! 🚀',
+        });
+      } else {
+        console.warn('Notification permission was denied');
+      }
     } catch (err) {
-      console.error("[Heliox] test notification failed:", err);
+      console.error('Notification test failed:', err);
     }
   }
 </script>
 
 <div class="settings-panel">
   <h2>Settings</h2>
+
+  <section class="settings-group">
+    <h3>Appearance</h3>
+    <div class="setting-row">
+      <div class="setting-info">
+        <span class="setting-label">Light Mode</span>
+        <span class="setting-desc">Switch between dark and light themes</span>
+      </div>
+      <button
+        class="toggle"
+        class:active={$settings.theme === "light"}
+        onclick={toggleTheme}
+        aria-label="Toggle Light Mode"
+        title="Toggle Light Mode"
+      >
+        <span class="toggle-knob"></span>
+      </button>
+    </div>
+  </section>
 
   <section class="settings-group">
     <h3>Security</h3>
