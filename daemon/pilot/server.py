@@ -1545,6 +1545,8 @@ class PilotServer:
         providers = await self._vault.list_providers()
         return {"providers": providers}
 
+
+
     # -- Ollama model discovery --
 
     async def _handle_list_ollama_models(self, params: dict, ws: ServerConnection) -> dict:
@@ -1854,6 +1856,35 @@ class PilotServer:
         if self._reasoning:
             return self._reasoning.get_stats()
         return {"error": "Reasoning emitter not initialized"}
+
+   async def _handle_export_trace(self, params: dict, ws: ServerConnection) -> dict:
+       try:
+            steps = params.get("steps", [])
+
+            if not steps:
+                return {
+                    "success": False,
+                    "error": "No steps to export"
+                }
+
+            from pilot.reasoning.events import export_reasoning_trace
+
+            filepath = export_reasoning_trace(steps)
+
+            return {
+                "success": True,
+                "filepath": filepath,
+                "message": f"Trace exported to {filepath}"
+            }
+
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e)
+            }
+
+
+      
 
     # -- Task Decomposition --
 

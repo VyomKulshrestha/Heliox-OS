@@ -390,3 +390,35 @@ class ReasoningEmitter:
             "event_types": type_counts,
             "stage_counts": stage_counts,
         }
+
+# Reasoning function
+
+import json
+import os
+from datetime import datetime
+
+def export_reasoning_trace(trace_steps: list, output_dir: str = None) -> str:
+    """
+    Export ReAct reasoning steps to a JSON file.
+    Returns the file path of the exported JSON.
+    """
+    if output_dir is None:
+        output_dir = os.path.expanduser("~/.heliox/traces")
+    
+    os.makedirs(output_dir, exist_ok=True)
+    
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"react_trace_{timestamp}.json"
+    filepath = os.path.join(output_dir, filename)
+    
+    export_data = {
+        "exported_at": datetime.now().isoformat(),
+        "version": "1.0",
+        "total_steps": len(trace_steps),
+        "steps": trace_steps
+    }
+    
+    with open(filepath, "w", encoding="utf-8") as f:
+        json.dump(export_data, f, indent=2, ensure_ascii=False)
+    
+    return filepath
