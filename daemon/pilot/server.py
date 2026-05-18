@@ -121,7 +121,7 @@ class PilotServer:
         """Manages message distribution over live sockets."""
         self._clients.add(ws)
         try:
-            async for message in ws:
+            async for _message in ws:
                 pass
         except Exception as e:
             logger.debug("Socket context reset: %s", e)
@@ -638,12 +638,10 @@ class PilotServer:
             async with aiosqlite.connect(DB_PATH) as conn:
                 conn.row_factory = aiosqlite.Row
                 async with conn.execute(
-                    """
-                    SELECT plan_id, critic_verdict, user_confirmation_decision, execution_outcome, timestamp 
+                    """SELECT plan_id, critic_verdict, user_confirmation_decision, execution_outcome, timestamp 
                     FROM plan_history 
-                    ORDER BY timestamp DESC 
-                    LIMIT ? OFFSET ?
-                """,
+                    ORDER BY timestamp DESC
+                    LIMIT ? OFFSET ?""",
                     (limit, offset),
                 ) as cursor:
                     rows = await cursor.fetchall()
@@ -663,11 +661,9 @@ class PilotServer:
             async with aiosqlite.connect(DB_PATH) as conn:
                 conn.row_factory = aiosqlite.Row
                 async with conn.execute(
-                    """
-                    SELECT plan_id, action_plan, critic_verdict, user_confirmation_decision, execution_outcome, timestamp 
-                    FROM plan_history 
-                    WHERE plan_id = ?
-                """,
+                    """SELECT plan_id, action_plan, critic_verdict, user_confirmation_decision, execution_outcome, timestamp 
+                    FROM plan_history
+                    WHERE plan_id = ?""",
                     (plan_id,),
                 ) as cursor:
                     row = await cursor.fetchone()
@@ -747,3 +743,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+    
