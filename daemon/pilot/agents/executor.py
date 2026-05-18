@@ -27,6 +27,7 @@ from pilot.actions import (
     DBusParams,
     DiskManageParams,
     DownloadParams,
+    ElementDetectionParams,
     EnvParams,
     FileIntelParams,
     FileParams,
@@ -200,6 +201,7 @@ class Executor:
             ActionType.SCREEN_FIND_TEXT: self._exec_screen_find_text,
             ActionType.SCREEN_ANALYZE: self._exec_screen_analyze,
             ActionType.SCREEN_ELEMENT_MAP: self._exec_screen_element_map,
+            ActionType.SCREEN_DETECT_ELEMENTS: self._exec_screen_detect_elements,
             # -- Browser automation --
             ActionType.BROWSER_NAVIGATE: self._exec_browser_navigate,
             ActionType.BROWSER_CLICK: self._exec_browser_click,
@@ -1393,6 +1395,58 @@ class Executor:
         from pilot.system.vision import screen_element_map
 
         return await screen_element_map()
+
+    async def _exec_screen_detect_elements(self, action: Action) -> str:
+        """Zero-shot VLM element detection — returns bounding-box coordinates.
+
+        If the result contains exactly one ``click`` element, automatically
+        emits a MOUSE_CLICK action so the agent can act on it immediately.
+        """
+        import json as _json
+
+        from pilot.actions import ElementDetectionParams
+        from pilot.system.vision import screen_detect_elements
+
+        p: ElementDetectionParams = action.parameters  # type: ignore[assignment]
+
+        # Parse region string "x,y,w,h" → tuple
+        region: tuple[int, int, int, int] | None = None
+        if p.region:
+            try:
+                parts = [int(v.strip()) for v in p.region.split(",")]
+                if len(parts) == 4:
+                    region = (parts[0], parts[1], parts[2], parts[3])
+            except (ValueError, AttributeError):
+                pass
+
+        result = await screen_detect_elements(
+            description=p.description,
+            region=region,
+            max_elements=p.max_elements,
+            action_filter=p.action_filter,
+        )
+
+        # Auto-chain: if exactly one click element found, inject its centre
+        # coordinates into _last_output so a subsequent MOUSE_CLICK can use them
+        try:
+            data = _json.loads(result)
+            elements = data.get("elements", [])
+            click_els = [e for e in elements if e.get("action") == "click"]
+            if len(click_els) == 1:
+                bbox = click_els[0].get("bbox", [0, 0, 0, 0])
+                cx = bbox[0] + bbox[2] // 2
+                cy = bbox[1] + bbox[3] // 2
+                self._last_output = f"{cx},{cy}"
+                logger.info(
+                    "screen_detect_elements: single click target '%s' at (%d, %d)",
+                    click_els[0].get("label", ""),
+                    cx,
+                    cy,
+                )
+        except Exception:
+            pass
+
+        return result
 
     def _get_browser_backend(self):
         if not hasattr(self, "_browser_backend"):
