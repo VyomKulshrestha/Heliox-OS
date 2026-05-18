@@ -29,6 +29,7 @@ full = [
     "chromadb>=0.5",
     "pyperclip>=1.8",
     "SecretStorage>=3.3; sys_platform == 'linux'",
+    "zeroconf>=0.131",
 ]
 llamacpp = ["llama-cpp-python>=0.3", "pynvml>=11.5"]
 
@@ -47,6 +48,11 @@ browser = [
 ]
 pty = [
     "ptyprocess>=0.7; sys_platform != 'win32'",
+]
+
+# LAN mesh networking
+network = [
+    "zeroconf>=0.131",
 ]
 
 # Remote execution
@@ -69,7 +75,7 @@ cognitive = [
 
 # Everything
 all = [
-    "pilot-daemon[full,automation,vision,browser,documents,cognitive,ssh]",
+    "pilot-daemon[full,automation,vision,browser,documents,cognitive,ssh,network]",
 ]
 
 dev = [

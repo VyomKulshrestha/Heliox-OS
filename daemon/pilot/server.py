@@ -127,6 +127,8 @@ class PilotServer:
         # ── Cancel Token (Issue #92) ──
         self._cancel_event: asyncio.Event | None = None
         self._rss_agent: Any = None
+        # ── LAN Mesh Network ──
+        self._mesh: Any = None
 
     async def initialize(self) -> None:
         """Initialize all agent components.
@@ -412,7 +414,25 @@ class PilotServer:
             "proactive_dismiss": self._handle_proactive_dismiss,
             "budget_stats": self._handle_budget_stats,
             "budget_reset": self._handle_budget_reset,
+            # ── LAN Mesh Network ──
+            "mesh_peers": self._handle_mesh_peers,
+            "mesh_status": self._handle_mesh_status,
         }
+
+        # ── LAN Mesh Network (opt-in via config) ──
+        if self.config.network.enabled:
+            try:
+                from pilot.network.mesh import HelioxMesh
+                from pilot.system.plugins import get_manager as get_plugin_manager
+
+                self._mesh = HelioxMesh(
+                    config=self.config.network,
+                    executor=self._executor,
+                    plugin_manager=get_plugin_manager(),
+                )
+                logger.info("HelioxMesh initialised (will start with server)")
+            except Exception:
+                logger.warning("HelioxMesh init failed (non-critical)", exc_info=True)
 
     async def _broadcast_notification(self, method: str, params: Any) -> None:
         """Broadcast a notification to all connected clients.
@@ -2253,6 +2273,10 @@ class PilotServer:
         )
         logger.info("Pilot daemon ready")
 
+        # ── Start LAN mesh if enabled ──
+        if self._mesh:
+            asyncio.create_task(self._mesh.start())
+
         if hasattr(self, "_new_features_announcement") and self._new_features_announcement:
             await asyncio.sleep(1)
             await self._broadcast_notification(
@@ -2266,6 +2290,9 @@ class PilotServer:
     async def stop(self) -> None:
         """Stop the Pilot daemon server and clean up all resources."""
         self._running = False
+        # ── Stop LAN mesh ──
+        if self._mesh:
+            await self._mesh.stop()
         if self._orchestrator:
             await self._orchestrator.stop_all()
         if self._background:
@@ -2319,6 +2346,60 @@ class PilotServer:
             return {"status": "ok"}
         await self._budget_tracker.reset_current_month()
         return {"status": "ok"}
+
+    # ── LAN Mesh Network Handlers ──
+
+    async def _handle_mesh_peers(self, params: dict, ws: ServerConnection) -> dict:
+        """Return a list of currently connected LAN peers.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with ``enabled`` flag and ``peers`` list.
+        """
+        if not self._mesh:
+            return {"enabled": False, "peers": []}
+
+        peers = []
+        for pid in self._mesh.peer_ids:
+            conn = self._mesh.get_connection(pid)
+            caps = conn.peer_capabilities if conn else None
+            peers.append(
+                {
+                    "peer_id": pid,
+                    "hostname": caps.hostname if caps else "",
+                    "can_execute": caps.can_execute if caps else False,
+                    "cpu_load": caps.cpu_load if caps else 0.0,
+                    "plugin_count": len(caps.plugin_names) if caps else 0,
+                }
+            )
+        return {"enabled": True, "peers": peers}
+
+    async def _handle_mesh_status(self, params: dict, ws: ServerConnection) -> dict:
+        """Return overall mesh status and configuration.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with mesh status, instance ID, and config summary.
+        """
+        if not self._mesh:
+            return {
+                "enabled": False,
+                "reason": "Set [network] enabled = true in config.toml to activate",
+            }
+        return {
+            "enabled": True,
+            "instance_id": self._mesh.instance_id,
+            "peer_count": len(self._mesh.peer_ids),
+            "skill_sync_enabled": self.config.network.skill_sync_enabled,
+            "collab_exec_enabled": self.config.network.collab_exec_enabled,
+            "port": self.config.network.port,
+        }
 
     # ── Cognitive Intelligence (TRIBE v2) Handlers ──
 
