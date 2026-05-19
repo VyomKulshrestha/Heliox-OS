@@ -348,7 +348,7 @@ class ScreenVisionAgent:
         # Cache in the current ScreenState so the planner can reference it
         current = self._context.current()
         if current is not None:
-            current.description = f"[element_detection] {result[:200]}"
+            current.description = f"[element_detection] {result}"
 
         return result
 
