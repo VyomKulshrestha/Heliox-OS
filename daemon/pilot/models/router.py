@@ -44,6 +44,10 @@ class ModelRouter:
 
         self._rate_limiter = TokenBucketRateLimiter(config.model)
 
+        # Prevent local LLM overload from concurrent inference calls
+        self._local_llm_semaphore = asyncio.Semaphore(2)
+        self._local_llm_timeout = 120
+
     async def initialize(self) -> None:
         """Initialize the cache. Must be called before using generate()."""
         await self._cache.initialize()
@@ -82,7 +86,11 @@ class ModelRouter:
             self._budget_tracker.check_budget(self._config.model.provider)
 
         result = await self._generate_with_cache(
-            prompt, system=system, json_mode=json_mode, temperature=temperature, stream_callback=stream_callback
+            prompt,
+            system=system,
+            json_mode=json_mode,
+            temperature=temperature,
+            stream_callback=stream_callback,
         )
 
         if self._budget_tracker:
@@ -100,7 +108,15 @@ class ModelRouter:
                 else self._config.model.provider
             )
             model_name = self._config.model.cloud_model or self._config.model.ollama_model
-            asyncio.create_task(self._budget_tracker.record_usage(provider_key, model_name, in_tokens, out_tokens))
+
+            asyncio.create_task(
+                self._budget_tracker.record_usage(
+                    provider_key,
+                    model_name,
+                    in_tokens,
+                    out_tokens,
+                )
+            )
 
         return result
 
@@ -123,7 +139,16 @@ class ModelRouter:
             # Try cloud backend first if configured
             if provider == "cloud" and self._cloud:
                 model = self._config.model.cloud_model or "unknown"
-                response = await self._cache.get(prompt, model, provider, temperature, json_mode, system)
+
+                response = await self._cache.get(
+                    prompt,
+                    model,
+                    provider,
+                    temperature,
+                    json_mode,
+                    system,
+                )
+
                 if response is not None:
                     return response
 
@@ -131,41 +156,93 @@ class ModelRouter:
             if provider in ("ollama", "local"):
                 if await self._ollama.is_available():
                     model = await self._resolve_ollama_model()
-                    response = await self._cache.get(prompt, model, provider, temperature, json_mode, system)
+
+                    response = await self._cache.get(
+                        prompt,
+                        model,
+                        provider,
+                        temperature,
+                        json_mode,
+                        system,
+                    )
+
                     if response is not None:
                         return response
 
                 if self._try_llamacpp():
                     model = "llamacpp"
-                    response = await self._cache.get(prompt, model, provider, temperature, json_mode, system)
+
+                    response = await self._cache.get(
+                        prompt,
+                        model,
+                        provider,
+                        temperature,
+                        json_mode,
+                        system,
+                    )
+
                     if response is not None:
                         return response
 
             # Fallback: try ollama if not already tried
             if provider != "ollama" and await self._ollama.is_available():
                 model = await self._resolve_ollama_model()
-                response = await self._cache.get(prompt, model, "ollama", temperature, json_mode, system)
+
+                response = await self._cache.get(
+                    prompt,
+                    model,
+                    "ollama",
+                    temperature,
+                    json_mode,
+                    system,
+                )
+
                 if response is not None:
                     return response
 
             # Final fallback: cloud API
             if self._cloud and provider not in ("ollama", "local"):
                 model = self._config.model.cloud_model or "unknown"
-                response = await self._cache.get(prompt, model, "cloud", temperature, json_mode, system)
+
+                response = await self._cache.get(
+                    prompt,
+                    model,
+                    "cloud",
+                    temperature,
+                    json_mode,
+                    system,
+                )
+
                 if response is not None:
                     return response
 
         # Now do the actual generation with rate limiting
         await self._rate_limiter.acquire()
 
+        # Cloud provider
         if provider == "cloud" and self._cloud:
             try:
                 response = await self._cloud.generate(
-                    prompt, system=system, json_mode=json_mode, temperature=temperature, stream_callback=stream_callback
+                    prompt,
+                    system=system,
+                    json_mode=json_mode,
+                    temperature=temperature,
+                    stream_callback=stream_callback,
                 )
+
                 if not stream_callback and model:
-                    await self._cache.set(prompt, model, provider, temperature, json_mode, response, system)
+                    await self._cache.set(
+                        prompt,
+                        model,
+                        provider,
+                        temperature,
+                        json_mode,
+                        response,
+                        system,
+                    )
+
                 return response
+
             except Exception as e:
                 logger.error("Cloud API failed: %s", e)
                 raise RuntimeError(f"Cloud API Failed: {e}")
@@ -174,49 +251,141 @@ class ModelRouter:
         if provider in ("ollama", "local"):
             if await self._ollama.is_available():
                 model = await self._resolve_ollama_model()
-                response = await self._ollama.generate(
-                    model,
-                    prompt,
-                    system=system,
-                    json_mode=json_mode,
-                    temperature=temperature,
-                    stream_callback=stream_callback,
-                )
+
+                logger.info("Waiting for local Ollama slot...")
+
+                async with self._local_llm_semaphore:
+                    logger.info("Acquired local Ollama slot")
+
+                    try:
+                        response = await asyncio.wait_for(
+                            self._ollama.generate(
+                                model,
+                                prompt,
+                                system=system,
+                                json_mode=json_mode,
+                                temperature=temperature,
+                                stream_callback=stream_callback,
+                            ),
+                            timeout=self._local_llm_timeout,
+                        )
+
+                    except asyncio.TimeoutError:
+                        logger.error("Ollama request timed out")
+                        raise RuntimeError("Local Ollama inference timed out")
+
                 if not stream_callback and model:
-                    await self._cache.set(prompt, model, provider, temperature, json_mode, response, system)
+                    await self._cache.set(
+                        prompt,
+                        model,
+                        provider,
+                        temperature,
+                        json_mode,
+                        response,
+                        system,
+                    )
+
                 return response
 
             if self._try_llamacpp():
                 model = "llamacpp"
-                response = await self._llamacpp_generate(prompt, system=system, temperature=temperature)
+
+                logger.info("Waiting for llama.cpp slot...")
+
+                async with self._local_llm_semaphore:
+                    logger.info("Acquired llama.cpp slot")
+
+                    try:
+                        response = await asyncio.wait_for(
+                            self._llamacpp_generate(
+                                prompt,
+                                system=system,
+                                temperature=temperature,
+                            ),
+                            timeout=self._local_llm_timeout,
+                        )
+
+                    except asyncio.TimeoutError:
+                        logger.error("llama.cpp request timed out")
+                        raise RuntimeError("Local llama.cpp inference timed out")
+
                 if not stream_callback and model:
-                    await self._cache.set(prompt, model, provider, temperature, json_mode, response, system)
+                    await self._cache.set(
+                        prompt,
+                        model,
+                        provider,
+                        temperature,
+                        json_mode,
+                        response,
+                        system,
+                    )
+
                 return response
 
         # Fallback: try ollama if not already tried
         if provider != "ollama" and await self._ollama.is_available():
             model = await self._resolve_ollama_model()
-            response = await self._ollama.generate(
-                model,
+
+            logger.info("Waiting for fallback Ollama slot...")
+
+            async with self._local_llm_semaphore:
+                logger.info("Acquired fallback Ollama slot")
+
+                try:
+                    response = await asyncio.wait_for(
+                        self._ollama.generate(
+                            model,
+                            prompt,
+                            system=system,
+                            json_mode=json_mode,
+                            temperature=temperature,
+                            stream_callback=stream_callback,
+                        ),
+                        timeout=self._local_llm_timeout,
+                    )
+
+                except asyncio.TimeoutError:
+                    logger.error("Fallback Ollama request timed out")
+                    raise RuntimeError("Fallback Ollama inference timed out")
+
+            if not stream_callback and model:
+                await self._cache.set(
+                    prompt,
+                    model,
+                    "ollama",
+                    temperature,
+                    json_mode,
+                    response,
+                    system,
+                )
+
+            return response
+
+        # Final fallback: cloud API
+        if self._cloud:
+            model = self._config.model.cloud_model or "unknown"
+
+            logger.warning("Falling back to cloud API — Ollama unavailable")
+
+            response = await self._cloud.generate(
                 prompt,
                 system=system,
                 json_mode=json_mode,
                 temperature=temperature,
                 stream_callback=stream_callback,
             )
-            if not stream_callback and model:
-                await self._cache.set(prompt, model, "ollama", temperature, json_mode, response, system)
-            return response
 
-        # Final fallback: cloud API
-        if self._cloud:
-            model = self._config.model.cloud_model or "unknown"
-            logger.warning("Falling back to cloud API — Ollama unavailable")
-            response = await self._cloud.generate(
-                prompt, system=system, json_mode=json_mode, temperature=temperature, stream_callback=stream_callback
-            )
             if not stream_callback and model:
-                await self._cache.set(prompt, model, "cloud", temperature, json_mode, response, system)
+                await self._cache.set(
+                    prompt,
+                    model,
+                    "cloud",
+                    temperature,
+                    json_mode,
+                    response,
+                    system,
+                )
+
             return response
 
         raise RuntimeError("No model backend available. Start Ollama or configure a cloud API key.")
@@ -240,32 +409,48 @@ class ModelRouter:
                 return m
 
         fallback = available[0]
+
         logger.warning(
             "Configured model '%s' not found in Ollama. Using '%s' instead. Available: %s",
             configured,
             fallback,
             ", ".join(available),
         )
+
         self._resolved_ollama_model = fallback
         self._config.model.ollama_model = fallback
+
         return fallback
 
     def _try_llamacpp(self) -> bool:
         if self._llamacpp is not None:
             return True
+
         try:
             from pilot.models.llamacpp import LlamaCppClient
 
             self._llamacpp = LlamaCppClient(self._config)
             return True
+
         except ImportError:
             return False
 
-    async def _llamacpp_generate(self, prompt: str, *, system: str = "", temperature: float = 0.1) -> str:
+    async def _llamacpp_generate(
+        self,
+        prompt: str,
+        *,
+        system: str = "",
+        temperature: float = 0.1,
+    ) -> str:
         from pilot.models.llamacpp import LlamaCppClient
 
         client: LlamaCppClient = self._llamacpp  # type: ignore[assignment]
-        return await client.generate(prompt, system=system, temperature=temperature)
+
+        return await client.generate(
+            prompt,
+            system=system,
+            temperature=temperature,
+        )
 
     def rate_limit_stats(self) -> dict[str, Any]:
         """Return current rate limiter state and lifetime counters."""
@@ -275,21 +460,28 @@ class ModelRouter:
         """Return current budget tracker stats, or empty dict if not configured."""
         if self._budget_tracker:
             return await self._budget_tracker.get_stats()
+
         return {}
 
     async def check_health(self) -> dict[str, bool]:
         """Check which backends are available."""
         status: dict[str, bool] = {}
+
         status["ollama"] = await self._ollama.is_available()
         status["llamacpp"] = self._try_llamacpp()
         status["cloud"] = self._cloud is not None
+
         return status
 
     async def cache_stats(self) -> dict[str, int]:
         """Get cache statistics."""
         return await self._cache.stats()
 
-    async def cache_clear(self, provider: str | None = None, model: str | None = None) -> int:
+    async def cache_clear(
+        self,
+        provider: str | None = None,
+        model: str | None = None,
+    ) -> int:
         """Clear cache entries.
 
         Args:

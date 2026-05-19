@@ -11,6 +11,7 @@ import logging
 import secrets
 import signal
 import sys
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -90,6 +91,7 @@ class PilotServer:
             config: PilotConfig instance containing server and model settings.
         """
         self.config = config
+        self._start_time = time.time()
         self._server: Server | None = None
         self._clients: set[ServerConnection] = set()
         self._handlers: dict[str, Any] = {}
@@ -360,6 +362,7 @@ class PilotServer:
             "list_api_keys": self._handle_list_api_keys,
             "list_ollama_models": self._handle_list_ollama_models,
             "health": self._handle_health,
+            "ready": self._handle_ready,
             "ping": self._handle_ping,
             "system_status": self._handle_system_status,
             "capabilities": self._handle_capabilities,
@@ -663,6 +666,8 @@ class PilotServer:
         all_results: list = []
         last_verification = None
         last_explanation = ""
+        _original_plan = None
+        _successful_results: list = []
 
         for attempt in range(1 + self.MAX_RETRIES):
             # ── Cancel Token: check before each planning attempt ──
@@ -959,6 +964,8 @@ class PilotServer:
             else:
                 verification = await self._verifier.verify(plan, results)
             last_verification = verification
+            if _original_plan is not None and _successful_results:
+                all_results = PlanDiffer.merge_results(_successful_results, results, _original_plan, verification)
 
             if verification.passed:
                 if emit:
@@ -1026,9 +1033,26 @@ class PilotServer:
                     "verification", VERIFICATION_FAILED, "; ".join(verification.details[:3]), parent_id=verify_phase
                 )
 
+            # Execution failed — use PlanDiffer for partial re-plan
+            from pilot.agents.plan_differ import PlanDiffer
+
+            retry_plan, successful_results = PlanDiffer.diff(plan, results, verification)
+
             failed_details = [d for d in verification.details if "FAILED" in d or "MISMATCH" in d]
             error_msgs = [r.error for r in results if r.error]
             error_context = "\n".join(failed_details + error_msgs)
+
+            # Use partial retry plan if PlanDiffer found fewer actions to retry
+            if len(retry_plan.actions) < len(plan.actions):
+                logger.info(
+                    "PlanDiffer: retrying %d/%d actions",
+                    len(retry_plan.actions),
+                    len(plan.actions),
+                )
+                plan = retry_plan
+                _original_plan = plan
+                _successful_results = successful_results
+                all_results = list(successful_results)
 
             if attempt < self.MAX_RETRIES:
                 await ws.send(
@@ -1588,21 +1612,65 @@ class PilotServer:
 
     # -- Health --
 
-    async def _handle_health(self, params: dict, ws: ServerConnection) -> dict:
-        """Check the health of all model backends.
+    async def _handle_health(self, params: dict[str, Any], ws: ServerConnection) -> dict[str, Any]:
+        """Return health status of the daemon.
 
         Args:
             params: JSON-RPC parameters (unused).
             ws: The WebSocket connection.
 
         Returns:
-            A dict with backends health status.
+            A dict with uptime, memory usage, active connections, and loaded agents.
         """
-        from pilot.models.router import ModelRouter
+        import psutil
 
-        router: ModelRouter = self._planner._model
-        backends = await router.check_health()
-        return {"backends": backends}
+        # Calculate uptime
+        uptime = time.time() - self._start_time
+
+        # Get memory usage in MB
+        process = psutil.Process()
+        memory_mb = process.memory_info().rss / (1024**2)
+
+        # Count active connections
+        active_connections = len(self._clients)
+
+        # Get loaded agent names
+        loaded_agents: list[str] = []
+        if self._orchestrator:
+            loaded_agents = [role.value for role in self._orchestrator._agents]
+
+        return {
+            "uptime": uptime,
+            "memory_usage_mb": memory_mb,
+            "active_connections": active_connections,
+            "loaded_agents": loaded_agents,
+        }
+
+    async def _handle_ready(self, params: dict[str, Any], ws: ServerConnection) -> dict[str, Any]:
+        """Check if all agents are fully initialized and ready.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with ready status (True only if all agents are initialized).
+        """
+        from pilot.agents.base_agent import AgentStatus
+
+        # If orchestrator is not initialized, not ready
+        if not self._orchestrator:
+            return {"ready": False}
+
+        # If no agents are registered, not ready
+        if not self._orchestrator._agents:
+            return {"ready": False}
+
+        for agent in self._orchestrator._agents.values():
+            if not agent._running or agent.status in {AgentStatus.STOPPED, AgentStatus.ERROR}:
+                return {"ready": False}
+
+        return {"ready": True}
 
     async def _handle_ping(self, params: dict, ws: ServerConnection) -> dict:
         """Ping the server to check connectivity.
