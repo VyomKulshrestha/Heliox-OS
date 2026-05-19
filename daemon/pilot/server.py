@@ -1,5 +1,6 @@
 """WebSocket JSON-RPC 2.0 server for the Pilot daemon."""
 
+from __future__ import annotations
 
 import argparse
 import asyncio
@@ -214,6 +215,39 @@ async def _record_execution_outcome(
 
 
 # ════════════════════════════════════════════════════════════════════════════
+# Log export utility
+# ════════════════════════════════════════════════════════════════════════════
+
+def export_logs(dest: Path | None = None) -> Path:
+    """Copy the daemon log file to *dest* (or a timestamped default path).
+
+    Args:
+        dest: Optional destination path. Defaults to
+              ``STATE_DIR / 'pilot_logs_<timestamp>.log'``.
+
+    Returns:
+        The path the log file was exported to.
+
+    Raises:
+        FileNotFoundError: If the log file does not exist.
+    """
+    import shutil
+
+    if not LOG_FILE.exists():
+        raise FileNotFoundError(f"Log file not found: {LOG_FILE}")
+
+    if dest is None:
+        ts = time.strftime("%Y%m%d_%H%M%S")
+        dest = STATE_DIR / f"pilot_logs_{ts}.log"
+
+    dest = Path(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(LOG_FILE, dest)
+    logger.info("Logs exported to %s", dest)
+    return dest
+
+
+# ════════════════════════════════════════════════════════════════════════════
 # JSON-RPC helpers
 # ════════════════════════════════════════════════════════════════════════════
 
@@ -309,6 +343,12 @@ class PilotServer:
         self._budget_tracker: Any = None
         self._running = False
         self._pending_confirms: dict[str, PendingConfirmation] = {}
+        # Restored initializers (deleted in bad merge commit cc436ac)
+        self._cancel_event: asyncio.Event = asyncio.Event()
+        self._mesh: Any = None
+        self._rss_agent: Any = None
+        self._permission_audit: Any = None
+        self._checkpoint_store: Any = None
 
     async def initialize(self) -> None:
         """Initialize all agent components.
@@ -358,6 +398,23 @@ class PilotServer:
         self._planner = Planner(model_router, self._memory)
         self._executor = Executor(self.config, validator, permissions, audit)
         self._verifier = Verifier(model_router)
+
+        # ── Permission Audit + Checkpoint Store (restored from main) ──
+        try:
+            from pilot.security.permission_audit import PermissionAuditLog
+            self._permission_audit = PermissionAuditLog(str(DB_FILE))
+            await self._permission_audit.initialize()
+            logger.info("PermissionAuditLog initialized")
+        except Exception:
+            logger.warning("PermissionAuditLog init failed (non-critical)", exc_info=True)
+
+        try:
+            from pilot.memory.checkpoint import CheckpointStore
+            self._checkpoint_store = CheckpointStore(str(DB_FILE))
+            await self._checkpoint_store.initialize()
+            logger.info("CheckpointStore initialized")
+        except Exception:
+            logger.warning("CheckpointStore init failed (non-critical)", exc_info=True)
 
         # Advanced agent components
         self._reflector = Reflector(model_router)
@@ -418,8 +475,6 @@ class PilotServer:
 
             self._subconscious = SubconsciousAgent(model_router)
             await self._subconscious.initialize(str(DB_FILE))
-            # NOTE: Don't auto-start the consolidation loop — it can block
-            # the event loop with LLM calls. Users start it via API.
             logger.info("SubconsciousAgent initialized (idle, use persona_consolidate to trigger)")
         except Exception:
             logger.warning("SubconsciousAgent init failed (non-critical)", exc_info=True)
@@ -432,11 +487,9 @@ class PilotServer:
             self._cognitive_hub = CognitiveHub()
             logger.info("CognitiveHub initialized with TRIBE v2")
 
-            # Check for new features and announce
             announcement = announce_new_features()
             if announcement:
                 logger.info("New features announcement: %s", announcement)
-                # Will be spoken by voice.py
                 self._new_features_announcement = announcement
                 mark_version_seen()
         except Exception:
@@ -448,12 +501,28 @@ class PilotServer:
             from pilot.agents.screen_vision import ScreenVisionAgent
 
             self._screen_vision = ScreenVisionAgent(model_router)
-            # Auto-start the screen watcher for always-on context awareness.
-            # Uses asyncio.to_thread() internally so it won't block the event loop.
             asyncio.create_task(self._screen_vision.start(interval_seconds=3.0, enable_describe=False))
             logger.info("ScreenVisionAgent auto-started (every 3s, JARVIS mode)")
         except Exception:
             logger.warning("ScreenVisionAgent init failed (non-critical)", exc_info=True)
+
+        # ── Mesh networking (restored from main) ──
+        try:
+            from pilot.mesh.peer import MeshNetwork
+            self._mesh = MeshNetwork(self.config)
+            await self._mesh.initialize()
+            logger.info("MeshNetwork initialized")
+        except Exception:
+            logger.warning("MeshNetwork init failed (non-critical)", exc_info=True)
+
+        # ── RSS / feed agent (restored from main) ──
+        try:
+            from pilot.agents.rss_agent import RssAgent
+            self._rss_agent = RssAgent(model_router)
+            await self._rss_agent.initialize()
+            logger.info("RssAgent initialized")
+        except Exception:
+            logger.warning("RssAgent init failed (non-critical)", exc_info=True)
 
         # ── Cognitive Intelligence (TRIBE v2) ──
         try:
@@ -468,7 +537,6 @@ class PilotServer:
             self._stress_gate = StressGate(self._tribe_engine)
             self._intent_predictor = IntentPredictor(self._tribe_engine)
 
-            # Inject cognitive modules into subsystem architectures
             if self._executor:
                 self._executor._stress_gate = self._stress_gate
             if self._fusion:
@@ -476,7 +544,6 @@ class PilotServer:
             if getattr(self, "_screen_vision", None):
                 self._screen_vision._tribe_engine = self._tribe_engine
 
-            # Attempt background model load (non-blocking)
             asyncio.create_task(self._tribe_engine.load_model())
             logger.info(
                 "Cognitive intelligence initialized (TRIBE v2 %s)",
@@ -525,6 +592,7 @@ class PilotServer:
             "list_api_keys": self._handle_list_api_keys,
             "list_ollama_models": self._handle_list_ollama_models,
             "health": self._handle_health,
+            "ready": self._handle_ready,
             "ping": self._handle_ping,
             "system_status": self._handle_system_status,
             "capabilities": self._handle_capabilities,
@@ -597,6 +665,13 @@ class PilotServer:
             # Plan-history audit log endpoints
             "get_plan_history": self._handle_get_plan_history,
             "get_plan_detail": self._handle_get_plan_detail,
+            # Restored endpoints (deleted in bad merge commit cc436ac)
+            "resume_plan": self._handle_resume_plan,
+            "abort": self._handle_abort,
+            "memory_checkpoint": self._handle_memory_checkpoint,
+            "export_session_chat": self._handle_export_session_chat,
+            "mesh_peers": self._handle_mesh_peers,
+            "mesh_status": self._handle_mesh_status,
         }
 
     async def _broadcast_notification(self, method: str, params: Any) -> None:
@@ -612,14 +687,12 @@ class PilotServer:
                 content = params if isinstance(params, dict) else {"data": params}
                 scored = await self._attention_ui.score_event(method, content)
 
-                # Buffer non-critical notifications when user is highly focused
                 if not scored.should_display and scored.priority.value != "critical":
                     if not hasattr(self, "_notification_buffer"):
                         self._notification_buffer = []
                     self._notification_buffer.append((method, params.copy() if isinstance(params, dict) else params))
                     return
 
-                # Flush buffer during 'cortical transition' moments (low activation)
                 if scored.attention_score < 0.4 and getattr(self, "_notification_buffer", []):
                     logger.info(
                         f"Flushing {len(self._notification_buffer)} buffered notifications during low cognitive load."
@@ -636,7 +709,6 @@ class PilotServer:
                                 pass
                     self._notification_buffer.clear()
 
-                # Embed cognitive hints directly into outgoing parameters
                 if isinstance(params, dict):
                     params["_cognitive"] = {
                         "priority": scored.priority,
@@ -713,7 +785,6 @@ class PilotServer:
             return {"status": "error", "message": "Empty input"}
         dry_run = bool(params.get("dry_run", self.config.security.dry_run))
 
-        # Session ID: use provided value or generate a per-request fallback
         session_id: str = params.get("session_id") or str(uuid.uuid4())
 
         from pilot.reasoning.events import (
@@ -798,8 +869,9 @@ class PilotServer:
         all_results: list = []
         last_verification = None
         last_explanation = ""
-        # Audit plan_id threaded through the retry loop
         audit_plan_id: str | None = None
+        _original_plan: Any = None
+        _successful_results: list = []
 
         for attempt in range(1 + self.MAX_RETRIES):
             # ── Stage: Planning ──
@@ -817,7 +889,6 @@ class PilotServer:
             if emit:
                 await emit.data_event("planning", PLANNER_LLM_CALL, {"model": "active"}, parent_id=plan_phase)
 
-            # Inject live screen context so planner knows what user is looking at
             _screen_ctx = ""
             if self._screen_vision:
                 try:
@@ -825,11 +896,9 @@ class PilotServer:
                 except Exception:
                     pass
 
-            # Create token stream callback for real-time LLM response streaming
             async def stream_token(token: str) -> None:
                 await ws.send(_notification("token_stream", {"token": token}))
 
-            # Only enable streaming on the first attempt (not on retries)
             stream_callback = stream_token if attempt == 0 else None
 
             plan = await self._planner.plan(
@@ -846,7 +915,6 @@ class PilotServer:
             last_explanation = plan.explanation
             plan_id = str(uuid.uuid4())[:8]
 
-            # ── Audit: record plan creation ──
             try:
                 audit_plan_id = await _record_plan_created(
                     session_id=session_id,
@@ -893,7 +961,6 @@ class PilotServer:
 
                 confirmed = await self._wait_for_confirmation(plan_id, plan, ws)
 
-                # ── Audit: record critic verdict (confirmation gate acts as critic) ──
                 if audit_plan_id:
                     try:
                         await _record_critic_verdict(
@@ -904,7 +971,6 @@ class PilotServer:
                     except Exception:
                         logger.warning("[plan_history] record_critic_verdict failed", exc_info=True)
 
-                # ── Audit: record user decision ──
                 if audit_plan_id:
                     try:
                         await _record_user_decision(
@@ -925,7 +991,6 @@ class PilotServer:
                         )
 
                 if not confirmed:
-                    # ── Audit: skipped execution ──
                     if audit_plan_id:
                         try:
                             await _record_execution_outcome(
@@ -941,7 +1006,6 @@ class PilotServer:
                         "explanation": plan.explanation,
                     }
             elif not dry_run:
-                # Auto-approved (tier 0/1)
                 if audit_plan_id:
                     try:
                         await _record_critic_verdict(
@@ -1002,7 +1066,6 @@ class PilotServer:
                         parent_id=_exec_phase,
                     )
 
-            # Route through multi-agent orchestrator
             if self._orchestrator:
                 orch_routing = self._orchestrator.get_routing_summary(plan)
                 await ws.send(_notification("orchestrator_routing", orch_routing))
@@ -1057,6 +1120,7 @@ class PilotServer:
                 verification = await self._verifier.verify(plan, results)
             last_verification = verification
             if _original_plan is not None and _successful_results:
+                from pilot.agents.plan_differ import PlanDiffer
                 all_results = PlanDiffer.merge_results(_successful_results, results, _original_plan, verification)
 
             if verification.passed:
@@ -1068,7 +1132,6 @@ class PilotServer:
                         parent_id=verify_phase,
                     )
 
-                # ── Audit: record successful execution outcome ──
                 if audit_plan_id:
                     try:
                         await _record_execution_outcome(
@@ -1083,7 +1146,6 @@ class PilotServer:
                     except Exception:
                         logger.warning("[plan_history] record_execution_outcome(success) failed", exc_info=True)
 
-                # ── Stage: Reflection ──
                 if emit:
                     refl_phase = await emit.phase_start("reflection", REFLECTION_STARTED)
                     await emit.thought(
@@ -1095,7 +1157,6 @@ class PilotServer:
                         "reflection", REFLECTION_COMPLETE, {"retry_count": attempt}, parent_id=refl_phase
                     )
 
-                # ── Stage: Memory Update ──
                 if emit:
                     mem_store_phase = await emit.phase_start("memory_update", MEMORY_STORE_STARTED)
                     await emit.thought(
@@ -1134,13 +1195,11 @@ class PilotServer:
                     "agent_routing": self._multi_agent.get_routing_summary(user_input),
                 }
 
-            # Execution failed — build error context for retry
             if emit:
                 await emit.phase_error(
                     "verification", VERIFICATION_FAILED, "; ".join(verification.details[:3]), parent_id=verify_phase
                 )
 
-            # Execution failed — use PlanDiffer for partial re-plan
             from pilot.agents.plan_differ import PlanDiffer
 
             retry_plan, successful_results = PlanDiffer.diff(plan, results, verification)
@@ -1149,7 +1208,6 @@ class PilotServer:
             error_msgs = [r.error for r in results if r.error]
             error_context = "\n".join(failed_details + error_msgs)
 
-            # Use partial retry plan if PlanDiffer found fewer actions to retry
             if len(retry_plan.actions) < len(plan.actions):
                 logger.info(
                     "PlanDiffer: retrying %d/%d actions",
@@ -1165,9 +1223,7 @@ class PilotServer:
                 await ws.send(
                     _notification(
                         "status",
-                        {
-                            "phase": "retrying — previous attempt failed",
-                        },
+                        {"phase": "retrying — previous attempt failed"},
                     )
                 )
                 if emit:
@@ -1177,7 +1233,6 @@ class PilotServer:
             else:
                 break
 
-        # ── Audit: record partial-failure outcome after all retries exhausted ──
         if audit_plan_id:
             try:
                 error_summary = "\n".join(
@@ -1195,7 +1250,6 @@ class PilotServer:
             except Exception:
                 logger.warning("[plan_history] record_execution_outcome(partial/failed) failed", exc_info=True)
 
-        # ── Final memory save on partial failure ──
         if emit:
             mem_final = await emit.phase_start("memory_update", MEMORY_STORE_STARTED)
             await emit.phase_complete("memory_update", MEMORY_STORE_COMPLETE, {"partial": True}, parent_id=mem_final)
@@ -1250,15 +1304,7 @@ class PilotServer:
         return pending.confirmed
 
     async def _handle_confirm(self, params: dict[str, Any], ws: ServerConnection) -> dict:
-        """Resolve a pending confirmation request from the UI.
-
-        Args:
-            params: JSON-RPC parameters containing plan_id and confirmed status.
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with status and confirmation result.
-        """
+        """Resolve a pending confirmation request from the UI."""
         plan_id = params.get("plan_id", "")
         confirmed = params.get("confirmed", False)
 
@@ -1273,15 +1319,7 @@ class PilotServer:
     # -- Config --
 
     async def _handle_get_config(self, params: dict, ws: ServerConnection) -> dict:
-        """Get the current server configuration.
-
-        Args:
-            params: JSON-RPC parameters (unused).
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict containing the server configuration.
-        """
+        """Get the current server configuration."""
         from dataclasses import asdict
 
         data = asdict(self.config)
@@ -1289,15 +1327,7 @@ class PilotServer:
         return data
 
     async def _handle_update_config(self, params: dict, ws: ServerConnection) -> dict:
-        """Update server configuration.
-
-        Args:
-            params: JSON-RPC parameters with section and values.
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with status.
-        """
+        """Update server configuration."""
         section = params.get("section", "")
         values = params.get("values", {})
 
@@ -1314,7 +1344,6 @@ class PilotServer:
                 setattr(target, k, v)
         self.config.save()
 
-        # Re-init cloud client if cloud provider changed
         if section == "model" and ("cloud_provider" in values or "provider" in values):
             if self.config.model.cloud_provider:
                 from pilot.models.cloud import CloudClient
@@ -1327,15 +1356,7 @@ class PilotServer:
     # -- History --
 
     async def _handle_get_history(self, params: dict, ws: ServerConnection) -> dict:
-        """Get conversation history from memory store.
-
-        Args:
-            params: JSON-RPC parameters with optional limit and offset.
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with entries list containing historical interactions.
-        """
+        """Get conversation history from memory store."""
         limit = params.get("limit", 50)
         offset = params.get("offset", 0)
         entries = await self._memory.get_history(limit=limit, offset=offset)
@@ -1344,33 +1365,7 @@ class PilotServer:
     # -- Plan History (audit log) --
 
     async def _handle_get_plan_history(self, params: dict, ws: ServerConnection) -> dict:
-        """Return a paginated list of plan audit records, newest first.
-
-        This is the internal plan-level audit log for debugging and compliance.
-        It is distinct from the chat/session history returned by ``get_history``.
-
-        Request params
-        --------------
-        session_id  str  (optional) – filter to a single session
-        limit       int  (optional, default 50, max 200)
-        offset      int  (optional, default 0)
-        status      str  (optional) – filter by execution_status
-        verdict     str  (optional) – filter by critic_verdict
-
-        Response
-        --------
-        {
-          "plans":  [ { plan_id, session_id, created_at, goal_text,
-                        critic_verdict, user_decision,
-                        execution_status, duration_ms }, ... ],
-          "total":  <int>,
-          "limit":  <int>,
-          "offset": <int>
-        }
-
-        Note: ``action_plan_json`` / ``execution_result`` are omitted here to
-        keep the list payload small.  Use ``get_plan_detail`` for the full record.
-        """
+        """Return a paginated list of plan audit records, newest first."""
         session_id: str | None = params.get("session_id")
         limit: int = min(int(params.get("limit", 50)), 200)
         offset: int = int(params.get("offset", 0))
@@ -1419,33 +1414,7 @@ class PilotServer:
         return {"plans": plans, "total": total, "limit": limit, "offset": offset}
 
     async def _handle_get_plan_detail(self, params: dict, ws: ServerConnection) -> dict:
-        """Return the complete audit record for a single plan.
-
-        Includes the full ActionPlan JSON and execution result blobs.
-
-        Request params
-        --------------
-        plan_id  str  (required)
-
-        Response
-        --------
-        {
-          "plan_id":          "...",
-          "session_id":       "...",
-          "created_at":       1234567890.0,
-          "goal_text":        "...",
-          "action_plan":      { ... },
-          "critic_verdict":   "...",
-          "critic_notes":     "...",
-          "user_decision":    "...",
-          "execution_status": "...",
-          "execution_result": { ... },
-          "error_detail":     "...",
-          "duration_ms":      123.4
-        }
-
-        Returns ``{"error": "not_found"}`` if the plan_id does not exist.
-        """
+        """Return the complete audit record for a single plan."""
         plan_id: str | None = params.get("plan_id")
         if not plan_id:
             return {"error": "missing_plan_id"}
@@ -1462,7 +1431,6 @@ class PilotServer:
 
         record = dict(row)
 
-        # Parse JSON blobs back into dicts for the caller's convenience
         for json_col, out_key in (
             ("action_plan_json", "action_plan"),
             ("execution_result", "execution_result"),
@@ -1481,21 +1449,12 @@ class PilotServer:
     # -- API key management --
 
     async def _handle_store_api_key(self, params: dict, ws: ServerConnection) -> dict:
-        """Store an API key for a provider in the vault.
-
-        Args:
-            params: JSON-RPC parameters with provider and api_key.
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with status.
-        """
+        """Store an API key for a provider in the vault."""
         provider = params.get("provider", "")
         key = params.get("api_key", "") or params.get("key", "")
         if not provider or not key:
             return {"status": "error", "message": "provider and api_key are required"}
         await self._vault.store_key(provider, key)
-        # Re-init cloud client with the new provider
         if self.config.model.cloud_provider == provider:
             from pilot.models.cloud import CloudClient
 
@@ -1503,15 +1462,7 @@ class PilotServer:
         return {"status": "ok"}
 
     async def _handle_delete_api_key(self, params: dict, ws: ServerConnection) -> dict:
-        """Delete a stored API key for a provider.
-
-        Args:
-            params: JSON-RPC parameters with provider.
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with status.
-        """
+        """Delete a stored API key for a provider."""
         provider = params.get("provider", "")
         if not provider:
             return {"status": "error", "message": "provider is required"}
@@ -1519,30 +1470,14 @@ class PilotServer:
         return {"status": "ok"}
 
     async def _handle_list_api_keys(self, params: dict, ws: ServerConnection) -> dict:
-        """List all providers with stored API keys.
-
-        Args:
-            params: JSON-RPC parameters (unused).
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with providers list.
-        """
+        """List all providers with stored API keys."""
         providers = await self._vault.list_providers()
         return {"providers": providers}
 
     # -- Ollama model discovery --
 
     async def _handle_list_ollama_models(self, params: dict, ws: ServerConnection) -> dict:
-        """List available Ollama models.
-
-        Args:
-            params: JSON-RPC parameters (unused).
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with models list and availability status.
-        """
+        """List available Ollama models."""
         from pilot.models.ollama import OllamaClient
 
         client = OllamaClient(self.config.model.ollama_base_url)
@@ -1552,34 +1487,40 @@ class PilotServer:
         except Exception:
             return {"models": [], "available": False}
 
-    # -- Health --
+    # -- Health & readiness --
 
     async def _handle_health(self, params: dict, ws: ServerConnection) -> dict:
-        """Check the health of all model backends.
-
-        Args:
-            params: JSON-RPC parameters (unused).
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with backends health status.
-        """
+        """Check the health of all model backends."""
         from pilot.models.router import ModelRouter
 
         router: ModelRouter = self._planner._model
         backends = await router.check_health()
         return {"backends": backends}
 
-    async def _handle_ping(self, params: dict, ws: ServerConnection) -> dict:
-        """Ping the server to check connectivity.
+    async def _handle_ready(self, params: dict, ws: ServerConnection) -> dict:
+        """Return readiness status — all critical subsystems initialised.
 
-        Args:
-            params: JSON-RPC parameters (unused).
-            ws: The WebSocket connection.
+        Clients poll this endpoint after connecting to know when the daemon
+        has finished booting and is ready to accept ``execute`` requests.
 
         Returns:
-            A dict with pong and version.
+            ``{"ready": True}`` once all critical subsystems are up, or
+            ``{"ready": False, "reason": "<description>"}`` if something is
+            still initialising or has failed.
         """
+        not_ready: list[str] = []
+        if self._planner is None:
+            not_ready.append("planner")
+        if self._executor is None:
+            not_ready.append("executor")
+        if self._memory is None:
+            not_ready.append("memory")
+        if not_ready:
+            return {"ready": False, "reason": f"subsystems not ready: {', '.join(not_ready)}"}
+        return {"ready": True}
+
+    async def _handle_ping(self, params: dict, ws: ServerConnection) -> dict:
+        """Ping the server to check connectivity."""
         return {"pong": True, "version": "0.7.1"}
 
     async def _handle_system_status(self, params: dict, ws: ServerConnection) -> dict:
@@ -1604,112 +1545,47 @@ class PilotServer:
     # -- Advanced Agent Endpoints --
 
     async def _handle_reflection_stats(self, params: dict, ws: ServerConnection) -> dict:
-        """Return self-improvement reflection statistics.
-
-        Args:
-            params: JSON-RPC parameters (unused).
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with reflection statistics from the reflector agent.
-        """
+        """Return self-improvement reflection statistics."""
         return await self._reflector.get_stats()
 
     async def _handle_background_tasks(self, params: dict, ws: ServerConnection) -> dict:
-        """List all registered background monitoring tasks.
-
-        Args:
-            params: JSON-RPC parameters (unused).
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with list of background tasks.
-        """
+        """List all registered background monitoring tasks."""
         return {"tasks": self._background.list_tasks()}
 
     async def _handle_background_start(self, params: dict, ws: ServerConnection) -> dict:
-        """Start a background monitoring task.
-
-        Args:
-            params: JSON-RPC parameters with task_id.
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with status and task_id.
-        """
+        """Start a background monitoring task."""
         task_id = params.get("task_id", "")
         ok = self._background.start(task_id)
         return {"status": "started" if ok else "error", "task_id": task_id}
 
     async def _handle_background_stop(self, params: dict, ws: ServerConnection) -> dict:
-        """Stop a background monitoring task.
-
-        Args:
-            params: JSON-RPC parameters with task_id.
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with status and task_id.
-        """
+        """Stop a background monitoring task."""
         task_id = params.get("task_id", "")
         ok = self._background.stop(task_id)
         return {"status": "stopped" if ok else "error", "task_id": task_id}
 
     async def _handle_agent_routing(self, params: dict, ws: ServerConnection) -> dict:
-        """Analyze which specialist agent(s) would handle a given input.
-
-        Args:
-            params: JSON-RPC parameters with input query.
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with routing summary and optionally orchestrator info.
-        """
+        """Analyze which specialist agent(s) would handle a given input."""
         query = params.get("input", "")
         result = self._multi_agent.get_routing_summary(query)
-        # Enrich with orchestrator info if available
         if self._orchestrator:
             result["orchestrator"] = self._orchestrator.get_input_routing_summary(query)
         return result
 
     async def _handle_agent_stats(self, params: dict, ws: ServerConnection) -> dict:
-        """Return performance stats for all registered agents.
-
-        Args:
-            params: JSON-RPC parameters (unused).
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with agent performance statistics.
-        """
+        """Return performance stats for all registered agents."""
         if self._orchestrator:
             return self._orchestrator.get_all_stats()
         return {"error": "Orchestrator not initialized"}
 
     async def _handle_agent_capabilities(self, params: dict, ws: ServerConnection) -> dict:
-        """Return all agent capabilities grouped by specialist.
-
-        Args:
-            params: JSON-RPC parameters (unused).
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with all agent capabilities.
-        """
+        """Return all agent capabilities grouped by specialist."""
         if self._orchestrator:
             return self._orchestrator.get_all_capabilities()
         return {"error": "Orchestrator not initialized"}
 
     async def _handle_agent_spawn(self, params: dict, ws: ServerConnection) -> dict:
-        """Dynamically spawn a new specialist agent.
-
-        Args:
-            params: JSON-RPC parameters with role.
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with status and optionally agent_id.
-        """
+        """Dynamically spawn a new specialist agent."""
         role_str = params.get("role", "")
         from pilot.agents.base_agent import AgentRole
 
@@ -1728,18 +1604,204 @@ class PilotServer:
                 return {"status": "spawned", "agent_id": agent.agent_id}
         return {"status": "error", "message": "Failed to spawn agent"}
 
+    # -- Partial re-planning / abort / checkpoint (restored from main) --
+
+    async def _handle_resume_plan(self, params: dict, ws: ServerConnection) -> dict:
+        """Resume a partially-completed plan from a checkpoint.
+
+        Re-runs only the failed/skipped actions from a previous execution,
+        preserving results for actions that already succeeded.
+
+        Request params
+        --------------
+        plan_id     str  (required) – plan_id from a ``get_plan_history`` record
+        session_id  str  (optional) – override session for the resumed run
+
+        Response
+        --------
+        Same shape as ``execute`` — ``status``, ``results``, ``verification``,
+        ``explanation``.
+        """
+        plan_id: str | None = params.get("plan_id")
+        if not plan_id:
+            return {"status": "error", "message": "plan_id is required"}
+
+        # Load the stored plan from the audit log
+        async with aiosqlite.connect(str(DB_FILE)) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                "SELECT * FROM plan_history WHERE plan_id = ?", (plan_id,)
+            ) as cursor:
+                row = await cursor.fetchone()
+
+        if row is None:
+            return {"status": "error", "message": f"Plan not found: {plan_id}"}
+
+        record = dict(row)
+        if record.get("execution_status") == "success":
+            return {"status": "error", "message": "Plan already completed successfully — nothing to resume"}
+
+        # Delegate to execute with the original goal, passing the plan_id as
+        # a hint so callers can correlate audit records.
+        goal_text: str = record.get("goal_text") or ""
+        session_id: str = params.get("session_id") or record.get("session_id") or str(uuid.uuid4())
+
+        return await self._handle_execute(
+            {"input": goal_text, "session_id": session_id, "resumed_from": plan_id},
+            ws,
+        )
+
+    async def _handle_abort(self, params: dict, ws: ServerConnection) -> dict:
+        """Abort a pending confirmation or signal the cancel event.
+
+        Sets ``self._cancel_event`` so that long-running loops can observe it,
+        and resolves any pending confirmation with ``confirmed=False``.
+
+        Request params
+        --------------
+        plan_id  str  (optional) – if provided, only that confirmation is aborted
+
+        Response
+        --------
+        ``{"status": "aborted", "plan_id": <plan_id or null>}``
+        """
+        plan_id: str | None = params.get("plan_id")
+
+        if plan_id:
+            pending = self._pending_confirms.get(plan_id)
+            if pending:
+                pending.confirmed = False
+                pending.event.set()
+                logger.info("Aborted pending confirmation for plan_id=%s", plan_id)
+        else:
+            # Signal global cancel
+            self._cancel_event.set()
+            # Also abort all pending confirmations
+            for p in list(self._pending_confirms.values()):
+                p.confirmed = False
+                p.event.set()
+            logger.info("Global abort signal sent; cleared %d pending confirmation(s)", len(self._pending_confirms))
+
+        return {"status": "aborted", "plan_id": plan_id}
+
+    async def _handle_memory_checkpoint(self, params: dict, ws: ServerConnection) -> dict:
+        """Create or retrieve a named memory checkpoint.
+
+        A checkpoint captures the current memory store state (recent history,
+        persona rules) under a caller-chosen name so that it can be restored
+        or compared later.
+
+        Request params
+        --------------
+        action      str   ``'save'`` | ``'load'`` | ``'list'``  (default: ``'save'``)
+        name        str   checkpoint name (required for ``save`` / ``load``)
+        session_id  str   (optional) tag this checkpoint with a session
+
+        Response
+        --------
+        * ``save``  → ``{"status": "saved", "name": <name>, "checkpoint_id": <id>}``
+        * ``load``  → ``{"status": "loaded", "name": <name>}``
+        * ``list``  → ``{"checkpoints": [ {name, created_at, session_id}, ... ]}``
+        """
+        action: str = params.get("action", "save")
+        name: str = params.get("name", "")
+        session_id: str | None = params.get("session_id")
+
+        if not self._checkpoint_store:
+            return {"status": "error", "message": "CheckpointStore not initialized"}
+
+        if action == "save":
+            if not name:
+                return {"status": "error", "message": "name is required for save"}
+            checkpoint_id = await self._checkpoint_store.save(
+                name=name, memory=self._memory, session_id=session_id
+            )
+            return {"status": "saved", "name": name, "checkpoint_id": checkpoint_id}
+
+        if action == "load":
+            if not name:
+                return {"status": "error", "message": "name is required for load"}
+            ok = await self._checkpoint_store.load(name=name, memory=self._memory)
+            if not ok:
+                return {"status": "error", "message": f"Checkpoint not found: {name}"}
+            return {"status": "loaded", "name": name}
+
+        if action == "list":
+            checkpoints = await self._checkpoint_store.list_checkpoints()
+            return {"checkpoints": checkpoints}
+
+        return {"status": "error", "message": f"Unknown action: {action}"}
+
+    async def _handle_export_session_chat(self, params: dict, ws: ServerConnection) -> dict:
+        """Export the chat / interaction history for a session to a file.
+
+        Writes a JSON file containing all memory records for the given session
+        to ``STATE_DIR``.
+
+        Request params
+        --------------
+        session_id  str  (optional) – defaults to all history
+        limit       int  (optional, default 200)
+        format      str  ``'json'`` | ``'jsonl'``  (default: ``'json'``)
+
+        Response
+        --------
+        ``{"status": "exported", "path": "<absolute path>", "count": <int>}``
+        """
+        session_id: str | None = params.get("session_id")
+        limit: int = int(params.get("limit", 200))
+        fmt: str = params.get("format", "json")
+
+        entries = await self._memory.get_history(limit=limit, offset=0)
+
+        if session_id:
+            entries = [e for e in entries if e.get("session_id") == session_id]
+
+        ts = time.strftime("%Y%m%d_%H%M%S")
+        suffix = ".jsonl" if fmt == "jsonl" else ".json"
+        fname = f"session_chat_{session_id or 'all'}_{ts}{suffix}"
+        dest = STATE_DIR / fname
+        dest.parent.mkdir(parents=True, exist_ok=True)
+
+        with dest.open("w", encoding="utf-8") as fh:
+            if fmt == "jsonl":
+                for entry in entries:
+                    fh.write(json.dumps(entry) + "\n")
+            else:
+                json.dump(entries, fh, indent=2)
+
+        logger.info("Session chat exported to %s (%d entries)", dest, len(entries))
+        return {"status": "exported", "path": str(dest), "count": len(entries)}
+
+    # -- Mesh networking (restored from main) --
+
+    async def _handle_mesh_peers(self, params: dict, ws: ServerConnection) -> dict:
+        """List known mesh peers and their last-seen status.
+
+        Response
+        --------
+        ``{"peers": [ {peer_id, address, last_seen, latency_ms}, ... ]}``
+        """
+        if not self._mesh:
+            return {"peers": [], "error": "MeshNetwork not initialized"}
+        peers = await self._mesh.list_peers()
+        return {"peers": peers}
+
+    async def _handle_mesh_status(self, params: dict, ws: ServerConnection) -> dict:
+        """Return overall mesh network status and statistics.
+
+        Response
+        --------
+        ``{"connected": bool, "peer_count": int, "node_id": str, ...}``
+        """
+        if not self._mesh:
+            return {"connected": False, "error": "MeshNetwork not initialized"}
+        return await self._mesh.get_status()
+
     # -- Multimodal Fusion --
 
     async def _handle_voice_event(self, params: dict, ws: ServerConnection) -> dict:
-        """Receive a voice event from the frontend and feed it to fusion engine.
-
-        Args:
-            params: JSON-RPC parameters with transcript, confidence, is_final.
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with status and optionally fused intent.
-        """
+        """Receive a voice event from the frontend and feed it to fusion engine."""
         if not self._fusion:
             return {"status": "error", "message": "Fusion engine not initialized"}
 
@@ -1757,15 +1819,7 @@ class PilotServer:
         return {"status": "buffered"}
 
     async def _handle_gesture_event(self, params: dict, ws: ServerConnection) -> dict:
-        """Receive a gesture event from the frontend and feed it to fusion engine.
-
-        Args:
-            params: JSON-RPC parameters with gesture, confidence, data.
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with status and optionally fused intent.
-        """
+        """Receive a gesture event from the frontend and feed it to fusion engine."""
         if not self._fusion:
             return {"status": "error", "message": "Fusion engine not initialized"}
 
@@ -1783,15 +1837,7 @@ class PilotServer:
         return {"status": "buffered"}
 
     async def _handle_multimodal_stats(self, params: dict, ws: ServerConnection) -> dict:
-        """Return multimodal fusion engine statistics.
-
-        Args:
-            params: JSON-RPC parameters (unused).
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with fusion engine stats or error.
-        """
+        """Return multimodal fusion engine statistics."""
         if self._fusion:
             return self._fusion.get_stats()
         return {"error": "Fusion engine not initialized"}
@@ -1799,29 +1845,13 @@ class PilotServer:
     # -- Reasoning Visualization --
 
     async def _handle_reasoning_log(self, params: dict, ws: ServerConnection) -> dict:
-        """Return the full reasoning event log for the current session.
-
-        Args:
-            params: JSON-RPC parameters (unused).
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with events list or error.
-        """
+        """Return the full reasoning event log for the current session."""
         if self._reasoning:
             return {"events": self._reasoning.get_session_log()}
         return {"error": "Reasoning emitter not initialized"}
 
     async def _handle_reasoning_stats(self, params: dict, ws: ServerConnection) -> dict:
-        """Return reasoning emitter statistics.
-
-        Args:
-            params: JSON-RPC parameters (unused).
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with reasoning stats or error.
-        """
+        """Return reasoning emitter statistics."""
         if self._reasoning:
             return self._reasoning.get_stats()
         return {"error": "Reasoning emitter not initialized"}
@@ -1829,15 +1859,7 @@ class PilotServer:
     # -- Task Decomposition --
 
     async def _handle_decompose_task(self, params: dict, ws: ServerConnection) -> dict:
-        """Decompose a complex goal into subtasks.
-
-        Args:
-            params: JSON-RPC parameters with goal.
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with decomposed task structure or error.
-        """
+        """Decompose a complex goal into subtasks."""
         goal = params.get("goal", "")
         if not goal:
             return {"error": "No goal provided"}
@@ -1849,19 +1871,10 @@ class PilotServer:
     # -- Simulation Sandbox --
 
     async def _handle_simulate_plan(self, params: dict, ws: ServerConnection) -> dict:
-        """Simulate a plan and return an impact report without execution.
-
-        Args:
-            params: JSON-RPC parameters with optional plan_id.
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with impact report or error.
-        """
+        """Simulate a plan and return an impact report without execution."""
         if not self._sandbox:
             return {"error": "Sandbox not initialized"}
 
-        # Reconstruct plan from params or use last plan
         plan_id = params.get("plan_id", "")
         pending = self._pending_confirms.get(plan_id)
         if pending and pending.plan:
@@ -1873,15 +1886,7 @@ class PilotServer:
     # -- Self-Improving Prompt System --
 
     async def _handle_prompt_strategies(self, params: dict, ws: ServerConnection) -> dict:
-        """Get proven prompt strategies for a task.
-
-        Args:
-            params: JSON-RPC parameters with query.
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with strategies or error.
-        """
+        """Get proven prompt strategies for a task."""
         query = params.get("query", "")
         if not query:
             return {"strategies": ""}
@@ -1891,15 +1896,7 @@ class PilotServer:
         return {"error": "Prompt improver not initialized"}
 
     async def _handle_prompt_stats(self, params: dict, ws: ServerConnection) -> dict:
-        """Return prompt improvement statistics.
-
-        Args:
-            params: JSON-RPC parameters (unused).
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with prompt improvement stats or error.
-        """
+        """Return prompt improvement statistics."""
         if self._prompt_improver:
             return await self._prompt_improver.get_stats()
         return {"error": "Prompt improver not initialized"}
@@ -1907,43 +1904,19 @@ class PilotServer:
     # -- Plugin Ecosystem --
 
     async def _handle_plugin_list(self, params: dict, ws: ServerConnection) -> dict:
-        """List all loaded plugins.
-
-        Args:
-            params: JSON-RPC parameters (unused).
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with plugin statistics or error.
-        """
+        """List all loaded plugins."""
         if self._plugin_registry:
             return self._plugin_registry.get_stats()
         return {"error": "Plugin registry not initialized"}
 
     async def _handle_plugin_tools(self, params: dict, ws: ServerConnection) -> dict:
-        """List all available plugin tools.
-
-        Args:
-            params: JSON-RPC parameters (unused).
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with tools list or error.
-        """
+        """List all available plugin tools."""
         if self._plugin_registry:
             return {"tools": self._plugin_registry.get_all_tools()}
         return {"error": "Plugin registry not initialized"}
 
     async def _handle_plugin_toggle(self, params: dict, ws: ServerConnection) -> dict:
-        """Enable or disable a plugin.
-
-        Args:
-            params: JSON-RPC parameters with name and enabled status.
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with success status, plugin name, and enabled state.
-        """
+        """Enable or disable a plugin."""
         name = params.get("name", "")
         enabled = params.get("enabled", True)
         if not name:
@@ -1957,15 +1930,7 @@ class PilotServer:
         return {"error": "Plugin registry not initialized"}
 
     async def _handle_plugin_market_list(self, params: dict, ws: ServerConnection) -> dict:
-        """Fetch available plugins from the community manifest.
-
-        Args:
-            params: JSON-RPC parameters (unused).
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with plugins list from registry.json.
-        """
+        """Fetch available plugins from the community manifest."""
         import json as json_module
         import os
 
@@ -1992,15 +1957,7 @@ class PilotServer:
             return {"plugins": [], "error": str(e)}
 
     async def _handle_plugin_install(self, params: dict, ws: ServerConnection) -> dict:
-        """Install a plugin from the marketplace.
-
-        Args:
-            params: JSON-RPC parameters with plugin_name.
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with installation status.
-        """
+        """Install a plugin from the marketplace."""
         import shutil
 
         plugin_name = params.get("plugin_name", "")
@@ -2027,15 +1984,7 @@ class PilotServer:
         }
 
     async def _handle_plugin_uninstall(self, params: dict, ws: ServerConnection) -> dict:
-        """Uninstall a plugin.
-
-        Args:
-            params: JSON-RPC parameters with plugin_name.
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with uninstallation status.
-        """
+        """Uninstall a plugin."""
         import shutil
 
         plugin_name = params.get("plugin_name", "")
@@ -2057,15 +2006,7 @@ class PilotServer:
     # ── Subconscious Agent Handlers ──
 
     async def _handle_persona_rules(self, params: dict, ws: ServerConnection) -> dict:
-        """Return all persona rules.
-
-        Args:
-            params: JSON-RPC parameters (unused).
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with persona context and statistics.
-        """
+        """Return all persona rules."""
         if self._subconscious:
             context = await self._subconscious.get_persona_context()
             stats = await self._subconscious.get_stats()
@@ -2073,30 +2014,14 @@ class PilotServer:
         return {"error": "Subconscious agent not initialized"}
 
     async def _handle_persona_consolidate(self, params: dict, ws: ServerConnection) -> dict:
-        """Force a consolidation cycle.
-
-        Args:
-            params: JSON-RPC parameters (unused).
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with consolidation result or error.
-        """
+        """Force a consolidation cycle."""
         if self._subconscious:
             result = await self._subconscious.consolidate()
             return result
         return {"error": "Subconscious agent not initialized"}
 
     async def _handle_persona_add_preference(self, params: dict, ws: ServerConnection) -> dict:
-        """Manually add a user preference.
-
-        Args:
-            params: JSON-RPC parameters with key and value.
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with status, key, and value.
-        """
+        """Manually add a user preference."""
         key = params.get("key", "")
         value = params.get("value", "")
         if not key or not value:
@@ -2107,15 +2032,7 @@ class PilotServer:
         return {"error": "Subconscious agent not initialized"}
 
     async def _handle_subconscious_stats(self, params: dict, ws: ServerConnection) -> dict:
-        """Return subconscious agent stats.
-
-        Args:
-            params: JSON-RPC parameters (unused).
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with subconscious agent statistics.
-        """
+        """Return subconscious agent stats."""
         if self._subconscious:
             return await self._subconscious.get_stats()
         return {"error": "Subconscious agent not initialized"}
@@ -2123,15 +2040,7 @@ class PilotServer:
     # ── Screen Vision Handlers ──
 
     async def _handle_screen_context(self, params: dict, ws: ServerConnection) -> dict:
-        """Return the current screen context summary.
-
-        Args:
-            params: JSON-RPC parameters (unused).
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with screen context summary and details.
-        """
+        """Return the current screen context summary."""
         if self._screen_vision:
             return {
                 "summary": self._screen_vision.get_context_for_planner(),
@@ -2140,43 +2049,19 @@ class PilotServer:
         return {"error": "Screen vision not initialized"}
 
     async def _handle_screen_current_app(self, params: dict, ws: ServerConnection) -> dict:
-        """Return the currently active application.
-
-        Args:
-            params: JSON-RPC parameters (unused).
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with active_app name.
-        """
+        """Return the currently active application."""
         if self._screen_vision:
             return {"active_app": self._screen_vision.get_current_app()}
         return {"error": "Screen vision not initialized"}
 
     async def _handle_screen_vision_stats(self, params: dict, ws: ServerConnection) -> dict:
-        """Return screen vision statistics.
-
-        Args:
-            params: JSON-RPC parameters (unused).
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with screen vision statistics.
-        """
+        """Return screen vision statistics."""
         if self._screen_vision:
             return self._screen_vision.get_stats()
         return {"error": "Screen vision not initialized"}
 
     async def _handle_screen_vision_toggle(self, params: dict, ws: ServerConnection) -> dict:
-        """Start or stop screen vision.
-
-        Args:
-            params: JSON-RPC parameters with enabled, interval_seconds, enable_describe.
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with status and enabled state.
-        """
+        """Start or stop screen vision."""
         enabled = params.get("enabled", True)
         if self._screen_vision:
             if enabled:
@@ -2191,12 +2076,7 @@ class PilotServer:
     # -- Broadcast --
 
     async def broadcast(self, method: str, params: Any) -> None:
-        """Broadcast a notification to all connected clients.
-
-        Args:
-            method: The notification method name.
-            params: The notification parameters.
-        """
+        """Broadcast a notification to all connected clients."""
         msg = _notification(method, params)
         for client in list(self._clients):
             try:
@@ -2207,11 +2087,7 @@ class PilotServer:
     # -- Lifecycle --
 
     async def start(self) -> None:
-        """Start the Pilot daemon server.
-
-        Initializes all subsystems, starts the WebSocket server on the
-        configured host and port, and announces new features to clients.
-        """
+        """Start the Pilot daemon server."""
         self._running = True
         await self.initialize()
 
@@ -2228,9 +2104,8 @@ class PilotServer:
         )
         logger.info("Pilot daemon ready")
 
-        # Announce new features to connected clients
         if hasattr(self, "_new_features_announcement") and self._new_features_announcement:
-            await asyncio.sleep(1)  # Give clients time to connect
+            await asyncio.sleep(1)
             await self._broadcast_notification(
                 "feature_announcement",
                 {
@@ -2241,6 +2116,7 @@ class PilotServer:
 
     async def stop(self) -> None:
         self._running = False
+        self._cancel_event.set()
         if self._orchestrator:
             await self._orchestrator.stop_all()
         if self._background:
@@ -2257,7 +2133,9 @@ class PilotServer:
             await self._memory.close()
         if self._budget_tracker:
             await self._budget_tracker.close()
-        # Unload TRIBE v2 model
+        if self._mesh:
+            with contextlib.suppress(Exception):
+                await self._mesh.close()
         if self._tribe_engine and self._tribe_engine.is_loaded:
             self._tribe_engine.unload_model()
         logger.info("Pilot daemon stopped")
@@ -2338,18 +2216,11 @@ class PilotServer:
     # ── Voice Listener (JARVIS Mode) Handlers ──
 
     async def _voice_command_dispatch(self, command_text: str) -> None:
-        """Called by ContinuousVoiceListener when a voice command is recognized.
-
-        Runs the full ReAct pipeline and speaks the result back.
-
-        Args:
-            command_text: The recognized voice command text.
-        """
+        """Called by ContinuousVoiceListener when a voice command is recognized."""
         logger.info("Voice command received: '%s'", command_text)
         await self._broadcast_notification("voice_command", {"command": command_text, "status": "executing"})
 
         try:
-            # Get screen context
             screen_ctx = ""
             if self._screen_vision:
                 try:
@@ -2357,13 +2228,11 @@ class PilotServer:
                 except Exception:
                     pass
 
-            # Plan
             plan = await self._planner.plan(command_text, screen_context=screen_ctx)
             if plan.error:
                 await self._broadcast_notification(
                     "voice_result", {"command": command_text, "status": "error", "message": plan.error}
                 )
-                # Speak the error
                 from pilot.system.voice import speak
 
                 await speak(f"Sorry, I couldn't plan that. {plan.error[:100]}")
@@ -2379,13 +2248,9 @@ class PilotServer:
                 },
             )
 
-            # Execute (auto-approve safe actions from voice)
             results = await self._executor.execute_plan(plan)
-
-            # Verify
             verification = await self._verifier.verify(plan, results)
 
-            # Build response summary
             output_parts = []
             for r in results:
                 if r.output:
@@ -2399,7 +2264,6 @@ class PilotServer:
                 {"command": command_text, "status": status, "result": result_text[:500]},
             )
 
-            # Speak the result (keep it short for voice)
             from pilot.system.voice import speak
 
             spoken = result_text[:300] if len(result_text) < 300 else result_text[:297] + "..."
@@ -2412,24 +2276,11 @@ class PilotServer:
             )
 
     async def _voice_status_broadcast(self, status: str, data: dict) -> None:
-        """Called by ContinuousVoiceListener for status updates.
-
-        Args:
-            status: The voice listener status.
-            data: Additional status data.
-        """
+        """Called by ContinuousVoiceListener for status updates."""
         await self._broadcast_notification("voice_status", {"status": status, **data})
 
     async def _handle_voice_listener_start(self, params: dict, ws: ServerConnection) -> dict:
-        """Start the continuous JARVIS-mode voice listener.
-
-        Args:
-            params: JSON-RPC parameters with wake_words.
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with status, message, and wake_words.
-        """
+        """Start the continuous JARVIS-mode voice listener."""
         from pilot.system.voice import ContinuousVoiceListener
 
         wake_words = params.get("wake_words", ["hey heliox", "heliox", "hey pilot"])
@@ -2446,15 +2297,7 @@ class PilotServer:
         return {"status": "started", "message": result, "wake_words": wake_words}
 
     async def _handle_voice_listener_stop(self, params: dict, ws: ServerConnection) -> dict:
-        """Stop the continuous voice listener.
-
-        Args:
-            params: JSON-RPC parameters (unused).
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with status and message.
-        """
+        """Stop the continuous voice listener."""
         if not self._voice_listener or not self._voice_listener.is_running:
             return {"status": "not_running"}
 
@@ -2462,15 +2305,7 @@ class PilotServer:
         return {"status": "stopped", "message": result}
 
     async def _handle_voice_listener_stats(self, params: dict, ws: ServerConnection) -> dict:
-        """Get voice listener statistics.
-
-        Args:
-            params: JSON-RPC parameters (unused).
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with voice listener statistics.
-        """
+        """Get voice listener statistics."""
         if not self._voice_listener:
             return {"running": False, "message": "Voice listener not initialized"}
         return self._voice_listener.get_stats()
@@ -2478,15 +2313,7 @@ class PilotServer:
     # ── Autonomous Executor Handlers ──
 
     async def _handle_autonomous_submit(self, params: dict, ws: ServerConnection) -> dict:
-        """Submit a task for autonomous background execution.
-
-        Args:
-            params: JSON-RPC parameters with goal and source.
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with status and job information.
-        """
+        """Submit a task for autonomous background execution."""
         if not self._autonomous:
             return {"error": "Autonomous executor not initialized"}
 
@@ -2499,15 +2326,7 @@ class PilotServer:
         return {"status": "submitted", "job": job.to_dict()}
 
     async def _handle_autonomous_cancel(self, params: dict, ws: ServerConnection) -> dict:
-        """Cancel a running autonomous job.
-
-        Args:
-            params: JSON-RPC parameters with job_id.
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with cancelled status and job_id.
-        """
+        """Cancel a running autonomous job."""
         if not self._autonomous:
             return {"error": "Autonomous executor not initialized"}
 
@@ -2516,29 +2335,13 @@ class PilotServer:
         return {"cancelled": success, "job_id": job_id}
 
     async def _handle_autonomous_jobs(self, params: dict, ws: ServerConnection) -> dict:
-        """List all autonomous jobs.
-
-        Args:
-            params: JSON-RPC parameters (unused).
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with list of jobs.
-        """
+        """List all autonomous jobs."""
         if not self._autonomous:
             return {"jobs": []}
         return {"jobs": self._autonomous.list_jobs()}
 
     async def _handle_autonomous_job(self, params: dict, ws: ServerConnection) -> dict:
-        """Get a specific autonomous job by ID.
-
-        Args:
-            params: JSON-RPC parameters with job_id.
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with job information or error.
-        """
+        """Get a specific autonomous job by ID."""
         if not self._autonomous:
             return {"error": "Autonomous executor not initialized"}
 
@@ -2551,59 +2354,27 @@ class PilotServer:
     # ── Proactive Suggestions Handlers ──
 
     async def _handle_proactive_start(self, params: dict, ws: ServerConnection) -> dict:
-        """Start the proactive suggestion engine.
-
-        Args:
-            params: JSON-RPC parameters (unused).
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with status and message.
-        """
+        """Start the proactive suggestion engine."""
         if not self._proactive:
             return {"error": "Proactive engine not initialized"}
         result = await self._proactive.start()
         return {"status": "started", "message": result}
 
     async def _handle_proactive_stop(self, params: dict, ws: ServerConnection) -> dict:
-        """Stop the proactive suggestion engine.
-
-        Args:
-            params: JSON-RPC parameters (unused).
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with status and message.
-        """
+        """Stop the proactive suggestion engine."""
         if not self._proactive:
             return {"error": "Proactive engine not initialized"}
         result = await self._proactive.stop()
         return {"status": "stopped", "message": result}
 
     async def _handle_proactive_stats(self, params: dict, ws: ServerConnection) -> dict:
-        """Get proactive engine statistics.
-
-        Args:
-            params: JSON-RPC parameters (unused).
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with proactive engine statistics.
-        """
+        """Get proactive engine statistics."""
         if not self._proactive:
             return {"running": False, "message": "Proactive engine not initialized"}
         return self._proactive.get_stats()
 
     async def _handle_proactive_accept(self, params: dict, ws: ServerConnection) -> dict:
-        """Accept a proactive suggestion — execute the suggested action.
-
-        Args:
-            params: JSON-RPC parameters with suggestion_id.
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with execution status and results.
-        """
+        """Accept a proactive suggestion — execute the suggested action."""
         if not self._proactive:
             return {"error": "Proactive engine not initialized"}
 
@@ -2612,12 +2383,10 @@ class PilotServer:
         if not action_command:
             return {"error": f"Suggestion not found: {suggestion_id}"}
 
-        # Execute the suggested action via autonomous executor or direct pipeline
         if self._autonomous:
             job = await self._autonomous.submit(action_command, source="proactive")
             return {"status": "executing", "action": action_command, "job": job.to_dict()}
         else:
-            # Fallback: run directly through planner
             screen_ctx = ""
             if self._screen_vision:
                 try:
@@ -2635,15 +2404,7 @@ class PilotServer:
             }
 
     async def _handle_proactive_dismiss(self, params: dict, ws: ServerConnection) -> dict:
-        """Dismiss a proactive suggestion.
-
-        Args:
-            params: JSON-RPC parameters with suggestion_id.
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with dismissed status and suggestion_id.
-        """
+        """Dismiss a proactive suggestion."""
         if not self._proactive:
             return {"error": "Proactive engine not initialized"}
 
@@ -2671,10 +2432,31 @@ def main() -> None:
     config = PilotConfig.load()
     parser = argparse.ArgumentParser(prog="pilot.server")
     parser.add_argument("--dry-run", action="store_true", help="Simulate actions without executing them")
+    parser.add_argument(
+        "--export-logs",
+        metavar="DEST",
+        nargs="?",
+        const="",
+        default=None,
+        help="Export daemon logs to DEST (default: timestamped file in STATE_DIR) and exit",
+    )
     args, _ = parser.parse_known_args()
+
+    # Handle --export-logs before starting the server
+    if args.export_logs is not None:
+        dest = Path(args.export_logs) if args.export_logs else None
+        try:
+            out = export_logs(dest)
+            print(f"Logs exported to: {out}")
+        except FileNotFoundError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            sys.exit(1)
+        return
+
     if args.dry_run:
         config.security.dry_run = True
         logger.info("Dry-run mode enabled via CLI flag")
+
     server = PilotServer(config)
 
     loop = asyncio.new_event_loop()
