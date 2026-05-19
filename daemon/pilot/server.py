@@ -9,11 +9,13 @@ import json
 import logging
 import secrets
 import signal
+import sqlite3
 import sys
+import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, List, Optional
 
 import websockets
 from websockets.asyncio.server import Server, ServerConnection
@@ -24,6 +26,203 @@ logger = logging.getLogger("pilot.server")
 
 CONFIRM_TIMEOUT_SECONDS = 300
 
+
+# ════════════════════════════════════════════════════════════════════════════
+# Plan History — SQLite audit log
+# ════════════════════════════════════════════════════════════════════════════
+
+def _init_plan_history_db() -> None:
+    """Create the ``plan_history`` table and index if they do not exist.
+
+    Called once during server startup, right after other DB initialisations.
+
+    Schema
+    ------
+    plan_id          TEXT  PRIMARY KEY  – UUID, unique per plan attempt
+    session_id       TEXT              – links to the active chat/session
+    created_at       REAL              – Unix timestamp (time.time())
+    goal_text        TEXT              – the original user goal string
+    action_plan_json TEXT              – full ActionPlan serialised as JSON
+    critic_verdict   TEXT              – 'approved' | 'rejected' | 'modified' | NULL
+    critic_notes     TEXT              – free-form critic feedback / NULL
+    user_decision    TEXT              – 'confirmed' | 'rejected' | 'auto' | NULL
+    execution_status TEXT              – 'success' | 'partial' | 'failed' | 'skipped' | NULL
+    execution_result TEXT              – JSON summary of executor output / NULL
+    error_detail     TEXT              – stack-trace or error message on failure / NULL
+    duration_ms      REAL              – wall-clock ms from plan creation → execution end
+    """
+    conn = sqlite3.connect(str(DB_FILE))
+    try:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS plan_history (
+                plan_id          TEXT PRIMARY KEY,
+                session_id       TEXT,
+                created_at       REAL NOT NULL,
+                goal_text        TEXT,
+                action_plan_json TEXT,
+                critic_verdict   TEXT,
+                critic_notes     TEXT,
+                user_decision    TEXT,
+                execution_status TEXT,
+                execution_result TEXT,
+                error_detail     TEXT,
+                duration_ms      REAL
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_plan_history_session
+            ON plan_history (session_id, created_at DESC)
+        """)
+        conn.commit()
+        logger.info("[plan_history] table ready at %s", DB_FILE)
+    finally:
+        conn.close()
+
+
+def _record_plan_created(
+    *,
+    session_id: str,
+    goal_text: str,
+    action_plan: Any,
+) -> str:
+    """Insert a new audit row when the planner produces an ActionPlan.
+
+    Returns the generated ``plan_id`` (UUID) so callers can thread it
+    through subsequent lifecycle stages.
+    """
+    plan_id = str(uuid.uuid4())
+    now = time.time()
+
+    if not isinstance(action_plan, str):
+        try:
+            action_plan_json = json.dumps(
+                action_plan if isinstance(action_plan, dict) else action_plan.__dict__,
+                default=str,
+            )
+        except Exception:
+            action_plan_json = str(action_plan)
+    else:
+        action_plan_json = action_plan
+
+    conn = sqlite3.connect(str(DB_FILE))
+    try:
+        conn.execute(
+            """
+            INSERT INTO plan_history
+                (plan_id, session_id, created_at, goal_text, action_plan_json)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (plan_id, session_id, now, goal_text, action_plan_json),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    logger.debug("[plan_history] created plan_id=%s", plan_id)
+    return plan_id
+
+
+def _record_critic_verdict(
+    *,
+    plan_id: str,
+    verdict: str,
+    notes: Optional[str] = None,
+) -> None:
+    """Update the audit row after the critic agent evaluates the plan.
+
+    Args:
+        plan_id: The plan's UUID returned by ``_record_plan_created``.
+        verdict: One of ``'approved'``, ``'rejected'``, or ``'modified'``.
+        notes: Optional free-form feedback from the critic.
+    """
+    conn = sqlite3.connect(str(DB_FILE))
+    try:
+        conn.execute(
+            "UPDATE plan_history SET critic_verdict=?, critic_notes=? WHERE plan_id=?",
+            (verdict, notes, plan_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    logger.debug("[plan_history] critic verdict=%s for plan_id=%s", verdict, plan_id)
+
+
+def _record_user_decision(*, plan_id: str, decision: str) -> None:
+    """Update the audit row after the user (or auto-confirm gate) decides.
+
+    Args:
+        plan_id: The plan's UUID.
+        decision: One of ``'confirmed'``, ``'rejected'``, or ``'auto'``.
+    """
+    conn = sqlite3.connect(str(DB_FILE))
+    try:
+        conn.execute(
+            "UPDATE plan_history SET user_decision=? WHERE plan_id=?",
+            (decision, plan_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    logger.debug("[plan_history] user decision=%s for plan_id=%s", decision, plan_id)
+
+
+def _record_execution_outcome(
+    *,
+    plan_id: str,
+    status: str,
+    result: Optional[Any] = None,
+    error: Optional[str] = None,
+) -> None:
+    """Update the audit row once execution completes (or fails/is skipped).
+
+    Args:
+        plan_id: The plan's UUID.
+        status: One of ``'success'``, ``'partial'``, ``'failed'``, ``'skipped'``.
+        result: JSON-serialisable summary of executor output.
+        error: Stack-trace or error message string on failure.
+    """
+    now = time.time()
+
+    if result is not None and not isinstance(result, str):
+        try:
+            result_json: Optional[str] = json.dumps(result, default=str)
+        except Exception:
+            result_json = str(result)
+    else:
+        result_json = result
+
+    conn = sqlite3.connect(str(DB_FILE))
+    try:
+        row = conn.execute(
+            "SELECT created_at FROM plan_history WHERE plan_id=?", (plan_id,)
+        ).fetchone()
+        duration_ms: Optional[float] = None
+        if row:
+            duration_ms = (now - row[0]) * 1000.0
+
+        conn.execute(
+            """
+            UPDATE plan_history
+               SET execution_status=?,
+                   execution_result=?,
+                   error_detail=?,
+                   duration_ms=?
+             WHERE plan_id=?
+            """,
+            (status, result_json, error, duration_ms, plan_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    logger.debug(
+        "[plan_history] execution status=%s duration=%.0fms for plan_id=%s",
+        status, duration_ms or 0, plan_id,
+    )
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# JSON-RPC helpers
+# ════════════════════════════════════════════════════════════════════════════
 
 @dataclass
 class JsonRpcRequest:
@@ -143,6 +342,9 @@ class PilotServer:
         from pilot.security.permissions import PermissionChecker
         from pilot.security.validator import ActionValidator
         from pilot.security.vault import KeyVault
+
+        # ── Initialise plan-history audit table ──
+        _init_plan_history_db()
 
         self._vault = KeyVault(self.config)
         model_router = ModelRouter(self.config, self._vault)
@@ -399,6 +601,9 @@ class PilotServer:
             # Budget tracking endpoints
             "budget_stats": self._handle_budget_stats,
             "budget_reset": self._handle_budget_reset,
+            # Plan-history audit log endpoints
+            "get_plan_history": self._handle_get_plan_history,
+            "get_plan_detail": self._handle_get_plan_detail,
         }
 
     async def _broadcast_notification(self, method: str, params: Any) -> None:
@@ -515,7 +720,8 @@ class PilotServer:
             return {"status": "error", "message": "Empty input"}
         dry_run = bool(params.get("dry_run", self.config.security.dry_run))
 
-        import time
+        # Session ID: use provided value or generate a per-request fallback
+        session_id: str = params.get("session_id") or str(uuid.uuid4())
 
         from pilot.reasoning.events import (
             CONFIRMATION_APPROVED,
@@ -599,6 +805,8 @@ class PilotServer:
         all_results: list = []
         last_verification = None
         last_explanation = ""
+        # Audit plan_id threaded through the retry loop
+        audit_plan_id: Optional[str] = None
 
         for attempt in range(1 + self.MAX_RETRIES):
             # ── Stage: Planning ──
@@ -645,6 +853,16 @@ class PilotServer:
             last_explanation = plan.explanation
             plan_id = str(uuid.uuid4())[:8]
 
+            # ── Audit: record plan creation ──
+            try:
+                audit_plan_id = _record_plan_created(
+                    session_id=session_id,
+                    goal_text=user_input,
+                    action_plan=[a.model_dump() for a in plan.actions],
+                )
+            except Exception:
+                logger.warning("[plan_history] record_plan_created failed", exc_info=True)
+
             if emit:
                 await emit.phase_complete(
                     "planning",
@@ -682,6 +900,27 @@ class PilotServer:
 
                 confirmed = await self._wait_for_confirmation(plan_id, plan, ws)
 
+                # ── Audit: record critic verdict (confirmation gate acts as critic) ──
+                if audit_plan_id:
+                    try:
+                        _record_critic_verdict(
+                            plan_id=audit_plan_id,
+                            verdict="approved" if confirmed else "rejected",
+                            notes="Confirmation gate",
+                        )
+                    except Exception:
+                        logger.warning("[plan_history] record_critic_verdict failed", exc_info=True)
+
+                # ── Audit: record user decision ──
+                if audit_plan_id:
+                    try:
+                        _record_user_decision(
+                            plan_id=audit_plan_id,
+                            decision="confirmed" if confirmed else "rejected",
+                        )
+                    except Exception:
+                        logger.warning("[plan_history] record_user_decision failed", exc_info=True)
+
                 if emit:
                     if confirmed:
                         await emit.phase_complete(
@@ -693,12 +932,34 @@ class PilotServer:
                         )
 
                 if not confirmed:
+                    # ── Audit: skipped execution ──
+                    if audit_plan_id:
+                        try:
+                            _record_execution_outcome(
+                                plan_id=audit_plan_id,
+                                status="skipped",
+                                error="Plan was denied by user.",
+                            )
+                        except Exception:
+                            logger.warning("[plan_history] record_execution_outcome(skipped) failed", exc_info=True)
                     return {
                         "status": "cancelled",
                         "message": "Plan was denied by user.",
                         "explanation": plan.explanation,
                     }
             elif not dry_run:
+                # Auto-approved (tier 0/1)
+                if audit_plan_id:
+                    try:
+                        _record_critic_verdict(
+                            plan_id=audit_plan_id,
+                            verdict="approved",
+                            notes="Auto-approved (no dangerous actions)",
+                        )
+                        _record_user_decision(plan_id=audit_plan_id, decision="auto")
+                    except Exception:
+                        logger.warning("[plan_history] auto-approve audit failed", exc_info=True)
+
                 if emit:
                     skip_phase = await emit.phase_start("confirmation", "confirmation_skipped")
                     await emit.phase_complete(
@@ -812,6 +1073,21 @@ class PilotServer:
                         parent_id=verify_phase,
                     )
 
+                # ── Audit: record successful execution outcome ──
+                if audit_plan_id:
+                    try:
+                        _record_execution_outcome(
+                            plan_id=audit_plan_id,
+                            status="success",
+                            result={
+                                "dry_run": dry_run,
+                                "action_count": len(results),
+                                "successes": sum(1 for r in results if r.success),
+                            },
+                        )
+                    except Exception:
+                        logger.warning("[plan_history] record_execution_outcome(success) failed", exc_info=True)
+
                 # ── Stage: Reflection ──
                 if emit:
                     refl_phase = await emit.phase_start("reflection", REFLECTION_STARTED)
@@ -888,6 +1164,24 @@ class PilotServer:
                     )
             else:
                 break
+
+        # ── Audit: record partial-failure outcome after all retries exhausted ──
+        if audit_plan_id:
+            try:
+                error_summary = "\n".join(
+                    [r.error for r in all_results if r.error][:5]
+                ) or "Verification failed after all retries"
+                _record_execution_outcome(
+                    plan_id=audit_plan_id,
+                    status="partial" if any(r.success for r in all_results) else "failed",
+                    result={
+                        "action_count": len(all_results),
+                        "successes": sum(1 for r in all_results if r.success),
+                    },
+                    error=error_summary,
+                )
+            except Exception:
+                logger.warning("[plan_history] record_execution_outcome(partial/failed) failed", exc_info=True)
 
         # ── Final memory save on partial failure ──
         if emit:
@@ -1034,6 +1328,146 @@ class PilotServer:
         offset = params.get("offset", 0)
         entries = await self._memory.get_history(limit=limit, offset=offset)
         return {"entries": entries}
+
+    # -- Plan History (audit log) --
+
+    async def _handle_get_plan_history(self, params: dict, ws: ServerConnection) -> dict:
+        """Return a paginated list of plan audit records, newest first.
+
+        This is the internal plan-level audit log for debugging and compliance.
+        It is distinct from the chat/session history returned by ``get_history``.
+
+        Request params
+        --------------
+        session_id  str  (optional) – filter to a single session
+        limit       int  (optional, default 50, max 200)
+        offset      int  (optional, default 0)
+        status      str  (optional) – filter by execution_status
+        verdict     str  (optional) – filter by critic_verdict
+
+        Response
+        --------
+        {
+          "plans":  [ { plan_id, session_id, created_at, goal_text,
+                        critic_verdict, user_decision,
+                        execution_status, duration_ms }, ... ],
+          "total":  <int>,
+          "limit":  <int>,
+          "offset": <int>
+        }
+
+        Note: ``action_plan_json`` / ``execution_result`` are omitted here to
+        keep the list payload small.  Use ``get_plan_detail`` for the full record.
+        """
+        session_id: Optional[str] = params.get("session_id")
+        limit: int = min(int(params.get("limit", 50)), 200)
+        offset: int = int(params.get("offset", 0))
+        status_filter: Optional[str] = params.get("status")
+        verdict_filter: Optional[str] = params.get("verdict")
+
+        where_clauses: List[str] = []
+        bind_values: List[Any] = []
+
+        if session_id:
+            where_clauses.append("session_id = ?")
+            bind_values.append(session_id)
+        if status_filter:
+            where_clauses.append("execution_status = ?")
+            bind_values.append(status_filter)
+        if verdict_filter:
+            where_clauses.append("critic_verdict = ?")
+            bind_values.append(verdict_filter)
+
+        where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
+
+        conn = sqlite3.connect(str(DB_FILE))
+        conn.row_factory = sqlite3.Row
+        try:
+            total_row = conn.execute(
+                f"SELECT COUNT(*) AS cnt FROM plan_history {where_sql}", bind_values
+            ).fetchone()
+            total = total_row["cnt"] if total_row else 0
+
+            rows = conn.execute(
+                f"""
+                SELECT plan_id, session_id, created_at, goal_text,
+                       critic_verdict, user_decision,
+                       execution_status, duration_ms
+                  FROM plan_history
+                 {where_sql}
+                 ORDER BY created_at DESC
+                 LIMIT ? OFFSET ?
+                """,
+                bind_values + [limit, offset],
+            ).fetchall()
+
+            plans = [dict(r) for r in rows]
+        finally:
+            conn.close()
+
+        return {"plans": plans, "total": total, "limit": limit, "offset": offset}
+
+    async def _handle_get_plan_detail(self, params: dict, ws: ServerConnection) -> dict:
+        """Return the complete audit record for a single plan.
+
+        Includes the full ActionPlan JSON and execution result blobs.
+
+        Request params
+        --------------
+        plan_id  str  (required)
+
+        Response
+        --------
+        {
+          "plan_id":          "...",
+          "session_id":       "...",
+          "created_at":       1234567890.0,
+          "goal_text":        "...",
+          "action_plan":      { ... },
+          "critic_verdict":   "...",
+          "critic_notes":     "...",
+          "user_decision":    "...",
+          "execution_status": "...",
+          "execution_result": { ... },
+          "error_detail":     "...",
+          "duration_ms":      123.4
+        }
+
+        Returns ``{"error": "not_found"}`` if the plan_id does not exist.
+        """
+        plan_id: Optional[str] = params.get("plan_id")
+        if not plan_id:
+            return {"error": "missing_plan_id"}
+
+        conn = sqlite3.connect(str(DB_FILE))
+        conn.row_factory = sqlite3.Row
+        try:
+            row = conn.execute(
+                "SELECT * FROM plan_history WHERE plan_id = ?", (plan_id,)
+            ).fetchone()
+        finally:
+            conn.close()
+
+        if row is None:
+            return {"error": "not_found"}
+
+        record = dict(row)
+
+        # Parse JSON blobs back into dicts for the caller's convenience
+        for json_col, out_key in (
+            ("action_plan_json", "action_plan"),
+            ("execution_result", "execution_result"),
+        ):
+            raw = record.pop(json_col, None)
+            if raw:
+                try:
+                    record[out_key] = json.loads(raw)
+                except (json.JSONDecodeError, TypeError):
+                    record[out_key] = raw
+            else:
+                record[out_key] = None
+
+        return record
 
     # -- API key management --
 
