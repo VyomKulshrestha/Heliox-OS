@@ -143,6 +143,16 @@ class SshConfig:
     enabled: bool = False
     connect_timeout_seconds: int = 10
     allowed_hosts: list[SshHostConfig] = field(default_factory=list)
+class RedisConfig:
+    enabled: bool = False
+    host: str = "127.0.0.1"
+    port: int = 6379
+    db: int = 0
+    password: str = ""
+    ssl: bool = False
+    key_prefix: str = "pilot:"
+    default_ttl: int = 300
+    max_memory_cache_size: int = 512
 
 
 @dataclass
@@ -168,6 +178,7 @@ class PilotConfig:
     ssh: SshConfig = field(default_factory=SshConfig)
     restrictions: Restrictions = field(default_factory=Restrictions)
     first_run_complete: bool = False
+    redis: RedisConfig = field(default_factory=RedisConfig)
 
     @classmethod
     def load(cls) -> PilotConfig:
@@ -283,6 +294,17 @@ def _validate_config_types(raw: dict) -> None:
             "connect_timeout_seconds": int,
             "allowed_hosts": list,
         },
+        "redis": {
+            "enabled": bool,
+            "host": str,
+            "port": int,
+            "db": int,
+            "password": str,
+            "ssl": bool,
+            "key_prefix": str,
+            "default_ttl": int,
+            "max_memory_cache_size": int,
+},
     }
 
     for section, expected_keys in expected_types.items():
@@ -380,6 +402,10 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
                     )
                 )
             config.ssh.allowed_hosts = parsed_hosts
+    if "redis" in raw:
+        for k, v in raw["redis"].items():
+            if hasattr(config.redis, k):
+                setattr(config.redis, k, v)
 
     config.first_run_complete = raw.get(
         "first_run_complete",
