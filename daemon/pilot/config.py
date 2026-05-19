@@ -69,12 +69,16 @@ class SecurityConfig:
     snapshot_retention_days: int = 7
     unrestricted_shell: bool = False  # Allow ANY shell command (bypass whitelist)
     # Code execution sandbox — isolates agent-generated code from the host OS
-    sandbox_mode: str = "auto"  # "auto" | "docker" | "restricted" | "none"
+    sandbox_mode: str = "auto"  # "auto" | "firecracker" | "docker" | "restricted" | "none"
     sandbox_memory_mb: int = 128  # memory cap applied inside the sandbox (MB)
     sandbox_timeout: int = 30  # max wall-clock seconds for sandboxed execution
     sandbox_network: bool = False  # allow outbound network inside the sandbox
     sandbox_kernel_guard: bool = True  # Linux seccomp-BPF syscall denylist for restricted mode
     sandbox_blocked_syscalls: list[str] = field(default_factory=lambda: ["unlink", "unlinkat"])
+    sandbox_firecracker_binary: str = "firecracker"  # executable path or command name
+    sandbox_firecracker_kernel_image: str = ""  # vmlinux path used by strict microVM mode
+    sandbox_firecracker_rootfs_path: str = ""  # rootfs image path used by strict microVM mode
+    sandbox_firecracker_fallback: bool = True  # fall back to Docker/restricted if microVM mode is unavailable
 
 
 @dataclass
@@ -239,6 +243,10 @@ def _validate_config_types(raw: dict) -> None:
             "sandbox_network": bool,
             "sandbox_kernel_guard": bool,
             "sandbox_blocked_syscalls": list,
+            "sandbox_firecracker_binary": str,
+            "sandbox_firecracker_kernel_image": str,
+            "sandbox_firecracker_rootfs_path": str,
+            "sandbox_firecracker_fallback": bool,
         },
         "server": {
             "host": str,
