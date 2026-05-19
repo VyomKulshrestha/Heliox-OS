@@ -63,9 +63,8 @@ def summarize_messages(messages: list[dict[str, Any]], max_summary_items: int = 
         content = str(msg.get("content", "")).strip()
 
         is_existing_summary = (
-            (role == "system" and ("Compressed History Summary" in content or "Compressed context summary" in content))
-            or msg.get("is_summary")
-        )
+            role == "system" and ("Compressed History Summary" in content or "Compressed context summary" in content)
+        ) or msg.get("is_summary")
 
         if is_existing_summary:
             # Flatten existing summary
