@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-import httpx
+import websockets
 
 from pilot.config import DATA_DIR
 
@@ -186,35 +186,48 @@ class SwarmManager:
         return node
 
     async def execute_remote(
-        self, node: DaemonNode, endpoint: str, payload: dict[str, Any]
+        self, node: DaemonNode, plan: dict[str, Any]
     ) -> dict[str, Any]:
-        """Execute a task on a remote daemon node."""
+        """Execute a task on a remote daemon node via WebSocket JSON-RPC."""
         if not node.is_healthy:
             raise RuntimeError(f"Node {node.node_id} is not healthy")
 
-        url = f"http://{node.addr}:{node.port}/api/v1/{endpoint}"
+        uri = f"ws://{node.addr}:{node.port}"
 
-        async with httpx.AsyncClient(timeout=60) as client:
-            response = await client.post(url, json=payload)
-
-        return response.json()
+        try:
+            async with websockets.connect(uri, open_timeout=10) as ws:
+                request = {
+                    "jsonrpc": "2.0",
+                    "id": secrets.token_hex(8),
+                    "method": "execute",
+                    "params": {"input": plan.get("input", ""), "dry_run": plan.get("dry_run", False)},
+                }
+                await ws.send(json.dumps(request))
+                response = await ws.recv()
+                result = json.loads(response)
+                if "error" in result:
+                    raise RuntimeError(f"Remote execution error: {result['error']}")
+                return result.get("result", {})
+        except Exception as e:
+            logger.error("Remote execution failed on node %s: %s", node.node_id, e)
+            raise RuntimeError(f"Failed to execute on remote node {node.node_id}: {e}")
 
     def set_broadcast(self, fn) -> None:
         """Set the broadcast function for UI notifications."""
         self._broadcast_fn = fn
 
     async def _heartbeat_monitor(self) -> None:
-        """Monitor heartbeat of all nodes."""
+        """Monitor heartbeat of all nodes via WebSocket ping."""
         while True:
             for node in self._nodes:
                 if not node.is_healthy:
                     continue
 
                 try:
-                    url = f"http://{node.addr}:{node.port}/health"
-                    async with httpx.AsyncClient(timeout=5) as client:
-                        response = await client.get(url)
-                        node.is_healthy = response.status_code == 200
+                    uri = f"ws://{node.addr}:{node.port}"
+                    async with websockets.connect(uri, open_timeout=5) as ws:
+                        await ws.ping()
+                        node.is_healthy = True
                         node.last_heartbeat = asyncio.get_event_loop().time()
                 except Exception as e:
                     node.is_healthy = False

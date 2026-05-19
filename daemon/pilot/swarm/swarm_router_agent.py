@@ -98,31 +98,51 @@ class SwarmRouterAgent(BaseAgent):
     async def _execute_on_node(
         self, node: Any, plan: ActionPlan
     ) -> list[ActionResult]:
-        """Execute a plan on a specific node."""
-        if not self._executor:
-            self._executor = await self._get_executor()
+        """Execute a plan on a specific node (local or remote)."""
+        is_remote = node and hasattr(node, "node_id") and node.node_id != self._swarm._local_node.node_id
 
-        if not self._executor:
-            logger.warning("Executor not available, using local fallback execution")
-            return [
-                ActionResult(
-                    action=plan.actions[0] if plan.actions else None,
-                    success=False,
-                    error="Swarm executor not initialized - using local fallback",
-                )
-            ]
-
-        results = await self._executor.execute(plan)
-
-        if node and node.node_id != self._swarm._local_node.node_id:
+        if is_remote:
+            logger.info("Executing on remote node %s", node.node_id)
             try:
-                await self._swarm.execute_remote(
-                    node, "task_complete", {"tasks_completed": len(results)}
-                )
+                plan_dict = {"input": plan.input, "dry_run": plan.dry_run}
+                result = await self._swarm.execute_remote(node, plan_dict)
+                return [
+                    ActionResult(
+                        action=plan.actions[0] if plan.actions else None,
+                        success=result.get("status") != "error",
+                        output=result,
+                    )
+                ]
             except Exception as e:
-                logger.warning("Failed to update node stats: %s", e)
+                logger.error("Remote execution failed: %s. Falling back to local.", e)
+                is_remote = False
 
-        return results
+        if not is_remote:
+            if not self._executor:
+                self._executor = await self._get_executor()
+
+            if not self._executor:
+                logger.warning("Executor not available")
+                return [
+                    ActionResult(
+                        action=plan.actions[0] if plan.actions else None,
+                        success=False,
+                        error="Swarm executor not initialized - no local fallback available",
+                    )
+                ]
+
+            logger.info("Executing locally on node %s", self._swarm._local_node.node_id if self._swarm._local_node else "unknown")
+            results = await self._executor.execute(plan)
+
+            if node and hasattr(node, "node_id"):
+                try:
+                    node.tasks_completed += 1
+                except Exception as e:
+                    logger.warning("Failed to update node stats: %s", e)
+
+            return results
+
+        return []
 
     async def _get_executor(self) -> Any:
         """Get the executor from the orchestrator or create one."""
