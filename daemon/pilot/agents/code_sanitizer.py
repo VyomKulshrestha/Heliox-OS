@@ -10,7 +10,9 @@ Fixes common patterns that LLMs generate incorrectly:
 import logging
 import re
 
-logger = logging.getLogger("pilot.agents.code_sanitizer")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.agents.code_sanitizer")
 
 
 def sanitize_python_code(code: str) -> str:

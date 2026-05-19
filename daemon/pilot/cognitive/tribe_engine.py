@@ -32,7 +32,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-logger = logging.getLogger("pilot.cognitive.tribe_engine")
+from pilot.utils.logger import get_logger
+
+logger = get_logger("pilot.cognitive.tribe_engine")
 
 # ── Cache directory ──
 _CACHE_DIR = Path(os.environ.get("HELIOX_TRIBE_CACHE", "")) or (Path.home() / ".cache" / "heliox" / "tribe_v2")

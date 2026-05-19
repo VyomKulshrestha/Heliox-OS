@@ -33,7 +33,9 @@ from pilot.security.sanitizer import SanitizationError, Sanitizer
 if TYPE_CHECKING:
     from pilot.config import PilotConfig
 
-logger = logging.getLogger("pilot.security.validator")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.security.validator")
 
 
 class ValidationError(Exception):

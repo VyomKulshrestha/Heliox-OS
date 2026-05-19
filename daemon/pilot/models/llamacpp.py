@@ -19,7 +19,9 @@ from pilot.models.gpu_utils import calculate_gpu_layers
 if TYPE_CHECKING:
     from pilot.config import PilotConfig
 
-logger = logging.getLogger("pilot.models.llamacpp")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.models.llamacpp")
 
 
 class LlamaCppClient:

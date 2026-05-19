@@ -21,7 +21,9 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
-logger = logging.getLogger("pilot.agents.sandbox")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.agents.sandbox")
 
 
 class RiskLevel(StrEnum):

@@ -9,7 +9,9 @@ import logging
 
 from pilot.system.platform_detect import CURRENT_PLATFORM, Platform, run_command
 
-logger = logging.getLogger("pilot.system.network")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.system.network")
 
 
 async def wifi_list() -> str:

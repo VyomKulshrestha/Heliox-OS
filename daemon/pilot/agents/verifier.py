@@ -25,7 +25,9 @@ from pilot.actions import (
 if TYPE_CHECKING:
     from pilot.models.router import ModelRouter
 
-logger = logging.getLogger("pilot.agents.verifier")
+from pilot.utils.logger import get_logger
+
+logger = get_logger("pilot.agents.verifier")
 
 
 class Verifier:

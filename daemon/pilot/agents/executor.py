@@ -62,7 +62,9 @@ from pilot.system.snapshots import SnapshotManager
 if TYPE_CHECKING:
     from pilot.config import PilotConfig
 
-logger = logging.getLogger("pilot.agents.executor")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.agents.executor")
 
 
 class Executor:

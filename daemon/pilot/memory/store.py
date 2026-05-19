@@ -19,7 +19,9 @@ from pilot.config import DATA_DIR, DB_FILE
 if TYPE_CHECKING:
     from pilot.actions import ActionPlan, ActionResult
 
-logger = logging.getLogger("pilot.memory.store")
+from pilot.utils.logger import get_logger
+
+logger = get_logger("pilot.memory.store")
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS action_history (

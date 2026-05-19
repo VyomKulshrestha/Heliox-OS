@@ -28,7 +28,9 @@ import tempfile
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
-logger = logging.getLogger("pilot.system.sandbox_exec")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.system.sandbox_exec")
 
 # ---------------------------------------------------------------------------
 # Configuration dataclass (mirrors SecurityConfig fields)

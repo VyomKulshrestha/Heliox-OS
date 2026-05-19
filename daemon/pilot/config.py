@@ -144,8 +144,9 @@ class PilotConfig:
             )
 
 
-logger = logging.getLogger("pilot.config")
+from pilot.utils.logger import get_logger
 
+logger = get_logger("pilot.config")
 
 def _validate_config_types(raw: dict) -> None:
     """Validate that the user's config has no typos and uses correct types."""

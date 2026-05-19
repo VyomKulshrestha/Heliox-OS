@@ -12,7 +12,9 @@ import aiosqlite
 if TYPE_CHECKING:
     from pilot.config import ModelConfig
 
-logger = logging.getLogger("pilot.models.budget_tracker")
+from pilot.utils.logger import get_logger
+
+logger = get_logger("pilot.models.budget_tracker")
 
 # (input_usd, output_usd) per 1 000 tokens
 COST_PER_1K_TOKENS: dict[str, tuple[float, float]] = {

@@ -10,7 +10,9 @@ import os
 
 from pilot.system.platform_detect import CURRENT_PLATFORM, Platform, run_command
 
-logger = logging.getLogger("pilot.system.environment")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.system.environment")
 
 
 async def env_get(name: str) -> str:

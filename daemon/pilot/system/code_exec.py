@@ -18,7 +18,9 @@ import tempfile
 
 from pilot.system.sandbox_exec import SandboxConfig, SecureExecutionSandbox
 
-logger = logging.getLogger("pilot.system.code_exec")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.system.code_exec")
 
 # Module-level sandbox instance — initialised lazily via _get_sandbox()
 _sandbox: SecureExecutionSandbox | None = None

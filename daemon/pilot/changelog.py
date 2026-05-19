@@ -8,7 +8,9 @@ import time
 from pathlib import Path
 from typing import Any
 
-logger = logging.getLogger("pilot.changelog")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.changelog")
 
 VERSION = "0.6.0"
 

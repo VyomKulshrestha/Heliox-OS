@@ -6,7 +6,9 @@ import logging
 
 import httpx
 
-logger = logging.getLogger("pilot.models.ollama")
+from pilot.utils.logger import get_logger
+
+logger = get_logger("pilot.models.ollama")
 
 DEFAULT_TIMEOUT = 600.0  # 10 minutes — local LLMs can be slow for complex plans
 

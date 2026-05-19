@@ -26,7 +26,9 @@ import aiosqlite
 if TYPE_CHECKING:
     from pilot.config import PilotConfig
 
-logger = logging.getLogger("pilot.models.cache")
+from pilot.utils.logger import get_logger
+
+logger = get_logger("pilot.models.cache")
 CACHE_SCHEMA_VERSION = 1
 
 

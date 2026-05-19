@@ -19,7 +19,9 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-logger = logging.getLogger("pilot.cognitive.cognitive_offload")
+from pilot.utils.logger import get_logger
+
+logger = get_logger("pilot.cognitive.cognitive_offload")
 
 # ── Configuration ──
 

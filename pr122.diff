@@ -66,7 +66,9 @@ index fa7a55c..eb91322 100644
 +            )
  
  
- logger = logging.getLogger("pilot.config")
+ from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.config")
 @@ -141,7 +161,6 @@ def _validate_config_types(raw: dict) -> None:
              "rate_limit_enabled": bool,
              "rate_limit_rpm": int,
@@ -322,7 +324,9 @@ index 4efb051..bdd11f8 100644
 +from pilot.config import PilotConfig
  from pilot.system.platform_detect import CURRENT_PLATFORM, Platform, run_powershell
  
- logger = logging.getLogger("pilot.system.voice")
+ from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.system.voice")
 @@ -29,13 +30,8 @@ async def speak(
      volume: float = 1.0,
      output_file: str | None = None,

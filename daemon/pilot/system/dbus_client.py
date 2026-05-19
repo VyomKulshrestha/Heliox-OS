@@ -9,7 +9,9 @@ from __future__ import annotations
 import asyncio
 import logging
 
-logger = logging.getLogger("pilot.system.dbus")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.system.dbus")
 
 
 async def call_dbus_method(

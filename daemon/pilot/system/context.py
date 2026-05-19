@@ -16,7 +16,9 @@ from pathlib import Path
 
 from pilot.system.platform_detect import CURRENT_PLATFORM, Platform, run_powershell
 
-logger = logging.getLogger("pilot.system.context")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.system.context")
 
 
 # ── Active Window ────────────────────────────────────────────────────

@@ -22,7 +22,9 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-logger = logging.getLogger("pilot.cognitive.biometric_loop")
+from pilot.utils.logger import get_logger
+
+logger = get_logger("pilot.cognitive.biometric_loop")
 
 # ── Configuration ──
 

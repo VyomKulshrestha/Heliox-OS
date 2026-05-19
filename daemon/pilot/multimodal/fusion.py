@@ -25,7 +25,9 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Callable, Coroutine
 
-logger = logging.getLogger("pilot.multimodal.fusion")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.multimodal.fusion")
 
 
 # ── Event types ──

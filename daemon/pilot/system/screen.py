@@ -13,7 +13,9 @@ from pathlib import Path
 
 from pilot.system.platform_detect import CURRENT_PLATFORM, Platform, run_command, run_powershell
 
-logger = logging.getLogger("pilot.system.screen")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.system.screen")
 
 
 async def brightness_get() -> str:

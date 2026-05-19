@@ -11,7 +11,9 @@ import tempfile
 
 from pilot.system.platform_detect import CURRENT_PLATFORM, Platform, run_command
 
-logger = logging.getLogger("pilot.system.scheduler")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.system.scheduler")
 
 
 async def schedule_create(name: str, command: str, schedule: str) -> str:

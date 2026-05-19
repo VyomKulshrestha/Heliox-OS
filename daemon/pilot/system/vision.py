@@ -21,7 +21,9 @@ from pathlib import Path
 
 from pilot.system.platform_detect import CURRENT_PLATFORM, Platform, run_command
 
-logger = logging.getLogger("pilot.system.vision")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.system.vision")
 
 # ──────────────────────────────────────────────────────────────────────
 #  Screenshot capture

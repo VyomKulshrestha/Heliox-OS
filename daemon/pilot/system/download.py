@@ -10,7 +10,9 @@ from pathlib import Path
 
 from pilot.system.platform_detect import CURRENT_PLATFORM, Platform, run_command, run_powershell
 
-logger = logging.getLogger("pilot.system.download")
+from pilot.utils.logger import get_logger
+
+logger = "pilot.system.download")
 
 
 async def download_file(url: str, output_path: str, overwrite: bool = False) -> str:

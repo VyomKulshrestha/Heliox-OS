@@ -14,7 +14,9 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Coroutine
 
-logger = logging.getLogger("pilot.agents.background")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.agents.background")
 
 
 class TaskStatus(Enum):

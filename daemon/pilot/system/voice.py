@@ -17,7 +17,9 @@ from typing import Any
 from pilot.config import PilotConfig
 from pilot.system.platform_detect import CURRENT_PLATFORM, Platform, run_powershell
 
-logger = logging.getLogger("pilot.system.voice")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( )"pilot.system.voice")
 
 
 # ── Text-to-Speech ───────────────────────────────────────────────────

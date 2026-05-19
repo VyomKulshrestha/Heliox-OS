@@ -18,7 +18,9 @@ from typing import Any
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
-logger = logging.getLogger("pilot.plugins.homeassistant")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.plugins.homeassistant")
 
 DEFAULT_HA_URL = "http://homeassistant.local:8123"
 

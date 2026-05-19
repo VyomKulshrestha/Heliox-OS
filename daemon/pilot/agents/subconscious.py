@@ -36,7 +36,9 @@ import aiosqlite
 if TYPE_CHECKING:
     from pilot.models.router import ModelRouter
 
-logger = logging.getLogger("pilot.agents.subconscious")
+from pilot.utils.logger import get_logger
+
+logger = get_logger("pilot.agents.subconscious")
 
 PERSONA_SCHEMA = """
 CREATE TABLE IF NOT EXISTS user_persona (

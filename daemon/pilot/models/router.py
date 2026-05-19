@@ -17,7 +17,9 @@ if TYPE_CHECKING:
     from pilot.models.budget_tracker import BudgetTracker
     from pilot.security.vault import KeyVault
 
-logger = logging.getLogger("pilot.models.router")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.models.router")
 
 
 class ModelRouter:

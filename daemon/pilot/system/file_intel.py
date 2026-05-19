@@ -11,7 +11,9 @@ import json
 import logging
 from pathlib import Path
 
-logger = logging.getLogger("pilot.system.file_intel")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.system.file_intel")
 
 
 async def parse_file(file_path: str) -> str:

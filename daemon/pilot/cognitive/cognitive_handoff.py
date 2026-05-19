@@ -23,7 +23,9 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-logger = logging.getLogger("pilot.cognitive.cognitive_handoff")
+from pilot.utils.logger import get_logger
+
+logger = get_logger("pilot.cognitive.cognitive_handoff")
 
 # ── Configuration ──
 

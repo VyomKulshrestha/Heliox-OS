@@ -12,7 +12,9 @@ if TYPE_CHECKING:
     from pilot.config import PilotConfig
     from pilot.security.vault import KeyVault
 
-logger = logging.getLogger("pilot.models.cloud")
+from pilot.utils.logger import get_logger
+
+logger = get_logger("pilot.models.cloud")
 
 PROVIDER_ENDPOINTS = {
     "openai": "https://api.openai.com/v1/chat/completions",

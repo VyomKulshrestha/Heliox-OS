@@ -21,7 +21,9 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-logger = logging.getLogger("pilot.cognitive.evolving_persona")
+from pilot.utils.logger import get_logger
+
+logger = get_logger("pilot.cognitive.evolving_persona")
 
 # ── Configuration ──
 

@@ -17,7 +17,9 @@ if TYPE_CHECKING:
     from pilot.agents.executor import Executor
     from pilot.models.router import ModelRouter
 
-logger = logging.getLogger("pilot.agents.code_agent")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.agents.code_agent")
 
 CODE_ACTION_TYPES: set[ActionType] = {
     ActionType.CODE_EXECUTE,

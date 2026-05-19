@@ -11,7 +11,9 @@ import logging
 import os
 from pathlib import Path
 
-logger = logging.getLogger("pilot.models.gpu_utils")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.models.gpu_utils")
 
 # Safety margin: keep this fraction of free VRAM unallocated to avoid OOM.
 _VRAM_SAFETY_MARGIN = 0.90

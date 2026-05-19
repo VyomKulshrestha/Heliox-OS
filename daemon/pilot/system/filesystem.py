@@ -14,7 +14,9 @@ from pathlib import Path
 
 from pilot.system.platform_detect import CURRENT_PLATFORM, Platform
 
-logger = logging.getLogger("pilot.system.filesystem")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.system.filesystem")
 
 
 async def file_read(path: str) -> str:

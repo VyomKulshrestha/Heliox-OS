@@ -18,7 +18,9 @@ from pilot.actions import Action, ActionPlan, PermissionTier
 if TYPE_CHECKING:
     from pilot.config import PilotConfig
 
-logger = logging.getLogger("pilot.security.permissions")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.security.permissions")
 
 
 @dataclass

@@ -19,7 +19,9 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-logger = logging.getLogger("pilot.system.plugins")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.system.plugins")
 
 
 @dataclass

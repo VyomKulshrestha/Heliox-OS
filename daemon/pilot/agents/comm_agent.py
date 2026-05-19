@@ -16,7 +16,9 @@ if TYPE_CHECKING:
     from pilot.agents.executor import Executor
     from pilot.models.router import ModelRouter
 
-logger = logging.getLogger("pilot.agents.comm_agent")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.agents.comm_agent")
 
 COMM_ACTION_TYPES: set[ActionType] = {
     ActionType.API_SEND_EMAIL,

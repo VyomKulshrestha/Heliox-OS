@@ -20,7 +20,9 @@ from typing import Any, Callable, Coroutine
 
 from pilot.cognitive.tribe_engine import CognitiveSnapshot, TribeEngine
 
-logger = logging.getLogger("pilot.cognitive.attention_scorer")
+from pilot.utils.logger import get_logger
+
+logger = get_logger("pilot.cognitive.attention_scorer")
 
 
 # ── Thresholds ──

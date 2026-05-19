@@ -10,7 +10,9 @@ index 05f6675..bc638ac 100644
  Takes periodic screenshots, detects the active application, and
  maintains a context buffer so the planner knows what the user is
 @@ -39,6 +40,8 @@
- logger = logging.getLogger("pilot.agents.screen_vision")
+ from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.agents.screen_vision")
  
  
 +# ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ Screen State ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ #

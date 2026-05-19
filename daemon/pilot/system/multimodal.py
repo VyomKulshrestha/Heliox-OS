@@ -11,7 +11,9 @@ import logging
 from dataclasses import asdict, dataclass
 from typing import Any
 
-logger = logging.getLogger("pilot.system.multimodal")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.system.multimodal")
 
 
 @dataclass

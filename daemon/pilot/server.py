@@ -21,8 +21,9 @@ from websockets.asyncio.server import Server, ServerConnection
 
 from pilot.config import DB_FILE, LOG_FILE, STATE_DIR, PilotConfig, ensure_dirs
 
-logger = logging.getLogger("pilot.server")
+from pilot.utils.logger import get_logger
 
+logger = get_logger("pilot.server")
 CONFIRM_TIMEOUT_SECONDS = 300
 
 

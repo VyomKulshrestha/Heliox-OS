@@ -16,7 +16,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-logger = logging.getLogger("pilot.security.sandbox")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.security.sandbox")
 
 
 @dataclass

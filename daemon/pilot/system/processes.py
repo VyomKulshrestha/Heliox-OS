@@ -12,7 +12,9 @@ import signal as signal_module
 
 from pilot.system.platform_detect import CURRENT_PLATFORM, Platform, run_command, run_powershell
 
-logger = logging.getLogger("pilot.system.processes")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.system.processes")
 
 
 async def process_list(filter_name: str | None = None) -> str:

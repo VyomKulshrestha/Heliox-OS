@@ -12,7 +12,9 @@ import logging
 from pathlib import Path
 from typing import Any
 
-logger = logging.getLogger("pilot.memory.workspace_index")
+from pilot.utils.logger import get_logger
+
+logger = get_logger("pilot.memory.workspace_index")
 
 SUPPORTED_EXTENSIONS = {
     ".py",

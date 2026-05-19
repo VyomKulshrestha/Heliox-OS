@@ -24,7 +24,9 @@ import asyncio
 import logging
 from collections.abc import Callable
 
-logger = logging.getLogger("pilot.system.gesture")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.system.gesture")
 
 # ── Gesture Detection via MediaPipe ──────────────────────────────────
 

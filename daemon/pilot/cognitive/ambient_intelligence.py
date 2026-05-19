@@ -19,7 +19,9 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Callable, Coroutine
 
-logger = logging.getLogger("pilot.cognitive.ambient_intelligence")
+from pilot.utils.logger import get_logger
+
+logger = get_logger("pilot.cognitive.ambient_intelligence")
 
 # ── Configuration ──
 

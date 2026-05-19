@@ -32,7 +32,9 @@ import aiosqlite
 if TYPE_CHECKING:
     from pilot.models.router import ModelRouter
 
-logger = logging.getLogger("pilot.agents.prompt_improver")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.agents.prompt_improver")
 
 PROMPT_SCHEMA = """
 CREATE TABLE IF NOT EXISTS prompt_templates (

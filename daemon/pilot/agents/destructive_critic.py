@@ -23,7 +23,9 @@ if TYPE_CHECKING:
     from pilot.actions import ActionPlan
     from pilot.models.router import ModelRouter
 
-logger = logging.getLogger("pilot.agents.destructive_critic")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.agents.destructive_critic")
 
 # ---------------------------------------------------------------------------
 # Prompts

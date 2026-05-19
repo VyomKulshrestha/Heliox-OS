@@ -8,7 +8,9 @@ from __future__ import annotations
 import asyncio
 import logging
 
-logger = logging.getLogger("pilot.system.gnome")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.system.gnome")
 
 
 async def _run_gsettings(args: list[str]) -> tuple[int, str, str]:

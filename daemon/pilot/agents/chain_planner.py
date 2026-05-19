@@ -13,7 +13,9 @@ import os
 import time
 from dataclasses import dataclass, field
 
-logger = logging.getLogger("pilot.agents.chain_planner")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.agents.chain_planner")
 
 
 @dataclass

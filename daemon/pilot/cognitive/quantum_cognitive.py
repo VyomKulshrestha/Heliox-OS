@@ -20,7 +20,9 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Callable
 
-logger = logging.getLogger("pilot.cognitive.quantum_ready")
+from pilot.utils.logger import get_logger
+
+logger = get_logger("pilot.cognitive.quantum_ready")
 
 # ── Model Types ──
 

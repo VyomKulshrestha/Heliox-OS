@@ -12,7 +12,9 @@ import os
 from pathlib import Path
 from typing import Any
 
-logger = logging.getLogger("pilot.system.browser")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.system.browser")
 
 # Global browser instance for session persistence
 _browser_context: Any = None

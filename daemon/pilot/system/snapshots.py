@@ -15,7 +15,9 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from pilot.config import PilotConfig
 
-logger = logging.getLogger("pilot.system.snapshots")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.system.snapshots")
 
 
 class SnapshotBackend(StrEnum):

@@ -22,7 +22,9 @@ from pilot.config import DATA_DIR
 if TYPE_CHECKING:
     from pilot.config import PilotConfig
 
-logger = logging.getLogger("pilot.security.vault")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.security.vault")
 
 VAULT_FILE = DATA_DIR / "vault.enc"
 VAULT_SERVICE = "pilot-ai-command-center"

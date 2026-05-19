@@ -20,7 +20,9 @@ if TYPE_CHECKING:
     from pilot.actions import ActionPlan, ActionResult, VerificationResult
     from pilot.models.router import ModelRouter
 
-logger = logging.getLogger("pilot.agents.reflector")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.agents.reflector")
 
 REFLECTION_SCHEMA = """
 CREATE TABLE IF NOT EXISTS task_reflections (

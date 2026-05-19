@@ -25,7 +25,9 @@ from typing import Any
 
 from pilot.cognitive.tribe_engine import TribeEngine
 
-logger = logging.getLogger("pilot.cognitive.intent_predictor")
+from pilot.utils.logger import get_logger
+
+logger = get_logger("pilot.cognitive.intent_predictor")
 
 
 # ── Configuration ──

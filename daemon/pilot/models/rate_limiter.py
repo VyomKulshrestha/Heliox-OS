@@ -10,7 +10,9 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from pilot.config import ModelConfig
 
-logger = logging.getLogger("pilot.models.rate_limiter")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.models.rate_limiter")
 
 
 class TokenBucketRateLimiter:

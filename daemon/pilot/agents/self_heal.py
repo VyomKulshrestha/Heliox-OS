@@ -15,7 +15,9 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-logger = logging.getLogger("pilot.agents.self_heal")
+from pilot.utils.logger import get_logger
+
+logger = get_logger("pilot.agents.self_heal")
 
 
 class FailureMemory:

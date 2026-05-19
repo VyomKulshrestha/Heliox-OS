@@ -23,7 +23,9 @@ if TYPE_CHECKING:
     from pilot.agents.background import BackgroundTaskManager
     from pilot.models.router import ModelRouter
 
-logger = logging.getLogger("pilot.agents.monitor_agent")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.agents.monitor_agent")
 
 MONITOR_ACTION_TYPES: set[ActionType] = {
     ActionType.SYSTEM_INFO,

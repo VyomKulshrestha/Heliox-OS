@@ -19,7 +19,9 @@ import aiofiles.os
 from pilot.actions import Action, ActionResult
 from pilot.config import AUDIT_FILE, DATA_DIR
 
-logger = logging.getLogger("pilot.security.audit")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.security.audit")
 
 
 class AuditEntry:

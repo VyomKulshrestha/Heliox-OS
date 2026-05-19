@@ -32,7 +32,9 @@ from pilot.cognitive.evolving_persona import EvolvingPersonaEngine
 from pilot.cognitive.neural_bridge import NeuralBridge, NeuralWorkspace
 from pilot.cognitive.quantum_cognitive import CognitiveOutput, QuantumCognitivePipeline
 
-logger = logging.getLogger("pilot.cognitive.hub")
+from pilot.utils.logger import get_logger
+
+logger = get_logger("pilot.cognitive.hub")
 
 
 # ── Data Structures ──

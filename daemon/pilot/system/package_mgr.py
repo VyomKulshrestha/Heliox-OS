@@ -11,7 +11,9 @@ import logging
 
 from pilot.system.platform_detect import CURRENT_PLATFORM, Platform, run_command
 
-logger = logging.getLogger("pilot.system.package_mgr")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.system.package_mgr")
 
 
 async def _detect_linux_pkg_manager() -> str:

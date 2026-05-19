@@ -19,7 +19,9 @@ from urllib.error import URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
-logger = logging.getLogger("pilot.plugins.media")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.plugins.media")
 
 SPOTIFY_API = "https://api.spotify.com/v1"
 

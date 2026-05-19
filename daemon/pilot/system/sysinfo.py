@@ -16,7 +16,9 @@ from pilot.system.platform_detect import (
     run_powershell,
 )
 
-logger = logging.getLogger("pilot.system.sysinfo")
+from pilot.utils.logger import get_logger
+
+logger = "pilot.system.sysinfo")
 
 
 async def system_info(categories: list[str] | None = None) -> str:

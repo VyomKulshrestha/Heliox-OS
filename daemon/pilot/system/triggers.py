@@ -20,7 +20,9 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-logger = logging.getLogger("pilot.system.triggers")
+from pilot.utils.logger import get_logger
+
+logger = "pilot.system.triggers")
 
 
 class TriggerType(StrEnum):

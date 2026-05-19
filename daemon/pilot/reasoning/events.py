@@ -29,7 +29,9 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Callable, Coroutine
 
-logger = logging.getLogger("pilot.reasoning.events")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.reasoning.events")
 
 
 # â”€â”€ Event Schema â”€â”€

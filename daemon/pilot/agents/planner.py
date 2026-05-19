@@ -57,7 +57,9 @@ if TYPE_CHECKING:
     from pilot.memory.store import MemoryStore
     from pilot.models.router import ModelRouter
 
-logger = logging.getLogger("pilot.agents.planner")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.agents.planner")
 
 
 def _detect_os() -> str:

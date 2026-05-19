@@ -18,7 +18,9 @@ from typing import Any
 
 import httpx
 
-logger = logging.getLogger("pilot.system.api_client")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.system.api_client")
 
 
 # ── Generic REST API ─────────────────────────────────────────────────

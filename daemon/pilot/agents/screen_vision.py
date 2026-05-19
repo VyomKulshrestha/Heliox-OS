@@ -36,7 +36,9 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from pilot.models.router import ModelRouter
 
-logger = logging.getLogger("pilot.agents.screen_vision")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.agents.screen_vision")
 
 
 @dataclass

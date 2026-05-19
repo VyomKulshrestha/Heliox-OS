@@ -13,7 +13,7 @@ This replaces the simple MultiAgentRouter with a full agent coordination system.
 from __future__ import annotations
 
 import asyncio
-import logging
+ 
 import time
 from typing import TYPE_CHECKING, Any, Callable, Coroutine
 
@@ -28,8 +28,9 @@ from pilot.agents.base_agent import (
 if TYPE_CHECKING:
     from pilot.models.router import ModelRouter
 
-logger = logging.getLogger("pilot.agents.orchestrator")
+from pilot.utils.logger import get_logger
 
+logger = get_logger("orchestrator")
 
 class AgentOrchestrator:
     """Central coordinator that manages specialist agents and routes tasks.

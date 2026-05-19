@@ -10,7 +10,9 @@ import logging
 
 from pilot.system.platform_detect import CURRENT_PLATFORM, Platform, run_command, run_powershell
 
-logger = logging.getLogger("pilot.system.power")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.system.power")
 
 
 async def shutdown(delay_seconds: int = 0, force: bool = False) -> str:

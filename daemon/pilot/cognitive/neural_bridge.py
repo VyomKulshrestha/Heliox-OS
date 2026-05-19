@@ -20,7 +20,9 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-logger = logging.getLogger("pilot.cognitive.neural_bridge")
+from pilot.utils.logger import get_logger
+
+logger = get_logger("pilot.cognitive.neural_bridge")
 
 # ── Configuration ──
 

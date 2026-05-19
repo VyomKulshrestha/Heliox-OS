@@ -16,7 +16,9 @@ if TYPE_CHECKING:
     from pilot.actions import DBusParams
     from pilot.config import PilotConfig
 
-logger = logging.getLogger("pilot.security.sanitizer")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.security.sanitizer")
 
 SHELL_METACHARACTERS = re.compile(r"[;&|`$(){}!\[\]<>\n\r\\]")
 # Relaxed for Windows path separators

@@ -9,7 +9,9 @@ from __future__ import annotations
 import asyncio
 import logging
 
-logger = logging.getLogger("pilot.system.systemctl")
+from pilot.utils.logger import get_logger
+
+logger = "pilot.system.systemctl")
 
 
 async def _run_systemctl(action: str, unit: str, *, user_scope: bool = False) -> tuple[int, str, str]:

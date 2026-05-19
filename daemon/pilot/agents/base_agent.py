@@ -27,7 +27,9 @@ if TYPE_CHECKING:
     from pilot.agents.orchestrator import AgentOrchestrator
     from pilot.models.router import ModelRouter
 
-logger = logging.getLogger("pilot.agents.base")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.agents.base")
 
 
 # ── Agent lifecycle states ──

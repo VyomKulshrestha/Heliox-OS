@@ -11,7 +11,9 @@ import platform
 import sys
 from enum import StrEnum
 
-logger = logging.getLogger("pilot.system.platform")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.system.platform")
 
 
 class Platform(StrEnum):

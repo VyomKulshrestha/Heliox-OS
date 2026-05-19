@@ -182,8 +182,10 @@ Enable debug logs to see cache operations:
 
 ```python
 import logging
-logging.getLogger("pilot.models.cache").setLevel(logging.DEBUG)
-```
+from pilot.utils.logger import get_logger
+
+logger = get_logger("pilot.models.cache")
+logger.setLevel(logging.DEBUG)```
 
 Output:
 ```

@@ -29,7 +29,9 @@ if TYPE_CHECKING:
     from pilot.agents.screen_vision import ScreenVisionAgent
     from pilot.agents.verifier import Verifier
 
-logger = logging.getLogger("pilot.agents.autonomous")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.agents.autonomous")
 
 
 class JobStatus(StrEnum):

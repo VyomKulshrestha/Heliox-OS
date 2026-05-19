@@ -6,7 +6,9 @@ import logging
 import re
 from typing import Any
 
-logger = logging.getLogger("pilot.memory.semantic")
+from pilot.utils.logger import get_logger
+
+logger = get_logger("pilot.memory.semantic")
 
 PREFERENCE_PATTERNS = [
     (r"(?:set|change|switch to|use|enable)\s+dark\s+(?:mode|theme)", "theme", "dark"),

@@ -10,7 +10,9 @@ import asyncio
 import logging
 import time
 
-logger = logging.getLogger("pilot.system.input_control")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.system.input_control")
 
 
 def _ensure_pyautogui():

@@ -9,7 +9,9 @@ import logging
 
 from pilot.system.platform_detect import CURRENT_PLATFORM, Platform, run_command, run_powershell
 
-logger = logging.getLogger("pilot.system.clipboard")
+from pilot.utils.logger import get_logger
+
+logger = get_logger( "pilot.system.clipboard")
 
 
 async def clipboard_read() -> str:

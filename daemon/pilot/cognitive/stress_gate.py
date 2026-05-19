@@ -23,7 +23,9 @@ from typing import Any
 from pilot.actions import ActionType
 from pilot.cognitive.tribe_engine import CognitiveSnapshot, TribeEngine
 
-logger = logging.getLogger("pilot.cognitive.stress_gate")
+from pilot.utils.logger import get_logger
+
+logger = get_logger("pilot.cognitive.stress_gate")
 
 # ── Configuration ──
 
