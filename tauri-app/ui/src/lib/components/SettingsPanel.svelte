@@ -7,10 +7,12 @@
   let apiKeySaved = $state(false);
   let apiKeySaving = $state(false);
 
-    settings.updateSection("security", { root_enabled: !$settings.security.root_enabled });
   function toggleRoot() {
+  settings.updateSection("security", {
+    root_enabled: !$settings.security.root_enabled
+  });
   }
-
+ 
   function toggleDryRun() {
     settings.updateSection("security", { dry_run: !$settings.security.dry_run });
   }
