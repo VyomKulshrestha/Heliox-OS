@@ -378,7 +378,6 @@ class PilotServer:
             "gesture_event": self._handle_gesture_event,
             "multimodal_stats": self._handle_multimodal_stats,
             "reasoning_log": self._handle_reasoning_log,
-            "reasoning_stats": self._handle_reasoning_stats,
             "decompose_task": self._handle_decompose_task,
             "simulate_plan": self._handle_simulate_plan,
             "prompt_strategies": self._handle_prompt_strategies,
