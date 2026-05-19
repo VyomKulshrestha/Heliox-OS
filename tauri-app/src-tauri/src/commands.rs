@@ -70,6 +70,25 @@ pub async fn confirm_action(window: tauri::Window, plan_id: String, confirmed: b
     send_rpc(window, request).await
 }
 
+// 5. Reset all settings to factory defaults by removing the config file.
+// The daemon's PilotConfig.load() falls back to safe defaults when the file is absent.
+#[tauri::command]
+pub async fn reset_settings_to_defaults() -> Result<(), String> {
+    let config_dir = dirs::config_dir().ok_or("Could not find user config directory")?;
+    let config_file = config_dir.join("pilot").join("config.toml");
+    
+    if config_file.exists() {
+        std::fs::remove_file(config_file).map_err(|e| format!("Failed to delete config: {}", e))?;
+    }
+    
+    let restrictions_file = config_dir.join("pilot").join("restrictions.toml");
+    if restrictions_file.exists() {
+        let _ = std::fs::remove_file(restrictions_file);
+    }
+    
+    Ok(())
+}
+
 // Internal worker to parse handshake ping data
 async fn try_ping_daemon(window: tauri::Window) -> Result<String, String> {
     let request = serde_json::json!({

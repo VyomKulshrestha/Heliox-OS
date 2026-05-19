@@ -3,10 +3,13 @@
   import { session } from "../stores/session";
   import { call } from "../api/daemon";
   import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
+  import ResetConfirmModal from "./ResetConfirmModal.svelte";
 
   let apiKeyInput = $state("");
   let apiKeySaved = $state(false);
   let apiKeySaving = $state(false);
+  let showResetModal = $state(false);
+  let resetting = $state(false);
 
   function toggleRoot() {
     settings.updateSection("security", { root_enabled: !$settings.security.root_enabled });
@@ -99,6 +102,26 @@
       }
     } catch (err) {
       console.error('Notification test failed:', err);
+    }
+  }
+
+  async function handleReset() {
+    resetting = true;
+    try {
+      await settings.resetToDefaults();
+      showResetModal = false;
+      sendNotification({
+        title: "Settings Reset",
+        body: "All configurations have been restored to factory defaults."
+      });
+    } catch (err) {
+      console.error("Failed to reset:", err);
+      sendNotification({
+        title: "Reset Failed",
+        body: "There was an error while resetting configurations."
+      });
+    } finally {
+      resetting = false;
     }
   }
 </script>
@@ -369,7 +392,26 @@
       <button class="btn-save" onclick={testNotification}>Test Popup</button>
     </div>
   </section>
+
+  <section class="settings-group danger-zone">
+    <h3>Danger Zone</h3>
+    <div class="setting-row">
+      <div class="setting-info">
+        <span class="setting-label text-danger">Factory Reset</span>
+        <span class="setting-desc">Clear all settings and local data</span>
+      </div>
+      <button class="btn-danger" onclick={() => showResetModal = true} disabled={resetting}>
+        {resetting ? "Resetting..." : "Reset to Defaults"}
+      </button>
+    </div>
+  </section>
 </div>
+
+<ResetConfirmModal 
+  show={showResetModal} 
+  onconfirm={handleReset} 
+  oncancel={() => showResetModal = false} 
+/>
 
 <style>
   .settings-panel {
@@ -553,5 +595,40 @@
     cursor: not-allowed;
     color: var(--text-secondary);
     background: var(--bg-tertiary);
+  }
+
+  .text-danger {
+    color: #ef4444;
+  }
+
+  .danger-zone {
+    border-color: rgba(239, 68, 68, 0.3);
+  }
+
+  .danger-zone h3 {
+    background: rgba(239, 68, 68, 0.1);
+    color: #ef4444;
+    border-bottom-color: rgba(239, 68, 68, 0.2);
+  }
+
+  .btn-danger {
+    padding: 5px 14px;
+    font-size: 12px;
+    font-weight: 600;
+    color: white;
+    background: #ef4444;
+    border: none;
+    border-radius: var(--radius-sm);
+    transition: all 0.15s;
+    cursor: pointer;
+  }
+
+  .btn-danger:hover:not(:disabled) {
+    background: #dc2626;
+  }
+
+  .btn-danger:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
   }
 </style>

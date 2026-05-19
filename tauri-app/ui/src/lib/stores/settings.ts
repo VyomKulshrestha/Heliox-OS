@@ -1,4 +1,5 @@
 import { writable } from "svelte/store";
+import { invoke } from "@tauri-apps/api/core";
 import { call } from "../api/daemon";
 
 export interface PilotSettings {
@@ -155,10 +156,38 @@ function createSettings() {
     });
   }
 
+  async function resetToDefaults() {
+    try {
+      await invoke("reset_settings_to_defaults");
+      
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith("heliox_")) {
+          localStorage.removeItem(key);
+        }
+      }
+      for (let i = sessionStorage.length - 1; i >= 0; i--) {
+        const key = sessionStorage.key(i);
+        if (key && key.startsWith("heliox_")) {
+          sessionStorage.removeItem(key);
+        }
+      }
+      
+      const theme = getSystemTheme();
+      set({ ...defaultSettings, theme });
+      
+      await load();
+    } catch (err) {
+      console.error("Failed to reset settings:", err);
+      throw err;
+    }
+  }
+
   return {
     subscribe,
     load,
     updateSection,
+    resetToDefaults,
   };
 }
 
