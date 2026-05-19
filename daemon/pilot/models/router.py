@@ -243,7 +243,6 @@ class ModelRouter:
 
         # Try ollama or local backend
         if provider in ("ollama", "local"):
-
             if await self._ollama.is_available():
                 model = await self._resolve_ollama_model()
 
@@ -383,9 +382,7 @@ class ModelRouter:
 
             return response
 
-        raise RuntimeError(
-            "No model backend available. Start Ollama or configure a cloud API key."
-        )
+        raise RuntimeError("No model backend available. Start Ollama or configure a cloud API key.")
 
     async def _resolve_ollama_model(self) -> str:
         """Return a valid Ollama model name, falling back to an installed model if needed."""
