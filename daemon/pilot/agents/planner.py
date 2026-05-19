@@ -512,8 +512,11 @@ class Planner:
             history_entries.reverse()
 
             messages = [{"role": "system", "content": self._system_prompt}]
-            for entry in history_entries:
-                messages.append({"role": "user", "content": entry["user_input"]})
+            for idx, entry in enumerate(history_entries):
+                msg = {"role": "user", "content": entry["user_input"]}
+                if idx == 0:
+                    msg["type"] = "goal"
+                messages.append(msg)
                 if entry.get("explanation"):
                     messages.append({"role": "assistant", "content": entry["explanation"]})
 
@@ -545,7 +548,10 @@ class Planner:
                         request=user_input,
                     )
 
-            messages.append({"role": "user", "content": get_latest_content(error_context)})
+            latest_msg = {"role": "user", "content": get_latest_content(error_context)}
+            if not history_entries:
+                latest_msg["type"] = "goal"
+            messages.append(latest_msg)
 
             # Compress history using sliding window
             optimized_messages = build_sliding_context(
@@ -559,11 +565,15 @@ class Planner:
             last_parse_error = None
 
             for attempt in range(max_retries):
+                new_messages = optimized_messages
                 if attempt > 0:
-                    optimized_messages[-1]["content"] = get_latest_content("", last_parse_error, last_raw_response)
+                    new_messages = optimized_messages.copy()
+                    last = new_messages[-1].copy()
+                    last["content"] = get_latest_content("", last_parse_error, last_raw_response)
+                    new_messages[-1] = last
 
                 raw_response = await self._model.generate(
-                    optimized_messages, json_mode=True, temperature=0.1, stream_callback=stream_callback
+                    new_messages, json_mode=True, temperature=0.1, stream_callback=stream_callback
                 )
                 last_raw_response = raw_response
 
