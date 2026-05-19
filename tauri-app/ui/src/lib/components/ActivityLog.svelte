@@ -47,6 +47,7 @@ async function openLogsFolder() {
       📂 Open Logs
     </button>
   </div>
+  </div>
 
 
   {#if loading}
@@ -72,7 +73,7 @@ async function openLogsFolder() {
     </div>
   {/if}
 </div>
-</div>
+
 <style>
   .activity-log {
     height: 100%;
