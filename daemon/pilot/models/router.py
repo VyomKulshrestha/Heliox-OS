@@ -59,7 +59,7 @@ class ModelRouter:
 
     async def generate(
         self,
-        prompt: str,
+        prompt: str | list[dict[str, Any]],
         *,
         system: str = "",
         json_mode: bool = False,
@@ -86,7 +86,13 @@ class ModelRouter:
         )
 
         if self._budget_tracker:
-            in_tokens = len(prompt) // 4
+            if isinstance(prompt, list):
+                import json
+
+                prompt_str = json.dumps(prompt)
+            else:
+                prompt_str = prompt
+            in_tokens = len(prompt_str) // 4
             out_tokens = len(result) // 4
             provider_key = (
                 self._config.model.cloud_provider
@@ -100,7 +106,7 @@ class ModelRouter:
 
     async def _generate_with_cache(
         self,
-        prompt: str,
+        prompt: str | list[dict[str, Any]],
         *,
         system: str = "",
         json_mode: bool = False,

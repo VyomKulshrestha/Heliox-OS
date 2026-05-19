@@ -56,10 +56,17 @@ def summarize_messages(messages: list[dict[str, Any]], max_summary_items: int = 
         role = msg.get("role", "unknown")
         content = str(msg.get("content", "")).strip()
 
-        if len(content) > 100:
-            content = content[:97] + "..."
-
-        summary_parts.append(f"- {role.capitalize()}: {content}")
+        if role == "system" and "Compressed History Summary" in content:
+            # Flatten existing summary
+            lines = content.split("\n")
+            for line in lines:
+                line_stripped = line.strip()
+                if line_stripped and not line_stripped.startswith("##"):
+                    summary_parts.append(line_stripped)
+        else:
+            if len(content) > 100:
+                content = content[:97] + "..."
+            summary_parts.append(f"- {role.capitalize()}: {content}")
 
     return "\n".join(summary_parts)
 
