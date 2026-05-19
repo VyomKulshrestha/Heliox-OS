@@ -1051,24 +1051,37 @@ def _parse_element_response(raw: str) -> list[dict] | None:
     """Extract and validate a JSON element array from a VLM response.
 
     The VLM is instructed to return only JSON, but may wrap it in markdown
-    fences or add prose.  This function strips common wrappers and validates
-    the schema of each element.
+    fences, add conversational prefixes, or include square brackets in prose
+    (e.g. ``"Checking [window title]: [...]"``).  A simple ``find("[")``
+    would match those incidental brackets and produce invalid JSON.
+
+    This function uses a regex to find the first ``[`` that is immediately
+    followed by ``{`` or whitespace+``{`` — i.e. the start of a JSON array
+    of objects — which is far more robust against conversational noise.
 
     Returns ``None`` if the response cannot be parsed into a valid list.
     """
+    import re as _re
+
     text = raw.strip()
 
     # Strip markdown code fences if present
     if text.startswith("```"):
         lines = text.splitlines()
-        # Remove first and last fence lines
-        inner = [l for l in lines if not l.startswith("```")]
+        inner = [ln for ln in lines if not ln.startswith("```")]
         text = "\n".join(inner).strip()
 
-    # Find the first '[' and last ']' to extract the array
-    start = text.find("[")
-    end = text.rfind("]")
-    if start == -1 or end == -1 or end <= start:
+    # Find the first '[' that starts a JSON array of objects: '[' followed
+    # (with optional whitespace) by '{' or ']' (empty array).
+    # This skips incidental brackets like "[window title]" in prose.
+    array_start = _re.search(r"\[\s*(\{|\])", text)
+    if array_start is None:
+        return None
+
+    start = array_start.start()
+    # Find the matching closing ']' by scanning from the end
+    end = text.rfind("]", start)
+    if end == -1 or end <= start:
         return None
 
     try:
