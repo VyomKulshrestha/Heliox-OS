@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 from dataclasses import dataclass, field
@@ -34,6 +35,8 @@ CONFIG_FILE = CONFIG_DIR / "config.toml"
 RESTRICTIONS_FILE = CONFIG_DIR / "restrictions.toml"
 DB_FILE = DATA_DIR / "pilot.db"
 AUDIT_FILE = DATA_DIR / "audit.jsonl"
+PERMISSION_AUDIT_DB_FILE = DATA_DIR / "permission_audit.db"
+PERMISSION_AUDIT_KEY_FILE = DATA_DIR / "permission_audit.key"
 LOG_FILE = STATE_DIR / "pilot.log"
 
 
@@ -66,6 +69,13 @@ class SecurityConfig:
     snapshot_retention_count: int = 10
     snapshot_retention_days: int = 7
     unrestricted_shell: bool = False  # Allow ANY shell command (bypass whitelist)
+    # Code execution sandbox — isolates agent-generated code from the host OS
+    sandbox_mode: str = "auto"  # "auto" | "docker" | "restricted" | "none"
+    sandbox_memory_mb: int = 128  # memory cap applied inside the sandbox (MB)
+    sandbox_timeout: int = 30  # max wall-clock seconds for sandboxed execution
+    sandbox_network: bool = False  # allow outbound network inside the sandbox
+    sandbox_kernel_guard: bool = True  # Linux seccomp-BPF syscall denylist for restricted mode
+    sandbox_blocked_syscalls: list[str] = field(default_factory=lambda: ["unlink", "unlinkat"])
 
 
 @dataclass
@@ -76,10 +86,68 @@ class ServerConfig:
 
 
 @dataclass
+class VoiceConfig:
+    language: str = "auto"  # auto detect or manual language code
+    whisper_model: str = "base"
+
+
+@dataclass
+class ScreenVisionConfig:
+    capture_interval_seconds: float = 3.0
+
+
+@dataclass
+class MemoryConfig:
+    checkpoint_interval_seconds: int = 300
+
+
+@dataclass
+class RSSConfig:
+    enabled: bool = False
+    feeds: list[str] = field(default_factory=list)
+    poll_interval_hours: float = 24.0
+    max_items_per_feed: int = 10
+
+
+@dataclass
+class NetworkConfig:
+    """LAN mesh network configuration for multi-instance collaboration."""
+
+    enabled: bool = False
+    port: int = 8786  # peer-to-peer WebSocket port (separate from client port)
+    peer_timeout_s: int = 30  # seconds before a silent peer is considered gone
+    skill_sync_enabled: bool = True  # broadcast/receive plugins from peers
+    collab_exec_enabled: bool = True  # distribute parallelizable action batches
+
+
+@dataclass
+class SshHostConfig:
+    """One allowed SSH destination (referenced by alias in ssh_* actions)."""
+
+    name: str = ""
+    hostname: str = ""
+    port: int = 22
+    username: str = ""
+    private_key_provider: str = ""  # KeyVault provider name containing the private key (PEM)
+    passphrase_provider: str = ""  # Optional KeyVault provider name for key passphrase
+    strict_host_key_checking: bool = True
+
+
+@dataclass
+class SshConfig:
+    enabled: bool = False
+    connect_timeout_seconds: int = 10
+    allowed_hosts: list[SshHostConfig] = field(default_factory=list)
+
+
+@dataclass
 class Restrictions:
     protected_folders: list[str] = field(default_factory=list)
     protected_packages: list[str] = field(default_factory=list)
     blocked_commands: list[str] = field(default_factory=list)
+    sandbox_allowed_commands: list[str] = field(
+        default_factory=lambda: ["echo", "ls", "dir", "cat", "type", "ping", "whoami", "pwd", "grep", "find"]
+    )
 
 
 @dataclass
@@ -87,6 +155,12 @@ class PilotConfig:
     model: ModelConfig = field(default_factory=ModelConfig)
     security: SecurityConfig = field(default_factory=SecurityConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
+    voice: VoiceConfig = field(default_factory=VoiceConfig)
+    screen_vision: ScreenVisionConfig = field(default_factory=ScreenVisionConfig)
+    memory: MemoryConfig = field(default_factory=MemoryConfig)
+    rss: RSSConfig = field(default_factory=RSSConfig)
+    network: NetworkConfig = field(default_factory=NetworkConfig)
+    ssh: SshConfig = field(default_factory=SshConfig)
     restrictions: Restrictions = field(default_factory=Restrictions)
     first_run_complete: bool = False
 
@@ -94,22 +168,137 @@ class PilotConfig:
     def load(cls) -> PilotConfig:
         """Load config from disk, creating defaults if missing."""
         config = cls()
+
         if CONFIG_FILE.exists():
-            raw = tomllib.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-            config = _merge_config(config, raw)
+            try:
+                raw = tomllib.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+                _validate_config_types(raw)
+                config = _merge_config(config, raw)
+            except Exception as e:
+                logger.error(f"Failed to load config.toml: {e}. Falling back to safe defaults.")
+
         if RESTRICTIONS_FILE.exists():
             raw = tomllib.loads(RESTRICTIONS_FILE.read_text(encoding="utf-8"))
             config.restrictions = _parse_restrictions(raw)
+
         return config
 
     def save(self) -> None:
         """Persist current config to disk."""
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+
         data = _config_to_dict(self)
         restrictions = data.pop("restrictions", {})
-        CONFIG_FILE.write_text(tomli_w.dumps(data), encoding="utf-8")
+
+        CONFIG_FILE.write_text(
+            tomli_w.dumps(data),
+            encoding="utf-8",
+        )
+
         if restrictions:
-            RESTRICTIONS_FILE.write_text(tomli_w.dumps(restrictions), encoding="utf-8")
+            RESTRICTIONS_FILE.write_text(
+                tomli_w.dumps(restrictions),
+                encoding="utf-8",
+            )
+
+
+logger = logging.getLogger("pilot.config")
+
+
+def _validate_config_types(raw: dict) -> None:
+    """Validate that the user's config has no typos and uses correct types."""
+    expected_types = {
+        "model": {
+            "provider": str,
+            "ollama_base_url": str,
+            "ollama_model": str,
+            "mode": str,
+            "gpu_memory_limit_mb": int,
+            "idle_unload_seconds": int,
+            "cloud_provider": str,
+            "cloud_model": str,
+            "rate_limit_enabled": bool,
+            "rate_limit_rpm": int,
+            "rate_limit_burst": int,
+            "budget_enabled": bool,
+            "budget_monthly_limit_usd": float,
+        },
+        "security": {
+            "root_enabled": bool,
+            "confirm_tier2": bool,
+            "dry_run": bool,
+            "snapshot_on_destructive": bool,
+            "snapshot_backend": str,
+            "snapshot_retention_count": int,
+            "snapshot_retention_days": int,
+            "unrestricted_shell": bool,
+            "sandbox_mode": str,
+            "sandbox_memory_mb": int,
+            "sandbox_timeout": int,
+            "sandbox_network": bool,
+            "sandbox_kernel_guard": bool,
+            "sandbox_blocked_syscalls": list,
+        },
+        "server": {
+            "host": str,
+            "port": int,
+            "auth_token": str,
+        },
+        "voice": {
+            "language": str,
+            "whisper_model": str,
+        },
+        "screen_vision": {
+            "capture_interval_seconds": (int, float),
+        },
+        "memory": {
+            "checkpoint_interval_seconds": int,
+        },
+        "rss": {
+            "enabled": bool,
+            "feeds": list,
+            "poll_interval_hours": (int, float),
+            "max_items_per_feed": int,
+        },
+        "network": {
+            "enabled": bool,
+            "port": int,
+            "peer_timeout_s": int,
+            "skill_sync_enabled": bool,
+            "collab_exec_enabled": bool,
+        },
+        "ssh": {
+            "enabled": bool,
+            "connect_timeout_seconds": int,
+            "allowed_hosts": list,
+        },
+    }
+
+    for section, expected_keys in expected_types.items():
+        if section in raw and isinstance(raw[section], dict):
+            for actual_key, actual_value in raw[section].items():
+                # Catch invalid keys
+                if actual_key not in expected_keys:
+                    error_msg = f"Invalid config key found: '{section}.{actual_key}'. Please check for typos."
+                    logger.error(error_msg)
+                    raise ValueError(error_msg)
+
+                # Catch invalid types
+                expected_type = expected_keys[actual_key]
+                if not isinstance(actual_value, expected_type):
+                    error_msg = (
+                        f"Invalid type: '{section}.{actual_key}' must be "
+                        f"{_format_type_name(expected_type)}, got "
+                        f"{type(actual_value).__name__}."
+                    )
+                    logger.error(error_msg)
+                    raise ValueError(error_msg)
+
+
+def _format_type_name(expected_type: type | tuple[type, ...]) -> str:
+    if isinstance(expected_type, tuple):
+        return " or ".join(t.__name__ for t in expected_type)
+    return expected_type.__name__
 
 
 def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
@@ -117,15 +306,72 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
         for k, v in raw["model"].items():
             if hasattr(config.model, k):
                 setattr(config.model, k, v)
+
     if "security" in raw:
         for k, v in raw["security"].items():
             if hasattr(config.security, k):
                 setattr(config.security, k, v)
+
     if "server" in raw:
         for k, v in raw["server"].items():
             if hasattr(config.server, k):
                 setattr(config.server, k, v)
-    config.first_run_complete = raw.get("first_run_complete", config.first_run_complete)
+
+    if "voice" in raw:
+        for k, v in raw["voice"].items():
+            if hasattr(config.voice, k):
+                setattr(config.voice, k, v)
+
+    if "screen_vision" in raw:
+        for k, v in raw["screen_vision"].items():
+            if hasattr(config.screen_vision, k):
+                setattr(config.screen_vision, k, float(v))
+
+    if "memory" in raw:
+        for k, v in raw["memory"].items():
+            if hasattr(config.memory, k):
+                setattr(config.memory, k, v)
+
+    if "rss" in raw:
+        for k, v in raw["rss"].items():
+            if hasattr(config.rss, k):
+                setattr(config.rss, k, v)
+
+    if "network" in raw:
+        for k, v in raw["network"].items():
+            if hasattr(config.network, k):
+                setattr(config.network, k, v)
+
+    if "ssh" in raw and isinstance(raw["ssh"], dict):
+        ssh_raw = raw["ssh"]
+        config.ssh.enabled = bool(ssh_raw.get("enabled", config.ssh.enabled))
+        if "connect_timeout_seconds" in ssh_raw:
+            config.ssh.connect_timeout_seconds = int(ssh_raw["connect_timeout_seconds"])
+
+        hosts_raw = ssh_raw.get("allowed_hosts", [])
+        if isinstance(hosts_raw, list):
+            parsed_hosts: list[SshHostConfig] = []
+            for item in hosts_raw:
+                if not isinstance(item, dict):
+                    continue
+                parsed_hosts.append(
+                    SshHostConfig(
+                        name=str(item.get("name", "")),
+                        hostname=str(item.get("hostname", "")),
+                        port=int(item.get("port", 22)),
+                        username=str(item.get("username", "")),
+                        private_key_provider=str(item.get("private_key_provider", "")),
+                        passphrase_provider=str(item.get("passphrase_provider", "")),
+                        strict_host_key_checking=bool(item.get("strict_host_key_checking", True)),
+                    )
+                )
+            config.ssh.allowed_hosts = parsed_hosts
+
+    config.first_run_complete = raw.get(
+        "first_run_complete",
+        config.first_run_complete,
+    )
+
     return config
 
 
@@ -134,6 +380,9 @@ def _parse_restrictions(raw: dict[str, Any]) -> Restrictions:
         protected_folders=raw.get("protected_folders", []),
         protected_packages=raw.get("protected_packages", []),
         blocked_commands=raw.get("blocked_commands", []),
+        sandbox_allowed_commands=raw.get(
+            "sandbox_allowed_commands", ["echo", "ls", "dir", "cat", "type", "ping", "whoami", "pwd", "grep", "find"]
+        ),
     )
 
 

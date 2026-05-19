@@ -15,7 +15,6 @@ import pytest
 
 from pilot.models.rate_limiter import TokenBucketRateLimiter
 
-
 # ---------------------------------------------------------------------------
 # Minimal ModelConfig stub
 # ---------------------------------------------------------------------------

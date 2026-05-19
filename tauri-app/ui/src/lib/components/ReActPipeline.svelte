@@ -11,7 +11,7 @@
   import { session } from "../stores/session";
   import { onNotification, offNotification } from "../api/daemon";
   import { fade, slide } from "svelte/transition";
-  import { onDestroy } from "svelte";
+  import { onMount, onDestroy } from "svelte";
 
   // ── Pipeline Stage Types ──
 
@@ -41,6 +41,18 @@
   let isVisible = $state(false);
   let totalDuration = $state(0);
   let agentRouting = $state<{ assigned_agents: string[]; is_multi_agent: boolean } | null>(null);
+  let showSkeleton = $state(false);
+
+  const skeletonStages = ["Memory", "Planning", "Routing", "Execution", "Verification", "Reflection"];
+  const pipelineMethods = new Set([
+    "status",
+    "agent_routing",
+    "plan_preview",
+    "action_start",
+    "action_complete",
+    "confirm_required",
+    "reasoning_event",
+  ]);
 
   let stages = $state<PipelineStage[]>([
     { id: "user_input", label: "User Request", emoji: "💬", status: "idle", detail: "", startTime: 0, endTime: 0 },
@@ -74,6 +86,7 @@
     stageDecisions = {};
     stageTiming = {};
     thoughtStream = [];
+    showSkeleton = false;
     showThoughts = false;
     expandedThoughtStages = {};
     collapsed = false;
@@ -100,6 +113,10 @@
 
   function handleNotification(method: string, params: unknown) {
     const p = params as Record<string, any>;
+
+    if (showSkeleton && pipelineMethods.has(method)) {
+      showSkeleton = false;
+    }
 
     switch (method) {
       case "status": {
@@ -314,6 +331,7 @@
       if (lastMsg) {
         // Defer state mutations out of the $effect tracking context
         queueMicrotask(() => {
+          showSkeleton = false;
           if (lastMsg.type === "result") {
             setStage("executing", "success", `${executionActions.length} action(s) completed`);
             setStage("verifying", lastMsg.verification?.passed ? "success" : "error",
@@ -338,8 +356,8 @@
       queueMicrotask(() => {
         resetPipeline();
         isVisible = true;
+        showSkeleton = true;
         pipelineStartTime = Date.now();
-        setStage("user_input", "active", "Processing...");
       });
     }
   });
@@ -357,6 +375,27 @@
   let dismiss = () => { isVisible = false; };
   let toggleCollapse = () => { collapsed = !collapsed; };
   let toggleThoughts = () => { showThoughts = !showThoughts; };
+
+  // ── Keyboard Shortcut: Ctrl+Shift+L toggles the ReAct Pipeline panel ──
+  function handleKeydown(e: KeyboardEvent): void {
+    if (e.ctrlKey && e.shiftKey && e.key === 'L') {
+      e.preventDefault();
+      if (!isVisible) {
+        // Restore from dismissed state
+        isVisible = true;
+        collapsed = false;
+        showThoughts = true;
+      } else if (collapsed) {
+        // Expanding from collapsed: show thoughts immediately
+        showThoughts = true;
+        toggleCollapse();
+      } else {
+        toggleCollapse();
+      }
+    }
+  }
+  onMount(() => window.addEventListener('keydown', handleKeydown));
+  onDestroy(() => window.removeEventListener('keydown', handleKeydown));
   let toggleThoughtStage = (stageId: string) => {
     expandedThoughtStages = {
       ...expandedThoughtStages,
@@ -402,6 +441,19 @@
   });
 </script>
 
+{#if !isVisible && (thoughtStream.length > 0 || stages.some(s => s.status !== 'idle'))}
+  <button
+    class="pipeline-restore-btn"
+    onclick={() => { isVisible = true; collapsed = false; showThoughts = true; }}
+    title="Restore pipeline (Ctrl+Shift+L)"
+    aria-label="Restore ReAct pipeline"
+  >
+    <span class="restore-icon">⚛️</span>
+    <span>Pipeline</span>
+    <span class="restore-hint">Ctrl+Shift+L</span>
+  </button>
+{/if}
+
 {#if isVisible}
   <div class="react-pipeline" class:collapsed transition:slide={{ duration: 300 }}>
     <!-- Header (always visible, clickable to expand/collapse) -->
@@ -421,7 +473,7 @@
         {#if agentRouting?.is_multi_agent}
           <span class="multi-agent-badge">Multi-Agent</span>
         {/if}
-        <button class="collapse-toggle" onclick={(e) => { e.stopPropagation(); toggleCollapse(); }} title={collapsed ? 'Expand' : 'Collapse'}>
+        <button class="collapse-toggle" onclick={(e) => { e.stopPropagation(); toggleCollapse(); }} title={collapsed ? 'Expand pipeline (Ctrl+Shift+L)' : 'Collapse pipeline (Ctrl+Shift+L)'}>
           {collapsed ? '▼' : '▲'}
         </button>
         <button
@@ -439,11 +491,33 @@
     </div>
 
     <!-- Progress bar -->
-    <div class="progress-track">
-      <div class="progress-fill" style="width: {progress}%"></div>
+    <div class="progress-track" class:skeleton={showSkeleton}>
+      <div class="progress-fill" style="width: {showSkeleton ? 0 : progress}%"></div>
     </div>
 
   {#if !collapsed}
+    {#if showSkeleton}
+      <div class="pipeline-graph skeleton-graph" aria-label="Preparing ReAct pipeline">
+        {#each skeletonStages as stage, i}
+          <div class="stage-wrapper skeleton-stage" transition:fade={{ duration: 180, delay: i * 30 }}>
+            {#if i > 0}
+              <div class="connector skeleton-connector"></div>
+            {/if}
+
+            <div class="stage-node skeleton-node">
+              <div class="skeleton-emoji" aria-hidden="true"></div>
+              <div class="stage-info">
+                <div class="stage-label">{stage}</div>
+                <div class="skeleton-detail" aria-hidden="true"></div>
+              </div>
+              <div class="stage-indicator">
+                <span class="skeleton-dot" aria-hidden="true"></span>
+              </div>
+            </div>
+          </div>
+        {/each}
+      </div>
+    {:else}
     <!-- Pipeline nodes -->
     <div class="pipeline-graph">
       {#each stages as stage, i (stage.id)}
@@ -503,9 +577,10 @@
         </div>
       {/each}
     </div>
+    {/if}
 
     <!-- Collapsible Thought Stream -->
-    {#if showThoughts && thoughtStream.length > 0}
+    {#if !showSkeleton && showThoughts && thoughtStream.length > 0}
       <div class="thought-stream" transition:slide={{ duration: 200 }}>
         <div class="thought-stream-header">
           <span class="thought-stream-icon">◫</span>
@@ -566,7 +641,7 @@
     {/if}
 
     <!-- Agent routing info -->
-    {#if agentRouting}
+    {#if !showSkeleton && agentRouting}
       <div class="routing-info" transition:fade>
         <span class="routing-label">Agents:</span>
         {#each agentRouting.assigned_agents as agent}
@@ -589,6 +664,10 @@
     font-family: 'Inter', 'JetBrains Mono', monospace;
     box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.05);
     transition: padding 0.3s ease;
+    max-height: 75vh;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(0, 240, 255, 0.3) transparent;
   }
 
   .react-pipeline.collapsed {
@@ -726,6 +805,10 @@
     box-shadow: 0 0 8px rgba(0, 240, 255, 0.4);
   }
 
+  .progress-track.skeleton {
+    background: rgba(255, 255, 255, 0.07);
+  }
+
   /* Pipeline graph */
   .pipeline-graph {
     display: flex;
@@ -769,6 +852,55 @@
     border: 1px solid rgba(255, 255, 255, 0.04);
     transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
     position: relative;
+  }
+
+  .skeleton-node {
+    background: rgba(255, 255, 255, 0.035);
+    border-color: rgba(255, 255, 255, 0.08);
+    opacity: 0.72;
+    overflow: hidden;
+  }
+
+  .skeleton-node::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.08), transparent);
+    animation: skeleton-shimmer 1.4s ease-in-out infinite;
+    transform: translateX(-100%);
+  }
+
+  .skeleton-connector {
+    background: rgba(255, 255, 255, 0.09);
+  }
+
+  .skeleton-emoji,
+  .skeleton-dot {
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.16);
+    flex-shrink: 0;
+  }
+
+  .skeleton-emoji {
+    width: 28px;
+    height: 28px;
+  }
+
+  .skeleton-dot {
+    width: 8px;
+    height: 8px;
+  }
+
+  .skeleton-node .stage-label {
+    color: rgba(255, 255, 255, 0.42);
+  }
+
+  .skeleton-detail {
+    width: min(140px, 55%);
+    height: 6px;
+    margin-top: 6px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.12);
   }
 
   .stage-node.active {
@@ -954,6 +1086,10 @@
     0% { box-shadow: 0 0 8px rgba(0, 240, 255, 0.1), inset 0 0 8px rgba(0, 240, 255, 0.02); }
     50% { box-shadow: 0 0 20px rgba(0, 240, 255, 0.2), inset 0 0 16px rgba(0, 240, 255, 0.05); }
     100% { box-shadow: 0 0 8px rgba(0, 240, 255, 0.1), inset 0 0 8px rgba(0, 240, 255, 0.02); }
+  }
+
+  @keyframes skeleton-shimmer {
+    100% { transform: translateX(100%); }
   }
 
   @keyframes spin {
@@ -1181,5 +1317,36 @@
   .thought-summary:hover {
     border-color: rgba(120, 100, 255, 0.35);
     background: rgba(120, 100, 255, 0.1);
+  }
+
+  .pipeline-restore-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.35rem 0.75rem;
+    margin: 0.5rem 0;
+    background: rgba(0, 240, 255, 0.06);
+    border: 1px solid rgba(0, 240, 255, 0.2);
+    border-radius: 999px;
+    color: rgba(0, 240, 255, 0.7);
+    font-size: 0.75rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    letter-spacing: 0.5px;
+  }
+
+  .pipeline-restore-btn:hover {
+    background: rgba(0, 240, 255, 0.12);
+    border-color: rgba(0, 240, 255, 0.45);
+    color: #00f0ff;
+    box-shadow: 0 0 10px rgba(0, 240, 255, 0.15);
+  }
+
+  .restore-hint {
+    font-size: 0.65rem;
+    opacity: 0.55;
+    font-weight: 400;
+    font-family: 'JetBrains Mono', monospace;
   }
 </style>
