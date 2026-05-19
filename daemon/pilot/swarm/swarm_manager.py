@@ -103,36 +103,46 @@ class SwarmManager:
         """Discover other daemons on the network using UDP broadcast."""
         discovered = []
 
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-        sock.settimeout(timeout)
+        def _run_discovery() -> list[tuple[bytes, tuple[str, int]]]:
+            results = []
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            sock.settimeout(timeout)
+
+            try:
+                discovery_msg = {
+                    "type": "DISCOVERY",
+                    "node_id": self._local_node.node_id if self._local_node else "",
+                }
+                sock.sendto(
+                    json.dumps(discovery_msg).encode(),
+                    ("<broadcast>", 18888),
+                )
+
+                while True:
+                    try:
+                        data, addr = sock.recvfrom(1024)
+                        results.append((data, addr))
+                    except socket.timeout:
+                        break
+            finally:
+                sock.close()
+            return results
 
         try:
-            discovery_msg = {
-                "type": "DISCOVERY",
-                "node_id": self._local_node.node_id if self._local_node else "",
-            }
-            sock.sendto(
-                json.dumps(discovery_msg).encode(),
-                ("<broadcast>", 18888),
-            )
-
-            while True:
-                try:
-                    data, addr = sock.recvfrom(1024)
-                    msg = json.loads(data.decode())
-                    if msg.get("type") == "DISCOVERY_RESPONSE":
-                        node = DaemonNode(
-                            node_id=msg.get("node_id", ""),
-                            addr=addr[0],
-                            port=msg.get("port", 18888),
-                            hardware=msg.get("hardware", {}),
-                        )
-                        discovered.append(node)
-                except socket.timeout:
-                    break
-        finally:
-            sock.close()
+            results = await asyncio.to_thread(_run_discovery)
+            for data, addr in results:
+                msg = json.loads(data.decode())
+                if msg.get("type") == "DISCOVERY_RESPONSE":
+                    node = DaemonNode(
+                        node_id=msg.get("node_id", ""),
+                        addr=addr[0],
+                        port=msg.get("port", 18888),
+                        hardware=msg.get("hardware", {}),
+                    )
+                    discovered.append(node)
+        except Exception as e:
+            logger.warning("Node discovery failed: %s", e)
 
         self._nodes = list(set(self._nodes + discovered))
         return discovered
