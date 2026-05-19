@@ -23,18 +23,18 @@ def sample_workspace():
         # Create sample Python files
         (folder / "auth.py").write_text(
             "def login(username, password):\n"
-            "    \"\"\"Authenticate user with username and password.\"\"\"\n"
+            '    """Authenticate user with username and password."""\n'
             "    return check_credentials(username, password)\n"
         )
         (folder / "database.py").write_text(
             "import sqlite3\n\n"
             "def get_connection():\n"
-            "    \"\"\"Return a database connection.\"\"\"\n"
+            '    """Return a database connection."""\n'
             "    return sqlite3.connect('app.db')\n"
         )
         (folder / "utils.py").write_text(
             "def format_date(date):\n"
-            "    \"\"\"Format a date object to string.\"\"\"\n"
+            '    """Format a date object to string."""\n'
             "    return date.strftime('%Y-%m-%d')\n"
         )
         yield folder

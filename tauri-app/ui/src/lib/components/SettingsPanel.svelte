@@ -91,6 +91,25 @@
     // The store's internal side-effects will automatically manage document classes and localStorage synchronization
     settings.updateSection("", { theme: nextTheme });
   }
+  async function testNotification() {
+    try {
+      let granted = await isPermissionGranted();
+      if (!granted) {
+        const permission = await requestPermission();
+        granted = permission === 'granted';
+      }
+      if (granted) {
+        sendNotification({
+          title: 'Heliox OS',
+          body: 'Test notification — desktop notifications are working! 🚀',
+        });
+      } else {
+        console.warn('Notification permission was denied');
+      }
+    } catch (err) {
+      console.error('Notification test failed:', err);
+    }
+  }
 </script>
 
 <div class="settings-panel">
