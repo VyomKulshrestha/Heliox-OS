@@ -147,22 +147,21 @@ class SwarmManager:
 
     def get_nodes_by_capability(self, capability: HardwareCapability) -> list[DaemonNode]:
         """Get nodes that meet the specified hardware capability."""
+        capability_vram_gb = {
+            HardwareCapability.GPU_VRAM_4GB: 4,
+            HardwareCapability.GPU_VRAM_8GB: 8,
+            HardwareCapability.GPU_VRAM_12GB: 12,
+            HardwareCapability.GPU_VRAM_16GB: 16,
+        }
         nodes = []
         for node in self._nodes:
             if node.is_healthy:
                 gpu_vram = node.hardware.get("gpu_vram_gb", 0)
-                if (
-                    capability == HardwareCapability.CPU_ONLY
-                    and not node.hardware.get("has_gpu")
-                    or capability == HardwareCapability.GPU_VRAM_4GB
-                    and gpu_vram >= 4
-                    or capability == HardwareCapability.GPU_VRAM_8GB
-                    and gpu_vram >= 8
-                    or capability == HardwareCapability.GPU_VRAM_12GB
-                    and gpu_vram >= 12
-                    or capability == HardwareCapability.GPU_VRAM_16GB
-                    and gpu_vram >= 16
-                ):
+                required_vram = capability_vram_gb.get(capability)
+                if capability == HardwareCapability.CPU_ONLY:
+                    if not node.hardware.get("has_gpu"):
+                        nodes.append(node)
+                elif required_vram is not None and gpu_vram >= required_vram:
                     nodes.append(node)
         return nodes
 
