@@ -130,7 +130,7 @@ def _record_critic_verdict(
     *,
     plan_id: str,
     verdict: str,
-    notes: Optional[str] = None,
+    notes: str|None = None,
 ) -> None:
     """Update the audit row after the critic agent evaluates the plan.
 
@@ -174,8 +174,8 @@ def _record_execution_outcome(
     *,
     plan_id: str,
     status: str,
-    result: Optional[Any] = None,
-    error: Optional[str] = None,
+    result: str|None = None,
+    error: str|None = None,
 ) -> None:
     """Update the audit row once execution completes (or fails/is skipped).
 
@@ -189,7 +189,7 @@ def _record_execution_outcome(
 
     if result is not None and not isinstance(result, str):
         try:
-            result_json: Optional[str] = json.dumps(result, default=str)
+            result_json: str|None = json.dumps(result, default=str)
         except Exception:
             result_json = str(result)
     else:
@@ -200,7 +200,7 @@ def _record_execution_outcome(
         row = conn.execute(
             "SELECT created_at FROM plan_history WHERE plan_id=?", (plan_id,)
         ).fetchone()
-        duration_ms: Optional[float] = None
+        duration_ms: float|None = None
         if row:
             duration_ms = (now - row[0]) * 1000.0
 
@@ -865,7 +865,7 @@ class PilotServer:
         last_verification = None
         last_explanation = ""
         # Audit plan_id threaded through the retry loop
-        audit_plan_id: Optional[str] = None
+        audit_plan_id: str|None = None
 
         for attempt in range(1 + self.MAX_RETRIES):
             # ── Cancel Token: check before each planning attempt ──
@@ -1687,14 +1687,14 @@ class PilotServer:
         Note: ``action_plan_json`` / ``execution_result`` are omitted here to
         keep the list payload small.  Use ``get_plan_detail`` for the full record.
         """
-        session_id: Optional[str] = params.get("session_id")
+        session_id: str|None = params.get("session_id")
         limit: int = min(int(params.get("limit", 50)), 200)
         offset: int = int(params.get("offset", 0))
-        status_filter: Optional[str] = params.get("status")
-        verdict_filter: Optional[str] = params.get("verdict")
+        status_filter: str|None = params.get("status")
+        verdict_filter: str|None = params.get("verdict")
 
-        where_clauses: List[str] = []
-        bind_values: List[Any] = []
+        where_clauses: list[str] = []
+        bind_values: list[Any] = []
 
         if session_id:
             where_clauses.append("session_id = ?")
@@ -1763,7 +1763,7 @@ class PilotServer:
 
         Returns ``{"error": "not_found"}`` if the plan_id does not exist.
         """
-        plan_id: Optional[str] = params.get("plan_id")
+        plan_id: str|None = params.get("plan_id")
         if not plan_id:
             return {"error": "missing_plan_id"}
 
@@ -3246,3 +3246,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+    
