@@ -2,6 +2,7 @@
   import { session } from "../stores/session";
 
   let input = $state("");
+  const MAX_CHARS = 20000;
 
   function handleSubmit(e: Event) {
     e.preventDefault();
@@ -29,6 +30,12 @@
       autocomplete="off"
       spellcheck="false"
     />
+    <div
+      class="char-counter"
+      style:color={input.length > MAX_CHARS ? "red" : "#888"}
+    >
+      {input.length}/{MAX_CHARS}
+    </div>
     <button type="submit" class="send-btn" title="Send" disabled={!input.trim()}>
       Send
     </button>
@@ -92,5 +99,10 @@
   .send-btn:disabled {
     opacity: 0.4;
     cursor: default;
+  }
+  .char-counter {
+    font-size: 12px;
+    text-align: right;
+    margin-top: 4px;
   }
 </style>
