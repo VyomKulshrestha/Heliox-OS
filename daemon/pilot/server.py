@@ -1545,8 +1545,6 @@ class PilotServer:
         providers = await self._vault.list_providers()
         return {"providers": providers}
 
-
-
     # -- Ollama model discovery --
 
     async def _handle_list_ollama_models(self, params: dict, ws: ServerConnection) -> dict:
