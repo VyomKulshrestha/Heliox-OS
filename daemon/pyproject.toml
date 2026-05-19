@@ -62,6 +62,11 @@ ssh = [
     "paramiko>=3.4",
 ]
 
+# WASM plugin sandbox
+wasm = [
+    "wasmtime>=18.0",
+]
+
 # Tier 2: Multipliers
 documents = [
     "pypdf>=4.0",
@@ -77,7 +82,7 @@ cognitive = [
 
 # Everything
 all = [
-    "pilot-daemon[full,automation,vision,browser,documents,cognitive,ssh,network]",
+    "pilot-daemon[full,automation,vision,browser,documents,cognitive,ssh,network,wasm]",
 ]
 
 dev = [
