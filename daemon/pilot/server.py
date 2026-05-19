@@ -667,6 +667,8 @@ class PilotServer:
         all_results: list = []
         last_verification = None
         last_explanation = ""
+        _original_plan = None
+        _successful_results: list = []
 
         for attempt in range(1 + self.MAX_RETRIES):
             # ── Cancel Token: check before each planning attempt ──
@@ -963,6 +965,8 @@ class PilotServer:
             else:
                 verification = await self._verifier.verify(plan, results)
             last_verification = verification
+            if _original_plan is not None and _successful_results:
+                all_results = PlanDiffer.merge_results(_successful_results, results, _original_plan, verification)
 
             if verification.passed:
                 if emit:
@@ -1030,9 +1034,26 @@ class PilotServer:
                     "verification", VERIFICATION_FAILED, "; ".join(verification.details[:3]), parent_id=verify_phase
                 )
 
+            # Execution failed — use PlanDiffer for partial re-plan
+            from pilot.agents.plan_differ import PlanDiffer
+
+            retry_plan, successful_results = PlanDiffer.diff(plan, results, verification)
+
             failed_details = [d for d in verification.details if "FAILED" in d or "MISMATCH" in d]
             error_msgs = [r.error for r in results if r.error]
             error_context = "\n".join(failed_details + error_msgs)
+
+            # Use partial retry plan if PlanDiffer found fewer actions to retry
+            if len(retry_plan.actions) < len(plan.actions):
+                logger.info(
+                    "PlanDiffer: retrying %d/%d actions",
+                    len(retry_plan.actions),
+                    len(plan.actions),
+                )
+                plan = retry_plan
+                _original_plan = plan
+                _successful_results = successful_results
+                all_results = list(successful_results)
 
             if attempt < self.MAX_RETRIES:
                 await ws.send(
