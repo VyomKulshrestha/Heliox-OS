@@ -100,17 +100,10 @@ class SwarmRouterAgent(BaseAgent):
 
         return requirements
 
-    async def _execute_on_node(
-        self, node: Any, plan: ActionPlan
-    ) -> list[ActionResult]:
+    async def _execute_on_node(self, node: Any, plan: ActionPlan) -> list[ActionResult]:
         """Execute a plan on a specific node (local or remote)."""
         local_node_id = self._swarm._local_node.node_id if self._swarm._local_node else None
-        is_remote = (
-            node
-            and hasattr(node, "node_id")
-            and local_node_id is not None
-            and node.node_id != local_node_id
-        )
+        is_remote = node and hasattr(node, "node_id") and local_node_id is not None and node.node_id != local_node_id
 
         if is_remote:
             logger.info("Executing on remote node %s", node.node_id)

@@ -67,7 +67,7 @@ class SwarmManager:
         self._local_node = DaemonNode(
             node_id=secrets.token_hex(8),
             addr="127.0.0.1",
-            port=self._config.get("daemon_port", 8000),
+            port=getattr(self._config.server, "port", 8000),
             hardware=hardware,
         )
         self._nodes.append(self._local_node)
@@ -91,9 +91,7 @@ class SwarmManager:
             if torch.cuda.is_available():
                 hardware["has_gpu"] = True
                 hardware["gpu_name"] = torch.cuda.get_device_name(0)
-                hardware["gpu_vram_gb"] = round(
-                    torch.cuda.get_device_properties(0).total_memory / (1024**3), 2
-                )
+                hardware["gpu_vram_gb"] = round(torch.cuda.get_device_properties(0).total_memory / (1024**3), 2)
         except ImportError:
             pass
 
@@ -147,9 +145,7 @@ class SwarmManager:
         self._nodes = list(set(self._nodes + discovered))
         return discovered
 
-    def get_nodes_by_capability(
-        self, capability: HardwareCapability
-    ) -> list[DaemonNode]:
+    def get_nodes_by_capability(self, capability: HardwareCapability) -> list[DaemonNode]:
         """Get nodes that meet the specified hardware capability."""
         capability_vram_gb = {
             HardwareCapability.GPU_VRAM_4GB: 4,
@@ -197,9 +193,7 @@ class SwarmManager:
         node.tasks_completed += 1
         return node
 
-    async def execute_remote(
-        self, node: DaemonNode, plan: dict[str, Any]
-    ) -> dict[str, Any]:
+    async def execute_remote(self, node: DaemonNode, plan: dict[str, Any]) -> dict[str, Any]:
         """Execute a task on a remote daemon node via WebSocket JSON-RPC."""
         if not node.is_healthy:
             raise RuntimeError(f"Node {node.node_id} is not healthy")
