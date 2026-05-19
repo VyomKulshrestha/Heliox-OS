@@ -1,6 +1,11 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { call } from "../api/daemon";
+  import { invoke } from "@tauri-apps/api/core";
+
+async function openLogsFolder() {
+  await invoke("open_logs_folder");
+}
 
   interface HistoryEntry {
     id: number;
@@ -33,12 +38,17 @@
     }
   }
 </script>
-
 <div class="activity-log">
-  <div class="log-header">
-    <h2>Activity Log</h2>
+<div class="log-header">
+  <h2>Activity Log</h2>
+  <div class="header-right">
     <span class="count">{entries.length} entries</span>
+    <button class="open-logs-btn" onclick={openLogsFolder} title="Open Logs Folder">
+      📂 Open Logs
+    </button>
   </div>
+  </div>
+
 
   {#if loading}
     <div class="empty">Loading...</div>
@@ -152,5 +162,24 @@
     font-size: 12px;
     color: var(--text-secondary);
     margin-top: 4px;
+  }
+  .header-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .open-logs-btn {
+    font-size: 11px;
+    padding: 4px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .open-logs-btn:hover {
+    background: var(--accent, #38bdf8);
+    color: #000;
   }
 </style>
