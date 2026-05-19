@@ -144,21 +144,30 @@
       if (msg.plan?.actions?.length) {
         parts.push(msg.plan.actions.map((a: any) => `• ${a.action_type}: ${a.target || ""}`).join("\n"));
       }
+      if (!parts.length && msg.plan?.actions?.length) {
+        parts.push(msg.plan.actions.map((a: any) => `• ${a.action_type}: ${a.target || ""}`).join("\n"));
+      }
       return parts.join("\n\n");
     }
     if (msg.type === "result") {
       const parts = [];
       if (msg.text) parts.push(msg.text);
       if (msg.actionResults?.length) {
-        parts.push(
-          msg.actionResults
-            .map((r: any) => r.output || r.error || "")
-            .filter(Boolean)
-            .join("\n")
-        );
+        const outputs = msg.actionResults
+          .map((r: any) => {
+            const content = r.output || r.error || "";
+            const actionType = r.action?.action_type || "";
+            return content ? `${actionType}: ${content}` : actionType;
+          })
+          .filter(Boolean)
+          .join("\n");
+        if (outputs) parts.push(outputs);
       }
       if (msg.verification) {
         parts.push(`Verification: ${msg.verification.passed ? "passed" : "failed"}`);
+        if (msg.verification.details?.length) {
+          parts.push(msg.verification.details.join("\n"));
+        }
       }
       return parts.join("\n\n");
     }
