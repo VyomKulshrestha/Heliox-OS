@@ -216,8 +216,10 @@ class PilotServer:
         from pilot.swarm.swarm_router_agent import SwarmRouterAgent
 
         self._swarm_manager = SwarmManager(self.config)
-        swarm_router = SwarmRouterAgent(model_router, self._swarm_manager)
+        await self._swarm_manager.initialize()
+        swarm_router = SwarmRouterAgent(model_router, self._swarm_manager, executor=self._executor)
         self._orchestrator.register_agent(swarm_router)
+        await self._swarm_manager.start()
         logger.info("Swarm mode initialized with SwarmRouterAgent")
 
         from pilot.agents.rss_agent import RssAgent

@@ -16,10 +16,15 @@ logger = logging.getLogger("pilot.swarm.swarm_router_agent")
 class SwarmRouterAgent(BaseAgent):
     """Specialist agent for distributed task routing in swarm mode."""
 
-    def __init__(self, model_router: "ModelRouter", swarm_manager: SwarmManager) -> None:
+    def __init__(
+        self,
+        model_router: "ModelRouter",
+        swarm_manager: SwarmManager,
+        executor: Any = None,
+    ) -> None:
         super().__init__(role=AgentRole.SYSTEM, model_router=model_router)
         self._swarm = swarm_manager
-        self._executor = None
+        self._executor = executor
 
     def get_capabilities(self) -> list[AgentCapability]:
         """Return supported capabilities."""
@@ -99,7 +104,13 @@ class SwarmRouterAgent(BaseAgent):
         self, node: Any, plan: ActionPlan
     ) -> list[ActionResult]:
         """Execute a plan on a specific node (local or remote)."""
-        is_remote = node and hasattr(node, "node_id") and node.node_id != self._swarm._local_node.node_id
+        local_node_id = self._swarm._local_node.node_id if self._swarm._local_node else None
+        is_remote = (
+            node
+            and hasattr(node, "node_id")
+            and local_node_id is not None
+            and node.node_id != local_node_id
+        )
 
         if is_remote:
             logger.info("Executing on remote node %s", node.node_id)
@@ -130,9 +141,6 @@ class SwarmRouterAgent(BaseAgent):
 
         if not is_remote:
             if not self._executor:
-                self._executor = await self._get_executor()
-
-            if not self._executor:
                 logger.warning("Executor not available")
                 return [
                     ActionResult(
@@ -142,7 +150,7 @@ class SwarmRouterAgent(BaseAgent):
                     )
                 ]
 
-            logger.info("Executing locally on node %s", self._swarm._local_node.node_id if self._swarm._local_node else "unknown")
+            logger.info("Executing locally on node %s", local_node_id or "unknown")
             results = await self._executor.execute(plan)
 
             if node and hasattr(node, "node_id"):
@@ -154,14 +162,6 @@ class SwarmRouterAgent(BaseAgent):
             return results
 
         return []
-
-    async def _get_executor(self) -> Any:
-        """Get the executor from the orchestrator or create one."""
-        if self._orchestrator:
-            if hasattr(self._orchestrator, "_executor"):
-                return self._orchestrator._executor
-
-        return None
 
     async def get_swarm_status(self) -> dict[str, Any]:
         """Get current swarm status."""
