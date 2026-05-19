@@ -72,6 +72,7 @@ class _LRUCache:
 
 # ── Adapter ───────────────────────────────────────────────────────────────────
 
+
 @dataclass
 class RedisConfig:
     enabled: bool = False
@@ -81,7 +82,7 @@ class RedisConfig:
     password: str = ""
     ssl: bool = False
     key_prefix: str = "pilot:"
-    default_ttl: int = 300          # seconds
+    default_ttl: int = 300  # seconds
     max_memory_cache_size: int = 512  # fallback LRU size
 
 
@@ -90,7 +91,7 @@ class RedisCacheAdapter:
 
     def __init__(self, config: RedisConfig) -> None:
         self._config = config
-        self._redis: Any = None          # aioredis / redis.asyncio client
+        self._redis: Any = None  # aioredis / redis.asyncio client
         self._fallback = _LRUCache(max_size=config.max_memory_cache_size)
         self._using_redis = False
 
