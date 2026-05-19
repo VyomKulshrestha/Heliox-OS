@@ -55,18 +55,26 @@ class OllamaClient:
         json_mode: bool = False,
         temperature: float = 0.1,
         stream: bool = False,
+        stream_callback: callable | None = None,
     ) -> str:
-        """Generate a completion. Returns the full response text."""
+        """Generate a completion. Returns the full response text.
+
+        If stream_callback is provided, tokens are streamed via the callback
+        and the full response is returned at the end.
+        """
         payload: dict = {
             "model": model,
             "prompt": prompt,
-            "stream": stream,
+            "stream": stream_callback is not None,
             "options": {"temperature": temperature},
         }
         if system:
             payload["system"] = system
         if json_mode:
             payload["format"] = "json"
+
+        if stream_callback is not None:
+            return await self._generate_stream(model, prompt, system, json_mode, temperature, stream_callback)
 
         resp = await self._client.post(
             f"{self._base_url}/api/generate",
@@ -80,6 +88,49 @@ class OllamaClient:
         resp.raise_for_status()
         data = resp.json()
         return data.get("response", "")
+
+    async def _generate_stream(
+        self,
+        model: str,
+        prompt: str,
+        system: str,
+        json_mode: bool,
+        temperature: float,
+        stream_callback: callable,
+    ) -> str:
+        """Generate with streaming - calls stream_callback for each token."""
+        payload: dict = {
+            "model": model,
+            "prompt": prompt,
+            "stream": True,
+            "options": {"temperature": temperature},
+        }
+        if system:
+            payload["system"] = system
+        if json_mode:
+            payload["format"] = "json"
+
+        full_response = ""
+        async with self._client.stream("POST", f"{self._base_url}/api/generate", json=payload) as resp:
+            if resp.status_code == 404:
+                available = await self.list_models()
+                raise OllamaModelNotFoundError(model, available)
+
+            resp.raise_for_status()
+
+            async for line in resp.aiter_lines():
+                if not line.strip():
+                    continue
+                try:
+                    data = __import__("json").loads(line)
+                    token = data.get("response", "")
+                    if token:
+                        full_response += token
+                        await stream_callback(token)
+                except Exception:
+                    continue
+
+        return full_response
 
     async def chat(
         self,

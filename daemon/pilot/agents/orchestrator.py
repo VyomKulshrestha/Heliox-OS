@@ -78,6 +78,45 @@ class AgentOrchestrator:
         """Get a registered agent by role."""
         return self._agents.get(role)
 
+    def auto_register_all_agents(
+        self,
+        executor: Any = None,
+        background_manager: Any = None,
+        model_router: Any = None,
+    ) -> int:
+        """Auto-register all discovered agents from the registry."""
+        import inspect
+
+        from pilot.agents.registry import AgentRegistry
+
+        count = 0
+        for name, agent_class in AgentRegistry.get_all_agents().items():
+            try:
+                kwargs = {}
+                if executor:
+                    kwargs["executor"] = executor
+                if background_manager:
+                    kwargs["background_manager"] = background_manager
+                if model_router:
+                    kwargs["model_router"] = model_router
+
+                # Only pass supported kwargs to avoid breaking agents with narrower constructors.
+                sig = inspect.signature(agent_class.__init__)
+                accepts_var_kw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+                if accepts_var_kw:
+                    filtered = kwargs
+                else:
+                    accepted = {k for k in sig.parameters if k != "self"}
+                    filtered = {k: v for k, v in kwargs.items() if k in accepted}
+
+                agent = agent_class(**filtered)
+                self.register_agent(agent)
+                count += 1
+            except Exception as e:
+                logger.warning("Failed to auto-register agent %s: %s", name, e)
+
+        return count
+
     def set_broadcast(self, fn: Callable[..., Coroutine]) -> None:
         """Set the WebSocket broadcast function for UI notifications."""
         self._broadcast_fn = fn
@@ -118,6 +157,7 @@ class AgentOrchestrator:
         plan: ActionPlan,
         on_action_start: Callable | None = None,
         on_action_complete: Callable | None = None,
+        cancel_event: asyncio.Event | None = None,  # ← add this
     ) -> list[ActionResult]:
         """Execute a plan by routing actions to specialist agents.
 
@@ -137,11 +177,15 @@ class AgentOrchestrator:
                     "is_multi_agent": len(routing) > 1,
                 },
             )
-
         # Process actions in order, grouping consecutive same-agent actions
         action_order = self._build_execution_order(plan, routing)
 
         for batch in action_order:
+            # ── Cancellation check ──
+            if cancel_event and cancel_event.is_set():
+                logger.info("Orchestrator: cancel_event set — halting plan execution")
+                break
+
             role, indices = batch
             agent = self._agents.get(role)
             if agent is None:
@@ -265,6 +309,10 @@ class AgentOrchestrator:
                 from pilot.agents.system_agent import SystemAgent
 
                 agent = SystemAgent(self._model, kwargs.get("executor"))
+            elif role == AgentRole.SSH:
+                from pilot.agents.ssh_agent import SshAgent
+
+                agent = SshAgent(self._model)
             elif role == AgentRole.CODE:
                 from pilot.agents.code_agent import CodeAgent
 
@@ -341,6 +389,15 @@ class AgentOrchestrator:
                 "screenshot",
                 "registry",
             ],
+            AgentRole.SSH: [
+                "ssh",
+                "remote",
+                "server",
+                "hostname",
+                "host",
+                "bastion",
+                "jump host",
+            ],
             AgentRole.CODE: [
                 "code",
                 "script",
@@ -397,4 +454,26 @@ class AgentOrchestrator:
             "input": user_input,
             "assigned_agents": assigned,
             "is_multi_agent": len(assigned) > 1,
+        }
+
+    def is_complex_prompt(self, user_input: str) -> bool:
+        summary = self.get_input_routing_summary(user_input)
+        assigned = summary.get("assigned_agents", [])
+        return len(assigned) > 1
+
+    async def delegate_to_subagents(self, user_input: str, **kwargs: Any) -> dict[str, Any]:
+        """Spawn Researcher and Coder sub-agents in parallel for complex prompts."""
+        logger.info("[Orchestrator] Complex prompt detected — spawning sub-agents")
+
+        # Spawn both sub-agents in parallel
+        researcher, coder = await asyncio.gather(
+            self.spawn_agent(AgentRole.WEB, **kwargs),
+            self.spawn_agent(AgentRole.CODE, **kwargs),
+        )
+
+        return {
+            "researcher": researcher.role.value if researcher else None,
+            "coder": coder.role.value if coder else None,
+            "status": "delegated",
+            "input": user_input,
         }

@@ -1,7 +1,7 @@
 """Pydantic models for structured action plans.
 
 Every LLM output is parsed into these models. The Executor only accepts
-validated Action objects — there is no path from raw LLM text to system calls.
+validated Action objects ΓÇö there is no path from raw LLM text to system calls.
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ class ActionType(StrEnum):
     FILE_COPY = "file_copy"
     FILE_LIST = "file_list"
     FILE_SEARCH = "file_search"
+    DIRECTORY_SUMMARY = "directory_summary"
     FILE_PERMISSIONS = "file_permissions"
 
     # -- Package management --
@@ -47,6 +48,7 @@ class ActionType(StrEnum):
     # -- Shell / command execution --
     SHELL_COMMAND = "shell_command"
     SHELL_SCRIPT = "shell_script"  # Run a multi-line script
+    PTY_EXEC = "pty_exec"  # Run command in a persistent PTY shell session
 
     # -- Open URL / Application / Notify (original) --
     OPEN_URL = "open_url"
@@ -202,6 +204,18 @@ class ActionType(StrEnum):
     API_SLACK = "api_slack"
     API_DISCORD = "api_discord"
     API_SCRAPE = "api_scrape"
+    # -- Workspace semantic search (RAG) --
+    WORKSPACE_INDEX = "workspace_index"
+    WORKSPACE_SEARCH = "workspace_search"
+
+    # -- Email (IMAP/SMTP) --
+    EMAIL_FETCH = "email_fetch"
+    EMAIL_SUMMARIZE = "email_summarize"
+    EMAIL_REPLY = "email_reply"
+
+    # -- Remote execution (SSH) --
+    SSH_COMMAND = "ssh_command"
+    SSH_SCRIPT = "ssh_script"
 
 
 class PermissionTier(int, Enum):
@@ -216,6 +230,7 @@ READ_ONLY_ACTIONS = {
     ActionType.FILE_READ,
     ActionType.FILE_LIST,
     ActionType.FILE_SEARCH,
+    ActionType.DIRECTORY_SUMMARY,
     ActionType.PACKAGE_SEARCH,
     ActionType.SERVICE_STATUS,
     ActionType.GNOME_SETTING_READ,
@@ -260,6 +275,10 @@ READ_ONLY_ACTIONS = {
     ActionType.FILE_PARSE,
     ActionType.FILE_SEARCH_CONTENT,
     ActionType.API_SCRAPE,
+    ActionType.WORKSPACE_SEARCH,
+    # Email agent read-only
+    ActionType.EMAIL_FETCH,
+    ActionType.EMAIL_SUMMARIZE,
 }
 
 DESTRUCTIVE_ACTIONS = {
@@ -295,6 +314,11 @@ SYSTEM_MODIFY_ACTIONS = {
     ActionType.API_WEBHOOK,
     ActionType.API_SLACK,
     ActionType.API_DISCORD,
+    # Email agent actions (IMAP fetch is read-only; reply/send require confirmation)
+    ActionType.EMAIL_REPLY,
+    # SSH is always a remote system modification surface
+    ActionType.SSH_COMMAND,
+    ActionType.SSH_SCRIPT,
 }
 
 
@@ -307,6 +331,9 @@ class FileParams(BaseModel):
     destination: str | None = None
     recursive: bool = False
     pattern: str | None = None  # For file_search
+    max_depth: int = 3  # For directory_summary
+    max_entries: int = 200  # For directory_summary
+    ignore_dirs: list[str] = Field(default_factory=lambda: [".git", "node_modules"])  # For directory_summary
     permissions: str | None = None  # e.g. "755" for file_permissions
 
 
@@ -352,6 +379,14 @@ class ShellScriptParams(BaseModel):
     working_directory: str | None = None
     timeout: int = 60
     elevated: bool = False
+
+
+class PtyExecParams(BaseModel):
+    """Run a command inside a persistent PTY shell session."""
+
+    session_id: str = "default"
+    command: str = ""
+    timeout: int = 30
 
 
 class OpenUrlParams(BaseModel):
@@ -600,6 +635,55 @@ class ApiRequestParams(BaseModel):
     labels: list[str] = Field(default_factory=list)
 
 
+class WorkspaceParams(BaseModel):
+    """For workspace indexing and semantic search."""
+
+    folder_path: str = ""
+    query: str = ""
+    n_results: int = 5
+
+
+class EmailParams(BaseModel):
+    """Parameters for IMAP/SMTP email operations."""
+
+    # Connection settings
+    imap_host: str = ""  # e.g. imap.gmail.com
+    smtp_host: str = ""  # e.g. smtp.gmail.com
+    smtp_port: int = 587
+    username: str = ""  # full email address
+    app_password: str = ""  # App Password (not account password)
+
+    # Fetch options
+    mailbox: str = "INBOX"
+    max_emails: int = 10  # max unread emails to fetch
+    mark_as_read: bool = False  # mark fetched emails as read
+
+    # Reply / send options
+    reply_to_uid: str = ""  # UID of the email to reply to
+    reply_body: str = ""  # pre-written reply body (empty = LLM drafts it)
+    subject: str = ""  # subject override for new emails
+    to: str = ""  # recipient for new emails
+
+    # Summarise options
+    emails_json: str = ""  # JSON-serialised list of fetched emails to summarise
+
+
+class SshCommandParams(BaseModel):
+    """Parameters for executing a single command over SSH on a configured host."""
+
+    host: str = ""  # Host alias from config.ssh.allowed_hosts
+    command: str = ""  # Single shell command to run
+    timeout_seconds: int = 60
+
+
+class SshScriptParams(BaseModel):
+    """Parameters for executing a multi-line bash script over SSH on a configured host."""
+
+    host: str = ""  # Host alias from config.ssh.allowed_hosts
+    script: str = ""  # Multi-line script (executed via bash -lc)
+    timeout_seconds: int = 300
+
+
 class EmptyParams(BaseModel):
     """For actions that need no parameters."""
 
@@ -615,6 +699,7 @@ ActionParameters = (
     | DBusParams
     | ShellCommandParams
     | ShellScriptParams
+    | PtyExecParams
     | OpenUrlParams
     | OpenApplicationParams
     | NotifyParams
@@ -640,6 +725,10 @@ ActionParameters = (
     | CodeExecParams
     | FileIntelParams
     | ApiRequestParams
+    | WorkspaceParams
+    | EmailParams
+    | SshCommandParams
+    | SshScriptParams
     | EmptyParams
 )
 
@@ -658,7 +747,7 @@ class Action(BaseModel):
 
     @property
     def permission_tier(self) -> PermissionTier:
-        # These actions are ALWAYS safe — never require confirmation
+        # These actions are ALWAYS safe ΓÇö never require confirmation
         ALWAYS_SAFE = {
             ActionType.FILE_READ,
             ActionType.FILE_WRITE,
