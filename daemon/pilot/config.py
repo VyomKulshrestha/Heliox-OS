@@ -15,7 +15,7 @@ else:
     try:
         import tomllib
     except ModuleNotFoundError:
-        import tomli as tomllib  # type: ignore[no-redef]
+            import tomli as tomllib # type : ignore{ no redef}
 
 import tomli_w
 
@@ -31,11 +31,11 @@ RUNTIME_DIR = (
     Path(
         os.environ.get(
             "XDG_RUNTIME_DIR",
-            str(Path.home() / ".pilot_runtime")
+            f"/run/user/{os.getuid() if hasattr(os, 'getuid') else 1000}"
         )
     )
+    / "pilot"
 )
-
 CONFIG_FILE = CONFIG_DIR / "config.toml"
 RESTRICTIONS_FILE = CONFIG_DIR / "restrictions.toml"
 DB_FILE = DATA_DIR / "pilot.db"
