@@ -1928,7 +1928,6 @@ class PilotServer:
             return {"events": self._reasoning.get_session_log()}
         return {"error": "Reasoning emitter not initialized"}
 
-
     # -- Task Decomposition --
 
     async def _handle_decompose_task(self, params: dict, ws: ServerConnection) -> dict:
