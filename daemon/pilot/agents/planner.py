@@ -11,6 +11,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import os
 import sys
 from typing import TYPE_CHECKING
 
@@ -52,6 +53,7 @@ from pilot.actions import (
     WifiParams,
     WindowParams,
 )
+from pilot.memory.sliding_window import build_sliding_context
 
 if TYPE_CHECKING:
     from pilot.memory.store import MemoryStore
@@ -492,28 +494,86 @@ class Planner:
 
             context = await self._memory.get_context(user_input)
 
-            if error_context:
-                prompt = RETRY_TEMPLATE.format(
-                    error=error_context,
-                    request=user_input,
-                    os=_detect_os(),
-                    path_style="Windows (C:\\Users\\...)" if sys.platform == "win32" else "Unix (/home/...)",
-                    home=str(__import__("pathlib").Path.home()),
-                )
-            else:
-                prompt = USER_CONTEXT_TEMPLATE.format(
-                    context=context or "No prior context.",
-                    screen_context=screen_context or "Not available.",
-                    request=user_input,
-                )
+            # Load config parameters safely
+            config = getattr(self._model, "_config", None)
+            max_tokens = 4000
+            recent_limit = 10
+            if config:
+                memory_config = getattr(config, "memory", None)
+                if memory_config:
+                    max_tokens = getattr(memory_config, "max_context_tokens", 4000)
+                    recent_limit = getattr(memory_config, "max_recent_messages", 10)
+                else:
+                    max_tokens = getattr(config, "max_context_tokens", 4000)
+                    recent_limit = getattr(config, "max_recent_messages", 10)
+
+            # Retrieve chronological history
+            history_entries = await self._memory.get_history(limit=50)
+            history_entries.reverse()
+
+            messages = [{"role": "system", "content": self._system_prompt}]
+            for idx, entry in enumerate(history_entries):
+                msg = {"role": "user", "content": entry["user_input"]}
+                if idx == 0:
+                    msg["type"] = "goal"
+                messages.append(msg)
+                if entry.get("explanation"):
+                    messages.append({"role": "assistant", "content": entry["explanation"]})
+
+            # Helper function to get latest message content
+            def get_latest_content(err_ctx: str, parse_err: str = None, raw_resp: str = None) -> str:
+                if parse_err:
+                    return AUTO_HEAL_RETRY_TEMPLATE.format(
+                        error=parse_err,
+                        raw_response=raw_resp[:1000] if raw_resp else "",
+                        request=user_input,
+                        context=context or "No prior context.",
+                        screen_context=screen_context or "Not available.",
+                        os=_detect_os(),
+                        path_style="Windows (C:\\Users\\...)" if sys.platform == "win32" else "Unix (/home/...)",
+                        home=str(__import__("pathlib").Path.home()),
+                    )
+                elif err_ctx:
+                    return RETRY_TEMPLATE.format(
+                        error=err_ctx,
+                        request=user_input,
+                        os=_detect_os(),
+                        path_style="Windows (C:\\Users\\...)" if sys.platform == "win32" else "Unix (/home/...)",
+                        home=str(__import__("pathlib").Path.home()),
+                    )
+                else:
+                    return USER_CONTEXT_TEMPLATE.format(
+                        context=context or "No prior context.",
+                        screen_context=screen_context or "Not available.",
+                        request=user_input,
+                    )
+
+            latest_msg = {"role": "user", "content": get_latest_content(error_context)}
+            if not history_entries:
+                latest_msg["type"] = "goal"
+            messages.append(latest_msg)
+
+            # Compress history using sliding window
+            optimized_messages = build_sliding_context(
+                messages,
+                max_recent_messages=recent_limit,
+                max_context_tokens=max_tokens,
+            )
 
             max_retries = 3
             last_raw_response = None
             last_parse_error = None
 
             for attempt in range(max_retries):
+                new_messages = optimized_messages
+                if attempt > 0:
+                    new_messages = optimized_messages.copy()
+                    last = new_messages[-1].copy()
+                    last["content"] = get_latest_content("", last_parse_error, last_raw_response)
+                    new_messages[-1] = last
+
                 raw_response = await self._model.generate(
-                    prompt, system=self._system_prompt, json_mode=True, temperature=0.1, stream_callback=stream_callback
+                    new_messages, json_mode=True, temperature=0.1, stream_callback=stream_callback
                 )
                 last_raw_response = raw_response
 
@@ -533,19 +593,6 @@ class Planner:
                     max_retries,
                     last_parse_error[:200] if last_parse_error else "Unknown",
                 )
-
-                if attempt < max_retries - 1:
-                    context = await self._memory.get_context(user_input)
-                    prompt = AUTO_HEAL_RETRY_TEMPLATE.format(
-                        error=last_parse_error or "Unknown parse error",
-                        raw_response=last_raw_response[:1000] if last_raw_response else "",
-                        request=user_input,
-                        context=context or "No prior context.",
-                        screen_context=screen_context or "Not available.",
-                        os=_detect_os(),
-                        path_style="Windows (C:\\Users\\...)" if sys.platform == "win32" else "Unix (/home/...)",
-                        home=str(__import__("pathlib").Path.home()),
-                    )
 
             return ActionPlan(
                 error=f"Auto-healing failed after {max_retries} attempts. Last error: {last_parse_error}",
