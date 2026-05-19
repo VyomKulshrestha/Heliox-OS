@@ -3,7 +3,7 @@
 Allows developers to add new capabilities to Heliox OS by dropping
 plugin manifests into a plugins directory.
 
-Plugin Manifest (JSON):
+Python plugin manifest (JSON):
 {
   "name": "docker-agent",
   "version": "1.0.0",
@@ -24,6 +24,26 @@ Plugin Manifest (JSON):
   "dependencies": ["docker"]
 }
 
+WASM plugin manifest (JSON):
+{
+  "name": "image-resizer",
+  "version": "1.0.0",
+  "description": "Resize images inside a WASM sandbox",
+  "author": "community",
+  "runtime_type": "wasm",
+  "wasm_module": "plugin.wasm",
+  "tools": [
+    {
+      "name": "resize_image",
+      "description": "Resize an image to given dimensions",
+      "inputs": ["path", "width", "height"],
+      "outputs": ["out_path"],
+      "permission_tier": 1,
+      "action_type": "wasm_call"
+    }
+  ]
+}
+
 Plugin directory structure:
   ~/.heliox/plugins/
     docker-agent/
@@ -31,11 +51,11 @@ Plugin directory structure:
       plugin.ed25519.pub
       plugin.ed25519.sig
       docker_plugin.py
-    spotify-agent/
+    image-resizer/            # WASM plugin
       manifest.json
       plugin.ed25519.pub
       plugin.ed25519.sig
-      spotify_plugin.py
+      plugin.wasm
 
 Plugin signatures:
   Each plugin directory must include an Ed25519 signature file. Production
@@ -44,6 +64,7 @@ Plugin signatures:
   signature is verified before manifest parsing and covers a deterministic
   digest of every plugin file except signature metadata, so changes to either
   manifest.json or plugin code are rejected before loading.
+  For WASM plugins the .wasm binary is automatically included in the digest.
 """
 
 from __future__ import annotations
@@ -201,6 +222,8 @@ class PluginManifest:
     dependencies: list[str] = field(default_factory=list)
     enabled: bool = True
     path: str = ""
+    runtime_type: str = "python"  # "python" | "wasm"
+    wasm_module: str = ""  # relative path to .wasm file, e.g. "plugin.wasm"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -213,6 +236,8 @@ class PluginManifest:
             "entry_point": self.entry_point,
             "dependencies": self.dependencies,
             "enabled": self.enabled,
+            "runtime_type": self.runtime_type,
+            "wasm_module": self.wasm_module,
             "tool_count": len(self.tools),
         }
 
@@ -223,6 +248,9 @@ class PluginRegistry:
     Plugins are discovered from:
       1. ~/.heliox/plugins/     (user plugins)
       2. <data_dir>/plugins/    (system plugins)
+
+    Both Python and WASM plugins are supported. WASM plugins require the
+    optional `wasmtime` package (pip install pilot-daemon[wasm]).
     """
 
     def __init__(
@@ -237,6 +265,7 @@ class PluginRegistry:
         self._tool_index: dict[str, PluginManifest] = {}
         self._require_signatures = require_signatures
         self._trusted_public_keys = tuple(_coerce_public_key(key) for key in (trusted_public_keys or []))
+        self._wasm_plugins: dict[str, Any] = {}  # name -> WasmPlugin
 
         # Add default plugin directories
         home_plugins = Path.home() / ".heliox" / "plugins"
@@ -263,12 +292,15 @@ class PluginRegistry:
                             # Index tools
                             for tool in manifest.tools:
                                 self._tool_index[tool.name] = manifest
+                            if manifest.runtime_type == "wasm":
+                                self._load_wasm_plugin(manifest)
                             loaded += 1
                             logger.info(
-                                "Loaded plugin: %s v%s (%d tools)",
+                                "Loaded plugin: %s v%s (%d tools, runtime=%s)",
                                 manifest.name,
                                 manifest.version,
                                 len(manifest.tools),
+                                manifest.runtime_type,
                             )
 
         logger.info("Plugin discovery complete: %d plugins loaded", loaded)
@@ -313,12 +345,47 @@ class PluginRegistry:
                 dependencies=data.get("dependencies", []),
                 enabled=data.get("enabled", True),
                 path=str(path.parent),
+                runtime_type=data.get("runtime_type", "python"),
+                wasm_module=data.get("wasm_module", ""),
             )
         except Exception:
             logger.error("Failed to load plugin manifest: %s", path, exc_info=True)
             return None
 
+    def _load_wasm_plugin(self, manifest: PluginManifest) -> None:
+        """Instantiate and cache a WasmPlugin for the given manifest."""
+        from pilot.plugins.wasm_runtime import WasmConfig, WasmPlugin, WasmRuntimeError
+
+        if not manifest.wasm_module:
+            logger.error("WASM plugin %s has no wasm_module specified in manifest", manifest.name)
+            return
+
+        wasm_path = Path(manifest.path) / manifest.wasm_module
+        try:
+            plugin = WasmPlugin(wasm_path, WasmConfig())
+            self._wasm_plugins[manifest.name] = plugin
+            logger.info("Loaded WASM plugin: %s (%s)", manifest.name, wasm_path.name)
+        except (WasmRuntimeError, ImportError) as exc:
+            logger.error("Failed to load WASM plugin %s: %s", manifest.name, exc)
+
     # ── Query APIs ──
+
+    def call_wasm_tool(self, tool_name: str, params: dict[str, Any]) -> dict[str, Any]:
+        """Call a tool provided by a WASM plugin and return its JSON result.
+
+        Returns ``{"error": "..."}`` when the tool is not found or the plugin
+        is not a WASM plugin — never raises on lookup failures.
+        """
+        result = self.find_tool(tool_name)
+        if result is None:
+            return {"error": f"Tool not found: {tool_name}"}
+        manifest, _ = result
+        if manifest.runtime_type != "wasm":
+            return {"error": f"Tool {tool_name!r} belongs to a Python plugin, not a WASM plugin"}
+        wasm_plugin = self._wasm_plugins.get(manifest.name)
+        if wasm_plugin is None:
+            return {"error": f"WASM plugin {manifest.name!r} is not loaded (missing wasmtime?)"}
+        return wasm_plugin.call_tool(tool_name, params)
 
     def get_plugin(self, name: str) -> PluginManifest | None:
         """Get a plugin by name."""
@@ -389,6 +456,7 @@ class PluginRegistry:
             "total_plugins": len(self._plugins),
             "enabled_plugins": enabled,
             "total_tools": total_tools,
+            "wasm_plugins": len(self._wasm_plugins),
             "plugin_dirs": [str(d) for d in self._plugin_dirs],
             "plugins": [p.to_dict() for p in self._plugins.values()],
         }

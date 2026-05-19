@@ -74,6 +74,8 @@ class SecurityConfig:
     sandbox_memory_mb: int = 128  # memory cap applied inside the sandbox (MB)
     sandbox_timeout: int = 30  # max wall-clock seconds for sandboxed execution
     sandbox_network: bool = False  # allow outbound network inside the sandbox
+    sandbox_kernel_guard: bool = True  # Linux seccomp-BPF syscall denylist for restricted mode
+    sandbox_blocked_syscalls: list[str] = field(default_factory=lambda: ["unlink", "unlinkat"])
 
 
 @dataclass
@@ -108,6 +110,37 @@ class RSSConfig:
 
 
 @dataclass
+class NetworkConfig:
+    """LAN mesh network configuration for multi-instance collaboration."""
+
+    enabled: bool = False
+    port: int = 8786  # peer-to-peer WebSocket port (separate from client port)
+    peer_timeout_s: int = 30  # seconds before a silent peer is considered gone
+    skill_sync_enabled: bool = True  # broadcast/receive plugins from peers
+    collab_exec_enabled: bool = True  # distribute parallelizable action batches
+
+
+@dataclass
+class SshHostConfig:
+    """One allowed SSH destination (referenced by alias in ssh_* actions)."""
+
+    name: str = ""
+    hostname: str = ""
+    port: int = 22
+    username: str = ""
+    private_key_provider: str = ""  # KeyVault provider name containing the private key (PEM)
+    passphrase_provider: str = ""  # Optional KeyVault provider name for key passphrase
+    strict_host_key_checking: bool = True
+
+
+@dataclass
+class SshConfig:
+    enabled: bool = False
+    connect_timeout_seconds: int = 10
+    allowed_hosts: list[SshHostConfig] = field(default_factory=list)
+
+
+@dataclass
 class Restrictions:
     protected_folders: list[str] = field(default_factory=list)
     protected_packages: list[str] = field(default_factory=list)
@@ -126,6 +159,8 @@ class PilotConfig:
     screen_vision: ScreenVisionConfig = field(default_factory=ScreenVisionConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     rss: RSSConfig = field(default_factory=RSSConfig)
+    network: NetworkConfig = field(default_factory=NetworkConfig)
+    ssh: SshConfig = field(default_factory=SshConfig)
     restrictions: Restrictions = field(default_factory=Restrictions)
     first_run_complete: bool = False
 
@@ -201,6 +236,8 @@ def _validate_config_types(raw: dict) -> None:
             "sandbox_memory_mb": int,
             "sandbox_timeout": int,
             "sandbox_network": bool,
+            "sandbox_kernel_guard": bool,
+            "sandbox_blocked_syscalls": list,
         },
         "server": {
             "host": str,
@@ -222,6 +259,18 @@ def _validate_config_types(raw: dict) -> None:
             "feeds": list,
             "poll_interval_hours": (int, float),
             "max_items_per_feed": int,
+        },
+        "network": {
+            "enabled": bool,
+            "port": int,
+            "peer_timeout_s": int,
+            "skill_sync_enabled": bool,
+            "collab_exec_enabled": bool,
+        },
+        "ssh": {
+            "enabled": bool,
+            "connect_timeout_seconds": int,
+            "allowed_hosts": list,
         },
     }
 
@@ -287,6 +336,36 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
         for k, v in raw["rss"].items():
             if hasattr(config.rss, k):
                 setattr(config.rss, k, v)
+
+    if "network" in raw:
+        for k, v in raw["network"].items():
+            if hasattr(config.network, k):
+                setattr(config.network, k, v)
+
+    if "ssh" in raw and isinstance(raw["ssh"], dict):
+        ssh_raw = raw["ssh"]
+        config.ssh.enabled = bool(ssh_raw.get("enabled", config.ssh.enabled))
+        if "connect_timeout_seconds" in ssh_raw:
+            config.ssh.connect_timeout_seconds = int(ssh_raw["connect_timeout_seconds"])
+
+        hosts_raw = ssh_raw.get("allowed_hosts", [])
+        if isinstance(hosts_raw, list):
+            parsed_hosts: list[SshHostConfig] = []
+            for item in hosts_raw:
+                if not isinstance(item, dict):
+                    continue
+                parsed_hosts.append(
+                    SshHostConfig(
+                        name=str(item.get("name", "")),
+                        hostname=str(item.get("hostname", "")),
+                        port=int(item.get("port", 22)),
+                        username=str(item.get("username", "")),
+                        private_key_provider=str(item.get("private_key_provider", "")),
+                        passphrase_provider=str(item.get("passphrase_provider", "")),
+                        strict_host_key_checking=bool(item.get("strict_host_key_checking", True)),
+                    )
+                )
+            config.ssh.allowed_hosts = parsed_hosts
 
     config.first_run_complete = raw.get(
         "first_run_complete",
