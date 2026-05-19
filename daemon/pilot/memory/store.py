@@ -13,8 +13,6 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import aiofiles.os
-import numpy as np
-from sklearn.cluster import DBSCAN
 
 from pilot.config import DATA_DIR, DB_FILE
 from pilot.db.sqlite_pool import AsyncSqlitePool
@@ -162,6 +160,14 @@ class MemoryStore:
                 logger.exception("Background semantic memory pruning failed")
 
     async def _cluster_and_prune(self, router: ModelRouter) -> None:
+        """Background task to cluster semantic memories and prune redundancies."""
+        try:
+            import numpy as np
+            from sklearn.cluster import DBSCAN
+        except ImportError:
+            logger.warning("Optional dependencies 'numpy' or 'scikit-learn' missing. Semantic pruning disabled.")
+            return
+
         """Identify semantic clusters in ChromaDB, summarize, and prune SQLite/Chroma."""
         if self._chroma_collection is None or not self._pool:
             return
