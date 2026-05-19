@@ -129,6 +129,8 @@ class PilotServer:
         self._rss_agent: Any = None
         # ── LAN Mesh Network ──
         self._mesh: Any = None
+        # ── Swarm Mode ──
+        self._swarm_manager: Any = None
 
     async def initialize(self) -> None:
         """Initialize all agent components.
@@ -208,6 +210,15 @@ class PilotServer:
         )
         logger.info("Auto-registered %d agents via dynamic discovery", registered)
         await self._orchestrator.start_all()
+
+        # Swarm Mode - distributed multi-daemon execution
+        from pilot.swarm.swarm_manager import SwarmManager
+        from pilot.swarm.swarm_router_agent import SwarmRouterAgent
+
+        self._swarm_manager = SwarmManager(self.config)
+        swarm_router = SwarmRouterAgent(model_router, self._swarm_manager)
+        self._orchestrator.register_agent(swarm_router)
+        logger.info("Swarm mode initialized with SwarmRouterAgent")
 
         from pilot.agents.rss_agent import RssAgent
 

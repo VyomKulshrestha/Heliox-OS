@@ -106,6 +106,17 @@ class SwarmRouterAgent(BaseAgent):
             try:
                 plan_dict = {"input": plan.input, "dry_run": plan.dry_run}
                 result = await self._swarm.execute_remote(node, plan_dict)
+                remote_results = result.get("results", [])
+                if remote_results:
+                    return [
+                        ActionResult(
+                            action=action,
+                            success=r.get("success", True),
+                            output=r.get("output"),
+                            error=r.get("error"),
+                        )
+                        for action, r in zip(plan.actions, remote_results)
+                    ]
                 return [
                     ActionResult(
                         action=plan.actions[0] if plan.actions else None,
