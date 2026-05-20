@@ -1,4 +1,3 @@
-
 <script lang="ts">
   import CommandInput from "./lib/components/CommandInput.svelte";
   import ConfirmDialog from "./lib/components/ConfirmDialog.svelte";
@@ -26,6 +25,7 @@
   import { highlight } from "./lib/highlighter";
   import ScrollToBottom from "./lib/components/ScrollToBottom.svelte";
   import ConnectionStatus from "./lib/components/ConnectionStatus.svelte";
+  import { _, isLoading } from 'svelte-i18n';
 
   const renderer = new marked.Renderer();
   renderer.code = function(code, language) {
@@ -55,7 +55,6 @@
   let virtualListEl: VirtualList<Message> | undefined = $state();
   let particleBurst: ParticleBurst | undefined = $state();
 
-  // Show FAB whenever the user scrolls away from the bottom
   $effect(() => {
     showScrollFAB = !isAtBottom;
   });
@@ -66,7 +65,6 @@
     session.addSystemMessage(getJarvisGreeting());
   }
 
-  // JARVIS-style proactive greeting based on time
   function getJarvisGreeting(): string {
     const hour = new Date().getHours();
     if (hour < 6) return "Good evening. Heliox OS is online. All systems nominal.";
@@ -76,7 +74,6 @@
     return "Burning the midnight oil? Heliox OS is standing by.";
   }
 
-  // Handle gesture events for particle effects and navigation
   function onGestureDetected(gesture: string) {
     particleBurst?.gestureBurst(gesture);
     if (gesture === "swipe_left" || gesture === "two_finger_swipe_left") {
@@ -122,7 +119,7 @@
     if (action.destructive) return "tier-destructive";
     return "tier-safe";
   }
-  // Trigger particle burst on new results
+
   let prevMsgLen = 0;
   $effect(() => {
     const msgs = $session.messages;
@@ -168,14 +165,12 @@
   async function copyMessage(msg: Message) {
     const text = getCopyText(msg).trim();
     if (!text) return;
-
     try {
       await writeText(text);
     } catch {
       return;
     }
     copiedMessageId = msg.timestamp;
-
     if (copiedTimeout) clearTimeout(copiedTimeout);
     copiedTimeout = setTimeout(() => {
       copiedMessageId = null;
@@ -205,29 +200,28 @@
   >
     <div class="titlebar-left">
       <ArcReactor />
-      <span class="title">Heliox OS</span>
+      <span class="title">{$_('app.title')}</span>
       <span class="badge" class:connected={$session.daemonConnected}>
-        {$session.daemonConnected ? "Online" : "Connecting..."}
+        {$session.daemonConnected ? $_('app.online') : $_('app.connecting')}
       </span>
     </div>
     <nav class="tabs">
-      <button class="tab" class:active={activeTab === "chat"} title="Open Command Panel" onclick={() => activeTab = "chat"}>Command</button>
-      <button class="tab" class:active={activeTab === "log"} title="Open activity log" onclick={() => activeTab = "log"}>Activity</button>
-      <button class="tab" class:active={activeTab === "plugins"} title="Browse plugin marketplace" onclick={() => activeTab = "plugins"}>Plugins</button>
-      <button class="tab" class:active={activeTab === "settings"} title="Open Settings" onclick={() => activeTab = "settings"}>Settings</button>
+      <button class="tab" class:active={activeTab === "chat"} title="Open Command Panel" onclick={() => activeTab = "chat"}>{$_('app.tab_command')}</button>
+      <button class="tab" class:active={activeTab === "log"} title="Open activity log" onclick={() => activeTab = "log"}>{$_('app.tab_activity')}</button>
+      <button class="tab" class:active={activeTab === "plugins"} title="Browse plugin marketplace" onclick={() => activeTab = "plugins"}>{$_('app.tab_plugins')}</button>
+      <button class="tab" class:active={activeTab === "settings"} title="Open Settings" onclick={() => activeTab = "settings"}>{$_('app.tab_settings')}</button>
     </nav>
     <div class="titlebar-right">
-  <ConnectionStatus />
-  <AmbientHUD />
-</div>
+      <ConnectionStatus />
+      <AmbientHUD />
+    </div>
   </header>
 
-    <div class="content">
+  <div class="content">
     {#if activeTab === "chat"}
       <div class="chat-panel">
         <NeuralBackground />
-        
-        <!-- ReAct Pipeline Visualizer (Top layer) -->
+
         <div class="pipeline-container">
           <ReActPipeline />
         </div>
@@ -244,12 +238,12 @@
           {#if $session.messages.length === 0 && !$session.loading}
             <div class="empty-state">
               <div class="empty-logo">C</div>
-              <h2>Heliox OS</h2>
-              <p>Your AI system control agent. Type, speak, or gesture — I'm ready.</p>
+              <h2>{$_('chat.empty_title')}</h2>
+              <p>{$_('chat.empty_subtitle')}</p>
               <div class="suggestions">
-                <button class="suggestion" onclick={() => session.sendCommand("Show system information")}>Show system info</button>
-                <button class="suggestion" onclick={() => session.sendCommand("Take a screenshot and describe it")}>Screenshot + OCR</button>
-                <button class="suggestion" onclick={() => session.sendCommand("What processes are running?")}>List processes</button>
+                <button class="suggestion" onclick={() => session.sendCommand("Show system information")}>{$_('chat.suggestion_sysinfo')}</button>
+                <button class="suggestion" onclick={() => session.sendCommand("Take a screenshot and describe it")}>{$_('chat.suggestion_screenshot')}</button>
+                <button class="suggestion" onclick={() => session.sendCommand("What processes are running?")}>{$_('chat.suggestion_processes')}</button>
               </div>
             </div>
           {:else}
@@ -257,16 +251,16 @@
               {#snippet item(msg)}
                 {@render messageBlock(msg)}
               {/snippet}
-              
+
               {#snippet footer()}
                 {#if $session.loading}
                   <ExecutionGraph />
-                  
+
                   {#if $session.streamingText}
                     <div class="message system streaming">
                       <div class="msg-header">
                         <span class="msg-label">HELIOX</span>
-                        <span class="phase-badge">streaming</span>
+                        <span class="phase-badge">{$_('chat.streaming')}</span>
                       </div>
                       <span class="msg-text">{$session.streamingText}</span>
                     </div>
@@ -274,10 +268,10 @@
                     <div class="message system">
                       <div class="msg-header">
                         <span class="msg-label">HELIOX</span>
-                        <span class="phase-badge">{$session.phase || "thinking"}</span>
+                        <span class="phase-badge">{$session.phase || $_('chat.thinking')}</span>
                       </div>
                       <span class="msg-text loading-dots">
-                        {$session.phase ? `${$session.phase}` : "Thinking"}
+                        {$session.phase ? `${$session.phase}` : $_('chat.thinking')}
                       </span>
                     </div>
                   {/if}
@@ -292,8 +286,8 @@
           <VoiceControl />
           <CommandInput />
           <GestureControl onGesture={onGestureDetected} />
-          <button class="tab" type="button" onclick={() => session.exportChat("json")}>Export JSON</button>
-          <button class="tab" type="button" onclick={() => session.exportChat("csv")}>Export CSV</button>
+          <button class="tab" type="button" onclick={() => session.exportChat("json")}>{$_('app.export_json')}</button>
+          <button class="tab" type="button" onclick={() => session.exportChat("csv")}>{$_('app.export_csv')}</button>
         </div>
       </div>
     {:else if activeTab === "log"}
@@ -305,7 +299,6 @@
     {/if}
   </div>
 
-  <!-- Particle Burst Overlay -->
   <ParticleBurst bind:this={particleBurst} />
 </main>
 
@@ -319,8 +312,8 @@
   {:else if msg.type === "plan" && msg.plan}
     <div class="message plan-msg has-copy">
       <div class="msg-header">
-        <span class="msg-label">PLAN</span>
-        <span class="phase-badge">{msg.plan.dry_run ? "dry run" : "planning"}</span>
+        <span class="msg-label">{$_('plan.label')}</span>
+        <span class="phase-badge">{msg.plan.dry_run ? $_('plan.dry_run') : $_('plan.planning')}</span>
       </div>
       {#if msg.plan.explanation}
         <p class="plan-explanation">{msg.plan.explanation}</p>
@@ -340,24 +333,18 @@
       <button class="copy-button" type="button" aria-label="Copy message" title="Copy" onclick={() => copyMessage(msg)}>
         <Copy size={14} />
       </button>
-      <span
-        class="copy-feedback"
-        role="status"
-        aria-live="polite"
-        aria-atomic="true"
-        class:active={copiedMessageId === msg.timestamp}
-      >
-        Copied!
+      <span class="copy-feedback" role="status" aria-live="polite" aria-atomic="true" class:active={copiedMessageId === msg.timestamp}>
+        {$_('chat.copied')}
       </span>
     </div>
 
   {:else if msg.type === "result"}
     <div class="message result-msg has-copy">
       <div class="msg-header">
-        <span class="msg-label">RESULT</span>
+        <span class="msg-label">{$_('result.label')}</span>
         {#if msg.verification}
           <span class="status-badge" class:passed={msg.verification.passed} class:failed={!msg.verification.passed}>
-            {msg.verification.passed ? "Verified" : "Issues detected"}
+            {msg.verification.passed ? $_('result.verified') : $_('result.issues')}
           </span>
         {/if}
       </div>
@@ -371,26 +358,26 @@
                 <code class="ar-target">{ar.target}</code>
               {/if}
               <span class="ar-status" class:success={ar.success} class:failure={!ar.success}>
-                {ar.success ? "OK" : "FAILED"}
+                {ar.success ? $_('result.ok') : $_('result.failed')}
               </span>
             </div>
             {#if ar.success && ar.output}
-  		<div class="ar-output">
-    		      {@html renderMarkdown(ar.output.trim())}
-  		</div>
-	    {/if}            
-	    {#if !ar.success && ar.error}
+              <div class="ar-output">
+                {@html renderMarkdown(ar.output.trim())}
+              </div>
+            {/if}
+            {#if !ar.success && ar.error}
               <pre class="ar-error">{ar.error}</pre>
             {/if}
           </div>
         {/each}
       {:else}
-        <span class="msg-text">{msg.text || "Done."}</span>
+        <span class="msg-text">{msg.text || $_('result.done')}</span>
       {/if}
 
       {#if msg.verification && msg.verification.details.length > 0}
         <div class="verification-section">
-          <span class="verification-label">Verification</span>
+          <span class="verification-label">{$_('result.verification')}</span>
           {#each msg.verification.details as detail}
             <span class="verification-detail" class:v-pass={detail.includes("VERIFIED")} class:v-fail={detail.includes("FAILED") || detail.includes("MISMATCH")}>
               {detail}
@@ -401,32 +388,20 @@
       <button class="copy-button" type="button" aria-label="Copy message" title="Copy" onclick={() => copyMessage(msg)}>
         <Copy size={14} />
       </button>
-      <span
-        class="copy-feedback"
-        role="status"
-        aria-live="polite"
-        aria-atomic="true"
-        class:active={copiedMessageId === msg.timestamp}
-      >
-        Copied!
+      <span class="copy-feedback" role="status" aria-live="polite" aria-atomic="true" class:active={copiedMessageId === msg.timestamp}>
+        {$_('chat.copied')}
       </span>
     </div>
 
   {:else if msg.type === "error"}
     <div class="message error-msg has-copy">
-      <span class="msg-label">ERROR</span>
+      <span class="msg-label">{$_('error.label')}</span>
       <span class="msg-text">{msg.text}</span>
       <button class="copy-button" type="button" aria-label="Copy message" title="Copy" onclick={() => copyMessage(msg)}>
         <Copy size={14} />
       </button>
-      <span
-        class="copy-feedback"
-        role="status"
-        aria-live="polite"
-        aria-atomic="true"
-        class:active={copiedMessageId === msg.timestamp}
-      >
-        Copied!
+      <span class="copy-feedback" role="status" aria-live="polite" aria-atomic="true" class:active={copiedMessageId === msg.timestamp}>
+        {$_('chat.copied')}
       </span>
     </div>
 
@@ -434,19 +409,13 @@
     <div class="message system-msg has-copy">
       <span class="msg-label">HELIOX</span>
       <div class="msg-text">
-           {@html renderMarkdown(msg.text || "")}
+        {@html renderMarkdown(msg.text || "")}
       </div>
       <button class="copy-button" type="button" aria-label="Copy message" title="Copy" onclick={() => copyMessage(msg)}>
         <Copy size={14} />
       </button>
-      <span
-        class="copy-feedback"
-        role="status"
-        aria-live="polite"
-        aria-atomic="true"
-        class:active={copiedMessageId === msg.timestamp}
-      >
-        Copied!
+      <span class="copy-feedback" role="status" aria-live="polite" aria-atomic="true" class:active={copiedMessageId === msg.timestamp}>
+        {$_('chat.copied')}
       </span>
     </div>
   {/if}
@@ -528,7 +497,6 @@
     -webkit-app-region: no-drag;
   }
 
-  /* Input Row — voice + text + gesture */
   .input-row {
     display: flex;
     align-items: center;
@@ -574,7 +542,6 @@
     position: relative;
   }
 
-  /* Empty state */
   .empty-state {
     flex: 1;
     display: flex;
@@ -622,7 +589,6 @@
 
   .suggestion:hover { background: var(--accent); color: white; }
 
-  /* All messages */
   .message {
     display: flex;
     flex-direction: column;
@@ -722,17 +688,9 @@
     word-break: break-word;
   }
 
-  /* User messages */
-  .user-msg {
-    background: var(--bg-secondary);
-  }
+  .user-msg { background: var(--bg-secondary); }
+  .system-msg { background: var(--bg-tertiary); }
 
-  /* System messages */
-  .system-msg {
-    background: var(--bg-tertiary);
-  }
-
-  /* Error messages */
   .error-msg {
     border-color: var(--danger);
     background: var(--danger-bg);
@@ -740,7 +698,6 @@
 
   .error-msg .msg-label { color: var(--danger); }
 
-  /* Streaming messages */
   .message.system.streaming {
     background: var(--bg-tertiary);
     border-left: 3px solid var(--accent);
@@ -752,7 +709,6 @@
     50% { border-left-color: var(--accent-hover); }
   }
 
-  /* Plan messages */
   .plan-msg {
     background: var(--bg-tertiary);
     border-color: var(--accent-muted);
@@ -844,7 +800,6 @@
   .tier-destructive { background: rgba(251, 191, 36, 0.1); color: var(--warning); }
   .tier-root { background: var(--danger-bg); color: var(--danger); }
 
-  /* Result messages */
   .result-msg {
     background: var(--bg-secondary);
     gap: 8px;
@@ -859,15 +814,8 @@
     border-radius: 20px;
   }
 
-  .status-badge.passed {
-    background: rgba(74, 222, 128, 0.1);
-    color: var(--success);
-  }
-
-  .status-badge.failed {
-    background: var(--danger-bg);
-    color: var(--danger);
-  }
+  .status-badge.passed { background: rgba(74, 222, 128, 0.1); color: var(--success); }
+  .status-badge.failed { background: var(--danger-bg); color: var(--danger); }
 
   .action-result {
     border-radius: var(--radius-sm);
@@ -938,7 +886,6 @@
     word-break: break-all;
   }
 
-  /* Verification section */
   .verification-section {
     display: flex;
     flex-direction: column;
@@ -966,7 +913,6 @@
   .verification-detail.v-pass { color: var(--success); }
   .verification-detail.v-fail { color: var(--danger); }
 
-  /* Loading */
   .loading-dots::after {
     content: "";
     animation: dots 1.5s infinite;
@@ -977,7 +923,7 @@
     40% { content: ".."; }
     60%, 100% { content: "..."; }
   }
-  
+
   .hlx-code-wrapper {
     margin: 8px 0;
     border-radius: var(--radius-sm);
@@ -985,6 +931,7 @@
     border: 1px solid var(--border);
     background: #1a1a24;
   }
+
   .hlx-code-header {
     display: flex;
     align-items: center;
@@ -994,6 +941,7 @@
     border-bottom: 1px solid var(--border);
     min-height: 26px;
   }
+
   .hlx-lang-badge {
     font-size: 10px;
     font-weight: 600;
@@ -1002,6 +950,7 @@
     color: var(--accent);
     opacity: 0.85;
   }
+
   .hlx-copy-btn {
     font-size: 10px;
     padding: 2px 8px;
@@ -1013,11 +962,13 @@
     font-family: var(--font-sans);
     transition: all 0.15s;
   }
+
   .hlx-copy-btn:hover {
     background: var(--accent-muted);
     border-color: var(--accent);
     color: var(--accent);
   }
+
   .hlx-pre {
     margin: 0;
     padding: 12px 14px;
@@ -1026,6 +977,7 @@
     line-height: 1.6;
     background: transparent;
   }
+
   .hlx-pre code {
     font-family: var(--font-mono);
     background: none;

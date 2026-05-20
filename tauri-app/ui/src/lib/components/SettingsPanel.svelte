@@ -1,5 +1,6 @@
 <script lang="ts">
   import { settings } from "../stores/settings";
+  import { _, locale } from 'svelte-i18n';
   import { session } from "../stores/session";
   import { call } from "../api/daemon";
   import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
@@ -73,26 +74,33 @@
     }
   }
 
-  // Toggle between dark and light mode targeting root settings configuration state
   function toggleTheme() {
     const currentTheme = $settings.theme || "dark";
     const nextTheme = currentTheme === "dark" ? "light" : "dark";
-    
-    // Update the central store root section directly
-    // The store's internal side-effects will automatically manage document classes and localStorage synchronization
     settings.updateSection("", { theme: nextTheme });
+  }
+
+  async function testNotification() {
+    let permissionGranted = await isPermissionGranted();
+    if (!permissionGranted) {
+      const permission = await requestPermission();
+      permissionGranted = permission === "granted";
+    }
+    if (permissionGranted) {
+      sendNotification({ title: "Heliox OS", body: "Notifications are working!" });
+    }
   }
 </script>
 
 <div class="settings-panel">
-  <h2>Settings</h2>
+  <h2>{$_('settings.title')}</h2>
 
   <section class="settings-group">
-    <h3>Appearance</h3>
+    <h3>{$_('settings.appearance')}</h3>
     <div class="setting-row">
       <div class="setting-info">
-        <span class="setting-label">Light Mode</span>
-        <span class="setting-desc">Switch between dark and light themes</span>
+        <span class="setting-label">{$_('settings.light_mode')}</span>
+        <span class="setting-desc">{$_('settings.light_mode_desc')}</span>
       </div>
       <button
         class="toggle"
@@ -104,15 +112,26 @@
         <span class="toggle-knob"></span>
       </button>
     </div>
-  </section>
-
-  <section class="settings-group">
-    <h3>Security</h3>
 
     <div class="setting-row">
       <div class="setting-info">
-        <span class="setting-label">Root Access</span>
-        <span class="setting-desc">Allow actions that require superuser privileges</span>
+        <span class="setting-label">{$_('settings.language')}</span>
+        <span class="setting-desc">{$_('settings.language_desc')}</span>
+      </div>
+      <select class="input-md" bind:value={$locale}>
+        <option value="en">English</option>
+        <option value="hi">हिन्दी</option>
+      </select>
+    </div>
+  </section>
+
+  <section class="settings-group">
+    <h3>{$_('settings.security')}</h3>
+
+    <div class="setting-row">
+      <div class="setting-info">
+        <span class="setting-label">{$_('settings.root_access')}</span>
+        <span class="setting-desc">{$_('settings.root_access_desc')}</span>
       </div>
       <button
         class="toggle"
@@ -127,8 +146,8 @@
 
     <div class="setting-row">
       <div class="setting-info">
-        <span class="setting-label">Auto-Snapshot</span>
-        <span class="setting-desc">Create system snapshot before destructive actions</span>
+        <span class="setting-label">{$_('settings.auto_snapshot')}</span>
+        <span class="setting-desc">{$_('settings.auto_snapshot_desc')}</span>
       </div>
       <button
         class="toggle"
@@ -146,8 +165,8 @@
 
     <div class="setting-row">
       <div class="setting-info">
-        <span class="setting-label">Dry Run Mode</span>
-        <span class="setting-desc">Plan and log actions without changing the OS, files, or processes</span>
+        <span class="setting-label">{$_('settings.dry_run')}</span>
+        <span class="setting-desc">{$_('settings.dry_run_desc')}</span>
       </div>
       <button
         class="toggle"
@@ -162,8 +181,8 @@
 
     <div class="setting-row">
       <div class="setting-info">
-        <span class="setting-label">Snapshot Retention</span>
-        <span class="setting-desc">Number of snapshots to keep</span>
+        <span class="setting-label">{$_('settings.snapshot_retention')}</span>
+        <span class="setting-desc">{$_('settings.snapshot_retention_desc')}</span>
       </div>
       <input
         type="number"
@@ -177,39 +196,38 @@
   </section>
 
   <section class="settings-group">
-    <h3>Usage</h3>
+    <h3>{$_('settings.usage')}</h3>
 
     <div class="setting-row">
       <div class="setting-info">
-        <span class="setting-label">Total Tokens</span>
-        <span class="setting-desc">Estimated session token usage</span>
+        <span class="setting-label">{$_('settings.total_tokens')}</span>
+        <span class="setting-desc">{$_('settings.total_tokens_desc')}</span>
       </div>
       <span>{$session.totalTokens}</span>
     </div>
 
     <div class="setting-row">
       <div class="setting-info">
-        <span class="setting-label">Estimated Cost</span>
-        <span class="setting-desc">Approximate API usage cost</span>
+        <span class="setting-label">{$_('settings.estimated_cost')}</span>
+        <span class="setting-desc">{$_('settings.estimated_cost_desc')}</span>
       </div>
-
       <span>
-        {$settings.model.provider === "ollama" ? "Free (local)" : `$${$session.estimatedCost.toFixed(4)}`}
+        {$settings.model.provider === "ollama" ? $_('settings.free_local') : `$${$session.estimatedCost.toFixed(4)}`}
       </span>
     </div>
 
     <div class="setting-row">
-      <button class="btn-save" onclick={() => session.resetUsage()}> Reset Session Usage </button>
+      <button class="btn-save" onclick={() => session.resetUsage()}>{$_('settings.reset_usage')}</button>
     </div>
   </section>
 
   <section class="settings-group">
-    <h3>Screen Vision</h3>
+    <h3>{$_('settings.screen_vision')}</h3>
 
     <div class="setting-row">
       <div class="setting-info">
-        <span class="setting-label">Capture Interval</span>
-        <span class="setting-desc">Seconds between screen awareness captures</span>
+        <span class="setting-label">{$_('settings.capture_interval')}</span>
+        <span class="setting-desc">{$_('settings.capture_interval_desc')}</span>
       </div>
       <input
         type="number"
@@ -224,38 +242,34 @@
   </section>
 
   <section class="settings-group">
-    <h3>Model</h3>
+    <h3>{$_('settings.model')}</h3>
 
     <div class="setting-row">
       <div class="setting-info">
-        <span class="setting-label">Provider</span>
-        <span class="setting-desc">Primary model backend</span>
+        <span class="setting-label">{$_('settings.provider')}</span>
+        <span class="setting-desc">{$_('settings.provider_desc')}</span>
       </div>
       <div class="btn-group">
-        <button class:active={$settings.model.provider === "ollama"} onclick={() => setProvider("ollama")}
-          >Ollama</button
-        >
+        <button class:active={$settings.model.provider === "ollama"} onclick={() => setProvider("ollama")}>Ollama</button>
         <button class:active={$settings.model.provider === "cloud"} onclick={() => setProvider("cloud")}>Cloud</button>
       </div>
     </div>
 
     <div class="setting-row">
       <div class="setting-info">
-        <span class="setting-label">Reasoning Mode</span>
-        <span class="setting-desc">Trade speed for accuracy</span>
+        <span class="setting-label">{$_('settings.reasoning_mode')}</span>
+        <span class="setting-desc">{$_('settings.reasoning_mode_desc')}</span>
       </div>
       <div class="btn-group">
-        <button class:active={$settings.model.mode === "lightweight"} onclick={() => setMode("lightweight")}
-          >Light</button
-        >
-        <button class:active={$settings.model.mode === "full"} onclick={() => setMode("full")}>Full</button>
+        <button class:active={$settings.model.mode === "lightweight"} onclick={() => setMode("lightweight")}>{$_('settings.light')}</button>
+        <button class:active={$settings.model.mode === "full"} onclick={() => setMode("full")}>{$_('settings.full')}</button>
       </div>
     </div>
 
     <div class="setting-row">
       <div class="setting-info">
-        <span class="setting-label">Ollama Model</span>
-        <span class="setting-desc">Model tag to use with Ollama</span>
+        <span class="setting-label">{$_('settings.ollama_model')}</span>
+        <span class="setting-desc">{$_('settings.ollama_model_desc')}</span>
       </div>
       <input
         type="text"
@@ -268,8 +282,8 @@
 
     <div class="setting-row">
       <div class="setting-info">
-        <span class="setting-label">GPU Memory Limit</span>
-        <span class="setting-desc">Max VRAM in MB (0 = unlimited)</span>
+        <span class="setting-label">{$_('settings.gpu_memory')}</span>
+        <span class="setting-desc">{$_('settings.gpu_memory_desc')}</span>
       </div>
       <input
         type="number"
@@ -283,30 +297,24 @@
   </section>
 
   <section class="settings-group">
-    <h3>Cloud API (Fast)</h3>
+    <h3>{$_('settings.cloud_api')}</h3>
 
     <div class="setting-row">
       <div class="setting-info">
-        <span class="setting-label">Cloud Provider</span>
-        <span class="setting-desc">Select your cloud LLM provider</span>
+        <span class="setting-label">{$_('settings.cloud_provider')}</span>
+        <span class="setting-desc">{$_('settings.cloud_provider_desc')}</span>
       </div>
       <div class="btn-group">
-        <button class:active={$settings.model.cloud_provider === "gemini"} onclick={() => setCloudProvider("gemini")}
-          >Gemini</button
-        >
-        <button class:active={$settings.model.cloud_provider === "openai"} onclick={() => setCloudProvider("openai")}
-          >OpenAI</button
-        >
-        <button class:active={$settings.model.cloud_provider === "claude"} onclick={() => setCloudProvider("claude")}
-          >Claude</button
-        >
+        <button class:active={$settings.model.cloud_provider === "gemini"} onclick={() => setCloudProvider("gemini")}>Gemini</button>
+        <button class:active={$settings.model.cloud_provider === "openai"} onclick={() => setCloudProvider("openai")}>OpenAI</button>
+        <button class:active={$settings.model.cloud_provider === "claude"} onclick={() => setCloudProvider("claude")}>Claude</button>
       </div>
     </div>
 
     <div class="setting-row">
       <div class="setting-info">
-        <span class="setting-label">Cloud Model</span>
-        <span class="setting-desc">Override model (blank = default)</span>
+        <span class="setting-label">{$_('settings.cloud_model')}</span>
+        <span class="setting-desc">{$_('settings.cloud_model_desc')}</span>
       </div>
       <input
         type="text"
@@ -319,42 +327,42 @@
 
     <div class="setting-row">
       <div class="setting-info">
-        <span class="setting-label">API Key</span>
-        <span class="setting-desc">Stored securely in system keyring</span>
+        <span class="setting-label">{$_('settings.api_key')}</span>
+        <span class="setting-desc">{$_('settings.api_key_desc')}</span>
       </div>
       <div class="api-key-row">
-        <input type="password" class="input-md" bind:value={apiKeyInput} placeholder="Paste API key..." />
+        <input type="password" class="input-md" bind:value={apiKeyInput} placeholder={$_('settings.api_key_placeholder')} />
         <button class="btn-save" onclick={saveApiKey} disabled={apiKeySaving}>
-          {apiKeySaved ? "✓ Saved!" : apiKeySaving ? "Saving..." : "Save"}
+          {apiKeySaved ? $_('settings.saved') : apiKeySaving ? $_('settings.saving') : $_('settings.save')}
         </button>
       </div>
     </div>
   </section>
 
   <section class="settings-group">
-    <h3>Restrictions</h3>
+    <h3>{$_('settings.restrictions')}</h3>
     <div class="restriction-info">
-      <p>Protected folders: {$settings.restrictions?.protected_folders?.length || 0} configured</p>
-      <p>Protected packages: {$settings.restrictions?.protected_packages?.length || 0} configured</p>
-      <p>Blocked commands: {$settings.restrictions?.blocked_commands?.length || 0} configured</p>
+      <p>{$_('settings.protected_folders')}: {$settings.restrictions?.protected_folders?.length || 0} {$_('settings.configured')}</p>
+      <p>{$_('settings.protected_packages')}: {$settings.restrictions?.protected_packages?.length || 0} {$_('settings.configured')}</p>
+      <p>{$_('settings.blocked_commands')}: {$settings.restrictions?.blocked_commands?.length || 0} {$_('settings.configured')}</p>
     </div>
   </section>
 
   <section class="settings-group">
-    <h3>Debug</h3>
+    <h3>{$_('settings.debug')}</h3>
     <div class="setting-row">
       <div class="setting-info">
-        <span class="setting-label">Notifications</span>
-        <span class="setting-desc">Test native OS desktop popup</span>
+        <span class="setting-label">{$_('settings.notifications')}</span>
+        <span class="setting-desc">{$_('settings.notifications_desc')}</span>
       </div>
-      <button class="btn-save" onclick={testNotification}>Test Popup</button>
+      <button class="btn-save" onclick={testNotification}>{$_('settings.test_popup')}</button>
     </div>
   </section>
 </div>
 
 <style>
   .settings-panel {
-    height: 100%; 
+    height: 100%;
     overflow-y: auto;
     padding: 16px;
   }
