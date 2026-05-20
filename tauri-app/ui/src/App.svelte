@@ -144,21 +144,30 @@
       if (msg.plan?.actions?.length) {
         parts.push(msg.plan.actions.map((a: any) => `• ${a.action_type}: ${a.target || ""}`).join("\n"));
       }
+      if (!parts.length && msg.plan?.actions?.length) {
+        parts.push(msg.plan.actions.map((a: any) => `• ${a.action_type}: ${a.target || ""}`).join("\n"));
+      }
       return parts.join("\n\n");
     }
     if (msg.type === "result") {
       const parts = [];
       if (msg.text) parts.push(msg.text);
       if (msg.actionResults?.length) {
-        parts.push(
-          msg.actionResults
-            .map((r: any) => r.output || r.error || "")
-            .filter(Boolean)
-            .join("\n")
-        );
+        const outputs = msg.actionResults
+          .map((r: any) => {
+            const content = r.output || r.error || "";
+            const actionType = r.action?.action_type || "";
+            return content ? `${actionType}: ${content}` : actionType;
+          })
+          .filter(Boolean)
+          .join("\n");
+        if (outputs) parts.push(outputs);
       }
       if (msg.verification) {
         parts.push(`Verification: ${msg.verification.passed ? "passed" : "failed"}`);
+        if (msg.verification.details?.length) {
+          parts.push(msg.verification.details.join("\n"));
+        }
       }
       return parts.join("\n\n");
     }
@@ -186,6 +195,43 @@
   onDestroy(() => {
     if (copiedTimeout) clearTimeout(copiedTimeout);
   });
+  function exportReActTrace() {
+    const traceSteps = $session.messages
+      .filter(m => m.type === "plan" || m.type === "result" || m.type === "error")
+      .map(m => ({
+        type: m.type,
+        timestamp: m.timestamp,
+        ...(m.plan && { plan: m.plan }),
+        ...(m.actionResults && { actionResults: m.actionResults }),
+        ...(m.verification && { verification: m.verification }),
+        ...(m.text && { text: m.text })
+      }));
+
+    if (traceSteps.length === 0) {
+      alert("No ReAct trace steps found. Run a command first!");
+      return;
+    }
+
+    const exportData = {
+      exported_at: new Date().toISOString(),
+      version: "1.0",
+      total_steps: traceSteps.length,
+      steps: traceSteps
+    };
+
+    const blob = new Blob(
+      [JSON.stringify(exportData, null, 2)],
+      { type: "application/json" }
+    );
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `react_trace_${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
 </script>
 
 {#if showWizard}
@@ -294,6 +340,7 @@
           <GestureControl onGesture={onGestureDetected} />
           <button class="tab" type="button" onclick={() => session.exportChat("json")}>Export JSON</button>
           <button class="tab" type="button" onclick={() => session.exportChat("csv")}>Export CSV</button>
+          <button class="tab" type="button" onclick={exportReActTrace} title="Export ReAct reasoning trace to JSON">Export Trace</button>
         </div>
       </div>
     {:else if activeTab === "log"}

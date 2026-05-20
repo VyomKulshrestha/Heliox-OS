@@ -131,6 +131,8 @@ class PilotServer:
         self._rss_agent: Any = None
         # ── LAN Mesh Network ──
         self._mesh: Any = None
+        # ── Swarm Mode ──
+        self._swarm_manager: Any = None
 
     async def initialize(self) -> None:
         """Initialize all agent components.
@@ -178,7 +180,7 @@ class PilotServer:
         validator = ActionValidator(self.config)
         permissions = PermissionChecker(self.config)
         self._memory = MemoryStore(checkpoint_interval_seconds=self.config.memory.checkpoint_interval_seconds)
-        await self._memory.initialize()
+        await self._memory.initialize(model_router)
 
         self._planner = Planner(model_router, self._memory)
         self._executor = Executor(self.config, validator, permissions, audit)
@@ -210,6 +212,17 @@ class PilotServer:
         )
         logger.info("Auto-registered %d agents via dynamic discovery", registered)
         await self._orchestrator.start_all()
+
+        # Swarm Mode - distributed multi-daemon execution
+        from pilot.swarm.swarm_manager import SwarmManager
+        from pilot.swarm.swarm_router_agent import SwarmRouterAgent
+
+        self._swarm_manager = SwarmManager(self.config)
+        await self._swarm_manager.initialize()
+        swarm_router = SwarmRouterAgent(model_router, self._swarm_manager, executor=self._executor)
+        self._orchestrator.register_agent(swarm_router)
+        await self._swarm_manager.start()
+        logger.info("Swarm mode initialized with SwarmRouterAgent")
 
         from pilot.agents.rss_agent import RssAgent
 
@@ -378,7 +391,6 @@ class PilotServer:
             "gesture_event": self._handle_gesture_event,
             "multimodal_stats": self._handle_multimodal_stats,
             "reasoning_log": self._handle_reasoning_log,
-            "reasoning_stats": self._handle_reasoning_stats,
             "decompose_task": self._handle_decompose_task,
             "simulate_plan": self._handle_simulate_plan,
             "prompt_strategies": self._handle_prompt_strategies,
@@ -550,6 +562,20 @@ class PilotServer:
         Tier 2+ actions.
         """
         user_input = params.get("input", "")
+        attachments = params.get("attachments", [])
+
+        if attachments:
+            formatted_attachments = []
+
+            for attachment in attachments:
+                name = attachment.get("name", "unknown")
+                content = attachment.get("content", "")
+
+                formatted_attachments.append(f"[Attached File: {name}]\n{content}")
+
+            user_input += "\n\nAttached Context:\n"
+            user_input += "\n\n".join(formatted_attachments)
+
         if not user_input.strip():
             return {"status": "error", "message": "Empty input"}
         dry_run = bool(params.get("dry_run", self.config.security.dry_run))
@@ -1927,20 +1953,6 @@ class PilotServer:
         """
         if self._reasoning:
             return {"events": self._reasoning.get_session_log()}
-        return {"error": "Reasoning emitter not initialized"}
-
-    async def _handle_reasoning_stats(self, params: dict, ws: ServerConnection) -> dict:
-        """Return reasoning emitter statistics.
-
-        Args:
-            params: JSON-RPC parameters (unused).
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with reasoning stats or error.
-        """
-        if self._reasoning:
-            return self._reasoning.get_stats()
         return {"error": "Reasoning emitter not initialized"}
 
     # -- Task Decomposition --
