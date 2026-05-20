@@ -51,6 +51,7 @@ class DaemonManager:
 
     async def initialize(self) -> None:
         """Initialize the crash database."""
+        CRASH_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
         async with aiosqlite.connect(CRASH_DB_PATH) as db:
             await db.execute(
                 """

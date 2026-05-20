@@ -103,9 +103,7 @@ async def test_safe_plan_approved():
 async def test_critic_error_falls_back_to_warn():
     model_router = AsyncMock()
 
-    model_router.generate.side_effect = Exception(
-        "LLM unavailable"
-    )
+    model_router.generate.side_effect = Exception("LLM unavailable")
 
     critic = DestructiveCriticAgent(model_router)
 

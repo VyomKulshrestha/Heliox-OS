@@ -1547,6 +1547,12 @@ class Executor:
             memory_mb=getattr(self._config.security, "sandbox_memory_mb", 128),
             timeout=getattr(self._config.security, "sandbox_timeout", p.timeout),
             network=getattr(self._config.security, "sandbox_network", False),
+            kernel_guard=getattr(self._config.security, "sandbox_kernel_guard", True),
+            blocked_syscalls=tuple(getattr(self._config.security, "sandbox_blocked_syscalls", ["unlink", "unlinkat"])),
+            firecracker_binary=getattr(self._config.security, "sandbox_firecracker_binary", "firecracker"),
+            firecracker_kernel_image=getattr(self._config.security, "sandbox_firecracker_kernel_image", ""),
+            firecracker_rootfs_path=getattr(self._config.security, "sandbox_firecracker_rootfs_path", ""),
+            firecracker_fallback=getattr(self._config.security, "sandbox_firecracker_fallback", True),
         )
 
         # If there's previous output available, inject it as Python variables
@@ -1648,6 +1654,12 @@ class Executor:
             memory_mb=getattr(self._config.security, "sandbox_memory_mb", 128),
             timeout=getattr(self._config.security, "sandbox_timeout", p.timeout),
             network=getattr(self._config.security, "sandbox_network", False),
+            kernel_guard=getattr(self._config.security, "sandbox_kernel_guard", True),
+            blocked_syscalls=tuple(getattr(self._config.security, "sandbox_blocked_syscalls", ["unlink", "unlinkat"])),
+            firecracker_binary=getattr(self._config.security, "sandbox_firecracker_binary", "firecracker"),
+            firecracker_kernel_image=getattr(self._config.security, "sandbox_firecracker_kernel_image", ""),
+            firecracker_rootfs_path=getattr(self._config.security, "sandbox_firecracker_rootfs_path", ""),
+            firecracker_fallback=getattr(self._config.security, "sandbox_firecracker_fallback", True),
         )
         return await generate_and_execute(p.task_description, p.language, p.timeout, sandbox_cfg=sandbox_cfg)
 

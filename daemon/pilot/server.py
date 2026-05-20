@@ -11,6 +11,7 @@ import logging
 import secrets
 import signal
 import sys
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -90,6 +91,7 @@ class PilotServer:
             config: PilotConfig instance containing server and model settings.
         """
         self.config = config
+        self._start_time = time.time()
         self._server: Server | None = None
         self._clients: set[ServerConnection] = set()
         self._handlers: dict[str, Any] = {}
@@ -126,6 +128,11 @@ class PilotServer:
         self._pending_confirms: dict[str, PendingConfirmation] = {}
         # ── Cancel Token (Issue #92) ──
         self._cancel_event: asyncio.Event | None = None
+        self._rss_agent: Any = None
+        # ── LAN Mesh Network ──
+        self._mesh: Any = None
+        # ── Swarm Mode ──
+        self._swarm_manager: Any = None
 
     async def initialize(self) -> None:
         """Initialize all agent components.
@@ -172,8 +179,8 @@ class PilotServer:
         await self._checkpoint_store.initialize()
         validator = ActionValidator(self.config)
         permissions = PermissionChecker(self.config)
-        self._memory = MemoryStore()
-        await self._memory.initialize()
+        self._memory = MemoryStore(checkpoint_interval_seconds=self.config.memory.checkpoint_interval_seconds)
+        await self._memory.initialize(model_router)
 
         self._planner = Planner(model_router, self._memory)
         self._executor = Executor(self.config, validator, permissions, audit)
@@ -205,6 +212,22 @@ class PilotServer:
         )
         logger.info("Auto-registered %d agents via dynamic discovery", registered)
         await self._orchestrator.start_all()
+
+        # Swarm Mode - distributed multi-daemon execution
+        from pilot.swarm.swarm_manager import SwarmManager
+        from pilot.swarm.swarm_router_agent import SwarmRouterAgent
+
+        self._swarm_manager = SwarmManager(self.config)
+        await self._swarm_manager.initialize()
+        swarm_router = SwarmRouterAgent(model_router, self._swarm_manager, executor=self._executor)
+        self._orchestrator.register_agent(swarm_router)
+        await self._swarm_manager.start()
+        logger.info("Swarm mode initialized with SwarmRouterAgent")
+
+        from pilot.agents.rss_agent import RssAgent
+
+        self._rss_agent = RssAgent(model_router, self._memory, self.config, self._background)
+        self._orchestrator.register_agent(self._rss_agent)
 
         # Multimodal Fusion Engine — voice + gesture intent fusion
         from pilot.multimodal.fusion import MultimodalFusionEngine
@@ -346,11 +369,13 @@ class PilotServer:
             "get_config": self._handle_get_config,
             "update_config": self._handle_update_config,
             "get_history": self._handle_get_history,
+            "memory_checkpoint": self._handle_memory_checkpoint,
             "store_api_key": self._handle_store_api_key,
             "delete_api_key": self._handle_delete_api_key,
             "list_api_keys": self._handle_list_api_keys,
             "list_ollama_models": self._handle_list_ollama_models,
             "health": self._handle_health,
+            "ready": self._handle_ready,
             "ping": self._handle_ping,
             "system_status": self._handle_system_status,
             "capabilities": self._handle_capabilities,
@@ -366,7 +391,6 @@ class PilotServer:
             "gesture_event": self._handle_gesture_event,
             "multimodal_stats": self._handle_multimodal_stats,
             "reasoning_log": self._handle_reasoning_log,
-            "reasoning_stats": self._handle_reasoning_stats,
             "decompose_task": self._handle_decompose_task,
             "simulate_plan": self._handle_simulate_plan,
             "prompt_strategies": self._handle_prompt_strategies,
@@ -405,7 +429,25 @@ class PilotServer:
             "proactive_dismiss": self._handle_proactive_dismiss,
             "budget_stats": self._handle_budget_stats,
             "budget_reset": self._handle_budget_reset,
+            # ── LAN Mesh Network ──
+            "mesh_peers": self._handle_mesh_peers,
+            "mesh_status": self._handle_mesh_status,
         }
+
+        # ── LAN Mesh Network (opt-in via config) ──
+        if self.config.network.enabled:
+            try:
+                from pilot.network.mesh import HelioxMesh
+                from pilot.system.plugins import get_manager as get_plugin_manager
+
+                self._mesh = HelioxMesh(
+                    config=self.config.network,
+                    executor=self._executor,
+                    plugin_manager=get_plugin_manager(),
+                )
+                logger.info("HelioxMesh initialised (will start with server)")
+            except Exception:
+                logger.warning("HelioxMesh init failed (non-critical)", exc_info=True)
 
     async def _broadcast_notification(self, method: str, params: Any) -> None:
         """Broadcast a notification to all connected clients.
@@ -636,6 +678,8 @@ class PilotServer:
         all_results: list = []
         last_verification = None
         last_explanation = ""
+        _original_plan = None
+        _successful_results: list = []
 
         for attempt in range(1 + self.MAX_RETRIES):
             # ── Cancel Token: check before each planning attempt ──
@@ -932,6 +976,8 @@ class PilotServer:
             else:
                 verification = await self._verifier.verify(plan, results)
             last_verification = verification
+            if _original_plan is not None and _successful_results:
+                all_results = PlanDiffer.merge_results(_successful_results, results, _original_plan, verification)
 
             if verification.passed:
                 if emit:
@@ -999,9 +1045,26 @@ class PilotServer:
                     "verification", VERIFICATION_FAILED, "; ".join(verification.details[:3]), parent_id=verify_phase
                 )
 
+            # Execution failed — use PlanDiffer for partial re-plan
+            from pilot.agents.plan_differ import PlanDiffer
+
+            retry_plan, successful_results = PlanDiffer.diff(plan, results, verification)
+
             failed_details = [d for d in verification.details if "FAILED" in d or "MISMATCH" in d]
             error_msgs = [r.error for r in results if r.error]
             error_context = "\n".join(failed_details + error_msgs)
+
+            # Use partial retry plan if PlanDiffer found fewer actions to retry
+            if len(retry_plan.actions) < len(plan.actions):
+                logger.info(
+                    "PlanDiffer: retrying %d/%d actions",
+                    len(retry_plan.actions),
+                    len(plan.actions),
+                )
+                plan = retry_plan
+                _original_plan = plan
+                _successful_results = successful_results
+                all_results = list(successful_results)
 
             if attempt < self.MAX_RETRIES:
                 await ws.send(
@@ -1348,6 +1411,20 @@ class PilotServer:
         entries = await self._memory.get_history(limit=limit, offset=offset)
         return {"entries": entries}
 
+    async def _handle_memory_checkpoint(self, params: dict, ws: ServerConnection) -> dict:
+        """Manually trigger a SQLite WAL checkpoint for the memory store.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with checkpoint status and WAL checkpoint statistics.
+        """
+        if not self._memory:
+            return {"status": "error", "message": "Memory store is not initialized"}
+        return await self._memory.checkpoint()
+
     async def _handle_export_session_chat(self, params: dict, ws: ServerConnection) -> dict:
         """Export current UI session chat messages to JSON or CSV."""
         fmt = str(params.get("format", "json")).lower()
@@ -1547,21 +1624,65 @@ class PilotServer:
 
     # -- Health --
 
-    async def _handle_health(self, params: dict, ws: ServerConnection) -> dict:
-        """Check the health of all model backends.
+    async def _handle_health(self, params: dict[str, Any], ws: ServerConnection) -> dict[str, Any]:
+        """Return health status of the daemon.
 
         Args:
             params: JSON-RPC parameters (unused).
             ws: The WebSocket connection.
 
         Returns:
-            A dict with backends health status.
+            A dict with uptime, memory usage, active connections, and loaded agents.
         """
-        from pilot.models.router import ModelRouter
+        import psutil
 
-        router: ModelRouter = self._planner._model
-        backends = await router.check_health()
-        return {"backends": backends}
+        # Calculate uptime
+        uptime = time.time() - self._start_time
+
+        # Get memory usage in MB
+        process = psutil.Process()
+        memory_mb = process.memory_info().rss / (1024**2)
+
+        # Count active connections
+        active_connections = len(self._clients)
+
+        # Get loaded agent names
+        loaded_agents: list[str] = []
+        if self._orchestrator:
+            loaded_agents = [role.value for role in self._orchestrator._agents]
+
+        return {
+            "uptime": uptime,
+            "memory_usage_mb": memory_mb,
+            "active_connections": active_connections,
+            "loaded_agents": loaded_agents,
+        }
+
+    async def _handle_ready(self, params: dict[str, Any], ws: ServerConnection) -> dict[str, Any]:
+        """Check if all agents are fully initialized and ready.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with ready status (True only if all agents are initialized).
+        """
+        from pilot.agents.base_agent import AgentStatus
+
+        # If orchestrator is not initialized, not ready
+        if not self._orchestrator:
+            return {"ready": False}
+
+        # If no agents are registered, not ready
+        if not self._orchestrator._agents:
+            return {"ready": False}
+
+        for agent in self._orchestrator._agents.values():
+            if not agent._running or agent.status in {AgentStatus.STOPPED, AgentStatus.ERROR}:
+                return {"ready": False}
+
+        return {"ready": True}
 
     async def _handle_ping(self, params: dict, ws: ServerConnection) -> dict:
         """Ping the server to check connectivity.
@@ -1818,20 +1939,6 @@ class PilotServer:
         """
         if self._reasoning:
             return {"events": self._reasoning.get_session_log()}
-        return {"error": "Reasoning emitter not initialized"}
-
-    async def _handle_reasoning_stats(self, params: dict, ws: ServerConnection) -> dict:
-        """Return reasoning emitter statistics.
-
-        Args:
-            params: JSON-RPC parameters (unused).
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with reasoning stats or error.
-        """
-        if self._reasoning:
-            return self._reasoning.get_stats()
         return {"error": "Reasoning emitter not initialized"}
 
     # -- Task Decomposition --
@@ -2232,6 +2339,10 @@ class PilotServer:
         )
         logger.info("Pilot daemon ready")
 
+        # ── Start LAN mesh if enabled ──
+        if self._mesh:
+            asyncio.create_task(self._mesh.start())
+
         if hasattr(self, "_new_features_announcement") and self._new_features_announcement:
             await asyncio.sleep(1)
             await self._broadcast_notification(
@@ -2245,6 +2356,9 @@ class PilotServer:
     async def stop(self) -> None:
         """Stop the Pilot daemon server and clean up all resources."""
         self._running = False
+        # ── Stop LAN mesh ──
+        if self._mesh:
+            await self._mesh.stop()
         if self._orchestrator:
             await self._orchestrator.stop_all()
         if self._background:
@@ -2298,6 +2412,60 @@ class PilotServer:
             return {"status": "ok"}
         await self._budget_tracker.reset_current_month()
         return {"status": "ok"}
+
+    # ── LAN Mesh Network Handlers ──
+
+    async def _handle_mesh_peers(self, params: dict, ws: ServerConnection) -> dict:
+        """Return a list of currently connected LAN peers.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with ``enabled`` flag and ``peers`` list.
+        """
+        if not self._mesh:
+            return {"enabled": False, "peers": []}
+
+        peers = []
+        for pid in self._mesh.peer_ids:
+            conn = self._mesh.get_connection(pid)
+            caps = conn.peer_capabilities if conn else None
+            peers.append(
+                {
+                    "peer_id": pid,
+                    "hostname": caps.hostname if caps else "",
+                    "can_execute": caps.can_execute if caps else False,
+                    "cpu_load": caps.cpu_load if caps else 0.0,
+                    "plugin_count": len(caps.plugin_names) if caps else 0,
+                }
+            )
+        return {"enabled": True, "peers": peers}
+
+    async def _handle_mesh_status(self, params: dict, ws: ServerConnection) -> dict:
+        """Return overall mesh status and configuration.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with mesh status, instance ID, and config summary.
+        """
+        if not self._mesh:
+            return {
+                "enabled": False,
+                "reason": "Set [network] enabled = true in config.toml to activate",
+            }
+        return {
+            "enabled": True,
+            "instance_id": self._mesh.instance_id,
+            "peer_count": len(self._mesh.peer_ids),
+            "skill_sync_enabled": self.config.network.skill_sync_enabled,
+            "collab_exec_enabled": self.config.network.collab_exec_enabled,
+            "port": self.config.network.port,
+        }
 
     # ── Cognitive Intelligence (TRIBE v2) Handlers ──
 

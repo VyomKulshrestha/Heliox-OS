@@ -13,7 +13,6 @@ import pytest
 
 from pilot.models.budget_tracker import BudgetExceededError, BudgetTracker
 
-
 # ---------------------------------------------------------------------------
 # Minimal config stub
 # ---------------------------------------------------------------------------
@@ -82,7 +81,7 @@ async def test_check_budget_noop_for_free_providers(tmp_path):
     """check_budget() never blocks ollama or local providers."""
     tracker = await make_tracker(tmp_path, budget_monthly_limit_usd=0.0)
     tracker.check_budget("ollama")  # must not raise
-    tracker.check_budget("local")   # must not raise
+    tracker.check_budget("local")  # must not raise
     await tracker.close()
 
 
@@ -129,8 +128,9 @@ async def test_reset_current_month(tmp_path):
 @pytest.mark.asyncio
 async def test_cross_month_isolation(tmp_path):
     """Usage from a different month is not counted against the current month."""
-    import aiosqlite
     from datetime import UTC, datetime
+
+    import aiosqlite
 
     tracker = await make_tracker(tmp_path)
     db_path = str(tmp_path / "budget.db")
