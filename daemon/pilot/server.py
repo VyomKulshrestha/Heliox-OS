@@ -2305,20 +2305,6 @@ class PilotServer:
             return {"events": self._reasoning.get_session_log()}
         return {"error": "Reasoning emitter not initialized"}
 
-    async def _handle_reasoning_stats(self, params: dict, ws: ServerConnection) -> dict:
-        """Return reasoning emitter statistics.
-
-        Args:
-            params: JSON-RPC parameters (unused).
-            ws: The WebSocket connection.
-
-        Returns:
-            A dict with reasoning stats or error.
-        """
-        if self._reasoning:
-            return self._reasoning.get_stats()
-        return {"error": "Reasoning emitter not initialized"}
-
     # -- Task Decomposition --
 
     async def _handle_decompose_task(self, params: dict, ws: ServerConnection) -> dict:

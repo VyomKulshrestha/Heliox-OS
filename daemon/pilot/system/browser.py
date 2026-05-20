@@ -2,6 +2,22 @@
 
 Navigate, click, type, extract data, execute JS, handle forms,
 manage tabs, and scrape web content programmatically.
+
+DOM-diff self-correction
+------------------------
+All mutating actions (click, type, select, fill_form) automatically:
+  1. Snapshot the DOM before the action
+  2. Execute the action
+  3. Snapshot the DOM after the action
+  4. Compute a DomDiff (change_score in [0.0, 1.0])
+  5. If change_score < MIN_CHANGE_SCORE, attempt self-correction:
+       - click: retry with JS element.click() (bypasses pointer-events:none)
+       - type:  retry with page.type() character-by-character
+       - select: retry with JS value assignment + change event dispatch
+       - fill_form: retry each failing field individually
+  6. Return the action result appended with a JSON diff summary
+
+Set ``DOM_DIFF_ENABLED = False`` to disable (e.g. for performance testing).
 """
 
 from __future__ import annotations
@@ -12,7 +28,22 @@ import os
 from pathlib import Path
 from typing import Any
 
+from pilot.system.browser_backend import BrowserBackend
+
 logger = logging.getLogger("pilot.system.browser")
+
+# ---------------------------------------------------------------------------
+# DOM-diff configuration
+# ---------------------------------------------------------------------------
+
+# Master switch — set to False to skip all DOM diffing
+DOM_DIFF_ENABLED: bool = True
+
+# Minimum change_score to consider a mutating action successful
+MIN_CHANGE_SCORE: float = 0.01
+
+# Max self-correction retries before giving up and returning the result anyway
+MAX_SELF_CORRECT_RETRIES: int = 2
 
 # Global browser instance for session persistence
 _browser_context: Any = None
@@ -56,6 +87,31 @@ async def _get_page(tab_index: int = -1):
     return pages[min(tab_index, len(pages) - 1)]
 
 
+# ---------------------------------------------------------------------------
+# DOM-diff helpers (internal)
+# ---------------------------------------------------------------------------
+
+
+async def _snap(page: Any):
+    """Take a DOM snapshot if DOM_DIFF_ENABLED, else return None."""
+    if not DOM_DIFF_ENABLED:
+        return None
+    from pilot.system.dom_diff import snapshot_dom
+
+    return await snapshot_dom(page)
+
+
+def _append_diff(base_output: str, before: Any, after: Any, action_desc: str) -> str:
+    """Compute diff and append a JSON summary to the action output string."""
+    if before is None or after is None:
+        return base_output
+    from pilot.system.dom_diff import diff_dom
+
+    diff = diff_dom(before, after)
+    logger.debug("DOM diff [%s]: %s", action_desc, diff.summary())
+    return base_output + f"\n[DOM_DIFF] {json.dumps(diff.to_dict())}"
+
+
 # ── Navigation ───────────────────────────────────────────────────────
 
 
@@ -97,23 +153,80 @@ async def browser_click(
     click_count: int = 1,
     timeout: int = 5000,
 ) -> str:
-    """Click an element by CSS selector.
+    """Click an element by CSS selector, with DOM-diff self-correction.
+
+    If the DOM does not change after the click (change_score < MIN_CHANGE_SCORE),
+    retries using a JavaScript ``element.click()`` call which bypasses
+    ``pointer-events: none`` and overlapping elements.
 
     Examples: "#submit-btn", "button:has-text('Login')", "a[href='/about']"
     """
     page = await _get_page()
+    before = await _snap(page)
+
     await page.click(selector, button=button, click_count=click_count, timeout=timeout)
-    return f"Clicked: {selector}"
+    await page.wait_for_timeout(300)
+    after = await _snap(page)
+
+    if DOM_DIFF_ENABLED and before is not None and after is not None:
+        from pilot.system.dom_diff import diff_dom
+
+        diff = diff_dom(before, after)
+        retries = 0
+        while diff.change_score < MIN_CHANGE_SCORE and retries < MAX_SELF_CORRECT_RETRIES:
+            retries += 1
+            logger.info(
+                "browser_click: no DOM change (score=%.3f), self-correcting attempt %d/%d",
+                diff.change_score,
+                retries,
+                MAX_SELF_CORRECT_RETRIES,
+            )
+            await page.evaluate(f"document.querySelector('{selector}')?.click()")
+            await page.wait_for_timeout(400)
+            after = await _snap(page)
+            diff = diff_dom(before, after)
+
+    return _append_diff(f"Clicked: {selector}", before, after, f"click:{selector}")
 
 
 async def browser_click_text(text: str, exact: bool = False) -> str:
-    """Click an element by its visible text content."""
+    """Click an element by its visible text content, with DOM-diff self-correction."""
     page = await _get_page()
+    before = await _snap(page)
+
     if exact:
         await page.click(f"text='{text}'")
     else:
         await page.click(f"text={text}")
-    return f"Clicked element with text: {text}"
+    await page.wait_for_timeout(300)
+    after = await _snap(page)
+
+    if DOM_DIFF_ENABLED and before is not None and after is not None:
+        from pilot.system.dom_diff import diff_dom
+
+        diff = diff_dom(before, after)
+        retries = 0
+        while diff.change_score < MIN_CHANGE_SCORE and retries < MAX_SELF_CORRECT_RETRIES:
+            retries += 1
+            logger.info(
+                "browser_click_text: no DOM change (score=%.3f), self-correcting attempt %d/%d",
+                diff.change_score,
+                retries,
+                MAX_SELF_CORRECT_RETRIES,
+            )
+            escaped = text.replace("'", "\\'")
+            await page.evaluate(
+                f"""
+                const els = [...document.querySelectorAll('*')];
+                const match = els.find(e => e.innerText && e.innerText.trim().includes('{escaped}'));
+                if (match) match.click();
+                """
+            )
+            await page.wait_for_timeout(400)
+            after = await _snap(page)
+            diff = diff_dom(before, after)
+
+    return _append_diff(f"Clicked element with text: {text}", before, after, f"click_text:{text}")
 
 
 async def browser_type(
@@ -122,22 +235,95 @@ async def browser_type(
     clear_first: bool = True,
     press_enter: bool = False,
 ) -> str:
-    """Type text into an input field."""
+    """Type text into an input field, with DOM-diff self-correction.
+
+    If the DOM does not change after fill(), retries using character-by-character
+    ``page.type()`` which fires individual keydown/keypress/keyup events and is
+    more compatible with custom input components.
+    """
     page = await _get_page()
+    before = await _snap(page)
+
     if clear_first:
         await page.fill(selector, text)
     else:
         await page.type(selector, text)
     if press_enter:
         await page.press(selector, "Enter")
-    return f"Typed into {selector}: {text[:80]}"
+    await page.wait_for_timeout(200)
+    after = await _snap(page)
+
+    if DOM_DIFF_ENABLED and before is not None and after is not None:
+        from pilot.system.dom_diff import diff_dom
+
+        diff = diff_dom(before, after)
+        retries = 0
+        while diff.change_score < MIN_CHANGE_SCORE and retries < MAX_SELF_CORRECT_RETRIES:
+            retries += 1
+            logger.info(
+                "browser_type: no DOM change (score=%.3f), self-correcting attempt %d/%d — char-by-char",
+                diff.change_score,
+                retries,
+                MAX_SELF_CORRECT_RETRIES,
+            )
+            await page.click(selector)
+            if clear_first:
+                await page.keyboard.press("Control+a")
+                await page.keyboard.press("Delete")
+            await page.type(selector, text, delay=30)
+            if press_enter:
+                await page.press(selector, "Enter")
+            await page.wait_for_timeout(300)
+            after = await _snap(page)
+            diff = diff_dom(before, after)
+
+    return _append_diff(f"Typed into {selector}: {text[:80]}", before, after, f"type:{selector}")
 
 
 async def browser_select(selector: str, value: str) -> str:
-    """Select an option from a dropdown."""
+    """Select an option from a dropdown, with DOM-diff self-correction.
+
+    If the DOM does not change after select_option(), retries by directly
+    setting the element's value via JavaScript and dispatching a 'change' event,
+    which works for custom select components that don't use native <select>.
+    """
     page = await _get_page()
+    before = await _snap(page)
+
     await page.select_option(selector, value)
-    return f"Selected '{value}' in {selector}"
+    await page.wait_for_timeout(200)
+    after = await _snap(page)
+
+    if DOM_DIFF_ENABLED and before is not None and after is not None:
+        from pilot.system.dom_diff import diff_dom
+
+        diff = diff_dom(before, after)
+        retries = 0
+        while diff.change_score < MIN_CHANGE_SCORE and retries < MAX_SELF_CORRECT_RETRIES:
+            retries += 1
+            logger.info(
+                "browser_select: no DOM change (score=%.3f), self-correcting attempt %d/%d — JS dispatch",
+                diff.change_score,
+                retries,
+                MAX_SELF_CORRECT_RETRIES,
+            )
+            escaped_val = value.replace("'", "\\'")
+            escaped_sel = selector.replace("'", "\\'")
+            await page.evaluate(
+                f"""
+                const el = document.querySelector('{escaped_sel}');
+                if (el) {{
+                    el.value = '{escaped_val}';
+                    el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                    el.dispatchEvent(new Event('input',  {{ bubbles: true }}));
+                }}
+                """
+            )
+            await page.wait_for_timeout(300)
+            after = await _snap(page)
+            diff = diff_dom(before, after)
+
+    return _append_diff(f"Selected '{value}' in {selector}", before, after, f"select:{selector}")
 
 
 async def browser_check(selector: str, checked: bool = True) -> str:
@@ -404,19 +590,45 @@ async def browser_wait_navigation(timeout: int = 30000) -> str:
 
 
 async def browser_fill_form(fields: dict[str, str], submit_selector: str | None = None) -> str:
-    """Fill multiple form fields at once.
+    """Fill multiple form fields at once, with DOM-diff self-correction per field.
 
     fields: {"#email": "user@example.com", "#password": "secret", ...}
+
+    Each field is filled individually. If a field produces no DOM change,
+    it is retried with character-by-character typing before moving on.
     """
     page = await _get_page()
+    before_form = await _snap(page)
+
     for selector, value in fields.items():
+        field_before = await _snap(page)
         await page.fill(selector, value)
+        await page.wait_for_timeout(150)
+        field_after = await _snap(page)
+
+        if DOM_DIFF_ENABLED and field_before is not None and field_after is not None:
+            from pilot.system.dom_diff import diff_dom
+
+            diff = diff_dom(field_before, field_after)
+            if diff.change_score < MIN_CHANGE_SCORE:
+                logger.info(
+                    "browser_fill_form: field %s produced no DOM change — retrying with type()",
+                    selector,
+                )
+                await page.click(selector)
+                await page.keyboard.press("Control+a")
+                await page.keyboard.press("Delete")
+                await page.type(selector, value, delay=25)
+                await page.wait_for_timeout(150)
 
     if submit_selector:
         await page.click(submit_selector)
+        await page.wait_for_timeout(300)
 
+    after_form = await _snap(page)
     filled = ", ".join(f"{k}={v[:20]}..." for k, v in fields.items())
-    return f"Filled form: {filled}" + (f" and submitted via {submit_selector}" if submit_selector else "")
+    base = f"Filled form: {filled}" + (f" and submitted via {submit_selector}" if submit_selector else "")
+    return _append_diff(base, before_form, after_form, "fill_form")
 
 
 # ── Cleanup ──────────────────────────────────────────────────────────
@@ -432,3 +644,76 @@ async def browser_close() -> str:
         await _playwright_instance.stop()
         _playwright_instance = None
     return "Browser closed"
+
+
+class PlaywrightBackend(BrowserBackend):
+    async def navigate(self, url: str, wait_until: str = "domcontentloaded") -> str:
+        return await browser_navigate(url, wait_until)
+
+    async def click(self, selector: str, button: str = "left", timeout: int = 5000) -> str:
+        return await browser_click(selector, button=button, timeout=timeout)
+
+    async def click_text(self, text: str, exact: bool = False) -> str:
+        return await browser_click_text(text, exact)
+
+    async def type(self, selector: str, text: str, clear_first: bool = True, press_enter: bool = False) -> str:
+        return await browser_type(selector, text, clear_first, press_enter)
+
+    async def select(self, selector: str, value: str) -> str:
+        return await browser_select(selector, value)
+
+    async def hover(self, selector: str) -> str:
+        return await browser_hover(selector)
+
+    async def scroll(self, direction: str = "down", amount: int = 500) -> str:
+        return await browser_scroll(direction, amount)
+
+    async def extract(self, selector: str = "body", attribute: str = "innerText", multiple: bool = False) -> str:
+        return await browser_extract(selector, attribute, multiple)
+
+    async def extract_table(self, selector: str = "table") -> str:
+        return await browser_extract_table(selector)
+
+    async def extract_links(self) -> str:
+        return await browser_extract_links()
+
+    async def execute_js(self, script: str) -> str:
+        return await browser_execute_js(script)
+
+    async def screenshot(
+        self, output_path: str | None = None, full_page: bool = False, selector: str | None = None
+    ) -> str:
+        return await browser_screenshot(output_path, full_page, selector)
+
+    async def fill_form(self, fields: dict[str, str], submit_selector: str | None = None) -> str:
+        return await browser_fill_form(fields, submit_selector)
+
+    async def new_tab(self, url: str | None = None) -> str:
+        return await browser_new_tab(url)
+
+    async def close_tab(self, tab_index: int = -1) -> str:
+        return await browser_close_tab(tab_index)
+
+    async def list_tabs(self) -> str:
+        return await browser_list_tabs()
+
+    async def switch_tab(self, tab_index: int) -> str:
+        return await browser_switch_tab(tab_index)
+
+    async def back(self) -> str:
+        return await browser_back()
+
+    async def forward(self) -> str:
+        return await browser_forward()
+
+    async def refresh(self) -> str:
+        return await browser_refresh()
+
+    async def wait(self, selector: str | None = None, timeout: int = 10000, state: str = "visible") -> str:
+        return await browser_wait(selector, timeout, state)
+
+    async def close(self) -> str:
+        return await browser_close()
+
+    async def get_page_info(self) -> str:
+        return await browser_get_page_info()

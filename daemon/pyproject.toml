@@ -13,6 +13,7 @@ license = "MIT"
 dependencies = [
     "websockets>=13.0",
     "pydantic>=2.6",
+    "aiofiles>=24.1",
     "aiosqlite>=0.20",
     "httpx>=0.27",
     "tomli>=2.0; python_version < '3.12'",
@@ -20,7 +21,10 @@ dependencies = [
     "cryptography>=43.0",
     "keyring>=25.0",
     "psutil>=5.9",
+    "tiktoken>=0.7",
     "tribev2 @ git+https://github.com/facebookresearch/tribev2.git",
+    "numpy>=1.24.0",
+    "scikit-learn>=1.3.0",
 ]
 
 [project.optional-dependencies]
@@ -28,8 +32,9 @@ full = [
     "chromadb>=0.5",
     "pyperclip>=1.8",
     "SecretStorage>=3.3; sys_platform == 'linux'",
+    "zeroconf>=0.131",
 ]
-llamacpp = ["llama-cpp-python>=0.3"]
+llamacpp = ["llama-cpp-python>=0.3", "pynvml>=11.5"]
 
 # Tier 1: Game Changers
 automation = [
@@ -43,6 +48,24 @@ vision = [
 ]
 browser = [
     "playwright>=1.40",
+]
+pty = [
+    "ptyprocess>=0.7; sys_platform != 'win32'",
+]
+
+# LAN mesh networking
+network = [
+    "zeroconf>=0.131",
+]
+
+# Remote execution
+ssh = [
+    "paramiko>=3.4",
+]
+
+# WASM plugin sandbox
+wasm = [
+    "wasmtime>=18.0",
 ]
 
 # Tier 2: Multipliers
@@ -60,7 +83,7 @@ cognitive = [
 
 # Everything
 all = [
-    "pilot-daemon[full,automation,vision,browser,documents,cognitive]",
+    "pilot-daemon[full,automation,vision,browser,documents,cognitive,ssh,network,wasm]",
 ]
 
 dev = [
