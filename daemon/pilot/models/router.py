@@ -7,6 +7,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from pilot.config import DATA_DIR
+from pilot.db.redis_adapter import RedisCacheAdapter
 from pilot.models.cache import LLMCache
 from pilot.models.cloud import CloudClient
 from pilot.models.ollama import OllamaClient
@@ -36,7 +37,8 @@ class ModelRouter:
         self._cloud: CloudClient | None = None
         self._llamacpp: object | None = None
         self._resolved_ollama_model: str | None = None
-        self._cache = LLMCache(DATA_DIR / "llm_cache.db")
+        redis_adapter = RedisCacheAdapter.from_config(config.redis)
+        self._cache = LLMCache(DATA_DIR / "llm_cache.db", redis=redis_adapter)
         self._budget_tracker: BudgetTracker | None = None
 
         if config.model.cloud_provider:
@@ -50,6 +52,7 @@ class ModelRouter:
 
     async def initialize(self) -> None:
         """Initialize the cache. Must be called before using generate()."""
+        await self._cache._redis.initialize()
         await self._cache.initialize()
 
     def set_budget_tracker(self, tracker: BudgetTracker) -> None:

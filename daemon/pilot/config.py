@@ -155,16 +155,6 @@ class SshConfig:
     enabled: bool = False
     connect_timeout_seconds: int = 10
     allowed_hosts: list[SshHostConfig] = field(default_factory=list)
-class RedisConfig:
-    enabled: bool = False
-    host: str = "127.0.0.1"
-    port: int = 6379
-    db: int = 0
-    password: str = ""
-    ssl: bool = False
-    key_prefix: str = "pilot:"
-    default_ttl: int = 300
-    max_memory_cache_size: int = 512
 
 
 @dataclass
@@ -317,17 +307,6 @@ def _validate_config_types(raw: dict) -> None:
             "connect_timeout_seconds": int,
             "allowed_hosts": list,
         },
-        "redis": {
-            "enabled": bool,
-            "host": str,
-            "port": int,
-            "db": int,
-            "password": str,
-            "ssl": bool,
-            "key_prefix": str,
-            "default_ttl": int,
-            "max_memory_cache_size": int,
-},
     }
 
     for section, expected_keys in expected_types.items():

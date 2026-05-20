@@ -3,14 +3,8 @@
 Provides a unified cache interface that uses Redis when available,
 falling back to a local in-memory LRU cache for single-instance setups.
 
-Usage:
-    adapter = RedisCacheAdapter.from_config(config.redis)
-    await adapter.initialize()
-
-    await adapter.set("key", "value", ttl=300)
-    value = await adapter.get("key")   # None on miss
-    await adapter.delete("key")
-    await adapter.close()
+Warning logs for Redis failures are throttled (once per 60 s) to avoid
+flooding pilot.log when Redis is temporarily unreachable.
 """
 
 from __future__ import annotations
@@ -19,22 +13,36 @@ import asyncio
 import logging
 import time
 from collections import OrderedDict
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 logger = logging.getLogger("pilot.db.redis_adapter")
 
-# ── In-memory LRU fallback ────────────────────────────────────────────────────
-
 _SENTINEL = object()
+
+# ── Warning throttle ──────────────────────────────────────────────────────────
+_WARN_INTERVAL = 60.0  # seconds between repeated Redis failure warnings
+_last_warn_time: float = 0.0
+
+
+def _throttled_warn(msg: str, *args: object) -> None:
+    """Log a warning at most once per _WARN_INTERVAL seconds."""
+    global _last_warn_time
+    now = time.monotonic()
+    if now - _last_warn_time >= _WARN_INTERVAL:
+        _last_warn_time = now
+        logger.warning(msg, *args)
+
+
+# ── In-memory LRU fallback ────────────────────────────────────────────────────
 
 
 class _LRUCache:
-    """Thread-safe LRU cache with per-entry TTL."""
+    """Async LRU cache with per-entry TTL."""
 
     def __init__(self, max_size: int = 512) -> None:
         self._max_size = max_size
-        self._store: OrderedDict[str, tuple[str, float]] = OrderedDict()  # key → (value, expires_at)
+        self._store: OrderedDict[str, tuple[str, float]] = OrderedDict()
         self._lock = asyncio.Lock()
 
     async def get(self, key: str) -> str | None:
@@ -82,20 +90,18 @@ class RedisConfig:
     password: str = ""
     ssl: bool = False
     key_prefix: str = "pilot:"
-    default_ttl: int = 300  # seconds
-    max_memory_cache_size: int = 512  # fallback LRU size
+    default_ttl: int = 300
+    max_memory_cache_size: int = 512
 
 
 class RedisCacheAdapter:
-    """Cache adapter: Redis when available, in-memory LRU otherwise."""
+    """Cache adapter: Redis L1 when available, in-memory LRU otherwise."""
 
     def __init__(self, config: RedisConfig) -> None:
         self._config = config
-        self._redis: Any = None  # aioredis / redis.asyncio client
+        self._redis: Any = None
         self._fallback = _LRUCache(max_size=config.max_memory_cache_size)
         self._using_redis = False
-
-    # ── lifecycle ─────────────────────────────────────────────────────────────
 
     @classmethod
     def from_config(cls, config: RedisConfig) -> RedisCacheAdapter:
@@ -153,17 +159,15 @@ class RedisCacheAdapter:
         return f"{self._config.key_prefix}{key}"
 
     async def get(self, key: str) -> str | None:
-        """Return cached value or None on miss / expiry."""
         if self._using_redis:
             try:
                 return await self._redis.get(self._prefixed(key))
             except Exception as exc:
-                logger.warning("Redis GET failed (%s) — using fallback", exc)
+                _throttled_warn("Redis GET failed (%s) — using fallback", exc)
                 return await self._fallback.get(key)
         return await self._fallback.get(key)
 
     async def set(self, key: str, value: str, ttl: int | None = None) -> None:
-        """Store a value. ttl=0 → no expiry."""
         effective_ttl = ttl if ttl is not None else self._config.default_ttl
         if self._using_redis:
             try:
@@ -173,25 +177,22 @@ class RedisCacheAdapter:
                     await self._redis.set(self._prefixed(key), value)
                 return
             except Exception as exc:
-                logger.warning("Redis SET failed (%s) — writing to fallback", exc)
+                _throttled_warn("Redis SET failed (%s) — writing to fallback", exc)
         await self._fallback.set(key, value, ttl=effective_ttl)
 
     async def delete(self, key: str) -> None:
-        """Delete a key from both backends."""
         if self._using_redis:
             try:
                 await self._redis.delete(self._prefixed(key))
                 return
             except Exception as exc:
-                logger.warning("Redis DELETE failed (%s) — deleting from fallback", exc)
+                _throttled_warn("Redis DELETE failed (%s) — deleting from fallback", exc)
         await self._fallback.delete(key)
 
     async def exists(self, key: str) -> bool:
-        """Return True if key exists and has not expired."""
         return await self.get(key) is not None
 
     async def flush(self) -> None:
-        """Flush all pilot-prefixed keys (Redis) or all entries (memory)."""
         if self._using_redis:
             try:
                 pattern = f"{self._config.key_prefix}*"
@@ -200,7 +201,7 @@ class RedisCacheAdapter:
                     await self._redis.delete(*keys)
                 return
             except Exception as exc:
-                logger.warning("Redis FLUSH failed (%s) — flushing fallback", exc)
+                _throttled_warn("Redis FLUSH failed (%s) — flushing fallback", exc)
         await self._fallback.flush()
 
     def stats(self) -> dict[str, Any]:
