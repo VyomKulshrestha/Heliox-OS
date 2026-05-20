@@ -10,10 +10,9 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from pilot.memory.context_compressor import (
-    COMPRESSION_THRESHOLD,
-    DEFAULT_MAX_TOKENS,
     ContextCompressor,
     RollingContextWindow,
+    NUM_RESERVED_TOKENS
 )
 
 
@@ -34,7 +33,7 @@ class TestContextCompressor:
     def test_initial_state(self, compressor):
         """Test compressor initializes with correct defaults."""
         assert compressor._max_tokens == 8000
-        assert compressor._threshold == 6000
+        assert compressor._threshold == int((compressor._max_tokens - NUM_RESERVED_TOKENS) * 0.6)
 
     def test_count_tokens_empty(self, compressor):
         """Test token count for empty string."""
