@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
+from collections.abc import Generator
 from typing import Any
 
 import httpx
@@ -10,8 +12,12 @@ import httpx
 from pilot.config import PilotConfig
 
 
-def _apply_proxy_env(config: PilotConfig) -> None:
-    """Apply proxy values from config into environment variables."""
+@contextlib.contextmanager
+def _scoped_proxy_env(config: PilotConfig) -> Generator[None, None, None]:
+    """Temporarily apply proxy values from config into environment variables."""
+    keys = ["HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "NO_PROXY", "no_proxy"]
+    original_env = {key: os.environ.get(key) for key in keys}
+
     if config.proxy.http is not None:
         os.environ["HTTP_PROXY"] = config.proxy.http
         os.environ["http_proxy"] = config.proxy.http
@@ -22,11 +28,20 @@ def _apply_proxy_env(config: PilotConfig) -> None:
         os.environ["NO_PROXY"] = config.proxy.no_proxy
         os.environ["no_proxy"] = config.proxy.no_proxy
 
+    try:
+        yield
+    finally:
+        for key, value in original_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
 
 def create_httpx_client(config: PilotConfig, **kwargs: Any) -> httpx.AsyncClient:
     """Construct an httpx AsyncClient with proxy and env fallback support."""
-    _apply_proxy_env(config)
     if "trust_env" not in kwargs:
         kwargs["trust_env"] = True
 
-    return httpx.AsyncClient(**kwargs)
+    with _scoped_proxy_env(config):
+        return httpx.AsyncClient(**kwargs)

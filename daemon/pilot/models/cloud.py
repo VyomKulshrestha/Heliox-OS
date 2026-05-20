@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import TYPE_CHECKING
 
 from pilot.config import PilotConfig
 from pilot.system.http_client import create_httpx_client
 
-from typing import TYPE_CHECKING
-
-if   TYPE_CHECKING:
+if TYPE_CHECKING:
     from pilot.security.vault import KeyVault
 
 logger = logging.getLogger("pilot.models.cloud")
