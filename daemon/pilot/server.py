@@ -1386,9 +1386,19 @@ class PilotServer:
     async def _handle_reset_config(self, params: dict, ws: ServerConnection) -> dict:
         """Reset configuration to factory defaults."""
 
-        self.config = PilotConfig()
-        self.config.save()
+    default_config = PilotConfig()
 
+    for field in default_config.__dataclass_fields__:
+    val = getattr(default_config, field)
+    current = getattr(self.config, field)
+
+    if hasattr(val, "__dataclass_fields__"):
+        for subfield in val.__dataclass_fields__:
+        setattr(current, subfield, getattr(val, subfield))
+    else:
+        setattr(self.config, field, val)
+
+        self.config.save()
         return {"status": "ok"}
 
     # -- History --
