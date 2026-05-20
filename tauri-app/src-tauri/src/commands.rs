@@ -74,7 +74,13 @@ pub async fn confirm_action(window: tauri::Window, plan_id: String, confirmed: b
 // The daemon's PilotConfig.load() falls back to safe defaults when the file is absent.
 #[tauri::command]
 pub async fn reset_settings_to_defaults() -> Result<(), String> {
-    let config_dir = dirs::config_dir().ok_or("Could not find user config directory")?;
+    let config_dir = match std::env::var("XDG_CONFIG_HOME") {
+        Ok(path) => std::path::PathBuf::from(path),
+        Err(_) => {
+            let home = dirs::home_dir().ok_or("Could not find user home directory")?;
+            home.join(".config")
+        }
+    };
     let config_file = config_dir.join("pilot").join("config.toml");
     
     if config_file.exists() {
