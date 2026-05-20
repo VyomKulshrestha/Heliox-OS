@@ -23,23 +23,10 @@ def _apply_proxy_env(config: PilotConfig) -> None:
         os.environ["no_proxy"] = config.proxy.no_proxy
 
 
-def _build_proxy_map(config: PilotConfig) -> dict[str, str] | None:
-    proxies: dict[str, str] = {}
-    if config.proxy.http:
-        proxies["http://"] = config.proxy.http
-    if config.proxy.https:
-        proxies["https://"] = config.proxy.https
-    return proxies or None
-
-
 def create_httpx_client(config: PilotConfig, **kwargs: Any) -> httpx.AsyncClient:
     """Construct an httpx AsyncClient with proxy and env fallback support."""
     _apply_proxy_env(config)
     if "trust_env" not in kwargs:
         kwargs["trust_env"] = True
-
-    proxies = _build_proxy_map(config)
-    if proxies is not None:
-        kwargs["proxies"] = proxies
 
     return httpx.AsyncClient(**kwargs)
