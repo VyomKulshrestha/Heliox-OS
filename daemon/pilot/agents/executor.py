@@ -45,6 +45,7 @@ from pilot.actions import (
     ServiceParams,
     ShellCommandParams,
     ShellScriptParams,
+    SkillRunParams,
     SystemInfoParams,
     TriggerParams,
     VolumeParams,
@@ -59,6 +60,7 @@ from pilot.system.snapshots import SnapshotManager
 
 if TYPE_CHECKING:
     from pilot.config import PilotConfig
+    from pilot.skills.loader import SkillRegistry
 
 logger = logging.getLogger("pilot.agents.executor")
 
@@ -72,11 +74,13 @@ class Executor:
         validator: ActionValidator,
         permissions: PermissionChecker,
         audit: AuditLogger,
+        skill_registry: SkillRegistry | None = None,
     ) -> None:
         self._config = config
         self._validator = validator
         self._permissions = permissions
         self._audit = audit
+        self._skill_registry = skill_registry
         self._snapshot_mgr = SnapshotManager(config)
         self._simulation_sandbox = SimulationSandbox()
         self._last_output: str = ""  # For output chaining between steps
@@ -231,6 +235,7 @@ class Executor:
             # -- Code execution --
             ActionType.CODE_EXECUTE: self._exec_code_execute,
             ActionType.CODE_GENERATE_AND_RUN: self._exec_code_generate,
+            ActionType.SKILL_RUN: self._exec_skill_run,
             # -- File intelligence --
             ActionType.FILE_PARSE: self._exec_file_parse,
             ActionType.FILE_SEARCH_CONTENT: self._exec_file_search_content,
@@ -1440,6 +1445,15 @@ class Executor:
     # ======================================================================
     # TIER 2: CODE EXECUTION
     # ======================================================================
+
+    async def _exec_skill_run(self, action: Action) -> str:
+        from pilot.skills.base import SkillContext
+
+        p: SkillRunParams = action.parameters  # type: ignore[assignment]
+        if self._skill_registry is None:
+            return "Skill registry is not configured"
+        ctx = SkillContext(pilot_config=self._config)
+        return await self._skill_registry.run(p.skill_id.strip(), p.arguments, ctx)
 
     async def _exec_code_execute(self, action: Action) -> str:
         import tempfile

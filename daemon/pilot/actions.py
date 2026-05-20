@@ -7,9 +7,9 @@ validated Action objects — there is no path from raw LLM text to system calls.
 from __future__ import annotations
 
 from enum import Enum, StrEnum
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class ActionType(StrEnum):
@@ -202,6 +202,9 @@ class ActionType(StrEnum):
     API_SLACK = "api_slack"
     API_DISCORD = "api_discord"
     API_SCRAPE = "api_scrape"
+
+    # -- Third-party skills (dynamic ``pilot/skills`` loader) --
+    SKILL_RUN = "skill_run"
 
 
 class PermissionTier(int, Enum):
@@ -551,6 +554,21 @@ class TriggerParams(BaseModel):
 # ======= TIER 2: MULTIPLIER PARAMS =======
 
 
+class SkillRunParams(BaseModel):
+    """Invoke a dynamically loaded :class:`pilot.skills.base.Skill`."""
+
+    skill_id: str = ""
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_aliases(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "arguments" not in data and "params" in data:
+            data = dict(data)
+            data["arguments"] = data.pop("params")
+        return data
+
+
 class CodeExecParams(BaseModel):
     """For code generation and execution."""
 
@@ -640,6 +658,7 @@ ActionParameters = (
     | CodeExecParams
     | FileIntelParams
     | ApiRequestParams
+    | SkillRunParams
     | EmptyParams
 )
 
@@ -667,6 +686,7 @@ class Action(BaseModel):
             ActionType.FILE_COPY,
             ActionType.CODE_EXECUTE,
             ActionType.CODE_GENERATE_AND_RUN,
+            ActionType.SKILL_RUN,
             ActionType.SHELL_COMMAND,
             ActionType.BROWSER_NAVIGATE,
             ActionType.BROWSER_EXTRACT,

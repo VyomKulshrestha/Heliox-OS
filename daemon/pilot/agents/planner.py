@@ -46,6 +46,7 @@ from pilot.actions import (
     ServiceParams,
     ShellCommandParams,
     ShellScriptParams,
+    SkillRunParams,
     SystemInfoParams,
     TriggerParams,
     VolumeParams,
@@ -289,14 +290,31 @@ Generate a NEW plan that avoids this error. Keep it SIMPLE — fewer actions is 
 class Planner:
     """Converts natural language to structured action plans."""
 
-    def __init__(self, model_router: ModelRouter, memory: MemoryStore) -> None:
+    def __init__(
+        self,
+        model_router: ModelRouter,
+        memory: MemoryStore,
+        skills_context: str = "",
+    ) -> None:
         self._model = model_router
         self._memory = memory
-        self._system_prompt = SYSTEM_PROMPT.format(
+        self._system_prompt_base = SYSTEM_PROMPT.format(
             os=_detect_os(),
             path_style="Windows (C:\\Users\\...)" if sys.platform == "win32" else "Unix (/home/...)",
             home=str(__import__("pathlib").Path.home()),
         )
+        self._skills_context = skills_context.strip()
+        self._rebuild_system_prompt()
+
+    def set_skills_context(self, skills_context: str) -> None:
+        """Update planner instructions after a hot skill reload."""
+        self._skills_context = skills_context.strip()
+        self._rebuild_system_prompt()
+
+    def _rebuild_system_prompt(self) -> None:
+        self._system_prompt = self._system_prompt_base
+        if self._skills_context:
+            self._system_prompt += "\n\n" + self._skills_context
 
     # ------------------------------------------------------------------
     # Fast-path: instant local matching for simple commands (no LLM call)
@@ -825,6 +843,9 @@ class Planner:
         "file_rename": "file_move",
         "scrape_url": "api_scrape",
         "web_scrape": "api_scrape",
+        "custom_skill": "skill_run",
+        "skill": "skill_run",
+        "run_skill": "skill_run",
         "screen_read": "screen_ocr",
         "ocr": "screen_ocr",
         "take_screenshot": "screenshot",
@@ -946,6 +967,10 @@ class Planner:
                 p["url"] = target
             if "output_path" not in p:
                 p["output_path"] = str(__import__("pathlib").Path.home() / "Downloads" / "download")
+
+        elif action_type == ActionType.SKILL_RUN:
+            if (not p.get("skill_id")) and target:
+                p["skill_id"] = target
 
         file_types = {
             ActionType.FILE_READ,
@@ -1276,6 +1301,9 @@ class Planner:
         }
         if action_type in code_exec_types:
             return CodeExecParams(**params)
+
+        if action_type == ActionType.SKILL_RUN:
+            return SkillRunParams(**params)
 
         file_intel_types = {
             ActionType.FILE_PARSE,

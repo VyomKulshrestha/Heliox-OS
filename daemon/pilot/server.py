@@ -101,6 +101,7 @@ class PilotServer:
         self._sandbox: Any = None
         self._prompt_improver: Any = None
         self._plugin_registry: Any = None
+        self._skill_registry: Any = None
         self._subconscious: Any = None
         self._screen_vision: Any = None
         self._memory: Any = None
@@ -150,8 +151,23 @@ class PilotServer:
         self._memory = MemoryStore()
         await self._memory.initialize()
 
-        self._planner = Planner(model_router, self._memory)
-        self._executor = Executor(self.config, validator, permissions, audit)
+        from pilot.skills.loader import SkillRegistry
+
+        self._skill_registry = SkillRegistry()
+        self._skill_registry.load_all()
+
+        self._planner = Planner(
+            model_router,
+            self._memory,
+            skills_context=self._skill_registry.planner_prompt_block(),
+        )
+        self._executor = Executor(
+            self.config,
+            validator,
+            permissions,
+            audit,
+            skill_registry=self._skill_registry,
+        )
         self._verifier = Verifier(model_router)
 
         # Advanced agent components
@@ -351,6 +367,10 @@ class PilotServer:
             "plugin_list": self._handle_plugin_list,
             "plugin_tools": self._handle_plugin_tools,
             "plugin_toggle": self._handle_plugin_toggle,
+            # Dynamic Python skills (pilot/skills + ~/.config/pilot/skills)
+            "skills_list": self._handle_skills_list,
+            "skills_reload": self._handle_skills_reload,
+            "skills_load_report": self._handle_skills_load_report,
             # Subconscious agent endpoints
             "persona_rules": self._handle_persona_rules,
             "persona_consolidate": self._handle_persona_consolidate,
@@ -1487,6 +1507,43 @@ class PilotServer:
                 ok = self._plugin_registry.disable_plugin(name)
             return {"success": ok, "plugin": name, "enabled": enabled}
         return {"error": "Plugin registry not initialized"}
+
+    async def _handle_skills_list(self, params: dict, ws: ServerConnection) -> dict:
+        if self._skill_registry:
+            return {"skills": self._skill_registry.list_skills()}
+        return {"error": "Skill registry not initialized"}
+
+    async def _handle_skills_reload(self, params: dict, ws: ServerConnection) -> dict:
+        if self._skill_registry:
+            records = self._skill_registry.reload()
+            serial = [
+                {
+                    "path": r.path,
+                    "success": r.success,
+                    "skill_ids": r.skill_ids,
+                    "error": r.error,
+                }
+                for r in records
+            ]
+            if self._planner:
+                self._planner.set_skills_context(self._skill_registry.planner_prompt_block())
+            return {"ok": True, "records": serial, "skills": self._skill_registry.list_skills()}
+        return {"error": "Skill registry not initialized"}
+
+    async def _handle_skills_load_report(self, params: dict, ws: ServerConnection) -> dict:
+        if self._skill_registry:
+            records = self._skill_registry.last_load_records
+            serial = [
+                {
+                    "path": r.path,
+                    "success": r.success,
+                    "skill_ids": r.skill_ids,
+                    "error": r.error,
+                }
+                for r in records
+            ]
+            return {"records": serial, "search_dirs": [str(p) for p in self._skill_registry.search_dirs]}
+        return {"error": "Skill registry not initialized"}
 
     # ── Subconscious Agent Handlers ──
 

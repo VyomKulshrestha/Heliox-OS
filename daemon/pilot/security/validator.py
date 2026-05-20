@@ -27,6 +27,7 @@ from pilot.actions import (
     ServiceParams,
     ShellCommandParams,
     ShellScriptParams,
+    SkillRunParams,
 )
 from pilot.security.sanitizer import SanitizationError, Sanitizer
 
@@ -150,6 +151,7 @@ NO_TARGET_REQUIRED = {
     ActionType.API_SLACK,
     ActionType.API_DISCORD,
     ActionType.API_SCRAPE,
+    ActionType.SKILL_RUN,
 }
 
 # File action types
@@ -235,6 +237,16 @@ class ActionValidator:
         elif isinstance(params, RegistryParams):
             if not params.key_path:
                 raise ValidationError(idx, "Empty registry key_path")
+
+        elif isinstance(params, SkillRunParams):
+            if not params.skill_id or not params.skill_id.strip():
+                raise ValidationError(idx, "skill_run requires non-empty skill_id")
+            sid = params.skill_id.strip()
+            if len(sid) > 128:
+                raise ValidationError(idx, "skill_id too long")
+            allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
+            if not all(ch in allowed for ch in sid):
+                raise ValidationError(idx, "skill_id contains illegal characters")
 
         elif isinstance(params, (OpenApplicationParams, NotifyParams)):
             pass
