@@ -63,6 +63,8 @@ class ContextCompressor:
         """
         total_tokens = 0
         for item in history:
+            if "user_input" in item and isinstance(item["user_input"], str):
+                total_tokens += self.count_tokens(item["user_input"])
             if "plan" in item and isinstance(item["plan"], dict):
                 total_tokens += self.estimate_plan_tokens(item["plan"])
             if "result" in item and isinstance(item.get("result"), dict):
@@ -79,8 +81,12 @@ class ContextCompressor:
 
         for item in reversed(history):
             item_tokens = 0
+            if "user_input" in item and isinstance(item["user_input"], str):
+                item_tokens += self.count_tokens(item["user_input"])
             if "plan" in item and isinstance(item["plan"], dict):
-                item_tokens = self.estimate_plan_tokens(item["plan"])
+                item_tokens += self.estimate_plan_tokens(item["plan"])
+            if "result" in item and isinstance(item.get("result"), dict):
+                item_tokens += self.estimate_action_tokens(item.get("result", {}))
 
             if running_tokens + item_tokens < self._max_tokens - NUM_RESERVED_TOKENS:
                 recent_items.insert(0, item)
