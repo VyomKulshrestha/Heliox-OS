@@ -1,8 +1,9 @@
 """Secure execution sandbox for agent-generated code.
 
 Provides OS-level isolation so untrusted code cannot harm the host system.
-Two backends are supported, selected automatically or via config:
+Backends are selected automatically or via config:
 
+  firecracker — strict microVM mode, gated by explicit host artifacts
   docker     — ephemeral container per execution (best isolation)
   restricted  — ulimit + stripped env subprocess (fallback, no Docker needed)
   none        — direct execution, no isolation (legacy / opt-out)
@@ -39,12 +40,16 @@ logger = logging.getLogger("pilot.system.sandbox_exec")
 class SandboxConfig:
     """Runtime configuration for the sandbox layer."""
 
-    mode: str = "auto"  # "auto" | "docker" | "restricted" | "none"
+    mode: str = "auto"  # "auto" | "firecracker" | "docker" | "restricted" | "none"
     memory_mb: int = 128  # memory cap (docker & restricted)
     timeout: int = 30  # max wall-clock seconds
     network: bool = False  # allow outbound network inside sandbox
     kernel_guard: bool = True  # apply Linux seccomp-BPF syscall denylist when available
     blocked_syscalls: tuple[str, ...] = ("unlink", "unlinkat")
+    firecracker_binary: str = "firecracker"  # executable path or command name
+    firecracker_kernel_image: str = ""  # vmlinux path used by the microVM runtime
+    firecracker_rootfs_path: str = ""  # root filesystem image for guest execution
+    firecracker_fallback: bool = True  # fall back to Docker/restricted if unavailable
 
 
 # ---------------------------------------------------------------------------
@@ -172,6 +177,40 @@ class DockerBackend(_SandboxBackend):
         finally:
             if script_path:
                 _safe_unlink(script_path)
+
+
+# ---------------------------------------------------------------------------
+# Firecracker backend foundation
+# ---------------------------------------------------------------------------
+
+
+class FirecrackerBackend(_SandboxBackend):
+    """Preflight-gated Firecracker sandbox backend.
+
+    The backend is intentionally strict: it only becomes active when the
+    host has the Firecracker binary plus guest kernel/rootfs artifacts. The
+    actual guest process handoff is kept behind this backend boundary so the
+    sandbox resolver can safely expose a Firecracker mode without silently
+    degrading isolation when operators disable fallback.
+    """
+
+    async def run(self, code: str, language: str, config: SandboxConfig) -> str:
+        reason = _firecracker_unavailable_reason(config)
+        if reason:
+            logger.error("Firecracker sandbox requested but unavailable: %s", reason)
+            return f"ERROR: Firecracker sandbox unavailable: {reason}"
+
+        lang = _normalise_language(language)
+        if lang not in _DOCKER_LANG_MAP:
+            return f"ERROR: Firecracker sandbox does not support language '{language}'"
+
+        logger.warning(
+            "Firecracker sandbox preflight succeeded, but guest execution handoff is not enabled in this build."
+        )
+        return (
+            "ERROR: Firecracker sandbox preflight passed, but microVM guest execution "
+            "handoff is not enabled in this build."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -424,6 +463,21 @@ class SecureExecutionSandbox:
             )
             return RestrictedBackend(), "restricted"
 
+        if mode == "firecracker":
+            reason = _firecracker_unavailable_reason(self._config)
+            if not reason:
+                return FirecrackerBackend(), "firecracker"
+            if not self._config.firecracker_fallback:
+                logger.warning("Firecracker requested without fallback; sandbox will fail closed: %s", reason)
+                return FirecrackerBackend(), "firecracker"
+            logger.warning(
+                "sandbox_mode='firecracker' requested but unavailable (%s). Falling back to the next sandbox backend.",
+                reason,
+            )
+            if _docker_available():
+                return DockerBackend(), "docker"
+            return RestrictedBackend(), "restricted"
+
         if mode == "restricted":
             return RestrictedBackend(), "restricted"
 
@@ -507,6 +561,26 @@ def _docker_available() -> bool:
     except Exception as exc:
         logger.debug("Docker daemon status check failed: %s", exc)
         return False
+
+
+def _firecracker_unavailable_reason(config: SandboxConfig) -> str:
+    """Return a human-readable reason Firecracker cannot be selected."""
+    if sys.platform != "linux":
+        return "Firecracker is only supported on Linux hosts"
+
+    if shutil.which(config.firecracker_binary) is None:
+        return f"Firecracker binary not found: {config.firecracker_binary}"
+
+    missing = []
+    if not config.firecracker_kernel_image or not os.path.exists(config.firecracker_kernel_image):
+        missing.append("kernel image")
+    if not config.firecracker_rootfs_path or not os.path.exists(config.firecracker_rootfs_path):
+        missing.append("rootfs image")
+
+    if missing:
+        return "missing " + " and ".join(missing)
+
+    return ""
 
 
 def _safe_unlink(path: str) -> None:

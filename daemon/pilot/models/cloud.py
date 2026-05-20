@@ -40,7 +40,7 @@ class CloudClient:
 
     async def generate(
         self,
-        prompt: str,
+        prompt: str | list[dict[str, Any]],
         *,
         system: str = "",
         json_mode: bool = False,
@@ -128,7 +128,7 @@ class CloudClient:
         self,
         api_key: str,
         model: str,
-        prompt: str,
+        prompt: str | list[dict[str, Any]],
         system: str,
         json_mode: bool,
         temperature: float,
@@ -143,10 +143,16 @@ class CloudClient:
 
         # Build contents
         contents = []
-        if system:
-            # Gemini uses systemInstruction for system prompts
-            pass  # handled below
-        contents.append({"parts": [{"text": prompt}]})
+        system_content = system
+        if isinstance(prompt, list):
+            for msg in prompt:
+                if msg["role"] == "system":
+                    system_content = msg["content"]
+                else:
+                    role = "model" if msg["role"] == "assistant" else "user"
+                    contents.append({"role": role, "parts": [{"text": msg["content"]}]})
+        else:
+            contents.append({"parts": [{"text": prompt}]})
 
         payload: dict = {
             "contents": contents,
@@ -156,8 +162,8 @@ class CloudClient:
         }
 
         # Add system instruction
-        if system:
-            payload["systemInstruction"] = {"parts": [{"text": system}]}
+        if system_content:
+            payload["systemInstruction"] = {"parts": [{"text": system_content}]}
 
         # Add JSON mode
         if json_mode:
@@ -207,16 +213,19 @@ class CloudClient:
         provider: str,
         api_key: str,
         model: str,
-        prompt: str,
+        prompt: str | list[dict[str, Any]],
         system: str,
         json_mode: bool,
         temperature: float,
     ) -> str:
         endpoint = PROVIDER_ENDPOINTS.get(provider, PROVIDER_ENDPOINTS["openai"])
         messages = []
-        if system:
-            messages.append({"role": "system", "content": system})
-        messages.append({"role": "user", "content": prompt})
+        if isinstance(prompt, list):
+            messages = prompt
+        else:
+            if system:
+                messages.append({"role": "system", "content": system})
+            messages.append({"role": "user", "content": prompt})
 
         payload: dict = {
             "model": model,
@@ -259,7 +268,7 @@ class CloudClient:
         self,
         api_key: str,
         model: str,
-        prompt: str,
+        prompt: str | list[dict[str, Any]],
         system: str,
         temperature: float,
     ) -> str:
@@ -268,14 +277,25 @@ class CloudClient:
             "content-type": "application/json",
             "anthropic-version": "2023-06-01",
         }
+        messages = []
+        system_content = system
+        if isinstance(prompt, list):
+            for msg in prompt:
+                if msg["role"] == "system":
+                    system_content = msg["content"]
+                else:
+                    messages.append({"role": msg["role"], "content": msg["content"]})
+        else:
+            messages = [{"role": "user", "content": prompt}]
+
         payload: dict = {
             "model": model,
             "max_tokens": 4096,
             "temperature": temperature,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": messages,
         }
-        if system:
-            payload["system"] = system
+        if system_content:
+            payload["system"] = system_content
 
         for attempt in range(MAX_RETRIES + 1):
             resp = await self._client.post(PROVIDER_ENDPOINTS["claude"], json=payload, headers=headers)

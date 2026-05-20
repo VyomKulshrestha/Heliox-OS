@@ -31,7 +31,6 @@ STATE_DIR = _xdg("XDG_STATE_HOME", ".local/state") / "pilot"
 RUNTIME_DIR = (
     Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid() if hasattr(os, 'getuid') else 1000}")) / "pilot"
 )
-
 CONFIG_FILE = CONFIG_DIR / "config.toml"
 RESTRICTIONS_FILE = CONFIG_DIR / "restrictions.toml"
 DB_FILE = DATA_DIR / "pilot.db"
@@ -71,12 +70,16 @@ class SecurityConfig:
     snapshot_retention_days: int = 7
     unrestricted_shell: bool = False  # Allow ANY shell command (bypass whitelist)
     # Code execution sandbox — isolates agent-generated code from the host OS
-    sandbox_mode: str = "auto"  # "auto" | "docker" | "restricted" | "none"
+    sandbox_mode: str = "auto"  # "auto" | "firecracker" | "docker" | "restricted" | "none"
     sandbox_memory_mb: int = 128  # memory cap applied inside the sandbox (MB)
     sandbox_timeout: int = 30  # max wall-clock seconds for sandboxed execution
     sandbox_network: bool = False  # allow outbound network inside the sandbox
     sandbox_kernel_guard: bool = True  # Linux seccomp-BPF syscall denylist for restricted mode
     sandbox_blocked_syscalls: list[str] = field(default_factory=lambda: ["unlink", "unlinkat"])
+    sandbox_firecracker_binary: str = "firecracker"  # executable path or command name
+    sandbox_firecracker_kernel_image: str = ""  # vmlinux path used by strict microVM mode
+    sandbox_firecracker_rootfs_path: str = ""  # rootfs image path used by strict microVM mode
+    sandbox_firecracker_fallback: bool = True  # fall back to Docker/restricted if microVM mode is unavailable
 
 
 @dataclass
@@ -107,6 +110,8 @@ class ProxyConfig:
 @dataclass
 class MemoryConfig:
     checkpoint_interval_seconds: int = 300
+    max_context_tokens: int = 8000
+    max_recent_messages: int = 10
 
 
 @dataclass
@@ -247,6 +252,10 @@ def _validate_config_types(raw: dict) -> None:
             "sandbox_network": bool,
             "sandbox_kernel_guard": bool,
             "sandbox_blocked_syscalls": list,
+            "sandbox_firecracker_binary": str,
+            "sandbox_firecracker_kernel_image": str,
+            "sandbox_firecracker_rootfs_path": str,
+            "sandbox_firecracker_fallback": bool,
         },
         "server": {
             "host": str,
@@ -262,6 +271,8 @@ def _validate_config_types(raw: dict) -> None:
         },
         "memory": {
             "checkpoint_interval_seconds": int,
+            "max_context_tokens": int,
+            "max_recent_messages": int,
         },
         "rss": {
             "enabled": bool,
@@ -361,7 +372,10 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
     if "memory" in raw:
         for k, v in raw["memory"].items():
             if hasattr(config.memory, k):
-                setattr(config.memory, k, v)
+                if k in ("max_context_tokens", "max_recent_messages", "checkpoint_interval_seconds"):
+                    setattr(config.memory, k, int(v))
+                else:
+                    setattr(config.memory, k, v)
 
     if "rss" in raw:
         for k, v in raw["rss"].items():
@@ -442,6 +456,15 @@ def _config_to_dict(config: PilotConfig) -> dict[str, Any]:
 
 
 def ensure_dirs() -> None:
-    """Create all required XDG directories."""
+    """Create all required XDG directories and validate write access."""
     for d in (CONFIG_DIR, DATA_DIR, STATE_DIR, RUNTIME_DIR):
         d.mkdir(parents=True, exist_ok=True)
+
+    test_file = DATA_DIR / ".write_test"
+
+    try:
+        test_file.write_text("test")
+        test_file.unlink()
+    except Exception as e:
+        logger.error(f"DATA_DIR is not writable: {DATA_DIR}")
+        raise RuntimeError(f"DATA_DIR is not writable: {DATA_DIR}") from e
