@@ -67,6 +67,12 @@ interface SessionState {
   streamingText: string;
 }
 
+export interface Attachment {
+  name: string;
+  type: string;
+  content: string;
+}
+
 const initialState: SessionState = {
   daemonConnected: false,
   loading: false,
@@ -259,7 +265,7 @@ function createSession() {
     listenToLLMStream(
       (chunk: any) => {
         const newText = chunk?.result?.explanation || chunk?.explanation || chunk?.result?.text || chunk?.text || "";
-        
+
         // Append characters to current active assistant index
         update((s) => {
           const updatedMessages = [...s.messages];
@@ -276,7 +282,10 @@ function createSession() {
     );
   }
 
-  async function sendCommand(input: string) {
+  async function sendCommand(
+    input: string,
+    attachments: Attachment[] = []
+  ) {
     update((s) => ({
       ...s,
       loading: true,
@@ -296,7 +305,10 @@ function createSession() {
     handleStreamingResponse();
 
     try {
-      const result = (await call("execute", { input })) as Record<string, unknown>;
+      const result = (await call("execute", {
+        input,
+        attachments,
+      })) as Record<string, unknown>;
       const isDryRun = Boolean(result.dry_run);
 
       const rawResults = (result.results ?? []) as Array<Record<string, unknown>>;
