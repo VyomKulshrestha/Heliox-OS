@@ -14,7 +14,7 @@ import sys
 import time
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -180,10 +180,17 @@ class PlanHistoryStore:
         except Exception:
             plan_dict = {}
 
-        try:
-            results_list = [r.model_dump(mode="json") for r in results if hasattr(r, "model_dump")]
-        except Exception:
-            results_list = []
+        results_list: list[Any] = []
+        for r in results:
+            try:
+                if hasattr(r, "model_dump"):
+                    results_list.append(r.model_dump(mode="json"))
+                elif isinstance(r, (dict, list, str, int, float, bool)) or r is None:
+                    results_list.append(r)
+                else:
+                    results_list.append(str(r))
+            except Exception:
+                results_list.append(str(r))
 
         try:
             verification_dict = verification.model_dump(mode="json") if (verification and hasattr(verification, "model_dump")) else None
@@ -201,7 +208,7 @@ class PlanHistoryStore:
             """,
             (
                 plan_id,
-                datetime.utcnow().isoformat(),
+                datetime.now(timezone.utc).isoformat(),
                 raw_input,
                 json.dumps(plan_dict, ensure_ascii=False),
                 len(getattr(plan, "actions", [])),
@@ -342,6 +349,7 @@ class PilotServer:
         self._checkpoint_store: Any = None
         # ── Plan History Audit Log ──
         self._plan_history: PlanHistoryStore | None = None
+        self._plan_history_tasks: set[asyncio.Task[None]] = set()
         # Cognitive intelligence (TRIBE v2)
         self._tribe_engine: Any = None
         self._attention_ui: Any = None
@@ -1011,7 +1019,7 @@ class PilotServer:
                         execution_error=verdict.recommendation,
                     )
                     # ── Plan History: blocked by critic ──
-                    asyncio.create_task(self._record_plan_history(
+                    self._spawn_history_task(self._record_plan_history(
                         plan_id=plan_id,
                         raw_input=user_input,
                         plan=plan,
@@ -1079,7 +1087,7 @@ class PilotServer:
                         execution_error="Plan was denied by user.",
                     )
                     # ── Plan History: user denied ──
-                    asyncio.create_task(self._record_plan_history(
+                    self._spawn_history_task(self._record_plan_history(
                         plan_id=plan_id,
                         raw_input=user_input,
                         plan=plan,
@@ -1190,7 +1198,7 @@ class PilotServer:
                 if self._checkpoint_store:
                     await self._checkpoint_store.mark_status(plan_id, "cancelled")
                 # ── Plan History: cancelled mid-execution ──
-                asyncio.create_task(self._record_plan_history(
+                self._spawn_history_task(self._record_plan_history(
                     plan_id=plan_id,
                     raw_input=user_input,
                     plan=plan,
@@ -1286,7 +1294,7 @@ class PilotServer:
                     )
 
                 # ── Plan History: success ──
-                asyncio.create_task(self._record_plan_history(
+                self._spawn_history_task(self._record_plan_history(
                     plan_id=plan_id,
                     raw_input=user_input,
                     plan=plan,
@@ -1364,7 +1372,7 @@ class PilotServer:
             await self._checkpoint_store.mark_status(last_plan_id, "failed")
 
         # ── Plan History: partial_failure after all retries exhausted ──
-        asyncio.create_task(self._record_plan_history(
+        self._spawn_history_task(self._record_plan_history(
             plan_id=last_plan_id,
             raw_input=user_input,
             plan=plan,
@@ -1443,6 +1451,20 @@ class PilotServer:
             )
         except Exception:
             logger.warning("_record_plan_history failed (non-critical)", exc_info=True)
+
+    def _spawn_history_task(self, coro: Any) -> None:
+        """Schedule a plan-history coroutine as a tracked background task.
+
+        The task is added to ``_plan_history_tasks`` and automatically removed
+        when it completes, so ``stop()`` can drain any in-flight writes before
+        closing the SQLite connection.
+
+        Args:
+            coro: The coroutine to schedule (typically ``_record_plan_history(...)``).
+        """
+        task: asyncio.Task[None] = asyncio.create_task(coro)
+        self._plan_history_tasks.add(task)
+        task.add_done_callback(self._plan_history_tasks.discard)
 
     async def _handle_resume_plan(self, params: dict[str, Any], ws: ServerConnection) -> dict:
         """Resume a previously checkpointed plan from its last completed action."""
@@ -2731,7 +2753,15 @@ class PilotServer:
             await self._memory.close()
         if self._budget_tracker:
             await self._budget_tracker.close()
-        # ── Close Plan History store ──
+        # ── Drain pending plan-history tasks before closing the store ──
+        # Avoids aiosqlite.ProgrammingError when a fire-and-forget log task
+        # is still writing as the connection is torn down.
+        if self._plan_history_tasks:
+            logger.info(
+                "Waiting for %d pending plan-history task(s) to flush…",
+                len(self._plan_history_tasks),
+            )
+            await asyncio.gather(*self._plan_history_tasks, return_exceptions=True)
         if self._plan_history:
             await self._plan_history.close()
         if self._tribe_engine and self._tribe_engine.is_loaded:
@@ -3423,4 +3453,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-    
