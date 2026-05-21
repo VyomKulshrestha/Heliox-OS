@@ -88,23 +88,6 @@
     }
     if (permissionGranted) {
       sendNotification({ title: "Heliox OS", body: "Notifications are working!" });
-  async function testNotification() {
-    try {
-      let granted = await isPermissionGranted();
-      if (!granted) {
-        const permission = await requestPermission();
-        granted = permission === 'granted';
-      }
-      if (granted) {
-        sendNotification({
-          title: 'Heliox OS',
-          body: 'Test notification — desktop notifications are working! 🚀',
-        });
-      } else {
-        console.warn('Notification permission was denied');
-      }
-    } catch (err) {
-      console.error('Notification test failed:', err);
     }
   }
 </script>
