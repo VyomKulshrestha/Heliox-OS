@@ -47,9 +47,6 @@ async def test_audit_logger_serializes_concurrent_writes(tmp_path):
         logger.log_security_event("three"),
     )
 
-    events = [
-        json.loads(line)["details"]["event"]
-        for line in audit_file.read_text(encoding="utf-8").splitlines()
-    ]
+    events = [json.loads(line)["details"]["event"] for line in audit_file.read_text(encoding="utf-8").splitlines()]
 
     assert sorted(events) == ["one", "three", "two"]

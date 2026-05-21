@@ -27,6 +27,8 @@ from pilot.actions import (
     ServiceParams,
     ShellCommandParams,
     ShellScriptParams,
+    SshCommandParams,
+    SshScriptParams,
 )
 from pilot.security.sanitizer import SanitizationError, Sanitizer
 
@@ -150,6 +152,9 @@ NO_TARGET_REQUIRED = {
     ActionType.API_SLACK,
     ActionType.API_DISCORD,
     ActionType.API_SCRAPE,
+    # SSH remote exec is parameter-driven (host alias)
+    ActionType.SSH_COMMAND,
+    ActionType.SSH_SCRIPT,
 }
 
 # File action types
@@ -221,6 +226,14 @@ class ActionValidator:
             # Scripts get validated more loosely — they're inherently powerful
             if not params.script or not params.script.strip():
                 raise ValidationError(idx, "Empty script")
+
+        elif isinstance(params, (SshCommandParams, SshScriptParams)):
+            if not params.host or not params.host.strip():
+                raise ValidationError(idx, "Empty SSH host alias")
+            if isinstance(params, SshCommandParams) and (not params.command or not params.command.strip()):
+                raise ValidationError(idx, "Empty SSH command")
+            if isinstance(params, SshScriptParams) and (not params.script or not params.script.strip()):
+                raise ValidationError(idx, "Empty SSH script")
 
         elif isinstance(params, DBusParams):
             self._sanitizer.validate_dbus_params(params, idx)

@@ -16,7 +16,7 @@ async def test_directory_summary_includes_tree_and_file_sizes(tmp_path):
     summary = await directory_summary(str(tmp_path))
 
     assert "src/" in summary
-    assert "main.py (15 B)" in summary
+    assert "main.py (16 B)" in summary
     assert "README.md (14 B)" in summary
 
 

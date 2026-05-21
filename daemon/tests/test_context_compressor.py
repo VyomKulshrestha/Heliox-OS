@@ -80,7 +80,7 @@ class TestContextCompressor:
     async def test_compress_conversation_with_compression(self, compressor):
         """Test compression triggers when over threshold."""
         large_history = []
-        for i in range(100):
+        for i in range(400):
             large_history.append(
                 {
                     "user_input": f"Task {i}",
