@@ -51,4 +51,3 @@ def export_logs() -> Path:
 
     print(f"[heliox] Bug report created: {zip_path} ({files_added} files)")
     return zip_path
-
