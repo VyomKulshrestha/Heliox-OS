@@ -120,7 +120,7 @@
       </div>
       <select class="input-md" bind:value={$locale}>
         <option value="en">English</option>
-        <option value="hi">हिन्दी</option>
+        <option value="hi">Hindi</option>
       </select>
     </div>
   </section>
