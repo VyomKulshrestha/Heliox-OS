@@ -7,7 +7,7 @@ validated Action objects ΓÇö there is no path from raw LLM text to system cal
 from __future__ import annotations
 
 from enum import Enum, StrEnum
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -223,6 +223,9 @@ class ActionType(StrEnum):
 
     # -- VLM zero-shot element detection --
     SCREEN_DETECT_ELEMENTS = "screen_detect_elements"
+
+    # -- WebAssembly Plugin execution --
+    WASM_CALL = "wasm_call"
 
 
 class PermissionTier(int, Enum):
@@ -719,6 +722,13 @@ class SshScriptParams(BaseModel):
     timeout_seconds: int = 300
 
 
+class WasmCallParams(BaseModel):
+    """Parameters for wasm_call action."""
+
+    tool: str = ""
+    args: dict[str, Any] = Field(default_factory=dict)
+
+
 class EmptyParams(BaseModel):
     """For actions that need no parameters."""
 
@@ -766,6 +776,7 @@ ActionParameters = (
     | SshCommandParams
     | SshScriptParams
     | ElementDetectionParams
+    | WasmCallParams
     | EmptyParams
 )
 
@@ -831,6 +842,7 @@ class Action(BaseModel):
             ActionType.API_REQUEST,
             ActionType.API_SCRAPE,
             ActionType.DOWNLOAD_FILE,
+            ActionType.WASM_CALL,
         }
         if self.action_type in ALWAYS_SAFE:
             return PermissionTier.USER_WRITE
