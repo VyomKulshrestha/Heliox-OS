@@ -6,8 +6,11 @@
 
   function handleSubmit(e: Event) {
     e.preventDefault();
+
     const text = input.trim();
-    if (!text) return;
+
+    if (!text || input.length >= MAX_CHARS) return;
+
     session.sendCommand(text);
     input = "";
   }
@@ -22,21 +25,30 @@
 <form class="command-input" onsubmit={handleSubmit}>
   <div class="input-wrapper">
     <span class="prompt">&gt;</span>
+
     <input
       type="text"
       bind:value={input}
+      maxlength="20000"
       placeholder="Tell Heliox OS what to do..."
       onkeydown={handleKeydown}
       autocomplete="off"
       spellcheck="false"
     />
+
     <div
       class="char-counter"
-      style:color={input.length > MAX_CHARS ? "red" : "#888"}
+      style:color={input.length >= MAX_CHARS ? "red" : "#888"}
     >
       {input.length}/{MAX_CHARS}
     </div>
-    <button type="submit" class="send-btn" title="Send" disabled={!input.trim()}>
+
+    <button
+      type="submit"
+      class="send-btn"
+      title="Send"
+      disabled={!input.trim() || input.length >= MAX_CHARS}
+    >
       Send
     </button>
   </div>
@@ -100,9 +112,12 @@
     opacity: 0.4;
     cursor: default;
   }
+
   .char-counter {
+    display: flex;
+    align-items: center;
     font-size: 12px;
     text-align: right;
-    margin-top: 4px;
+    white-space: nowrap;
   }
 </style>
