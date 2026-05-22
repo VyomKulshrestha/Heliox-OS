@@ -58,7 +58,7 @@ class Trigger:
             return False
         if self.max_fires > 0 and self.fire_count >= self.max_fires:
             return False
-        return not time.time() - self.last_fired < self.cooldown_seconds
+        return (time.time() - self.last_fired) >= self.cooldown_seconds
 
 
 class TriggerEngine:
@@ -198,7 +198,7 @@ class TriggerEngine:
             import psutil
 
             threshold = condition.get("threshold", 90)
-            cpu = psutil.cpu_percent(interval=1)
+            cpu = await asyncio.to_thread(psutil.cpu_percent, interval=1)
             return cpu > threshold
         except ImportError:
             return False
@@ -208,7 +208,7 @@ class TriggerEngine:
             import psutil
 
             threshold = condition.get("threshold", 90)
-            mem = psutil.virtual_memory()
+            mem = await asyncio.to_thread(psutil.virtual_memory)
             return mem.percent > threshold
         except ImportError:
             return False
@@ -219,7 +219,7 @@ class TriggerEngine:
 
             threshold = condition.get("threshold", 95)
             path = condition.get("path", "/")
-            usage = psutil.disk_usage(path)
+            usage = await asyncio.to_thread(psutil.disk_usage, path)
             return usage.percent > threshold
         except ImportError:
             return False
@@ -229,7 +229,7 @@ class TriggerEngine:
             import psutil
 
             threshold = condition.get("threshold", 20)
-            batt = psutil.sensors_battery()
+            batt = await asyncio.to_thread(psutil.sensors_battery)
             if batt is None:
                 return False
             return batt.percent < threshold and not batt.power_plugged
@@ -279,25 +279,46 @@ class TriggerEngine:
             import psutil
 
             name = condition.get("name", "")
-            for proc in psutil.process_iter(["name"]):
-                if name.lower() in proc.info["name"].lower():
-                    return expect  # Found AND we're looking for "started"
-            return not expect  # Not found AND we're looking for "stopped"
+            def check():
+                for proc in psutil.process_iter(["name"]):
+                    if name.lower() in proc.info["name"].lower():
+                        return expect
+                return not expect
+            return await asyncio.to_thread(check)
         except ImportError:
             return False
 
     async def _check_custom(self, condition: dict) -> bool:
-        """Evaluate a custom Python expression."""
+        """Evaluate a custom Python expression in a safe, restricted context."""
         expr = condition.get("expression", "")
         if not expr:
             return False
-        try:
-            import psutil
-        except ImportError:
-            psutil = None
 
         try:
-            result = eval(expr, {"__builtins__": {}, "psutil": psutil, "os": os, "time": time})
+            import math
+            from types import SimpleNamespace
+            safe_globals = {
+                "__builtins__": {
+                    "abs": abs,
+                    "all": all,
+                    "any": any,
+                    "bool": bool,
+                    "float": float,
+                    "int": int,
+                    "len": len,
+                    "max": max,
+                    "min": min,
+                    "round": round,
+                    "str": str,
+                    "sum": sum,
+                },
+                "time": SimpleNamespace(
+                    time=time.time,
+                    ctime=time.ctime,
+                ),
+                "math": math,
+            }
+            result = eval(expr, safe_globals, {})
             return bool(result)
         except Exception as e:
             logger.warning("Custom condition eval error: %s", e)
