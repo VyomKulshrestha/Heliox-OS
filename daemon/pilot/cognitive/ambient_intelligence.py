@@ -53,6 +53,16 @@ class CognitiveTrend:
     confidence: float = 0.0
     duration_minutes: float = 0.0
 
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "direction": self.direction,
+            "slope_attention": self.slope_attention,
+            "slope_stress": self.slope_stress,
+            "slope_load": self.slope_load,
+            "confidence": self.confidence,
+            "duration_minutes": self.duration_minutes,
+        }
+
 
 @dataclass
 class ProactiveSuggestion:
@@ -136,6 +146,7 @@ class AmbientIntelligenceEngine:
         self._state = AmbientState()
         self._history: list[dict[str, Any]] = []
         self._max_history = 200
+        self._last_date = datetime.now().date()
 
         # Callback for when suggestions are accepted/dismissed
         self._on_suggestion: Callable[[ProactiveSuggestion, str], Coroutine] | None = None
@@ -159,6 +170,12 @@ class AmbientIntelligenceEngine:
     ) -> None:
         """Update ambient state with current cognitive metrics."""
         now = time.time()
+
+        # Check if day changed
+        current_date = datetime.now().date()
+        if current_date != self._last_date:
+            self.reset_daily_counters()
+            self._last_date = current_date
 
         # Update cognitive trend
         self._update_trend(attention, stress, load)
@@ -214,9 +231,10 @@ class AmbientIntelligenceEngine:
         def calc_slope(values: list[float]) -> float:
             if len(values) < 2:
                 return 0.0
-            mean = sum(values) / len(values)
-            num = sum((x[i] - mean / (n - 1)) * (values[i] - mean) for i in range(n))
-            den = sum((x[i] - mean / (n - 1)) ** 2 for i in range(n))
+            mean_y = sum(values) / n
+            mean_x = (n - 1) / 2.0
+            num = sum((x[i] - mean_x) * (values[i] - mean_y) for i in range(n))
+            den = sum((x[i] - mean_x) ** 2 for i in range(n))
             return num / den if den != 0 else 0.0
 
         slope_att = calc_slope([e["attention"] for e in recent])
@@ -224,8 +242,8 @@ class AmbientIntelligenceEngine:
         slope_load = calc_slope([e["load"] for e in recent])
 
         # Determine direction
-        avg_recent = sum(recent[-3:]) / 3
-        avg_older = sum(recent[:3]) / 3
+        avg_recent = sum(e["stress"] for e in recent[-3:]) / 3
+        avg_older = sum(e["stress"] for e in recent[:3]) / 3
 
         if abs(slope_stress) < 0.01:
             direction = "stable"
@@ -241,8 +259,8 @@ class AmbientIntelligenceEngine:
         self._state.cognitive_trend = CognitiveTrend(
             direction=direction,
             slope_attention=slope_att,
-            slope_stress=stress,
-            slope_load=load,
+            slope_stress=slope_stress,
+            slope_load=slope_load,
             confidence=confidence,
             duration_minutes=self._state.current_task_duration_minutes,
         )
