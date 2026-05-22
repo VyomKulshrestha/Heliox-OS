@@ -7,19 +7,25 @@ mod commands;
 mod hotkey;
 mod tray;
 
-use std::process::{Child, Command};
+use std::net::TcpStream;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use tauri::Manager;
 
 /// Global handle to the Python daemon process so we can kill it on exit.
 struct DaemonProcess(Mutex<Option<Child>>);
 
-fn get_app_data_dir() -> std::path::PathBuf {
-    let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
+const DAEMON_HOST: &str = "127.0.0.1";
+const DAEMON_PORT: u16 = 8785;
+
+fn get_app_data_dir() -> PathBuf {
+    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
     home.join(".heliox-os")
 }
 
-fn get_venv_python() -> std::path::PathBuf {
+fn get_venv_python() -> PathBuf {
     let venv_dir = get_app_data_dir().join("env");
     #[cfg(target_os = "windows")]
     {
@@ -32,12 +38,12 @@ fn get_venv_python() -> std::path::PathBuf {
 }
 
 /// Try to launch the daemon using a specific python path.
-fn try_spawn_with(python: &std::path::Path) -> Option<Child> {
+fn try_spawn_with(python: &Path) -> Option<Child> {
     let mut cmd = Command::new(python);
     cmd.args(["-m", "pilot.server"])
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::inherit());
 
     #[cfg(target_os = "windows")]
     {
@@ -45,7 +51,30 @@ fn try_spawn_with(python: &std::path::Path) -> Option<Child> {
         cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
     }
 
-    cmd.spawn().ok()
+    match cmd.spawn() {
+        Ok(child) => Some(child),
+        Err(e) => {
+            eprintln!(
+                "[Heliox OS] Failed to spawn daemon with {:?}: {}",
+                python, e
+            );
+            None
+        }
+    }
+}
+
+/// Wait until the daemon accepts TCP connections on the configured host/port.
+fn wait_for_daemon(host: &str, port: u16, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+
+    while Instant::now() < deadline {
+        if TcpStream::connect((host, port)).is_ok() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+
+    false
 }
 
 /// Run the first-time venv + pip install in a background thread (non-blocking).
@@ -57,13 +86,13 @@ fn setup_venv_in_background() {
 
         println!("[Heliox OS] First run detected — setting up virtual environment in background...");
 
-        // 1. Create venv
         #[cfg(target_os = "windows")]
         let sys_python = "python";
         #[cfg(not(target_os = "windows"))]
         let sys_python = "python3";
 
         let mut venv_cmd = Command::new(sys_python);
+
         #[cfg(target_os = "windows")]
         {
             use std::os::windows::process::CommandExt;
@@ -81,13 +110,13 @@ fn setup_venv_in_background() {
             return;
         }
 
-        // 2. pip install pilot-daemon
         #[cfg(target_os = "windows")]
         let pip_exe = venv_dir.join("Scripts").join("pip.exe");
         #[cfg(not(target_os = "windows"))]
         let pip_exe = venv_dir.join("bin").join("pip");
 
         let mut pip_cmd = Command::new(&pip_exe);
+
         #[cfg(target_os = "windows")]
         {
             use std::os::windows::process::CommandExt;
@@ -112,27 +141,88 @@ fn spawn_daemon() -> Option<Child> {
     let data_dir = get_app_data_dir();
     let _ = std::fs::create_dir_all(&data_dir);
 
-    // === Strategy 1: Try the isolated venv python (production installs) ===
     let venv_python = get_venv_python();
+
+    // Strategy 1: isolated venv python
     if venv_python.exists() {
-        if let Some(child) = try_spawn_with(&venv_python) {
+        if let Some(mut child) = try_spawn_with(&venv_python) {
             println!("[Heliox OS] AI daemon spawned from venv");
-            return Some(child);
+
+            if wait_for_daemon(DAEMON_HOST, DAEMON_PORT, Duration::from_secs(8)) {
+                println!(
+                    "[Heliox OS] AI daemon is ready on ws://{}:{}",
+                    DAEMON_HOST, DAEMON_PORT
+                );
+                return Some(child);
+            }
+
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    eprintln!(
+                        "[Heliox OS] Daemon exited early after venv spawn with status: {}",
+                        status
+                    );
+                }
+                Ok(None) => {
+                    eprintln!(
+                        "[Heliox OS] Daemon spawned from venv but did not become ready in time"
+                    );
+                }
+                Err(e) => {
+                    eprintln!(
+                        "[Heliox OS] Failed to inspect daemon process after venv spawn: {}",
+                        e
+                    );
+                }
+            }
+
+            let _ = child.kill();
+            let _ = child.wait();
         }
     }
 
-    // === Strategy 2: Try system python directly (local dev with `pip install -e daemon/`) ===
+    // Strategy 2: system python
     #[cfg(target_os = "windows")]
-    let sys_python = std::path::PathBuf::from("python");
+    let sys_python = PathBuf::from("python");
     #[cfg(not(target_os = "windows"))]
-    let sys_python = std::path::PathBuf::from("python3");
+    let sys_python = PathBuf::from("python3");
 
-    if let Some(child) = try_spawn_with(&sys_python) {
+    if let Some(mut child) = try_spawn_with(&sys_python) {
         println!("[Heliox OS] AI daemon spawned from system Python");
-        return Some(child);
+
+        if wait_for_daemon(DAEMON_HOST, DAEMON_PORT, Duration::from_secs(8)) {
+            println!(
+                "[Heliox OS] AI daemon is ready on ws://{}:{}",
+                DAEMON_HOST, DAEMON_PORT
+            );
+            return Some(child);
+        }
+
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                eprintln!(
+                    "[Heliox OS] Daemon exited early after system Python spawn with status: {}",
+                    status
+                );
+            }
+            Ok(None) => {
+                eprintln!(
+                    "[Heliox OS] Daemon spawned from system Python but did not become ready in time"
+                );
+            }
+            Err(e) => {
+                eprintln!(
+                    "[Heliox OS] Failed to inspect daemon process after system Python spawn: {}",
+                    e
+                );
+            }
+        }
+
+        let _ = child.kill();
+        let _ = child.wait();
     }
 
-    // === Strategy 3: Nothing worked — kick off background setup, don't block UI ===
+    // Strategy 3: background install if venv doesn't exist
     if !venv_python.exists() {
         println!("[Heliox OS] No daemon found. Starting background installation...");
         setup_venv_in_background();
@@ -143,8 +233,29 @@ fn spawn_daemon() -> Option<Child> {
     None
 }
 
+fn stop_daemon(state: &DaemonProcess) {
+    if let Ok(mut guard) = state.0.lock() {
+        if let Some(mut child) = guard.take() {
+            match child.try_wait() {
+                Ok(Some(_)) => {
+                    println!("[Heliox OS] Python daemon already exited");
+                }
+                Ok(None) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    println!("[Heliox OS] Python daemon stopped");
+                }
+                Err(e) => {
+                    eprintln!("[Heliox OS] Failed to inspect daemon before stop: {}", e);
+                    let _ = child.kill();
+                    let _ = child.wait();
+                }
+            }
+        }
+    }
+}
+
 fn main() {
-    // Spawn the Python daemon before building the Tauri app
     let daemon_child = spawn_daemon();
 
     tauri::Builder::default()
@@ -154,27 +265,17 @@ fn main() {
         .manage(DaemonProcess(Mutex::new(daemon_child)))
         .setup(|app| {
             let window = app.get_webview_window("main").unwrap();
-            
-            // Show the window when the user starts the app, rather than hiding it
             window.show().unwrap();
             window.set_focus().unwrap();
 
             tray::setup_tray(app)?;
             hotkey::register_hotkey(app)?;
-
             Ok(())
         })
         .on_window_event(|window, event| {
-            if let tauri::WindowEvent::Destroyed = event {
-                // Kill the daemon when the app window is destroyed
-                if let Some(state) = window.try_state::<DaemonProcess>() {
-                    if let Ok(mut guard) = state.0.lock() {
-                        if let Some(ref mut child) = *guard {
-                            let _ = child.kill();
-                            println!("[Heliox OS] Python daemon stopped");
-                        }
-                    }
-                }
+            if let tauri::WindowEvent::CloseRequested { .. } = event {
+                println!("[Heliox OS] Main window close requested");
+                let _ = window;
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -183,6 +284,12 @@ fn main() {
             commands::send_to_daemon,
             commands::confirm_action,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Heliox OS");
+        .build(tauri::generate_context!())
+        .expect("error while building Heliox OS")
+        .run(|app_handle, event| {
+            if let tauri::RunEvent::Exit = event {
+                let state = app_handle.state::<DaemonProcess>();
+                stop_daemon(&state);
+            }
+        });
 }
