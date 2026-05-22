@@ -71,7 +71,7 @@ fn setup_venv_in_background() {
         }
 
         let ok = venv_cmd
-            .args(["-m", "venv", venv_dir.to_str().unwrap()])
+            .args(["-m", "venv", &venv_dir.to_string_lossy()])
             .status()
             .map(|s| s.success())
             .unwrap_or(false);
@@ -144,21 +144,30 @@ fn spawn_daemon() -> Option<Child> {
 }
 
 fn main() {
-    // Spawn the Python daemon before building the Tauri app
-    let daemon_child = spawn_daemon();
-
     tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_notification::init())
-        .manage(DaemonProcess(Mutex::new(daemon_child)))
+        .manage(DaemonProcess(Mutex::new(None)))
         .setup(|app| {
+            // Spawn the Python daemon inside the setup hook
+            let daemon_child = spawn_daemon();
+            if let Some(state) = app.try_state::<DaemonProcess>() {
+                if let Ok(mut guard) = state.0.lock() {
+                    *guard = daemon_child;
+                }
+            }
+
             let window = app.get_webview_window("main").unwrap();
             
             // Show the window when the user starts the app, rather than hiding it
-            window.show().unwrap();
-            window.set_focus().unwrap();
+            if let Err(e) = window.show() {
+                eprintln!("[Heliox OS] Failed to show main window: {:?}", e);
+            }
+            if let Err(e) = window.set_focus() {
+                eprintln!("[Heliox OS] Failed to focus main window: {:?}", e);
+            }
 
             tray::setup_tray(app)?;
             hotkey::register_hotkey(app)?;
@@ -167,12 +176,15 @@ fn main() {
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {
-                // Kill the daemon when the app window is destroyed
-                if let Some(state) = window.try_state::<DaemonProcess>() {
-                    if let Ok(mut guard) = state.0.lock() {
-                        if let Some(ref mut child) = *guard {
-                            let _ = child.kill();
-                            println!("[Heliox OS] Python daemon stopped");
+                // Kill the daemon only when the main app window is destroyed
+                if window.label() == "main" {
+                    if let Some(state) = window.try_state::<DaemonProcess>() {
+                        if let Ok(mut guard) = state.0.lock() {
+                            if let Some(ref mut child) = *guard {
+                                let _ = child.kill();
+                                let _ = child.wait(); // Prevent zombie processes
+                                println!("[Heliox OS] Python daemon stopped");
+                            }
                         }
                     }
                 }
