@@ -28,7 +28,9 @@
   import ConnectionStatus from "./lib/components/ConnectionStatus.svelte";
 
   const renderer = new marked.Renderer();
-  renderer.code = function(code, language) {
+  renderer.code = function(token: any) {
+    const code = token.text;
+    const language = token.lang || "";
     const lang = language || "";
     const result = highlight(code, lang);
     const langLabel = result.language !== "plaintext" ? result.language : "";
@@ -37,9 +39,9 @@
   };
   marked.setOptions({ renderer, gfm: true, breaks: true });
 
-  function renderMarkdown(text) {
+  function renderMarkdown(text: string) {
     if (!text) return "";
-    const raw = marked.parse(text);
+    const raw = marked.parse(text) as string;
     return DOMPurify.sanitize(raw);
   }
 
@@ -61,6 +63,7 @@
   });
 
   async function onSetupComplete() {
+    localStorage.setItem("heliox_first_run_complete", "true");
     await settings.updateSection("", { first_run_complete: true });
     await tick();
     session.addSystemMessage(getJarvisGreeting());
@@ -69,7 +72,7 @@
   // JARVIS-style proactive greeting based on time
   function getJarvisGreeting(): string {
     const hour = new Date().getHours();
-    if (hour < 6) return "Good evening. Heliox OS is online. All systems nominal.";
+    if (hour < 6) return "Good night. Heliox OS is online. All systems nominal.";
     if (hour < 12) return "Good morning. Heliox OS is online and ready for your commands.";
     if (hour < 17) return "Good afternoon. Heliox OS at your service. What shall we tackle?";
     if (hour < 21) return "Good evening. Heliox OS is ready. How can I assist you tonight?";
@@ -97,10 +100,13 @@
     });
   }
 
+  let lastMsgLength = 0;
   $effect(() => {
-    $session.messages;
-    $session.loading;
-    scrollToBottom();
+    const len = $session.messages.length;
+    if (len > lastMsgLength) {
+      scrollToBottom();
+    }
+    lastMsgLength = len;
   });
 
   function formatActionType(t: string): string {
@@ -142,9 +148,6 @@
       const parts = [];
       if (msg.plan?.explanation) parts.push(msg.plan.explanation);
       if (msg.plan?.actions?.length) {
-        parts.push(msg.plan.actions.map((a: any) => `• ${a.action_type}: ${a.target || ""}`).join("\n"));
-      }
-      if (!parts.length && msg.plan?.actions?.length) {
         parts.push(msg.plan.actions.map((a: any) => `• ${a.action_type}: ${a.target || ""}`).join("\n"));
       }
       return parts.join("\n\n");
@@ -190,6 +193,29 @@
       copiedMessageId = null;
       copiedTimeout = null;
     }, 1500);
+  }
+
+  async function handleGlobalClick(event: MouseEvent) {
+    const target = event.target as HTMLElement;
+    const copyBtn = target.closest(".hlx-copy-btn") as HTMLButtonElement | null;
+    if (!copyBtn) return;
+
+    const encodedCode = copyBtn.getAttribute("data-code");
+    if (!encodedCode) return;
+
+    const code = decodeURIComponent(encodedCode);
+    try {
+      await writeText(code);
+      const originalText = copyBtn.textContent || "Copy";
+      copyBtn.textContent = "Copied!";
+      copyBtn.classList.add("copied");
+      setTimeout(() => {
+        copyBtn.textContent = originalText;
+        copyBtn.classList.remove("copied");
+      }, 1500);
+    } catch (err) {
+      console.error("Failed to copy code: ", err);
+    }
   }
 
   onDestroy(() => {
@@ -242,6 +268,7 @@
   class="window"
   class:dragging={isDragging}
   class:hidden-behind-wizard={showWizard}
+  onclick={handleGlobalClick}
 >
   <header
     class="titlebar"
@@ -1064,6 +1091,11 @@
     background: var(--accent-muted);
     border-color: var(--accent);
     color: var(--accent);
+  }
+  .hlx-copy-btn.copied {
+    background: rgba(74, 222, 128, 0.1);
+    border-color: var(--success);
+    color: var(--success);
   }
   .hlx-pre {
     margin: 0;

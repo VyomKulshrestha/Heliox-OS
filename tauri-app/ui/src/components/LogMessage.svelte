@@ -27,7 +27,7 @@
   import { onMount, tick } from "svelte";
   import { marked, type Renderer } from "marked";
   import DOMPurify from "dompurify";
-  import { highlight } from "$lib/highlighter";
+  import { highlight } from "../lib/highlighter";
   import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 
   // ── Props ────────────────────────────────────────────────────────────────
@@ -67,7 +67,9 @@
    */
   function buildRenderer(): Partial<Renderer> {
     return {
-      code(code: string, language: string | undefined): string {
+      code(token: any): string {
+        const code = token.text;
+        const language = token.lang || "";
         const lang = language ?? "";
         const { value: highlighted, language: detected } = highlight(code, lang);
 
