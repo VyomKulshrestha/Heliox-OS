@@ -6,8 +6,8 @@
   "build": {
     "frontendDist": "../ui/dist",
     "devUrl": "http://localhost:1420",
-    "beforeDevCommand": "cd ui && npm run dev",
-    "beforeBuildCommand": "npm run build"
+    "beforeDevCommand": "npm --prefix ./ui run dev",
+    "beforeBuildCommand": "npm --prefix ./ui run build"
   },
   "app": {
     "windows": [
@@ -32,6 +32,9 @@
       "csp": "default-src 'self'; connect-src 'self' ws://127.0.0.1:* http://127.0.0.1:* ws://localhost:* http://localhost:* https://cdn.jsdelivr.net; script-src 'self' 'unsafe-eval' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; media-src 'self' mediastream:; img-src 'self' blob: data:;"
     }
   },
+  "plugins": {
+    "clipboard-manager": null
+  },
   "bundle": {
     "active": true,
     "targets": "all",
@@ -52,10 +55,7 @@
     },
     "linux": {
       "deb": {
-        "depends": [
-          "python3 (>= 3.11)",
-          "python3-pip"
-        ]
+        "depends": ["python3 (>= 3.11)", "python3-pip"]
       }
     }
   }

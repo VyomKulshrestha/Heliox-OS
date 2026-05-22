@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, Window, Emitter};
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct DaemonStatus {
@@ -7,6 +7,7 @@ pub struct DaemonStatus {
     pub version: String,
 }
 
+// 1. Command to show/hide main application window
 #[tauri::command]
 pub async fn toggle_window(app: AppHandle) -> Result<(), String> {
     let window = app
@@ -22,10 +23,11 @@ pub async fn toggle_window(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+// 2. Command to check daemon connection and ping status
 #[tauri::command]
-pub async fn get_daemon_status() -> Result<DaemonStatus, String> {
-    // Connect to the Python daemon WebSocket and send a ping
-    let status = match try_ping_daemon().await {
+pub async fn get_daemon_status(window: tauri::Window) -> Result<DaemonStatus, String> {
+    // Pass window down to the ping checker
+    let status = match try_ping_daemon(window).await {
         Ok(version) => DaemonStatus {
             connected: true,
             version,
@@ -38,8 +40,9 @@ pub async fn get_daemon_status() -> Result<DaemonStatus, String> {
     Ok(status)
 }
 
+// 3. Command triggered by UI input prompts
 #[tauri::command]
-pub async fn send_to_daemon(method: String, params: serde_json::Value) -> Result<serde_json::Value, String> {
+pub async fn send_to_daemon(window: tauri::Window, method: String, params: serde_json::Value) -> Result<(), String> {
     let request = serde_json::json!({
         "jsonrpc": "2.0",
         "method": method,
@@ -47,11 +50,13 @@ pub async fn send_to_daemon(method: String, params: serde_json::Value) -> Result
         "id": 1
     });
 
-    send_rpc(request).await
+    // Pass window directly to send streaming chunks
+    send_rpc(window, request).await
 }
 
+// 4. Command to confirm user specific milestones or plans
 #[tauri::command]
-pub async fn confirm_action(plan_id: String, confirmed: bool) -> Result<(), String> {
+pub async fn confirm_action(window: tauri::Window, plan_id: String, confirmed: bool) -> Result<(), String> {
     let request = serde_json::json!({
         "jsonrpc": "2.0",
         "method": "confirm",
@@ -62,10 +67,11 @@ pub async fn confirm_action(plan_id: String, confirmed: bool) -> Result<(), Stri
         "id": 1
     });
 
-    send_rpc(request).await.map(|_| ())
+    send_rpc(window, request).await
 }
 
-async fn try_ping_daemon() -> Result<String, String> {
+// Internal worker to parse handshake ping data
+async fn try_ping_daemon(window: tauri::Window) -> Result<String, String> {
     let request = serde_json::json!({
         "jsonrpc": "2.0",
         "method": "ping",
@@ -73,37 +79,66 @@ async fn try_ping_daemon() -> Result<String, String> {
         "id": 1
     });
 
-    let response = send_rpc(request).await?;
-    let version = response
-        .get("result")
-        .and_then(|r| r.get("version"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("unknown")
-        .to_string();
+    // Temporary mock response parsing since ping won't stream chunks
+    let url = "ws://127.0.0.1:8785";
+    use tokio_tungstenite::connect_async;
+    use futures_util::{SinkExt, StreamExt};
 
-    Ok(version)
+    let (mut ws, _) = connect_async(url).await.map_err(|e| e.to_string())?;
+    let msg = serde_json::to_string(&request).map_err(|e| e.to_string())?;
+    ws.send(tokio_tungstenite::tungstenite::Message::Text(msg)).await.map_err(|e| e.to_string())?;
+
+    if let Some(Ok(response)) = ws.next().await {
+        let text = response.to_text().map_err(|e| e.to_string())?;
+        let parsed: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+        let version = parsed
+            .get("result")
+            .and_then(|r| r.get("version"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+        return Ok(version);
+    }
+    Err("Ping failed".to_string())
 }
 
-async fn send_rpc(request: serde_json::Value) -> Result<serde_json::Value, String> {
+// Main streaming loop broadcasting raw frames back to Svelte context
+async fn send_rpc(window: tauri::Window, request: serde_json::Value) -> Result<(), String> {
     use tokio_tungstenite::connect_async;
     use futures_util::{SinkExt, StreamExt};
 
     let url = "ws://127.0.0.1:8785";
     let (mut ws, _) = connect_async(url)
         .await
-        .map_err(|e| format!("Failed to connect to daemon: {}", e))?;
+        .map_err(|e| format!("Conn failed: {}", e))?;
 
     let msg = serde_json::to_string(&request).map_err(|e| e.to_string())?;
     ws.send(tokio_tungstenite::tungstenite::Message::Text(msg))
         .await
-        .map_err(|e| format!("Failed to send: {}", e))?;
+        .map_err(|e| format!("Send failed: {}", e))?;
 
-    if let Some(Ok(response)) = ws.next().await {
+    // Actively loop over streaming messages instead of breaking instantly
+    while let Some(Ok(response)) = ws.next().await {
         let text = response.to_text().map_err(|e| e.to_string())?;
-        let parsed: serde_json::Value =
-            serde_json::from_str(text).map_err(|e| e.to_string())?;
-        Ok(parsed)
-    } else {
-        Err("No response from daemon".to_string())
+        let parsed: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+        
+        window.emit("llm-chunk", &parsed).map_err(|e| e.to_string())?;
     }
+
+    window.emit("llm-complete", "DONE").map_err(|e| e.to_string())?;
+    Ok(())
+}
+#[tauri::command]
+pub fn open_logs_folder(app: tauri::AppHandle) -> Result<(), String> {
+    let log_dir = app
+        .path()
+        .app_log_dir()
+        .map_err(|e| e.to_string())?;
+
+    if !log_dir.exists() {
+        std::fs::create_dir_all(&log_dir).map_err(|e| e.to_string())?;
+    }
+
+    opener::open(&log_dir).map_err(|e| e.to_string())?;
+    Ok(())
 }

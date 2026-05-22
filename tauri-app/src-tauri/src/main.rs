@@ -262,6 +262,7 @@ fn main() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_notification::init())
         .manage(DaemonProcess(Mutex::new(daemon_child)))
         .setup(|app| {
             let window = app.get_webview_window("main").unwrap();
@@ -283,6 +284,7 @@ fn main() {
             commands::get_daemon_status,
             commands::send_to_daemon,
             commands::confirm_action,
+            commands::open_logs_folder,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Heliox OS")

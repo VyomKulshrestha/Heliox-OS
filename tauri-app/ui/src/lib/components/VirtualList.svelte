@@ -31,6 +31,8 @@
     item: Snippet<[T, number]>;
     /** Optional footer rendered below all items. */
     footer?: Snippet;
+    /** Bindable — true when the list is scrolled to (or near) the bottom. */
+    atBottom?: boolean;
   }
 
   let {
@@ -39,6 +41,7 @@
     overscan = 5,
     item: itemSnippet,
     footer: footerSnippet,
+    atBottom = $bindable(true),
   }: Props<T> = $props();
 
   // ── Internal state ─────────────────────────────────────────────────────────
@@ -57,6 +60,10 @@
 
   /** Whether the user was at the bottom before the last items update. */
   let wasAtBottom = true;
+
+  /** True while scrollToBottom() animation is in progress — prevents recalcWindow from flickering atBottom to false mid-scroll. */
+  let scrollingToBottom = false;
+  let scrollingTimer: ReturnType<typeof setTimeout> | null = null;
 
   /** ResizeObserver watching rendered row heights. */
   let ro: ResizeObserver | null = null;
@@ -146,6 +153,11 @@
     wasAtBottom =
       scrollerEl.scrollTop + scrollerEl.clientHeight >=
       scrollerEl.scrollHeight - 8;
+    // Only update bindable atBottom when the user is scrolling manually,
+    // not during a programmatic smooth-scroll animation
+    if (!scrollingToBottom) {
+      atBottom = wasAtBottom;
+    }
 
     // Walk the heights array to find the first and last visible item
     let cumulative = 0;
@@ -232,6 +244,7 @@
 
   onDestroy(() => {
     ro?.disconnect();
+    if (scrollingTimer) clearTimeout(scrollingTimer);
   });
 
   // ── Public API ─────────────────────────────────────────────────────────────
@@ -239,8 +252,17 @@
   /** Scroll the list to the very bottom. */
   export function scrollToBottom() {
     if (scrollerEl) {
-      scrollerEl.scrollTop = scrollerEl.scrollHeight;
+      // Immediately mark as at-bottom so the FAB hides at once
+      scrollingToBottom = true;
       wasAtBottom = true;
+      atBottom = true;
+      scrollerEl.scrollTo({ top: scrollerEl.scrollHeight, behavior: "smooth" });
+      // Re-enable manual scroll tracking after animation completes (~400ms)
+      if (scrollingTimer) clearTimeout(scrollingTimer);
+      scrollingTimer = setTimeout(() => {
+        scrollingToBottom = false;
+        scrollingTimer = null;
+      }, 450);
     }
   }
 </script>

@@ -842,3 +842,275 @@ async def screen_element_map(
 
     except ImportError:
         return "Install easyocr for element detection: pip install easyocr"
+
+
+# ──────────────────────────────────────────────────────────────────────
+#  screen_detect_elements — VLM zero-shot element detection
+# ──────────────────────────────────────────────────────────────────────
+
+# Structured prompt sent to the VLM.  The model is asked to return ONLY
+# a JSON array so we can parse it reliably without post-processing prose.
+_DETECT_ELEMENTS_PROMPT = """\
+You are a UI element detector. Analyse the screenshot and return a JSON array \
+of every interactive element you can see (buttons, links, input fields, \
+checkboxes, dropdowns, icons, etc.).
+
+For EACH element output exactly this object:
+{
+  "label": "<short human-readable name>",
+  "type": "<button|input|link|checkbox|dropdown|icon|text|other>",
+  "action": "<click|type|select|scroll|other>",
+  "bbox": [x, y, width, height],
+  "confidence": <0.0-1.0>
+}
+
+Rules:
+- bbox values are pixel coordinates relative to the top-left of the image.
+- Return ONLY the JSON array, no markdown fences, no explanation.
+- If you cannot detect any elements return an empty array: []
+"""
+
+_DETECT_ELEMENTS_FILTER_PROMPT = """\
+You are a UI element detector. Analyse the screenshot and find the element \
+that best matches this description: "{description}".
+
+Return a JSON array containing ONLY the matching element(s) in this format:
+{{
+  "label": "<short human-readable name>",
+  "type": "<button|input|link|checkbox|dropdown|icon|text|other>",
+  "action": "<click|type|select|scroll|other>",
+  "bbox": [x, y, width, height],
+  "confidence": <0.0-1.0>
+}}
+
+Rules:
+- bbox values are pixel coordinates relative to the top-left of the image.
+- Return ONLY the JSON array, no markdown fences, no explanation.
+- If nothing matches return an empty array: []
+"""
+
+
+async def screen_detect_elements(
+    description: str = "",
+    region: tuple[int, int, int, int] | None = None,
+    max_elements: int = 20,
+    action_filter: str = "",
+) -> str:
+    """Detect interactive UI elements via zero-shot VLM inference.
+
+    Sends a screenshot to the configured vision-capable LLM (Gemini,
+    GPT-4o, Claude, or local LLaVA/Ollama) with a structured prompt that
+    asks it to return bounding-box coordinates for every interactive element
+    it can see — no DOM parsing, no accessibility APIs required.
+
+    Parameters
+    ----------
+    description:
+        Optional natural-language filter, e.g. ``"the login button"``.
+        When provided, the VLM is asked to return only matching elements.
+    region:
+        ``(left, top, width, height)`` crop, or ``None`` for full screen.
+    max_elements:
+        Maximum number of elements to return (applied after VLM response).
+    action_filter:
+        ``"click"``, ``"type"``, or ``""`` (all actions).
+
+    Returns
+    -------
+    str
+        JSON string with keys ``elements``, ``count``, ``source``, and
+        ``note``.  Each element has ``label``, ``type``, ``action``,
+        ``bbox`` ``[x, y, w, h]``, and ``confidence``.
+    """
+    img_bytes = await _capture_screenshot_bytes(region)
+    b64_image = base64.b64encode(img_bytes).decode("utf-8")
+
+    prompt = (
+        _DETECT_ELEMENTS_FILTER_PROMPT.format(description=description)
+        if description.strip()
+        else _DETECT_ELEMENTS_PROMPT
+    )
+
+    raw_response: str | None = None
+    source = "unknown"
+
+    # ── 1. Cloud VLM (Gemini / OpenAI / Claude) ──────────────────────
+    try:
+        from pilot.config import PilotConfig
+        from pilot.security.vault import KeyVault
+
+        config = PilotConfig.load()
+        if config.model.provider == "cloud" and config.model.cloud_provider:
+            vault = KeyVault(config)
+            api_key = await vault.get_key(config.model.cloud_provider)
+            if api_key:
+                provider = config.model.cloud_provider
+                if provider == "gemini":
+                    raw_response = await _gemini_vision(api_key, b64_image, prompt, config.model.cloud_model)
+                    source = "gemini"
+                elif provider == "openai":
+                    raw_response = await _openai_vision(api_key, b64_image, prompt, config.model.cloud_model)
+                    source = "openai"
+                elif provider == "claude":
+                    raw_response = await _claude_vision(api_key, b64_image, prompt, config.model.cloud_model)
+                    source = "claude"
+    except Exception as exc:
+        logger.warning("screen_detect_elements: cloud VLM error: %s", exc)
+
+    # ── 2. Local Ollama vision model ──────────────────────────────────
+    if raw_response is None:
+        try:
+            import httpx
+
+            ollama_url = "http://127.0.0.1:11434"
+            try:
+                from pilot.config import PilotConfig
+
+                ollama_url = PilotConfig.load().model.ollama_base_url or ollama_url
+            except Exception:
+                pass
+
+            async with httpx.AsyncClient(timeout=90) as client:
+                for model_name in ["llava:7b", "llava", "bakllava", "moondream"]:
+                    try:
+                        resp = await client.post(
+                            f"{ollama_url}/api/generate",
+                            json={
+                                "model": model_name,
+                                "prompt": prompt,
+                                "images": [b64_image],
+                                "stream": False,
+                            },
+                        )
+                        if resp.status_code == 200:
+                            raw_response = resp.json().get("response", "")
+                            source = f"ollama/{model_name}"
+                            break
+                    except Exception:
+                        continue
+        except Exception as exc:
+            logger.warning("screen_detect_elements: Ollama error: %s", exc)
+
+    # ── 3. Parse VLM response ─────────────────────────────────────────
+    if raw_response:
+        elements = _parse_element_response(raw_response)
+        if elements is not None:
+            # Apply filters
+            if action_filter:
+                elements = [e for e in elements if e.get("action", "") == action_filter]
+            elements = elements[:max_elements]
+            return json.dumps(
+                {
+                    "elements": elements,
+                    "count": len(elements),
+                    "source": source,
+                    "note": "Use mouse_click with bbox center coordinates to interact",
+                },
+                indent=2,
+            )
+        logger.warning("screen_detect_elements: VLM returned unparseable response, falling back to EasyOCR")
+
+    # ── 4. Fallback: EasyOCR element map ─────────────────────────────
+    logger.info("screen_detect_elements: falling back to EasyOCR element map")
+    ocr_result = await screen_element_map(region)
+    try:
+        ocr_data = json.loads(ocr_result)
+        # Normalise EasyOCR output to the same schema
+        normalised = []
+        for el in ocr_data.get("elements", []):
+            cx = el.get("center", {}).get("x", 0)
+            cy = el.get("center", {}).get("y", 0)
+            w = el.get("size", {}).get("w", 0)
+            h = el.get("size", {}).get("h", 0)
+            normalised.append(
+                {
+                    "label": el.get("text", ""),
+                    "type": el.get("type", "text"),
+                    "action": "click" if el.get("type") in ("button", "link") else "type",
+                    "bbox": [cx - w // 2, cy - h // 2, w, h],
+                    "confidence": el.get("confidence", 0.5),
+                }
+            )
+        if action_filter:
+            normalised = [e for e in normalised if e.get("action") == action_filter]
+        normalised = normalised[:max_elements]
+        return json.dumps(
+            {
+                "elements": normalised,
+                "count": len(normalised),
+                "source": "easyocr_fallback",
+                "note": "VLM unavailable — coordinates from OCR (less accurate)",
+            },
+            indent=2,
+        )
+    except Exception:
+        return ocr_result
+
+
+def _parse_element_response(raw: str) -> list[dict] | None:
+    """Extract and validate a JSON element array from a VLM response.
+
+    The VLM is instructed to return only JSON, but may wrap it in markdown
+    fences, add conversational prefixes, or include square brackets in prose
+    (e.g. ``"Checking [window title]: [...]"``).  A simple ``find("[")``
+    would match those incidental brackets and produce invalid JSON.
+
+    This function uses a regex to find the first ``[`` that is immediately
+    followed by ``{`` or whitespace+``{`` — i.e. the start of a JSON array
+    of objects — which is far more robust against conversational noise.
+
+    Returns ``None`` if the response cannot be parsed into a valid list.
+    """
+    import re as _re
+
+    text = raw.strip()
+
+    # Strip markdown code fences if present
+    if text.startswith("```"):
+        lines = text.splitlines()
+        inner = [ln for ln in lines if not ln.startswith("```")]
+        text = "\n".join(inner).strip()
+
+    # Find the first '[' that starts a JSON array of objects: '[' followed
+    # (with optional whitespace) by '{' or ']' (empty array).
+    # This skips incidental brackets like "[window title]" in prose.
+    array_start = _re.search(r"\[\s*(\{|\])", text)
+    if array_start is None:
+        return None
+
+    start = array_start.start()
+    # Find the matching closing ']' by scanning from the end
+    end = text.rfind("]", start)
+    if end == -1 or end <= start:
+        return None
+
+    try:
+        data = json.loads(text[start : end + 1])
+    except json.JSONDecodeError:
+        return None
+
+    if not isinstance(data, list):
+        return None
+
+    validated: list[dict] = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        bbox = item.get("bbox")
+        if not isinstance(bbox, list) or len(bbox) != 4:
+            continue
+        try:
+            bbox = [int(v) for v in bbox]
+        except (TypeError, ValueError):
+            continue
+        validated.append(
+            {
+                "label": str(item.get("label", "")),
+                "type": str(item.get("type", "other")),
+                "action": str(item.get("action", "click")),
+                "bbox": bbox,
+                "confidence": float(item.get("confidence", 0.5)),
+            }
+        )
+
+    return validated
