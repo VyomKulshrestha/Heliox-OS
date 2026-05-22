@@ -25,9 +25,8 @@ pub async fn toggle_window(app: AppHandle) -> Result<(), String> {
 
 // 2. Command to check daemon connection and ping status
 #[tauri::command]
-pub async fn get_daemon_status(window: tauri::Window) -> Result<DaemonStatus, String> {
-    // Pass window down to the ping checker
-    let status = match try_ping_daemon(window).await {
+pub async fn get_daemon_status() -> Result<DaemonStatus, String> {
+    let status = match try_ping_daemon().await {
         Ok(version) => DaemonStatus {
             connected: true,
             version,
@@ -40,9 +39,32 @@ pub async fn get_daemon_status(window: tauri::Window) -> Result<DaemonStatus, St
     Ok(status)
 }
 
+const ALLOWED_RPC_METHODS: &[&str] = &[
+    "execute",
+    "resume_plan",
+    "export_session_chat",
+    "confirm",
+    "abort",
+    "get_config",
+    "update_config",
+    "ping",
+    "ready",
+    "health",
+    "system_status",
+    "capabilities",
+    "cognitive_stats",
+    "cognitive_state",
+    "proactive_accept",
+    "proactive_dismiss",
+];
+
 // 3. Command triggered by UI input prompts
 #[tauri::command]
 pub async fn send_to_daemon(window: tauri::Window, method: String, params: serde_json::Value) -> Result<(), String> {
+    if !ALLOWED_RPC_METHODS.contains(&method.as_str()) {
+        return Err(format!("Unauthorized RPC method: {}", method));
+    }
+
     let request = serde_json::json!({
         "jsonrpc": "2.0",
         "method": method,
@@ -71,7 +93,7 @@ pub async fn confirm_action(window: tauri::Window, plan_id: String, confirmed: b
 }
 
 // Internal worker to parse handshake ping data
-async fn try_ping_daemon(window: tauri::Window) -> Result<String, String> {
+async fn try_ping_daemon() -> Result<String, String> {
     let request = serde_json::json!({
         "jsonrpc": "2.0",
         "method": "ping",
@@ -119,7 +141,16 @@ async fn send_rpc(window: tauri::Window, request: serde_json::Value) -> Result<(
 
     // Actively loop over streaming messages instead of breaking instantly
     while let Some(Ok(response)) = ws.next().await {
-        let text = response.to_text().map_err(|e| e.to_string())?;
+        if response.is_ping() || response.is_pong() {
+            continue;
+        }
+        if response.is_close() {
+            break;
+        }
+        if !response.is_text() {
+            continue;
+        }
+        let text = response.into_text().map_err(|e| e.to_string())?;
         let parsed: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
         
         window.emit("llm-chunk", &parsed).map_err(|e| e.to_string())?;
@@ -129,16 +160,19 @@ async fn send_rpc(window: tauri::Window, request: serde_json::Value) -> Result<(
     Ok(())
 }
 #[tauri::command]
-pub fn open_logs_folder(app: tauri::AppHandle) -> Result<(), String> {
+pub async fn open_logs_folder(app: tauri::AppHandle) -> Result<(), String> {
     let log_dir = app
         .path()
         .app_log_dir()
         .map_err(|e| e.to_string())?;
 
-    if !log_dir.exists() {
-        std::fs::create_dir_all(&log_dir).map_err(|e| e.to_string())?;
-    }
-
-    opener::open(&log_dir).map_err(|e| e.to_string())?;
-    Ok(())
+    tokio::task::spawn_blocking(move || {
+        if !log_dir.exists() {
+            std::fs::create_dir_all(&log_dir).map_err(|e| e.to_string())?;
+        }
+        opener::open(&log_dir).map_err(|e| e.to_string())?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
