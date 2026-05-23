@@ -29,7 +29,7 @@ class OllamaModelNotFoundError(RuntimeError):
 class OllamaClient:
     """Client for the Ollama local inference server."""
 
-    def __init__(self, base_url: str = "http://127.0.0.1:11434", config: "PilotConfig" | None = None) -> None:
+    def __init__(self, base_url: str = "http://127.0.0.1:11434", config: PilotConfig | None = None) -> None:
         self._base_url = base_url.rstrip("/")
         self._client = create_httpx_client(config or PilotConfig.load(), timeout=DEFAULT_TIMEOUT)
 
