@@ -368,6 +368,7 @@ class PilotServer:
             "abort": self._handle_abort,
             "get_config": self._handle_get_config,
             "update_config": self._handle_update_config,
+            "reset_config": self._handle_reset_config,
             "get_history": self._handle_get_history,
             "memory_checkpoint": self._handle_memory_checkpoint,
             "store_api_key": self._handle_store_api_key,
@@ -1405,6 +1406,25 @@ class PilotServer:
 
                 self._planner._model._cloud = CloudClient(self.config, self._vault)
                 logger.info("Cloud client re-initialized for provider: %s", self.config.model.cloud_provider)
+
+        return {"status": "ok"}
+
+    async def _handle_reset_config(self, params: dict, ws: ServerConnection) -> dict:
+        """Reset configuration to factory defaults."""
+
+        default_config = PilotConfig()
+
+        for field_name in default_config.__dataclass_fields__:
+            val = getattr(default_config, field_name)
+            current = getattr(self.config, field_name)
+
+            if hasattr(val, "__dataclass_fields__"):
+                for subfield in val.__dataclass_fields__:
+                    setattr(current, subfield, getattr(val, subfield))
+            else:
+                setattr(self.config, field_name, val)
+
+        self.config.save()
 
         return {"status": "ok"}
 
