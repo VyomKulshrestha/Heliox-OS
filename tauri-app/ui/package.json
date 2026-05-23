@@ -23,12 +23,14 @@
     "vite": "^6.0.0"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.0.0",
+    "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-clipboard-manager": "^2.0.0",
     "@tauri-apps/plugin-notification": "^2.0.0",
+    "chart.js": "^4.5.1",
     "dompurify": "^3.4.3",
     "highlight.js": "^11.11.1",
     "lucide-svelte": "^0.577.0",
-    "marked": "^18.0.3"
+    "marked": "^18.0.3",
+    "svelte-chartjs": "^4.0.1"
   }
 }
