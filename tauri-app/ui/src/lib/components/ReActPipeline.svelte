@@ -11,7 +11,7 @@
   import { session } from "../stores/session";
   import { onNotification, offNotification } from "../api/daemon";
   import { fade, slide } from "svelte/transition";
-  import { onDestroy } from "svelte";
+  import { onMount, onDestroy } from "svelte";
 
   // ── Pipeline Stage Types ──
 
@@ -375,6 +375,27 @@
   let dismiss = () => { isVisible = false; };
   let toggleCollapse = () => { collapsed = !collapsed; };
   let toggleThoughts = () => { showThoughts = !showThoughts; };
+
+  // ── Keyboard Shortcut: Ctrl+Shift+L toggles the ReAct Pipeline panel ──
+  function handleKeydown(e: KeyboardEvent): void {
+    if (e.ctrlKey && e.shiftKey && e.key === 'L') {
+      e.preventDefault();
+      if (!isVisible) {
+        // Restore from dismissed state
+        isVisible = true;
+        collapsed = false;
+        showThoughts = true;
+      } else if (collapsed) {
+        // Expanding from collapsed: show thoughts immediately
+        showThoughts = true;
+        toggleCollapse();
+      } else {
+        toggleCollapse();
+      }
+    }
+  }
+  onMount(() => window.addEventListener('keydown', handleKeydown));
+  onDestroy(() => window.removeEventListener('keydown', handleKeydown));
   let toggleThoughtStage = (stageId: string) => {
     expandedThoughtStages = {
       ...expandedThoughtStages,
@@ -420,6 +441,19 @@
   });
 </script>
 
+{#if !isVisible && (thoughtStream.length > 0 || stages.some(s => s.status !== 'idle'))}
+  <button
+    class="pipeline-restore-btn"
+    onclick={() => { isVisible = true; collapsed = false; showThoughts = true; }}
+    title="Restore pipeline (Ctrl+Shift+L)"
+    aria-label="Restore ReAct pipeline"
+  >
+    <span class="restore-icon">⚛️</span>
+    <span>Pipeline</span>
+    <span class="restore-hint">Ctrl+Shift+L</span>
+  </button>
+{/if}
+
 {#if isVisible}
   <div class="react-pipeline" class:collapsed transition:slide={{ duration: 300 }}>
     <!-- Header (always visible, clickable to expand/collapse) -->
@@ -439,7 +473,7 @@
         {#if agentRouting?.is_multi_agent}
           <span class="multi-agent-badge">Multi-Agent</span>
         {/if}
-        <button class="collapse-toggle" onclick={(e) => { e.stopPropagation(); toggleCollapse(); }} title={collapsed ? 'Expand' : 'Collapse'}>
+        <button class="collapse-toggle" onclick={(e) => { e.stopPropagation(); toggleCollapse(); }} title={collapsed ? 'Expand pipeline (Ctrl+Shift+L)' : 'Collapse pipeline (Ctrl+Shift+L)'}>
           {collapsed ? '▼' : '▲'}
         </button>
         <button
@@ -630,6 +664,10 @@
     font-family: 'Inter', 'JetBrains Mono', monospace;
     box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.05);
     transition: padding 0.3s ease;
+    max-height: 75vh;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(0, 240, 255, 0.3) transparent;
   }
 
   .react-pipeline.collapsed {
@@ -1279,5 +1317,36 @@
   .thought-summary:hover {
     border-color: rgba(120, 100, 255, 0.35);
     background: rgba(120, 100, 255, 0.1);
+  }
+
+  .pipeline-restore-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.35rem 0.75rem;
+    margin: 0.5rem 0;
+    background: rgba(0, 240, 255, 0.06);
+    border: 1px solid rgba(0, 240, 255, 0.2);
+    border-radius: 999px;
+    color: rgba(0, 240, 255, 0.7);
+    font-size: 0.75rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    letter-spacing: 0.5px;
+  }
+
+  .pipeline-restore-btn:hover {
+    background: rgba(0, 240, 255, 0.12);
+    border-color: rgba(0, 240, 255, 0.45);
+    color: #00f0ff;
+    box-shadow: 0 0 10px rgba(0, 240, 255, 0.15);
+  }
+
+  .restore-hint {
+    font-size: 0.65rem;
+    opacity: 0.55;
+    font-weight: 400;
+    font-family: 'JetBrains Mono', monospace;
   }
 </style>

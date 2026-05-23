@@ -38,6 +38,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("pilot.agents.screen_vision")
 
+MIN_CAPTURE_INTERVAL_SECONDS = 0.5
+MAX_CAPTURE_INTERVAL_SECONDS = 60.0
+
 
 @dataclass
 class ScreenState:
@@ -130,19 +133,28 @@ class ScreenVisionAgent:
         self._context = ScreenContext()
         self._task: asyncio.Task[None] | None = None
         self._running = False
-        self._interval_seconds: float = 2.0
+        self._interval_seconds: float = 3.0
         self._last_hash: str = ""
         self._screenshot_dir = Path.home() / ".heliox" / "screenshots"
         self._enable_llm_describe = False  # Disabled by default (expensive)
 
-    async def start(self, interval_seconds: float = 2.0, enable_describe: bool = False) -> None:
+    def set_interval(self, interval_seconds: float) -> None:
+        """Update the capture cadence while keeping it inside safe bounds."""
+        self._interval_seconds = max(
+            MIN_CAPTURE_INTERVAL_SECONDS,
+            min(float(interval_seconds), MAX_CAPTURE_INTERVAL_SECONDS),
+        )
+
+    async def start(self, interval_seconds: float = 3.0, enable_describe: bool = False) -> None:
         """Start the screen monitoring loop."""
-        self._interval_seconds = interval_seconds
+        self.set_interval(interval_seconds)
         self._enable_llm_describe = enable_describe
+        if self._task and not self._task.done():
+            await self.stop()
         self._running = True
         self._screenshot_dir.mkdir(parents=True, exist_ok=True)
         self._task = asyncio.create_task(self._capture_loop())
-        logger.info("Screen vision started (every %.1fs, describe=%s)", interval_seconds, enable_describe)
+        logger.info("Screen vision started (every %.1fs, describe=%s)", self._interval_seconds, enable_describe)
 
     async def stop(self) -> None:
         """Stop the monitoring loop."""
@@ -295,6 +307,98 @@ class ScreenVisionAgent:
             "recent_apps": self._context._recent_apps(),
         }
 
+    async def detect_actionable_elements(
+        self,
+        description: str = "",
+        region: str | None = None,
+        max_elements: int = 20,
+        action_filter: str = "",
+    ) -> str:
+        """Detect interactive UI elements via zero-shot VLM inference.
+
+        Calls ``screen_detect_elements()`` from ``vision.py`` and caches
+        the result in the latest ``ScreenState`` for downstream use.
+
+        Parameters
+        ----------
+        description:
+            Optional natural-language filter, e.g. ``"the submit button"``.
+        region:
+            ``"x,y,w,h"`` crop string, or ``None`` for full screen.
+        max_elements:
+            Maximum number of elements to return.
+        action_filter:
+            ``"click"``, ``"type"``, or ``""`` (all).
+
+        Returns
+        -------
+        str
+            JSON string — same schema as ``screen_detect_elements()``.
+        """
+        from pilot.system.vision import screen_detect_elements
+
+        parsed_region = _parse_region(region)
+        result = await screen_detect_elements(
+            description=description,
+            region=parsed_region,
+            max_elements=max_elements,
+            action_filter=action_filter,
+        )
+
+        # Cache in the current ScreenState so the planner can reference it
+        current = self._context.current()
+        if current is not None:
+            current.description = f"[element_detection] {result}"
+
+        return result
+
+    def get_click_target(self, description: str) -> dict[str, Any] | None:
+        """Find the best-matching cached element for a natural-language description.
+
+        Searches the most recent element detection result stored in the
+        ``ScreenState`` description field.  Uses simple substring matching
+        on element labels — no LLM call required.
+
+        Parameters
+        ----------
+        description:
+            Natural-language description, e.g. ``"login button"``.
+
+        Returns
+        -------
+        dict or None
+            The best-matching element dict with ``label``, ``type``,
+            ``action``, ``bbox``, and ``confidence``, or ``None`` if no
+            match is found.
+        """
+        import json as _json
+
+        current = self._context.current()
+        if current is None or not current.description.startswith("[element_detection]"):
+            return None
+
+        raw = current.description[len("[element_detection]") :].strip()
+        # The cached value is truncated — we can only search what's stored
+        try:
+            data = _json.loads(raw)
+            elements = data.get("elements", [])
+        except Exception:
+            return None
+
+        desc_lower = description.lower()
+        best: dict[str, Any] | None = None
+        best_score = -1
+
+        for el in elements:
+            label = el.get("label", "").lower()
+            # Score: number of description words found in the label
+            score = sum(1 for word in desc_lower.split() if word in label)
+            if score > best_score:
+                best_score = score
+                best = el
+
+        return best if best_score > 0 else None
+
 
 # ── Platform-Specific Window Detection ──
 
@@ -405,3 +509,16 @@ def _get_active_window_linux() -> tuple[str, str]:
         return (app, title)
     except Exception:
         return ("Unknown", "Unknown")
+
+
+def _parse_region(region: str | None) -> tuple[int, int, int, int] | None:
+    """Parse a ``"x,y,w,h"`` region string into a tuple, or return None."""
+    if not region:
+        return None
+    try:
+        parts = [int(v.strip()) for v in region.split(",")]
+        if len(parts) == 4:
+            return (parts[0], parts[1], parts[2], parts[3])
+    except (ValueError, AttributeError):
+        pass
+    return None

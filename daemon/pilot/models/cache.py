@@ -103,7 +103,7 @@ class LLMCache:
 
     def _make_cache_key(
         self,
-        prompt: str,
+        prompt: str | list[dict[str, Any]],
         model: str,
         provider: str,
         temperature: float,
@@ -113,7 +113,7 @@ class LLMCache:
         """Generate a cache key from prompt parameters.
 
         Args:
-            prompt: The user prompt.
+            prompt: The user prompt or message list.
             model: The model identifier.
             provider: The provider name.
             temperature: The temperature parameter.
@@ -123,13 +123,19 @@ class LLMCache:
         Returns:
             Tuple of (prompt_hash, system_hash, model, provider, temperature, json_mode_int)
         """
-        prompt_hash = self._hash_string(prompt)
+        if isinstance(prompt, list):
+            import json
+
+            prompt_str = json.dumps(prompt, sort_keys=True)
+        else:
+            prompt_str = prompt
+        prompt_hash = self._hash_string(prompt_str)
         system_hash = self._hash_string(system) if system else ""
         return (prompt_hash, system_hash, model, provider, temperature, int(json_mode))
 
     async def get(
         self,
-        prompt: str,
+        prompt: str | list[dict[str, Any]],
         model: str,
         provider: str,
         temperature: float,
@@ -184,7 +190,7 @@ class LLMCache:
 
     async def set(
         self,
-        prompt: str,
+        prompt: str | list[dict[str, Any]],
         model: str,
         provider: str,
         temperature: float,
@@ -195,7 +201,7 @@ class LLMCache:
         """Store a response in the cache.
 
         Args:
-            prompt: The user prompt.
+            prompt: The user prompt or message list.
             model: The model identifier.
             provider: The provider name.
             temperature: The temperature parameter.
