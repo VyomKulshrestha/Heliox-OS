@@ -157,8 +157,7 @@ class AgentOrchestrator:
         plan: ActionPlan,
         on_action_start: Callable | None = None,
         on_action_complete: Callable | None = None,
-        cancel_event: asyncio.Event | None = None,
-        plan_id: str | None = None,
+        cancel_event: asyncio.Event | None = None,  # ← add this
     ) -> list[ActionResult]:
         """Execute a plan by routing actions to specialist agents.
 
