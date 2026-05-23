@@ -88,6 +88,7 @@ class PendingConfirmation:
 # Plan History Store
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class PlanHistoryStore:
     """Append-only SQLite audit log for every ActionPlan executed by the daemon.
 
@@ -193,7 +194,9 @@ class PlanHistoryStore:
                 results_list.append(str(r))
 
         try:
-            verification_dict = verification.model_dump(mode="json") if (verification and hasattr(verification, "model_dump")) else None
+            verification_dict = (
+                verification.model_dump(mode="json") if (verification and hasattr(verification, "model_dump")) else None
+            )
         except Exception:
             verification_dict = None
 
@@ -312,6 +315,7 @@ class PlanHistoryStore:
 # ─────────────────────────────────────────────────────────────────────────────
 # PilotServer
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class PilotServer:
     """Main daemon server managing WebSocket connections and agent dispatch."""
@@ -1034,18 +1038,20 @@ class PilotServer:
                         execution_error=verdict.recommendation,
                     )
                     # ── Plan History: blocked by critic ──
-                    self._spawn_history_task(self._record_plan_history(
-                        plan_id=plan_id,
-                        raw_input=user_input,
-                        plan=plan,
-                        critic_verdict=critic_verdict_payload,
-                        confirmation_decision="blocked_by_critic",
-                        execution_status="blocked_by_critic",
-                        results=[],
-                        verification=None,
-                        dry_run=dry_run,
-                        start_time=_start_time,
-                    ))
+                    self._spawn_history_task(
+                        self._record_plan_history(
+                            plan_id=plan_id,
+                            raw_input=user_input,
+                            plan=plan,
+                            critic_verdict=critic_verdict_payload,
+                            confirmation_decision="blocked_by_critic",
+                            execution_status="blocked_by_critic",
+                            results=[],
+                            verification=None,
+                            dry_run=dry_run,
+                            start_time=_start_time,
+                        )
+                    )
                     if emit:
                         await emit.phase_error(
                             "critic_review",
@@ -1102,18 +1108,20 @@ class PilotServer:
                         execution_error="Plan was denied by user.",
                     )
                     # ── Plan History: user denied ──
-                    self._spawn_history_task(self._record_plan_history(
-                        plan_id=plan_id,
-                        raw_input=user_input,
-                        plan=plan,
-                        critic_verdict=critic_verdict_payload,
-                        confirmation_decision="denied",
-                        execution_status="cancelled",
-                        results=[],
-                        verification=None,
-                        dry_run=dry_run,
-                        start_time=_start_time,
-                    ))
+                    self._spawn_history_task(
+                        self._record_plan_history(
+                            plan_id=plan_id,
+                            raw_input=user_input,
+                            plan=plan,
+                            critic_verdict=critic_verdict_payload,
+                            confirmation_decision="denied",
+                            execution_status="cancelled",
+                            results=[],
+                            verification=None,
+                            dry_run=dry_run,
+                            start_time=_start_time,
+                        )
+                    )
                     await _emit_task_complete("cancelled", "Plan was denied by user.")
                     return {
                         "status": "cancelled",
@@ -1213,18 +1221,20 @@ class PilotServer:
                 if self._checkpoint_store:
                     await self._checkpoint_store.mark_status(plan_id, "cancelled")
                 # ── Plan History: cancelled mid-execution ──
-                self._spawn_history_task(self._record_plan_history(
-                    plan_id=plan_id,
-                    raw_input=user_input,
-                    plan=plan,
-                    critic_verdict=critic_verdict_payload,
-                    confirmation_decision="approved" if needs_confirm else "skipped",
-                    execution_status="cancelled",
-                    results=results,
-                    verification=None,
-                    dry_run=dry_run,
-                    start_time=_start_time,
-                ))
+                self._spawn_history_task(
+                    self._record_plan_history(
+                        plan_id=plan_id,
+                        raw_input=user_input,
+                        plan=plan,
+                        critic_verdict=critic_verdict_payload,
+                        confirmation_decision="approved" if needs_confirm else "skipped",
+                        execution_status="cancelled",
+                        results=results,
+                        verification=None,
+                        dry_run=dry_run,
+                        start_time=_start_time,
+                    )
+                )
                 return {
                     "status": "cancelled",
                     "message": "Execution was aborted by user.",
@@ -1309,18 +1319,20 @@ class PilotServer:
                     )
 
                 # ── Plan History: success ──
-                self._spawn_history_task(self._record_plan_history(
-                    plan_id=plan_id,
-                    raw_input=user_input,
-                    plan=plan,
-                    critic_verdict=critic_verdict_payload,
-                    confirmation_decision="approved" if needs_confirm else ("n/a" if dry_run else "skipped"),
-                    execution_status="dry_run" if dry_run else "success",
-                    results=results,
-                    verification=verification,
-                    dry_run=dry_run,
-                    start_time=_start_time,
-                ))
+                self._spawn_history_task(
+                    self._record_plan_history(
+                        plan_id=plan_id,
+                        raw_input=user_input,
+                        plan=plan,
+                        critic_verdict=critic_verdict_payload,
+                        confirmation_decision="approved" if needs_confirm else ("n/a" if dry_run else "skipped"),
+                        execution_status="dry_run" if dry_run else "success",
+                        results=results,
+                        verification=verification,
+                        dry_run=dry_run,
+                        start_time=_start_time,
+                    )
+                )
 
                 await _emit_task_complete("success", plan.explanation or "Task completed successfully.")
                 return {
@@ -1387,18 +1399,20 @@ class PilotServer:
             await self._checkpoint_store.mark_status(last_plan_id, "failed")
 
         # ── Plan History: partial_failure after all retries exhausted ──
-        self._spawn_history_task(self._record_plan_history(
-            plan_id=last_plan_id,
-            raw_input=user_input,
-            plan=plan,
-            critic_verdict=critic_verdict_payload,
-            confirmation_decision="approved" if needs_confirm else "skipped",
-            execution_status="partial_failure",
-            results=all_results,
-            verification=last_verification,
-            dry_run=dry_run,
-            start_time=_start_time,
-        ))
+        self._spawn_history_task(
+            self._record_plan_history(
+                plan_id=last_plan_id,
+                raw_input=user_input,
+                plan=plan,
+                critic_verdict=critic_verdict_payload,
+                confirmation_decision="approved" if needs_confirm else "skipped",
+                execution_status="partial_failure",
+                results=all_results,
+                verification=last_verification,
+                dry_run=dry_run,
+                start_time=_start_time,
+            )
+        )
 
         await _emit_task_complete("partial_failure", last_explanation or "Task completed with errors.")
         return {
@@ -1451,6 +1465,7 @@ class PilotServer:
             return
         try:
             import time as _time
+
             duration_ms = int((_time.time() - start_time) * 1000)
             await self._plan_history.record(
                 plan_id=plan_id,
@@ -2337,6 +2352,20 @@ class PilotServer:
         """
         if self._reasoning:
             return {"events": self._reasoning.get_session_log()}
+        return {"error": "Reasoning emitter not initialized"}
+
+    async def _handle_reasoning_stats(self, params: dict, ws: ServerConnection) -> dict:
+        """Return reasoning emitter statistics.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with reasoning emitter statistics or error.
+        """
+        if self._reasoning:
+            return self._reasoning.get_stats()
         return {"error": "Reasoning emitter not initialized"}
 
     # -- Task Decomposition --
