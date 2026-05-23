@@ -23,11 +23,15 @@ def tmp_repo(tmp_path):
     subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
     subprocess.run(
         ["git", "config", "user.email", "test@test.com"],
-        cwd=str(tmp_path), check=True, capture_output=True,
+        cwd=str(tmp_path),
+        check=True,
+        capture_output=True,
     )
     subprocess.run(
         ["git", "config", "user.name", "Test User"],
-        cwd=str(tmp_path), check=True, capture_output=True,
+        cwd=str(tmp_path),
+        check=True,
+        capture_output=True,
     )
     return str(tmp_path)
 
@@ -36,13 +40,12 @@ def tmp_repo(tmp_path):
 def agent(tmp_repo):
     """GitAgent pointed at the temp repo, with a mock LLM client."""
     mock_llm = MagicMock()
-    mock_llm.complete = AsyncMock(
-        return_value="feat(test): add initial test files"
-    )
+    mock_llm.complete = AsyncMock(return_value="feat(test): add initial test files")
     return GitAgent(repo_path=tmp_repo, llm_client=mock_llm)
 
 
 # Helper tests
+
 
 def test_parse_status_empty():
     result = _parse_status("")
@@ -66,6 +69,7 @@ def test_parse_status_modified():
 
 # git_status
 
+
 @pytest.mark.asyncio
 async def test_status_clean_repo(agent, tmp_repo):
     """A fresh repo with no files should report clean working tree."""
@@ -75,7 +79,8 @@ async def test_status_clean_repo(agent, tmp_repo):
     subprocess.run(["git", "add", "."], cwd=tmp_repo, capture_output=True)
     subprocess.run(
         ["git", "commit", "-m", "init"],
-        cwd=tmp_repo, capture_output=True,
+        cwd=tmp_repo,
+        capture_output=True,
     )
 
     result = await agent.execute("git_status", {})
@@ -95,6 +100,7 @@ async def test_status_shows_untracked(agent, tmp_repo):
 
 
 # git_branch
+
 
 @pytest.mark.asyncio
 async def test_branch_missing_name(agent):
@@ -117,7 +123,9 @@ async def test_branch_create(agent, tmp_repo):
     assert result["success"] is True
     assert result["branch"] == "feature-test"  # slashes replaced with dashes
 
+
 # git_stage
+
 
 @pytest.mark.asyncio
 async def test_stage_specific_file(agent, tmp_repo):
@@ -138,6 +146,7 @@ async def test_stage_no_files(agent):
 
 
 # git_commit (with LLM mock)
+
 
 @pytest.mark.asyncio
 async def test_commit_generates_llm_message(agent, tmp_repo):
@@ -175,6 +184,7 @@ async def test_commit_nothing_staged(agent, tmp_repo):
 
 # git_log
 
+
 @pytest.mark.asyncio
 async def test_log_returns_commits(agent, tmp_repo):
     """Should return commit history after commits are made."""
@@ -190,6 +200,7 @@ async def test_log_returns_commits(agent, tmp_repo):
 
 
 # Unknown action
+
 
 @pytest.mark.asyncio
 async def test_unknown_action(agent):

@@ -12,7 +12,8 @@ logger = logging.getLogger(__name__)
 
 # Helpers
 
-async def _run_git(args, cwd=None):    
+
+async def _run_git(args, cwd=None):
     """Run a git command asynchronously and return structured output."""
     cmd = ["git"] + args
     try:
@@ -55,9 +56,9 @@ def _parse_status(porcelain: str) -> dict[str, list[str]]:
     for line in porcelain.splitlines():
         if len(line) < 2:
             continue
-        index_status = line[0]   # staged area
-        work_status  = line[1]   # working tree
-        filepath     = line[2:].strip().strip('"')
+        index_status = line[0]  # staged area
+        work_status = line[1]  # working tree
+        filepath = line[2:].strip().strip('"')
 
         if index_status != " " and index_status != "?":
             staged.append(filepath)
@@ -132,8 +133,8 @@ async def _generate_commit_message(diff: str, llm_client: Any) -> str:
 
 # GitAgent
 
-class GitAgent:
 
+class GitAgent:
     # Action types this agent handles — used by the Orchestrator router
     SUPPORTED_ACTIONS = {
         "git_status",
@@ -174,11 +175,11 @@ class GitAgent:
         handlers = {
             "git_status": self._handle_status,
             "git_branch": self._handle_branch,
-            "git_stage":  self._handle_stage,
+            "git_stage": self._handle_stage,
             "git_commit": self._handle_commit,
-            "git_push":   self._handle_push,
-            "git_diff":   self._handle_diff,
-            "git_log":    self._handle_log,
+            "git_push": self._handle_push,
+            "git_diff": self._handle_diff,
+            "git_log": self._handle_log,
         }
         # TODO: add support for git stash operations
         handler = handlers.get(action_type)
@@ -233,11 +234,12 @@ class GitAgent:
         return {
             "success": True,
             "output": "\n".join(lines),
-            "staged":    parsed["staged"],
-            "unstaged":  parsed["unstaged"],
+            "staged": parsed["staged"],
+            "unstaged": parsed["unstaged"],
             "untracked": parsed["untracked"],
-            "branch":    branch,
+            "branch": branch,
         }
+
     # Tool: git_branch
 
     async def _handle_branch(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -264,8 +266,8 @@ class GitAgent:
 
         return {
             "success": result["success"],
-            "output":  result["stdout"] or result["stderr"],
-            "branch":  safe_name if result["success"] else "unchanged",
+            "output": result["stdout"] or result["stderr"],
+            "branch": safe_name if result["success"] else "unchanged",
         }
 
     # Tool: git_stage
@@ -285,8 +287,8 @@ class GitAgent:
         )
 
         return {
-            "success":      result["success"],
-            "output":       result["stdout"] or result["stderr"] or f"Staged: {files}",
+            "success": result["success"],
+            "output": result["stdout"] or result["stderr"] or f"Staged: {files}",
             "staged_files": files if result["success"] else [],
         }
 
@@ -303,13 +305,13 @@ class GitAgent:
 
         return {
             "success": result["success"],
-            "output":  result["stdout"] or "(no changes)",
-            "diff":    result["stdout"],
+            "output": result["stdout"] or "(no changes)",
+            "diff": result["stdout"],
         }
 
     # Tool: git_commit
     async def _handle_commit(self, params: dict[str, Any]) -> dict[str, Any]:
-        """ Stage files (optional), generate an LLM commit message, and commit."""
+        """Stage files (optional), generate an LLM commit message, and commit."""
         files = params.get("files", ["."])
         if isinstance(files, str):
             files = [files]
@@ -331,7 +333,7 @@ class GitAgent:
         if not diff.strip():
             return {
                 "success": False,
-                "output":  "Nothing staged to commit — working tree may be clean.",
+                "output": "Nothing staged to commit — working tree may be clean.",
                 "commit_message": "",
                 "commit_hash": "",
             }
@@ -356,7 +358,7 @@ class GitAgent:
         if not commit_result["success"]:
             return {
                 "success": False,
-                "output":  f"Commit failed: {commit_result['stderr']}",
+                "output": f"Commit failed: {commit_result['stderr']}",
                 "commit_message": commit_message,
                 "commit_hash": "",
             }
@@ -369,10 +371,10 @@ class GitAgent:
         commit_hash = hash_result["stdout"] if hash_result["success"] else "unknown"
 
         return {
-            "success":        True,
-            "output":         f"Committed as {commit_hash}: {commit_message}",
+            "success": True,
+            "output": f"Committed as {commit_hash}: {commit_message}",
             "commit_message": commit_message,
-            "commit_hash":    commit_hash,
+            "commit_hash": commit_hash,
         }
 
     # Tool: git_push
@@ -380,7 +382,7 @@ class GitAgent:
     async def _handle_push(self, params: dict[str, Any]) -> dict[str, Any]:
         """Push the current branch to a remote."""
         remote = params.get("remote", "origin")
-        force  = params.get("force", False)
+        force = params.get("force", False)
 
         # Get current branch if not specified
         branch = params.get("branch", "")
@@ -401,7 +403,7 @@ class GitAgent:
 
         return {
             "success": result["success"],
-            "output":  result["stdout"] or result["stderr"],
+            "output": result["stdout"] or result["stderr"],
         }
 
     # Tool: git_log
@@ -426,20 +428,20 @@ class GitAgent:
         for line in result["stdout"].splitlines():
             parts = line.split("|", 4)
             if len(parts) == 5:
-                commits.append({
-                    "hash":    parts[0],
-                    "short":   parts[1],
-                    "author":  parts[2],
-                    "when":    parts[3],
-                    "message": parts[4],
-                })
+                commits.append(
+                    {
+                        "hash": parts[0],
+                        "short": parts[1],
+                        "author": parts[2],
+                        "when": parts[3],
+                        "message": parts[4],
+                    }
+                )
 
-        readable = "\n".join(
-            f"{c['short']} ({c['when']}) — {c['message']}" for c in commits
-        )
+        readable = "\n".join(f"{c['short']} ({c['when']}) — {c['message']}" for c in commits)
 
         return {
             "success": True,
-            "output":  readable or "No commits found.",
+            "output": readable or "No commits found.",
             "commits": commits,
         }
