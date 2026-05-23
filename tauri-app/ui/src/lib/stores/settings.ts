@@ -154,11 +154,28 @@ function createSettings() {
       }
     });
   }
+  async function reset() {
+  // Reset app state immediately
+  set(defaultSettings);
+
+  // Remove cached local settings
+  try {
+    localStorage.removeItem("heliox_settings");
+  } catch {
+    /* ignore */
+  }
+
+  // Tell backend/daemon to reset config
+  call("reset_config").catch((err) => {
+    console.warn("Failed to reset backend config:", err);
+  });
+}
 
   return {
     subscribe,
     load,
     updateSection,
+    reset,
   };
 }
 

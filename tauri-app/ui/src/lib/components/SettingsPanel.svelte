@@ -3,15 +3,16 @@
   import { session } from "../stores/session";
   import { call } from "../api/daemon";
   import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
-
   let apiKeyInput = $state("");
   let apiKeySaved = $state(false);
   let apiKeySaving = $state(false);
 
   function toggleRoot() {
-    settings.updateSection("security", { root_enabled: !$settings.security.root_enabled });
+  settings.updateSection("security", {
+    root_enabled: !$settings.security.root_enabled
+  });
   }
-
+ 
   function toggleDryRun() {
     settings.updateSection("security", { dry_run: !$settings.security.dry_run });
   }
@@ -72,7 +73,17 @@
       apiKeySaving = false;
     }
   }
+  
+  // Function to reset all settings to deafault
+   async function handleReset() {
+  const confirmed = confirm(
+    "Are you sure you want to reset all settings to defaults?"
+  );
 
+  if (!confirmed) return;
+
+  await settings.reset();
+}
   // Toggle between dark and light mode targeting root settings configuration state
   function toggleTheme() {
     const currentTheme = $settings.theme || "dark";
@@ -358,6 +369,24 @@
       <p>Blocked commands: {$settings.restrictions?.blocked_commands?.length || 0} configured</p>
     </div>
   </section>
+
+  <!--Adding a reset button to clear all settings and return to defaults, with a confirmation prompt to prevent accidental resets -->
+  <section class="settings-group">
+  <h3>Reset</h3>
+
+  <div class="setting-row">
+    <div class="setting-info">
+      <span class="setting-label">Reset to Defaults</span>
+      <span class="setting-desc">
+        Clear local settings and restore default configuration
+      </span>
+    </div>
+
+    <button class="btn-save" onclick={handleReset}>
+      Reset
+    </button>
+  </div>
+</section>
 
   <section class="settings-group">
     <h3>Debug</h3>
