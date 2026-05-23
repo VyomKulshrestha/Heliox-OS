@@ -22,16 +22,6 @@ _SENTINEL = object()
 
 # ── Warning throttle ──────────────────────────────────────────────────────────
 _WARN_INTERVAL = 60.0  # seconds between repeated Redis failure warnings
-_last_warn_time: float = 0.0
-
-
-def _throttled_warn(msg: str, *args: object) -> None:
-    """Log a warning at most once per _WARN_INTERVAL seconds."""
-    global _last_warn_time
-    now = time.monotonic()
-    if now - _last_warn_time >= _WARN_INTERVAL:
-        _last_warn_time = now
-        logger.warning(msg, *args)
 
 
 # ── In-memory LRU fallback ────────────────────────────────────────────────────
@@ -102,6 +92,7 @@ class RedisCacheAdapter:
         self._redis: Any = None
         self._fallback = _LRUCache(max_size=config.max_memory_cache_size)
         self._using_redis = False
+        self._last_warn_time: float = 0.0
 
     @classmethod
     def from_config(cls, config: RedisConfig) -> RedisCacheAdapter:
@@ -149,6 +140,12 @@ class RedisCacheAdapter:
             self._redis = None
             self._using_redis = False
 
+    def _throttled_warn(self, msg: str, *args: object) -> None:
+        now = time.monotonic()
+        if now - self._last_warn_time >= _WARN_INTERVAL:
+            self._last_warn_time = now
+            logger.warning(msg, *args)
+
     # ── public API ────────────────────────────────────────────────────────────
 
     @property
@@ -163,7 +160,7 @@ class RedisCacheAdapter:
             try:
                 return await self._redis.get(self._prefixed(key))
             except Exception as exc:
-                _throttled_warn("Redis GET failed (%s) — using fallback", exc)
+                self._throttled_warn("Redis GET failed (%s) — using fallback", exc)
                 return await self._fallback.get(key)
         return await self._fallback.get(key)
 
@@ -177,7 +174,7 @@ class RedisCacheAdapter:
                     await self._redis.set(self._prefixed(key), value)
                 return
             except Exception as exc:
-                _throttled_warn("Redis SET failed (%s) — writing to fallback", exc)
+                self._throttled_warn("Redis SET failed (%s) — writing to fallback", exc)
         await self._fallback.set(key, value, ttl=effective_ttl)
 
     async def delete(self, key: str) -> None:
@@ -186,7 +183,7 @@ class RedisCacheAdapter:
                 await self._redis.delete(self._prefixed(key))
                 return
             except Exception as exc:
-                _throttled_warn("Redis DELETE failed (%s) — deleting from fallback", exc)
+                self._throttled_warn("Redis DELETE failed (%s) — deleting from fallback", exc)
         await self._fallback.delete(key)
 
     async def exists(self, key: str) -> bool:
@@ -201,7 +198,7 @@ class RedisCacheAdapter:
                     await self._redis.delete(*keys)
                 return
             except Exception as exc:
-                _throttled_warn("Redis FLUSH failed (%s) — flushing fallback", exc)
+                self._throttled_warn("Redis FLUSH failed (%s) — flushing fallback", exc)
         await self._fallback.flush()
 
     def stats(self) -> dict[str, Any]:
