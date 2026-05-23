@@ -221,6 +221,9 @@ class ActionType(StrEnum):
     SSH_COMMAND = "ssh_command"
     SSH_SCRIPT = "ssh_script"
 
+    # -- VLM zero-shot element detection --
+    SCREEN_DETECT_ELEMENTS = "screen_detect_elements"
+
 
 class PermissionTier(int, Enum):
     READ_ONLY = 0
@@ -268,6 +271,7 @@ READ_ONLY_ACTIONS = {
     ActionType.SCREEN_FIND_TEXT,
     ActionType.SCREEN_ANALYZE,
     ActionType.SCREEN_ELEMENT_MAP,
+    ActionType.SCREEN_DETECT_ELEMENTS,
     ActionType.BROWSER_EXTRACT,
     ActionType.BROWSER_EXTRACT_TABLE,
     ActionType.BROWSER_EXTRACT_LINKS,
@@ -552,6 +556,20 @@ class ScreenVisionParams(BaseModel):
     language: str = "eng"
 
 
+class ElementDetectionParams(BaseModel):
+    """For VLM zero-shot element detection (SCREEN_DETECT_ELEMENTS).
+
+    The VLM is asked to locate all interactive UI elements in a screenshot
+    and return structured bounding-box coordinates so the agent can click
+    or type without relying on DOM trees or accessibility APIs.
+    """
+
+    description: str = ""  # Optional: natural-language filter, e.g. "login button"
+    region: str | None = None  # "x,y,w,h" or None for full screen
+    max_elements: int = 20  # cap on returned elements
+    action_filter: str = ""  # "click" | "type" | "" (all)
+
+
 class BrowserParams(BaseModel):
     """For browser automation actions."""
 
@@ -747,6 +765,7 @@ ActionParameters = (
     | CalendarParams
     | SshCommandParams
     | SshScriptParams
+    | ElementDetectionParams
     | EmptyParams
 )
 

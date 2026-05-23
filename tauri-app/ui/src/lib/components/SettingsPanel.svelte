@@ -2,16 +2,41 @@
   import { settings } from "../stores/settings";
   import { session } from "../stores/session";
   import { call } from "../api/daemon";
+  import { invoke } from "@tauri-apps/api/core";
   import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
-
   let apiKeyInput = $state("");
   let apiKeySaved = $state(false);
   let apiKeySaving = $state(false);
 
-  function toggleRoot() {
-    settings.updateSection("security", { root_enabled: !$settings.security.root_enabled });
+  let hotkeyInput = $state("");
+  let hotkeySaved = $state(false);
+  let hotkeyError = $state("");
+
+  // Load the current hotkey when component mounts
+  invoke("get_hotkey").then((val) => {
+    hotkeyInput = val as string;
+  });
+
+  async function saveHotkey() {
+    hotkeyError = "";
+    const trimmed = hotkeyInput.trim();
+    if (!trimmed) return;
+    try {
+      await invoke("set_hotkey", { shortcut: trimmed });
+      settings.updateSection("", { hotkey: trimmed });
+      hotkeySaved = true;
+      setTimeout(() => (hotkeySaved = false), 3000);
+    } catch (err) {
+      hotkeyError = "Invalid shortcut. Try: Ctrl+Space or Alt+H";
+    }
   }
 
+  function toggleRoot() {
+  settings.updateSection("security", {
+    root_enabled: !$settings.security.root_enabled
+  });
+  }
+ 
   function toggleDryRun() {
     settings.updateSection("security", { dry_run: !$settings.security.dry_run });
   }
@@ -72,33 +97,44 @@
       apiKeySaving = false;
     }
   }
+  
+  // Function to reset all settings to deafault
+   async function handleReset() {
+  const confirmed = confirm(
+    "Are you sure you want to reset all settings to defaults?"
+  );
 
+  if (!confirmed) return;
+
+  await settings.reset();
+}
   // Toggle between dark and light mode targeting root settings configuration state
   function toggleTheme() {
     const currentTheme = $settings.theme || "dark";
     const nextTheme = currentTheme === "dark" ? "light" : "dark";
-    
+
     // Update the central store root section directly
     // The store's internal side-effects will automatically manage document classes and localStorage synchronization
     settings.updateSection("", { theme: nextTheme });
   }
+
   async function testNotification() {
     try {
       let granted = await isPermissionGranted();
       if (!granted) {
         const permission = await requestPermission();
-        granted = permission === 'granted';
+        granted = permission === "granted";
       }
       if (granted) {
         sendNotification({
-          title: 'Heliox OS',
-          body: 'Test notification — desktop notifications are working! 🚀',
+          title: "Heliox OS",
+          body: "Test notification — desktop notifications are working! 🚀",
         });
       } else {
-        console.warn('Notification permission was denied');
+        console.warn("Notification permission was denied");
       }
     } catch (err) {
-      console.error('Notification test failed:', err);
+      console.error("Notification test failed:", err);
     }
   }
 </script>
@@ -123,6 +159,32 @@
         <span class="toggle-knob"></span>
       </button>
     </div>
+  </section>
+
+  <section class="settings-group">
+    <h3>Keyboard Shortcut</h3>
+    <div class="setting-row">
+      <div class="setting-info">
+        <span class="setting-label">Global Hotkey</span>
+        <span class="setting-desc">Summon Heliox from anywhere (default: Ctrl+Space)</span>
+      </div>
+      <div class="api-key-row">
+        <input
+          type="text"
+          class="input-md"
+          bind:value={hotkeyInput}
+          placeholder="Ctrl+Space"
+        />
+        <button class="btn-save" onclick={saveHotkey}>
+          {hotkeySaved ? "✓ Saved!" : "Save"}
+        </button>
+      </div>
+    </div>
+    {#if hotkeyError}
+      <div style="padding: 6px 14px; font-size: 11px; color: var(--accent);">
+        {hotkeyError}
+      </div>
+    {/if}
   </section>
 
   <section class="settings-group">
@@ -359,6 +421,24 @@
     </div>
   </section>
 
+  <!--Adding a reset button to clear all settings and return to defaults, with a confirmation prompt to prevent accidental resets -->
+  <section class="settings-group">
+  <h3>Reset</h3>
+
+  <div class="setting-row">
+    <div class="setting-info">
+      <span class="setting-label">Reset to Defaults</span>
+      <span class="setting-desc">
+        Clear local settings and restore default configuration
+      </span>
+    </div>
+
+    <button class="btn-save" onclick={handleReset}>
+      Reset
+    </button>
+  </div>
+</section>
+
   <section class="settings-group">
     <h3>Debug</h3>
     <div class="setting-row">
@@ -373,7 +453,7 @@
 
 <style>
   .settings-panel {
-    height: 100%; 
+    height: 100%;
     overflow-y: auto;
     padding: 16px;
   }
