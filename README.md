@@ -605,6 +605,11 @@ snapshot_on_destructive = true
 [server]
 host = "127.0.0.1"
 port = 8785
+
+[proxy]
+http = "http://proxy.example.com:8080"
+https = "http://proxy.example.com:8080"
+no_proxy = "localhost,127.0.0.1"
 ```
 ## 🛠️ Troubleshooting
 
@@ -695,6 +700,8 @@ npm run dev
 ```
 
 Ensure all frontend dependencies are installed successfully before starting the app.
+
+> Tip: If no proxy section is configured, the daemon will fall back to standard `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY` environment variables.
 
 ## 🤝 Contributing
 

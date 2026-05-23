@@ -6,6 +6,9 @@ import logging
 
 import httpx
 
+from pilot.config import PilotConfig
+from pilot.system.http_client import create_httpx_client
+
 logger = logging.getLogger("pilot.models.ollama")
 
 DEFAULT_TIMEOUT = 600.0  # 10 minutes — local LLMs can be slow for complex plans
@@ -26,9 +29,9 @@ class OllamaModelNotFoundError(RuntimeError):
 class OllamaClient:
     """Client for the Ollama local inference server."""
 
-    def __init__(self, base_url: str = "http://127.0.0.1:11434") -> None:
+    def __init__(self, base_url: str = "http://127.0.0.1:11434", config: PilotConfig | None = None) -> None:
         self._base_url = base_url.rstrip("/")
-        self._client = httpx.AsyncClient(timeout=DEFAULT_TIMEOUT)
+        self._client = create_httpx_client(config or PilotConfig.load(), timeout=DEFAULT_TIMEOUT)
 
     async def is_available(self) -> bool:
         try:

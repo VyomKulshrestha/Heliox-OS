@@ -32,7 +32,7 @@ class ModelRouter:
     def __init__(self, config: PilotConfig, vault: KeyVault) -> None:
         self._config = config
         self._vault = vault
-        self._ollama = OllamaClient(config.model.ollama_base_url)
+        self._ollama = OllamaClient(config.model.ollama_base_url, config)
         self._cloud: CloudClient | None = None
         self._llamacpp: object | None = None
         self._resolved_ollama_model: str | None = None
