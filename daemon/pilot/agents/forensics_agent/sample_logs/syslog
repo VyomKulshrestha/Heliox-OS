@@ -1,0 +1,17 @@
+Jun 14 03:10:00 heliox-node1 systemd[1]: Started Daily apt download activities.
+Jun 14 03:10:05 heliox-node1 kernel[0]: segfault at 00007f8b1c000010 ip 00007f8b1c8a45e3 sp 00007ffec4a3b3a0 error 4 in libssl.so[7f8b1c800000+200000]
+Jun 14 03:10:06 heliox-node1 kernel[0]: nginx[3311]: segfault at 0 ip 00007f1234560000 sp 00007fff00000000 error 6 in nginx[3311]
+Jun 14 03:11:00 heliox-node1 nginx[3312]: nginx restarted after crash
+Jun 14 03:11:30 heliox-node1 kernel[0]: nginx[3320]: segfault at 0 ip 00007f1234560001 sp 00007fff00000001 error 6 in nginx[3320]
+Jun 14 03:12:00 heliox-node1 nginx[3321]: nginx restarted after crash
+Jun 14 03:12:30 heliox-node1 kernel[0]: nginx[3330]: segfault at 0 ip 00007f1234560002 sp 00007fff00000002 error 6 in nginx[3330]
+Jun 14 03:16:44 heliox-node1 kernel[0]: Out of memory: Kill process 4412 (heliox-runtime) score 921 or sacrifice child
+Jun 14 03:16:45 heliox-node1 kernel[0]: Killed process 4412 (heliox-runtime) total-vm:8192000kB, anon-rss:7680000kB
+Jun 14 03:16:46 heliox-node1 systemd[1]: heliox-runtime.service: Main process exited, code=killed, status=9/KILL
+Jun 14 03:17:00 heliox-node1 systemd[1]: heliox-runtime.service: Failed with result 'signal'.
+Jun 14 03:17:01 heliox-node1 systemd[1]: Failed to start Heliox Runtime Service.
+Jun 14 03:20:00 heliox-node1 kernel[0]: INFO: possible circular locking dependency detected
+Jun 14 03:20:01 heliox-node1 kernel[0]: RIP: 0010:lock_acquire+0xd4/0x370
+Jun 14 03:21:00 heliox-node1 syslog[100]: nmap scan detected from source 198.51.100.23 targeting ports 22,80,443,8080
+Jun 14 03:25:00 heliox-node1 systemd[1]: Started Heliox Monitoring Daemon.
+Jun 14 03:30:00 heliox-node1 kernel[0]: core dump generated for process heliox-worker[7890]
