@@ -493,6 +493,7 @@ class PilotServer:
         self._plugin_registry = PluginRegistry()
         plugin_count = self._plugin_registry.discover()
         logger.info("Plugins loaded: %d", plugin_count)
+        self._executor.set_plugin_registry(self._plugin_registry)
 
         # Subconscious Agent — long-term memory consolidation (lazy start)
         try:
