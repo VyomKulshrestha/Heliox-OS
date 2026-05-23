@@ -171,7 +171,7 @@ class SkillRegistry:
         if not self._skills:
             return ""
         lines = [
-            "Registered custom skills — use action_type \"skill_run\" with parameters:",
+            'Registered custom skills — use action_type "skill_run" with parameters:',
             '  {"skill_id": "<id>", "arguments": { ... }}',
             "Skills:",
         ]
