@@ -27,6 +27,7 @@ from pilot.actions import (
     ServiceParams,
     ShellCommandParams,
     ShellScriptParams,
+    SkillRunParams,
     SshCommandParams,
     SshScriptParams,
     WasmCallParams,
@@ -153,6 +154,7 @@ NO_TARGET_REQUIRED = {
     ActionType.API_SLACK,
     ActionType.API_DISCORD,
     ActionType.API_SCRAPE,
+    ActionType.SKILL_RUN,
     # SSH remote exec is parameter-driven (host alias)
     ActionType.SSH_COMMAND,
     ActionType.SSH_SCRIPT,
@@ -250,6 +252,10 @@ class ActionValidator:
         elif isinstance(params, RegistryParams):
             if not params.key_path:
                 raise ValidationError(idx, "Empty registry key_path")
+
+        elif isinstance(params, SkillRunParams):
+            if not params.skill_id or not params.skill_id.strip():
+                raise ValidationError(idx, "skill_run requires non-empty skill_id")
 
         elif isinstance(params, (OpenApplicationParams, NotifyParams)):
             pass

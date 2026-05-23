@@ -25,12 +25,28 @@ def _xdg(env_var: str, fallback: str) -> Path:
     return Path(os.environ.get(env_var, Path.home() / fallback))
 
 
+def _default_runtime_dir() -> Path:
+    """Resolve runtime dir when XDG_RUNTIME_DIR is unset (macOS, Windows, minimal Linux)."""
+    xdg = os.environ.get("XDG_RUNTIME_DIR", "").strip()
+    if xdg:
+        return Path(xdg) / "pilot"
+    uid = os.getuid() if hasattr(os, "getuid") else 1000
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Caches" / "pilot" / "runtime"
+    if sys.platform == "win32":
+        local = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+        return Path(local) / "pilot" / "runtime"
+    run_user = Path(f"/run/user/{uid}")
+    if run_user.is_dir() and os.access(run_user, os.W_OK):
+        return run_user / "pilot"
+    tmp = os.environ.get("TMPDIR", "/tmp")
+    return Path(tmp) / f"pilot-runtime-{uid}"
+
+
 CONFIG_DIR = _xdg("XDG_CONFIG_HOME", ".config") / "pilot"
 DATA_DIR = _xdg("XDG_DATA_HOME", ".local/share") / "pilot"
 STATE_DIR = _xdg("XDG_STATE_HOME", ".local/state") / "pilot"
-RUNTIME_DIR = (
-    Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid() if hasattr(os, 'getuid') else 1000}")) / "pilot"
-)
+RUNTIME_DIR = _default_runtime_dir()
 CONFIG_FILE = CONFIG_DIR / "config.toml"
 RESTRICTIONS_FILE = CONFIG_DIR / "restrictions.toml"
 DB_FILE = DATA_DIR / "pilot.db"
