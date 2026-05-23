@@ -99,6 +99,11 @@
     "notifications_desc": "Test native OS desktop popup",
     "test_popup": "Test Popup",
     "light": "Light",
-    "full": "Full"
+    "full": "Full",
+    "reset_header": "Reset",
+    "reset_label": "Reset to Defaults",
+    "reset_desc": "Clear local settings and restore default configuration",
+    "reset_button": "Reset",
+    "reset_confirm": "Are you sure you want to reset all settings to defaults?"
   }
 }

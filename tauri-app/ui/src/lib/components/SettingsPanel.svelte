@@ -4,15 +4,22 @@
   import { session } from "../stores/session";
   import { call } from "../api/daemon";
   import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
-
   let apiKeyInput = $state("");
   let apiKeySaved = $state(false);
   let apiKeySaving = $state(false);
 
-  function toggleRoot() {
-    settings.updateSection("security", { root_enabled: !$settings.security.root_enabled });
-  }
+  $effect(() => {
+    if ($locale) {
+      localStorage.setItem("locale", $locale);
+    }
+  });
 
+  function toggleRoot() {
+  settings.updateSection("security", {
+    root_enabled: !$settings.security.root_enabled
+  });
+  }
+ 
   function toggleDryRun() {
     settings.updateSection("security", { dry_run: !$settings.security.dry_run });
   }
@@ -73,7 +80,13 @@
       apiKeySaving = false;
     }
   }
-
+  
+  // Function to reset all settings to defaults
+  async function handleReset() {
+    const confirmed = confirm($_('settings.reset_confirm'));
+    if (!confirmed) return;
+    await settings.reset();
+  }
   function toggleTheme() {
     const currentTheme = $settings.theme || "dark";
     const nextTheme = currentTheme === "dark" ? "light" : "dark";
@@ -345,6 +358,24 @@
       <p>{$_('settings.protected_folders')}: {$settings.restrictions?.protected_folders?.length || 0} {$_('settings.configured')}</p>
       <p>{$_('settings.protected_packages')}: {$settings.restrictions?.protected_packages?.length || 0} {$_('settings.configured')}</p>
       <p>{$_('settings.blocked_commands')}: {$settings.restrictions?.blocked_commands?.length || 0} {$_('settings.configured')}</p>
+    </div>
+  </section>
+
+  <!--Adding a reset button to clear all settings and return to defaults, with a confirmation prompt to prevent accidental resets -->
+  <section class="settings-group">
+    <h3>{$_('settings.reset_header')}</h3>
+
+    <div class="setting-row">
+      <div class="setting-info">
+        <span class="setting-label">{$_('settings.reset_label')}</span>
+        <span class="setting-desc">
+          {$_('settings.reset_desc')}
+        </span>
+      </div>
+
+      <button class="btn-save" onclick={handleReset}>
+        {$_('settings.reset_button')}
+      </button>
     </div>
   </section>
 

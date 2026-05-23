@@ -5,7 +5,9 @@ import hi from './locales/hi.json';
 addMessages('en', en);
 addMessages('hi', hi);
 
+const savedLocale = typeof window !== 'undefined' ? localStorage.getItem('locale') : null;
+
 init({
   fallbackLocale: 'en',
-  initialLocale: getLocaleFromNavigator() || 'en',
+  initialLocale: savedLocale || getLocaleFromNavigator() || 'en',
 });
