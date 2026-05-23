@@ -12,20 +12,52 @@
   import ParticleBurst from "./lib/components/ParticleBurst.svelte";
   import ExecutionGraph from "./lib/components/ExecutionGraph.svelte";
   import ReActPipeline from "./lib/components/ReActPipeline.svelte";
+  import VirtualList from "./lib/components/VirtualList.svelte";
+  import PluginsTab from "./lib/components/PluginsTab.svelte";
   import { session } from "./lib/stores/session";
   import type { Message } from "./lib/stores/session";
   import { settings } from "./lib/stores/settings";
   import { onDestroy, tick } from "svelte";
   import { writeText } from "@tauri-apps/plugin-clipboard-manager";
   import { Copy } from "lucide-svelte";
+  import { marked } from "marked";
+  import DOMPurify from "dompurify";
+  import { highlight } from "./lib/highlighter";
+  import ScrollToBottom from "./lib/components/ScrollToBottom.svelte";
+  import ConnectionStatus from "./lib/components/ConnectionStatus.svelte";
+  import { _, isLoading } from 'svelte-i18n';
 
-  let activeTab: "chat" | "log" | "settings" = $state("chat");
+  const renderer = new marked.Renderer();
+  renderer.code = function(code, language) {
+    const lang = language || "";
+    const result = highlight(code, lang);
+    const langLabel = result.language !== "plaintext" ? result.language : "";
+    const langBadge = langLabel ? `<span class="hlx-lang-badge">${langLabel}</span>` : "";
+    return `<div class="hlx-code-wrapper"><div class="hlx-code-header">${langBadge}<button class="hlx-copy-btn" data-code="${encodeURIComponent(code)}">Copy</button></div><pre class="hlx-pre"><code class="hljs language-${result.language}">${result.value}</code></pre></div>`;
+  };
+  marked.setOptions({ renderer, gfm: true, breaks: true });
+
+  function renderMarkdown(text) {
+    if (!text) return "";
+    const raw = marked.parse(text);
+    return DOMPurify.sanitize(raw);
+  }
+
+  let activeTab: "chat" | "log" | "settings" | "plugins" = $state("chat");
   let isDragging = $state(false);
   let showWizard = $derived(
     !$settings.first_run_complete && localStorage.getItem("heliox_first_run_complete") !== "true"
   );
-  let resultsEl: HTMLDivElement | undefined = $state();
+
+  let showScrollFAB = $state(false);
+  let isAtBottom = $state(true);
+
+  let virtualListEl: VirtualList<Message> | undefined = $state();
   let particleBurst: ParticleBurst | undefined = $state();
+
+  $effect(() => {
+    showScrollFAB = !isAtBottom;
+  });
 
   async function onSetupComplete() {
     await settings.updateSection("", { first_run_complete: true });
@@ -33,7 +65,6 @@
     session.addSystemMessage(getJarvisGreeting());
   }
 
-  // JARVIS-style proactive greeting based on time
   function getJarvisGreeting(): string {
     const hour = new Date().getHours();
     if (hour < 6) return "Good evening. Heliox OS is online. All systems nominal.";
@@ -43,7 +74,6 @@
     return "Burning the midnight oil? Heliox OS is standing by.";
   }
 
-  // Handle gesture events for particle effects and navigation
   function onGestureDetected(gesture: string) {
     particleBurst?.gestureBurst(gesture);
     if (gesture === "swipe_left" || gesture === "two_finger_swipe_left") {
@@ -59,7 +89,8 @@
 
   function scrollToBottom() {
     tick().then(() => {
-      if (resultsEl) resultsEl.scrollTop = resultsEl.scrollHeight;
+      virtualListEl?.scrollToBottom();
+      showScrollFAB = false;
     });
   }
 
@@ -88,7 +119,7 @@
     if (action.destructive) return "tier-destructive";
     return "tier-safe";
   }
-  // Trigger particle burst on new results
+
   let prevMsgLen = 0;
   $effect(() => {
     const msgs = $session.messages;
@@ -110,21 +141,30 @@
       if (msg.plan?.actions?.length) {
         parts.push(msg.plan.actions.map((a: any) => `• ${a.action_type}: ${a.target || ""}`).join("\n"));
       }
+      if (!parts.length && msg.plan?.actions?.length) {
+        parts.push(msg.plan.actions.map((a: any) => `• ${a.action_type}: ${a.target || ""}`).join("\n"));
+      }
       return parts.join("\n\n");
     }
     if (msg.type === "result") {
       const parts = [];
       if (msg.text) parts.push(msg.text);
       if (msg.actionResults?.length) {
-        parts.push(
-          msg.actionResults
-            .map((r: any) => r.output || r.error || "")
-            .filter(Boolean)
-            .join("\n")
-        );
+        const outputs = msg.actionResults
+          .map((r: any) => {
+            const content = r.output || r.error || "";
+            const actionType = r.action?.action_type || "";
+            return content ? `${actionType}: ${content}` : actionType;
+          })
+          .filter(Boolean)
+          .join("\n");
+        if (outputs) parts.push(outputs);
       }
       if (msg.verification) {
         parts.push(`Verification: ${msg.verification.passed ? "passed" : "failed"}`);
+        if (msg.verification.details?.length) {
+          parts.push(msg.verification.details.join("\n"));
+        }
       }
       return parts.join("\n\n");
     }
@@ -134,14 +174,12 @@
   async function copyMessage(msg: Message) {
     const text = getCopyText(msg).trim();
     if (!text) return;
-
     try {
       await writeText(text);
     } catch {
       return;
     }
     copiedMessageId = msg.timestamp;
-
     if (copiedTimeout) clearTimeout(copiedTimeout);
     copiedTimeout = setTimeout(() => {
       copiedMessageId = null;
@@ -152,6 +190,43 @@
   onDestroy(() => {
     if (copiedTimeout) clearTimeout(copiedTimeout);
   });
+  function exportReActTrace() {
+    const traceSteps = $session.messages
+      .filter(m => m.type === "plan" || m.type === "result" || m.type === "error")
+      .map(m => ({
+        type: m.type,
+        timestamp: m.timestamp,
+        ...(m.plan && { plan: m.plan }),
+        ...(m.actionResults && { actionResults: m.actionResults }),
+        ...(m.verification && { verification: m.verification }),
+        ...(m.text && { text: m.text })
+      }));
+
+    if (traceSteps.length === 0) {
+      alert("No ReAct trace steps found. Run a command first!");
+      return;
+    }
+
+    const exportData = {
+      exported_at: new Date().toISOString(),
+      version: "1.0",
+      total_steps: traceSteps.length,
+      steps: traceSteps
+    };
+
+    const blob = new Blob(
+      [JSON.stringify(exportData, null, 2)],
+      { type: "application/json" }
+    );
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `react_trace_${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
 </script>
 
 {#if showWizard}
@@ -171,27 +246,28 @@
   >
     <div class="titlebar-left">
       <ArcReactor />
-      <span class="title">Heliox OS</span>
+      <span class="title">{$_('app.title')}</span>
       <span class="badge" class:connected={$session.daemonConnected}>
-        {$session.daemonConnected ? "Online" : "Connecting..."}
+        {$session.daemonConnected ? $_('app.online') : $_('app.connecting')}
       </span>
     </div>
     <nav class="tabs">
-      <button class="tab" class:active={activeTab === "chat"} title="Open Command Panel" onclick={() => activeTab = "chat"}>Command</button>
-      <button class="tab" class:active={activeTab === "log"} title="Open activity log" onclick={() => activeTab = "log"}>Activity</button>
-      <button class="tab" class:active={activeTab === "settings"} title="Open Settings" onclick={() => activeTab = "settings"}>Settings</button>
+      <button class="tab" class:active={activeTab === "chat"} title="Open Command Panel" onclick={() => activeTab = "chat"}>{$_('app.tab_command')}</button>
+      <button class="tab" class:active={activeTab === "log"} title="Open activity log" onclick={() => activeTab = "log"}>{$_('app.tab_activity')}</button>
+      <button class="tab" class:active={activeTab === "plugins"} title="Browse plugin marketplace" onclick={() => activeTab = "plugins"}>{$_('app.tab_plugins')}</button>
+      <button class="tab" class:active={activeTab === "settings"} title="Open Settings" onclick={() => activeTab = "settings"}>{$_('app.tab_settings')}</button>
     </nav>
     <div class="titlebar-right">
+      <ConnectionStatus />
       <AmbientHUD />
     </div>
   </header>
 
-    <div class="content">
+  <div class="content">
     {#if activeTab === "chat"}
       <div class="chat-panel">
         <NeuralBackground />
-        
-        <!-- ReAct Pipeline Visualizer (Top layer) -->
+
         <div class="pipeline-container">
           <ReActPipeline />
         </div>
@@ -204,53 +280,74 @@
           />
         {/if}
 
-        <div class="results" bind:this={resultsEl}>
+        <div class="results">
           {#if $session.messages.length === 0 && !$session.loading}
             <div class="empty-state">
               <div class="empty-logo">C</div>
-              <h2>Heliox OS</h2>
-              <p>Your AI system control agent. Type, speak, or gesture — I'm ready.</p>
+              <h2>{$_('chat.empty_title')}</h2>
+              <p>{$_('chat.empty_subtitle')}</p>
               <div class="suggestions">
-                <button class="suggestion" onclick={() => session.sendCommand("Show system information")}>Show system info</button>
-                <button class="suggestion" onclick={() => session.sendCommand("Take a screenshot and describe it")}>Screenshot + OCR</button>
-                <button class="suggestion" onclick={() => session.sendCommand("What processes are running?")}>List processes</button>
+                <button class="suggestion" onclick={() => session.sendCommand("Show system information")}>{$_('chat.suggestion_sysinfo')}</button>
+                <button class="suggestion" onclick={() => session.sendCommand("Take a screenshot and describe it")}>{$_('chat.suggestion_screenshot')}</button>
+                <button class="suggestion" onclick={() => session.sendCommand("What processes are running?")}>{$_('chat.suggestion_processes')}</button>
               </div>
             </div>
           {:else}
-            {#each $session.messages as msg (msg.timestamp)}
-              {@render messageBlock(msg)}
-            {/each}
+            <VirtualList bind:this={virtualListEl} items={$session.messages} bind:atBottom={isAtBottom}>
+              {#snippet item(msg)}
+                {@render messageBlock(msg)}
+              {/snippet}
 
-            {#if $session.loading}
-              <ExecutionGraph />
-              
-              <div class="message system">
-                <div class="msg-header">
-                  <span class="msg-label">HELIOX</span>
-                  <span class="phase-badge">{$session.phase || "thinking"}</span>
-                </div>
-                <span class="msg-text loading-dots">
-                  {$session.phase ? `${$session.phase}` : "Thinking"}
-                </span>
-              </div>
-            {/if}
+              {#snippet footer()}
+                {#if $session.loading}
+                  <ExecutionGraph />
+
+                  {#if $session.streamingText}
+                    <div class="message system streaming">
+                      <div class="msg-header">
+                        <span class="msg-label">HELIOX</span>
+                        <span class="phase-badge">{$_('chat.streaming')}</span>
+                      </div>
+                      <span class="msg-text">{$session.streamingText}</span>
+                    </div>
+                  {:else}
+                    <div class="message system">
+                      <div class="msg-header">
+                        <span class="msg-label">HELIOX</span>
+                        <span class="phase-badge">{$session.phase || $_('chat.thinking')}</span>
+                      </div>
+                      <span class="msg-text loading-dots">
+                        {$session.phase ? `${$session.phase}` : $_('chat.thinking')}
+                      </span>
+                    </div>
+                  {/if}
+                {/if}
+              {/snippet}
+            </VirtualList>
           {/if}
+          <ScrollToBottom show={showScrollFAB} onclick={scrollToBottom} />
         </div>
 
         <div class="input-row">
           <VoiceControl />
           <CommandInput />
           <GestureControl onGesture={onGestureDetected} />
+          <button class="tab" type="button" onclick={() => session.exportChat("json")}>{$_('app.export_json')}</button>
+          <button class="tab" type="button" onclick={() => session.exportChat("csv")}>{$_('app.export_csv')}</button>
+          <button class="tab" type="button" onclick={() => session.exportChat("json")}>Export JSON</button>
+          <button class="tab" type="button" onclick={() => session.exportChat("csv")}>Export CSV</button>
+          <button class="tab" type="button" onclick={exportReActTrace} title="Export ReAct reasoning trace to JSON">Export Trace</button>
         </div>
       </div>
     {:else if activeTab === "log"}
       <ActivityLog />
+    {:else if activeTab === "plugins"}
+      <PluginsTab />
     {:else}
       <SettingsPanel />
     {/if}
   </div>
 
-  <!-- Particle Burst Overlay -->
   <ParticleBurst bind:this={particleBurst} />
 </main>
 
@@ -264,8 +361,8 @@
   {:else if msg.type === "plan" && msg.plan}
     <div class="message plan-msg has-copy">
       <div class="msg-header">
-        <span class="msg-label">PLAN</span>
-        <span class="phase-badge">{msg.plan.dry_run ? "dry run" : "planning"}</span>
+        <span class="msg-label">{$_('plan.label')}</span>
+        <span class="phase-badge">{msg.plan.dry_run ? $_('plan.dry_run') : $_('plan.planning')}</span>
       </div>
       {#if msg.plan.explanation}
         <p class="plan-explanation">{msg.plan.explanation}</p>
@@ -285,24 +382,18 @@
       <button class="copy-button" type="button" aria-label="Copy message" title="Copy" onclick={() => copyMessage(msg)}>
         <Copy size={14} />
       </button>
-      <span
-        class="copy-feedback"
-        role="status"
-        aria-live="polite"
-        aria-atomic="true"
-        class:active={copiedMessageId === msg.timestamp}
-      >
-        Copied!
+      <span class="copy-feedback" role="status" aria-live="polite" aria-atomic="true" class:active={copiedMessageId === msg.timestamp}>
+        {$_('chat.copied')}
       </span>
     </div>
 
   {:else if msg.type === "result"}
     <div class="message result-msg has-copy">
       <div class="msg-header">
-        <span class="msg-label">RESULT</span>
+        <span class="msg-label">{$_('result.label')}</span>
         {#if msg.verification}
           <span class="status-badge" class:passed={msg.verification.passed} class:failed={!msg.verification.passed}>
-            {msg.verification.passed ? "Verified" : "Issues detected"}
+            {msg.verification.passed ? $_('result.verified') : $_('result.issues')}
           </span>
         {/if}
       </div>
@@ -316,11 +407,13 @@
                 <code class="ar-target">{ar.target}</code>
               {/if}
               <span class="ar-status" class:success={ar.success} class:failure={!ar.success}>
-                {ar.success ? "OK" : "FAILED"}
+                {ar.success ? $_('result.ok') : $_('result.failed')}
               </span>
             </div>
             {#if ar.success && ar.output}
-              <pre class="ar-output">{ar.output.trim()}</pre>
+              <div class="ar-output">
+                {@html renderMarkdown(ar.output.trim())}
+              </div>
             {/if}
             {#if !ar.success && ar.error}
               <pre class="ar-error">{ar.error}</pre>
@@ -328,12 +421,12 @@
           </div>
         {/each}
       {:else}
-        <span class="msg-text">{msg.text || "Done."}</span>
+        <span class="msg-text">{msg.text || $_('result.done')}</span>
       {/if}
 
       {#if msg.verification && msg.verification.details.length > 0}
         <div class="verification-section">
-          <span class="verification-label">Verification</span>
+          <span class="verification-label">{$_('result.verification')}</span>
           {#each msg.verification.details as detail}
             <span class="verification-detail" class:v-pass={detail.includes("VERIFIED")} class:v-fail={detail.includes("FAILED") || detail.includes("MISMATCH")}>
               {detail}
@@ -344,50 +437,34 @@
       <button class="copy-button" type="button" aria-label="Copy message" title="Copy" onclick={() => copyMessage(msg)}>
         <Copy size={14} />
       </button>
-      <span
-        class="copy-feedback"
-        role="status"
-        aria-live="polite"
-        aria-atomic="true"
-        class:active={copiedMessageId === msg.timestamp}
-      >
-        Copied!
+      <span class="copy-feedback" role="status" aria-live="polite" aria-atomic="true" class:active={copiedMessageId === msg.timestamp}>
+        {$_('chat.copied')}
       </span>
     </div>
 
   {:else if msg.type === "error"}
     <div class="message error-msg has-copy">
-      <span class="msg-label">ERROR</span>
+      <span class="msg-label">{$_('error.label')}</span>
       <span class="msg-text">{msg.text}</span>
       <button class="copy-button" type="button" aria-label="Copy message" title="Copy" onclick={() => copyMessage(msg)}>
         <Copy size={14} />
       </button>
-      <span
-        class="copy-feedback"
-        role="status"
-        aria-live="polite"
-        aria-atomic="true"
-        class:active={copiedMessageId === msg.timestamp}
-      >
-        Copied!
+      <span class="copy-feedback" role="status" aria-live="polite" aria-atomic="true" class:active={copiedMessageId === msg.timestamp}>
+        {$_('chat.copied')}
       </span>
     </div>
 
   {:else}
     <div class="message system-msg has-copy">
       <span class="msg-label">HELIOX</span>
-      <span class="msg-text">{msg.text}</span>
+      <div class="msg-text">
+        {@html renderMarkdown(msg.text || "")}
+      </div>
       <button class="copy-button" type="button" aria-label="Copy message" title="Copy" onclick={() => copyMessage(msg)}>
         <Copy size={14} />
       </button>
-      <span
-        class="copy-feedback"
-        role="status"
-        aria-live="polite"
-        aria-atomic="true"
-        class:active={copiedMessageId === msg.timestamp}
-      >
-        Copied!
+      <span class="copy-feedback" role="status" aria-live="polite" aria-atomic="true" class:active={copiedMessageId === msg.timestamp}>
+        {$_('chat.copied')}
       </span>
     </div>
   {/if}
@@ -469,7 +546,6 @@
     -webkit-app-region: no-drag;
   }
 
-  /* Input Row — voice + text + gesture */
   .input-row {
     display: flex;
     align-items: center;
@@ -509,14 +585,12 @@
 
   .results {
     flex: 1;
-    overflow-y: auto;
-    padding: 12px 16px;
+    overflow: hidden;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    position: relative;
   }
 
-  /* Empty state */
   .empty-state {
     flex: 1;
     display: flex;
@@ -564,7 +638,6 @@
 
   .suggestion:hover { background: var(--accent); color: white; }
 
-  /* All messages */
   .message {
     display: flex;
     flex-direction: column;
@@ -664,17 +737,9 @@
     word-break: break-word;
   }
 
-  /* User messages */
-  .user-msg {
-    background: var(--bg-secondary);
-  }
+  .user-msg { background: var(--bg-secondary); }
+  .system-msg { background: var(--bg-tertiary); }
 
-  /* System messages */
-  .system-msg {
-    background: var(--bg-tertiary);
-  }
-
-  /* Error messages */
   .error-msg {
     border-color: var(--danger);
     background: var(--danger-bg);
@@ -682,7 +747,17 @@
 
   .error-msg .msg-label { color: var(--danger); }
 
-  /* Plan messages */
+  .message.system.streaming {
+    background: var(--bg-tertiary);
+    border-left: 3px solid var(--accent);
+    animation: pulse-glow 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse-glow {
+    0%, 100% { border-left-color: var(--accent); }
+    50% { border-left-color: var(--accent-hover); }
+  }
+
   .plan-msg {
     background: var(--bg-tertiary);
     border-color: var(--accent-muted);
@@ -774,7 +849,6 @@
   .tier-destructive { background: rgba(251, 191, 36, 0.1); color: var(--warning); }
   .tier-root { background: var(--danger-bg); color: var(--danger); }
 
-  /* Result messages */
   .result-msg {
     background: var(--bg-secondary);
     gap: 8px;
@@ -789,15 +863,8 @@
     border-radius: 20px;
   }
 
-  .status-badge.passed {
-    background: rgba(74, 222, 128, 0.1);
-    color: var(--success);
-  }
-
-  .status-badge.failed {
-    background: var(--danger-bg);
-    color: var(--danger);
-  }
+  .status-badge.passed { background: rgba(74, 222, 128, 0.1); color: var(--success); }
+  .status-badge.failed { background: var(--danger-bg); color: var(--danger); }
 
   .action-result {
     border-radius: var(--radius-sm);
@@ -868,7 +935,6 @@
     word-break: break-all;
   }
 
-  /* Verification section */
   .verification-section {
     display: flex;
     flex-direction: column;
@@ -896,7 +962,6 @@
   .verification-detail.v-pass { color: var(--success); }
   .verification-detail.v-fail { color: var(--danger); }
 
-  /* Loading */
   .loading-dots::after {
     content: "";
     animation: dots 1.5s infinite;
@@ -906,5 +971,66 @@
     0%, 20% { content: "."; }
     40% { content: ".."; }
     60%, 100% { content: "..."; }
+  }
+
+  .hlx-code-wrapper {
+    margin: 8px 0;
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    border: 1px solid var(--border);
+    background: #1a1a24;
+  }
+
+  .hlx-code-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 10px;
+    background: rgba(0,0,0,0.3);
+    border-bottom: 1px solid var(--border);
+    min-height: 26px;
+  }
+
+  .hlx-lang-badge {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent);
+    opacity: 0.85;
+  }
+
+  .hlx-copy-btn {
+    font-size: 10px;
+    padding: 2px 8px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-family: var(--font-sans);
+    transition: all 0.15s;
+  }
+
+  .hlx-copy-btn:hover {
+    background: var(--accent-muted);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .hlx-pre {
+    margin: 0;
+    padding: 12px 14px;
+    overflow-x: auto;
+    font-size: 12px;
+    line-height: 1.6;
+    background: transparent;
+  }
+
+  .hlx-pre code {
+    font-family: var(--font-mono);
+    background: none;
+    border: none;
+    padding: 0;
   }
 </style>

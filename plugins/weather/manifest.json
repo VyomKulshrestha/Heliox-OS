@@ -1,0 +1,27 @@
+{
+  "name": "weather",
+  "version": "1.0.0",
+  "description": "Get current weather and forecast for any location",
+  "author": "community",
+  "tools": [
+    {
+      "name": "get_weather",
+      "description": "Get current weather for a city",
+      "inputs": ["city"],
+      "outputs": ["temperature", "condition", "humidity"],
+      "permission_tier": 1,
+      "action_type": "api_call"
+    },
+    {
+      "name": "get_forecast",
+      "description": "Get 5-day weather forecast",
+      "inputs": ["city"],
+      "outputs": ["forecast"],
+      "permission_tier": 1,
+      "action_type": "api_call"
+    }
+  ],
+  "agent_type": "system",
+  "entry_point": "weather_plugin.py",
+  "dependencies": ["requests"]
+}

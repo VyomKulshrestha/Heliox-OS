@@ -11,6 +11,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import os
 import sys
 from typing import TYPE_CHECKING
 
@@ -53,6 +54,7 @@ from pilot.actions import (
     WifiParams,
     WindowParams,
 )
+from pilot.memory.sliding_window import build_sliding_context
 
 if TYPE_CHECKING:
     from pilot.memory.store import MemoryStore
@@ -148,11 +150,17 @@ API INTEGRATION, MESSAGING & WEBHOOKS (OpenClaw-style Hub):
 
 FILE OPERATIONS:
 ... (all previously known standard operations)
-- file_read, file_write, file_delete, file_move, file_copy, file_list, file_search, file_permissions
+- file_read, file_write, file_delete, file_move, file_copy, file_list, file_search
+- directory_summary, file_permissions
 
 SYSTEM ADMINISTRATION / PACKAGE / SERVICE / PROCESS / POWER:
 ... (all standard commands apply)
 - You have full access to shell_command, shell_script, system_info, registry_read, dbus_call, etc.
+
+REMOTE EXECUTION (SSH):
+- ssh_command Params: {{"host": "prod-1", "command": "uname -a", "timeout_seconds": 60}}
+- ssh_script Params: {{"host": "prod-1", "script": "whoami\\nuptime\\n", "timeout_seconds": 300}}
+- IMPORTANT: "host" MUST be an alias from config.ssh.allowed_hosts (never a raw hostname/IP).
 
 ENVIRONMENT VARIABLES:
 - env_get Params: {{"name": "PATH"}}
@@ -286,6 +294,36 @@ IMPORTANT RULES FOR RETRY:
 Generate a NEW plan that avoids this error. Keep it SIMPLE — fewer actions is better.
 """
 
+AUTO_HEAL_RETRY_TEMPLATE = """\
+The previous LLM response FAILED JSON validation. Here is the error:
+
+{error}
+
+Raw LLM response (failed to parse):
+{raw_response}
+
+Original request: {request}
+
+User preferences and history:
+{context}
+
+Current screen context:
+{screen_context}
+
+IMPORTANT: Output ONLY a valid JSON object with this exact format:
+{{"explanation": "brief explanation", "actions": [{{"action_type": "action_name", "target": "target", "parameters": {{}}}}]}}
+
+IMPORTANT RULES:
+- This is a {os} system. Use {path_style} paths ONLY.
+- Home directory is "{home}".
+- Desktop is "{home}\\Desktop" (Windows) or "{home}/Desktop" (Linux/Mac).
+- NEVER use /mnt/ or /tmp/ or /home/ paths on Windows.
+- Output ONLY valid JSON - no markdown, no explanation outside the JSON.
+- The JSON must have exactly these keys: "explanation" (string) and "actions" (array).
+- Each action must have: "action_type", "target", and "parameters" keys.
+- Wrap your JSON in ```json code blocks if needed.
+"""
+
 
 class Planner:
     """Converts natural language to structured action plans."""
@@ -294,10 +332,12 @@ class Planner:
         self,
         model_router: ModelRouter,
         memory: MemoryStore,
+        orchestrator=None,
         skills_context: str = "",
     ) -> None:
         self._model = model_router
         self._memory = memory
+        self._orchestrator = orchestrator
         self._system_prompt_base = SYSTEM_PROMPT.format(
             os=_detect_os(),
             path_style="Windows (C:\\Users\\...)" if sys.platform == "win32" else "Unix (/home/...)",
@@ -395,6 +435,41 @@ class Planner:
                 raw_input=user_input,
             )
 
+        # --- Fast local system usage queries ---
+        usage_patterns = (
+            (
+                re.compile(r"^(?:what(?:'s| is)|show|check|tell me)\s+(?:my\s+)?cpu\s+usage\??$"),
+                ActionType.CPU_USAGE,
+                "cpu",
+                "Check current CPU usage",
+            ),
+            (
+                re.compile(r"^(?:what(?:'s| is)|show|check|tell me)\s+(?:my\s+)?(?:memory|ram)\s+usage\??$"),
+                ActionType.MEMORY_USAGE,
+                "memory",
+                "Check current memory usage",
+            ),
+            (
+                re.compile(r"^(?:what(?:'s| is)|show|check|tell me)\s+(?:my\s+)?disk\s+usage\??$"),
+                ActionType.DISK_USAGE,
+                "disk",
+                "Check current disk usage",
+            ),
+        )
+        for pattern, action_type, target, explanation in usage_patterns:
+            if pattern.match(text):
+                return ActionPlan(
+                    actions=[
+                        Action(
+                            action_type=action_type,
+                            target=target,
+                            parameters=EmptyParams(),
+                        )
+                    ],
+                    explanation=explanation,
+                    raw_input=user_input,
+                )
+
         # --- "open <app>" (known apps) ---
         app_match = re.match(r"^(?:open|launch|start|run)\s+([\w\s]+)$", text)
         if app_match:
@@ -417,8 +492,17 @@ class Planner:
 
         return None  # Not a simple command — use LLM
 
-    async def plan(self, user_input: str, error_context: str = "", screen_context: str = "") -> ActionPlan:
-        """Generate an action plan from a natural language request."""
+    async def plan(
+        self,
+        user_input: str,
+        error_context: str = "",
+        screen_context: str = "",
+        stream_callback: callable | None = None,
+    ) -> ActionPlan:
+        """Generate an action plan from a natural language request.
+
+        If stream_callback is provided, LLM tokens will be streamed via callback.
+        """
         try:
             # Fast-path: skip LLM for simple, pattern-matchable commands
             if not error_context:
@@ -429,26 +513,110 @@ class Planner:
 
             context = await self._memory.get_context(user_input)
 
-            if error_context:
-                prompt = RETRY_TEMPLATE.format(
-                    error=error_context,
-                    request=user_input,
-                    os=_detect_os(),
-                    path_style="Windows (C:\\Users\\...)" if sys.platform == "win32" else "Unix (/home/...)",
-                    home=str(__import__("pathlib").Path.home()),
-                )
-            else:
-                prompt = USER_CONTEXT_TEMPLATE.format(
-                    context=context or "No prior context.",
-                    screen_context=screen_context or "Not available.",
-                    request=user_input,
-                )
+            # Load config parameters safely
+            config = getattr(self._model, "_config", None)
+            max_tokens = 4000
+            recent_limit = 10
+            if config:
+                memory_config = getattr(config, "memory", None)
+                if memory_config:
+                    max_tokens = getattr(memory_config, "max_context_tokens", 4000)
+                    recent_limit = getattr(memory_config, "max_recent_messages", 10)
+                else:
+                    max_tokens = getattr(config, "max_context_tokens", 4000)
+                    recent_limit = getattr(config, "max_recent_messages", 10)
 
-            raw_response = await self._model.generate(
-                prompt, system=self._system_prompt, json_mode=True, temperature=0.1
+            # Retrieve chronological history
+            history_entries = await self._memory.get_history(limit=50)
+            history_entries.reverse()
+
+            messages = [{"role": "system", "content": self._system_prompt}]
+            for idx, entry in enumerate(history_entries):
+                msg = {"role": "user", "content": entry["user_input"]}
+                if idx == 0:
+                    msg["type"] = "goal"
+                messages.append(msg)
+                if entry.get("explanation"):
+                    messages.append({"role": "assistant", "content": entry["explanation"]})
+
+            # Helper function to get latest message content
+            def get_latest_content(err_ctx: str, parse_err: str = None, raw_resp: str = None) -> str:
+                if parse_err:
+                    return AUTO_HEAL_RETRY_TEMPLATE.format(
+                        error=parse_err,
+                        raw_response=raw_resp[:1000] if raw_resp else "",
+                        request=user_input,
+                        context=context or "No prior context.",
+                        screen_context=screen_context or "Not available.",
+                        os=_detect_os(),
+                        path_style="Windows (C:\\Users\\...)" if sys.platform == "win32" else "Unix (/home/...)",
+                        home=str(__import__("pathlib").Path.home()),
+                    )
+                elif err_ctx:
+                    return RETRY_TEMPLATE.format(
+                        error=err_ctx,
+                        request=user_input,
+                        os=_detect_os(),
+                        path_style="Windows (C:\\Users\\...)" if sys.platform == "win32" else "Unix (/home/...)",
+                        home=str(__import__("pathlib").Path.home()),
+                    )
+                else:
+                    return USER_CONTEXT_TEMPLATE.format(
+                        context=context or "No prior context.",
+                        screen_context=screen_context or "Not available.",
+                        request=user_input,
+                    )
+
+            latest_msg = {"role": "user", "content": get_latest_content(error_context)}
+            if not history_entries:
+                latest_msg["type"] = "goal"
+            messages.append(latest_msg)
+
+            # Compress history using sliding window
+            optimized_messages = build_sliding_context(
+                messages,
+                max_recent_messages=recent_limit,
+                max_context_tokens=max_tokens,
             )
 
-            return self._parse_response(raw_response, user_input)
+            max_retries = 3
+            last_raw_response = None
+            last_parse_error = None
+
+            for attempt in range(max_retries):
+                new_messages = optimized_messages
+                if attempt > 0:
+                    new_messages = optimized_messages.copy()
+                    last = new_messages[-1].copy()
+                    last["content"] = get_latest_content("", last_parse_error, last_raw_response)
+                    new_messages[-1] = last
+
+                raw_response = await self._model.generate(
+                    new_messages, json_mode=True, temperature=0.1, stream_callback=stream_callback
+                )
+                last_raw_response = raw_response
+
+                result = self._parse_response(raw_response, user_input)
+
+                if result.error is None:
+                    if self._orchestrator and attempt == 0 and not error_context:
+                        if self._orchestrator.is_complex_prompt(user_input):
+                            await self._orchestrator.delegate_to_subagents(user_input)
+                            logger.info("[Planner] Delegated to sub-agents for complex prompt.")
+                    return result
+
+                last_parse_error = result.error
+                logger.warning(
+                    "Attempt %d/%d failed: %s",
+                    attempt + 1,
+                    max_retries,
+                    last_parse_error[:200] if last_parse_error else "Unknown",
+                )
+
+            return ActionPlan(
+                error=f"Auto-healing failed after {max_retries} attempts. Last error: {last_parse_error}",
+                raw_input=user_input,
+            )
 
         except Exception as e:
             logger.exception("Planning failed for input: %s", user_input[:100])
@@ -474,16 +642,38 @@ class Planner:
             data = json.loads(clean_raw)
         except json.JSONDecodeError as e:
             return ActionPlan(
-                error=f"LLM returned invalid JSON: {e}\\n\\nRaw Response:\\n{clean_raw[:500]}", raw_input=user_input
+                error="JSON PARSING FAILED: "
+                + str(e)
+                + "\n\nThe LLM response was not valid JSON. Raw response:\n"
+                + clean_raw[:800]
+                + '\n\nIMPORTANT: Output ONLY a JSON object with this exact format: {"explanation": "...", "actions": [{"action_type": "...", "target": "...", "parameters": {}}]}',
+                raw_input=user_input,
             )
 
         if not isinstance(data, dict):
-            return ActionPlan(error="LLM response is not a JSON object", raw_input=user_input)
+            expected = '{"explanation": "...", "actions": [{"action_type": "...", "target": "...", "parameters": {}}]}'
+            return ActionPlan(
+                error="INVALID RESPONSE FORMAT: Expected a JSON object but got "
+                + type(data).__name__
+                + "\n\nRaw response:\n"
+                + clean_raw[:500]
+                + "\n\nOutput ONLY: "
+                + expected,
+                raw_input=user_input,
+            )
 
         explanation = data.get("explanation", "")
         raw_actions = data.get("actions", [])
         if not isinstance(raw_actions, list) or not raw_actions:
-            return ActionPlan(error="No actions in plan", explanation=explanation, raw_input=user_input)
+            expected = '{"explanation": "...", "actions": [{"action_type": "open_application", "target": "notepad", "parameters": {}}]}'
+            return ActionPlan(
+                error="MISSING ACTIONS: The response must contain an 'actions' array.\n\nRaw response:\n"
+                + clean_raw[:500]
+                + "\n\nOutput: "
+                + expected,
+                explanation=explanation,
+                raw_input=user_input,
+            )
 
         actions: list[Action] = []
         for i, raw_action in enumerate(raw_actions):
@@ -492,12 +682,11 @@ class Planner:
                 actions.append(action)
             except Exception as e:
                 logger.warning("Failed to parse action %d: %s", i, e)
-                # Skip unparseable actions instead of aborting entire plan
-                continue
 
         if not actions:
             return ActionPlan(
-                error="All actions failed to parse",
+                error="ACTION PARSING FAILED: Could not parse any actions from the response.\n\nThe 'actions' array must contain valid action objects with: action_type (string), target (string), parameters (object).\n\nRaw response:\n"
+                + clean_raw[:500],
                 explanation=explanation,
                 raw_input=user_input,
             )
@@ -968,10 +1157,6 @@ class Planner:
             if "output_path" not in p:
                 p["output_path"] = str(__import__("pathlib").Path.home() / "Downloads" / "download")
 
-        elif action_type == ActionType.SKILL_RUN:
-            if (not p.get("skill_id")) and target:
-                p["skill_id"] = target
-
         file_types = {
             ActionType.FILE_READ,
             ActionType.FILE_WRITE,
@@ -980,6 +1165,7 @@ class Planner:
             ActionType.FILE_COPY,
             ActionType.FILE_LIST,
             ActionType.FILE_SEARCH,
+            ActionType.DIRECTORY_SUMMARY,
             ActionType.FILE_PERMISSIONS,
         }
         if action_type in file_types and ("path" not in p or not p["path"]):
@@ -1301,9 +1487,6 @@ class Planner:
         }
         if action_type in code_exec_types:
             return CodeExecParams(**params)
-
-        if action_type == ActionType.SKILL_RUN:
-            return SkillRunParams(**params)
 
         file_intel_types = {
             ActionType.FILE_PARSE,

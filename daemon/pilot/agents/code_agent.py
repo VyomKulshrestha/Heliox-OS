@@ -25,6 +25,7 @@ CODE_ACTION_TYPES: set[ActionType] = {
     ActionType.SKILL_RUN,
     ActionType.SHELL_COMMAND,
     ActionType.SHELL_SCRIPT,
+    ActionType.PTY_EXEC,
 }
 
 
@@ -56,6 +57,10 @@ class CodeAgent(BaseAgent):
             AgentCapability(
                 action_type=ActionType.SHELL_SCRIPT,
                 description="Run multi-line dev scripts",
+            ),
+            AgentCapability(
+                action_type=ActionType.PTY_EXEC,
+                description="Run a command in a persistent PTY shell session, preserving env and cwd",
             ),
         ]
 

@@ -1,0 +1,35 @@
+{
+  "name": "spotify-control",
+  "version": "1.0.0",
+  "description": "Control Spotify playback and manage playlists",
+  "author": "community",
+  "tools": [
+    {
+      "name": "spotify_play",
+      "description": "Start or resume Spotify playback",
+      "inputs": [],
+      "outputs": ["result"],
+      "permission_tier": 2,
+      "action_type": "api_call"
+    },
+    {
+      "name": "spotify_pause",
+      "description": "Pause Spotify playback",
+      "inputs": [],
+      "outputs": ["result"],
+      "permission_tier": 2,
+      "action_type": "api_call"
+    },
+    {
+      "name": "spotify_now_playing",
+      "description": "Get currently playing track info",
+      "inputs": [],
+      "outputs": ["track", "artist", "album"],
+      "permission_tier": 1,
+      "action_type": "api_call"
+    }
+  ],
+  "agent_type": "system",
+  "entry_point": "spotify_plugin.py",
+  "dependencies": ["spotipy"]
+}

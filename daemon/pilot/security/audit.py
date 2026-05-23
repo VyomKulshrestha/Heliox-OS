@@ -6,11 +6,15 @@ This log is tamper-evident and can be shipped to external SIEM systems.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+import aiofiles
+import aiofiles.os
 
 from pilot.actions import Action, ActionResult
 from pilot.config import AUDIT_FILE, DATA_DIR
@@ -52,9 +56,9 @@ class AuditLogger:
 
     def __init__(self, audit_file: Path | None = None) -> None:
         self._file = audit_file or AUDIT_FILE
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        self._lock = asyncio.Lock()
 
-    def log_action_start(self, action: Action, plan_id: str, dry_run: bool = False) -> None:
+    async def log_action_start(self, action: Action, plan_id: str, dry_run: bool = False) -> None:
         action_type = action.action_type.value
         if dry_run:
             action_type = f"(dry run) {action_type}"
@@ -70,9 +74,9 @@ class AuditLogger:
                 "dry_run": dry_run,
             },
         )
-        self._write(entry)
+        await self._write(entry)
 
-    def log_action_result(self, result: ActionResult, plan_id: str, dry_run: bool = False) -> None:
+    async def log_action_result(self, result: ActionResult, plan_id: str, dry_run: bool = False) -> None:
         action_type = result.action.action_type.value
         if dry_run:
             action_type = f"(dry run) {action_type}"
@@ -89,9 +93,9 @@ class AuditLogger:
                 "dry_run": dry_run,
             },
         )
-        self._write(entry)
+        await self._write(entry)
 
-    def log_rollback(self, snapshot_id: str, plan_id: str, reason: str) -> None:
+    async def log_rollback(self, snapshot_id: str, plan_id: str, reason: str) -> None:
         entry = AuditEntry(
             event_type="rollback",
             details={
@@ -100,9 +104,9 @@ class AuditLogger:
                 "reason": reason,
             },
         )
-        self._write(entry)
+        await self._write(entry)
 
-    def log_config_change(self, section: str, key: str, old_value: Any, new_value: Any) -> None:
+    async def log_config_change(self, section: str, key: str, old_value: Any, new_value: Any) -> None:
         entry = AuditEntry(
             event_type="config_change",
             details={
@@ -112,19 +116,20 @@ class AuditLogger:
                 "new_value": str(new_value),
             },
         )
-        self._write(entry)
+        await self._write(entry)
 
-    def log_security_event(self, event: str, details: dict[str, Any] | None = None) -> None:
+    async def log_security_event(self, event: str, details: dict[str, Any] | None = None) -> None:
         entry = AuditEntry(
             event_type="security",
             details={"event": event, **(details or {})},
         )
-        self._write(entry)
+        await self._write(entry)
 
-    def _write(self, entry: AuditEntry) -> None:
+    async def _write(self, entry: AuditEntry) -> None:
         line = json.dumps(entry.to_dict(), separators=(",", ":")) + "\n"
         try:
-            with open(self._file, "a", encoding="utf-8") as f:
-                f.write(line)
+            await aiofiles.os.makedirs(self._file.parent, exist_ok=True)
+            async with self._lock, aiofiles.open(self._file, "a", encoding="utf-8") as f:
+                await f.write(line)
         except OSError:
             logger.exception("Failed to write audit log")

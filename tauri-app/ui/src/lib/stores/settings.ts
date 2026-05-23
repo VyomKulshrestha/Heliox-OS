@@ -20,12 +20,17 @@ export interface PilotSettings {
     snapshot_retention_count: number;
     snapshot_retention_days: number;
   };
+  screen_vision: {
+    capture_interval_seconds: number;
+  };
   restrictions: {
     protected_folders: string[];
     protected_packages: string[];
     blocked_commands: string[];
   };
   first_run_complete: boolean;
+  theme: "light" | "dark";
+  hotkey: string; // Added tracking for active UI theme mode
 }
 
 const defaultSettings: PilotSettings = {
@@ -47,43 +52,64 @@ const defaultSettings: PilotSettings = {
     snapshot_retention_count: 10,
     snapshot_retention_days: 7,
   },
+  screen_vision: {
+    capture_interval_seconds: 3,
+  },
   restrictions: {
     protected_folders: [],
     protected_packages: [],
     blocked_commands: [],
   },
   first_run_complete: false,
+  theme: "dark",
+  hotkey: typeof navigator !== "undefined" && navigator.platform.includes("Mac") 
+    ? "Cmd+Space" 
+    : "Ctrl+Space", // Default configuration set to dark mode
 };
 
 function createSettings() {
   const { subscribe, set, update } = writable<PilotSettings>(defaultSettings);
 
+  // Helper utility to detect system-level operating system dark/light mode preference
+  function getSystemTheme(): "light" | "dark" {
+    if (typeof window !== "undefined") {
+      return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+    }
+    return "dark";
+  }
+
   async function load() {
-    // Load from localStorage first (instant, always available)
     try {
       const stored = localStorage.getItem("heliox_settings");
       if (stored) {
         const parsed = JSON.parse(stored);
+        // Fallback to system preference matching if no theme key exists in saved cache
+        if (!parsed.theme) {
+          parsed.theme = getSystemTheme();
+        }
         update((s) => ({ ...s, ...parsed }));
+      } else {
+        // Apply detected system preference mode on fresh startup instances
+        update((s) => ({ ...s, theme: getSystemTheme() }));
       }
     } catch { /* ignore */ }
 
-    // Then try to sync from daemon in background (non-blocking)
     call("get_config")
       .then((config) => {
-        set(config as PilotSettings);
-        // Update localStorage with daemon's authoritative copy
+        const fullConfig = config as PilotSettings;
+        // Keep localized store UI theme value if backend daemon returns empty config properties
+        if (!fullConfig.theme) {
+          subscribe(s => { fullConfig.theme = s.theme; })();
+        }
+        set(fullConfig);
         try {
-          localStorage.setItem("heliox_settings", JSON.stringify(config));
+          localStorage.setItem("heliox_settings", JSON.stringify(fullConfig));
         } catch { /* ignore */ }
       })
-      .catch(() => {
-        // daemon not available, localStorage values are fine
-      });
+      .catch(() => {});
   }
 
   async function updateSection(section: string, values: Record<string, unknown>) {
-    // Always update the local store immediately so the UI never hangs
     if (section === "") {
       update((s) => ({ ...s, ...values }));
     } else {
@@ -93,7 +119,6 @@ function createSettings() {
       }));
     }
 
-    // Persist to localStorage as a reliable fallback
     try {
       const stored = JSON.parse(localStorage.getItem("heliox_settings") || "{}");
       if (section === "") {
@@ -104,7 +129,6 @@ function createSettings() {
       localStorage.setItem("heliox_settings", JSON.stringify(stored));
     } catch { /* ignore */ }
 
-    // Try to sync to daemon in background (non-blocking)
     call("update_config", { section, values }).catch((err) => {
       console.warn("Daemon unreachable, settings saved locally:", err);
     });
@@ -112,10 +136,50 @@ function createSettings() {
 
   load();
 
+  // Reactive subscription side-effect to safely toggle HTML element tags dynamically
+  subscribe((s) => {
+    if (typeof window !== "undefined") {
+      const root = document.documentElement;
+      if (s.theme === "light") {
+        root.classList.add("light-mode");
+      } else {
+        root.classList.remove("light-mode");
+      }
+    }
+  });
+
+  // Event listener tracking OS level theme switches when manual overrides aren't present
+  if (typeof window !== "undefined") {
+    window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", (e) => {
+      const stored = localStorage.getItem("heliox_settings");
+      const hasManualTheme = stored && JSON.parse(stored).theme;
+      if (!hasManualTheme) {
+        updateSection("", { theme: e.matches ? "light" : "dark" });
+      }
+    });
+  }
+  async function reset() {
+  // Reset app state immediately
+  set(defaultSettings);
+
+  // Remove cached local settings
+  try {
+    localStorage.removeItem("heliox_settings");
+  } catch {
+    /* ignore */
+  }
+
+  // Tell backend/daemon to reset config
+  call("reset_config").catch((err) => {
+    console.warn("Failed to reset backend config:", err);
+  });
+}
+
   return {
     subscribe,
     load,
     updateSection,
+    reset,
   };
 }
 

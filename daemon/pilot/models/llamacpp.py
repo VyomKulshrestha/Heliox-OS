@@ -2,6 +2,9 @@
 
 This module is optional — only used if Ollama is unavailable and
 the llama-cpp-python package is installed.
+
+GPU layer count is determined dynamically at load time via
+:mod:`pilot.models.gpu_utils` to prevent Out-Of-Memory crashes.
 """
 
 from __future__ import annotations
@@ -10,6 +13,8 @@ import asyncio
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from pilot.models.gpu_utils import calculate_gpu_layers
 
 if TYPE_CHECKING:
     from pilot.config import PilotConfig
@@ -39,9 +44,10 @@ class LlamaCppClient:
         if not model_path:
             raise RuntimeError("No GGUF model file found. Download one to ~/.local/share/pilot/models/")
 
-        gpu_layers = -1
-        if self._config.model.gpu_memory_limit_mb > 0:
-            gpu_layers = max(1, self._config.model.gpu_memory_limit_mb // 200)
+        gpu_layers = calculate_gpu_layers(
+            model_path,
+            vram_limit_mb=self._config.model.gpu_memory_limit_mb,
+        )
 
         logger.info("Loading GGUF model: %s (n_gpu_layers=%d)", model_path, gpu_layers)
         self._llm = Llama(
