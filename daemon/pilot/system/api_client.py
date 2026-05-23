@@ -44,7 +44,9 @@ async def api_request(
     # Try with SSL verification first, fallback without if cert issues
     for verify in (True, False):
         try:
-            async with create_httpx_client(PilotConfig.load(), timeout=timeout, follow_redirects=True, verify=verify) as client:
+            async with create_httpx_client(
+                PilotConfig.load(), timeout=timeout, follow_redirects=True, verify=verify
+            ) as client:
                 kwargs: dict[str, Any] = {"params": params}
                 if headers:
                     kwargs["headers"] = headers
