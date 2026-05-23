@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-import httpx
+from pilot.config import PilotConfig
+from pilot.system.http_client import create_httpx_client
 
 if TYPE_CHECKING:
-    from pilot.config import PilotConfig
     from pilot.security.vault import KeyVault
 
 logger = logging.getLogger("pilot.models.cloud")
@@ -36,7 +36,7 @@ class CloudClient:
     def __init__(self, config: PilotConfig, vault: KeyVault) -> None:
         self._config = config
         self._vault = vault
-        self._client = httpx.AsyncClient(timeout=120.0)
+        self._client = create_httpx_client(config, timeout=120.0)
 
     async def generate(
         self,
