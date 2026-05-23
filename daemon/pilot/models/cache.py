@@ -121,7 +121,7 @@ class LLMCache:
             prompt_str = json.dumps(prompt, sort_keys=True)
         else:
             prompt_str = prompt
-        prompt_hash = self._hash_string(prompt)
+        prompt_hash = self._hash_string(prompt_str)
         system_hash = self._hash_string(system) if system else ""
         return (prompt_hash, system_hash, model, provider, temperature, int(json_mode))
 
