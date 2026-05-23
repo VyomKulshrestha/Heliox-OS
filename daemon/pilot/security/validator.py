@@ -29,7 +29,6 @@ from pilot.actions import (
     ShellScriptParams,
     SshCommandParams,
     SshScriptParams,
-    WasmCallParams,
 )
 from pilot.security.sanitizer import SanitizationError, Sanitizer
 
@@ -156,7 +155,6 @@ NO_TARGET_REQUIRED = {
     # SSH remote exec is parameter-driven (host alias)
     ActionType.SSH_COMMAND,
     ActionType.SSH_SCRIPT,
-    ActionType.WASM_CALL,
 }
 
 # File action types
@@ -253,10 +251,6 @@ class ActionValidator:
 
         elif isinstance(params, (OpenApplicationParams, NotifyParams)):
             pass
-
-        elif isinstance(params, WasmCallParams):
-            if not params.tool and not action.target:
-                raise ValidationError(idx, "WASM call requires a tool name")
 
     def _validate_root_requirement(self, action: Action, idx: int) -> None:
         if action.requires_root and not self._config.security.root_enabled:
