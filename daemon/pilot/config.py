@@ -30,7 +30,6 @@ STATE_DIR = _xdg("XDG_STATE_HOME", ".local/state") / "pilot"
 RUNTIME_DIR = (
     Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid() if hasattr(os, 'getuid') else 1000}")) / "pilot"
 )
-
 CONFIG_FILE = CONFIG_DIR / "config.toml"
 RESTRICTIONS_FILE = CONFIG_DIR / "restrictions.toml"
 DB_FILE = DATA_DIR / "pilot.db"
@@ -70,12 +69,16 @@ class SecurityConfig:
     snapshot_retention_days: int = 7
     unrestricted_shell: bool = False  # Allow ANY shell command (bypass whitelist)
     # Code execution sandbox — isolates agent-generated code from the host OS
-    sandbox_mode: str = "auto"  # "auto" | "docker" | "restricted" | "none"
+    sandbox_mode: str = "auto"  # "auto" | "firecracker" | "docker" | "restricted" | "none"
     sandbox_memory_mb: int = 128  # memory cap applied inside the sandbox (MB)
     sandbox_timeout: int = 30  # max wall-clock seconds for sandboxed execution
     sandbox_network: bool = False  # allow outbound network inside the sandbox
     sandbox_kernel_guard: bool = True  # Linux seccomp-BPF syscall denylist for restricted mode
     sandbox_blocked_syscalls: list[str] = field(default_factory=lambda: ["unlink", "unlinkat"])
+    sandbox_firecracker_binary: str = "firecracker"  # executable path or command name
+    sandbox_firecracker_kernel_image: str = ""  # vmlinux path used by strict microVM mode
+    sandbox_firecracker_rootfs_path: str = ""  # rootfs image path used by strict microVM mode
+    sandbox_firecracker_fallback: bool = True  # fall back to Docker/restricted if microVM mode is unavailable
 
 
 @dataclass
@@ -99,6 +102,8 @@ class ScreenVisionConfig:
 @dataclass
 class MemoryConfig:
     checkpoint_interval_seconds: int = 300
+    max_context_tokens: int = 8000
+    max_recent_messages: int = 10
 
 
 @dataclass
@@ -107,6 +112,37 @@ class RSSConfig:
     feeds: list[str] = field(default_factory=list)
     poll_interval_hours: float = 24.0
     max_items_per_feed: int = 10
+
+
+@dataclass
+class NetworkConfig:
+    """LAN mesh network configuration for multi-instance collaboration."""
+
+    enabled: bool = False
+    port: int = 8786  # peer-to-peer WebSocket port (separate from client port)
+    peer_timeout_s: int = 30  # seconds before a silent peer is considered gone
+    skill_sync_enabled: bool = True  # broadcast/receive plugins from peers
+    collab_exec_enabled: bool = True  # distribute parallelizable action batches
+
+
+@dataclass
+class SshHostConfig:
+    """One allowed SSH destination (referenced by alias in ssh_* actions)."""
+
+    name: str = ""
+    hostname: str = ""
+    port: int = 22
+    username: str = ""
+    private_key_provider: str = ""  # KeyVault provider name containing the private key (PEM)
+    passphrase_provider: str = ""  # Optional KeyVault provider name for key passphrase
+    strict_host_key_checking: bool = True
+
+
+@dataclass
+class SshConfig:
+    enabled: bool = False
+    connect_timeout_seconds: int = 10
+    allowed_hosts: list[SshHostConfig] = field(default_factory=list)
 
 
 @dataclass
@@ -128,6 +164,8 @@ class PilotConfig:
     screen_vision: ScreenVisionConfig = field(default_factory=ScreenVisionConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     rss: RSSConfig = field(default_factory=RSSConfig)
+    network: NetworkConfig = field(default_factory=NetworkConfig)
+    ssh: SshConfig = field(default_factory=SshConfig)
     restrictions: Restrictions = field(default_factory=Restrictions)
     first_run_complete: bool = False
 
@@ -205,6 +243,10 @@ def _validate_config_types(raw: dict) -> None:
             "sandbox_network": bool,
             "sandbox_kernel_guard": bool,
             "sandbox_blocked_syscalls": list,
+            "sandbox_firecracker_binary": str,
+            "sandbox_firecracker_kernel_image": str,
+            "sandbox_firecracker_rootfs_path": str,
+            "sandbox_firecracker_fallback": bool,
         },
         "server": {
             "host": str,
@@ -220,12 +262,26 @@ def _validate_config_types(raw: dict) -> None:
         },
         "memory": {
             "checkpoint_interval_seconds": int,
+            "max_context_tokens": int,
+            "max_recent_messages": int,
         },
         "rss": {
             "enabled": bool,
             "feeds": list,
             "poll_interval_hours": (int, float),
             "max_items_per_feed": int,
+        },
+        "network": {
+            "enabled": bool,
+            "port": int,
+            "peer_timeout_s": int,
+            "skill_sync_enabled": bool,
+            "collab_exec_enabled": bool,
+        },
+        "ssh": {
+            "enabled": bool,
+            "connect_timeout_seconds": int,
+            "allowed_hosts": list,
         },
     }
 
@@ -285,12 +341,45 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
     if "memory" in raw:
         for k, v in raw["memory"].items():
             if hasattr(config.memory, k):
-                setattr(config.memory, k, v)
+                if k in ("max_context_tokens", "max_recent_messages", "checkpoint_interval_seconds"):
+                    setattr(config.memory, k, int(v))
+                else:
+                    setattr(config.memory, k, v)
 
     if "rss" in raw:
         for k, v in raw["rss"].items():
             if hasattr(config.rss, k):
                 setattr(config.rss, k, v)
+
+    if "network" in raw:
+        for k, v in raw["network"].items():
+            if hasattr(config.network, k):
+                setattr(config.network, k, v)
+
+    if "ssh" in raw and isinstance(raw["ssh"], dict):
+        ssh_raw = raw["ssh"]
+        config.ssh.enabled = bool(ssh_raw.get("enabled", config.ssh.enabled))
+        if "connect_timeout_seconds" in ssh_raw:
+            config.ssh.connect_timeout_seconds = int(ssh_raw["connect_timeout_seconds"])
+
+        hosts_raw = ssh_raw.get("allowed_hosts", [])
+        if isinstance(hosts_raw, list):
+            parsed_hosts: list[SshHostConfig] = []
+            for item in hosts_raw:
+                if not isinstance(item, dict):
+                    continue
+                parsed_hosts.append(
+                    SshHostConfig(
+                        name=str(item.get("name", "")),
+                        hostname=str(item.get("hostname", "")),
+                        port=int(item.get("port", 22)),
+                        username=str(item.get("username", "")),
+                        private_key_provider=str(item.get("private_key_provider", "")),
+                        passphrase_provider=str(item.get("passphrase_provider", "")),
+                        strict_host_key_checking=bool(item.get("strict_host_key_checking", True)),
+                    )
+                )
+            config.ssh.allowed_hosts = parsed_hosts
 
     config.first_run_complete = raw.get(
         "first_run_complete",
@@ -318,6 +407,15 @@ def _config_to_dict(config: PilotConfig) -> dict[str, Any]:
 
 
 def ensure_dirs() -> None:
-    """Create all required XDG directories."""
+    """Create all required XDG directories and validate write access."""
     for d in (CONFIG_DIR, DATA_DIR, STATE_DIR, RUNTIME_DIR):
         d.mkdir(parents=True, exist_ok=True)
+
+    test_file = DATA_DIR / ".write_test"
+
+    try:
+        test_file.write_text("test")
+        test_file.unlink()
+    except Exception as e:
+        logger.error(f"DATA_DIR is not writable: {DATA_DIR}")
+        raise RuntimeError(f"DATA_DIR is not writable: {DATA_DIR}") from e

@@ -21,14 +21,18 @@ import email as email_lib
 import imaplib
 import json
 import logging
+import platform
+import re
 import smtplib
 import ssl
+import subprocess
 import time
+from datetime import datetime, timezone
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import TYPE_CHECKING, Any
 
-from pilot.actions import ActionPlan, ActionResult, ActionType, EmailParams
+from pilot.actions import ActionPlan, ActionResult, ActionType, CalendarParams, EmailParams
 from pilot.agents.base_agent import AgentCapability, AgentRole, AgentStatus, BaseAgent
 
 if TYPE_CHECKING:
@@ -41,6 +45,8 @@ EMAIL_ACTION_TYPES: set[ActionType] = {
     ActionType.EMAIL_SUMMARIZE,
     ActionType.EMAIL_REPLY,
     ActionType.API_SEND_EMAIL,
+    ActionType.CALENDAR_FETCH,
+    ActionType.CALENDAR_RECONCILE,
 }
 
 # Maximum body length forwarded to the LLM to avoid token bloat
@@ -76,6 +82,19 @@ class EmailAgent(BaseAgent):
                 action_type=ActionType.API_SEND_EMAIL,
                 description="Compose and send a new email via SMTP",
                 requires_confirmation=True,
+            ),
+            AgentCapability(
+                action_type=ActionType.CALENDAR_FETCH,
+                description="Parse upcoming calendar events embedded as ICS in fetched emails",
+                requires_confirmation=False,
+            ),
+            AgentCapability(
+                action_type=ActionType.CALENDAR_RECONCILE,
+                description=(
+                    "Cross-reference calendar events with emails; fire OS notifications "
+                    "for scheduling conflicts or missing meeting links"
+                ),
+                requires_confirmation=False,
             ),
         ]
 
@@ -130,6 +149,16 @@ class EmailAgent(BaseAgent):
                     result = await self._summarize_emails(action, params)
                 elif action.action_type in (ActionType.EMAIL_REPLY, ActionType.API_SEND_EMAIL):
                     result = await self._send_email(action, params)
+                elif action.action_type == ActionType.CALENDAR_FETCH:
+                    if not isinstance(params, CalendarParams):
+                        result = ActionResult(action=action, success=False, error="CalendarParams required")
+                    else:
+                        result = await self._fetch_calendar_events(action, params)
+                elif action.action_type == ActionType.CALENDAR_RECONCILE:
+                    if not isinstance(params, CalendarParams):
+                        result = ActionResult(action=action, success=False, error="CalendarParams required")
+                    else:
+                        result = await self._reconcile_calendar(action, params)
                 else:
                     result = ActionResult(
                         action=action,
@@ -332,6 +361,90 @@ class EmailAgent(BaseAgent):
             output=f"Email sent to {recipient} with subject '{msg['Subject']}'",
         )
 
+    # ── Calendar: fetch events from ICS in emails ─────────────────────────────
+
+    async def _fetch_calendar_events(self, action: Any, params: CalendarParams) -> ActionResult:
+        """Parse VEVENT records from ICS blocks embedded in fetched email bodies."""
+        if not params.emails_json:
+            return ActionResult(
+                action=action,
+                success=False,
+                error="emails_json is required for CALENDAR_FETCH",
+            )
+
+        events = _parse_ics_from_emails(params.emails_json)
+        now_ts = time.time()
+        cutoff_ts = now_ts + params.lookahead_hours * 3600
+        upcoming = [e for e in events if now_ts <= e["dtstart_ts"] <= cutoff_ts]
+
+        logger.info(
+            "CALENDAR_FETCH: %d event(s) in next %dh",
+            len(upcoming),
+            params.lookahead_hours,
+        )
+        return ActionResult(
+            action=action,
+            success=True,
+            output=json.dumps(upcoming, ensure_ascii=False, indent=2),
+        )
+
+    # ── Calendar: reconcile events with emails ────────────────────────────────
+
+    async def _reconcile_calendar(self, action: Any, params: CalendarParams) -> ActionResult:
+        """Detect conflicts / missing meeting links and fire OS-native notifications."""
+        if not params.emails_json:
+            return ActionResult(
+                action=action,
+                success=False,
+                error="emails_json is required for CALENDAR_RECONCILE",
+            )
+
+        events = _parse_ics_from_emails(params.emails_json)
+        now_ts = time.time()
+        cutoff_ts = now_ts + params.lookahead_hours * 3600
+        upcoming = [e for e in events if now_ts <= e["dtstart_ts"] <= cutoff_ts]
+
+        issues: list[dict[str, Any]] = []
+
+        if params.check_conflicts:
+            for a, b in _find_conflicts(upcoming):
+                issue = {
+                    "type": "conflict",
+                    "severity": "high",
+                    "title": "Scheduling Conflict Detected",
+                    "detail": (f'"{a["summary"]}" and "{b["summary"]}" overlap. Check your calendar.'),
+                    "event_uids": [a["uid"], b["uid"]],
+                }
+                issues.append(issue)
+                if params.notify:
+                    _send_os_notification(issue["title"], issue["detail"])
+
+        if params.check_missing_links:
+            for e in upcoming:
+                if not _has_meeting_link(e):
+                    issue = {
+                        "type": "missing_link",
+                        "severity": "medium",
+                        "title": "Missing Meeting Link",
+                        "detail": f'"{e["summary"]}" has no video-call link.',
+                        "event_uids": [e["uid"]],
+                    }
+                    issues.append(issue)
+                    if params.notify:
+                        _send_os_notification(issue["title"], issue["detail"])
+
+        summary = f"Reconciled {len(upcoming)} upcoming event(s); found {len(issues)} issue(s)."
+        logger.info(summary)
+        return ActionResult(
+            action=action,
+            success=True,
+            output=json.dumps(
+                {"events_checked": len(upcoming), "issues": issues, "summary": summary},
+                ensure_ascii=False,
+                indent=2,
+            ),
+        )
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -353,3 +466,136 @@ def _extract_body(msg: email_lib.message.Message) -> str:
             charset = msg.get_content_charset() or "utf-8"
             return payload.decode(charset, errors="replace")
     return ""
+
+
+# ── ICS / Calendar helpers ────────────────────────────────────────────────────
+
+_MEETING_LINK_PATTERNS: list[str] = [
+    "zoom.us/j/",
+    "zoom.us/s/",
+    "meet.google.com/",
+    "teams.microsoft.com/l/meetup",
+    "teams.live.com/",
+    "meet.jit.si/",
+    "webex.com/",
+    "bluejeans.com/",
+    "gotomeeting.com/",
+]
+
+
+def _parse_ics_from_emails(emails_json: str) -> list[dict[str, Any]]:
+    """Extract VEVENT records from ICS blocks embedded in email bodies."""
+    try:
+        emails: list[dict[str, str]] = json.loads(emails_json)
+    except (json.JSONDecodeError, TypeError):
+        return []
+
+    events: list[dict[str, Any]] = []
+    for em in emails:
+        text = em.get("body", "") + "\n" + em.get("subject", "")
+        for match in re.finditer(r"BEGIN:VEVENT(.+?)END:VEVENT", text, re.DOTALL):
+            evt = _parse_vevent_block(match.group(1))
+            if evt:
+                events.append(evt)
+    return events
+
+
+def _parse_vevent_block(block: str) -> dict[str, Any] | None:
+    """Parse a raw VEVENT block into a structured dict."""
+    # Unfold RFC 5545 folded lines (CRLF + space/tab = continuation)
+    unfolded = re.sub(r"\r?\n[ \t]", "", block)
+
+    props: dict[str, str] = {}
+    for line in unfolded.splitlines():
+        if ":" not in line:
+            continue
+        key, _, value = line.partition(":")
+        key = key.split(";")[0].strip().upper()  # drop params like TZID=...
+        props[key] = value.strip()
+
+    dtstart = _parse_ics_datetime(props.get("DTSTART", ""))
+    if not dtstart:
+        return None
+    dtend = _parse_ics_datetime(props.get("DTEND", ""))
+
+    start_ts = dtstart.timestamp()
+    end_ts = dtend.timestamp() if dtend else start_ts + 3600
+
+    return {
+        "uid": props.get("UID", ""),
+        "summary": props.get("SUMMARY", "Untitled Event"),
+        "description": props.get("DESCRIPTION", ""),
+        "location": props.get("LOCATION", ""),
+        "url": props.get("URL", ""),
+        "dtstart": dtstart.isoformat(),
+        "dtend": dtend.isoformat() if dtend else "",
+        "dtstart_ts": start_ts,
+        "dtend_ts": end_ts,
+    }
+
+
+def _parse_ics_datetime(s: str) -> datetime | None:
+    """Parse ICS datetime strings: YYYYMMDDTHHMMSSZ, YYYYMMDDTHHMMSS, YYYYMMDD."""
+    for fmt in ("%Y%m%dT%H%M%SZ", "%Y%m%dT%H%M%S", "%Y%m%d"):
+        try:
+            dt = datetime.strptime(s.strip(), fmt)
+            return dt.replace(tzinfo=timezone.utc) if fmt.endswith("Z") else dt
+        except ValueError:
+            continue
+    return None
+
+
+def _has_meeting_link(event: dict[str, Any]) -> bool:
+    """Return True if the event contains a recognised video-call URL."""
+    haystack = " ".join(
+        [
+            event.get("summary", ""),
+            event.get("description", ""),
+            event.get("location", ""),
+            event.get("url", ""),
+        ]
+    ).lower()
+    return any(pat in haystack for pat in _MEETING_LINK_PATTERNS)
+
+
+def _find_conflicts(
+    events: list[dict[str, Any]],
+) -> list[tuple[dict[str, Any], dict[str, Any]]]:
+    """Return pairs of events whose time ranges overlap."""
+    conflicts = []
+    for i, a in enumerate(events):
+        for b in events[i + 1 :]:
+            # Overlap condition: a starts before b ends AND a ends after b starts
+            if a["dtstart_ts"] < b["dtend_ts"] and a["dtend_ts"] > b["dtstart_ts"]:
+                conflicts.append((a, b))
+    return conflicts
+
+
+def _send_os_notification(title: str, body: str) -> None:
+    """Fire an OS-native desktop notification (best-effort, never raises)."""
+    system = platform.system()
+    try:
+        if system == "Linux":
+            subprocess.run(
+                ["notify-send", "--app-name=Heliox OS", title, body],
+                timeout=5,
+                check=False,
+            )
+        elif system == "Darwin":
+            script = f'display notification "{body}" with title "{title}"'
+            subprocess.run(["osascript", "-e", script], timeout=5, check=False)
+        elif system == "Windows":
+            # Windows Forms balloon tip — no extra packages required
+            safe_title = title.replace("'", "''")
+            safe_body = body.replace("'", "''")
+            ps = (
+                "Add-Type -AssemblyName System.Windows.Forms; "
+                "$n = New-Object System.Windows.Forms.NotifyIcon; "
+                "$n.Icon = [System.Drawing.SystemIcons]::Information; "
+                "$n.Visible = $true; "
+                f"$n.ShowBalloonTip(6000, '{safe_title}', '{safe_body}', "
+                "[System.Windows.Forms.ToolTipIcon]::Info);"
+            )
+            subprocess.run(["powershell", "-Command", ps], timeout=10, check=False)
+    except Exception:  # noqa: BLE001
+        logger.debug("OS notification failed", exc_info=True)

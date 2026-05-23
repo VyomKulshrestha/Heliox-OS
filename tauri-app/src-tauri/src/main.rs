@@ -569,6 +569,7 @@ fn main() {
             commands::get_daemon_status,
             commands::send_to_daemon,
             commands::confirm_action,
+
             commands::open_terminal,
             commands::clear_logs,
             commands::restart_agents,
@@ -581,6 +582,9 @@ fn main() {
             get_rss_feed,
             get_agent_activity,
             get_temperature_stats,
+          
+            commands::open_logs_folder,
+
         ])
         .run(tauri::generate_context!())
         .expect("error while running Heliox OS");

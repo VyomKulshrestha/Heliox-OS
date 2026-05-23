@@ -213,6 +213,17 @@ class ActionType(StrEnum):
     EMAIL_SUMMARIZE = "email_summarize"
     EMAIL_REPLY = "email_reply"
 
+    # -- Calendar reconciliation --
+    CALENDAR_FETCH = "calendar_fetch"
+    CALENDAR_RECONCILE = "calendar_reconcile"
+
+    # -- Remote execution (SSH) --
+    SSH_COMMAND = "ssh_command"
+    SSH_SCRIPT = "ssh_script"
+
+    # -- VLM zero-shot element detection --
+    SCREEN_DETECT_ELEMENTS = "screen_detect_elements"
+
 
 class PermissionTier(int, Enum):
     READ_ONLY = 0
@@ -260,6 +271,7 @@ READ_ONLY_ACTIONS = {
     ActionType.SCREEN_FIND_TEXT,
     ActionType.SCREEN_ANALYZE,
     ActionType.SCREEN_ELEMENT_MAP,
+    ActionType.SCREEN_DETECT_ELEMENTS,
     ActionType.BROWSER_EXTRACT,
     ActionType.BROWSER_EXTRACT_TABLE,
     ActionType.BROWSER_EXTRACT_LINKS,
@@ -275,6 +287,9 @@ READ_ONLY_ACTIONS = {
     # Email agent read-only
     ActionType.EMAIL_FETCH,
     ActionType.EMAIL_SUMMARIZE,
+    # Calendar reconciliation (read-only — only reads ICS data)
+    ActionType.CALENDAR_FETCH,
+    ActionType.CALENDAR_RECONCILE,
 }
 
 DESTRUCTIVE_ACTIONS = {
@@ -312,6 +327,9 @@ SYSTEM_MODIFY_ACTIONS = {
     ActionType.API_DISCORD,
     # Email agent actions (IMAP fetch is read-only; reply/send require confirmation)
     ActionType.EMAIL_REPLY,
+    # SSH is always a remote system modification surface
+    ActionType.SSH_COMMAND,
+    ActionType.SSH_SCRIPT,
 }
 
 
@@ -538,6 +556,20 @@ class ScreenVisionParams(BaseModel):
     language: str = "eng"
 
 
+class ElementDetectionParams(BaseModel):
+    """For VLM zero-shot element detection (SCREEN_DETECT_ELEMENTS).
+
+    The VLM is asked to locate all interactive UI elements in a screenshot
+    and return structured bounding-box coordinates so the agent can click
+    or type without relying on DOM trees or accessibility APIs.
+    """
+
+    description: str = ""  # Optional: natural-language filter, e.g. "login button"
+    region: str | None = None  # "x,y,w,h" or None for full screen
+    max_elements: int = 20  # cap on returned elements
+    action_filter: str = ""  # "click" | "type" | "" (all)
+
+
 class BrowserParams(BaseModel):
     """For browser automation actions."""
 
@@ -661,6 +693,32 @@ class EmailParams(BaseModel):
     emails_json: str = ""  # JSON-serialised list of fetched emails to summarise
 
 
+class CalendarParams(BaseModel):
+    """Parameters for calendar reconciliation actions."""
+
+    emails_json: str = ""
+    lookahead_hours: int = 24
+    check_conflicts: bool = True
+    check_missing_links: bool = True
+    notify: bool = True
+
+
+class SshCommandParams(BaseModel):
+    """Parameters for executing a single command over SSH on a configured host."""
+
+    host: str = ""
+    command: str = ""
+    timeout_seconds: int = 60
+
+
+class SshScriptParams(BaseModel):
+    """Parameters for executing a multi-line bash script over SSH on a configured host."""
+
+    host: str = ""
+    script: str = ""
+    timeout_seconds: int = 300
+
+
 class EmptyParams(BaseModel):
     """For actions that need no parameters."""
 
@@ -704,6 +762,10 @@ ActionParameters = (
     | ApiRequestParams
     | WorkspaceParams
     | EmailParams
+    | CalendarParams
+    | SshCommandParams
+    | SshScriptParams
+    | ElementDetectionParams
     | EmptyParams
 )
 
