@@ -2,6 +2,7 @@
   import { session } from "../stores/session";
 
   let input = $state("");
+  const MAX_CHARS = 20000;
 
   type Attachment = {
     name: string;
@@ -26,8 +27,11 @@
 
   function handleSubmit(e: Event) {
     e.preventDefault();
+
     const text = input.trim();
-    if (!text && attachments.length === 0) return;
+
+    if ((!text && attachments.length === 0) || input.length >= MAX_CHARS) return;
+
     session.sendCommand(text, attachments);
     input = "";
     attachments = [];
@@ -104,15 +108,29 @@
     ondrop={handleDrop}
   >
     <span class="prompt">&gt;</span>
+
     <input
       type="text"
       bind:value={input}
+      maxlength="20000"
       placeholder="Tell Heliox OS what to do..."
       onkeydown={handleKeydown}
       autocomplete="off"
       spellcheck="false"
     />
-    <button type="submit" class="send-btn" title="Send" disabled={!input.trim() && attachments.length === 0}>
+    <div
+      class="char-counter"
+      style:color={input.length >= MAX_CHARS ? "red" : "#888"}
+    >
+      {input.length}/{MAX_CHARS}
+    </div>
+
+    <button
+      type="submit"
+      class="send-btn"
+      title="Send"
+      disabled={(!input.trim() && attachments.length === 0) || input.length >= MAX_CHARS}
+    >
       Send
     </button>
   </div>
@@ -175,6 +193,14 @@
   .send-btn:disabled {
     opacity: 0.4;
     cursor: default;
+  }
+
+  .char-counter {
+    display: flex;
+    align-items: center;
+    font-size: 12px;
+    text-align: right;
+    white-space: nowrap;
   }
 
   .attachment-row {

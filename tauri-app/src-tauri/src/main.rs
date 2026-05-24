@@ -581,10 +581,10 @@ fn main() {
             get_terminal_logs,
             get_rss_feed,
             get_agent_activity,
-            get_temperature_stats,
-          
             commands::open_logs_folder,
-
+            commands::apply_git_conflict_resolution,
+            commands::get_hotkey,
+            commands::set_hotkey,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Heliox OS");

@@ -216,5 +216,56 @@ pub fn open_logs_folder(app: tauri::AppHandle) -> Result<(), String> {
 
     opener::open(&log_dir).map_err(|e| e.to_string())?;
     Ok(())
+}
 
+#[tauri::command]
+pub async fn apply_git_conflict_resolution(
+    _window: tauri::Window,
+    path: String,
+    full_block: String,
+    resolved_code: String,
+) -> Result<serde_json::Value, String> {
+    let request = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "apply_git_resolution",
+        "params": {
+            "path": path,
+            "full_block": full_block,
+            "resolved_code": resolved_code
+        },
+        "id": 1
+    });
+
+    let url = "ws://127.0.0.1:8785";
+    use tokio_tungstenite::connect_async;
+    use futures_util::{SinkExt, StreamExt};
+
+    let (mut ws, _) = connect_async(url).await.map_err(|e| e.to_string())?;
+    let msg = serde_json::to_string(&request).map_err(|e| e.to_string())?;
+    ws.send(tokio_tungstenite::tungstenite::Message::Text(msg)).await.map_err(|e| e.to_string())?;
+
+    if let Some(Ok(response)) = ws.next().await {
+        let text = response.to_text().map_err(|e| e.to_string())?;
+        let parsed: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+        if let Some(result) = parsed.get("result") {
+            return Ok(result.clone());
+        }
+        if let Some(error) = parsed.get("error") {
+            return Err(error.get("message").and_then(|m| m.as_str()).unwrap_or("Daemon error").to_string());
+        }
+        return Ok(parsed);
+    }
+    Err("Failed to receive response from daemon".to_string())
+}
+
+// 5. Get the currently active global shortcut
+#[tauri::command]
+pub fn get_hotkey(app: AppHandle) -> String {
+    crate::hotkey::load_saved_shortcut(&app)
+}
+
+// 6. Update the global shortcut from the frontend settings panel
+#[tauri::command]
+pub fn set_hotkey(app: AppHandle, shortcut: String) -> Result<(), String> {
+    crate::hotkey::update_shortcut(&app, &shortcut)
 }

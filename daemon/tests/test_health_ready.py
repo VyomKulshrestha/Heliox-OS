@@ -41,9 +41,7 @@ async def _wait_for_port(
         if server_task.done():
             if server_task.cancelled():
                 raise RuntimeError("Server task was cancelled before port became ready.")
-            raise RuntimeError(
-                "Server task failed before port became ready."
-            ) from server_task.exception()
+            raise RuntimeError("Server task failed before port became ready.") from server_task.exception()
 
         try:
             _, writer = await asyncio.open_connection(host, port)
@@ -53,9 +51,7 @@ async def _wait_for_port(
         except OSError:
             # OSError covers ConnectionRefusedError and WinError 1225.
             if asyncio.get_running_loop().time() >= deadline:
-                raise TimeoutError(
-                    f"Server did not bind on {host}:{port} within {timeout_seconds}s."
-                ) from None
+                raise TimeoutError(f"Server did not bind on {host}:{port} within {timeout_seconds}s.") from None
             await asyncio.sleep(0.05)
 
 

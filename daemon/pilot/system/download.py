@@ -8,6 +8,8 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+from pilot.config import PilotConfig
+from pilot.system.http_client import create_httpx_client
 from pilot.system.platform_detect import CURRENT_PLATFORM, Platform, run_command, run_powershell
 
 logger = logging.getLogger("pilot.system.download")
@@ -24,16 +26,12 @@ async def download_file(url: str, output_path: str, overwrite: bool = False) -> 
 
     # Try httpx first (in our deps)
     try:
-        import httpx
-
-        async with httpx.AsyncClient(follow_redirects=True, timeout=120) as client:
+        async with create_httpx_client(PilotConfig.load(), follow_redirects=True, timeout=120) as client:
             resp = await client.get(url)
             resp.raise_for_status()
             out_path.write_bytes(resp.content)
             size = len(resp.content)
             return f"Downloaded {url} -> {output_path} ({size:,} bytes)"
-    except ImportError:
-        pass
     except Exception as e:
         logger.warning("httpx download failed, falling back to OS tools: %s", e)
 

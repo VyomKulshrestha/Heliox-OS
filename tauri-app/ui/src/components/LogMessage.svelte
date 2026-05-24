@@ -27,7 +27,7 @@
   import { onMount, tick } from "svelte";
   import { marked, type Renderer } from "marked";
   import DOMPurify from "dompurify";
-  import { highlight } from "$lib/highlighter";
+  import { highlight } from "../lib/highlighter";
   import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 
   // ── Props ────────────────────────────────────────────────────────────────
@@ -67,9 +67,9 @@
    */
   function buildRenderer(): Partial<Renderer> {
     return {
-      code(code: string, language: string | undefined): string {
-        const lang = language ?? "";
-        const { value: highlighted, language: detected } = highlight(code, lang);
+      code({ text, lang }: { text: string; lang?: string }): string {
+        const language = lang ?? "";
+        const { value: highlighted, language: detected } = highlight(text, language);
 
         // Stable UID for this block (used by the copy handler)
         const uid = `hlx-${Math.random().toString(36).slice(2, 9)}`;
@@ -86,7 +86,7 @@
               <button
                 class="hlx-copy-btn"
                 data-uid="${uid}"
-                data-code="${encodeURIComponent(code)}"
+                data-code="${encodeURIComponent(text)}"
                 aria-label="Copy code to clipboard"
                 title="Copy"
               >

@@ -8,6 +8,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 if sys.version_info >= (3, 12):
     import tomllib
@@ -24,12 +25,28 @@ def _xdg(env_var: str, fallback: str) -> Path:
     return Path(os.environ.get(env_var, Path.home() / fallback))
 
 
+def _default_runtime_dir() -> Path:
+    """Resolve runtime dir when XDG_RUNTIME_DIR is unset (macOS, Windows, minimal Linux)."""
+    xdg = os.environ.get("XDG_RUNTIME_DIR", "").strip()
+    if xdg:
+        return Path(xdg) / "pilot"
+    uid = os.getuid() if hasattr(os, "getuid") else 1000
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Caches" / "pilot" / "runtime"
+    if sys.platform == "win32":
+        local = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+        return Path(local) / "pilot" / "runtime"
+    run_user = Path(f"/run/user/{uid}")
+    if run_user.is_dir() and os.access(run_user, os.W_OK):
+        return run_user / "pilot"
+    tmp = os.environ.get("TMPDIR", "/tmp")
+    return Path(tmp) / f"pilot-runtime-{uid}"
+
+
 CONFIG_DIR = _xdg("XDG_CONFIG_HOME", ".config") / "pilot"
 DATA_DIR = _xdg("XDG_DATA_HOME", ".local/share") / "pilot"
 STATE_DIR = _xdg("XDG_STATE_HOME", ".local/state") / "pilot"
-RUNTIME_DIR = (
-    Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid() if hasattr(os, 'getuid') else 1000}")) / "pilot"
-)
+RUNTIME_DIR = _default_runtime_dir()
 CONFIG_FILE = CONFIG_DIR / "config.toml"
 RESTRICTIONS_FILE = CONFIG_DIR / "restrictions.toml"
 DB_FILE = DATA_DIR / "pilot.db"
@@ -100,6 +117,13 @@ class ScreenVisionConfig:
 
 
 @dataclass
+class ProxyConfig:
+    http: str | None = None
+    https: str | None = None
+    no_proxy: str | None = None
+
+
+@dataclass
 class MemoryConfig:
     checkpoint_interval_seconds: int = 300
     max_context_tokens: int = 8000
@@ -115,6 +139,18 @@ class RSSConfig:
 
 
 @dataclass
+class RedisConfig:
+    enabled: bool = False
+    host: str = "127.0.0.1"
+    port: int = 6379
+    db: int = 0
+    password: str = ""
+    ssl: bool = False
+    key_prefix: str = "pilot:"
+    default_ttl: int = 300
+    max_memory_cache_size: int = 512
+
+
 class NetworkConfig:
     """LAN mesh network configuration for multi-instance collaboration."""
 
@@ -166,8 +202,10 @@ class PilotConfig:
     rss: RSSConfig = field(default_factory=RSSConfig)
     network: NetworkConfig = field(default_factory=NetworkConfig)
     ssh: SshConfig = field(default_factory=SshConfig)
+    proxy: ProxyConfig = field(default_factory=ProxyConfig)
     restrictions: Restrictions = field(default_factory=Restrictions)
     first_run_complete: bool = False
+    redis: RedisConfig = field(default_factory=RedisConfig)
 
     @classmethod
     def load(cls) -> PilotConfig:
@@ -271,6 +309,17 @@ def _validate_config_types(raw: dict) -> None:
             "poll_interval_hours": (int, float),
             "max_items_per_feed": int,
         },
+        "redis": {
+            "enabled": bool,
+            "host": str,
+            "port": int,
+            "db": int,
+            "password": str,
+            "ssl": bool,
+            "key_prefix": str,
+            "default_ttl": int,
+            "max_memory_cache_size": int,
+        },
         "network": {
             "enabled": bool,
             "port": int,
@@ -282,6 +331,11 @@ def _validate_config_types(raw: dict) -> None:
             "enabled": bool,
             "connect_timeout_seconds": int,
             "allowed_hosts": list,
+        },
+        "proxy": {
+            "http": str,
+            "https": str,
+            "no_proxy": str,
         },
     }
 
@@ -304,6 +358,23 @@ def _validate_config_types(raw: dict) -> None:
                     )
                     logger.error(error_msg)
                     raise ValueError(error_msg)
+
+    if "proxy" in raw and isinstance(raw["proxy"], dict):
+        _validate_proxy_section(raw["proxy"])
+
+
+def _validate_proxy_section(raw: dict[str, Any]) -> None:
+    for key in ("http", "https"):
+        value = raw.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, str):
+            raise ValueError(f"Invalid proxy configuration: proxy.{key} must be a string.")
+        _validate_proxy_url(value, key)
+
+    no_proxy_value = raw.get("no_proxy")
+    if no_proxy_value is not None and not isinstance(no_proxy_value, str):
+        raise ValueError("Invalid proxy configuration: proxy.no_proxy must be a string.")
 
 
 def _format_type_name(expected_type: type | tuple[type, ...]) -> str:
@@ -380,6 +451,22 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
                     )
                 )
             config.ssh.allowed_hosts = parsed_hosts
+    if "redis" in raw:
+        for k, v in raw["redis"].items():
+            if hasattr(config.redis, k):
+                setattr(config.redis, k, v)
+
+    if "proxy" in raw and isinstance(raw["proxy"], dict):
+        for k, v in raw["proxy"].items():
+            if hasattr(config.proxy, k):
+                if k in ("http", "https", "no_proxy"):
+                    if not isinstance(v, str):
+                        error_msg = f"Invalid type: 'proxy.{k}' must be str, got {type(v).__name__}."
+                        logger.error(error_msg)
+                        raise ValueError(error_msg)
+                if k in ("http", "https") and v:
+                    _validate_proxy_url(v, k)
+                setattr(config.proxy, k, v)
 
     config.first_run_complete = raw.get(
         "first_run_complete",
@@ -387,6 +474,12 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
     )
 
     return config
+
+
+def _validate_proxy_url(url: str, key: str) -> None:
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError(f"Invalid proxy URL for proxy.{key}: {url}")
 
 
 def _parse_restrictions(raw: dict[str, Any]) -> Restrictions:
