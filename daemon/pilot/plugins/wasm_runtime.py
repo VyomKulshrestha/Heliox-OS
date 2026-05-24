@@ -53,7 +53,7 @@ import struct
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 logger = logging.getLogger("pilot.plugins.wasm")
 
@@ -107,30 +107,18 @@ class WasmPlugin:
         except OSError as exc:
             raise WasmRuntimeError(f"Cannot read WASM module: {wasm_path}") from exc
 
-        try:
-            engine_cfg = wasmtime.Config()
-            engine_cfg.epoch_interruption = True
-            self._engine = wasmtime.Engine(engine_cfg)
-            self._module = wasmtime.Module(self._engine, wasm_bytes)
-        except Exception as exc:
-            raise WasmRuntimeError(f"Failed to compile WASM module {wasm_path}: {exc}") from exc
+        self._wasm_bytes = wasm_bytes
+        self._lock = threading.Lock()
 
         logger.debug("Loaded WASM plugin: %s", wasm_path.name)
 
-    def _make_store(self) -> wasmtime.Store:
-        store = wasmtime.Store(self._engine)
-        # Enforce epoch-based timeout: each call bumps the deadline by 1.
-        # The engine's epoch counter must be incremented externally (or via a
-        # thread) to trigger interruption; here we set a generous fuel limit
-        # instead for simplicity.
+    def _make_store(self, engine: wasmtime.Engine) -> wasmtime.Store:
+        store = wasmtime.Store(engine)
         store.set_epoch_deadline(1)
         wasi_cfg = wasmtime.WasiConfig()
         wasi_cfg.inherit_stdin()
-        # Filesystem: no preopen directories unless explicitly allowed.
         if self._config.allow_filesystem:
             wasi_cfg.preopen_dir(".", ".")
-        # No network sockets — wasmtime does not expose a socket cap in Python
-        # bindings; network isolation is provided by default.
         store.set_wasi(wasi_cfg)
         return store
 
@@ -144,12 +132,19 @@ class WasmPlugin:
         request = json.dumps({"tool": tool_name, "params": params}).encode()
         req_len = len(request)
 
-        store = self._make_store()
+        try:
+            engine_cfg = wasmtime.Config()
+            engine_cfg.epoch_interruption = True
+            engine = wasmtime.Engine(engine_cfg)
+            module = wasmtime.Module(engine, self._wasm_bytes)
+            store = self._make_store(engine)
+        except Exception as exc:
+            raise WasmRuntimeError(f"Failed to compile or initialize WASM context: {exc}") from exc
 
         try:
-            linker = wasmtime.Linker(self._engine)
+            linker = wasmtime.Linker(engine)
             linker.define_wasi()
-            instance = linker.instantiate(store, self._module)
+            instance = linker.instantiate(store, module)
         except Exception as exc:
             raise WasmRuntimeError(f"Failed to instantiate WASM module: {exc}") from exc
 
@@ -163,11 +158,10 @@ class WasmPlugin:
                 f"WASM module is missing required exports (alloc/dealloc/call_tool/memory): {exc}"
             ) from exc
 
-        timer = threading.Timer(self._config.timeout_secs, self._engine.increment_epoch)
+        timer = threading.Timer(self._config.timeout_secs, engine.increment_epoch)
         timer.daemon = True
         timer.start()
         try:
-            # 1. Allocate input buffer inside WASM linear memory.
             req_ptr = alloc_fn(store, req_len)
 
             # 2. Write request bytes into WASM memory.
