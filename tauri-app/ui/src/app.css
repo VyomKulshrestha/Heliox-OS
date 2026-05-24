@@ -98,4 +98,20 @@ input, textarea {
   border: none;
   background: transparent;
   color: inherit;
+
+.tabs .theme-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  margin-left: 8px;
+  border-radius: var(--radius-sm);
+  transition: background-color 0.2s ease;
+}
+
+.tabs .theme-toggle-btn:hover {
+  background-color: var(--bg-hover);
+}
 }

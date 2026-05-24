@@ -1,4 +1,5 @@
 <script lang="ts">
+
   import CommandInput from "./lib/components/CommandInput.svelte";
   import ConfirmDialog from "./lib/components/ConfirmDialog.svelte";
   import ActivityLog from "./lib/components/ActivityLog.svelte";
@@ -27,7 +28,9 @@
   import ConnectionStatus from "./lib/components/ConnectionStatus.svelte";
   import { _, isLoading } from 'svelte-i18n';
 
+
   const renderer = new marked.Renderer();
+
   renderer.code = function(code, language) {
     const lang = language || "";
     const result = highlight(code, lang);
@@ -119,7 +122,6 @@
     if (action.destructive) return "tier-destructive";
     return "tier-safe";
   }
-
   let prevMsgLen = 0;
   $effect(() => {
     const msgs = $session.messages;
@@ -128,6 +130,7 @@
       if (last.type === "result") particleBurst?.confirmBurst();
       else if (last.type === "error") particleBurst?.errorBurst();
     }
+
     prevMsgLen = msgs.length;
   });
 
@@ -227,6 +230,33 @@
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   }
+
+import { onMount } from "svelte";
+
+let isLightMode = $state(false);
+
+onMount(() => {
+  const savedTheme = localStorage.getItem("heliox_theme");
+  
+  if (savedTheme === "light") {
+    isLightMode = true;
+    document.documentElement.classList.add("light-mode");
+  } else {
+    isLightMode = false;
+    document.documentElement.classList.remove("light-mode");
+  }
+});
+
+function toggleTheme() {
+  isLightMode = !isLightMode;
+  if (isLightMode) {
+    document.documentElement.classList.add("light-mode");
+    localStorage.setItem("heliox_theme", "light");
+  } else {
+    document.documentElement.classList.remove("light-mode");
+    localStorage.setItem("heliox_theme", "dark");
+  }
+}
 </script>
 
 {#if showWizard}
@@ -256,6 +286,14 @@
       <button class="tab" class:active={activeTab === "log"} title="Open activity log" onclick={() => activeTab = "log"}>{$_('app.tab_activity')}</button>
       <button class="tab" class:active={activeTab === "plugins"} title="Browse plugin marketplace" onclick={() => activeTab = "plugins"}>{$_('app.tab_plugins')}</button>
       <button class="tab" class:active={activeTab === "settings"} title="Open Settings" onclick={() => activeTab = "settings"}>{$_('app.tab_settings')}</button>
+
+      <button class="tab theme-toggle-btn" type="button" title="Toggle Theme" onclick={toggleTheme}>
+        {#if isLightMode === true}
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-yellow-500"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+        {:else}
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-400"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+        {/if}
+      </button>
     </nav>
     <div class="titlebar-right">
       <ConnectionStatus />
