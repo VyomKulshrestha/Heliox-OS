@@ -25,21 +25,23 @@ import aiosqlite
 if TYPE_CHECKING:
     from pilot.config import PilotConfig
     from pilot.db.redis_adapter import RedisCacheAdapter
+    from pilot.db.sqlite_pool import AsyncSqlitePool
 
 logger = logging.getLogger("pilot.models.cache")
 CACHE_SCHEMA_VERSION = 1
 
 
 class LLMCache:
-    """Two-tier LLM response cache: Redis L1 → SQLite L2."""
+    """Two-tier LLM response cache: Redis L1 → SQLite L2 Connection Pool."""
 
     def __init__(
         self,
         db_path: Path,
         redis: RedisCacheAdapter | None = None,
+        pool: AsyncSqlitePool | None = None,
     ) -> None:
         self._db_path = db_path
-        self._conn: aiosqlite.Connection | None = None
+        self._pool = pool
         self._initialized = False
         self._redis = redis  # optional L1 cache
 
@@ -48,11 +50,12 @@ class LLMCache:
             return
 
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        if self._pool is None:
+            from pilot.db.sqlite_pool import AsyncSqlitePool
+            self._pool = AsyncSqlitePool(self._db_path, read_pool_size=4)
+            await self._pool.start()
+
         try:
-            self._conn = await aiosqlite.connect(str(self._db_path))
-            await self._conn.execute("PRAGMA journal_mode = WAL")
-            await self._conn.execute("PRAGMA synchronous = NORMAL")
-            await self._conn.execute("PRAGMA cache_size = -64000")
             await self._create_schema()
             self._initialized = True
             logger.debug("LLM cache initialized at %s", self._db_path)
@@ -61,32 +64,33 @@ class LLMCache:
             raise
 
     async def _create_schema(self) -> None:
-        if not self._conn:
+        if not self._pool:
             raise RuntimeError("Cache not initialized")
 
-        await self._conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS llm_cache (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                prompt_hash TEXT NOT NULL,
-                system_hash TEXT NOT NULL DEFAULT '',
-                model TEXT NOT NULL,
-                provider TEXT NOT NULL,
-                temperature REAL NOT NULL,
-                json_mode INTEGER NOT NULL DEFAULT 0,
-                response TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(prompt_hash, system_hash, model, provider, temperature, json_mode)
+        async with self._pool.write() as db:
+            await db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS llm_cache (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    prompt_hash TEXT NOT NULL,
+                    system_hash TEXT NOT NULL DEFAULT '',
+                    model TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    temperature REAL NOT NULL,
+                    json_mode INTEGER NOT NULL DEFAULT 0,
+                    response TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(prompt_hash, system_hash, model, provider, temperature, json_mode)
+                )
+                """
             )
-            """
-        )
-        await self._conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_cache_key ON llm_cache"
-            "(prompt_hash, system_hash, model, provider, temperature, json_mode)"
-        )
-        await self._conn.execute("CREATE INDEX IF NOT EXISTS idx_provider ON llm_cache(provider)")
-        await self._conn.execute("CREATE INDEX IF NOT EXISTS idx_model ON llm_cache(model)")
-        await self._conn.commit()
+            await db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_cache_key ON llm_cache"
+                "(prompt_hash, system_hash, model, provider, temperature, json_mode)"
+            )
+            await db.execute("CREATE INDEX IF NOT EXISTS idx_provider ON llm_cache(provider)")
+            await db.execute("CREATE INDEX IF NOT EXISTS idx_model ON llm_cache(model)")
+            await db.commit()
 
     # ── helpers ───────────────────────────────────────────────────────────────
 
@@ -160,27 +164,28 @@ class LLMCache:
                 return cached
 
         # L2 — SQLite
-        if not self._conn:
+        if not self._pool:
             return None
 
         try:
-            cursor = await self._conn.execute(
-                """SELECT response FROM llm_cache
-                   WHERE prompt_hash=? AND system_hash=? AND model=?
-                     AND provider=? AND temperature=? AND json_mode=?
-                   LIMIT 1""",
-                (prompt_hash, system_hash, model, provider, temperature, json_mode_int),
-            )
-            row = await cursor.fetchone()
-            await cursor.close()
+            async with self._pool.read() as db:
+                cursor = await db.execute(
+                    """SELECT response FROM llm_cache
+                       WHERE prompt_hash=? AND system_hash=? AND model=?
+                         AND provider=? AND temperature=? AND json_mode=?
+                       LIMIT 1""",
+                    (prompt_hash, system_hash, model, provider, temperature, json_mode_int),
+                )
+                row = await cursor.fetchone()
+                await cursor.close()
 
-            if row:
-                logger.debug("SQLite cache hit: %s/%s (prompt: %s...)", provider, model, prompt[:30])
-                # Promote to Redis L1
-                if self._redis is not None:
-                    rkey = self._redis_key(prompt_hash, system_hash, model, provider, temperature, json_mode_int)
-                    await self._redis.set(rkey, row[0])
-                return row[0]
+                if row:
+                    logger.debug("SQLite cache hit: %s/%s (prompt: %s...)", provider, model, prompt[:30])
+                    # Promote to Redis L1
+                    if self._redis is not None:
+                        rkey = self._redis_key(prompt_hash, system_hash, model, provider, temperature, json_mode_int)
+                        await self._redis.set(rkey, row[0])
+                    return row[0]
 
             return None
         except Exception as e:
@@ -207,19 +212,20 @@ class LLMCache:
             await self._redis.set(rkey, response)
 
         # Write to SQLite L2
-        if not self._conn:
+        if not self._pool:
             return False
 
         try:
-            await self._conn.execute(
-                """INSERT INTO llm_cache
-                       (prompt_hash, system_hash, model, provider, temperature, json_mode, response)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)
-                   ON CONFLICT(prompt_hash, system_hash, model, provider, temperature, json_mode)
-                   DO UPDATE SET response=excluded.response, created_at=CURRENT_TIMESTAMP""",
-                (prompt_hash, system_hash, model, provider, temperature, json_mode_int, response),
-            )
-            await self._conn.commit()
+            async with self._pool.write() as db:
+                await db.execute(
+                    """INSERT INTO llm_cache
+                           (prompt_hash, system_hash, model, provider, temperature, json_mode, response)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)
+                       ON CONFLICT(prompt_hash, system_hash, model, provider, temperature, json_mode)
+                       DO UPDATE SET response=excluded.response, created_at=CURRENT_TIMESTAMP""",
+                    (prompt_hash, system_hash, model, provider, temperature, json_mode_int, response),
+                )
+                await db.commit()
             logger.debug("Cached response: %s/%s (prompt: %s...)", provider, model, prompt[:30])
             return True
         except Exception as e:
@@ -228,19 +234,20 @@ class LLMCache:
 
     async def stats(self) -> dict:
         base: dict = {}
-        if self._conn:
+        if self._pool:
             try:
-                cursor = await self._conn.execute(
-                    "SELECT COUNT(*), COUNT(DISTINCT provider), COUNT(DISTINCT model) FROM llm_cache"
-                )
-                row = await cursor.fetchone()
-                await cursor.close()
-                if row:
-                    base = {
-                        "total_cached_responses": row[0],
-                        "unique_providers": row[1],
-                        "unique_models": row[2],
-                    }
+                async with self._pool.read() as db:
+                    cursor = await db.execute(
+                        "SELECT COUNT(*), COUNT(DISTINCT provider), COUNT(DISTINCT model) FROM llm_cache"
+                    )
+                    row = await cursor.fetchone()
+                    await cursor.close()
+                    if row:
+                        base = {
+                            "total_cached_responses": row[0],
+                            "unique_providers": row[1],
+                            "unique_models": row[2],
+                        }
             except Exception as e:
                 logger.warning("Failed to get cache stats: %s", e)
 
@@ -254,29 +261,30 @@ class LLMCache:
         if self._redis is not None:
             await self._redis.flush()
 
-        if not self._conn:
+        if not self._pool:
             return 0
 
         try:
-            if provider is None and model is None:
-                cursor = await self._conn.execute("DELETE FROM llm_cache")
-                logger.info("Cleared entire LLM cache")
-            elif provider and model:
-                cursor = await self._conn.execute(
-                    "DELETE FROM llm_cache WHERE provider=? AND model=?", (provider, model)
-                )
-                logger.info("Cleared cache for %s/%s", provider, model)
-            elif provider:
-                cursor = await self._conn.execute("DELETE FROM llm_cache WHERE provider=?", (provider,))
-                logger.info("Cleared cache for provider %s", provider)
-            else:
-                cursor = await self._conn.execute("DELETE FROM llm_cache WHERE model=?", (model,))
-                logger.info("Cleared cache for model %s", model)
+            async with self._pool.write() as db:
+                if provider is None and model is None:
+                    cursor = await db.execute("DELETE FROM llm_cache")
+                    logger.info("Cleared entire LLM cache")
+                elif provider and model:
+                    cursor = await db.execute(
+                        "DELETE FROM llm_cache WHERE provider=? AND model=?", (provider, model)
+                    )
+                    logger.info("Cleared cache for %s/%s", provider, model)
+                elif provider:
+                    cursor = await db.execute("DELETE FROM llm_cache WHERE provider=?", (provider,))
+                    logger.info("Cleared cache for provider %s", provider)
+                else:
+                    cursor = await db.execute("DELETE FROM llm_cache WHERE model=?", (model,))
+                    logger.info("Cleared cache for model %s", model)
 
-            await self._conn.commit()
-            deleted = cursor.rowcount
-            await cursor.close()
-            return deleted
+                await db.commit()
+                deleted = cursor.rowcount
+                await cursor.close()
+                return deleted
         except Exception as e:
             logger.warning("Failed to clear cache: %s", e)
             return 0
@@ -284,8 +292,8 @@ class LLMCache:
     async def close(self) -> None:
         if self._redis is not None:
             await self._redis.close()
-        if self._conn:
-            await self._conn.close()
-            self._conn = None
+        if self._pool:
+            await self._pool.close()
+            self._pool = None
             self._initialized = False
             logger.debug("LLM cache connection closed")
