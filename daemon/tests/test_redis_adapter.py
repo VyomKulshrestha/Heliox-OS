@@ -17,10 +17,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pilot.db.redis_adapter import RedisConfig, RedisCacheAdapter, _LRUCache
-
+from pilot.db.redis_adapter import RedisCacheAdapter, RedisConfig, _LRUCache
 
 # ─── _LRUCache ────────────────────────────────────────────────────────────────
+
 
 class TestLRUCache:
     @pytest.fixture
@@ -86,6 +86,7 @@ class TestLRUCache:
 
 # ─── RedisCacheAdapter — memory fallback mode ─────────────────────────────────
 
+
 class TestAdapterMemoryMode:
     @pytest.fixture
     def config(self):
@@ -146,6 +147,7 @@ class TestAdapterMemoryMode:
 
 # ─── RedisCacheAdapter — Redis mode ──────────────────────────────────────────
 
+
 class TestAdapterRedisMode:
     @pytest.fixture
     def config(self):
@@ -165,12 +167,14 @@ class TestAdapterRedisMode:
     @pytest.fixture
     async def adapter_redis(self, config):
         mock_redis = self._make_mock_redis()
-        with patch.dict("sys.modules", {"redis": MagicMock(), "redis.asyncio": MagicMock()}):
-            with patch("pilot.db.redis_adapter.RedisCacheAdapter.initialize", new_callable=AsyncMock) as mock_init:
-                a = RedisCacheAdapter(config)
-                a._redis = mock_redis
-                a._using_redis = True
-                yield a, mock_redis
+        with (
+            patch.dict("sys.modules", {"redis": MagicMock(), "redis.asyncio": MagicMock()}),
+            patch("pilot.db.redis_adapter.RedisCacheAdapter.initialize", new_callable=AsyncMock) as mock_init,
+        ):
+            a = RedisCacheAdapter(config)
+            a._redis = mock_redis
+            a._using_redis = True
+            yield a, mock_redis
 
     async def test_backend_is_redis(self, adapter_redis):
         adapter, _ = adapter_redis
@@ -226,6 +230,7 @@ class TestAdapterRedisMode:
 
 # ─── Fallback on Redis failure ────────────────────────────────────────────────
 
+
 class TestAdapterRedisFallback:
     @pytest.fixture
     def config(self):
@@ -277,6 +282,7 @@ class TestAdapterRedisFallback:
 
 
 # ─── from_config ──────────────────────────────────────────────────────────────
+
 
 class TestFromConfig:
     def test_from_config_returns_adapter(self):

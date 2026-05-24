@@ -42,13 +42,14 @@ def test_create_httpx_client_scopes_proxy_env(monkeypatch) -> None:
     config.proxy.no_proxy = "localhost,127.0.0.1"
 
     client = create_httpx_client(config, timeout=1)
-    
+
     # Environment variables should be cleaned up after client construction
     assert "HTTP_PROXY" not in os.environ
     assert "HTTPS_PROXY" not in os.environ
     assert "NO_PROXY" not in os.environ
-    
+
     # The proxy config should be applied natively via mounts in the base transport fallback
     # But since it's an implementation detail, we just ensure it handles the scope correctly.
     import asyncio
+
     asyncio.run(client.aclose())

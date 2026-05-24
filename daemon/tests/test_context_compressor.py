@@ -9,11 +9,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from pilot.memory.context_compressor import (
-    ContextCompressor,
-    RollingContextWindow,
-    NUM_RESERVED_TOKENS
-)
+from pilot.memory.context_compressor import NUM_RESERVED_TOKENS, ContextCompressor, RollingContextWindow
 
 
 class TestContextCompressor:
