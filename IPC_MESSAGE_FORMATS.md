@@ -602,6 +602,58 @@ Return self-improvement reflection statistics.
 
 ---
 
+### Interactive Git Conflict Resolver
+
+#### `resolve_git_conflict`
+Parse the file at the given path, locate conflict blocks, run LLM routing to get candidate resolutions structured per `schemas/git_conflict_resolution.json`, and return the blocks with original + suggested resolution.
+
+**Params:**
+```json
+{
+  "filepath": "conflict_demo.py"
+}
+```
+
+**Result:**
+```json
+{
+  "status": "success",
+  "conflicts": [
+    {
+      "id": "conflict_0",
+      "original_block": "<<<<<<< HEAD\ndef hello():\n    return 'local'\n=======\ndef hello():\n    return 'incoming'\n>>>>>>> feature-branch",
+      "our_code": "def hello():\n    return 'local'",
+      "their_code": "def hello():\n    return 'incoming'",
+      "our_branch": "HEAD",
+      "their_branch": "feature-branch",
+      "resolved_code": "def hello():\n    return 'local'"
+    }
+  ]
+}
+```
+
+#### `apply_git_resolution`
+Apply a git conflict resolution block by safely, atomically, and securely writing/replacing the resolved code block inside the file.
+
+**Params:**
+```json
+{
+  "path": "conflict_demo.py",
+  "full_block": "<<<<<<< HEAD\ndef hello():\n    return 'local'\n=======\ndef hello():\n    return 'incoming'\n>>>>>>> feature-branch",
+  "resolved_code": "def hello():\n    return 'local'"
+}
+```
+
+**Result:**
+```json
+{
+  "status": "success",
+  "message": "Git conflict resolution applied successfully"
+}
+```
+
+---
+
 ## 2. Daemon → UI Notifications
 
 Notifications are broadcast to **all** connected clients with no `id` field. The UI should not send a response.
@@ -863,7 +915,7 @@ Defined in `schemas/action_plan.schema.json` and `daemon/pilot/actions.py`.
 | Tier | Action types |
 |------|-------------|
 | Read-only | `file_read`, `file_list`, `file_search`, `directory_summary`, `package_search`, `service_status`, `gnome_setting_read`, `open_url`, `open_application`, `notify`, `process_list`, `process_info`, `clipboard_read`, `system_info`, `disk_usage`, `memory_usage`, `cpu_usage`, `network_info`, `battery_info`, `env_get`, `env_list`, `window_list`, `volume_get`, `brightness_get`, `screenshot`, `wifi_list`, `disk_list`, `user_list`, `user_info`, `schedule_list`, `mouse_position`, `screen_ocr`, `screen_find_text`, `screen_analyze`, `screen_element_map`, `browser_extract`, `browser_extract_table`, `browser_extract_links`, `browser_screenshot`, `browser_list_tabs`, `browser_page_info`, `trigger_list`, `file_parse`, `file_search_content`, `api_scrape`, `registry_read` |
-| User write | `file_write`, `file_move`, `file_copy`, `clipboard_write`, `keyboard_type`, `keyboard_press`, `keyboard_hotkey`, `keyboard_hold`, `mouse_click`, `mouse_double_click`, `mouse_right_click`, `mouse_move`, `mouse_drag`, `mouse_scroll`, `volume_set`, `volume_mute`, `brightness_set`, `window_focus`, `window_minimize`, `window_maximize`, `browser_navigate`, `browser_click`, `browser_type`, `browser_select`, `browser_hover`, `browser_scroll`, `browser_execute_js`, `browser_fill_form`, `browser_new_tab`, `browser_close_tab`, `browser_switch_tab`, `browser_back`, `browser_forward`, `browser_refresh`, `browser_wait`, `browser_close`, `env_set`, `download_file`, `api_request`, `api_github`, `code_execute`, `code_generate_and_run`, `trigger_create`, `trigger_start`, `trigger_stop` |
+| User write | `file_write`, `file_move`, `file_copy`, `git_resolve`, `clipboard_write`, `keyboard_type`, `keyboard_press`, `keyboard_hotkey`, `keyboard_hold`, `mouse_click`, `mouse_double_click`, `mouse_right_click`, `mouse_move`, `mouse_drag`, `mouse_scroll`, `volume_set`, `volume_mute`, `brightness_set`, `window_focus`, `window_minimize`, `window_maximize`, `browser_navigate`, `browser_click`, `browser_type`, `browser_select`, `browser_hover`, `browser_scroll`, `browser_execute_js`, `browser_fill_form`, `browser_new_tab`, `browser_close_tab`, `browser_switch_tab`, `browser_back`, `browser_forward`, `browser_refresh`, `browser_wait`, `browser_close`, `env_set`, `download_file`, `api_request`, `api_github`, `code_execute`, `code_generate_and_run`, `trigger_create`, `trigger_start`, `trigger_stop` |
 | System modify | `package_install`, `package_update`, `service_start`, `service_stop`, `service_restart`, `service_enable`, `service_disable`, `gnome_setting_write`, `shell_command`, `shell_script`, `schedule_create`, `file_permissions`, `wifi_connect`, `wifi_disconnect`, `disk_mount`, `registry_write`, `api_send_email`, `api_webhook`, `api_slack`, `api_discord` |
 | Destructive | `file_delete`, `package_remove`, `process_kill`, `power_shutdown`, `power_restart`, `power_logout`, `schedule_delete`, `disk_unmount`, `window_close`, `trigger_delete`, `browser_click_text` |
 | Root critical | `power_sleep`, `power_lock`, `user_info` (with elevation), `dbus_call` |

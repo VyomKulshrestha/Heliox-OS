@@ -22,6 +22,7 @@ logger = logging.getLogger("pilot.agents.code_agent")
 CODE_ACTION_TYPES: set[ActionType] = {
     ActionType.CODE_EXECUTE,
     ActionType.CODE_GENERATE_AND_RUN,
+    ActionType.SKILL_RUN,
     ActionType.SHELL_COMMAND,
     ActionType.SHELL_SCRIPT,
     ActionType.PTY_EXEC,
@@ -44,6 +45,10 @@ class CodeAgent(BaseAgent):
             AgentCapability(
                 action_type=ActionType.CODE_GENERATE_AND_RUN,
                 description="Generate code from a task description and execute it",
+            ),
+            AgentCapability(
+                action_type=ActionType.SKILL_RUN,
+                description="Run a Python skill from ~/.config/pilot/skills (skill_id + arguments)",
             ),
             AgentCapability(
                 action_type=ActionType.SHELL_COMMAND,

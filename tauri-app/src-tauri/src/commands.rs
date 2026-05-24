@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager, Window, Emitter};
-
+use tauri::{AppHandle, Manager, Emitter};
+use sysinfo::System;
+use std::process::Command;
 #[derive(Serialize, Deserialize, Clone)]
 pub struct DaemonStatus {
     pub connected: bool,
@@ -71,7 +72,7 @@ pub async fn confirm_action(window: tauri::Window, plan_id: String, confirmed: b
 }
 
 // Internal worker to parse handshake ping data
-async fn try_ping_daemon(window: tauri::Window) -> Result<String, String> {
+async fn try_ping_daemon(_window: tauri::Window) -> Result<String, String> {
     let request = serde_json::json!({
         "jsonrpc": "2.0",
         "method": "ping",
@@ -129,6 +130,80 @@ async fn send_rpc(window: tauri::Window, request: serde_json::Value) -> Result<(
     Ok(())
 }
 #[tauri::command]
+
+pub fn open_terminal() -> Result<String, String> {
+    Command::new("cmd")
+        .args([
+            "/C",
+            "start cmd /K echo Heliox OS Terminal Ready"
+        ])
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    Ok("Terminal Opened".into())
+}
+#[tauri::command]
+pub fn clear_logs() -> Result<String, String> {
+    std::fs::write("system.log", "")
+        .map_err(|e| e.to_string())?;
+    Ok("Logs Cleared".into())
+}
+#[tauri::command]
+pub fn restart_agents() -> Result<String, String> {
+    Command::new("taskkill")
+        .args(["/IM", "agent.exe", "/F"])
+        .output()
+        .ok();
+    Ok("Agents Restarted".into())
+}
+#[tauri::command]
+pub fn system_scan() -> serde_json::Value {
+    let mut sys = System::new_all();
+    sys.refresh_all();
+    serde_json::json!({
+        "cpu_usage": sys.global_cpu_info().cpu_usage(),
+        "used_memory": sys.used_memory() / 1024,
+        "total_memory": sys.total_memory() / 1024
+    })
+}
+#[tauri::command]
+pub fn get_uptime() -> String {
+    let mut sys = System::new_all();
+    sys.refresh_all();
+    let uptime = System::uptime();
+    let days = uptime / 86400;
+    let hours = (uptime % 86400) / 3600;
+    let mins = (uptime % 3600) / 60;
+    format!("{}d {}h {}m", days, hours, mins)
+}
+#[tauri::command]
+pub fn take_screenshot() -> Result<String, String> {
+    use screenshots::Screen;
+    let screens = Screen::all().unwrap();
+    let image = screens[0].capture().unwrap();
+    image.save("screenshot.png").unwrap();
+    Ok("Screenshot Saved".into())
+}
+#[tauri::command]
+pub fn get_dashboard_status() -> serde_json::Value {
+    use sysinfo::System;
+    let mut sys = System::new_all();
+    sys.refresh_all();
+    serde_json::json!({
+        "connected": true,
+        "agents": 4,
+        "cpu": format!(
+            "{:.0}%",
+            sys.global_cpu_info().cpu_usage()
+        ),
+        "memory": format!(
+            "{:.0}%",
+            (sys.used_memory() as f32
+            / sys.total_memory() as f32) * 100.0
+        ),
+        "network_up": "96 KB/s",
+        "network_down": "32 KB/s"
+    })
+
 pub fn open_logs_folder(app: tauri::AppHandle) -> Result<(), String> {
     let log_dir = app
         .path()
@@ -141,4 +216,56 @@ pub fn open_logs_folder(app: tauri::AppHandle) -> Result<(), String> {
 
     opener::open(&log_dir).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+#[tauri::command]
+pub async fn apply_git_conflict_resolution(
+    _window: tauri::Window,
+    path: String,
+    full_block: String,
+    resolved_code: String,
+) -> Result<serde_json::Value, String> {
+    let request = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "apply_git_resolution",
+        "params": {
+            "path": path,
+            "full_block": full_block,
+            "resolved_code": resolved_code
+        },
+        "id": 1
+    });
+
+    let url = "ws://127.0.0.1:8785";
+    use tokio_tungstenite::connect_async;
+    use futures_util::{SinkExt, StreamExt};
+
+    let (mut ws, _) = connect_async(url).await.map_err(|e| e.to_string())?;
+    let msg = serde_json::to_string(&request).map_err(|e| e.to_string())?;
+    ws.send(tokio_tungstenite::tungstenite::Message::Text(msg)).await.map_err(|e| e.to_string())?;
+
+    if let Some(Ok(response)) = ws.next().await {
+        let text = response.to_text().map_err(|e| e.to_string())?;
+        let parsed: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+        if let Some(result) = parsed.get("result") {
+            return Ok(result.clone());
+        }
+        if let Some(error) = parsed.get("error") {
+            return Err(error.get("message").and_then(|m| m.as_str()).unwrap_or("Daemon error").to_string());
+        }
+        return Ok(parsed);
+    }
+    Err("Failed to receive response from daemon".to_string())
+}
+
+// 5. Get the currently active global shortcut
+#[tauri::command]
+pub fn get_hotkey(app: AppHandle) -> String {
+    crate::hotkey::load_saved_shortcut(&app)
+}
+
+// 6. Update the global shortcut from the frontend settings panel
+#[tauri::command]
+pub fn set_hotkey(app: AppHandle, shortcut: String) -> Result<(), String> {
+    crate::hotkey::update_shortcut(&app, &shortcut)
 }

@@ -3,7 +3,7 @@ import { call, connect, isConnected, onNotification, listenToLLMStream } from ".
 import { settings } from "./settings";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 
-export type MessageType = "user" | "system" | "error" | "plan" | "result" | "assistant";
+export type MessageType = "user" | "system" | "error" | "plan" | "result" | "assistant" | "git_conflict";
 
 // 1. Definition interfaces for structuring session data models
 export interface PlanAction {
@@ -35,6 +35,19 @@ export interface Plan {
   dry_run?: boolean;
 }
 
+export interface GitConflictBlock {
+  path: string;
+  original_hunk: string;
+  conflict_hunk: string;
+  proposed_resolution_code: string;
+  full_block: string;
+}
+
+export interface GitConflictPayload {
+  status: string;
+  conflicts: GitConflictBlock[];
+}
+
 export interface Message {
   type: MessageType;
   text: string;
@@ -42,6 +55,7 @@ export interface Message {
   plan?: Plan;
   actionResults?: ActionResultData[];
   verification?: VerificationData;
+  gitConflict?: GitConflictPayload;
 }
 
 export interface LiveActionState {
@@ -286,6 +300,67 @@ function createSession() {
     input: string,
     attachments: Attachment[] = []
   ) {
+    if (input.startsWith("/git-resolve ") || input.startsWith("git-resolve ")) {
+      const filepath = input.replace(/^(\/)?git-resolve\s+/, "").trim();
+      update((s) => ({
+        ...s,
+        loading: true,
+        phase: "detecting conflicts",
+        messages: [
+          ...s.messages,
+          { type: "user", text: input, timestamp: Date.now() },
+        ],
+      }));
+      try {
+        const res = (await call("resolve_git_conflict", { filepath })) as any;
+        if (res.status === "success" && res.conflicts && res.conflicts.length > 0) {
+          update((s) => ({
+            ...s,
+            loading: false,
+            phase: "",
+            messages: [
+              ...s.messages,
+              {
+                type: "git_conflict",
+                text: `Found ${res.conflicts.length} git conflicts in ${filepath}`,
+                timestamp: Date.now(),
+                gitConflict: res,
+              },
+            ],
+          }));
+        } else {
+          update((s) => ({
+            ...s,
+            loading: false,
+            phase: "",
+            messages: [
+              ...s.messages,
+              {
+                type: "system",
+                text: res.message || `No git conflict markers found in ${filepath}`,
+                timestamp: Date.now(),
+              },
+            ],
+          }));
+        }
+      } catch (err) {
+        update((s) => ({
+          ...s,
+          loading: false,
+          phase: "",
+          messages: [
+            ...s.messages,
+            {
+              type: "error",
+              text: String(err instanceof Error ? err.message : err),
+              timestamp: Date.now(),
+            },
+          ],
+        }));
+      }
+      return;
+    }
+
     update((s) => ({
       ...s,
       loading: true,

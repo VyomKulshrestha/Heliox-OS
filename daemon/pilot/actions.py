@@ -7,9 +7,9 @@ validated Action objects ΓÇö there is no path from raw LLM text to system cal
 from __future__ import annotations
 
 from enum import Enum, StrEnum
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class ActionType(StrEnum):
@@ -23,6 +23,7 @@ class ActionType(StrEnum):
     FILE_SEARCH = "file_search"
     DIRECTORY_SUMMARY = "directory_summary"
     FILE_PERMISSIONS = "file_permissions"
+    GIT_RESOLVE = "git_resolve"
 
     # -- Package management --
     PACKAGE_INSTALL = "package_install"
@@ -224,6 +225,12 @@ class ActionType(StrEnum):
     # -- VLM zero-shot element detection --
     SCREEN_DETECT_ELEMENTS = "screen_detect_elements"
 
+    # -- WebAssembly Plugin execution --
+    WASM_CALL = "wasm_call"
+
+    # -- Third-party skills (dynamic ``pilot/skills`` loader) --
+    SKILL_RUN = "skill_run"
+
 
 class PermissionTier(int, Enum):
     READ_ONLY = 0
@@ -346,6 +353,12 @@ class FileParams(BaseModel):
     max_entries: int = 200  # For directory_summary
     ignore_dirs: list[str] = Field(default_factory=lambda: [".git", "node_modules"])  # For directory_summary
     permissions: str | None = None  # e.g. "755" for file_permissions
+
+
+class GitResolveParams(BaseModel):
+    path: str = ""
+    full_block: str = ""
+    resolved_code: str = ""
 
 
 class PackageParams(BaseModel):
@@ -611,6 +624,21 @@ class TriggerParams(BaseModel):
 # ======= TIER 2: MULTIPLIER PARAMS =======
 
 
+class SkillRunParams(BaseModel):
+    """Invoke a dynamically loaded :class:`pilot.skills.base.Skill`."""
+
+    skill_id: str = ""
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_aliases(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "arguments" not in data and "params" in data:
+            data = dict(data)
+            data["arguments"] = data.pop("params")
+        return data
+
+
 class CodeExecParams(BaseModel):
     """For code generation and execution."""
 
@@ -719,6 +747,13 @@ class SshScriptParams(BaseModel):
     timeout_seconds: int = 300
 
 
+class WasmCallParams(BaseModel):
+    """Parameters for wasm_call action."""
+
+    tool: str = ""
+    args: dict[str, Any] = Field(default_factory=dict)
+
+
 class EmptyParams(BaseModel):
     """For actions that need no parameters."""
 
@@ -766,6 +801,9 @@ ActionParameters = (
     | SshCommandParams
     | SshScriptParams
     | ElementDetectionParams
+    | WasmCallParams
+    | SkillRunParams
+    | GitResolveParams
     | EmptyParams
 )
 
@@ -788,11 +826,13 @@ class Action(BaseModel):
         ALWAYS_SAFE = {
             ActionType.FILE_READ,
             ActionType.FILE_WRITE,
+            ActionType.GIT_RESOLVE,
             ActionType.FILE_LIST,
             ActionType.FILE_SEARCH,
             ActionType.FILE_COPY,
             ActionType.CODE_EXECUTE,
             ActionType.CODE_GENERATE_AND_RUN,
+            ActionType.SKILL_RUN,
             ActionType.SHELL_COMMAND,
             ActionType.BROWSER_NAVIGATE,
             ActionType.BROWSER_EXTRACT,
@@ -831,6 +871,7 @@ class Action(BaseModel):
             ActionType.API_REQUEST,
             ActionType.API_SCRAPE,
             ActionType.DOWNLOAD_FILE,
+            ActionType.WASM_CALL,
         }
         if self.action_type in ALWAYS_SAFE:
             return PermissionTier.USER_WRITE

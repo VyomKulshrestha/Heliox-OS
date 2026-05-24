@@ -31,6 +31,7 @@ from pilot.actions import (
     EnvParams,
     FileIntelParams,
     FileParams,
+    GitResolveParams,
     GnomeSettingParams,
     KeyboardParams,
     MouseParams,
@@ -48,9 +49,11 @@ from pilot.actions import (
     ServiceParams,
     ShellCommandParams,
     ShellScriptParams,
+    SkillRunParams,
     SystemInfoParams,
     TriggerParams,
     VolumeParams,
+    WasmCallParams,
     WifiParams,
     WindowParams,
     WorkspaceParams,
@@ -63,6 +66,7 @@ from pilot.system.snapshots import SnapshotManager
 
 if TYPE_CHECKING:
     from pilot.config import PilotConfig
+    from pilot.skills.loader import SkillRegistry
 
 logger = logging.getLogger("pilot.agents.executor")
 
@@ -76,15 +80,18 @@ class Executor:
         validator: ActionValidator,
         permissions: PermissionChecker,
         audit: AuditLogger,
+        skill_registry: SkillRegistry | None = None,
     ) -> None:
         self._config = config
         self._validator = validator
         self._permissions = permissions
         self._audit = audit
+        self._skill_registry = skill_registry
         self._snapshot_mgr = SnapshotManager(config)
+        self._plugin_registry = None
         self._simulation_sandbox = SimulationSandbox(allowed_commands=config.restrictions.sandbox_allowed_commands)
-        self._last_output: str = ""  # For output chaining between steps
-        self._largest_output: str = ""  # Largest output from any step in the pipeline
+        self._last_output = ""  # For output chaining between steps
+        self._largest_output = ""  # Largest output from any step in the pipeline
 
         self._dispatch_table: dict[ActionType, callable] = {
             # -- File operations --
@@ -97,6 +104,7 @@ class Executor:
             ActionType.FILE_SEARCH: self._exec_file_search,
             ActionType.DIRECTORY_SUMMARY: self._exec_directory_summary,
             ActionType.FILE_PERMISSIONS: self._exec_file_permissions,
+            ActionType.GIT_RESOLVE: self._exec_git_resolve,
             # -- Package operations --
             ActionType.PACKAGE_INSTALL: self._exec_package_install,
             ActionType.PACKAGE_REMOVE: self._exec_package_remove,
@@ -238,6 +246,7 @@ class Executor:
             # -- Code execution --
             ActionType.CODE_EXECUTE: self._exec_code_execute,
             ActionType.CODE_GENERATE_AND_RUN: self._exec_code_generate,
+            ActionType.SKILL_RUN: self._exec_skill_run,
             # -- File intelligence --
             ActionType.FILE_PARSE: self._exec_file_parse,
             ActionType.FILE_SEARCH_CONTENT: self._exec_file_search_content,
@@ -251,7 +260,11 @@ class Executor:
             ActionType.API_SCRAPE: self._exec_api_scrape,
             ActionType.WORKSPACE_INDEX: self._exec_workspace_index,
             ActionType.WORKSPACE_SEARCH: self._exec_workspace_search,
+            ActionType.WASM_CALL: self._exec_wasm_call,
         }
+
+    def set_plugin_registry(self, plugin_registry) -> None:
+        self._plugin_registry = plugin_registry
 
     def _analyze_dependencies(self, actions: list[Action]) -> list[list[Action]]:
         """Analyze action dependencies and return batches that can run in parallel.
@@ -702,6 +715,20 @@ class Executor:
 
         params: FileParams = action.parameters  # type: ignore[assignment]
         return await file_permissions(params.path, params.permissions)
+
+    async def _exec_git_resolve(self, action: Action) -> str:
+        from pathlib import Path
+
+        params: GitResolveParams = action.parameters  # type: ignore[assignment]
+        p = Path(params.path)
+        if not p.exists():
+            raise FileNotFoundError(f"File not found: {params.path}")
+        content = await asyncio.to_thread(p.read_text, "utf-8")
+        if params.full_block not in content:
+            raise ValueError("Conflict block not found in file. It might have been modified or already resolved.")
+        new_content = content.replace(params.full_block, params.resolved_code)
+        await asyncio.to_thread(p.write_text, new_content, "utf-8")
+        return f"Successfully resolved git conflict in {params.path}"
 
     # ======================================================================
     # PACKAGE OPERATIONS
@@ -1586,6 +1613,15 @@ class Executor:
     # TIER 2: CODE EXECUTION
     # ======================================================================
 
+    async def _exec_skill_run(self, action: Action) -> str:
+        from pilot.skills.base import SkillContext
+
+        p: SkillRunParams = action.parameters  # type: ignore[assignment]
+        if self._skill_registry is None:
+            return "Skill registry is not configured"
+        ctx = SkillContext(pilot_config=self._config)
+        return await self._skill_registry.run(p.skill_id.strip(), p.arguments, ctx)
+
     async def _exec_code_execute(self, action: Action) -> str:
         import tempfile
 
@@ -1826,3 +1862,17 @@ class Executor:
             lines.append(r["text"])
             lines.append("---")
         return "\n".join(lines)
+
+    async def _exec_wasm_call(self, action: Action) -> str:
+        import json
+
+        params: WasmCallParams = action.parameters  # type: ignore[assignment]
+        tool_name = params.tool or action.target
+        if not tool_name:
+            raise ValueError("wasm_call requires a tool name (either in target or parameters)")
+        if self._plugin_registry is None:
+            raise RuntimeError("Plugin registry not initialized in Executor")
+        result = self._plugin_registry.call_wasm_tool(tool_name, params.args)
+        if "error" in result:
+            raise RuntimeError(f"WASM tool execution failed: {result['error']}")
+        return json.dumps(result)
