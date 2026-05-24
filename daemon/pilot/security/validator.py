@@ -9,6 +9,7 @@ Updated for the expanded action set with cross-platform support.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from pilot.actions import (
@@ -280,10 +281,11 @@ class ActionValidator:
         restrictions = self._config.restrictions
 
         if isinstance(action.parameters, (FileParams, GitResolveParams)):
-            path_str = action.parameters.path
+            path_obj = Path(action.parameters.path).resolve()
             for protected in restrictions.protected_folders:
-                if path_str.startswith(protected):
-                    raise ValidationError(idx, f"Path {path_str} is in protected folder {protected}")
+                protected_obj = Path(protected).resolve()
+                if protected_obj == path_obj or protected_obj in path_obj.parents:
+                    raise ValidationError(idx, f"Path {action.parameters.path} resolves inside protected folder {protected}")
 
         if isinstance(action.parameters, PackageParams) and action.action_type == ActionType.PACKAGE_REMOVE:
             if action.parameters.name in restrictions.protected_packages:
