@@ -29,6 +29,7 @@
     "dompurify": "^3.4.3",
     "highlight.js": "^11.11.1",
     "lucide-svelte": "^0.577.0",
-    "marked": "^18.0.3"
+    "marked": "^18.0.3",
+    "svelte-i18n": "^4.0.1"
   }
 }

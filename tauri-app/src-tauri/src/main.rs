@@ -184,6 +184,8 @@ fn main() {
             commands::send_to_daemon,
             commands::confirm_action,
             commands::open_logs_folder,
+            commands::get_hotkey,
+            commands::set_hotkey,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Heliox OS");
