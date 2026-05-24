@@ -1,7 +1,7 @@
 <script lang="ts">
   import CommandInput from "./lib/components/CommandInput.svelte";
   import Dashboard from "./lib/components/Dashboard.svelte";
-  import { copyMessage } from "./lib/utils/copy";
+  import { copyMessage as utilCopyMessage } from "./lib/utils/copy";
   import { getJarvisGreeting } from "./lib/utils/greeting";
   import { renderMarkdown } from "./lib/utils/markdown";
   import ConfirmDialog from "./lib/components/ConfirmDialog.svelte";
@@ -30,22 +30,6 @@
   let isDragging = $state(false);
   import { _, isLoading } from 'svelte-i18n';
 
-  const renderer = new marked.Renderer();
-  renderer.code = function({ text, lang }: { text: string; lang?: string }): string {
-    const language = lang || "";
-    const result = highlight(text, language);
-    const langLabel = result.language !== "plaintext" ? result.language : "";
-    const langBadge = langLabel ? `<span class="hlx-lang-badge">${langLabel}</span>` : "";
-    return `<div class="hlx-code-wrapper"><div class="hlx-code-header">${langBadge}<button class="hlx-copy-btn" data-code="${encodeURIComponent(text)}">Copy</button></div><pre class="hlx-pre"><code class="hljs language-${result.language}">${result.value}</code></pre></div>`;
-  };
-  marked.setOptions({ renderer, gfm: true, breaks: true });
-
-  function renderMarkdown(text: string): string {
-    if (!text) return "";
-    const raw = marked.parse(text) as string;
-    return DOMPurify.sanitize(raw);
-  }
-
   let activeTab: "chat" | "log" | "dashboard" | "settings" | "plugins" = $state("chat");
   let showWizard = $derived(
     !$settings.first_run_complete && localStorage.getItem("heliox_first_run_complete") !== "true"
@@ -61,14 +45,6 @@
     await settings.updateSection("", { first_run_complete: true });
     await tick();
     session.addSystemMessage(getJarvisGreeting());
-  }
-  function getJarvisGreeting(): string {
-    const hour = new Date().getHours();
-    if (hour < 6) return "Good evening. Heliox OS is online. All systems nominal.";
-    if (hour < 12) return "Good morning. Heliox OS is online and ready for your commands.";
-    if (hour < 17) return "Good afternoon. Heliox OS at your service. What shall we tackle?";
-    if (hour < 21) return "Good evening. Heliox OS is ready. How can I assist you tonight?";
-    return "Burning the midnight oil? Heliox OS is standing by.";
   }
 
   // Handle gesture events for particle effects and navigation
@@ -126,57 +102,15 @@
 
   let copiedTimeout: ReturnType<typeof setTimeout> | null = null;
 
-  function getCopyText(msg: Message): string {
-    if (msg.type === "plan") {
-      const parts = [];
-      if (msg.plan?.explanation) parts.push(msg.plan.explanation);
-      if (msg.plan?.actions?.length) {
-        parts.push(msg.plan.actions.map((a: any) => `• ${a.action_type}: ${a.target || ""}`).join("\n"));
-      }
-      if (!parts.length && msg.plan?.actions?.length) {
-        parts.push(msg.plan.actions.map((a: any) => `• ${a.action_type}: ${a.target || ""}`).join("\n"));
-      }
-      return parts.join("\n\n");
-    }
-    if (msg.type === "result") {
-      const parts = [];
-      if (msg.text) parts.push(msg.text);
-      if (msg.actionResults?.length) {
-        const outputs = msg.actionResults
-          .map((r: any) => {
-            const content = r.output || r.error || "";
-            const actionType = r.action?.action_type || "";
-            return content ? `${actionType}: ${content}` : actionType;
-          })
-          .filter(Boolean)
-          .join("\n");
-        if (outputs) parts.push(outputs);
-      }
-      if (msg.verification) {
-        parts.push(`Verification: ${msg.verification.passed ? "passed" : "failed"}`);
-        if (msg.verification.details?.length) {
-          parts.push(msg.verification.details.join("\n"));
-        }
-      }
-      return parts.join("\n\n");
-    }
-    return msg.text || "";
-  }
-
   async function copyMessage(msg: Message) {
-    const text = getCopyText(msg).trim();
-    if (!text) return;
-    try {
-      await writeText(text);
-    } catch {
-      return;
+    if (await utilCopyMessage(msg)) {
+      copiedMessageId = msg.timestamp;
+      if (copiedTimeout) clearTimeout(copiedTimeout);
+      copiedTimeout = setTimeout(() => {
+        copiedMessageId = null;
+        copiedTimeout = null;
+      }, 1500);
     }
-    copiedMessageId = msg.timestamp;
-    if (copiedTimeout) clearTimeout(copiedTimeout);
-    copiedTimeout = setTimeout(() => {
-      copiedMessageId = null;
-      copiedTimeout = null;
-    }, 1500);
   }
 
   onDestroy(() => {
@@ -218,7 +152,7 @@
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-  
+  }
 </script>
 {#if showWizard}
   <SetupWizard oncomplete={onSetupComplete} />

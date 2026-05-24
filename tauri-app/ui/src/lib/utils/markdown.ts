@@ -31,10 +31,10 @@ marked.setOptions({
   gfm: true,
   breaks: true,
 });
-export async function renderMarkdown(
+export function renderMarkdown(
   text: string
-): Promise<string> {
+): string {
   if (!text) return "";
-  const raw = await marked.parse(text);
+  const raw = marked.parse(text);
   return DOMPurify.sanitize(raw as string);
 }
