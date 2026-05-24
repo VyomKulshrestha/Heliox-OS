@@ -142,7 +142,6 @@ pub fn open_logs_folder(app: tauri::AppHandle) -> Result<(), String> {
     opener::open(&log_dir).map_err(|e| e.to_string())?;
     Ok(())
 }
-
 #[tauri::command]
 pub async fn apply_git_conflict_resolution(
     _window: tauri::Window,
@@ -181,4 +180,16 @@ pub async fn apply_git_conflict_resolution(
         return Ok(parsed);
     }
     Err("Failed to receive response from daemon".to_string())
+}
+
+// 5. Get the currently active global shortcut
+#[tauri::command]
+pub fn get_hotkey(app: AppHandle) -> String {
+    crate::hotkey::load_saved_shortcut(&app)
+}
+
+// 6. Update the global shortcut from the frontend settings panel
+#[tauri::command]
+pub fn set_hotkey(app: AppHandle, shortcut: String) -> Result<(), String> {
+    crate::hotkey::update_shortcut(&app, &shortcut)
 }

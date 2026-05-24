@@ -21,10 +21,12 @@ class ContextCompressor:
         self,
         model_router: ModelRouter,
         max_tokens: int = DEFAULT_MAX_TOKENS,
+        compression_threshold: int | None = None,
     ):
         self._model = model_router
         self._max_tokens = max_tokens
-        self._threshold = COMPRESSION_THRESHOLD
+        available_budget = max_tokens - NUM_RESERVED_TOKENS
+        self._threshold = compression_threshold if compression_threshold is not None else int(available_budget * 0.6)
         self._enc = tiktoken.get_encoding("cl100k_base")
 
     def count_tokens(self, text: str) -> int:
@@ -63,6 +65,7 @@ class ContextCompressor:
         """
         total_tokens = 0
         for item in history:
+            total_tokens += self.count_tokens(item.get("user_input", ""))
             if "plan" in item and isinstance(item["plan"], dict):
                 total_tokens += self.estimate_plan_tokens(item["plan"])
             if "result" in item and isinstance(item.get("result"), dict):
@@ -76,17 +79,20 @@ class ContextCompressor:
         recent_items = []
         compressed_items = []
         running_tokens = 0
+        max_recent_tokens = self._threshold // 2
 
         for item in reversed(history):
-            item_tokens = 0
+            item_tokens = self.count_tokens(item.get("user_input", ""))
             if "plan" in item and isinstance(item["plan"], dict):
-                item_tokens = self.estimate_plan_tokens(item["plan"])
+                item_tokens += self.estimate_plan_tokens(item["plan"])
+            if "result" in item and isinstance(item.get("result"), dict):
+                item_tokens += self.estimate_action_tokens(item.get("result", {}))
 
-            if running_tokens + item_tokens < self._max_tokens - NUM_RESERVED_TOKENS:
+            if running_tokens + item_tokens <= max_recent_tokens:
                 recent_items.insert(0, item)
                 running_tokens += item_tokens
             else:
-                compressed_items.append(item)
+                compressed_items.insert(0, item)
 
         if compressed_items:
             summary = await self._summarize_items(compressed_items)
