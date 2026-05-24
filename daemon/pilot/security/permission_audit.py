@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -45,6 +46,7 @@ class PermissionEscalationAuditStore:
         self._db_file = db_file or PERMISSION_AUDIT_DB_FILE
         self._key_file = key_file or PERMISSION_AUDIT_KEY_FILE
         self._key = key
+        self._write_lock = asyncio.Lock()
 
     async def initialize(self) -> None:
         self._db_file.parent.mkdir(parents=True, exist_ok=True)
@@ -95,62 +97,68 @@ class PermissionEscalationAuditStore:
         execution_error: str = "",
     ) -> str:
         await self.initialize()
-        async with aiosqlite.connect(self._db_file) as db:
-            previous_hmac = await self._last_hmac(db)
-            payload = {
-                "timestamp": datetime.now(UTC).isoformat(),
-                "plan_id": plan_id,
-                "action_index": action_index,
-                "action_type": action_type,
-                "target": target,
-                "permission_tier": permission_tier,
-                "requires_root": bool(requires_root),
-                "destructive": bool(destructive),
-                "confirmation_decision": confirmation_decision,
-                "critic_verdict": critic_verdict or {},
-                "execution_success": execution_success,
-                "execution_error": execution_error,
-                "previous_hmac": previous_hmac,
-            }
-            entry_hmac = self._sign_payload(payload)
-            await db.execute(
-                """
-                INSERT INTO permission_escalation_audit (
-                    timestamp,
-                    plan_id,
-                    action_index,
-                    action_type,
-                    target,
-                    permission_tier,
-                    requires_root,
-                    destructive,
-                    confirmation_decision,
-                    critic_verdict,
-                    execution_success,
-                    execution_error,
-                    previous_hmac,
-                    entry_hmac
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    payload["timestamp"],
-                    plan_id,
-                    action_index,
-                    action_type,
-                    target,
-                    permission_tier,
-                    int(requires_root),
-                    int(destructive),
-                    confirmation_decision,
-                    self._json_dumps(critic_verdict or {}),
-                    None if execution_success is None else int(execution_success),
-                    execution_error,
-                    previous_hmac,
-                    entry_hmac,
-                ),
-            )
-            await db.commit()
-            return entry_hmac
+        async with self._write_lock:
+            async with aiosqlite.connect(self._db_file) as db:
+                await db.execute("BEGIN IMMEDIATE")
+                try:
+                    previous_hmac = await self._last_hmac(db)
+                    payload = {
+                        "timestamp": datetime.now(UTC).isoformat(),
+                        "plan_id": plan_id,
+                        "action_index": action_index,
+                        "action_type": action_type,
+                        "target": target,
+                        "permission_tier": permission_tier,
+                        "requires_root": bool(requires_root),
+                        "destructive": bool(destructive),
+                        "confirmation_decision": confirmation_decision,
+                        "critic_verdict": critic_verdict or {},
+                        "execution_success": execution_success,
+                        "execution_error": execution_error,
+                        "previous_hmac": previous_hmac,
+                    }
+                    entry_hmac = self._sign_payload(payload)
+                    await db.execute(
+                        """
+                        INSERT INTO permission_escalation_audit (
+                            timestamp,
+                            plan_id,
+                            action_index,
+                            action_type,
+                            target,
+                            permission_tier,
+                            requires_root,
+                            destructive,
+                            confirmation_decision,
+                            critic_verdict,
+                            execution_success,
+                            execution_error,
+                            previous_hmac,
+                            entry_hmac
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            payload["timestamp"],
+                            plan_id,
+                            action_index,
+                            action_type,
+                            target,
+                            permission_tier,
+                            int(requires_root),
+                            int(destructive),
+                            confirmation_decision,
+                            self._json_dumps(critic_verdict or {}),
+                            None if execution_success is None else int(execution_success),
+                            execution_error,
+                            previous_hmac,
+                            entry_hmac,
+                        ),
+                    )
+                    await db.commit()
+                    return entry_hmac
+                except Exception:
+                    await db.rollback()
+                    raise
 
     async def verify_chain(self) -> ChainVerificationResult:
         await self.initialize()
