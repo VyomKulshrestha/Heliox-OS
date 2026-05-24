@@ -188,8 +188,9 @@ class WasmPlugin:
                 raise WasmRuntimeError(f"WASM module payload length {payload_len} exceeds linear memory bounds")
             payload = bytes(data[result_ptr + 4 + i] for i in range(payload_len))
 
-            # 5. Free the input buffer (best-effort; module owns result buffer).
+            # 5. Free both the input and output buffers to prevent linear memory leaks.
             dealloc_fn(store, req_ptr, req_len)
+            dealloc_fn(store, result_ptr, 4 + payload_len)
 
         except WasmRuntimeError:
             raise
