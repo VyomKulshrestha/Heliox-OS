@@ -485,7 +485,7 @@ def _get_active_window_linux() -> tuple[str, str]:
         window_id = wid.stdout.strip()
 
         name_result = subprocess.run(
-            ["xdotool", "getactivewindow", "getwindowname"],
+            ["xdotool", "getwindowname", window_id],
             capture_output=True,
             text=True,
             timeout=5,
@@ -494,7 +494,7 @@ def _get_active_window_linux() -> tuple[str, str]:
 
         # Get PID and process name
         pid_result = subprocess.run(
-            ["xdotool", "getactivewindow", "getwindowpid"],
+            ["xdotool", "getwindowpid", window_id],
             capture_output=True,
             text=True,
             timeout=5,
