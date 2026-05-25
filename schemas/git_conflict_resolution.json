@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "GitConflictResolution",
+  "type": "object",
+  "properties": {
+    "original_hunk": {
+      "type": "string",
+      "description": "The exact original code block from HEAD / local branch (excluding <<<<<<< and ======= markers)."
+    },
+    "conflict_hunk": {
+      "type": "string",
+      "description": "The exact incoming conflict code block from other branch (excluding ======= and >>>>>>> markers)."
+    },
+    "proposed_resolution_code": {
+      "type": "string",
+      "description": "The clean, complete merged and resolved code block that should replace the entire conflict block."
+    }
+  },
+  "required": [
+    "original_hunk",
+    "conflict_hunk",
+    "proposed_resolution_code"
+  ],
+  "additionalProperties": false
+}

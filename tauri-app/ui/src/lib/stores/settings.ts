@@ -29,7 +29,8 @@ export interface PilotSettings {
     blocked_commands: string[];
   };
   first_run_complete: boolean;
-  theme: "light" | "dark"; // Added tracking for active UI theme mode
+  theme: "light" | "dark";
+  hotkey: string; // Added tracking for active UI theme mode
 }
 
 const defaultSettings: PilotSettings = {
@@ -60,7 +61,10 @@ const defaultSettings: PilotSettings = {
     blocked_commands: [],
   },
   first_run_complete: false,
-  theme: "dark", // Default configuration set to dark mode
+  theme: "dark",
+  hotkey: typeof navigator !== "undefined" && navigator.platform.includes("Mac") 
+    ? "Cmd+Space" 
+    : "Ctrl+Space", // Default configuration set to dark mode
 };
 
 function createSettings() {
@@ -154,11 +158,28 @@ function createSettings() {
       }
     });
   }
+  async function reset() {
+  // Reset app state immediately
+  set(defaultSettings);
+
+  // Remove cached local settings
+  try {
+    localStorage.removeItem("heliox_settings");
+  } catch {
+    /* ignore */
+  }
+
+  // Tell backend/daemon to reset config
+  call("reset_config").catch((err) => {
+    console.warn("Failed to reset backend config:", err);
+  });
+}
 
   return {
     subscribe,
     load,
     updateSection,
+    reset,
   };
 }
 

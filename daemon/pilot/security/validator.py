@@ -18,6 +18,7 @@ from pilot.actions import (
     DBusParams,
     DownloadParams,
     FileParams,
+    GitResolveParams,
     GnomeSettingParams,
     NotifyParams,
     OpenApplicationParams,
@@ -27,8 +28,10 @@ from pilot.actions import (
     ServiceParams,
     ShellCommandParams,
     ShellScriptParams,
+    SkillRunParams,
     SshCommandParams,
     SshScriptParams,
+    WasmCallParams,
 )
 from pilot.security.sanitizer import SanitizationError, Sanitizer
 
@@ -152,9 +155,12 @@ NO_TARGET_REQUIRED = {
     ActionType.API_SLACK,
     ActionType.API_DISCORD,
     ActionType.API_SCRAPE,
+    ActionType.SKILL_RUN,
     # SSH remote exec is parameter-driven (host alias)
     ActionType.SSH_COMMAND,
     ActionType.SSH_SCRIPT,
+    ActionType.GIT_RESOLVE,
+    ActionType.WASM_CALL,
 }
 
 # File action types
@@ -209,6 +215,9 @@ class ActionValidator:
             if params.destination:
                 self._sanitizer.validate_path(params.destination, idx)
 
+        elif isinstance(params, GitResolveParams):
+            self._sanitizer.validate_path(params.path, idx)
+
         elif isinstance(params, PackageParams):
             self._sanitizer.validate_package_name(params.name, idx)
 
@@ -249,8 +258,16 @@ class ActionValidator:
             if not params.key_path:
                 raise ValidationError(idx, "Empty registry key_path")
 
+        elif isinstance(params, SkillRunParams):
+            if not params.skill_id or not params.skill_id.strip():
+                raise ValidationError(idx, "skill_run requires non-empty skill_id")
+
         elif isinstance(params, (OpenApplicationParams, NotifyParams)):
             pass
+
+        elif isinstance(params, WasmCallParams):
+            if not params.tool and not action.target:
+                raise ValidationError(idx, "WASM call requires a tool name")
 
     def _validate_root_requirement(self, action: Action, idx: int) -> None:
         if action.requires_root and not self._config.security.root_enabled:
@@ -262,7 +279,7 @@ class ActionValidator:
     def _validate_restrictions(self, action: Action, idx: int) -> None:
         restrictions = self._config.restrictions
 
-        if isinstance(action.parameters, FileParams):
+        if isinstance(action.parameters, (FileParams, GitResolveParams)):
             path_str = action.parameters.path
             for protected in restrictions.protected_folders:
                 if path_str.startswith(protected):

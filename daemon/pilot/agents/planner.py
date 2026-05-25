@@ -47,6 +47,7 @@ from pilot.actions import (
     ServiceParams,
     ShellCommandParams,
     ShellScriptParams,
+    SkillRunParams,
     SystemInfoParams,
     TriggerParams,
     VolumeParams,
@@ -327,15 +328,33 @@ IMPORTANT RULES:
 class Planner:
     """Converts natural language to structured action plans."""
 
-    def __init__(self, model_router: ModelRouter, memory: MemoryStore, orchestrator=None) -> None:
+    def __init__(
+        self,
+        model_router: ModelRouter,
+        memory: MemoryStore,
+        orchestrator=None,
+        skills_context: str = "",
+    ) -> None:
         self._model = model_router
         self._memory = memory
         self._orchestrator = orchestrator
-        self._system_prompt = SYSTEM_PROMPT.format(
+        self._system_prompt_base = SYSTEM_PROMPT.format(
             os=_detect_os(),
             path_style="Windows (C:\\Users\\...)" if sys.platform == "win32" else "Unix (/home/...)",
             home=str(__import__("pathlib").Path.home()),
         )
+        self._skills_context = skills_context.strip()
+        self._rebuild_system_prompt()
+
+    def set_skills_context(self, skills_context: str) -> None:
+        """Update planner instructions after a hot skill reload."""
+        self._skills_context = skills_context.strip()
+        self._rebuild_system_prompt()
+
+    def _rebuild_system_prompt(self) -> None:
+        self._system_prompt = self._system_prompt_base
+        if self._skills_context:
+            self._system_prompt += "\n\n" + self._skills_context
 
     # ------------------------------------------------------------------
     # Fast-path: instant local matching for simple commands (no LLM call)
@@ -1013,6 +1032,9 @@ class Planner:
         "file_rename": "file_move",
         "scrape_url": "api_scrape",
         "web_scrape": "api_scrape",
+        "custom_skill": "skill_run",
+        "skill": "skill_run",
+        "run_skill": "skill_run",
         "screen_read": "screen_ocr",
         "ocr": "screen_ocr",
         "take_screenshot": "screenshot",
