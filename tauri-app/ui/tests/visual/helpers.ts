@@ -16,6 +16,17 @@ import type { Page } from "@playwright/test";
  */
 export async function mockTauriIpc(page: Page): Promise<void> {
   await page.addInitScript(() => {
+    // Seed Math.random using mulberry32 to make all random layouts (like canvas nodes) completely deterministic
+    const mulberry32 = (a: number) => {
+      return () => {
+        let t = a += 0x6D2B79F5;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    };
+    Math.random = mulberry32(12345);
+
     // Minimal Tauri v2 internals stub
     (window as any).__TAURI_INTERNALS__ = {
       invoke: async (_cmd: string, _args?: unknown) => null,
