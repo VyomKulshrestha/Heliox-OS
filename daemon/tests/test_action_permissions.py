@@ -1,9 +1,9 @@
 from pilot.actions import (
+    SYSTEM_MODIFY_ACTIONS,
     Action,
     ActionType,
     EmptyParams,
     PermissionTier,
-    SYSTEM_MODIFY_ACTIONS,
 )
 
 
