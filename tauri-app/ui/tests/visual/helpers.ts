@@ -23,6 +23,10 @@ export async function mockTauriIpc(page: Page): Promise<void> {
       convertFileSrc: (src: string) => src,
     };
 
+    // Stub requestAnimationFrame and cancelAnimationFrame to freeze canvas animations
+    (window as any).requestAnimationFrame = () => 999;
+    (window as any).cancelAnimationFrame = () => {};
+
     // Stub the plugin APIs used by the app
     (window as any).__TAURI__ = {
       core: { invoke: async () => null },
@@ -34,15 +38,17 @@ export async function mockTauriIpc(page: Page): Promise<void> {
     };
 
     // Mock WebSocket to simulate daemon connection and intercept messages
-    const OrigWS = window.WebSocket;
-    (window as any).WebSocket = class extends OrigWS {
+    (window as any).WebSocket = class {
+      static OPEN = 1;
+      static CLOSED = 3;
+
       onopen: any;
       onmessage: any;
       onerror: any;
       onclose: any;
+      readyState = 1; // WebSocket.OPEN
       
       constructor(url: string, protocols?: string | string[]) {
-        super("ws://localhost:0", protocols); // no-op URL
         (window as any).__mock_ws__ = this;
         
         // Auto-connect after a tiny delay
@@ -57,6 +63,7 @@ export async function mockTauriIpc(page: Page): Promise<void> {
       }
       
       close() {
+        this.readyState = 3; // WebSocket.CLOSED
         if (this.onclose) this.onclose(new Event("close"));
       }
     };

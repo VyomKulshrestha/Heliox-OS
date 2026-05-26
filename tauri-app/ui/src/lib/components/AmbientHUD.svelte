@@ -5,6 +5,7 @@
    */
 
   import { call, isConnected } from "../api/daemon";
+  import BudgetMeter from "./BudgetMeter.svelte";
 
   // ── State ──
   let cpuPercent = $state(0);
