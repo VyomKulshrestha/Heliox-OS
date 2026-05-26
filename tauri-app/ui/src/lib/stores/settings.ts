@@ -10,6 +10,18 @@ export interface PilotSettings {
     gpu_memory_limit_mb: number;
     cloud_provider: string;
     cloud_model: string;
+    // Rate limiting
+    rate_limit_enabled: boolean;
+    rate_limit_rpm: number;
+    rate_limit_burst: number;
+    // Monthly cumulative budget
+    budget_enabled: boolean;
+    budget_monthly_limit_usd: number;
+    // Per-action and per-task enforcement (Phase 1 of #312)
+    max_tokens_per_action: number;
+    max_tokens_per_task: number;
+    max_usd_per_task: number;
+    max_consecutive_failures: number;
   };
   security: {
     root_enabled: boolean;
@@ -42,6 +54,15 @@ const defaultSettings: PilotSettings = {
     gpu_memory_limit_mb: 0,
     cloud_provider: "",
     cloud_model: "",
+    rate_limit_enabled: true,
+    rate_limit_rpm: 60,
+    rate_limit_burst: 5,
+    budget_enabled: true,
+    budget_monthly_limit_usd: 10.0,
+    max_tokens_per_action: 4000,
+    max_tokens_per_task: 50000,
+    max_usd_per_task: 0.10,
+    max_consecutive_failures: 3,
   },
   security: {
     root_enabled: false,
