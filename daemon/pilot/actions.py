@@ -128,6 +128,9 @@ class ActionType(StrEnum):
     REGISTRY_READ = "registry_read"
     REGISTRY_WRITE = "registry_write"
 
+    # -- Forensics & Log Analysis --
+    LOG_ANALYZE = "log_analyze"
+
     # ============================================================
     # TIER 1: GAME CHANGERS
     # ============================================================
@@ -272,6 +275,7 @@ READ_ONLY_ACTIONS = {
     ActionType.USER_INFO,
     ActionType.SCHEDULE_LIST,
     ActionType.REGISTRY_READ,
+    ActionType.LOG_ANALYZE,
     # Tier 1 read-only
     ActionType.MOUSE_POSITION,
     ActionType.SCREEN_OCR,
@@ -531,6 +535,16 @@ class RegistryParams(BaseModel):
     value_type: str = "REG_SZ"
 
 
+class LogAnalyzeParams(BaseModel):
+    """Parameters for log analysis operations."""
+
+    log_path: str = ""  # path to log file (or log category e.g., 'auth', 'syslog', 'nginx')
+    log_type: str | None = None  # syslog, auth, json, service, nginx, apache, windows
+    query: str | None = None  # specific query or filter to apply
+    time_window: str | None = None  # e.g., "1h", "24h"
+    llm_contextual: bool = False  # whether to run LLM-based contextual analysis
+
+
 # ======= TIER 1: GAME CHANGER PARAMS =======
 
 
@@ -787,6 +801,7 @@ ActionParameters = (
     | DiskManageParams
     | DownloadParams
     | RegistryParams
+    | LogAnalyzeParams
     | MouseParams
     | KeyboardParams
     | ScreenVisionParams

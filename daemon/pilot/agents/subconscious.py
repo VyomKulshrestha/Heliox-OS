@@ -9,7 +9,7 @@ Architecture:
   2. Clustering:    Groups recent actions by category (file, code, web, media)
   3. Preference:    Extracts user habits ("always uses Python 3.11", "prefers dark mode")
   4. Rule Writing:  Generates system-prompt rules from patterns
-  5. Persona:       Maintains a ~/.heliox/persona.md that is injected into planner context
+   5. Persona:       Maintains a persona.md (in DATA_DIR) that is injected into planner context
 
 Schema (in pilot.db):
   user_persona:
@@ -32,6 +32,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import aiosqlite
+
+from pilot.config import PERSONA_FILE
 
 if TYPE_CHECKING:
     from pilot.models.router import ModelRouter
@@ -108,8 +110,6 @@ Rules should be:
 
 Categories: preference, habit, constraint, style
 """
-
-PERSONA_FILE = Path.home() / ".heliox" / "persona.md"
 
 
 class SubconsciousAgent:

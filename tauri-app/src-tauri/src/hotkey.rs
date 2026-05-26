@@ -4,7 +4,7 @@ use std::fs;
 
 fn get_shortcut_path(_app: &AppHandle) -> std::path::PathBuf {
     let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
-    home.join(".heliox-os").join("shortcut.txt")
+    home.join(".config").join("heliox-os").join("shortcut.txt")
 }
 
 pub fn load_saved_shortcut(app: &AppHandle) -> String {

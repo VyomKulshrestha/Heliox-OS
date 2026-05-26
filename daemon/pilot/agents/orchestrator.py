@@ -15,6 +15,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from dataclasses import dataclass, field
+from enum import IntEnum
 from typing import TYPE_CHECKING, Any, Callable, Coroutine
 
 from pilot.actions import ActionPlan, ActionResult, ActionType
@@ -39,6 +41,18 @@ from pilot.agents.circuit_breaker import (
     CircuitBreakerOpenError,
 )
 
+class TaskPriority(IntEnum):
+    USER_REALTIME = 0  # Voice commands, UI clicks (Immediate)
+    SYSTEM_CRITICAL = 1  # OS-level alerts
+    BACKGROUND_BATCH = 2  # Local file indexing, scraping
+
+
+@dataclass(order=True)
+class PrioritizedTask:
+    priority: TaskPriority
+    task_id: str = field(compare=False)
+    coro: Any = field(compare=False)
+
 if TYPE_CHECKING:
     from pilot.models.budget_tracker import BudgetTracker
     from pilot.models.router import ModelRouter
@@ -57,7 +71,7 @@ class AgentOrchestrator:
     tasks, it coordinates parallel or sequential execution and merges results.
     """
 
-    def __init__(self, model_router: ModelRouter) -> None:
+    def __init__(self, model_router: ModelRouter):
         self._model = model_router
         self._agents: dict[AgentRole, BaseAgent] = {}
         self._action_registry: dict[ActionType, AgentRole] = {}
@@ -66,6 +80,15 @@ class AgentOrchestrator:
         self._budget_tracker: BudgetTracker | None = None
         self._circuit_breaker: CircuitBreaker | None = None
 
+        self.task_queue = asyncio.PriorityQueue()
+
+        # This event acts as our "Freeze/Resume" switch for background tasks
+        self.background_allowed = asyncio.Event()
+        self.background_allowed.set()  # Start unpaused
+
+        # Start the continuous scheduler loop in the background
+        asyncio.create_task(self.scheduler_loop())
+
     def set_budget_tracker(self, tracker: BudgetTracker) -> None:
         """Inject the budget tracker. Called by server.py during startup."""
         self._budget_tracker = tracker
@@ -73,6 +96,32 @@ class AgentOrchestrator:
     def set_circuit_breaker(self, breaker: CircuitBreaker) -> None:
         """Inject the circuit breaker. Called by server.py during startup."""
         self._circuit_breaker = breaker
+
+    async def scheduler_loop(self):
+        """Continuously pulls tasks from the priority queue and handles context switching."""
+        while True:
+            # Pull the highest priority task (lowest integer value)
+            p_task = await self.task_queue.get()
+
+            if p_task.priority == TaskPriority.USER_REALTIME:
+                # INTERRUPT: Freeze all background tasks
+                logger.info(f"High-priority interrupt received: {p_task.task_id}. Suspending background tasks.")
+                self.background_allowed.clear()
+
+                # Execute the real-time task immediately
+                await p_task.coro
+
+                # RESUME: Unfreeze background tasks
+                logger.info(f"Real-time task {p_task.task_id} complete. Resuming background tasks.")
+                self.background_allowed.set()
+
+            else:
+                # Wait until we are allowed to run background tasks
+                await self.background_allowed.wait()
+                # Fire and forget the background task so the loop can keep listening
+                asyncio.create_task(p_task.coro)
+
+            self.task_queue.task_done()
 
     # ── Agent Registration ──
 
@@ -461,6 +510,10 @@ class AgentOrchestrator:
                 from pilot.agents.monitor_agent import MonitorAgent
 
                 agent = MonitorAgent(self._model, kwargs.get("background_manager"))
+            elif role == AgentRole.FORENSICS:
+                from pilot.agents.forensics_agent import ForensicsAgent
+
+                agent = ForensicsAgent(self._model, kwargs.get("executor"))
             elif role == AgentRole.COMMUNICATION:
                 from pilot.agents.comm_agent import CommunicationAgent
 
@@ -564,6 +617,20 @@ class AgentOrchestrator:
                 "memory",
                 "disk",
                 "background",
+            ],
+            AgentRole.FORENSICS: [
+                "forensic",
+                "forensics",
+                "log",
+                "logs",
+                "anomaly",
+                "anomalies",
+                "suspicious",
+                "failed login",
+                "failed attempts",
+                "auth logs",
+                "nginx logs",
+                "restart loop",
             ],
             AgentRole.COMMUNICATION: [
                 "email",

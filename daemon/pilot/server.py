@@ -22,8 +22,9 @@ import aiosqlite
 import websockets
 from websockets.asyncio.server import Server, ServerConnection
 
-from pilot.config import DATA_DIR, DB_FILE, LOG_FILE, STATE_DIR, PilotConfig, ensure_dirs
+from pilot.config import DATA_DIR, DB_FILE, LOG_FILE, PLUGINS_DIR, STATE_DIR, PilotConfig, ensure_dirs
 from pilot.export_logs import export_logs
+from pilot.logger import ColorFormatter
 
 logger = logging.getLogger("pilot.server")
 
@@ -658,7 +659,7 @@ class PilotServer:
             "plugin_market_list": self._handle_plugin_market_list,
             "plugin_install": self._handle_plugin_install,
             "plugin_uninstall": self._handle_plugin_uninstall,
-            # Dynamic Python skills (pilot/skills + ~/.config/pilot/skills)
+            # Dynamic Python skills (pilot/skills + config skills dir)
             "skills_list": self._handle_skills_list,
             "skills_reload": self._handle_skills_reload,
             "skills_load_report": self._handle_skills_load_report,
@@ -793,9 +794,17 @@ class PilotServer:
                     await websocket.send(_error_response(None, -32700, "Parse error"))
                 except ValueError as e:
                     await websocket.send(_error_response(None, -32600, str(e)))
+                except websockets.exceptions.ConnectionClosed:
+                    logger.warning("Connection lost during request handling: %s", remote)
+                    break
                 except Exception as e:
                     logger.exception("Handler error")
-                    await websocket.send(_error_response(None, -32603, f"Internal error: {e}"))
+                    try:
+                        await websocket.send(_error_response(None, -32603, f"Internal error: {e}"))
+                    except websockets.exceptions.ConnectionClosed:
+                        logger.warning("Could not send error response — connection already closed: %s", remote)
+        except websockets.exceptions.ConnectionClosed:
+            logger.info("Connection closed during message loop: %s", remote)
         finally:
             self._clients.discard(websocket)
             logger.info("Client disconnected: %s", remote)
@@ -2576,7 +2585,7 @@ class PilotServer:
         if not plugin_name:
             return {"error": "plugin_name is required"}
 
-        plugin_dir = Path.home() / ".heliox" / "plugins" / plugin_name
+        plugin_dir = PLUGINS_DIR / plugin_name
         plugin_dir.mkdir(parents=True, exist_ok=True)
 
         manifest_path = plugin_dir / "manifest.json"
@@ -2611,7 +2620,7 @@ class PilotServer:
         if not plugin_name:
             return {"error": "plugin_name is required"}
 
-        plugin_dir = Path.home() / ".heliox" / "plugins" / plugin_name
+        plugin_dir = PLUGINS_DIR / plugin_name
         if not plugin_dir.exists():
             return {"error": f"Plugin not found: {plugin_name}"}
 
@@ -2831,6 +2840,8 @@ class PilotServer:
             self._handle_connection,
             host,
             port,
+            ping_interval=30,  # send keepalive ping every 30s
+            ping_timeout=300,  # allow up to 5 min for pong (matches LLM timeout)
         )
         logger.info("Pilot daemon ready")
 
@@ -3580,11 +3591,15 @@ class PilotServer:
 
 def _setup_logging() -> None:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
+
+    stream_handler = logging.StreamHandler(sys.stdout)
+    stream_handler.setFormatter(ColorFormatter())
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
         handlers=[
-            logging.StreamHandler(sys.stdout),
+            stream_handler,
             logging.FileHandler(LOG_FILE, encoding="utf-8"),
         ],
     )
