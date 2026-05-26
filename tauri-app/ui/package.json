@@ -8,6 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.json",
+    "test:static": "node tests/static/no-remote-mediapipe.test.mjs",
     "test:visual": "playwright test",
     "test:visual:update": "playwright test --update-snapshots"
   },
@@ -23,6 +24,7 @@
     "vite": "^6.0.0"
   },
   "dependencies": {
+    "@mediapipe/hands": "0.4.1675469240",
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/plugin-clipboard-manager": "^2.0.0",
     "@tauri-apps/plugin-notification": "^2.0.0",
