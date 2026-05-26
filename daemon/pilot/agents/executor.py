@@ -342,6 +342,7 @@ class Executor:
         cancel_event: asyncio.Event | None = None,
         plan_id: str | None = None,
         initial_last_output: str = "",
+        orchestrator: Any = None,
     ) -> list[ActionResult]:
         """Execute all actions in a plan sequentially, with output chaining."""
         plan_id = plan_id or str(uuid.uuid4())[:8]
@@ -430,6 +431,13 @@ class Executor:
         for batch_idx, batch in enumerate(batches):
             if not batch:
                 continue
+
+            # --- PREEMPTIVE SCHEDULER YIELD POINT ---
+            if orchestrator and hasattr(orchestrator, "background_allowed"):
+                await asyncio.sleep(0)  # Micro-yield to the event loop
+                if not orchestrator.background_allowed.is_set():
+                    logger.info("Executor: Preempted! Freezing background execution until high-priority task finishes.")
+                    await orchestrator.background_allowed.wait()
 
             if cancel_event and cancel_event.is_set():
                 logger.info("Executor: cancel_event set — stopping at batch %d", batch_idx)
