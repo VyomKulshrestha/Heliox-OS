@@ -412,6 +412,9 @@ class PilotServer:
         self._budget_tracker = BudgetTracker(self.config.model, str(DB_FILE))
         await self._budget_tracker.initialize()
         model_router.set_budget_tracker(self._budget_tracker)
+        from pilot.agents.circuit_breaker import CircuitBreaker
+
+        self._circuit_breaker = CircuitBreaker(threshold=self.config.model.max_consecutive_failures)
 
         audit = AuditLogger()
         self._permission_audit = PermissionEscalationAuditStore()
@@ -462,6 +465,8 @@ class PilotServer:
         # Multi-Agent Orchestrator — register all specialist agents
         self._orchestrator = AgentOrchestrator(model_router)
         self._orchestrator.set_broadcast(self._broadcast_notification)
+        self._orchestrator.set_budget_tracker(self._budget_tracker)
+        self._orchestrator.set_circuit_breaker(self._circuit_breaker)
         from pilot.agents.registry import AgentRegistry
 
         AgentRegistry.discover_agents()
@@ -788,9 +793,17 @@ class PilotServer:
                     await websocket.send(_error_response(None, -32700, "Parse error"))
                 except ValueError as e:
                     await websocket.send(_error_response(None, -32600, str(e)))
+                except websockets.exceptions.ConnectionClosed:
+                    logger.warning("Connection lost during request handling: %s", remote)
+                    break
                 except Exception as e:
                     logger.exception("Handler error")
-                    await websocket.send(_error_response(None, -32603, f"Internal error: {e}"))
+                    try:
+                        await websocket.send(_error_response(None, -32603, f"Internal error: {e}"))
+                    except websockets.exceptions.ConnectionClosed:
+                        logger.warning("Could not send error response — connection already closed: %s", remote)
+        except websockets.exceptions.ConnectionClosed:
+            logger.info("Connection closed during message loop: %s", remote)
         finally:
             self._clients.discard(websocket)
             logger.info("Client disconnected: %s", remote)
@@ -2826,6 +2839,8 @@ class PilotServer:
             self._handle_connection,
             host,
             port,
+            ping_interval=30,  # send keepalive ping every 30s
+            ping_timeout=300,  # allow up to 5 min for pong (matches LLM timeout)
         )
         logger.info("Pilot daemon ready")
 
@@ -2851,6 +2866,8 @@ class PilotServer:
             await self._mesh.stop()
         if self._orchestrator:
             await self._orchestrator.stop_all()
+        if hasattr(self, "_budget_tracker") and self._budget_tracker:
+            await self._budget_tracker.close()
         if self._background:
             self._background.stop_all()
         for pending in self._pending_confirms.values():

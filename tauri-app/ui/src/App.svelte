@@ -5,6 +5,7 @@
   import { getJarvisGreeting } from "./lib/utils/greeting";
   import { renderMarkdown } from "./lib/utils/markdown";
   import ConfirmDialog from "./lib/components/ConfirmDialog.svelte";
+  import BudgetExceededDialog from "./lib/components/BudgetExceededDialog.svelte";
   import ActivityLog from "./lib/components/ActivityLog.svelte";
   import SettingsPanel from "./lib/components/SettingsPanel.svelte";
   import SetupWizard from "./lib/components/SetupWizard.svelte";
@@ -22,7 +23,7 @@
   import { session } from "./lib/stores/session";
   import type { Message } from "./lib/stores/session";
   import { settings } from "./lib/stores/settings";
-   import { tick } from "svelte";
+  import { tick, onDestroy } from "svelte";
   import { Copy } from "lucide-svelte";
 
   import ScrollToBottom from "./lib/components/ScrollToBottom.svelte";
@@ -189,86 +190,101 @@
   </header>
 
   <div class="content">
-    {#if activeTab === "chat"}
-      <div class="chat-panel">
-        <NeuralBackground />
+    <svelte:boundary>
+      {#if activeTab === "chat"}
+        <div class="chat-panel">
+          <NeuralBackground />
 
-        <div class="pipeline-container">
-          <ReActPipeline />
-        </div>
-        {#if $session.confirmRequired}
-          <ConfirmDialog
-            actions={$session.confirmActions}
-            onconfirm={() => session.confirm(true)}
-            ondeny={() => session.confirm(false)}
-          />
-        {/if}
-
-        <div class="results">
-          {#if $session.messages.length === 0 && !$session.loading}
-            <div class="empty-state">
-              <div class="empty-logo">C</div>
-              <h2>{$_('chat.empty_title')}</h2>
-              <p>{$_('chat.empty_subtitle')}</p>
-              <div class="suggestions">
-                <button class="suggestion" onclick={() => session.sendCommand("Show system information")}>{$_('chat.suggestion_sysinfo')}</button>
-                <button class="suggestion" onclick={() => session.sendCommand("Take a screenshot and describe it")}>{$_('chat.suggestion_screenshot')}</button>
-                <button class="suggestion" onclick={() => session.sendCommand("What processes are running?")}>{$_('chat.suggestion_processes')}</button>
-              </div>
-            </div>
-          {:else}
-            <VirtualList bind:this={virtualListEl} items={$session.messages} bind:atBottom={isAtBottom}>
-              {#snippet item(msg)}
-                {@render messageBlock(msg)}
-              {/snippet}
-              {#snippet footer()}
-                {#if $session.loading}
-                  <ExecutionGraph />
-                  {#if $session.streamingText}
-                    <div class="message system streaming">
-                      <div class="msg-header">
-                        <span class="msg-label">HELIOX</span>
-                        <span class="phase-badge">{$_('chat.streaming')}</span>
-                      </div>
-                      <span class="msg-text">{$session.streamingText}</span>
-                    </div>
-                  {:else}
-                    <div class="message system">
-                      <div class="msg-header">
-                        <span class="msg-label">HELIOX</span>
-                        <span class="phase-badge">{$session.phase || $_('chat.thinking')}</span>
-                      </div>
-                      <span class="msg-text loading-dots">
-                        {$session.phase ? `${$session.phase}` : $_('chat.thinking')}
-                      </span>
-                    </div>
-                  {/if}
-                {/if}
-              {/snippet}
-            </VirtualList>
+          <div class="pipeline-container">
+            <ReActPipeline />
+          </div>
+          {#if $session.confirmRequired}
+            <ConfirmDialog
+              actions={$session.confirmActions}
+              onconfirm={() => session.confirm(true)}
+              ondeny={() => session.confirm(false)}
+            />
           {/if}
-          <ScrollToBottom show={showScrollFAB} onclick={scrollToBottom} />
+
+          <BudgetExceededDialog />
+
+          <div class="results">
+            {#if $session.messages.length === 0 && !$session.loading}
+              <div class="empty-state">
+                <div class="empty-logo">C</div>
+                <h2>{$_('chat.empty_title')}</h2>
+                <p>{$_('chat.empty_subtitle')}</p>
+                <div class="suggestions">
+                  <button class="suggestion" onclick={() => session.sendCommand("Show system information")}>{$_('chat.suggestion_sysinfo')}</button>
+                  <button class="suggestion" onclick={() => session.sendCommand("Take a screenshot and describe it")}>{$_('chat.suggestion_screenshot')}</button>
+                  <button class="suggestion" onclick={() => session.sendCommand("What processes are running?")}>{$_('chat.suggestion_processes')}</button>
+                </div>
+              </div>
+            {:else}
+              <VirtualList bind:this={virtualListEl} items={$session.messages} bind:atBottom={isAtBottom}>
+                {#snippet item(msg)}
+                  {@render messageBlock(msg)}
+                {/snippet}
+                {#snippet footer()}
+                  {#if $session.loading}
+                    <ExecutionGraph />
+                    {#if $session.streamingText}
+                      <div class="message system streaming">
+                        <div class="msg-header">
+                          <span class="msg-label">HELIOX</span>
+                          <span class="phase-badge">{$_('chat.streaming')}</span>
+                        </div>
+                        <span class="msg-text">{$session.streamingText}</span>
+                      </div>
+                    {:else}
+                      <div class="message system">
+                        <div class="msg-header">
+                          <span class="msg-label">HELIOX</span>
+                          <span class="phase-badge">{$session.phase || $_('chat.thinking')}</span>
+                        </div>
+                        <span class="msg-text loading-dots">
+                          {$session.phase ? `${$session.phase}` : $_('chat.thinking')}
+                        </span>
+                      </div>
+                    {/if}
+                  {/if}
+                {/snippet}
+              </VirtualList>
+            {/if}
+            <ScrollToBottom show={showScrollFAB} onclick={scrollToBottom} />
+          </div>
+          <div class="input-row">
+            <VoiceControl />
+            <CommandInput />
+            <GestureControl onGesture={onGestureDetected} />
+            <button class="tab" type="button" onclick={() => session.exportChat("json")}>{$_('app.export_json')}</button>
+            <button class="tab" type="button" onclick={() => session.exportChat("csv")}>{$_('app.export_csv')}</button>
+            <button class="tab" type="button" onclick={() => session.exportChat("json")}>Export JSON</button>
+            <button class="tab" type="button" onclick={() => session.exportChat("csv")}>Export CSV</button>
+            <button class="tab" type="button" onclick={exportReActTrace} title="Export ReAct reasoning trace to JSON">Export Trace</button>
+          </div>
         </div>
-        <div class="input-row">
-          <VoiceControl />
-          <CommandInput />
-          <GestureControl onGesture={onGestureDetected} />
-          <button class="tab" type="button" onclick={() => session.exportChat("json")}>{$_('app.export_json')}</button>
-          <button class="tab" type="button" onclick={() => session.exportChat("csv")}>{$_('app.export_csv')}</button>
-          <button class="tab" type="button" onclick={() => session.exportChat("json")}>Export JSON</button>
-          <button class="tab" type="button" onclick={() => session.exportChat("csv")}>Export CSV</button>
-          <button class="tab" type="button" onclick={exportReActTrace} title="Export ReAct reasoning trace to JSON">Export Trace</button>
+      {:else if activeTab === "log"}
+        <ActivityLog />
+      {:else if activeTab === "dashboard"}
+       <Dashboard />
+      {:else if activeTab === "plugins"}
+        <PluginsTab />
+      {:else}
+        <SettingsPanel />
+      {/if}
+      {#snippet failed(error, reset)}
+        <div class="empty-state">
+          <div class="empty-logo" style="background: var(--danger)">!</div>
+          <h2>Something went wrong</h2>
+          <p style="font-family: var(--font-mono); font-size: 11px;">{error instanceof Error ? error.message : String(error)}</p>
+          <div class="suggestions">
+            <button class="suggestion" onclick={reset}>Try Again</button>
+            <button class="suggestion" onclick={() => activeTab = "chat"}>Go to Chat</button>
+          </div>
         </div>
-      </div>
-    {:else if activeTab === "log"}
-      <ActivityLog />
-    {:else if activeTab === "dashboard"}
-     <Dashboard />
-    {:else if activeTab === "plugins"}
-      <PluginsTab />
-    {:else}
-      <SettingsPanel />
-    {/if}
+      {/snippet}
+    </svelte:boundary>
   </div>
   <!-- Particle Burst Overlay -->
   <ParticleBurst bind:this={particleBurst} />
