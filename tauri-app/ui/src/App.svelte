@@ -5,6 +5,7 @@
   import { getJarvisGreeting } from "./lib/utils/greeting";
   import { renderMarkdown } from "./lib/utils/markdown";
   import ConfirmDialog from "./lib/components/ConfirmDialog.svelte";
+  import BudgetExceededDialog from "./lib/components/BudgetExceededDialog.svelte";
   import ActivityLog from "./lib/components/ActivityLog.svelte";
   import SettingsPanel from "./lib/components/SettingsPanel.svelte";
   import SetupWizard from "./lib/components/SetupWizard.svelte";
@@ -203,6 +204,8 @@
             ondeny={() => session.confirm(false)}
           />
         {/if}
+
+        <BudgetExceededDialog />
 
         <div class="results">
           {#if $session.messages.length === 0 && !$session.loading}

@@ -188,6 +188,8 @@
         </div>
       </div>
 
+      <BudgetMeter />
+
       <!-- Uptime & Network -->
       <div class="hud-divider"></div>
       <div class="hud-footer">
