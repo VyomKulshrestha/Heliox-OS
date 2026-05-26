@@ -701,6 +701,76 @@ npm run dev
 
 Ensure all frontend dependencies are installed successfully before starting the app.
 
+## 🔍 Troubleshooting / FAQ
+
+If you encounter issues while setting up or running Heliox-OS, check the common solutions below.
+
+#### Q1: The daemon fails to start — what should I check?
+**A:** This is usually caused by a port conflict or a missing background service.
+
+1. **Check Port Availability:** Ensure port `5000` (or your configured daemon port) isn't being used by another application. You can check this by running:
+
+   - Linux/macOS:
+   ```bash
+   lsof -i :5000
+   ```
+
+   - Windows:
+   ```bash
+   netstat -ano | findstr 5000
+   ```
+
+2. **Verify Dependencies:** Ensure your local LLM instance (like Ollama) or required system message queues are actively running in the background before spinning up the daemon.
+
+3. **Logs:** Check the `daemon.log` file in the root directory for specific stack traces.
+
+#### Q2: I get an API key error even though I entered one.
+**A:** This happens when the application cannot read the environment variables correctly.
+
+1. **File Naming:** Ensure your environment file is named exactly `.env` and not `.env.txt` or `.env.example`.
+
+2. **Variable Name:** Double-check that the key matches the exact naming convention required (e.g., `OPENAI_API_KEY` or `GEMINI_API_KEY`).
+
+3. **Shell Reload:** If you exported the key directly to your terminal via `export API_KEY=your_key`, remember that it only persists in that specific terminal session. Restarting your terminal or IDE requires re-exporting or sourcing the `.env` file.
+
+#### Q3: Voice detection isn't working on Linux.
+**A:** Voice tools typically fail on Linux due to missing system-level audio development libraries or incorrect audio subsystem permissions.
+
+1. **Install PortAudio:** The underlying Python audio libraries require `PortAudio`. Fix this by running:
+
+```bash
+sudo apt-get update
+sudo apt-get install portaudio19-dev python3-pyaudio
+```
+
+2. **Check Microphone Access:** Ensure your user account is part of the audio group:
+
+```bash
+sudo usermod -aG audio $USER
+```
+
+> Note: You will need to log out and log back in for group changes to take effect.
+
+#### Q4: Hand gesture control requires a webcam — which ones are supported?
+**A:** Heliox-OS utilizes standard OpenCV processing, meaning any standard USB webcam or integrated laptop camera that supports generic UVC (USB Video Class) drivers will work out of the box.
+
+**Troubleshooting feed issues:**  
+If the application opens the wrong camera (e.g., an integrated webcam instead of an external USB one), locate your configuration file and adjust the `CAMERA_INDEX` variable (try changing it from `0` to `1`).
+
+#### Q5: How do I switch from Ollama to a cloud LLM?
+**A:** You can swap providers seamlessly by modifying your `.env` configuration:
+
+1. Open your local `.env` file.
+
+2. Change the `LLM_PROVIDER` variable from `ollama` to your choice (e.g., `openai` or `gemini`).
+
+3. Provide the respective cloud API key in its field:
+
+```env
+LLM_PROVIDER=openai
+OPENAI_API_KEY=your_actual_api_key_here
+```
+
 > Tip: If no proxy section is configured, the daemon will fall back to standard `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY` environment variables.
 
 ## 🤝 Contributing
