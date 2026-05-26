@@ -17,18 +17,3 @@ class ColorFormatter(logging.Formatter):
         formatter = logging.Formatter(log_fmt, datefmt="%Y-%m-%d %H:%M:%S")
         return formatter.format(record)
 
-def setup_logger():
-    """Configure the root 'pilot' logger so all sub-loggers inherit this formatting."""
-    logger = logging.getLogger("pilot")
-
-    if getattr(logger, "_pilot_configured", False):
-        return
-    logger._pilot_configured = True
-
-    if not logger.handlers:
-        handler = logging.StreamHandler(sys.stdout)
-        handler.setFormatter(ColorFormatter())
-        logger.addHandler(handler)
-        logger.setLevel(logging.INFO)
-        # Prevent propagating to the root Python logger to avoid duplicate logs
-        logger.propagate = False

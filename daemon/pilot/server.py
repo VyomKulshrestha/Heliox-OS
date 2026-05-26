@@ -24,9 +24,8 @@ from websockets.asyncio.server import Server, ServerConnection
 
 from pilot.config import DATA_DIR, DB_FILE, LOG_FILE, STATE_DIR, PilotConfig, ensure_dirs
 from pilot.export_logs import export_logs
-from pilot.logger import setup_logger
+from pilot.logger import ColorFormatter
 
-setup_logger()
 logger = logging.getLogger("pilot.server")
 
 CONFIRM_TIMEOUT_SECONDS = 300
@@ -3574,11 +3573,15 @@ class PilotServer:
 
 def _setup_logging() -> None:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
+    
+    stream_handler = logging.StreamHandler(sys.stdout)
+    stream_handler.setFormatter(ColorFormatter())
+    
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
         handlers=[
-            logging.StreamHandler(sys.stdout),
+            stream_handler,
             logging.FileHandler(LOG_FILE, encoding="utf-8"),
         ],
     )
