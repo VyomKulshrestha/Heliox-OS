@@ -3573,10 +3573,10 @@ class PilotServer:
 
 def _setup_logging() -> None:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
-    
+
     stream_handler = logging.StreamHandler(sys.stdout)
     stream_handler.setFormatter(ColorFormatter())
-    
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
