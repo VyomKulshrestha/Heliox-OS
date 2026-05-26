@@ -19,12 +19,14 @@ def correlate_sessions(events: list[dict[str, Any]]) -> dict[str, list[dict[str,
             keys.append("system:general")
 
         for k in keys:
-            correlations.setdefault(k, []).append({
-                "timestamp": ev["timestamp"],
-                "event_type": ev.get("event_type", "general"),
-                "description": ev.get("description", ev["message"]),
-                "process": ev.get("original_event", {}).get("process", ev.get("process", "unknown"))
-            })
+            correlations.setdefault(k, []).append(
+                {
+                    "timestamp": ev["timestamp"],
+                    "event_type": ev.get("event_type", "general"),
+                    "description": ev.get("description", ev["message"]),
+                    "process": ev.get("original_event", {}).get("process", ev.get("process", "unknown")),
+                }
+            )
 
     # Chronologically sort timelines for each correlation key
     for k in correlations:

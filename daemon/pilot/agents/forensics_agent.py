@@ -20,6 +20,7 @@ FORENSICS_ACTION_TYPES: set[ActionType] = {
     ActionType.LOG_ANALYZE,
 }
 
+
 @auto_register
 class ForensicsAgent(BaseAgent):
     """Specialist agent for log forensics, incident timeline mapping, and anomaly detection."""

@@ -5,14 +5,11 @@ from typing import Any, Dict, List, Optional
 
 # RFC3164 format: Jan 22 14:32:01 host process[123]: msg
 # or: Jan 22 14:32:01 host process: msg
-RFC3164_PATTERN = re.compile(
-    r'^([A-Z][a-z]{2}\s+\d+\s+\d{2}:\d{2}:\d{2})\s+(\S+)\s+([^\[:]+)(?:\[(\d+)\])?:\s+(.*)$'
-)
+RFC3164_PATTERN = re.compile(r"^([A-Z][a-z]{2}\s+\d+\s+\d{2}:\d{2}:\d{2})\s+(\S+)\s+([^\[:]+)(?:\[(\d+)\])?:\s+(.*)$")
 
 # RFC5424 format: <13>1 2026-05-25T14:32:01.000Z host process 123 msgid - msg
-RFC5424_PATTERN = re.compile(
-    r'^<\d+>1\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(?:-|\S+)\s+(.*)$'
-)
+RFC5424_PATTERN = re.compile(r"^<\d+>1\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(?:-|\S+)\s+(.*)$")
+
 
 def parse_syslog_line(line: str) -> dict[str, Any] | None:
     """Parse a single syslog line into a structured dictionary."""
@@ -37,7 +34,7 @@ def parse_syslog_line(line: str) -> dict[str, Any] | None:
             "process": process.strip(),
             "pid": int(pid) if pid else None,
             "message": message,
-            "raw": line
+            "raw": line,
         }
 
     # Try RFC5424
@@ -50,11 +47,11 @@ def parse_syslog_line(line: str) -> dict[str, Any] | None:
             "process": process,
             "pid": int(pid) if pid and pid.isdigit() else None,
             "message": message,
-            "raw": line
+            "raw": line,
         }
 
     # Fallback/Generic parser (just extract timestamp if possible)
-    iso_match = re.match(r'^(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)\s+(.*)$', line)
+    iso_match = re.match(r"^(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)\s+(.*)$", line)
     if iso_match:
         timestamp_str, message = iso_match.groups()
         return {
@@ -63,7 +60,7 @@ def parse_syslog_line(line: str) -> dict[str, Any] | None:
             "process": "unknown",
             "pid": None,
             "message": message,
-            "raw": line
+            "raw": line,
         }
 
     # Generic fallback
@@ -73,26 +70,28 @@ def parse_syslog_line(line: str) -> dict[str, Any] | None:
         "process": "unknown",
         "pid": None,
         "message": line,
-        "raw": line
+        "raw": line,
     }
+
 
 def _parse_time_window(window_str: str) -> datetime.timedelta | None:
     if not window_str:
         return None
-    match = re.match(r'^(\d+)\s*([smhd])$', window_str.strip().lower())
+    match = re.match(r"^(\d+)\s*([smhd])$", window_str.strip().lower())
     if not match:
         return None
     value, unit = match.groups()
     val = int(value)
-    if unit == 's':
+    if unit == "s":
         return datetime.timedelta(seconds=val)
-    elif unit == 'm':
+    elif unit == "m":
         return datetime.timedelta(minutes=val)
-    elif unit == 'h':
+    elif unit == "h":
         return datetime.timedelta(hours=val)
-    elif unit == 'd':
+    elif unit == "d":
         return datetime.timedelta(days=val)
     return None
+
 
 def parse_syslog_file(filepath: str, query: str | None = None, time_window: str | None = None) -> list[dict[str, Any]]:
     """Safely parse a syslog file and apply time window and search query filters."""
@@ -108,7 +107,7 @@ def parse_syslog_file(filepath: str, query: str | None = None, time_window: str 
             limit_dt = datetime.datetime.now()
 
     try:
-        with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+        with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
             for line in f:
                 parsed = parse_syslog_line(line)
                 if not parsed:

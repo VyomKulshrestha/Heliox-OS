@@ -263,6 +263,7 @@ class ActionValidator:
         elif isinstance(params, LogAnalyzeParams):
             if params.log_path:
                 import os
+
                 # Validate path safety only if it actually represents a file path rather than a category name
                 if "/" in params.log_path or "\\" in params.log_path or os.path.isabs(params.log_path):
                     self._sanitizer.validate_path(params.log_path, idx)

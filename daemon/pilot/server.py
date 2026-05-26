@@ -2834,8 +2834,8 @@ class PilotServer:
             self._handle_connection,
             host,
             port,
-            ping_interval=30,   # send keepalive ping every 30s
-            ping_timeout=300,   # allow up to 5 min for pong (matches LLM timeout)
+            ping_interval=30,  # send keepalive ping every 30s
+            ping_timeout=300,  # allow up to 5 min for pong (matches LLM timeout)
         )
         logger.info("Pilot daemon ready")
 

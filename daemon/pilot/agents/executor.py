@@ -1903,7 +1903,11 @@ class Executor:
         # Mapping common categories
         if log_path in ("syslog", "auth", "nginx", "apache"):
             if log_path == "auth":
-                candidates = ["/var/log/auth.log", "/var/log/secure", "C:\\Windows\\System32\\winevt\\Logs\\Security.evtx"]
+                candidates = [
+                    "/var/log/auth.log",
+                    "/var/log/secure",
+                    "C:\\Windows\\System32\\winevt\\Logs\\Security.evtx",
+                ]
                 log_path = next((c for c in candidates if os.path.exists(c)), "auth.log")
                 log_type = "auth"
             elif log_path == "syslog":
@@ -1931,15 +1935,12 @@ class Executor:
                 "May 25 14:05:06 server systemd[1]: nginx.service: Scheduled restart job, restart counter is at 4.\n"
                 "May 25 14:05:08 server systemd[1]: nginx.service: Scheduled restart job, restart counter is at 5.\n"
             )
-            with open(log_path, 'w', encoding='utf-8') as f:
+            with open(log_path, "w", encoding="utf-8") as f:
                 f.write(mock_content)
 
         # 2. Parse the log file
         events = await asyncio.to_thread(
-            parse_syslog_file,
-            filepath=log_path,
-            query=params.query,
-            time_window=params.time_window
+            parse_syslog_file, filepath=log_path, query=params.query, time_window=params.time_window
         )
 
         # 3. Extract high-level security/authorization events
@@ -1960,7 +1961,9 @@ class Executor:
 
         summary = "Log analysis completed. "
         if anomalies:
-            summary += f"Detected {len(anomalies)} anomalies, including: " + ", ".join(a["summary"] for a in anomalies[:2])
+            summary += f"Detected {len(anomalies)} anomalies, including: " + ", ".join(
+                a["summary"] for a in anomalies[:2]
+            )
         else:
             summary += f"Analyzed {len(events)} events. No anomalies detected."
 
@@ -1974,10 +1977,16 @@ class Executor:
             "indicators": anomalies,
             "timeline": timeline,
             "recommended_actions": [
-                "Investigate anomalous client IP addresses" if "login_spike" in [a["anomaly_type"] for a in anomalies] else None,
-                "Check service configuration files and restart threshold policies" if "restart_loop" in [a["anomaly_type"] for a in anomalies] else None,
-                "Monitor auth logs continuously for persistent failures" if anomalies else "No action required at this time"
-            ]
+                "Investigate anomalous client IP addresses"
+                if "login_spike" in [a["anomaly_type"] for a in anomalies]
+                else None,
+                "Check service configuration files and restart threshold policies"
+                if "restart_loop" in [a["anomaly_type"] for a in anomalies]
+                else None,
+                "Monitor auth logs continuously for persistent failures"
+                if anomalies
+                else "No action required at this time",
+            ],
         }
 
         result_report["recommended_actions"] = [r for r in result_report["recommended_actions"] if r is not None]
@@ -1996,13 +2005,9 @@ class Executor:
                 f"Ensure it looks clean, structured, and premium."
             )
             try:
-                llm_verdict = await self._model.generate(
-                    [{"role": "system", "content": prompt}],
-                    temperature=0.1
-                )
+                llm_verdict = await self._model.generate([{"role": "system", "content": prompt}], temperature=0.1)
                 result_report["contextual_analysis"] = llm_verdict
             except Exception as e:
                 logger.warning("LLM Contextual analysis failed: %s", e)
 
         return json.dumps(result_report, indent=2)
-
