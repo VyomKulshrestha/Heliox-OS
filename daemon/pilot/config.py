@@ -73,6 +73,13 @@ class ModelConfig:
     # Budget tracking — cumulative monthly spend limit
     budget_enabled: bool = True
     budget_monthly_limit_usd: float = 10.0
+    # Per-action and per-task budget enforcement
+    # These limit single LLM calls and per-task cumulative spend, complementing
+    # the monthly cap. Useful for halting runaway autonomous loops.
+    max_tokens_per_action: int = 4000      # cap on tokens for a single LLM call
+    max_tokens_per_task: int = 50000       # cumulative token cap per orchestrator task
+    max_usd_per_task: float = 0.10         # cumulative USD cap per task
+    max_consecutive_failures: int = 3      # circuit breaker threshold (Phase 4)
 
 
 @dataclass
@@ -265,6 +272,10 @@ def _validate_config_types(raw: dict) -> None:
             "rate_limit_burst": int,
             "budget_enabled": bool,
             "budget_monthly_limit_usd": float,
+            "max_tokens_per_action": int,
+            "max_tokens_per_task": int,
+            "max_usd_per_task": float,
+            "max_consecutive_failures": int,
         },
         "security": {
             "root_enabled": bool,
