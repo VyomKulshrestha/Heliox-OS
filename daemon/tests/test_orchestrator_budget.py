@@ -22,6 +22,7 @@ from pilot.models.budget_tracker import (
 def _make_action(action_type=ActionType.SYSTEM_INFO, **kwargs):
     """Build a minimal Action for plan construction. Adjust ActionType if needed."""
     from pilot.actions import Action
+
     return Action(action_type=action_type, parameters={}, **kwargs)
 
 
@@ -74,9 +75,7 @@ def orchestrator(tracker):
 async def test_execute_plan_starts_and_ends_task(orchestrator, tracker):
     plan = _make_plan()
     action = plan.actions[0]
-    agent = _stub_agent(
-        results=[ActionResult(action=action, success=True, output="ok")]
-    )
+    agent = _stub_agent(results=[ActionResult(action=action, success=True, output="ok")])
     # Register the stub against the action type
     orchestrator._action_registry[action.action_type] = AgentRole.SYSTEM
     orchestrator._agents[AgentRole.SYSTEM] = agent
@@ -93,9 +92,7 @@ async def test_execute_plan_starts_and_ends_task(orchestrator, tracker):
 async def test_execute_plan_generates_uuid_when_no_plan_id(orchestrator):
     plan = _make_plan()
     action = plan.actions[0]
-    agent = _stub_agent(
-        results=[ActionResult(action=action, success=True, output="ok")]
-    )
+    agent = _stub_agent(results=[ActionResult(action=action, success=True, output="ok")])
     orchestrator._action_registry[action.action_type] = AgentRole.SYSTEM
     orchestrator._agents[AgentRole.SYSTEM] = agent
 
@@ -118,9 +115,7 @@ async def test_execute_plan_generates_uuid_when_no_plan_id(orchestrator):
 @pytest.mark.asyncio
 async def test_budget_error_mid_plan_halts_cleanly(orchestrator, tracker):
     plan = _make_plan(actions=[_make_action(), _make_action()])
-    raising_agent = _stub_agent(
-        raises=TaskBudgetExceededError("test task budget hit")
-    )
+    raising_agent = _stub_agent(raises=TaskBudgetExceededError("test task budget hit"))
     orchestrator._action_registry[plan.actions[0].action_type] = AgentRole.SYSTEM
     orchestrator._agents[AgentRole.SYSTEM] = raising_agent
 
@@ -137,9 +132,7 @@ async def test_budget_error_mid_plan_halts_cleanly(orchestrator, tracker):
 @pytest.mark.asyncio
 async def test_budget_error_sets_cancel_event(orchestrator):
     plan = _make_plan()
-    raising_agent = _stub_agent(
-        raises=ActionBudgetExceededError("prompt too large")
-    )
+    raising_agent = _stub_agent(raises=ActionBudgetExceededError("prompt too large"))
     orchestrator._action_registry[plan.actions[0].action_type] = AgentRole.SYSTEM
     orchestrator._agents[AgentRole.SYSTEM] = raising_agent
 
@@ -152,9 +145,7 @@ async def test_budget_error_sets_cancel_event(orchestrator):
 @pytest.mark.asyncio
 async def test_budget_error_broadcast_emitted(orchestrator):
     plan = _make_plan()
-    raising_agent = _stub_agent(
-        raises=TaskBudgetExceededError("usd cap reached")
-    )
+    raising_agent = _stub_agent(raises=TaskBudgetExceededError("usd cap reached"))
     orchestrator._action_registry[plan.actions[0].action_type] = AgentRole.SYSTEM
     orchestrator._agents[AgentRole.SYSTEM] = raising_agent
 
@@ -165,10 +156,7 @@ async def test_budget_error_broadcast_emitted(orchestrator):
 
     # Should be called with the agent_routing event AND the budget_exceeded event.
     # Find the budget_exceeded call.
-    budget_calls = [
-        c for c in broadcast.call_args_list
-        if c.args[0] == "budget_exceeded"
-    ]
+    budget_calls = [c for c in broadcast.call_args_list if c.args[0] == "budget_exceeded"]
     assert len(budget_calls) == 1
     payload = budget_calls[0].args[1]
     assert payload["task_id"] == "t-broadcast"

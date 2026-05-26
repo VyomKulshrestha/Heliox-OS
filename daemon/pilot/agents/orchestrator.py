@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+import uuid
 from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import TYPE_CHECKING, Any, Callable, Coroutine
@@ -26,9 +27,10 @@ from pilot.agents.base_agent import (
     AgentStatus,
     BaseAgent,
 )
-
-import uuid
-
+from pilot.agents.circuit_breaker import (
+    CircuitBreaker,
+    CircuitBreakerOpenError,
+)
 from pilot.models.budget_tracker import (
     ActionBudgetExceededError,
     BudgetExceededError,
@@ -36,10 +38,6 @@ from pilot.models.budget_tracker import (
     current_task_id,
 )
 
-from pilot.agents.circuit_breaker import (
-    CircuitBreaker,
-    CircuitBreakerOpenError,
-)
 
 class TaskPriority(IntEnum):
     USER_REALTIME = 0  # Voice commands, UI clicks (Immediate)
@@ -52,6 +50,7 @@ class PrioritizedTask:
     priority: TaskPriority
     task_id: str = field(compare=False)
     coro: Any = field(compare=False)
+
 
 if TYPE_CHECKING:
     from pilot.models.budget_tracker import BudgetTracker
@@ -308,7 +307,8 @@ class AgentOrchestrator:
                 except CircuitBreakerOpenError as exc:
                     logger.warning(
                         "Circuit breaker tripped mid-plan (task_id=%s): %s",
-                        task_id, exc,
+                        task_id,
+                        exc,
                     )
                     if self._broadcast_fn:
                         await self._broadcast_fn(
@@ -364,7 +364,8 @@ class AgentOrchestrator:
             ) as exc:
                 logger.warning(
                     "Budget exhausted mid-plan (task_id=%s): %s",
-                    task_id, exc,
+                    task_id,
+                    exc,
                 )
                 if self._broadcast_fn:
                     await self._broadcast_fn(

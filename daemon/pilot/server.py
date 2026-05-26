@@ -413,9 +413,8 @@ class PilotServer:
         await self._budget_tracker.initialize()
         model_router.set_budget_tracker(self._budget_tracker)
         from pilot.agents.circuit_breaker import CircuitBreaker
-        self._circuit_breaker = CircuitBreaker(
-            threshold=self.config.model.max_consecutive_failures
-        )
+
+        self._circuit_breaker = CircuitBreaker(threshold=self.config.model.max_consecutive_failures)
 
         audit = AuditLogger()
         self._permission_audit = PermissionEscalationAuditStore()

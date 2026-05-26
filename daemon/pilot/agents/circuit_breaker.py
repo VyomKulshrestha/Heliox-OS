@@ -63,15 +63,13 @@ class CircuitBreaker:
         if not tid:
             return
         self._counts[tid] = self._counts.get(tid, 0) + 1
-        if (
-            self._counts[tid] >= self._threshold
-            and self._state.get(tid) != CircuitBreakerState.OPEN
-        ):
+        if self._counts[tid] >= self._threshold and self._state.get(tid) != CircuitBreakerState.OPEN:
             self._state[tid] = CircuitBreakerState.OPEN
             logger.warning(
-                "CircuitBreaker tripped OPEN for task %s "
-                "(%d consecutive failures >= threshold %d)",
-                tid, self._counts[tid], self._threshold,
+                "CircuitBreaker tripped OPEN for task %s (%d consecutive failures >= threshold %d)",
+                tid,
+                self._counts[tid],
+                self._threshold,
             )
 
     def check(self, task_id: str | None = None) -> None:

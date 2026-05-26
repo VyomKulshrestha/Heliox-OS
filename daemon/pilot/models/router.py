@@ -59,7 +59,7 @@ class ModelRouter:
 
     def set_budget_tracker(self, tracker: BudgetTracker) -> None:
         self._budget_tracker = tracker
-    
+
     @staticmethod
     def _estimate_input_tokens(prompt: str | list[dict[str, Any]]) -> int:
         """Rough token estimate using the len/4 heuristic.
@@ -71,6 +71,7 @@ class ModelRouter:
         """
         if isinstance(prompt, list):
             import json
+
             prompt_str = json.dumps(prompt)
         else:
             prompt_str = prompt

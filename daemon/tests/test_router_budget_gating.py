@@ -23,7 +23,7 @@ def model_config():
         provider="ollama",
         budget_enabled=True,
         budget_monthly_limit_usd=100.0,
-        max_tokens_per_action=100,        # very small cap so we can test it easily
+        max_tokens_per_action=100,  # very small cap so we can test it easily
         max_tokens_per_task=1000,
         max_usd_per_task=0.10,
     )
@@ -48,10 +48,12 @@ async def tracker(model_config, tmp_path):
 def router(pilot_config, tracker):
     """ModelRouter with mocked cache + backends so generate() never actually calls a model."""
     # Patch heavy dependencies that ModelRouter creates in __init__
-    with patch("pilot.models.router.OllamaClient"), \
-    patch("pilot.models.router.CloudClient"), \
-    patch("pilot.models.router.LLMCache"), \
-    patch("pilot.models.router.RedisCacheAdapter"):
+    with (
+        patch("pilot.models.router.OllamaClient"),
+        patch("pilot.models.router.CloudClient"),
+        patch("pilot.models.router.LLMCache"),
+        patch("pilot.models.router.RedisCacheAdapter"),
+    ):
         r = ModelRouter(pilot_config, MagicMock())
     r._generate_with_cache = AsyncMock(return_value="mocked-response")
     r._rate_limiter = MagicMock()

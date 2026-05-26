@@ -41,6 +41,7 @@ def _stub_agent(role=AgentRole.SYSTEM, results=None):
 
 # ─── CircuitBreaker unit tests ───
 
+
 def test_breaker_starts_closed():
     cb = CircuitBreaker(threshold=3)
     assert cb.get_state("t1") == CircuitBreakerState.CLOSED
@@ -114,6 +115,7 @@ def test_concurrent_tasks_isolated():
 
 # ─── Orchestrator integration tests ───
 
+
 @pytest.fixture
 def orchestrator_with_breaker():
     o = AgentOrchestrator(model_router=MagicMock())
@@ -128,22 +130,27 @@ async def test_breaker_trips_after_repeated_failures(orchestrator_with_breaker):
     plan = _make_plan(n_actions=3)
     action_type = plan.actions[0].action_type
 
-    failed_result = lambda a: ActionResult(action=a, success=False, error="boom")
+    def failed_result(a):
+        return ActionResult(action=a, success=False, error="boom")
     agent = _stub_agent(results=[failed_result(plan.actions[0])])
     # Use side_effect so each call returns a fresh failed result for its own action
-    agent.handle_task = AsyncMock(side_effect=[
-        [failed_result(plan.actions[0])],
-        [failed_result(plan.actions[1])],
-        [failed_result(plan.actions[2])],
-    ])
+    agent.handle_task = AsyncMock(
+        side_effect=[
+            [failed_result(plan.actions[0])],
+            [failed_result(plan.actions[1])],
+            [failed_result(plan.actions[2])],
+        ]
+    )
     o._action_registry[action_type] = AgentRole.SYSTEM
     o._agents[AgentRole.SYSTEM] = agent
     # Force one-action-per-batch so the breaker check fires between actions
-    o._build_execution_order = MagicMock(return_value=[
-        (AgentRole.SYSTEM, [0]),
-        (AgentRole.SYSTEM, [1]),
-        (AgentRole.SYSTEM, [2]),
-    ])
+    o._build_execution_order = MagicMock(
+        return_value=[
+            (AgentRole.SYSTEM, [0]),
+            (AgentRole.SYSTEM, [1]),
+            (AgentRole.SYSTEM, [2]),
+        ]
+    )
 
     results = await o.execute_plan("test", plan, plan_id="t-trip")
 
@@ -160,21 +167,28 @@ async def test_success_resets_breaker_counter(orchestrator_with_breaker):
     plan = _make_plan(n_actions=3)
     action_type = plan.actions[0].action_type
 
-    ok = lambda a: ActionResult(action=a, success=True, output="ok")
-    bad = lambda a: ActionResult(action=a, success=False, error="boom")
+    def ok(a):
+        return ActionResult(action=a, success=True, output="ok")
+
+    def bad(a):
+        return ActionResult(action=a, success=False, error="boom")
     agent = _stub_agent()
-    agent.handle_task = AsyncMock(side_effect=[
-        [bad(plan.actions[0])],
-        [ok(plan.actions[1])],   # success — resets counter
-        [bad(plan.actions[2])],  # only one failure since reset; breaker stays CLOSED
-    ])
+    agent.handle_task = AsyncMock(
+        side_effect=[
+            [bad(plan.actions[0])],
+            [ok(plan.actions[1])],  # success — resets counter
+            [bad(plan.actions[2])],  # only one failure since reset; breaker stays CLOSED
+        ]
+    )
     o._action_registry[action_type] = AgentRole.SYSTEM
     o._agents[AgentRole.SYSTEM] = agent
-    o._build_execution_order = MagicMock(return_value=[
-        (AgentRole.SYSTEM, [0]),
-        (AgentRole.SYSTEM, [1]),
-        (AgentRole.SYSTEM, [2]),
-    ])
+    o._build_execution_order = MagicMock(
+        return_value=[
+            (AgentRole.SYSTEM, [0]),
+            (AgentRole.SYSTEM, [1]),
+            (AgentRole.SYSTEM, [2]),
+        ]
+    )
 
     await o.execute_plan("test", plan, plan_id="t-reset")
 
@@ -188,18 +202,23 @@ async def test_breaker_reset_on_task_end(orchestrator_with_breaker):
     plan = _make_plan(n_actions=2)
     action_type = plan.actions[0].action_type
 
-    bad = lambda a: ActionResult(action=a, success=False, error="boom")
+    def bad(a):
+        return ActionResult(action=a, success=False, error="boom")
     agent = _stub_agent()
-    agent.handle_task = AsyncMock(side_effect=[
-        [bad(plan.actions[0])],
-        [bad(plan.actions[1])],
-    ])
+    agent.handle_task = AsyncMock(
+        side_effect=[
+            [bad(plan.actions[0])],
+            [bad(plan.actions[1])],
+        ]
+    )
     o._action_registry[action_type] = AgentRole.SYSTEM
     o._agents[AgentRole.SYSTEM] = agent
-    o._build_execution_order = MagicMock(return_value=[
-        (AgentRole.SYSTEM, [0]),
-        (AgentRole.SYSTEM, [1]),
-    ])
+    o._build_execution_order = MagicMock(
+        return_value=[
+            (AgentRole.SYSTEM, [0]),
+            (AgentRole.SYSTEM, [1]),
+        ]
+    )
 
     await o.execute_plan("test", plan, plan_id="t-end")
 
@@ -214,29 +233,31 @@ async def test_breaker_tripped_broadcast(orchestrator_with_breaker):
     plan = _make_plan(n_actions=3)
     action_type = plan.actions[0].action_type
 
-    bad = lambda a: ActionResult(action=a, success=False, error="boom")
+    def bad(a):
+        return ActionResult(action=a, success=False, error="boom")
     agent = _stub_agent()
-    agent.handle_task = AsyncMock(side_effect=[
-        [bad(plan.actions[0])],
-        [bad(plan.actions[1])],
-        [bad(plan.actions[2])],
-    ])
+    agent.handle_task = AsyncMock(
+        side_effect=[
+            [bad(plan.actions[0])],
+            [bad(plan.actions[1])],
+            [bad(plan.actions[2])],
+        ]
+    )
     o._action_registry[action_type] = AgentRole.SYSTEM
     o._agents[AgentRole.SYSTEM] = agent
-    o._build_execution_order = MagicMock(return_value=[
-        (AgentRole.SYSTEM, [0]),
-        (AgentRole.SYSTEM, [1]),
-        (AgentRole.SYSTEM, [2]),
-    ])
+    o._build_execution_order = MagicMock(
+        return_value=[
+            (AgentRole.SYSTEM, [0]),
+            (AgentRole.SYSTEM, [1]),
+            (AgentRole.SYSTEM, [2]),
+        ]
+    )
 
     broadcast = AsyncMock()
     o.set_broadcast(broadcast)
     await o.execute_plan("test", plan, plan_id="t-broadcast")
 
-    breaker_calls = [
-        c for c in broadcast.call_args_list
-        if c.args[0] == "circuit_breaker_tripped"
-    ]
+    breaker_calls = [c for c in broadcast.call_args_list if c.args[0] == "circuit_breaker_tripped"]
     assert len(breaker_calls) == 1
     payload = breaker_calls[0].args[1]
     assert payload["task_id"] == "t-broadcast"

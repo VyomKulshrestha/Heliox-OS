@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import UTC, datetime
-from typing import TYPE_CHECKING
 from contextvars import ContextVar
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from pilot.db.sqlite_pool import AsyncSqlitePool
 
@@ -59,6 +59,7 @@ def _estimate_cost(provider: str, input_tokens: int, output_tokens: int) -> floa
     rates = COST_PER_1K_TOKENS.get(provider, (0.0, 0.0))
     return (input_tokens * rates[0] + output_tokens * rates[1]) / 1000.0
 
+
 class TaskBudgetExceededError(BudgetExceededError):
     """Raised when a single task's cumulative budget is exceeded."""
 
@@ -89,6 +90,8 @@ class TaskBudget:
     tokens_used: int = 0
     usd_spent: float = 0.0
     exceeded: bool = False
+
+
 class BudgetTracker:
     """Tracks cumulative LLM token spend and enforces a monthly USD limit."""
 
@@ -157,7 +160,7 @@ class BudgetTracker:
                 f"(spent ${self._monthly_cost:.4f}). "
                 "Increase budget_monthly_limit_usd or reset via budget_reset."
             )
-    
+
     def start_task(self, task_id: str) -> TaskBudget:
         """Begin tracking a new task. Returns the freshly-created TaskBudget.
 
@@ -173,7 +176,9 @@ class BudgetTracker:
         self._tasks[task_id] = budget
         logger.info(
             "BudgetTracker: started task %s (token_cap=%d, usd_cap=%.4f)",
-            task_id, budget.token_cap, budget.usd_cap,
+            task_id,
+            budget.token_cap,
+            budget.usd_cap,
         )
         return budget
 
@@ -183,7 +188,10 @@ class BudgetTracker:
         if budget:
             logger.info(
                 "BudgetTracker: ended task %s (tokens=%d, usd=%.4f, exceeded=%s)",
-                task_id, budget.tokens_used, budget.usd_spent, budget.exceeded,
+                task_id,
+                budget.tokens_used,
+                budget.usd_spent,
+                budget.exceeded,
             )
         return budget
 
@@ -253,8 +261,7 @@ class BudgetTracker:
                        (timestamp, month, provider, model, input_tokens,
                         output_tokens, cost_usd, task_id)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (now, month, provider, model, input_tokens, output_tokens,
-                     cost, task_id),
+                    (now, month, provider, model, input_tokens, output_tokens, cost, task_id),
                 )
                 await db.commit()
             self._monthly_cost += cost
