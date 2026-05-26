@@ -68,8 +68,10 @@
     });
   }
 
-  function handleReplay(command: string) {
-    prefillText = command; // Prefills input box — user can edit before sending
+  async function handleReplay(command: string) {
+    prefillText = "";
+    await tick();
+    prefillText = command; // Prefills input box so the user can edit before sending
   }
 
   $effect(() => {

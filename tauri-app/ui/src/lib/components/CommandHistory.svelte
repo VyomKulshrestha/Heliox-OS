@@ -6,15 +6,21 @@
 
   // State
   let isOpen = $state(false);
-  let history: any[] = $state([]);
+  type HistoryEntry = {
+    raw_input: string;
+    created_at: string;
+    execution_status: string;
+  };
+
+  let history: HistoryEntry[] = $state([]);
   let loading = $state(false);
 
   // Fetch history when panel opens
   async function fetchHistory() {
     loading = true;
     try {
-      const result = await call("get_plan_history", { limit: 30, offset: 0 }) as any[];
-      history = result ?? [];
+      const result = await call<{ plans?: HistoryEntry[] }>("get_plan_history", { limit: 30, offset: 0 });
+      history = result.plans ?? [];
     } catch (e) {
       history = [];
     } finally {
@@ -29,6 +35,7 @@
 
   function formatTime(iso: string): string {
     const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "";
     return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   }
 
