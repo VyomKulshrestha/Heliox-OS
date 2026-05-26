@@ -424,6 +424,20 @@
   </section>
 
   <section class="settings-group">
+    <h3>Data & Export</h3>
+    <div class="setting-row">
+      <div class="setting-info">
+        <span class="setting-label">Export Chat History</span>
+        <span class="setting-desc">Save the current session history and tool logs to your Downloads folder.</span>
+      </div>
+      <div class="btn-group">
+        <button onclick={() => session.exportChat("markdown")}>Markdown</button>
+        <button onclick={() => session.exportChat("json")}>JSON</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="settings-group">
     <h3>Budget &amp; Limits</h3>
 
     <div class="setting-row">
