@@ -158,6 +158,7 @@ class RedisConfig:
     max_memory_cache_size: int = 512
 
 
+@dataclass
 class NetworkConfig:
     """LAN mesh network configuration for multi-instance collaboration."""
 
@@ -503,7 +504,14 @@ def _parse_restrictions(raw: dict[str, Any]) -> Restrictions:
 def _config_to_dict(config: PilotConfig) -> dict[str, Any]:
     from dataclasses import asdict
 
-    return asdict(config)
+    def strip_none(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {k: strip_none(v) for k, v in value.items() if v is not None}
+        if isinstance(value, list):
+            return [strip_none(item) for item in value]
+        return value
+
+    return strip_none(asdict(config))
 
 
 def ensure_dirs() -> None:

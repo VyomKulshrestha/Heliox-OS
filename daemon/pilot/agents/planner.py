@@ -33,6 +33,7 @@ from pilot.actions import (
     FileParams,
     GnomeSettingParams,
     KeyboardParams,
+    LogAnalyzeParams,
     MouseParams,
     NotifyParams,
     OpenApplicationParams,
@@ -137,6 +138,9 @@ FILE CONTENT INTELLIGENCE & MEMORY:
 - file_search_content — Search inside files. Params: {{"path": "/dir", "query": "secret", "pattern": "*.txt", "is_regex": false}}
 - memory_store — Save context or long-term memory for yourself across sessions. Params: {{"key": "user_preferences", "value": "..."}}
 - memory_retrieve — Get saved core context. Params: {{"key": "user_preferences"}}
+
+FORENSICS & LOG ANALYSIS:
+- log_analyze — Parse and analyze system/service logs for anomalies, session correlation, failed logins, and resource spikes. Params: {{"log_path": "auth", "log_type": "auth", "query": "failed", "time_window": "24h", "llm_contextual": true}}
 
 API INTEGRATION, MESSAGING & WEBHOOKS (OpenClaw-style Hub):
 - api_request — Params: {{"method": "GET", "url": "https://api.example.com", "headers": {{}}, "body": null}}
@@ -489,6 +493,64 @@ class Planner:
                     explanation=f"Launch {app_name}",
                     raw_input=user_input,
                 )
+
+        # --- Forensics / log analysis fast-path ---
+        log_kw = re.match(
+            r"^(?:analyze|analyse|check|inspect|review|scan|examine|parse|investigate)"
+            r"\s+.*(?:log|auth|syslog|journal|event\s*log|anomal|forensic|suspicious|brute.?force|failed.?login)",
+            text,
+        )
+        # Also match the reverse order: "system logs for anomalies"
+        log_kw2 = re.match(
+            r"^.*(?:log|auth|syslog|journal|forensic)\S*\s+.*(?:analyz|analys|anomal|suspicious|inspect|check|scan)",
+            text,
+        )
+        if log_kw or log_kw2:
+            # Extract a log type hint from the query
+            log_type = None
+            log_path = ""
+            if "auth" in text:
+                log_type = "auth"
+                log_path = "auth"
+            elif "syslog" in text or "system" in text:
+                log_type = "syslog"
+                log_path = "syslog"
+            elif "nginx" in text:
+                log_type = "nginx"
+                log_path = "nginx"
+            elif "apache" in text:
+                log_type = "apache"
+                log_path = "apache"
+            elif "journal" in text:
+                log_type = "syslog"
+                log_path = "journal"
+            else:
+                log_type = "syslog"
+                log_path = "auto"
+
+            # Extract time window if mentioned
+            time_window = "24h"
+            tw_match = re.search(r"(\d+)\s*(h|hr|hour|d|day|m|min)", text)
+            if tw_match:
+                time_window = tw_match.group(1) + tw_match.group(2)[0] + ("h" if tw_match.group(2)[0] == "h" else "")
+
+            return ActionPlan(
+                actions=[
+                    Action(
+                        action_type=ActionType.LOG_ANALYZE,
+                        target=log_path,
+                        parameters=LogAnalyzeParams(
+                            log_path=log_path,
+                            log_type=log_type,
+                            query=user_input,
+                            time_window=time_window,
+                            llm_contextual=False,
+                        ),
+                    )
+                ],
+                explanation=f"Analyze {log_type or 'system'} logs for anomalies and suspicious activity",
+                raw_input=user_input,
+            )
 
         return None  # Not a simple command — use LLM
 

@@ -376,6 +376,10 @@ class AgentOrchestrator:
                 from pilot.agents.monitor_agent import MonitorAgent
 
                 agent = MonitorAgent(self._model, kwargs.get("background_manager"))
+            elif role == AgentRole.FORENSICS:
+                from pilot.agents.forensics_agent import ForensicsAgent
+
+                agent = ForensicsAgent(self._model, kwargs.get("executor"))
             elif role == AgentRole.COMMUNICATION:
                 from pilot.agents.comm_agent import CommunicationAgent
 
@@ -479,6 +483,20 @@ class AgentOrchestrator:
                 "memory",
                 "disk",
                 "background",
+            ],
+            AgentRole.FORENSICS: [
+                "forensic",
+                "forensics",
+                "log",
+                "logs",
+                "anomaly",
+                "anomalies",
+                "suspicious",
+                "failed login",
+                "failed attempts",
+                "auth logs",
+                "nginx logs",
+                "restart loop",
             ],
             AgentRole.COMMUNICATION: [
                 "email",

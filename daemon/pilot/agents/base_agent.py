@@ -51,6 +51,7 @@ class AgentRole(StrEnum):
     MONITOR = "monitor_agent"
     COMMUNICATION = "comm_agent"
     RSS = "rss_agent"
+    FORENSICS = "forensics_agent"
     ORCHESTRATOR = "orchestrator"
     GENERAL = "general"
 
