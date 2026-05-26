@@ -34,6 +34,11 @@ from pilot.models.budget_tracker import (
     current_task_id,
 )
 
+from pilot.agents.circuit_breaker import (
+    CircuitBreaker,
+    CircuitBreakerOpenError,
+)
+
 if TYPE_CHECKING:
     from pilot.models.budget_tracker import BudgetTracker
     from pilot.models.router import ModelRouter
@@ -59,10 +64,15 @@ class AgentOrchestrator:
         self._message_log: list[AgentMessage] = []
         self._broadcast_fn: Callable[..., Coroutine] | None = None
         self._budget_tracker: BudgetTracker | None = None
+        self._circuit_breaker: CircuitBreaker | None = None
 
     def set_budget_tracker(self, tracker: BudgetTracker) -> None:
         """Inject the budget tracker. Called by server.py during startup."""
         self._budget_tracker = tracker
+
+    def set_circuit_breaker(self, breaker: CircuitBreaker) -> None:
+        """Inject the circuit breaker. Called by server.py during startup."""
+        self._circuit_breaker = breaker
 
     # ── Agent Registration ──
 
@@ -204,6 +214,8 @@ class AgentOrchestrator:
         finally:
             if self._budget_tracker:
                 self._budget_tracker.end_task(task_id)
+            if self._circuit_breaker:
+                self._circuit_breaker.reset(task_id)
             current_task_id.reset(ctx_token)
 
     async def _execute_plan_inner(
@@ -233,12 +245,42 @@ class AgentOrchestrator:
         action_order = self._build_execution_order(plan, routing)
 
         for batch in action_order:
-            # ── Cancellation check ──
+            # â”€â”€ Cancellation check â”€â”€
             if cancel_event and cancel_event.is_set():
-                logger.info("Orchestrator: cancel_event set — halting plan execution")
+                logger.info("Orchestrator: cancel_event set â€” halting plan execution")
                 break
 
             role, indices = batch
+
+            # Circuit breaker pre-check — bail if too many consecutive failures
+            if self._circuit_breaker:
+                try:
+                    self._circuit_breaker.check()
+                except CircuitBreakerOpenError as exc:
+                    logger.warning(
+                        "Circuit breaker tripped mid-plan (task_id=%s): %s",
+                        task_id, exc,
+                    )
+                    if self._broadcast_fn:
+                        await self._broadcast_fn(
+                            "circuit_breaker_tripped",
+                            {
+                                "task_id": task_id,
+                                "error": str(exc),
+                                "failure_count": self._circuit_breaker.get_failure_count(),
+                            },
+                        )
+                    for idx in indices:
+                        if all_results[idx] is None:
+                            all_results[idx] = ActionResult(
+                                action=plan.actions[idx],
+                                success=False,
+                                error=f"Circuit breaker tripped: {exc}",
+                            )
+                    if cancel_event:
+                        cancel_event.set()
+                    break
+
             agent = self._agents.get(role)
             if agent is None:
                 # Fallback to system agent
@@ -300,8 +342,14 @@ class AgentOrchestrator:
                 break
 
             # Map results back to original indices
+            # Map results back to original indices and update breaker state
             for idx, result in zip(indices, results):
                 all_results[idx] = result
+                if self._circuit_breaker:
+                    if result.success:
+                        self._circuit_breaker.record_success()
+                    else:
+                        self._circuit_breaker.record_failure()
                 if on_action_complete:
                     await on_action_complete(result)
 
