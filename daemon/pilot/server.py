@@ -411,6 +411,10 @@ class PilotServer:
         self._budget_tracker = BudgetTracker(self.config.model, str(DB_FILE))
         await self._budget_tracker.initialize()
         model_router.set_budget_tracker(self._budget_tracker)
+        from pilot.agents.circuit_breaker import CircuitBreaker
+        self._circuit_breaker = CircuitBreaker(
+            threshold=self.config.model.max_consecutive_failures
+        )
 
         audit = AuditLogger()
         self._permission_audit = PermissionEscalationAuditStore()
@@ -461,6 +465,8 @@ class PilotServer:
         # Multi-Agent Orchestrator — register all specialist agents
         self._orchestrator = AgentOrchestrator(model_router)
         self._orchestrator.set_broadcast(self._broadcast_notification)
+        self._orchestrator.set_budget_tracker(self._budget_tracker)
+        self._orchestrator.set_circuit_breaker(self._circuit_breaker)
         from pilot.agents.registry import AgentRegistry
 
         AgentRegistry.discover_agents()
@@ -2850,6 +2856,8 @@ class PilotServer:
             await self._mesh.stop()
         if self._orchestrator:
             await self._orchestrator.stop_all()
+        if hasattr(self, "_budget_tracker") and self._budget_tracker:
+            await self._budget_tracker.close()
         if self._background:
             self._background.stop_all()
         for pending in self._pending_confirms.values():
