@@ -69,10 +69,6 @@
   }
 
   function handleReplay(command: string) {
-    session.sendCommand(command);
-  }
-
-  function handleReplay(command: string) {
     prefillText = command; // Prefills input box — user can edit before sending
   }
 
