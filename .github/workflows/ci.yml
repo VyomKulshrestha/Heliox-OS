@@ -146,8 +146,7 @@ jobs:
             echo "exists=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Generate baseline snapshots (first run only)
-        if: steps.check_baselines.outputs.exists == 'false'
+      - name: Generate missing baseline snapshots
         run: npx playwright test --update-snapshots --reporter=github
         continue-on-error: true
         env:
@@ -172,7 +171,6 @@ jobs:
         working-directory: tauri-app/ui
 
       - name: Run visual regression tests (comparison)
-        if: steps.check_baselines.outputs.exists == 'true'
         run: npx playwright test --reporter=github
         env:
           CI: "true"
