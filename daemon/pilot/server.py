@@ -22,7 +22,7 @@ import aiosqlite
 import websockets
 from websockets.asyncio.server import Server, ServerConnection
 
-from pilot.config import DATA_DIR, DB_FILE, LOG_FILE, STATE_DIR, PilotConfig, ensure_dirs
+from pilot.config import DATA_DIR, DB_FILE, LOG_FILE, PLUGINS_DIR, STATE_DIR, PilotConfig, ensure_dirs
 from pilot.export_logs import export_logs
 
 logger = logging.getLogger("pilot.server")
@@ -652,7 +652,7 @@ class PilotServer:
             "plugin_market_list": self._handle_plugin_market_list,
             "plugin_install": self._handle_plugin_install,
             "plugin_uninstall": self._handle_plugin_uninstall,
-            # Dynamic Python skills (pilot/skills + ~/.config/pilot/skills)
+            # Dynamic Python skills (pilot/skills + config skills dir)
             "skills_list": self._handle_skills_list,
             "skills_reload": self._handle_skills_reload,
             "skills_load_report": self._handle_skills_load_report,
@@ -2570,7 +2570,7 @@ class PilotServer:
         if not plugin_name:
             return {"error": "plugin_name is required"}
 
-        plugin_dir = Path.home() / ".heliox" / "plugins" / plugin_name
+        plugin_dir = PLUGINS_DIR / plugin_name
         plugin_dir.mkdir(parents=True, exist_ok=True)
 
         manifest_path = plugin_dir / "manifest.json"
@@ -2605,7 +2605,7 @@ class PilotServer:
         if not plugin_name:
             return {"error": "plugin_name is required"}
 
-        plugin_dir = Path.home() / ".heliox" / "plugins" / plugin_name
+        plugin_dir = PLUGINS_DIR / plugin_name
         if not plugin_dir.exists():
             return {"error": f"Plugin not found: {plugin_name}"}
 

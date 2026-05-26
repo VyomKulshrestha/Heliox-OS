@@ -48,7 +48,7 @@ class CodeAgent(BaseAgent):
             ),
             AgentCapability(
                 action_type=ActionType.SKILL_RUN,
-                description="Run a Python skill from ~/.config/pilot/skills (skill_id + arguments)",
+                description="Run a Python skill from the config skills directory (skill_id + arguments)",
             ),
             AgentCapability(
                 action_type=ActionType.SHELL_COMMAND,

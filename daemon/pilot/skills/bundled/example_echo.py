@@ -1,6 +1,6 @@
 """Example skill — uppercase a string parameter.
 
-Copy this file to ~/.config/pilot/skills/ and modify to experiment.
+Copy this file to the configured skills directory and modify to experiment.
 """
 
 from __future__ import annotations

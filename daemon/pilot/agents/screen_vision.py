@@ -33,6 +33,8 @@ from io import BytesIO
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from pilot.config import SCREENSHOTS_DIR
+
 if TYPE_CHECKING:
     from pilot.models.router import ModelRouter
 
@@ -135,7 +137,7 @@ class ScreenVisionAgent:
         self._running = False
         self._interval_seconds: float = 3.0
         self._last_hash: str = ""
-        self._screenshot_dir = Path.home() / ".heliox" / "screenshots"
+        self._screenshot_dir = SCREENSHOTS_DIR
         self._enable_llm_describe = False  # Disabled by default (expensive)
 
     def set_interval(self, interval_seconds: float) -> None:
