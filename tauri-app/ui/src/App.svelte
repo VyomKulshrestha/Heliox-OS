@@ -22,7 +22,7 @@
   import { session } from "./lib/stores/session";
   import type { Message } from "./lib/stores/session";
   import { settings } from "./lib/stores/settings";
-  import { tick } from "svelte";
+  import { onDestroy, tick } from "svelte";
   import { Copy } from "lucide-svelte";
   import ScrollToBottom from "./lib/components/ScrollToBottom.svelte";
   import ConnectionStatus from "./lib/components/ConnectionStatus.svelte";
