@@ -23,6 +23,7 @@ class AgentRole(Enum):
     CODE_AGENT = "code_agent"
     WEB_AGENT = "web_agent"
     MONITOR_AGENT = "monitor_agent"
+    FORENSICS_AGENT = "forensics_agent"
     COMMUNICATION_AGENT = "comm_agent"
     SYSTEM_AGENT = "system_agent"
     GENERAL = "general"
@@ -95,6 +96,20 @@ ROLE_KEYWORDS: dict[AgentRole, list[str]] = {
         "continuously",
         "keep checking",
     ],
+    AgentRole.FORENSICS_AGENT: [
+        "forensic",
+        "forensics",
+        "log",
+        "logs",
+        "anomaly",
+        "anomalies",
+        "suspicious",
+        "failed login",
+        "failed attempts",
+        "auth logs",
+        "nginx logs",
+        "restart loop",
+    ],
     AgentRole.COMMUNICATION_AGENT: [
         "email",
         "send",
@@ -164,6 +179,13 @@ ROLE_PROMPTS: dict[AgentRole, str] = {
         "You handle package management, service control, registry editing, "
         "volume/brightness control, network settings, and power management. "
         "Always check current state before making changes."
+    ),
+    AgentRole.FORENSICS_AGENT: (
+        "You are the Forensics and Log Analysis Specialist for Heliox OS. "
+        "You excel at system/service log inspection, parsing standard log formats "
+        "(syslog, auth, nginx, service logs), analyzing event timelines, and "
+        "identifying suspicious patterns or operational anomalies (failed logins, "
+        "crashes, restart loops) to generate structural reports."
     ),
 }
 

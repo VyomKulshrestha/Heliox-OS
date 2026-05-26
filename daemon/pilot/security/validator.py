@@ -20,6 +20,7 @@ from pilot.actions import (
     FileParams,
     GitResolveParams,
     GnomeSettingParams,
+    LogAnalyzeParams,
     NotifyParams,
     OpenApplicationParams,
     OpenUrlParams,
@@ -99,6 +100,7 @@ NO_TARGET_REQUIRED = {
     ActionType.DOWNLOAD_FILE,
     ActionType.REGISTRY_READ,
     ActionType.REGISTRY_WRITE,
+    ActionType.LOG_ANALYZE,
     # Tier 1: Game Changers
     ActionType.MOUSE_CLICK,
     ActionType.MOUSE_DOUBLE_CLICK,
@@ -257,6 +259,13 @@ class ActionValidator:
         elif isinstance(params, RegistryParams):
             if not params.key_path:
                 raise ValidationError(idx, "Empty registry key_path")
+
+        elif isinstance(params, LogAnalyzeParams):
+            if params.log_path:
+                import os
+                # Validate path safety only if it actually represents a file path rather than a category name
+                if "/" in params.log_path or "\\" in params.log_path or os.path.isabs(params.log_path):
+                    self._sanitizer.validate_path(params.log_path, idx)
 
         elif isinstance(params, SkillRunParams):
             if not params.skill_id or not params.skill_id.strip():

@@ -787,9 +787,17 @@ class PilotServer:
                     await websocket.send(_error_response(None, -32700, "Parse error"))
                 except ValueError as e:
                     await websocket.send(_error_response(None, -32600, str(e)))
+                except websockets.exceptions.ConnectionClosed:
+                    logger.warning("Connection lost during request handling: %s", remote)
+                    break
                 except Exception as e:
                     logger.exception("Handler error")
-                    await websocket.send(_error_response(None, -32603, f"Internal error: {e}"))
+                    try:
+                        await websocket.send(_error_response(None, -32603, f"Internal error: {e}"))
+                    except websockets.exceptions.ConnectionClosed:
+                        logger.warning("Could not send error response — connection already closed: %s", remote)
+        except websockets.exceptions.ConnectionClosed:
+            logger.info("Connection closed during message loop: %s", remote)
         finally:
             self._clients.discard(websocket)
             logger.info("Client disconnected: %s", remote)
@@ -2825,6 +2833,8 @@ class PilotServer:
             self._handle_connection,
             host,
             port,
+            ping_interval=30,   # send keepalive ping every 30s
+            ping_timeout=300,   # allow up to 5 min for pong (matches LLM timeout)
         )
         logger.info("Pilot daemon ready")
 
