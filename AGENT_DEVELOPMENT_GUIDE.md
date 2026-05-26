@@ -10,7 +10,7 @@ Heliox OS uses a **dynamic agent registry** that automatically discovers and reg
 
 1. Subclass `BaseAgent`
 2. Decorate your class with `@auto_register`
-3. Place it in the `pilot/agents/` package
+3. Place it in the `daemon.pilot/agents/` package
 
 The registry handles the rest.
 
@@ -20,10 +20,10 @@ The registry handles the rest.
 
 | Component | Location | Purpose |
 |-----------|----------|---------|
-| `AgentRegistry` | `pilot/agents/registry.py` | Singleton registry that stores all agents |
-| `BaseAgent` | `pilot/agents/base_agent.py` | Abstract base class all agents must extend |
-| `auto_register` | `pilot/agents/registry.py` | Decorator that registers an agent on import |
-| `discover_agents()` | `pilot/agents/registry.py` | Scans the package and imports all agent modules |
+| `AgentRegistry` | `daemon.pilot/agents/registry.py` | Singleton registry that stores all agents |
+| `BaseAgent` | `daemon.pilot/agents/base_agent.py` | Abstract base class all agents must extend |
+| `auto_register` | `daemon.pilot/agents/registry.py` | Decorator that registers an agent on import |
+| `discover_agents()` | `daemon.pilot/agents/registry.py` | Scans the package and imports all agent modules |
 
 ---
 
@@ -32,7 +32,7 @@ The registry handles the rest.
 The `AgentRegistry` is a **singleton** — there's only one instance across the entire application.
 
 ```python
-from pilot.agents.registry import AgentRegistry
+from daemon.pilot.agents.registry import AgentRegistry
 
 # Get the single registry instance
 registry = AgentRegistry.get_instance()
@@ -42,12 +42,12 @@ all_agents = registry.get_all_agents()  # returns dict[str, type[BaseAgent]]
 print(all_agents)
 ```
 
-At startup, `discover_agents()` is called to scan the `pilot.agents` package and import every module, which triggers the `@auto_register` decorator on each agent class.
+At startup, `discover_agents()` is called to scan the `daemon.pilot.agents` package and import every module, which triggers the `@auto_register` decorator on each agent class.
 
 ```python
-from pilot.agents.registry import discover_agents
+from daemon.pilot.agents.registry import discover_agents
 
-discover_agents(package_name="pilot.agents")
+discover_agents(package_name="daemon.pilot.agents")
 ```
 
 ---
@@ -60,14 +60,14 @@ Here's a complete example of a custom agent. Create a new file in `daemon/pilot/
 import logging
 from typing import TYPE_CHECKING, Any
 
-from pilot.actions import ActionPlan, ActionResult, ActionType
-from pilot.agents.base_agent import AgentCapability, AgentRole, AgentStatus, BaseAgent
-from pilot.agents.registry import auto_register
+from daemon.pilot.actions import ActionPlan, ActionResult, ActionType
+from daemon.pilot.agents.base_agent import AgentCapability, AgentRole, AgentStatus, BaseAgent
+from daemon.pilot.agents.registry import auto_register
 
 if TYPE_CHECKING:
-    from pilot.models.router import ModelRouter
+    from daemon.pilot.models.router import ModelRouter
 
-logger = logging.getLogger("pilot.agents.my_agent")
+logger = logging.getLogger("daemon.pilot.agents.my_agent")
 
 # Define the action types this agent handles
 MY_ACTION_TYPES: set[ActionType] = {
@@ -126,10 +126,10 @@ class MyAgent(BaseAgent):
 After creating your agent, you can verify it was registered correctly:
 
 ```python
-from pilot.agents.registry import AgentRegistry, discover_agents
+from daemon.pilot.agents.registry import AgentRegistry, discover_agents
 
 # Trigger discovery (done automatically at startup)
-discover_agents(package_name="pilot.agents")
+discover_agents(package_name="daemon.pilot.agents")
 
 registry = AgentRegistry.get_instance()
 all_agents = registry.get_all_agents()
@@ -172,10 +172,10 @@ Set your agent's permission tier by overriding `get_permission_tier()` in `BaseA
 
 ## 💡 Tips for Contributors
 
-- **One agent per file** — keep each agent in its own module inside `pilot/agents/`
+- **One agent per file** — keep each agent in its own module inside `daemon.pilot/agents/`
 - **Use `@auto_register`** — don't manually add agents to the registry
 - **Override `can_handle()`** — use a set of `ActionType` values for efficient lookup
-- **Log with the module logger** — use `logging.getLogger("pilot.agents.your_agent")`
+- **Log with the module logger** — use `logging.getLogger("daemon.pilot.agents.your_agent")`
 - **Handle exceptions in `handle_task()`** — always return an `ActionResult`, never raise
 - **Request minimal permissions** — only declare the resources your agent truly needs
 
