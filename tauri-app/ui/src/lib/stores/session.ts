@@ -66,6 +66,15 @@ export interface LiveActionState {
   error?: string;
 }
 
+export interface BudgetInfo {
+  exceeded: boolean;
+  errorType: string;   // "ActionBudgetExceededError" | "TaskBudgetExceededError" | "BudgetExceededError" | "CircuitBreakerOpenError"
+  message: string;
+  taskId: string;
+  failureCount?: number;  // populated for circuit-breaker events
+  timestamp: number;
+}
+
 interface SessionState {
   daemonConnected: boolean;
   loading: boolean;
@@ -79,6 +88,7 @@ interface SessionState {
   totalTokens: number;
   estimatedCost: number;
   streamingText: string;
+  budget: BudgetInfo | null;
 }
 
 export interface Attachment {
@@ -100,6 +110,7 @@ const initialState: SessionState = {
   totalTokens: 0,
   estimatedCost: 0,
   streamingText: "",
+  budget: null,
 };
 
 const MODEL_RATES: Record<string, number> = {
@@ -254,6 +265,53 @@ function createSession() {
 
       case "task_complete":
         void notifyTaskComplete(p);
+        break;
+
+      case "budget_exceeded":
+        update((s) => ({
+          ...s,
+          budget: {
+            exceeded: true,
+            errorType: String(p.error_type ?? "BudgetExceededError"),
+            message: String(p.error ?? "Budget exceeded"),
+            taskId: String(p.task_id ?? ""),
+            timestamp: Date.now(),
+          },
+          loading: false,
+          phase: "",
+          messages: [
+            ...s.messages,
+            {
+              type: "error" as MessageType,
+              text: `Budget halt: ${String(p.error ?? "limit reached")}`,
+              timestamp: Date.now(),
+            },
+          ],
+        }));
+        break;
+
+      case "circuit_breaker_tripped":
+        update((s) => ({
+          ...s,
+          budget: {
+            exceeded: true,
+            errorType: "CircuitBreakerOpenError",
+            message: String(p.error ?? "Circuit breaker tripped"),
+            taskId: String(p.task_id ?? ""),
+            failureCount: Number(p.failure_count ?? 0),
+            timestamp: Date.now(),
+          },
+          loading: false,
+          phase: "",
+          messages: [
+            ...s.messages,
+            {
+              type: "error" as MessageType,
+              text: `Circuit breaker tripped after ${p.failure_count ?? "several"} consecutive failures. ${String(p.error ?? "")}`,
+              timestamp: Date.now(),
+            },
+          ],
+        }));
         break;
     }
   });
@@ -577,6 +635,10 @@ function createSession() {
 
   init();
 
+  function acknowledgeBudgetEvent() {
+    update((s) => ({ ...s, budget: null }));
+  }
+
   return {
     subscribe,
     sendCommand,
@@ -585,6 +647,7 @@ function createSession() {
     addSystemMessage,
     clearMessages,
     resetUsage,
+    acknowledgeBudgetEvent,
   };
 }
 

@@ -437,6 +437,103 @@
     </div>
   </section>
 
+  <section class="settings-group">
+    <h3>Budget &amp; Limits</h3>
+
+    <div class="setting-row">
+      <div class="setting-info">
+        <span class="setting-label">Budget enforcement</span>
+        <span class="setting-desc">Master switch for all budget checks. When off, none of the limits below are enforced.</span>
+      </div>
+      <div class="btn-group">
+        <button
+          class:active={$settings.model.budget_enabled}
+          onclick={() => settings.updateSection("model", { budget_enabled: true })}
+        >On</button>
+        <button
+          class:active={!$settings.model.budget_enabled}
+          onclick={() => settings.updateSection("model", { budget_enabled: false })}
+        >Off</button>
+      </div>
+    </div>
+
+    <div class="setting-row">
+      <div class="setting-info">
+        <span class="setting-label">Monthly USD limit</span>
+        <span class="setting-desc">Cumulative cap across all cloud calls for the current calendar month.</span>
+      </div>
+      <input
+        type="number"
+        class="input-sm"
+        min="0"
+        step="0.5"
+        value={$settings.model.budget_monthly_limit_usd}
+        onchange={(e) => settings.updateSection("model", { budget_monthly_limit_usd: parseFloat((e.target as HTMLInputElement).value) || 0 })}
+      />
+    </div>
+
+    <div class="setting-row">
+      <div class="setting-info">
+        <span class="setting-label">Per-action token cap</span>
+        <span class="setting-desc">Maximum estimated input tokens for a single LLM call. Oversized prompts are blocked before being sent.</span>
+      </div>
+      <input
+        type="number"
+        class="input-sm"
+        min="0"
+        step="500"
+        value={$settings.model.max_tokens_per_action}
+        onchange={(e) => settings.updateSection("model", { max_tokens_per_action: parseInt((e.target as HTMLInputElement).value, 10) || 0 })}
+      />
+    </div>
+
+    <div class="setting-row">
+      <div class="setting-info">
+        <span class="setting-label">Per-task token cap</span>
+        <span class="setting-desc">Cumulative token budget for a single user task. Halts the task cleanly when exceeded.</span>
+      </div>
+      <input
+        type="number"
+        class="input-sm"
+        min="0"
+        step="5000"
+        value={$settings.model.max_tokens_per_task}
+        onchange={(e) => settings.updateSection("model", { max_tokens_per_task: parseInt((e.target as HTMLInputElement).value, 10) || 0 })}
+      />
+    </div>
+
+    <div class="setting-row">
+      <div class="setting-info">
+        <span class="setting-label">Per-task USD cap</span>
+        <span class="setting-desc">Cumulative USD cap per task. Useful for bounding cloud spend on autonomous loops.</span>
+      </div>
+      <input
+        type="number"
+        class="input-sm"
+        min="0"
+        step="0.01"
+        value={$settings.model.max_usd_per_task}
+        onchange={(e) => settings.updateSection("model", { max_usd_per_task: parseFloat((e.target as HTMLInputElement).value) || 0 })}
+      />
+    </div>
+
+    <div class="setting-row">
+      <div class="setting-info">
+        <span class="setting-label">Failure threshold</span>
+        <span class="setting-desc">Circuit breaker trips after this many consecutive action failures in a task.</span>
+      </div>
+      <input
+        type="number"
+        class="input-sm"
+        min="1"
+        max="20"
+        step="1"
+        value={$settings.model.max_consecutive_failures}
+        onchange={(e) => settings.updateSection("model", { max_consecutive_failures: parseInt((e.target as HTMLInputElement).value, 10) || 1 })}
+      />
+    </div>
+  </section>
+
   <!--Adding a reset button to clear all settings and return to defaults, with a confirmation prompt to prevent accidental resets -->
   <section class="settings-group">
     <h3>{$_('settings.reset_header')}</h3>
