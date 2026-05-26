@@ -18,7 +18,7 @@ use battery::Manager as BatteryManager;
 struct DaemonProcess(Mutex<Option<Child>>);
 fn get_app_data_dir() -> std::path::PathBuf {
     let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
-    home.join(".heliox-os")
+    home.join(".config").join("heliox-os")
 }
 fn get_venv_python() -> std::path::PathBuf {
     let venv_dir = get_app_data_dir().join("env");

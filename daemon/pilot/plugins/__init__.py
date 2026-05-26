@@ -45,7 +45,7 @@ WASM plugin manifest (JSON):
 }
 
 Plugin directory structure:
-  ~/.heliox/plugins/
+  ~/.config/heliox-os/plugins/
     docker-agent/
       manifest.json
       plugin.ed25519.pub
@@ -80,6 +80,8 @@ from typing import Any
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+from pilot.config import PLUGINS_DIR
 
 logger = logging.getLogger("pilot.plugins")
 
@@ -246,8 +248,8 @@ class PluginRegistry:
     """Discovers, loads, and manages Heliox OS plugins.
 
     Plugins are discovered from:
-      1. ~/.heliox/plugins/     (user plugins)
-      2. <data_dir>/plugins/    (system plugins)
+      1. <config_dir>/plugins/     (user plugins, from PLUGINS_DIR)
+      2. <data_dir>/plugins/       (system plugins)
 
     Both Python and WASM plugins are supported. WASM plugins require the
     optional `wasmtime` package (pip install pilot-daemon[wasm]).
@@ -268,9 +270,8 @@ class PluginRegistry:
         self._wasm_plugins: dict[str, Any] = {}  # name -> WasmPlugin
 
         # Add default plugin directories
-        home_plugins = Path.home() / ".heliox" / "plugins"
-        if home_plugins not in self._plugin_dirs:
-            self._plugin_dirs.insert(0, home_plugins)
+        if PLUGINS_DIR not in self._plugin_dirs:
+            self._plugin_dirs.insert(0, PLUGINS_DIR)
 
     def discover(self) -> int:
         """Scan plugin directories and load manifests. Returns count of loaded plugins."""

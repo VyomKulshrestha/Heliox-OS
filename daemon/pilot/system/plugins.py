@@ -19,6 +19,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from pilot.config import PLUGINS_DIR
+
 logger = logging.getLogger("pilot.system.plugins")
 
 
@@ -50,7 +52,7 @@ class PluginAction:
 class PluginManager:
     """Manages plugin discovery, loading, and execution."""
 
-    DEFAULT_PLUGIN_DIR = os.path.expanduser("~/.config/heliox-os/plugins")
+    DEFAULT_PLUGIN_DIR = str(PLUGINS_DIR)
 
     def __init__(self, plugin_dirs: list[str] | None = None):
         self._plugin_dirs = plugin_dirs or [self.DEFAULT_PLUGIN_DIR]
@@ -238,7 +240,7 @@ class PluginManager:
         example.write_text('''"""Example Pilot Plugin — Hello World.
 
 This shows how to create a custom plugin for Pilot.
-Place .py files in ~/.pilot/plugins/ and they'll be auto-discovered.
+Place .py files in the configured plugins directory and they'll be auto-discovered.
 
 Functions prefixed with 'action_' automatically become available actions.
 """
@@ -290,7 +292,7 @@ async def plugin_list() -> str:
         _manager.load_all()
         plugins = _manager.list_plugins()
     if not plugins:
-        return "No plugins found. Place .py files in ~/.pilot/plugins/"
+        return f"No plugins found. Place .py files in {PLUGINS_DIR}/"
     return json.dumps(plugins, indent=2)
 
 

@@ -43,10 +43,12 @@ def _default_runtime_dir() -> Path:
     return Path(tmp) / f"pilot-runtime-{uid}"
 
 
-CONFIG_DIR = _xdg("XDG_CONFIG_HOME", ".config") / "pilot"
-DATA_DIR = _xdg("XDG_DATA_HOME", ".local/share") / "pilot"
-STATE_DIR = _xdg("XDG_STATE_HOME", ".local/state") / "pilot"
-RUNTIME_DIR = _default_runtime_dir()
+CONFIG_DIR = _xdg("XDG_CONFIG_HOME", ".config") / "heliox-os"
+DATA_DIR = _xdg("XDG_DATA_HOME", ".local/share") / "heliox-os"
+STATE_DIR = _xdg("XDG_STATE_HOME", ".local/state") / "heliox-os"
+RUNTIME_DIR = (
+    Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid() if hasattr(os, 'getuid') else 1000}")) / "heliox-os"
+)
 CONFIG_FILE = CONFIG_DIR / "config.toml"
 RESTRICTIONS_FILE = CONFIG_DIR / "restrictions.toml"
 DB_FILE = DATA_DIR / "pilot.db"
@@ -54,6 +56,11 @@ AUDIT_FILE = DATA_DIR / "audit.jsonl"
 PERMISSION_AUDIT_DB_FILE = DATA_DIR / "permission_audit.db"
 PERMISSION_AUDIT_KEY_FILE = DATA_DIR / "permission_audit.key"
 LOG_FILE = STATE_DIR / "pilot.log"
+
+# Derived directories shared across modules — use these instead of hardcoded paths
+PLUGINS_DIR = CONFIG_DIR / "plugins"
+SCREENSHOTS_DIR = DATA_DIR / "screenshots"
+PERSONA_FILE = DATA_DIR / "persona.md"
 
 
 @dataclass
@@ -501,7 +508,7 @@ def _config_to_dict(config: PilotConfig) -> dict[str, Any]:
 
 def ensure_dirs() -> None:
     """Create all required XDG directories and validate write access."""
-    for d in (CONFIG_DIR, DATA_DIR, STATE_DIR, RUNTIME_DIR):
+    for d in (CONFIG_DIR, DATA_DIR, STATE_DIR, RUNTIME_DIR, PLUGINS_DIR, SCREENSHOTS_DIR):
         d.mkdir(parents=True, exist_ok=True)
 
     test_file = DATA_DIR / ".write_test"
@@ -512,3 +519,51 @@ def ensure_dirs() -> None:
     except Exception as e:
         logger.error(f"DATA_DIR is not writable: {DATA_DIR}")
         raise RuntimeError(f"DATA_DIR is not writable: {DATA_DIR}") from e
+
+
+def migrate_old_paths() -> None:
+    """Migrate data from old hardcoded path conventions to the new canonical layout.
+
+    Old paths migrated:
+      ~/.heliox/plugins/       → PLUGINS_DIR
+      ~/.heliox/screenshots/   → SCREENSHOTS_DIR
+      ~/.heliox/persona.md     → PERSONA_FILE
+      ~/.config/pilot/         → CONFIG_DIR (config only, non-destructive)
+    """
+    home = Path.home()
+    old_pairs: list[tuple[Path, Path]] = []
+
+    old_heliox_plugins = home / ".heliox" / "plugins"
+    if old_heliox_plugins.exists() and old_heliox_plugins.is_dir():
+        old_pairs.append((old_heliox_plugins, PLUGINS_DIR))
+
+    old_heliox_screenshots = home / ".heliox" / "screenshots"
+    if old_heliox_screenshots.exists() and old_heliox_screenshots.is_dir():
+        old_pairs.append((old_heliox_screenshots, SCREENSHOTS_DIR))
+
+    old_persona = home / ".heliox" / "persona.md"
+    if old_persona.exists() and old_persona.is_file():
+        old_pairs.append((old_persona, PERSONA_FILE))
+
+    old_config_pilot = home / ".config" / "pilot"
+    if old_config_pilot.exists() and old_config_pilot.is_dir():
+        old_pairs.append((old_config_pilot, CONFIG_DIR))
+
+    for src, dst in old_pairs:
+        if dst.exists():
+            logger.info("Migration: skipping %s → %s (destination already exists)", src, dst)
+            continue
+        try:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            if src.is_file():
+                src.rename(dst)
+            else:
+                dst.mkdir(parents=True, exist_ok=True)
+                for item in src.iterdir():
+                    target = dst / item.name
+                    if not target.exists():
+                        item.rename(target)
+                src.rmdir()
+            logger.info("Migration: moved %s → %s", src, dst)
+        except OSError as exc:
+            logger.warning("Migration: could not move %s → %s: %s", src, dst, exc)
