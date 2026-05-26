@@ -550,9 +550,16 @@ class PilotServer:
         try:
             from pilot.agents.screen_vision import ScreenVisionAgent
 
-            self._screen_vision = ScreenVisionAgent(model_router)
-            interval_seconds = self.config.screen_vision.capture_interval_seconds
-            asyncio.create_task(self._screen_vision.start(interval_seconds=interval_seconds, enable_describe=False))
+            sv_config = self.config.screen_vision
+            self._screen_vision = ScreenVisionAgent(
+                model_router,
+                capture_timeout_seconds=sv_config.capture_timeout_seconds,
+                max_consecutive_timeouts=sv_config.max_consecutive_timeouts,
+                auto_resume_after_seconds=sv_config.auto_resume_after_seconds,
+            )
+            asyncio.create_task(
+                self._screen_vision.start(interval_seconds=sv_config.capture_interval_seconds, enable_describe=False)
+            )
             logger.info("ScreenVisionAgent auto-started (every %.1fs, JARVIS mode)", interval_seconds)
         except Exception:
             logger.warning("ScreenVisionAgent init failed (non-critical)", exc_info=True)
