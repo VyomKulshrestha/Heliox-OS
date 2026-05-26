@@ -132,6 +132,7 @@ async def test_breaker_trips_after_repeated_failures(orchestrator_with_breaker):
 
     def failed_result(a):
         return ActionResult(action=a, success=False, error="boom")
+
     agent = _stub_agent(results=[failed_result(plan.actions[0])])
     # Use side_effect so each call returns a fresh failed result for its own action
     agent.handle_task = AsyncMock(
@@ -172,6 +173,7 @@ async def test_success_resets_breaker_counter(orchestrator_with_breaker):
 
     def bad(a):
         return ActionResult(action=a, success=False, error="boom")
+
     agent = _stub_agent()
     agent.handle_task = AsyncMock(
         side_effect=[
@@ -204,6 +206,7 @@ async def test_breaker_reset_on_task_end(orchestrator_with_breaker):
 
     def bad(a):
         return ActionResult(action=a, success=False, error="boom")
+
     agent = _stub_agent()
     agent.handle_task = AsyncMock(
         side_effect=[
@@ -235,6 +238,7 @@ async def test_breaker_tripped_broadcast(orchestrator_with_breaker):
 
     def bad(a):
         return ActionResult(action=a, success=False, error="boom")
+
     agent = _stub_agent()
     agent.handle_task = AsyncMock(
         side_effect=[
