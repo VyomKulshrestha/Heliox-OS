@@ -25,7 +25,17 @@ from pilot.agents.base_agent import (
     BaseAgent,
 )
 
+import uuid
+
+from pilot.models.budget_tracker import (
+    ActionBudgetExceededError,
+    BudgetExceededError,
+    TaskBudgetExceededError,
+    current_task_id,
+)
+
 if TYPE_CHECKING:
+    from pilot.models.budget_tracker import BudgetTracker
     from pilot.models.router import ModelRouter
 
 logger = logging.getLogger("pilot.agents.orchestrator")
@@ -48,6 +58,11 @@ class AgentOrchestrator:
         self._action_registry: dict[ActionType, AgentRole] = {}
         self._message_log: list[AgentMessage] = []
         self._broadcast_fn: Callable[..., Coroutine] | None = None
+        self._budget_tracker: BudgetTracker | None = None
+
+    def set_budget_tracker(self, tracker: BudgetTracker) -> None:
+        """Inject the budget tracker. Called by server.py during startup."""
+        self._budget_tracker = tracker
 
     # ── Agent Registration ──
 
@@ -165,7 +180,43 @@ class AgentOrchestrator:
         For single-agent tasks, delegates directly.
         For multi-agent tasks, runs agents sequentially (preserving action order)
         while allowing each agent to process its batch in parallel internally.
+
+        Establishes a per-task budget context: generates a task_id (or uses
+        plan_id if provided), starts a TaskBudget in the tracker, and threads
+        the id through via the current_task_id ContextVar so downstream model
+        calls and record_usage attribute their tokens to this task. The task
+        is cleaned up in a finally block regardless of how execution ends.
         """
+        task_id = plan_id or str(uuid.uuid4())
+        ctx_token = current_task_id.set(task_id)
+        if self._budget_tracker:
+            self._budget_tracker.start_task(task_id)
+
+        try:
+            return await self._execute_plan_inner(
+                user_input=user_input,
+                plan=plan,
+                task_id=task_id,
+                on_action_start=on_action_start,
+                on_action_complete=on_action_complete,
+                cancel_event=cancel_event,
+            )
+        finally:
+            if self._budget_tracker:
+                self._budget_tracker.end_task(task_id)
+            current_task_id.reset(ctx_token)
+
+    async def _execute_plan_inner(
+        self,
+        user_input: str,
+        plan: ActionPlan,
+        task_id: str,
+        on_action_start: Callable | None,
+        on_action_complete: Callable | None,
+        cancel_event: asyncio.Event | None,
+    ) -> list[ActionResult]:
+        """Inner execution loop — extracted so the task lifecycle wrapper
+        in execute_plan() stays small and the try/finally is obvious."""
         routing = self.analyze_plan(plan)
         all_results: list[ActionResult | None] = [None] * len(plan.actions)
 
@@ -209,8 +260,44 @@ class AgentOrchestrator:
                 for action in batch_actions:
                     await on_action_start(action)
 
-            # Execute via the specialist agent
-            results = await agent.handle_task(user_input, sub_plan)
+            # Execute via the specialist agent. Wrap with budget exception
+            # handling: if a per-action / per-task / monthly cap fires inside
+            # the agent's LLM calls, we halt the plan cleanly instead of
+            # letting the exception escape and leave the task in limbo.
+            try:
+                results = await agent.handle_task(user_input, sub_plan)
+            except (
+                ActionBudgetExceededError,
+                TaskBudgetExceededError,
+                BudgetExceededError,
+            ) as exc:
+                logger.warning(
+                    "Budget exhausted mid-plan (task_id=%s): %s",
+                    task_id, exc,
+                )
+                if self._broadcast_fn:
+                    await self._broadcast_fn(
+                        "budget_exceeded",
+                        {
+                            "task_id": task_id,
+                            "error": str(exc),
+                            "error_type": exc.__class__.__name__,
+                        },
+                    )
+                # Mark every still-unresolved action in this batch as failed
+                # with a budget-specific error so downstream consumers can
+                # distinguish budget halts from action failures.
+                for idx in indices:
+                    if all_results[idx] is None:
+                        all_results[idx] = ActionResult(
+                            action=plan.actions[idx],
+                            success=False,
+                            error=f"Budget exceeded: {exc}",
+                        )
+                # Halt subsequent batches.
+                if cancel_event:
+                    cancel_event.set()
+                break
 
             # Map results back to original indices
             for idx, result in zip(indices, results):
