@@ -48,7 +48,7 @@ class ModelRouter:
 
         # Prevent local LLM overload from concurrent inference calls
         self._local_llm_semaphore = asyncio.Semaphore(2)
-        self._local_llm_timeout = 120
+        self._local_llm_timeout = 300  # 5 min — local LLMs can be slow on large prompts
 
     async def initialize(self) -> None:
         """Initialize the cache. Must be called before using generate()."""
