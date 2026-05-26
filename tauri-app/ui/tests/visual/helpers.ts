@@ -27,6 +27,13 @@ export async function mockTauriIpc(page: Page): Promise<void> {
     };
     Math.random = mulberry32(12345);
 
+    // Mock Date.now to return a deterministic incrementing time to stabilize animations/timers
+    let mockTime = 1716768000000;
+    Date.now = () => {
+      mockTime += 100;
+      return mockTime;
+    };
+
     // Minimal Tauri v2 internals stub
     (window as any).__TAURI_INTERNALS__ = {
       invoke: async (_cmd: string, _args?: unknown) => null,
