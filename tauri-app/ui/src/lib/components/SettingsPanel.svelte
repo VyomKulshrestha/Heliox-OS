@@ -423,6 +423,20 @@
     </div>
   </section>
 
+  <section class="settings-group">
+    <h3>Data & Export</h3>
+    <div class="setting-row">
+      <div class="setting-info">
+        <span class="setting-label">Export Chat History</span>
+        <span class="setting-desc">Save the current session history and tool logs to your Downloads folder.</span>
+      </div>
+      <div class="btn-group">
+        <button onclick={() => session.exportChat("markdown")}>Markdown</button>
+        <button onclick={() => session.exportChat("json")}>JSON</button>
+      </div>
+    </div>
+  </section>
+
   <!--Adding a reset button to clear all settings and return to defaults, with a confirmation prompt to prevent accidental resets -->
   <section class="settings-group">
     <h3>{$_('settings.reset_header')}</h3>

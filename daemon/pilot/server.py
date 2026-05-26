@@ -1877,8 +1877,8 @@ class PilotServer:
         fmt = str(params.get("format", "json")).lower()
         messages = params.get("messages", [])
 
-        if fmt not in {"json", "csv"}:
-            return {"status": "error", "message": "format must be 'json' or 'csv'"}
+        if fmt not in {"json", "csv", "markdown", "md"}:
+            return {"status": "error", "message": "format must be 'json', 'csv', or 'markdown'"}
         if not isinstance(messages, list):
             return {"status": "error", "message": "messages must be a list"}
 
@@ -1893,6 +1893,29 @@ class PilotServer:
         try:
             if fmt == "json":
                 out_path.write_text(json.dumps(messages, ensure_ascii=False, indent=2), encoding="utf-8")
+            elif fmt in ("markdown", "md"):
+                lines = ["# Heliox Session Export", f"**Date:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", ""]
+                for m in messages:
+                    if not isinstance(m, dict):
+                        continue
+                    msg_type = str(m.get("type", "unknown")).upper()
+                    text = str(m.get("text", "")).strip()
+                    lines.append(f"### {msg_type}")
+                    if text:
+                        lines.append(text)
+                    plan = m.get("plan")
+                    if isinstance(plan, dict) and plan.get("explanation"):
+                        lines.append(f"\n**Plan:** {plan['explanation']}")
+                    ar = m.get("actionResults")
+                    if isinstance(ar, list) and ar:
+                        lines.append("\n**Action Results:**\n```")
+                        for r in ar:
+                            if isinstance(r, dict):
+                                out = r.get("output") or r.get("error") or ""
+                                lines.append(str(out).strip())
+                        lines.append("```")
+                    lines.append("\n---")
+                out_path.write_text("\n".join(lines), encoding="utf-8")
             else:
                 with out_path.open("w", newline="", encoding="utf-8") as f:
                     writer = csv.writer(f)
