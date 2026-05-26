@@ -10,13 +10,16 @@ from pilot.system.filesystem import directory_summary
 @pytest.mark.asyncio
 async def test_directory_summary_includes_tree_and_file_sizes(tmp_path):
     (tmp_path / "src").mkdir()
-    (tmp_path / "src" / "main.py").write_text("print('hello')\n", encoding="utf-8")
-    (tmp_path / "README.md").write_text("Project readme", encoding="utf-8")
+    # Use write_bytes to guarantee a deterministic on-disk size across all platforms.
+    # write_text in text mode converts \n to \r\n on Windows, making the file 16 B
+    # there but 15 B on macOS and Linux, causing the assertion to fail on Unix systems.
+    (tmp_path / "src" / "main.py").write_bytes(b"print('hello')\n")
+    (tmp_path / "README.md").write_bytes(b"Project readme")
 
     summary = await directory_summary(str(tmp_path))
 
     assert "src/" in summary
-    assert "main.py (16 B)" in summary
+    assert "main.py (15 B)" in summary
     assert "README.md (14 B)" in summary
 
 
