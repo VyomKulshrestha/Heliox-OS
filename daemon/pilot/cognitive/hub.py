@@ -329,7 +329,7 @@ class CognitiveHub:
        else:    
           surface["anchors"] = list(surface["anchors"]) + clipboard_buffer.get_history()
 
-       return surface
+        return surface
 
     def create_anchor(
         self,
