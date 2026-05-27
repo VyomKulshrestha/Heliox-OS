@@ -2,6 +2,7 @@
   import { session } from "../stores/session";
   import { invoke } from "@tauri-apps/api/core";
   import { getCurrentWebview } from "@tauri-apps/api/webview";
+  import { call } from "../api/daemon";
 
   let input = $state("");
   const MAX_CHARS = 20000;
@@ -144,6 +145,11 @@
             content = await invoke("extract_file_text", { path });
           } catch (err) {
             console.warn(`Failed to extract text from ${file.name}:`, err);
+          const res = (await call("extract_file_text", { path })) as Record<string, unknown>;
+          if (res && res.status === "ok" && typeof res.text === "string") {
+            content = res.text;
+          } else {
+            console.warn(`Failed to extract text from ${file.name}:`, res?.message);
             continue;
           }
         } else {
