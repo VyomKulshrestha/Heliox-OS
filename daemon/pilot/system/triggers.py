@@ -297,7 +297,7 @@ class TriggerEngine:
             psutil = None
 
         try:
-            result = eval(expr, {"__builtins__": {}, "psutil": psutil, "os": os, "time": time})
+            result = eval(expr, {"__builtins__": {}, "psutil": psutil, "time": time})
             return bool(result)
         except Exception as e:
             logger.warning("Custom condition eval error: %s", e)

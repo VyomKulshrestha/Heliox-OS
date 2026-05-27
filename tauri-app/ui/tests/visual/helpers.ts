@@ -16,12 +16,34 @@ import type { Page } from "@playwright/test";
  */
 export async function mockTauriIpc(page: Page): Promise<void> {
   await page.addInitScript(() => {
+    // Seed Math.random using mulberry32 to make all random layouts (like canvas nodes) completely deterministic
+    const mulberry32 = (a: number) => {
+      return () => {
+        let t = a += 0x6D2B79F5;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    };
+    Math.random = mulberry32(12345);
+
+    // Mock Date.now to return a deterministic incrementing time to stabilize animations/timers
+    let mockTime = 1716768000000;
+    Date.now = () => {
+      mockTime += 100;
+      return mockTime;
+    };
+
     // Minimal Tauri v2 internals stub
     (window as any).__TAURI_INTERNALS__ = {
       invoke: async (_cmd: string, _args?: unknown) => null,
       transformCallback: (cb: Function) => cb,
       convertFileSrc: (src: string) => src,
     };
+
+    // Stub requestAnimationFrame and cancelAnimationFrame to freeze canvas animations
+    (window as any).requestAnimationFrame = () => 999;
+    (window as any).cancelAnimationFrame = () => {};
 
     // Stub the plugin APIs used by the app
     (window as any).__TAURI__ = {
@@ -34,15 +56,17 @@ export async function mockTauriIpc(page: Page): Promise<void> {
     };
 
     // Mock WebSocket to simulate daemon connection and intercept messages
-    const OrigWS = window.WebSocket;
-    (window as any).WebSocket = class extends OrigWS {
+    (window as any).WebSocket = class {
+      static OPEN = 1;
+      static CLOSED = 3;
+
       onopen: any;
       onmessage: any;
       onerror: any;
       onclose: any;
+      readyState = 1; // WebSocket.OPEN
       
       constructor(url: string, protocols?: string | string[]) {
-        super("ws://localhost:0", protocols); // no-op URL
         (window as any).__mock_ws__ = this;
         
         // Auto-connect after a tiny delay
@@ -57,6 +81,7 @@ export async function mockTauriIpc(page: Page): Promise<void> {
       }
       
       close() {
+        this.readyState = 3; // WebSocket.CLOSED
         if (this.onclose) this.onclose(new Event("close"));
       }
     };

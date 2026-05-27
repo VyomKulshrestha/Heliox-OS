@@ -218,10 +218,65 @@ class KeyVault:
 
     @staticmethod
     def _get_machine_id() -> str:
-        """Read machine-id as a stable per-machine secret."""
+        """Read a stable per-machine identifier used as the KDF passphrase.
+
+        Tries platform-specific sources in order of preference:
+          - Linux: /etc/machine-id or /var/lib/dbus/machine-id
+          - macOS: IOPlatformUUID from ioreg
+          - Windows: MachineGuid from the Cryptography registry key
+
+        Falls back to a hardcoded constant only when no platform source
+        is reachable. The fallback weakens machine-binding (any attacker
+        who obtains the vault file can attempt decryption with the known
+        constant), so users on platforms where the fallback is hit should
+        prefer the system-keyring backend instead.
+        """
+        import platform
+        import subprocess
+
+        # Linux: standard machine-id files written by systemd / D-Bus.
         for path in ("/etc/machine-id", "/var/lib/dbus/machine-id"):
             try:
-                return Path(path).read_text().strip()
+                value = Path(path).read_text().strip()
+                if value:
+                    return value
             except OSError:
                 continue
+
+        system = platform.system()
+
+        # macOS: IOPlatformUUID is stable across reboots and unique per device.
+        if system == "Darwin":
+            try:
+                result = subprocess.run(
+                    ["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                for line in result.stdout.splitlines():
+                    if "IOPlatformUUID" in line:
+                        parts = line.split('"')
+                        if len(parts) >= 2:
+                            uuid = parts[-2].strip()
+                            if uuid:
+                                return uuid
+            except Exception:
+                pass
+
+        # Windows: MachineGuid written by Windows Setup; unique per installation.
+        if system == "Windows":
+            try:
+                import winreg  # available only on Windows
+
+                with winreg.OpenKey(
+                    winreg.HKEY_LOCAL_MACHINE,
+                    r"SOFTWARE\Microsoft\Cryptography",
+                ) as key:
+                    guid, _ = winreg.QueryValueEx(key, "MachineGuid")
+                    if guid:
+                        return str(guid)
+            except Exception:
+                pass
+
         return "pilot-fallback-id"

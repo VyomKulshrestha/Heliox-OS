@@ -2,7 +2,7 @@
 
 When a plugin is loaded locally it is broadcast to all connected peers.
 When a peer sends a plugin payload it is validated and installed into
-``~/.config/heliox-os/plugins/`` via the existing ``PluginManager``.
+``PLUGINS_DIR`` (from ``pilot.config``) via the existing ``PluginManager``.
 
 Security model
 --------------
@@ -24,6 +24,8 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from pilot.config import PLUGINS_DIR
+
 if TYPE_CHECKING:
     from pilot.network.mesh import HelioxMesh
 
@@ -40,12 +42,12 @@ class SkillSync:
     mesh:
         The ``HelioxMesh`` instance used to broadcast to peers.
     plugin_base_dir:
-        Base directory for plugins (default: ``~/.config/heliox-os/plugins``).
+        Base directory for plugins (default: ``PLUGINS_DIR`` from ``pilot.config``).
     """
 
     def __init__(self, mesh: HelioxMesh, plugin_base_dir: str | None = None) -> None:
         self._mesh = mesh
-        base = Path(plugin_base_dir or Path.home() / ".config" / "heliox-os" / "plugins")
+        base = Path(plugin_base_dir or PLUGINS_DIR)
         self._peer_dir = base / _PEER_PLUGIN_SUBDIR
         self._peer_dir.mkdir(parents=True, exist_ok=True)
 

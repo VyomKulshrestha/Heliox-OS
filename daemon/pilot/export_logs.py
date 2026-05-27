@@ -7,6 +7,8 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
+from pilot.config import CONFIG_FILE, LOG_FILE, STATE_DIR
+
 
 def _redact_config(config_text: str) -> str:
     """Redact API keys and secrets from config before including in zip."""
@@ -25,8 +27,8 @@ def export_logs() -> Path:
     desktop.mkdir(parents=True, exist_ok=True)
     zip_path = desktop / f"heliox_bugreport_{timestamp}.zip"
 
-    log_dir = Path.home() / ".local" / "share" / "heliox" / "logs"
-    config_file = Path.home() / ".config" / "pilot" / "config.toml"
+    log_dir = STATE_DIR
+    config_file = CONFIG_FILE
 
     files_added = 0
 

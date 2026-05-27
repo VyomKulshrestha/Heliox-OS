@@ -3,7 +3,7 @@ import { call, connect, isConnected, onNotification, listenToLLMStream } from ".
 import { settings } from "./settings";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 
-export type MessageType = "user" | "system" | "error" | "plan" | "result" | "assistant";
+export type MessageType = "user" | "system" | "error" | "plan" | "result" | "assistant" | "git_conflict";
 
 // 1. Definition interfaces for structuring session data models
 export interface PlanAction {
@@ -35,6 +35,19 @@ export interface Plan {
   dry_run?: boolean;
 }
 
+export interface GitConflictBlock {
+  path: string;
+  original_hunk: string;
+  conflict_hunk: string;
+  proposed_resolution_code: string;
+  full_block: string;
+}
+
+export interface GitConflictPayload {
+  status: string;
+  conflicts: GitConflictBlock[];
+}
+
 export interface Message {
   type: MessageType;
   text: string;
@@ -42,6 +55,7 @@ export interface Message {
   plan?: Plan;
   actionResults?: ActionResultData[];
   verification?: VerificationData;
+  gitConflict?: GitConflictPayload;
 }
 
 export interface LiveActionState {
@@ -50,6 +64,15 @@ export interface LiveActionState {
   status: "pending" | "running" | "success" | "error";
   output?: string;
   error?: string;
+}
+
+export interface BudgetInfo {
+  exceeded: boolean;
+  errorType: string;   // "ActionBudgetExceededError" | "TaskBudgetExceededError" | "BudgetExceededError" | "CircuitBreakerOpenError"
+  message: string;
+  taskId: string;
+  failureCount?: number;  // populated for circuit-breaker events
+  timestamp: number;
 }
 
 interface SessionState {
@@ -65,6 +88,7 @@ interface SessionState {
   totalTokens: number;
   estimatedCost: number;
   streamingText: string;
+  budget: BudgetInfo | null;
 }
 
 export interface Attachment {
@@ -86,6 +110,7 @@ const initialState: SessionState = {
   totalTokens: 0,
   estimatedCost: 0,
   streamingText: "",
+  budget: null,
 };
 
 const MODEL_RATES: Record<string, number> = {
@@ -241,6 +266,53 @@ function createSession() {
       case "task_complete":
         void notifyTaskComplete(p);
         break;
+
+      case "budget_exceeded":
+        update((s) => ({
+          ...s,
+          budget: {
+            exceeded: true,
+            errorType: String(p.error_type ?? "BudgetExceededError"),
+            message: String(p.error ?? "Budget exceeded"),
+            taskId: String(p.task_id ?? ""),
+            timestamp: Date.now(),
+          },
+          loading: false,
+          phase: "",
+          messages: [
+            ...s.messages,
+            {
+              type: "error" as MessageType,
+              text: `Budget halt: ${String(p.error ?? "limit reached")}`,
+              timestamp: Date.now(),
+            },
+          ],
+        }));
+        break;
+
+      case "circuit_breaker_tripped":
+        update((s) => ({
+          ...s,
+          budget: {
+            exceeded: true,
+            errorType: "CircuitBreakerOpenError",
+            message: String(p.error ?? "Circuit breaker tripped"),
+            taskId: String(p.task_id ?? ""),
+            failureCount: Number(p.failure_count ?? 0),
+            timestamp: Date.now(),
+          },
+          loading: false,
+          phase: "",
+          messages: [
+            ...s.messages,
+            {
+              type: "error" as MessageType,
+              text: `Circuit breaker tripped after ${p.failure_count ?? "several"} consecutive failures. ${String(p.error ?? "")}`,
+              timestamp: Date.now(),
+            },
+          ],
+        }));
+        break;
     }
   });
 
@@ -286,6 +358,67 @@ function createSession() {
     input: string,
     attachments: Attachment[] = []
   ) {
+    if (input.startsWith("/git-resolve ") || input.startsWith("git-resolve ")) {
+      const filepath = input.replace(/^(\/)?git-resolve\s+/, "").trim();
+      update((s) => ({
+        ...s,
+        loading: true,
+        phase: "detecting conflicts",
+        messages: [
+          ...s.messages,
+          { type: "user", text: input, timestamp: Date.now() },
+        ],
+      }));
+      try {
+        const res = (await call("resolve_git_conflict", { filepath })) as any;
+        if (res.status === "success" && res.conflicts && res.conflicts.length > 0) {
+          update((s) => ({
+            ...s,
+            loading: false,
+            phase: "",
+            messages: [
+              ...s.messages,
+              {
+                type: "git_conflict",
+                text: `Found ${res.conflicts.length} git conflicts in ${filepath}`,
+                timestamp: Date.now(),
+                gitConflict: res,
+              },
+            ],
+          }));
+        } else {
+          update((s) => ({
+            ...s,
+            loading: false,
+            phase: "",
+            messages: [
+              ...s.messages,
+              {
+                type: "system",
+                text: res.message || `No git conflict markers found in ${filepath}`,
+                timestamp: Date.now(),
+              },
+            ],
+          }));
+        }
+      } catch (err) {
+        update((s) => ({
+          ...s,
+          loading: false,
+          phase: "",
+          messages: [
+            ...s.messages,
+            {
+              type: "error",
+              text: String(err instanceof Error ? err.message : err),
+              timestamp: Date.now(),
+            },
+          ],
+        }));
+      }
+      return;
+    }
+
     update((s) => ({
       ...s,
       loading: true,
@@ -455,7 +588,7 @@ function createSession() {
 
     call("confirm", { plan_id: planId, confirmed: accepted }).catch(() => { });
   }
-  async function exportChat(format: "json" | "csv") {
+  async function exportChat(format: "json" | "csv" | "markdown") {
     let msgs: Message[] = [];
     const unsub = subscribe((s) => {
       msgs = s.messages;
@@ -502,6 +635,10 @@ function createSession() {
 
   init();
 
+  function acknowledgeBudgetEvent() {
+    update((s) => ({ ...s, budget: null }));
+  }
+
   return {
     subscribe,
     sendCommand,
@@ -510,6 +647,7 @@ function createSession() {
     addSystemMessage,
     clearMessages,
     resetUsage,
+    acknowledgeBudgetEvent,
   };
 }
 
