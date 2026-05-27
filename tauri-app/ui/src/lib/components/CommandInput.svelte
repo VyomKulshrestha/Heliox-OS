@@ -1,5 +1,7 @@
 <script lang="ts">
   import { session } from "../stores/session";
+  import { invoke } from "@tauri-apps/api/core";
+  import { getCurrentWebview } from "@tauri-apps/api/webview";
 
   let input = $state("");
   const MAX_CHARS = 20000;
@@ -23,9 +25,51 @@
   let attachments = $state<Attachment[]>([]);
   let isDragging = $state(false);
 
-  const MAX_FILE_SIZE = 500 * 1024;
+  const MAX_FILE_SIZE = 15 * 1024 * 1024;
 
   const ALLOWED_TEXT_TYPES = ["text/plain", "text/markdown", "application/json", "application/xml"];
+
+  $effect(() => {
+    let unlisten: () => void;
+    
+    // Attempt to register Tauri native drag/drop listener (WebView API)
+    async function setupTauri() {
+      try {
+        unlisten = await getCurrentWebview().onDragDropEvent(async (event) => {
+          const payload = event.payload;
+          
+          if (payload.type === "enter" || payload.type === "over") {
+            isDragging = true;
+          } else if (payload.type === "leave") {
+            isDragging = false;
+          } else if (payload.type === "drop") {
+            isDragging = false;
+            const paths = payload.paths || [];
+            
+            for (const path of paths) {
+              try {
+                // Extract filename
+                const filename = path.split('\\').pop()?.split('/').pop() || "unknown";
+                const content = await invoke("extract_file_text", { path });
+                
+                attachments = [...attachments, { name: filename, type: "file", content: content as string }];
+              } catch (err) {
+                console.warn(`Failed to extract text from ${path}:`, err);
+              }
+            }
+          }
+        });
+      } catch (e) {
+        // Not running in Tauri (e.g. browser), ignore gracefully
+      }
+    }
+    
+    setupTauri();
+
+    return () => {
+      if (unlisten) unlisten();
+    };
+  });
 
   function isTextLikeFile(file: File): boolean {
     return (
@@ -52,18 +96,30 @@
       handleSubmit(e);
     }
   }
+  let dragCounter = $state(0);
+
+  function handleDragEnter(e: DragEvent) {
+    e.preventDefault();
+    dragCounter++;
+    isDragging = true;
+  }
+
   function handleDragOver(e: DragEvent) {
     e.preventDefault();
-    isDragging = true;
   }
 
   function handleDragLeave(e: DragEvent) {
     e.preventDefault();
-    isDragging = false;
+    dragCounter--;
+    if (dragCounter <= 0) {
+      dragCounter = 0;
+      isDragging = false;
+    }
   }
 
   async function handleDrop(e: DragEvent) {
     e.preventDefault();
+    dragCounter = 0;
     isDragging = false;
 
     const droppedFiles = e.dataTransfer?.files;
@@ -77,18 +133,29 @@
           continue;
         }
 
-        if (!isTextLikeFile(file)) {
-          console.warn(`Skipping ${file.name}: unsupported file type`);
+        const path = (file as any).path;
+        let content = "";
+        let type = file.type;
+
+        if (isTextLikeFile(file)) {
+          content = await file.text();
+        } else if (path) {
+          try {
+            content = (await invoke("extract_file_text", { path })) as string;
+          } catch (err) {
+            console.warn(`Failed to extract text from ${file.name}:`, err);
+            continue;
+          }
+        } else {
+          console.warn(`Skipping ${file.name}: unsupported file type and no path available`);
           continue;
         }
-
-        const content = await file.text();
 
         attachments = [
           ...attachments,
           {
             name: file.name,
-            type: file.type,
+            type,
             content,
           },
         ];
@@ -98,6 +165,13 @@
     }
   }
 </script>
+
+<svelte:window
+  ondragenter={handleDragEnter}
+  ondragover={handleDragOver}
+  ondragleave={handleDragLeave}
+  ondrop={handleDrop}
+/>
 
 <form class="command-input" onsubmit={handleSubmit}>
   {#if attachments.length}
@@ -113,9 +187,6 @@
   <div
     class="input-wrapper"
     class:dragging={isDragging}
-    ondragover={handleDragOver}
-    ondragleave={handleDragLeave}
-    ondrop={handleDrop}
   >
     <span class="prompt">&gt;</span>
 
