@@ -128,6 +128,9 @@ class VoiceConfig:
 @dataclass
 class ScreenVisionConfig:
     capture_interval_seconds: float = 3.0
+    capture_timeout_seconds: float = 10.0
+    max_consecutive_timeouts: int = 3
+    auto_resume_after_seconds: float = 30.0
 
 
 @dataclass
@@ -316,6 +319,9 @@ def _validate_config_types(raw: dict) -> None:
         },
         "screen_vision": {
             "capture_interval_seconds": (int, float),
+            "capture_timeout_seconds": (int, float),
+            "max_consecutive_timeouts": int,
+            "auto_resume_after_seconds": (int, float),
         },
         "memory": {
             "checkpoint_interval_seconds": int,
@@ -426,7 +432,10 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
     if "screen_vision" in raw:
         for k, v in raw["screen_vision"].items():
             if hasattr(config.screen_vision, k):
-                setattr(config.screen_vision, k, float(v))
+                if k == "max_consecutive_timeouts":
+                    setattr(config.screen_vision, k, int(v))
+                else:
+                    setattr(config.screen_vision, k, float(v))
 
     if "memory" in raw:
         for k, v in raw["memory"].items():
