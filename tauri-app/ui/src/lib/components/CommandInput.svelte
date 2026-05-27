@@ -1,5 +1,6 @@
 <script lang="ts">
   import { session } from "../stores/session";
+  import { call } from "../api/daemon";
 
   let input = $state("");
 
@@ -38,18 +39,30 @@
       handleSubmit(e);
     }
   }
+  let dragCounter = $state(0);
+
+  function handleDragEnter(e: DragEvent) {
+    e.preventDefault();
+    dragCounter++;
+    isDragging = true;
+  }
+
   function handleDragOver(e: DragEvent) {
     e.preventDefault();
-    isDragging = true;
   }
 
   function handleDragLeave(e: DragEvent) {
     e.preventDefault();
-    isDragging = false;
+    dragCounter--;
+    if (dragCounter <= 0) {
+      dragCounter = 0;
+      isDragging = false;
+    }
   }
 
   async function handleDrop(e: DragEvent) {
     e.preventDefault();
+    dragCounter = 0;
     isDragging = false;
 
     const droppedFiles = e.dataTransfer?.files;
@@ -63,18 +76,30 @@
           continue;
         }
 
-        if (!isTextLikeFile(file)) {
-          console.warn(`Skipping ${file.name}: unsupported file type`);
+        const path = (file as any).path;
+        let content = "";
+        let type = file.type;
+
+        if (isTextLikeFile(file)) {
+          content = await file.text();
+        } else if (path) {
+          const res = (await call("extract_file_text", { path })) as Record<string, unknown>;
+          if (res && res.status === "ok" && typeof res.text === "string") {
+            content = res.text;
+          } else {
+            console.warn(`Failed to extract text from ${file.name}:`, res?.message);
+            continue;
+          }
+        } else {
+          console.warn(`Skipping ${file.name}: unsupported file type and no path available`);
           continue;
         }
-
-        const content = await file.text();
 
         attachments = [
           ...attachments,
           {
             name: file.name,
-            type: file.type,
+            type,
             content,
           },
         ];
@@ -84,6 +109,13 @@
     }
   }
 </script>
+
+<svelte:window
+  ondragenter={handleDragEnter}
+  ondragover={handleDragOver}
+  ondragleave={handleDragLeave}
+  ondrop={handleDrop}
+/>
 
 <form class="command-input" onsubmit={handleSubmit}>
   {#if attachments.length}
@@ -99,9 +131,6 @@
   <div
     class="input-wrapper"
     class:dragging={isDragging}
-    ondragover={handleDragOver}
-    ondragleave={handleDragLeave}
-    ondrop={handleDrop}
   >
     <span class="prompt">&gt;</span>
     <input
