@@ -251,15 +251,16 @@ class CollabExecutor:
         if not available:
             return None
 
-        # Pick peer with lowest reported CPU load
-        best = min(
-            available,
-            key=lambda pid: (
-                self._mesh.get_connection(pid).peer_capabilities.cpu_load
-                if self._mesh.get_connection(pid) and self._mesh.get_connection(pid).peer_capabilities
-                else 1.0
-            ),
-        )
+        # Pick peer with the most available VRAM.
+        # If VRAM is tied, pick the one with the lowest CPU load.
+        def peer_priority(pid: str) -> tuple[int, float]:
+            conn = self._mesh.get_connection(pid)
+            if not conn or not conn.peer_capabilities:
+                return (0, 1.0)
+            caps = conn.peer_capabilities
+            return (caps.vram_free, -caps.cpu_load)
+
+        best = max(available, key=peer_priority)
         return best
 
 
