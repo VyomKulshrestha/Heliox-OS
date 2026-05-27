@@ -152,6 +152,18 @@ def _free_ram_bytes_psutil() -> int:
         return 0
 
 
+def get_available_vram() -> int:
+    """Return the amount of available VRAM in bytes.
+
+    If an NVIDIA GPU is present, returns free VRAM.
+    Otherwise, falls back to available system RAM.
+    """
+    vram = _free_vram_bytes_nvidia()
+    if vram is not None:
+        return vram
+    return _free_ram_bytes_psutil()
+
+
 def calculate_gpu_layers(
     model_path: Path | None,
     *,

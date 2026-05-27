@@ -36,6 +36,7 @@ import socket
 import uuid
 from typing import TYPE_CHECKING, Any
 
+from pilot.models.gpu_utils import get_available_vram
 from pilot.network.peer_connection import PeerCapabilities, PeerConnection
 
 if TYPE_CHECKING:
@@ -345,5 +346,6 @@ class HelioxMesh:
             hostname=socket.gethostname(),
             can_execute=self._config.collab_exec_enabled,
             cpu_load=cpu_load,
+            vram_free=get_available_vram(),
             plugin_names=plugins,
         )

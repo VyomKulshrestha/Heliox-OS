@@ -27,6 +27,8 @@ import uuid
 from dataclasses import dataclass
 from typing import Callable
 
+from pilot.models.gpu_utils import get_available_vram
+
 logger = logging.getLogger("pilot.network.peer_discovery")
 
 _ZEROCONF_AVAILABLE = False
@@ -49,6 +51,7 @@ class PeerInfo:
     host: str  # IPv4 address
     port: int  # P2P WebSocket port
     hostname: str = ""  # human-readable hostname
+    vram_free: int = 0  # available VRAM in bytes
 
 
 class PeerDiscovery:
@@ -91,6 +94,7 @@ class PeerDiscovery:
         # Register our own service
         hostname = socket.gethostname()
         local_ip = _get_local_ip()
+        vram_free = get_available_vram()
         service_name = f"helioxos-{self._instance_id}.{_SERVICE_TYPE}"
 
         self._service_info = ServiceInfo(
@@ -101,6 +105,7 @@ class PeerDiscovery:
             properties={
                 "id": self._instance_id.encode(),
                 "host": hostname.encode(),
+                "vram": str(vram_free).encode(),
             },
             server=f"{hostname}.local.",
         )
@@ -170,6 +175,8 @@ class PeerDiscovery:
             peer_id = peer_id_bytes.decode() if peer_id_bytes else name
             host_bytes = info.properties.get(b"host", b"")
             hostname = host_bytes.decode() if host_bytes else ""
+            vram_bytes = info.properties.get(b"vram", b"0")
+            vram_free = int(vram_bytes.decode()) if vram_bytes else 0
 
             # Skip ourselves
             if peer_id == self._instance_id:
@@ -181,9 +188,16 @@ class PeerDiscovery:
                 host=host,
                 port=info.port,
                 hostname=hostname,
+                vram_free=vram_free,
             )
             self._known_peers[peer_id] = peer
-            logger.info("PeerDiscovery: found peer %s @ %s:%d", peer_id, host, info.port)
+            logger.info(
+                "PeerDiscovery: found peer %s @ %s:%d (VRAM: %.1f MB)",
+                peer_id,
+                host,
+                info.port,
+                vram_free / 1024**2,
+            )
 
             if self.on_peer_found:
                 self.on_peer_found(peer)
