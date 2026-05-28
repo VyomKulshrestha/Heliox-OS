@@ -50,6 +50,7 @@ from __future__ import annotations
 import json
 import logging
 import struct
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -162,6 +163,9 @@ class WasmPlugin:
                 f"WASM module is missing required exports (alloc/dealloc/call_tool/memory): {exc}"
             ) from exc
 
+        timer = threading.Timer(self._config.timeout_secs, self._engine.increment_epoch)
+        timer.daemon = True
+        timer.start()
         try:
             # 1. Allocate input buffer inside WASM linear memory.
             req_ptr = alloc_fn(store, req_len)
@@ -191,6 +195,8 @@ class WasmPlugin:
             raise
         except Exception as exc:
             raise WasmRuntimeError(f"WASM tool call trapped or failed: {exc}") from exc
+        finally:
+            timer.cancel()
 
         try:
             return json.loads(payload)

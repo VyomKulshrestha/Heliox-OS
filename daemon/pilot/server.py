@@ -14,7 +14,7 @@ import sys
 import time
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -22,12 +22,16 @@ import aiosqlite
 import websockets
 from websockets.asyncio.server import Server, ServerConnection
 
-from pilot.config import DATA_DIR, DB_FILE, LOG_FILE, STATE_DIR, PilotConfig, ensure_dirs
+from pilot.config import DATA_DIR, DB_FILE, LOG_FILE, PLUGINS_DIR, STATE_DIR, PilotConfig, ensure_dirs
 from pilot.export_logs import export_logs
+from pilot.logger import ColorFormatter
 
 logger = logging.getLogger("pilot.server")
 
 CONFIRM_TIMEOUT_SECONDS = 300
+
+# ── Plan History DB path (sibling of the main DB) ──
+PLAN_HISTORY_DB_FILE = DATA_DIR / "plan_history.db"
 
 
 @dataclass
@@ -81,6 +85,239 @@ class PendingConfirmation:
     plan: Any = None
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Plan History Store
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class PlanHistoryStore:
+    """Append-only SQLite audit log for every ActionPlan executed by the daemon.
+
+    Schema (``plan_history`` table)
+    --------------------------------
+    plan_id             TEXT  PRIMARY KEY  — 8-char UUID prefix assigned in _handle_execute
+    created_at          TEXT              — ISO-8601 UTC timestamp of plan creation
+    raw_input           TEXT              — original user input string
+    plan_json           TEXT              — full ActionPlan serialised as JSON
+    action_count        INTEGER           — len(plan.actions)
+    critic_verdict_json TEXT  NULLABLE    — DestructiveCriticAgent verdict dict, or NULL
+    confirmation_decision TEXT            — 'approved' | 'denied' | 'skipped' |
+                                            'blocked_by_critic' | 'n/a' (dry-run)
+    execution_status    TEXT              — 'success' | 'partial_failure' | 'error' |
+                                            'cancelled' | 'dry_run'
+    results_json        TEXT  NULLABLE    — list[ActionResult.model_dump()] as JSON
+    verification_json   TEXT  NULLABLE    — VerificationResult.model_dump() as JSON
+    dry_run             INTEGER           — 1 if dry-run, 0 otherwise
+    duration_ms         INTEGER           — wall-clock ms from plan start to terminal state
+    """
+
+    _CREATE_TABLE = """
+    CREATE TABLE IF NOT EXISTS plan_history (
+        plan_id               TEXT    PRIMARY KEY,
+        created_at            TEXT    NOT NULL,
+        raw_input             TEXT    NOT NULL,
+        plan_json             TEXT    NOT NULL,
+        action_count          INTEGER NOT NULL DEFAULT 0,
+        critic_verdict_json   TEXT,
+        confirmation_decision TEXT    NOT NULL DEFAULT 'n/a',
+        execution_status      TEXT    NOT NULL DEFAULT 'unknown',
+        results_json          TEXT,
+        verification_json     TEXT,
+        dry_run               INTEGER NOT NULL DEFAULT 0,
+        duration_ms           INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS plan_history_created_at
+        ON plan_history (created_at DESC);
+    CREATE INDEX IF NOT EXISTS plan_history_execution_status
+        ON plan_history (execution_status);
+    """
+
+    def __init__(self, db_path: str | Path = PLAN_HISTORY_DB_FILE) -> None:
+        self._db_path = str(db_path)
+        self._db: aiosqlite.Connection | None = None
+
+    async def initialize(self) -> None:
+        """Open (or create) the SQLite DB and ensure the schema exists."""
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        self._db = await aiosqlite.connect(self._db_path)
+        self._db.row_factory = aiosqlite.Row
+        await self._db.executescript(self._CREATE_TABLE)
+        await self._db.commit()
+        logger.info("PlanHistoryStore initialised at %s", self._db_path)
+
+    async def record(
+        self,
+        *,
+        plan_id: str,
+        raw_input: str,
+        plan: Any,
+        critic_verdict: dict[str, Any] | None,
+        confirmation_decision: str,
+        execution_status: str,
+        results: list[Any],
+        verification: Any | None,
+        dry_run: bool,
+        duration_ms: int,
+    ) -> None:
+        """Insert or replace a plan audit record.
+
+        Args:
+            plan_id: Short UUID identifying this plan.
+            raw_input: The original user-supplied text.
+            plan: ActionPlan object (must have ``.actions`` and ``.model_dump()`` / JSON-serialisable dict).
+            critic_verdict: Optional dict from DestructiveCriticAgent.
+            confirmation_decision: One of 'approved', 'denied', 'skipped', 'blocked_by_critic', 'n/a'.
+            execution_status: Terminal status string ('success', 'partial_failure', 'error', 'cancelled', 'dry_run').
+            results: List of ActionResult objects with ``.model_dump()``.
+            verification: VerificationResult object with ``.model_dump()``, or None.
+            dry_run: Whether this was a dry-run execution.
+            duration_ms: Wall-clock duration in milliseconds.
+        """
+        if self._db is None:
+            logger.warning("PlanHistoryStore.record() called before initialize()")
+            return
+
+        try:
+            plan_dict = plan.model_dump(mode="json") if hasattr(plan, "model_dump") else {}
+        except Exception:
+            plan_dict = {}
+
+        results_list: list[Any] = []
+        for r in results:
+            try:
+                if hasattr(r, "model_dump"):
+                    results_list.append(r.model_dump(mode="json"))
+                elif isinstance(r, (dict, list, str, int, float, bool)) or r is None:
+                    results_list.append(r)
+                else:
+                    results_list.append(str(r))
+            except Exception:
+                results_list.append(str(r))
+
+        try:
+            verification_dict = (
+                verification.model_dump(mode="json") if (verification and hasattr(verification, "model_dump")) else None
+            )
+        except Exception:
+            verification_dict = None
+
+        await self._db.execute(
+            """
+            INSERT OR REPLACE INTO plan_history (
+                plan_id, created_at, raw_input, plan_json, action_count,
+                critic_verdict_json, confirmation_decision,
+                execution_status, results_json, verification_json,
+                dry_run, duration_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                plan_id,
+                datetime.now(timezone.utc).isoformat(),
+                raw_input,
+                json.dumps(plan_dict, ensure_ascii=False),
+                len(getattr(plan, "actions", [])),
+                json.dumps(critic_verdict, ensure_ascii=False) if critic_verdict is not None else None,
+                confirmation_decision,
+                execution_status,
+                json.dumps(results_list, ensure_ascii=False),
+                json.dumps(verification_dict, ensure_ascii=False) if verification_dict is not None else None,
+                1 if dry_run else 0,
+                duration_ms,
+            ),
+        )
+        await self._db.commit()
+        logger.debug("PlanHistoryStore: recorded plan_id=%s status=%s", plan_id, execution_status)
+
+    async def get_list(
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        status_filter: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return a paginated list of plan summary rows (no large JSON blobs).
+
+        Args:
+            limit: Maximum number of rows to return.
+            offset: Rows to skip (for pagination).
+            status_filter: Optional execution_status to filter by.
+
+        Returns:
+            List of dicts with summary fields.
+        """
+        if self._db is None:
+            return []
+
+        if status_filter:
+            cursor = await self._db.execute(
+                """
+                SELECT plan_id, created_at, raw_input, action_count,
+                       confirmation_decision, execution_status, dry_run, duration_ms
+                FROM plan_history
+                WHERE execution_status = ?
+                ORDER BY created_at DESC
+                LIMIT ? OFFSET ?
+                """,
+                (status_filter, limit, offset),
+            )
+        else:
+            cursor = await self._db.execute(
+                """
+                SELECT plan_id, created_at, raw_input, action_count,
+                       confirmation_decision, execution_status, dry_run, duration_ms
+                FROM plan_history
+                ORDER BY created_at DESC
+                LIMIT ? OFFSET ?
+                """,
+                (limit, offset),
+            )
+
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+    async def get_detail(self, plan_id: str) -> dict[str, Any] | None:
+        """Return the full record for a single plan_id, with JSON blobs parsed.
+
+        Args:
+            plan_id: The plan identifier to look up.
+
+        Returns:
+            Full plan record dict with parsed JSON fields, or None if not found.
+        """
+        if self._db is None:
+            return None
+
+        cursor = await self._db.execute(
+            "SELECT * FROM plan_history WHERE plan_id = ?",
+            (plan_id,),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+
+        record = dict(row)
+        # Parse stored JSON blobs back into Python objects for the caller
+        for field_name in ("plan_json", "critic_verdict_json", "results_json", "verification_json"):
+            raw = record.get(field_name)
+            if raw:
+                try:
+                    record[field_name] = json.loads(raw)
+                except (json.JSONDecodeError, TypeError):
+                    pass  # leave as raw string if unparseable
+        record["dry_run"] = bool(record.get("dry_run", 0))
+        return record
+
+    async def close(self) -> None:
+        """Close the database connection."""
+        if self._db:
+            await self._db.close()
+            self._db = None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PilotServer
+# ─────────────────────────────────────────────────────────────────────────────
+
+
 class PilotServer:
     """Main daemon server managing WebSocket connections and agent dispatch."""
 
@@ -95,6 +332,7 @@ class PilotServer:
         self._server: Server | None = None
         self._clients: set[ServerConnection] = set()
         self._handlers: dict[str, Any] = {}
+        self._model_router: Any = None
         self._planner: Any = None
         self._executor: Any = None
         self._verifier: Any = None
@@ -109,12 +347,16 @@ class PilotServer:
         self._sandbox: Any = None
         self._prompt_improver: Any = None
         self._plugin_registry: Any = None
+        self._skill_registry: Any = None
         self._subconscious: Any = None
         self._screen_vision: Any = None
         self._memory: Any = None
         self._vault: Any = None
         self._permission_audit: Any = None
         self._checkpoint_store: Any = None
+        # ── Plan History Audit Log ──
+        self._plan_history: PlanHistoryStore | None = None
+        self._plan_history_tasks: set[asyncio.Task[None]] = set()
         # Cognitive intelligence (TRIBE v2)
         self._tribe_engine: Any = None
         self._attention_ui: Any = None
@@ -131,8 +373,6 @@ class PilotServer:
         self._rss_agent: Any = None
         # ── LAN Mesh Network ──
         self._mesh: Any = None
-        # ── Swarm Mode ──
-        self._swarm_manager: Any = None
 
     async def initialize(self) -> None:
         """Initialize all agent components.
@@ -164,6 +404,7 @@ class PilotServer:
 
         self._vault = KeyVault(self.config)
         model_router = ModelRouter(self.config, self._vault)
+        self._model_router = model_router
         await model_router.initialize()
 
         from pilot.models.budget_tracker import BudgetTracker
@@ -171,6 +412,9 @@ class PilotServer:
         self._budget_tracker = BudgetTracker(self.config.model, str(DB_FILE))
         await self._budget_tracker.initialize()
         model_router.set_budget_tracker(self._budget_tracker)
+        from pilot.agents.circuit_breaker import CircuitBreaker
+
+        self._circuit_breaker = CircuitBreaker(threshold=self.config.model.max_consecutive_failures)
 
         audit = AuditLogger()
         self._permission_audit = PermissionEscalationAuditStore()
@@ -182,8 +426,27 @@ class PilotServer:
         self._memory = MemoryStore(checkpoint_interval_seconds=self.config.memory.checkpoint_interval_seconds)
         await self._memory.initialize(model_router)
 
-        self._planner = Planner(model_router, self._memory)
-        self._executor = Executor(self.config, validator, permissions, audit)
+        # ── Plan History Audit Log ──
+        self._plan_history = PlanHistoryStore()
+        await self._plan_history.initialize()
+
+        from pilot.skills.loader import SkillRegistry
+
+        self._skill_registry = SkillRegistry()
+        self._skill_registry.load_all()
+
+        self._planner = Planner(
+            model_router,
+            self._memory,
+            skills_context=self._skill_registry.planner_prompt_block(),
+        )
+        self._executor = Executor(
+            self.config,
+            validator,
+            permissions,
+            audit,
+            skill_registry=self._skill_registry,
+        )
         self._verifier = Verifier(model_router)
 
         # Destructive Critic Agent — secondary safety reviewer for Tier 4 plans.
@@ -202,6 +465,8 @@ class PilotServer:
         # Multi-Agent Orchestrator — register all specialist agents
         self._orchestrator = AgentOrchestrator(model_router)
         self._orchestrator.set_broadcast(self._broadcast_notification)
+        self._orchestrator.set_budget_tracker(self._budget_tracker)
+        self._orchestrator.set_circuit_breaker(self._circuit_breaker)
         from pilot.agents.registry import AgentRegistry
 
         AgentRegistry.discover_agents()
@@ -212,17 +477,6 @@ class PilotServer:
         )
         logger.info("Auto-registered %d agents via dynamic discovery", registered)
         await self._orchestrator.start_all()
-
-        # Swarm Mode - distributed multi-daemon execution
-        from pilot.swarm.swarm_manager import SwarmManager
-        from pilot.swarm.swarm_router_agent import SwarmRouterAgent
-
-        self._swarm_manager = SwarmManager(self.config)
-        await self._swarm_manager.initialize()
-        swarm_router = SwarmRouterAgent(model_router, self._swarm_manager, executor=self._executor)
-        self._orchestrator.register_agent(swarm_router)
-        await self._swarm_manager.start()
-        logger.info("Swarm mode initialized with SwarmRouterAgent")
 
         from pilot.agents.rss_agent import RssAgent
 
@@ -263,6 +517,7 @@ class PilotServer:
         self._plugin_registry = PluginRegistry()
         plugin_count = self._plugin_registry.discover()
         logger.info("Plugins loaded: %d", plugin_count)
+        self._executor.set_plugin_registry(self._plugin_registry)
 
         # Subconscious Agent — long-term memory consolidation (lazy start)
         try:
@@ -368,6 +623,7 @@ class PilotServer:
             "abort": self._handle_abort,
             "get_config": self._handle_get_config,
             "update_config": self._handle_update_config,
+            "reset_config": self._handle_reset_config,
             "get_history": self._handle_get_history,
             "memory_checkpoint": self._handle_memory_checkpoint,
             "store_api_key": self._handle_store_api_key,
@@ -391,6 +647,7 @@ class PilotServer:
             "gesture_event": self._handle_gesture_event,
             "multimodal_stats": self._handle_multimodal_stats,
             "reasoning_log": self._handle_reasoning_log,
+            "reasoning_stats": self._handle_reasoning_stats,
             "decompose_task": self._handle_decompose_task,
             "simulate_plan": self._handle_simulate_plan,
             "prompt_strategies": self._handle_prompt_strategies,
@@ -401,6 +658,10 @@ class PilotServer:
             "plugin_market_list": self._handle_plugin_market_list,
             "plugin_install": self._handle_plugin_install,
             "plugin_uninstall": self._handle_plugin_uninstall,
+            # Dynamic Python skills (pilot/skills + config skills dir)
+            "skills_list": self._handle_skills_list,
+            "skills_reload": self._handle_skills_reload,
+            "skills_load_report": self._handle_skills_load_report,
             "persona_rules": self._handle_persona_rules,
             "persona_consolidate": self._handle_persona_consolidate,
             "persona_add_preference": self._handle_persona_add_preference,
@@ -432,6 +693,11 @@ class PilotServer:
             # ── LAN Mesh Network ──
             "mesh_peers": self._handle_mesh_peers,
             "mesh_status": self._handle_mesh_status,
+            "resolve_git_conflict": self._handle_resolve_git_conflict,
+            "apply_git_resolution": self._handle_apply_git_resolution,
+            # ── Plan History Audit Log ──
+            "get_plan_history": self._handle_get_plan_history,
+            "get_plan_detail": self._handle_get_plan_detail,
         }
 
         # ── LAN Mesh Network (opt-in via config) ──
@@ -527,9 +793,17 @@ class PilotServer:
                     await websocket.send(_error_response(None, -32700, "Parse error"))
                 except ValueError as e:
                     await websocket.send(_error_response(None, -32600, str(e)))
+                except websockets.exceptions.ConnectionClosed:
+                    logger.warning("Connection lost during request handling: %s", remote)
+                    break
                 except Exception as e:
                     logger.exception("Handler error")
-                    await websocket.send(_error_response(None, -32603, f"Internal error: {e}"))
+                    try:
+                        await websocket.send(_error_response(None, -32603, f"Internal error: {e}"))
+                    except websockets.exceptions.ConnectionClosed:
+                        logger.warning("Could not send error response — connection already closed: %s", remote)
+        except websockets.exceptions.ConnectionClosed:
+            logger.info("Connection closed during message loop: %s", remote)
         finally:
             self._clients.discard(websocket)
             logger.info("Client disconnected: %s", remote)
@@ -802,6 +1076,21 @@ class PilotServer:
                         results=[],
                         execution_error=verdict.recommendation,
                     )
+                    # ── Plan History: blocked by critic ──
+                    self._spawn_history_task(
+                        self._record_plan_history(
+                            plan_id=plan_id,
+                            raw_input=user_input,
+                            plan=plan,
+                            critic_verdict=critic_verdict_payload,
+                            confirmation_decision="blocked_by_critic",
+                            execution_status="blocked_by_critic",
+                            results=[],
+                            verification=None,
+                            dry_run=dry_run,
+                            start_time=_start_time,
+                        )
+                    )
                     if emit:
                         await emit.phase_error(
                             "critic_review",
@@ -856,6 +1145,21 @@ class PilotServer:
                         critic_verdict=critic_verdict_payload,
                         results=[],
                         execution_error="Plan was denied by user.",
+                    )
+                    # ── Plan History: user denied ──
+                    self._spawn_history_task(
+                        self._record_plan_history(
+                            plan_id=plan_id,
+                            raw_input=user_input,
+                            plan=plan,
+                            critic_verdict=critic_verdict_payload,
+                            confirmation_decision="denied",
+                            execution_status="cancelled",
+                            results=[],
+                            verification=None,
+                            dry_run=dry_run,
+                            start_time=_start_time,
+                        )
                     )
                     await _emit_task_complete("cancelled", "Plan was denied by user.")
                     return {
@@ -955,6 +1259,21 @@ class PilotServer:
                 await ws.send(_notification("status", {"phase": "aborted"}))
                 if self._checkpoint_store:
                     await self._checkpoint_store.mark_status(plan_id, "cancelled")
+                # ── Plan History: cancelled mid-execution ──
+                self._spawn_history_task(
+                    self._record_plan_history(
+                        plan_id=plan_id,
+                        raw_input=user_input,
+                        plan=plan,
+                        critic_verdict=critic_verdict_payload,
+                        confirmation_decision="approved" if needs_confirm else "skipped",
+                        execution_status="cancelled",
+                        results=results,
+                        verification=None,
+                        dry_run=dry_run,
+                        start_time=_start_time,
+                    )
+                )
                 return {
                     "status": "cancelled",
                     "message": "Execution was aborted by user.",
@@ -1038,6 +1357,22 @@ class PilotServer:
                         "memory_update", MEMORY_STORE_COMPLETE, {"saved": True}, parent_id=mem_store_phase
                     )
 
+                # ── Plan History: success ──
+                self._spawn_history_task(
+                    self._record_plan_history(
+                        plan_id=plan_id,
+                        raw_input=user_input,
+                        plan=plan,
+                        critic_verdict=critic_verdict_payload,
+                        confirmation_decision="approved" if needs_confirm else ("n/a" if dry_run else "skipped"),
+                        execution_status="dry_run" if dry_run else "success",
+                        results=results,
+                        verification=verification,
+                        dry_run=dry_run,
+                        start_time=_start_time,
+                    )
+                )
+
                 await _emit_task_complete("success", plan.explanation or "Task completed successfully.")
                 return {
                     "status": "success",
@@ -1101,6 +1436,23 @@ class PilotServer:
         asyncio.create_task(self._memory.record(user_input, plan, all_results))
         if self._checkpoint_store and last_plan_id:
             await self._checkpoint_store.mark_status(last_plan_id, "failed")
+
+        # ── Plan History: partial_failure after all retries exhausted ──
+        self._spawn_history_task(
+            self._record_plan_history(
+                plan_id=last_plan_id,
+                raw_input=user_input,
+                plan=plan,
+                critic_verdict=critic_verdict_payload,
+                confirmation_decision="approved" if needs_confirm else "skipped",
+                execution_status="partial_failure",
+                results=all_results,
+                verification=last_verification,
+                dry_run=dry_run,
+                start_time=_start_time,
+            )
+        )
+
         await _emit_task_complete("partial_failure", last_explanation or "Task completed with errors.")
         return {
             "status": "partial_failure",
@@ -1115,6 +1467,73 @@ class PilotServer:
                 else last_explanation
             ),
         }
+
+    # ── Plan History: internal helper ──
+
+    async def _record_plan_history(
+        self,
+        *,
+        plan_id: str,
+        raw_input: str,
+        plan: Any,
+        critic_verdict: dict[str, Any] | None,
+        confirmation_decision: str,
+        execution_status: str,
+        results: list[Any],
+        verification: Any | None,
+        dry_run: bool,
+        start_time: float,
+    ) -> None:
+        """Fire-and-forget wrapper that persists a plan audit record safely.
+
+        Swallows all exceptions so a storage failure never disrupts execution.
+
+        Args:
+            plan_id: Short UUID identifying this plan.
+            raw_input: Original user input string.
+            plan: ActionPlan object.
+            critic_verdict: Optional critic verdict dict.
+            confirmation_decision: User/system confirmation outcome.
+            execution_status: Terminal execution status string.
+            results: List of ActionResult objects.
+            verification: Optional VerificationResult object.
+            dry_run: Whether this was a dry-run.
+            start_time: ``time.time()`` at the start of execution for duration calc.
+        """
+        if not self._plan_history or not plan_id:
+            return
+        try:
+            import time as _time
+
+            duration_ms = int((_time.time() - start_time) * 1000)
+            await self._plan_history.record(
+                plan_id=plan_id,
+                raw_input=raw_input,
+                plan=plan,
+                critic_verdict=critic_verdict,
+                confirmation_decision=confirmation_decision,
+                execution_status=execution_status,
+                results=results,
+                verification=verification,
+                dry_run=dry_run,
+                duration_ms=duration_ms,
+            )
+        except Exception:
+            logger.warning("_record_plan_history failed (non-critical)", exc_info=True)
+
+    def _spawn_history_task(self, coro: Any) -> None:
+        """Schedule a plan-history coroutine as a tracked background task.
+
+        The task is added to ``_plan_history_tasks`` and automatically removed
+        when it completes, so ``stop()`` can drain any in-flight writes before
+        closing the SQLite connection.
+
+        Args:
+            coro: The coroutine to schedule (typically ``_record_plan_history(...)``).
+        """
+        task: asyncio.Task[None] = asyncio.create_task(coro)
+        self._plan_history_tasks.add(task)
+        task.add_done_callback(self._plan_history_tasks.discard)
 
     async def _handle_resume_plan(self, params: dict[str, Any], ws: ServerConnection) -> dict:
         """Resume a previously checkpointed plan from its last completed action."""
@@ -1408,6 +1827,25 @@ class PilotServer:
 
         return {"status": "ok"}
 
+    async def _handle_reset_config(self, params: dict, ws: ServerConnection) -> dict:
+        """Reset configuration to factory defaults."""
+
+        default_config = PilotConfig()
+
+        for field_name in default_config.__dataclass_fields__:
+            val = getattr(default_config, field_name)
+            current = getattr(self.config, field_name)
+
+            if hasattr(val, "__dataclass_fields__"):
+                for subfield in val.__dataclass_fields__:
+                    setattr(current, subfield, getattr(val, subfield))
+            else:
+                setattr(self.config, field_name, val)
+
+        self.config.save()
+
+        return {"status": "ok"}
+
     # -- History --
 
     async def _handle_get_history(self, params: dict, ws: ServerConnection) -> dict:
@@ -1444,8 +1882,8 @@ class PilotServer:
         fmt = str(params.get("format", "json")).lower()
         messages = params.get("messages", [])
 
-        if fmt not in {"json", "csv"}:
-            return {"status": "error", "message": "format must be 'json' or 'csv'"}
+        if fmt not in {"json", "csv", "markdown", "md"}:
+            return {"status": "error", "message": "format must be 'json', 'csv', or 'markdown'"}
         if not isinstance(messages, list):
             return {"status": "error", "message": "messages must be a list"}
 
@@ -1460,6 +1898,29 @@ class PilotServer:
         try:
             if fmt == "json":
                 out_path.write_text(json.dumps(messages, ensure_ascii=False, indent=2), encoding="utf-8")
+            elif fmt in ("markdown", "md"):
+                lines = ["# Heliox Session Export", f"**Date:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", ""]
+                for m in messages:
+                    if not isinstance(m, dict):
+                        continue
+                    msg_type = str(m.get("type", "unknown")).upper()
+                    text = str(m.get("text", "")).strip()
+                    lines.append(f"### {msg_type}")
+                    if text:
+                        lines.append(text)
+                    plan = m.get("plan")
+                    if isinstance(plan, dict) and plan.get("explanation"):
+                        lines.append(f"\n**Plan:** {plan['explanation']}")
+                    ar = m.get("actionResults")
+                    if isinstance(ar, list) and ar:
+                        lines.append("\n**Action Results:**\n```")
+                        for r in ar:
+                            if isinstance(r, dict):
+                                out = r.get("output") or r.get("error") or ""
+                                lines.append(str(out).strip())
+                        lines.append("```")
+                    lines.append("\n---")
+                out_path.write_text("\n".join(lines), encoding="utf-8")
             else:
                 with out_path.open("w", newline="", encoding="utf-8") as f:
                     writer = csv.writer(f)
@@ -1955,6 +2416,20 @@ class PilotServer:
             return {"events": self._reasoning.get_session_log()}
         return {"error": "Reasoning emitter not initialized"}
 
+    async def _handle_reasoning_stats(self, params: dict, ws: ServerConnection) -> dict:
+        """Return reasoning emitter statistics.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with reasoning emitter statistics or error.
+        """
+        if self._reasoning:
+            return self._reasoning.get_stats()
+        return {"error": "Reasoning emitter not initialized"}
+
     # -- Task Decomposition --
 
     async def _handle_decompose_task(self, params: dict, ws: ServerConnection) -> dict:
@@ -2132,7 +2607,7 @@ class PilotServer:
         if not plugin_name:
             return {"error": "plugin_name is required"}
 
-        plugin_dir = Path.home() / ".heliox" / "plugins" / plugin_name
+        plugin_dir = PLUGINS_DIR / plugin_name
         plugin_dir.mkdir(parents=True, exist_ok=True)
 
         manifest_path = plugin_dir / "manifest.json"
@@ -2167,7 +2642,7 @@ class PilotServer:
         if not plugin_name:
             return {"error": "plugin_name is required"}
 
-        plugin_dir = Path.home() / ".heliox" / "plugins" / plugin_name
+        plugin_dir = PLUGINS_DIR / plugin_name
         if not plugin_dir.exists():
             return {"error": f"Plugin not found: {plugin_name}"}
 
@@ -2178,6 +2653,43 @@ class PilotServer:
         except Exception as e:
             logger.error("Failed to uninstall plugin %s: %s", plugin_name, e)
             return {"error": str(e)}
+
+    async def _handle_skills_list(self, params: dict, ws: ServerConnection) -> dict:
+        if self._skill_registry:
+            return {"skills": self._skill_registry.list_skills()}
+        return {"error": "Skill registry not initialized"}
+
+    async def _handle_skills_reload(self, params: dict, ws: ServerConnection) -> dict:
+        if self._skill_registry:
+            records = self._skill_registry.reload()
+            serial = [
+                {
+                    "path": r.path,
+                    "success": r.success,
+                    "skill_ids": r.skill_ids,
+                    "error": r.error,
+                }
+                for r in records
+            ]
+            if self._planner:
+                self._planner.set_skills_context(self._skill_registry.planner_prompt_block())
+            return {"ok": True, "records": serial, "skills": self._skill_registry.list_skills()}
+        return {"error": "Skill registry not initialized"}
+
+    async def _handle_skills_load_report(self, params: dict, ws: ServerConnection) -> dict:
+        if self._skill_registry:
+            records = self._skill_registry.last_load_records
+            serial = [
+                {
+                    "path": r.path,
+                    "success": r.success,
+                    "skill_ids": r.skill_ids,
+                    "error": r.error,
+                }
+                for r in records
+            ]
+            return {"records": serial, "search_dirs": [str(p) for p in self._skill_registry.search_dirs]}
+        return {"error": "Skill registry not initialized"}
 
     # ── Subconscious Agent Handlers ──
 
@@ -2350,6 +2862,8 @@ class PilotServer:
             self._handle_connection,
             host,
             port,
+            ping_interval=30,  # send keepalive ping every 30s
+            ping_timeout=300,  # allow up to 5 min for pong (matches LLM timeout)
         )
         logger.info("Pilot daemon ready")
 
@@ -2375,6 +2889,8 @@ class PilotServer:
             await self._mesh.stop()
         if self._orchestrator:
             await self._orchestrator.stop_all()
+        if hasattr(self, "_budget_tracker") and self._budget_tracker:
+            await self._budget_tracker.close()
         if self._background:
             self._background.stop_all()
         for pending in self._pending_confirms.values():
@@ -2389,6 +2905,17 @@ class PilotServer:
             await self._memory.close()
         if self._budget_tracker:
             await self._budget_tracker.close()
+        # ── Drain pending plan-history tasks before closing the store ──
+        # Avoids aiosqlite.ProgrammingError when a fire-and-forget log task
+        # is still writing as the connection is torn down.
+        if self._plan_history_tasks:
+            logger.info(
+                "Waiting for %d pending plan-history task(s) to flush…",
+                len(self._plan_history_tasks),
+            )
+            await asyncio.gather(*self._plan_history_tasks, return_exceptions=True)
+        if self._plan_history:
+            await self._plan_history.close()
         if self._tribe_engine and self._tribe_engine.is_loaded:
             self._tribe_engine.unload_model()
         from pilot.system.pty_session import PtySessionManager
@@ -2937,14 +3464,164 @@ class PilotServer:
         dismissed = await self._proactive.dismiss_suggestion(suggestion_id)
         return {"dismissed": dismissed, "suggestion_id": suggestion_id}
 
+    async def _handle_resolve_git_conflict(self, params: dict, ws: ServerConnection) -> dict:
+        """Resolve git merge conflicts in a file via LLM.
+
+        Args:
+            params: JSON-RPC parameters containing filepath (or path).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with resolution details.
+        """
+        if not self._model_router:
+            return {"status": "error", "message": "Model router not initialized"}
+
+        filepath = params.get("filepath") or params.get("path")
+        if not filepath:
+            return {"status": "error", "message": "Missing filepath or path parameter"}
+
+        try:
+            from pilot.system.git_conflict import resolve_conflicts_in_file
+
+            resolved_blocks = await resolve_conflicts_in_file(filepath, self._model_router)
+            return {"status": "success", "conflicts": resolved_blocks}
+        except Exception as e:
+            logger.exception("Failed to resolve git conflict in handler")
+            return {"status": "error", "message": str(e)}
+
+    async def _handle_apply_git_resolution(self, params: dict, ws: ServerConnection) -> dict:
+        """Apply a git conflict resolution securely.
+
+        Args:
+            params: JSON-RPC parameters with path, full_block, resolved_code.
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with execution status.
+        """
+        path = params.get("path")
+        full_block = params.get("full_block")
+        resolved_code = params.get("resolved_code")
+
+        if not path or full_block is None or resolved_code is None:
+            return {"status": "error", "message": "Missing required params: path, full_block, resolved_code"}
+
+        try:
+            from pilot.actions import Action, ActionPlan, ActionType, GitResolveParams
+
+            action = Action(
+                action_type=ActionType.GIT_RESOLVE,
+                parameters=GitResolveParams(
+                    path=path,
+                    full_block=full_block,
+                    resolved_code=resolved_code,
+                ),
+            )
+            plan = ActionPlan(actions=[action], explanation="Apply git conflict resolution securely")
+            results = await self._executor.execute(plan)
+            success = all(r.success for r in results)
+            error = next((r.error for r in results if not r.success), None)
+            return {
+                "status": "success" if success else "error",
+                "message": "Git conflict resolved successfully" if success else (error or "Failed to resolve conflict"),
+            }
+        except Exception as e:
+            logger.exception("Failed to apply git conflict resolution in handler")
+            return {"status": "error", "message": str(e)}
+
+    # ── Plan History Audit Log Handlers ──
+
+    async def _handle_get_plan_history(self, params: dict, ws: ServerConnection) -> dict:
+        """Return a paginated list of plan audit records (summaries, no large blobs).
+
+        This is the internal plan-level audit log for debugging and compliance.
+        It is distinct from the chat/session history returned by ``get_history``.
+
+        JSON-RPC params
+        ---------------
+        limit : int, optional
+            Maximum rows to return. Default 50, max 200.
+        offset : int, optional
+            Rows to skip (for pagination). Default 0.
+        status : str, optional
+            Filter by ``execution_status`` (e.g. ``"success"``, ``"partial_failure"``,
+            ``"cancelled"``, ``"blocked_by_critic"``). Omit to return all statuses.
+
+        Returns
+        -------
+        dict
+            ``plans``   — list of summary dicts (no plan_json / results_json blobs)
+            ``count``   — number of rows in this page
+            ``offset``  — offset used
+            ``limit``   — limit used
+        """
+        if not self._plan_history:
+            return {"error": "Plan history store is not initialized", "plans": []}
+
+        raw_limit = params.get("limit", 50)
+        raw_offset = params.get("offset", 0)
+        status_filter = params.get("status") or None  # empty string → None
+
+        try:
+            limit = max(1, min(int(raw_limit), 200))
+            offset = max(0, int(raw_offset))
+        except (TypeError, ValueError):
+            return {"error": "limit and offset must be integers", "plans": []}
+
+        plans = await self._plan_history.get_list(
+            limit=limit,
+            offset=offset,
+            status_filter=status_filter,
+        )
+        return {
+            "plans": plans,
+            "count": len(plans),
+            "offset": offset,
+            "limit": limit,
+        }
+
+    async def _handle_get_plan_detail(self, params: dict, ws: ServerConnection) -> dict:
+        """Return the full audit record for a single plan, including all JSON blobs.
+
+        JSON-RPC params
+        ---------------
+        plan_id : str
+            The 8-char plan identifier (as returned in ``plan_preview`` notifications
+            and in ``get_plan_history`` rows).
+
+        Returns
+        -------
+        dict
+            Full plan record with parsed ``plan_json``, ``critic_verdict_json``,
+            ``results_json``, and ``verification_json`` fields, or an ``error`` key
+            if the plan_id is not found.
+        """
+        if not self._plan_history:
+            return {"error": "Plan history store is not initialized"}
+
+        plan_id = str(params.get("plan_id", "")).strip()
+        if not plan_id:
+            return {"error": "plan_id is required"}
+
+        record = await self._plan_history.get_detail(plan_id)
+        if record is None:
+            return {"error": f"No plan found with plan_id: {plan_id}"}
+
+        return record
+
 
 def _setup_logging() -> None:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
+
+    stream_handler = logging.StreamHandler(sys.stdout)
+    stream_handler.setFormatter(ColorFormatter())
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
         handlers=[
-            logging.StreamHandler(sys.stdout),
+            stream_handler,
             logging.FileHandler(LOG_FILE, encoding="utf-8"),
         ],
     )

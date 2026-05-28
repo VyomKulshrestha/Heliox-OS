@@ -15,6 +15,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+import uuid
+from dataclasses import dataclass, field
+from enum import IntEnum
 from typing import TYPE_CHECKING, Any, Callable, Coroutine
 
 from pilot.actions import ActionPlan, ActionResult, ActionType
@@ -24,8 +27,33 @@ from pilot.agents.base_agent import (
     AgentStatus,
     BaseAgent,
 )
+from pilot.agents.circuit_breaker import (
+    CircuitBreaker,
+    CircuitBreakerOpenError,
+)
+from pilot.models.budget_tracker import (
+    ActionBudgetExceededError,
+    BudgetExceededError,
+    TaskBudgetExceededError,
+    current_task_id,
+)
+
+
+class TaskPriority(IntEnum):
+    USER_REALTIME = 0  # Voice commands, UI clicks (Immediate)
+    SYSTEM_CRITICAL = 1  # OS-level alerts
+    BACKGROUND_BATCH = 2  # Local file indexing, scraping
+
+
+@dataclass(order=True)
+class PrioritizedTask:
+    priority: TaskPriority
+    task_id: str = field(compare=False)
+    coro: Any = field(compare=False)
+
 
 if TYPE_CHECKING:
+    from pilot.models.budget_tracker import BudgetTracker
     from pilot.models.router import ModelRouter
 
 logger = logging.getLogger("pilot.agents.orchestrator")
@@ -42,12 +70,57 @@ class AgentOrchestrator:
     tasks, it coordinates parallel or sequential execution and merges results.
     """
 
-    def __init__(self, model_router: ModelRouter) -> None:
+    def __init__(self, model_router: ModelRouter):
         self._model = model_router
         self._agents: dict[AgentRole, BaseAgent] = {}
         self._action_registry: dict[ActionType, AgentRole] = {}
         self._message_log: list[AgentMessage] = []
         self._broadcast_fn: Callable[..., Coroutine] | None = None
+        self._budget_tracker: BudgetTracker | None = None
+        self._circuit_breaker: CircuitBreaker | None = None
+
+        self.task_queue = asyncio.PriorityQueue()
+
+        # This event acts as our "Freeze/Resume" switch for background tasks
+        self.background_allowed = asyncio.Event()
+        self.background_allowed.set()  # Start unpaused
+
+        # Start the continuous scheduler loop in the background
+        asyncio.create_task(self.scheduler_loop())
+
+    def set_budget_tracker(self, tracker: BudgetTracker) -> None:
+        """Inject the budget tracker. Called by server.py during startup."""
+        self._budget_tracker = tracker
+
+    def set_circuit_breaker(self, breaker: CircuitBreaker) -> None:
+        """Inject the circuit breaker. Called by server.py during startup."""
+        self._circuit_breaker = breaker
+
+    async def scheduler_loop(self):
+        """Continuously pulls tasks from the priority queue and handles context switching."""
+        while True:
+            # Pull the highest priority task (lowest integer value)
+            p_task = await self.task_queue.get()
+
+            if p_task.priority == TaskPriority.USER_REALTIME:
+                # INTERRUPT: Freeze all background tasks
+                logger.info(f"High-priority interrupt received: {p_task.task_id}. Suspending background tasks.")
+                self.background_allowed.clear()
+
+                # Execute the real-time task immediately
+                await p_task.coro
+
+                # RESUME: Unfreeze background tasks
+                logger.info(f"Real-time task {p_task.task_id} complete. Resuming background tasks.")
+                self.background_allowed.set()
+
+            else:
+                # Wait until we are allowed to run background tasks
+                await self.background_allowed.wait()
+                # Fire and forget the background task so the loop can keep listening
+                asyncio.create_task(p_task.coro)
+
+            self.task_queue.task_done()
 
     # ── Agent Registration ──
 
@@ -157,14 +230,53 @@ class AgentOrchestrator:
         plan: ActionPlan,
         on_action_start: Callable | None = None,
         on_action_complete: Callable | None = None,
-        cancel_event: asyncio.Event | None = None,  # ← add this
+        cancel_event: asyncio.Event | None = None,
+        plan_id: str | None = None,
     ) -> list[ActionResult]:
         """Execute a plan by routing actions to specialist agents.
 
         For single-agent tasks, delegates directly.
         For multi-agent tasks, runs agents sequentially (preserving action order)
         while allowing each agent to process its batch in parallel internally.
+
+        Establishes a per-task budget context: generates a task_id (or uses
+        plan_id if provided), starts a TaskBudget in the tracker, and threads
+        the id through via the current_task_id ContextVar so downstream model
+        calls and record_usage attribute their tokens to this task. The task
+        is cleaned up in a finally block regardless of how execution ends.
         """
+        task_id = plan_id or str(uuid.uuid4())
+        ctx_token = current_task_id.set(task_id)
+        if self._budget_tracker:
+            self._budget_tracker.start_task(task_id)
+
+        try:
+            return await self._execute_plan_inner(
+                user_input=user_input,
+                plan=plan,
+                task_id=task_id,
+                on_action_start=on_action_start,
+                on_action_complete=on_action_complete,
+                cancel_event=cancel_event,
+            )
+        finally:
+            if self._budget_tracker:
+                self._budget_tracker.end_task(task_id)
+            if self._circuit_breaker:
+                self._circuit_breaker.reset(task_id)
+            current_task_id.reset(ctx_token)
+
+    async def _execute_plan_inner(
+        self,
+        user_input: str,
+        plan: ActionPlan,
+        task_id: str,
+        on_action_start: Callable | None,
+        on_action_complete: Callable | None,
+        cancel_event: asyncio.Event | None,
+    ) -> list[ActionResult]:
+        """Inner execution loop — extracted so the task lifecycle wrapper
+        in execute_plan() stays small and the try/finally is obvious."""
         routing = self.analyze_plan(plan)
         all_results: list[ActionResult | None] = [None] * len(plan.actions)
 
@@ -181,12 +293,43 @@ class AgentOrchestrator:
         action_order = self._build_execution_order(plan, routing)
 
         for batch in action_order:
-            # ── Cancellation check ──
+            # â”€â”€ Cancellation check â”€â”€
             if cancel_event and cancel_event.is_set():
-                logger.info("Orchestrator: cancel_event set — halting plan execution")
+                logger.info("Orchestrator: cancel_event set â€” halting plan execution")
                 break
 
             role, indices = batch
+
+            # Circuit breaker pre-check — bail if too many consecutive failures
+            if self._circuit_breaker:
+                try:
+                    self._circuit_breaker.check()
+                except CircuitBreakerOpenError as exc:
+                    logger.warning(
+                        "Circuit breaker tripped mid-plan (task_id=%s): %s",
+                        task_id,
+                        exc,
+                    )
+                    if self._broadcast_fn:
+                        await self._broadcast_fn(
+                            "circuit_breaker_tripped",
+                            {
+                                "task_id": task_id,
+                                "error": str(exc),
+                                "failure_count": self._circuit_breaker.get_failure_count(),
+                            },
+                        )
+                    for idx in indices:
+                        if all_results[idx] is None:
+                            all_results[idx] = ActionResult(
+                                action=plan.actions[idx],
+                                success=False,
+                                error=f"Circuit breaker tripped: {exc}",
+                            )
+                    if cancel_event:
+                        cancel_event.set()
+                    break
+
             agent = self._agents.get(role)
             if agent is None:
                 # Fallback to system agent
@@ -208,12 +351,55 @@ class AgentOrchestrator:
                 for action in batch_actions:
                     await on_action_start(action)
 
-            # Execute via the specialist agent
-            results = await agent.handle_task(user_input, sub_plan)
+            # Execute via the specialist agent. Wrap with budget exception
+            # handling: if a per-action / per-task / monthly cap fires inside
+            # the agent's LLM calls, we halt the plan cleanly instead of
+            # letting the exception escape and leave the task in limbo.
+            try:
+                results = await agent.handle_task(user_input, sub_plan)
+            except (
+                ActionBudgetExceededError,
+                TaskBudgetExceededError,
+                BudgetExceededError,
+            ) as exc:
+                logger.warning(
+                    "Budget exhausted mid-plan (task_id=%s): %s",
+                    task_id,
+                    exc,
+                )
+                if self._broadcast_fn:
+                    await self._broadcast_fn(
+                        "budget_exceeded",
+                        {
+                            "task_id": task_id,
+                            "error": str(exc),
+                            "error_type": exc.__class__.__name__,
+                        },
+                    )
+                # Mark every still-unresolved action in this batch as failed
+                # with a budget-specific error so downstream consumers can
+                # distinguish budget halts from action failures.
+                for idx in indices:
+                    if all_results[idx] is None:
+                        all_results[idx] = ActionResult(
+                            action=plan.actions[idx],
+                            success=False,
+                            error=f"Budget exceeded: {exc}",
+                        )
+                # Halt subsequent batches.
+                if cancel_event:
+                    cancel_event.set()
+                break
 
             # Map results back to original indices
+            # Map results back to original indices and update breaker state
             for idx, result in zip(indices, results):
                 all_results[idx] = result
+                if self._circuit_breaker:
+                    if result.success:
+                        self._circuit_breaker.record_success()
+                    else:
+                        self._circuit_breaker.record_failure()
                 if on_action_complete:
                     await on_action_complete(result)
 
@@ -325,6 +511,10 @@ class AgentOrchestrator:
                 from pilot.agents.monitor_agent import MonitorAgent
 
                 agent = MonitorAgent(self._model, kwargs.get("background_manager"))
+            elif role == AgentRole.FORENSICS:
+                from pilot.agents.forensics_agent import ForensicsAgent
+
+                agent = ForensicsAgent(self._model, kwargs.get("executor"))
             elif role == AgentRole.COMMUNICATION:
                 from pilot.agents.comm_agent import CommunicationAgent
 
@@ -428,6 +618,20 @@ class AgentOrchestrator:
                 "memory",
                 "disk",
                 "background",
+            ],
+            AgentRole.FORENSICS: [
+                "forensic",
+                "forensics",
+                "log",
+                "logs",
+                "anomaly",
+                "anomalies",
+                "suspicious",
+                "failed login",
+                "failed attempts",
+                "auth logs",
+                "nginx logs",
+                "restart loop",
             ],
             AgentRole.COMMUNICATION: [
                 "email",

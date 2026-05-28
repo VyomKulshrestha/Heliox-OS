@@ -5,6 +5,7 @@
    */
 
   import { call, isConnected } from "../api/daemon";
+  import BudgetMeter from "./BudgetMeter.svelte";
 
   // ── State ──
   let cpuPercent = $state(0);
@@ -187,6 +188,8 @@
           <span class="progress-text">{diskPercent}%</span>
         </div>
       </div>
+
+      <BudgetMeter />
 
       <!-- Uptime & Network -->
       <div class="hud-divider"></div>

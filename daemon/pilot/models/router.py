@@ -7,6 +7,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from pilot.config import DATA_DIR
+from pilot.db.redis_adapter import RedisCacheAdapter
 from pilot.models.cache import LLMCache
 from pilot.models.cloud import CloudClient
 from pilot.models.ollama import OllamaClient
@@ -16,6 +17,8 @@ if TYPE_CHECKING:
     from pilot.config import PilotConfig
     from pilot.models.budget_tracker import BudgetTracker
     from pilot.security.vault import KeyVault
+
+from pilot.models.budget_tracker import ActionBudgetExceededError
 
 logger = logging.getLogger("pilot.models.router")
 
@@ -32,11 +35,12 @@ class ModelRouter:
     def __init__(self, config: PilotConfig, vault: KeyVault) -> None:
         self._config = config
         self._vault = vault
-        self._ollama = OllamaClient(config.model.ollama_base_url)
+        self._ollama = OllamaClient(config.model.ollama_base_url, config)
         self._cloud: CloudClient | None = None
         self._llamacpp: object | None = None
         self._resolved_ollama_model: str | None = None
-        self._cache = LLMCache(DATA_DIR / "llm_cache.db")
+        redis_adapter = RedisCacheAdapter.from_config(config.redis)
+        self._cache = LLMCache(DATA_DIR / "llm_cache.db", redis=redis_adapter)
         self._budget_tracker: BudgetTracker | None = None
 
         if config.model.cloud_provider:
@@ -46,14 +50,32 @@ class ModelRouter:
 
         # Prevent local LLM overload from concurrent inference calls
         self._local_llm_semaphore = asyncio.Semaphore(2)
-        self._local_llm_timeout = 120
+        self._local_llm_timeout = 300  # 5 min — local LLMs can be slow on large prompts
 
     async def initialize(self) -> None:
         """Initialize the cache. Must be called before using generate()."""
+        await self._cache._redis.initialize()
         await self._cache.initialize()
 
     def set_budget_tracker(self, tracker: BudgetTracker) -> None:
         self._budget_tracker = tracker
+
+    @staticmethod
+    def _estimate_input_tokens(prompt: str | list[dict[str, Any]]) -> int:
+        """Rough token estimate using the len/4 heuristic.
+
+        TODO: replace with provider-specific tokenizers (tiktoken for OpenAI,
+        anthropic-tokenizer for Claude, model-specific for Ollama) for accurate
+        counts. The heuristic is acceptable for budget gating since it tends
+        to over-estimate, biasing toward earlier cutoffs rather than overruns.
+        """
+        if isinstance(prompt, list):
+            import json
+
+            prompt_str = json.dumps(prompt)
+        else:
+            prompt_str = prompt
+        return len(prompt_str) // 4
 
     def get_config(self) -> PilotConfig:
         return self._config
@@ -82,8 +104,24 @@ class ModelRouter:
         4. Call backend (cloud or local)
         5. Store successful response in cache (skip if streaming)
         """
+        # Estimate input tokens once — used for both the per-action gate
+        # and the post-call usage recording below.
+        in_tokens_estimate = self._estimate_input_tokens(prompt)
+
         if self._budget_tracker:
+            # Per-action gate: refuse calls whose estimated input alone
+            # exceeds the cap, before they go out.
+            max_per_action = self._config.model.max_tokens_per_action
+            if max_per_action > 0 and in_tokens_estimate > max_per_action:
+                raise ActionBudgetExceededError(
+                    f"LLM call estimated at {in_tokens_estimate} input tokens, "
+                    f"exceeding max_tokens_per_action={max_per_action}. "
+                    f"Reduce prompt size or raise the cap."
+                )
+            # Monthly cumulative cap (existing behavior)
             self._budget_tracker.check_budget(self._config.model.provider)
+            # Per-task cumulative cap (new)
+            self._budget_tracker.check_task_budget()
 
         result = await self._generate_with_cache(
             prompt,
@@ -94,13 +132,6 @@ class ModelRouter:
         )
 
         if self._budget_tracker:
-            if isinstance(prompt, list):
-                import json
-
-                prompt_str = json.dumps(prompt)
-            else:
-                prompt_str = prompt
-            in_tokens = len(prompt_str) // 4
             out_tokens = len(result) // 4
             provider_key = (
                 self._config.model.cloud_provider
@@ -113,7 +144,7 @@ class ModelRouter:
                 self._budget_tracker.record_usage(
                     provider_key,
                     model_name,
-                    in_tokens,
+                    in_tokens_estimate,
                     out_tokens,
                 )
             )

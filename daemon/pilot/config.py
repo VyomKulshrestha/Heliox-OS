@@ -8,6 +8,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 if sys.version_info >= (3, 12):
     import tomllib
@@ -24,11 +25,29 @@ def _xdg(env_var: str, fallback: str) -> Path:
     return Path(os.environ.get(env_var, Path.home() / fallback))
 
 
-CONFIG_DIR = _xdg("XDG_CONFIG_HOME", ".config") / "pilot"
-DATA_DIR = _xdg("XDG_DATA_HOME", ".local/share") / "pilot"
-STATE_DIR = _xdg("XDG_STATE_HOME", ".local/state") / "pilot"
+def _default_runtime_dir() -> Path:
+    """Resolve runtime dir when XDG_RUNTIME_DIR is unset (macOS, Windows, minimal Linux)."""
+    xdg = os.environ.get("XDG_RUNTIME_DIR", "").strip()
+    if xdg:
+        return Path(xdg) / "pilot"
+    uid = os.getuid() if hasattr(os, "getuid") else 1000
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Caches" / "pilot" / "runtime"
+    if sys.platform == "win32":
+        local = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+        return Path(local) / "pilot" / "runtime"
+    run_user = Path(f"/run/user/{uid}")
+    if run_user.is_dir() and os.access(run_user, os.W_OK):
+        return run_user / "pilot"
+    tmp = os.environ.get("TMPDIR", "/tmp")
+    return Path(tmp) / f"pilot-runtime-{uid}"
+
+
+CONFIG_DIR = _xdg("XDG_CONFIG_HOME", ".config") / "heliox-os"
+DATA_DIR = _xdg("XDG_DATA_HOME", ".local/share") / "heliox-os"
+STATE_DIR = _xdg("XDG_STATE_HOME", ".local/state") / "heliox-os"
 RUNTIME_DIR = (
-    Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid() if hasattr(os, 'getuid') else 1000}")) / "pilot"
+    Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid() if hasattr(os, 'getuid') else 1000}")) / "heliox-os"
 )
 CONFIG_FILE = CONFIG_DIR / "config.toml"
 RESTRICTIONS_FILE = CONFIG_DIR / "restrictions.toml"
@@ -37,6 +56,11 @@ AUDIT_FILE = DATA_DIR / "audit.jsonl"
 PERMISSION_AUDIT_DB_FILE = DATA_DIR / "permission_audit.db"
 PERMISSION_AUDIT_KEY_FILE = DATA_DIR / "permission_audit.key"
 LOG_FILE = STATE_DIR / "pilot.log"
+
+# Derived directories shared across modules — use these instead of hardcoded paths
+PLUGINS_DIR = CONFIG_DIR / "plugins"
+SCREENSHOTS_DIR = DATA_DIR / "screenshots"
+PERSONA_FILE = DATA_DIR / "persona.md"
 
 
 @dataclass
@@ -56,6 +80,13 @@ class ModelConfig:
     # Budget tracking — cumulative monthly spend limit
     budget_enabled: bool = True
     budget_monthly_limit_usd: float = 10.0
+    # Per-action and per-task budget enforcement
+    # These limit single LLM calls and per-task cumulative spend, complementing
+    # the monthly cap. Useful for halting runaway autonomous loops.
+    max_tokens_per_action: int = 4000  # cap on tokens for a single LLM call
+    max_tokens_per_task: int = 50000  # cumulative token cap per orchestrator task
+    max_usd_per_task: float = 0.10  # cumulative USD cap per task
+    max_consecutive_failures: int = 3  # circuit breaker threshold (Phase 4)
 
 
 @dataclass
@@ -100,6 +131,13 @@ class ScreenVisionConfig:
 
 
 @dataclass
+class ProxyConfig:
+    http: str | None = None
+    https: str | None = None
+    no_proxy: str | None = None
+
+
+@dataclass
 class MemoryConfig:
     checkpoint_interval_seconds: int = 300
     max_context_tokens: int = 8000
@@ -112,6 +150,19 @@ class RSSConfig:
     feeds: list[str] = field(default_factory=list)
     poll_interval_hours: float = 24.0
     max_items_per_feed: int = 10
+
+
+@dataclass
+class RedisConfig:
+    enabled: bool = False
+    host: str = "127.0.0.1"
+    port: int = 6379
+    db: int = 0
+    password: str = ""
+    ssl: bool = False
+    key_prefix: str = "pilot:"
+    default_ttl: int = 300
+    max_memory_cache_size: int = 512
 
 
 @dataclass
@@ -166,8 +217,10 @@ class PilotConfig:
     rss: RSSConfig = field(default_factory=RSSConfig)
     network: NetworkConfig = field(default_factory=NetworkConfig)
     ssh: SshConfig = field(default_factory=SshConfig)
+    proxy: ProxyConfig = field(default_factory=ProxyConfig)
     restrictions: Restrictions = field(default_factory=Restrictions)
     first_run_complete: bool = False
+    redis: RedisConfig = field(default_factory=RedisConfig)
 
     @classmethod
     def load(cls) -> PilotConfig:
@@ -227,6 +280,10 @@ def _validate_config_types(raw: dict) -> None:
             "rate_limit_burst": int,
             "budget_enabled": bool,
             "budget_monthly_limit_usd": float,
+            "max_tokens_per_action": int,
+            "max_tokens_per_task": int,
+            "max_usd_per_task": float,
+            "max_consecutive_failures": int,
         },
         "security": {
             "root_enabled": bool,
@@ -271,6 +328,17 @@ def _validate_config_types(raw: dict) -> None:
             "poll_interval_hours": (int, float),
             "max_items_per_feed": int,
         },
+        "redis": {
+            "enabled": bool,
+            "host": str,
+            "port": int,
+            "db": int,
+            "password": str,
+            "ssl": bool,
+            "key_prefix": str,
+            "default_ttl": int,
+            "max_memory_cache_size": int,
+        },
         "network": {
             "enabled": bool,
             "port": int,
@@ -282,6 +350,11 @@ def _validate_config_types(raw: dict) -> None:
             "enabled": bool,
             "connect_timeout_seconds": int,
             "allowed_hosts": list,
+        },
+        "proxy": {
+            "http": str,
+            "https": str,
+            "no_proxy": str,
         },
     }
 
@@ -304,6 +377,23 @@ def _validate_config_types(raw: dict) -> None:
                     )
                     logger.error(error_msg)
                     raise ValueError(error_msg)
+
+    if "proxy" in raw and isinstance(raw["proxy"], dict):
+        _validate_proxy_section(raw["proxy"])
+
+
+def _validate_proxy_section(raw: dict[str, Any]) -> None:
+    for key in ("http", "https"):
+        value = raw.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, str):
+            raise ValueError(f"Invalid proxy configuration: proxy.{key} must be a string.")
+        _validate_proxy_url(value, key)
+
+    no_proxy_value = raw.get("no_proxy")
+    if no_proxy_value is not None and not isinstance(no_proxy_value, str):
+        raise ValueError("Invalid proxy configuration: proxy.no_proxy must be a string.")
 
 
 def _format_type_name(expected_type: type | tuple[type, ...]) -> str:
@@ -380,6 +470,22 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
                     )
                 )
             config.ssh.allowed_hosts = parsed_hosts
+    if "redis" in raw:
+        for k, v in raw["redis"].items():
+            if hasattr(config.redis, k):
+                setattr(config.redis, k, v)
+
+    if "proxy" in raw and isinstance(raw["proxy"], dict):
+        for k, v in raw["proxy"].items():
+            if hasattr(config.proxy, k):
+                if k in ("http", "https", "no_proxy"):
+                    if not isinstance(v, str):
+                        error_msg = f"Invalid type: 'proxy.{k}' must be str, got {type(v).__name__}."
+                        logger.error(error_msg)
+                        raise ValueError(error_msg)
+                if k in ("http", "https") and v:
+                    _validate_proxy_url(v, k)
+                setattr(config.proxy, k, v)
 
     config.first_run_complete = raw.get(
         "first_run_complete",
@@ -387,6 +493,12 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
     )
 
     return config
+
+
+def _validate_proxy_url(url: str, key: str) -> None:
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError(f"Invalid proxy URL for proxy.{key}: {url}")
 
 
 def _parse_restrictions(raw: dict[str, Any]) -> Restrictions:
@@ -403,12 +515,19 @@ def _parse_restrictions(raw: dict[str, Any]) -> Restrictions:
 def _config_to_dict(config: PilotConfig) -> dict[str, Any]:
     from dataclasses import asdict
 
-    return asdict(config)
+    def strip_none(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {k: strip_none(v) for k, v in value.items() if v is not None}
+        if isinstance(value, list):
+            return [strip_none(item) for item in value]
+        return value
+
+    return strip_none(asdict(config))
 
 
 def ensure_dirs() -> None:
     """Create all required XDG directories and validate write access."""
-    for d in (CONFIG_DIR, DATA_DIR, STATE_DIR, RUNTIME_DIR):
+    for d in (CONFIG_DIR, DATA_DIR, STATE_DIR, RUNTIME_DIR, PLUGINS_DIR, SCREENSHOTS_DIR):
         d.mkdir(parents=True, exist_ok=True)
 
     test_file = DATA_DIR / ".write_test"
@@ -419,3 +538,51 @@ def ensure_dirs() -> None:
     except Exception as e:
         logger.error(f"DATA_DIR is not writable: {DATA_DIR}")
         raise RuntimeError(f"DATA_DIR is not writable: {DATA_DIR}") from e
+
+
+def migrate_old_paths() -> None:
+    """Migrate data from old hardcoded path conventions to the new canonical layout.
+
+    Old paths migrated:
+      ~/.heliox/plugins/       → PLUGINS_DIR
+      ~/.heliox/screenshots/   → SCREENSHOTS_DIR
+      ~/.heliox/persona.md     → PERSONA_FILE
+      ~/.config/pilot/         → CONFIG_DIR (config only, non-destructive)
+    """
+    home = Path.home()
+    old_pairs: list[tuple[Path, Path]] = []
+
+    old_heliox_plugins = home / ".heliox" / "plugins"
+    if old_heliox_plugins.exists() and old_heliox_plugins.is_dir():
+        old_pairs.append((old_heliox_plugins, PLUGINS_DIR))
+
+    old_heliox_screenshots = home / ".heliox" / "screenshots"
+    if old_heliox_screenshots.exists() and old_heliox_screenshots.is_dir():
+        old_pairs.append((old_heliox_screenshots, SCREENSHOTS_DIR))
+
+    old_persona = home / ".heliox" / "persona.md"
+    if old_persona.exists() and old_persona.is_file():
+        old_pairs.append((old_persona, PERSONA_FILE))
+
+    old_config_pilot = home / ".config" / "pilot"
+    if old_config_pilot.exists() and old_config_pilot.is_dir():
+        old_pairs.append((old_config_pilot, CONFIG_DIR))
+
+    for src, dst in old_pairs:
+        if dst.exists():
+            logger.info("Migration: skipping %s → %s (destination already exists)", src, dst)
+            continue
+        try:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            if src.is_file():
+                src.rename(dst)
+            else:
+                dst.mkdir(parents=True, exist_ok=True)
+                for item in src.iterdir():
+                    target = dst / item.name
+                    if not target.exists():
+                        item.rename(target)
+                src.rmdir()
+            logger.info("Migration: moved %s → %s", src, dst)
+        except OSError as exc:
+            logger.warning("Migration: could not move %s → %s: %s", src, dst, exc)
