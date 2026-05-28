@@ -1,6 +1,3 @@
-```python id="r8jlwm"
-"""Shared test fixtures."""
-
 import sys
 from typing import Any, Callable
 
