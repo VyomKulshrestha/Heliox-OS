@@ -518,6 +518,9 @@ The easiest way to get started is to download the pre-compiled installer for you
 
 ### Option 2: Build from Source (For Developers)
 
+> Note: Windows contributors can use the automated `setup.ps1` script for environment setup.  
+> If PowerShell blocks the script, check the Windows setup instructions in [CONTRIBUTING.md](CONTRIBUTING.md).
+
 If you want to contribute or modify Heliox OS, build it from the source code:
 
 **1. Install the Python daemon:**
