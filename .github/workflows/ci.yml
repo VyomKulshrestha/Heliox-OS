@@ -80,6 +80,9 @@ jobs:
       - name: Svelte check (type checking)
         run: npx svelte-check --tsconfig ./tsconfig.json || echo "Type check done"
 
+      - name: Static frontend checks
+        run: npm run test:static
+
       - name: Build check
         run: npx vite build
 
