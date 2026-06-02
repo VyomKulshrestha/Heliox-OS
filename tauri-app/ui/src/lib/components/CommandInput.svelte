@@ -4,6 +4,16 @@
   let input = $state("");
   const MAX_CHARS = 20000;
 
+  // Accept prefill text from parent (e.g. CommandHistory replay)
+  let { prefill = "" }: { prefill?: string } = $props();
+
+  // When prefill changes, populate the input box without running
+  $effect(() => {
+    if (prefill) {
+      input = prefill;
+    }
+  });
+
   type Attachment = {
     name: string;
     type: string;

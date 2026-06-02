@@ -25,18 +25,19 @@
   import { settings } from "./lib/stores/settings";
   import { tick, onDestroy } from "svelte";
   import { Copy } from "lucide-svelte";
-
   import ScrollToBottom from "./lib/components/ScrollToBottom.svelte";
   import ConnectionStatus from "./lib/components/ConnectionStatus.svelte";
-  let isDragging = $state(false);
+  import CommandHistory from "./lib/components/CommandHistory.svelte";
   import { _, isLoading } from 'svelte-i18n';
 
+  let isDragging = $state(false);
   let activeTab: "chat" | "log" | "dashboard" | "settings" | "plugins" = $state("chat");
   let showWizard = $derived(
     !$settings.first_run_complete && localStorage.getItem("heliox_first_run_complete") !== "true"
   );
   let showScrollFAB = $state(false);
   let isAtBottom = $state(true);
+  let prefillText = $state("");
   let virtualListEl: VirtualList<Message> | undefined = $state();
   let particleBurst: ParticleBurst | undefined = $state();
   $effect(() => {
@@ -67,6 +68,13 @@
       showScrollFAB = false;
     });
   }
+
+  async function handleReplay(command: string) {
+    prefillText = "";
+    await tick();
+    prefillText = command; // Prefills input box so the user can edit before sending
+  }
+
   $effect(() => {
     $session.messages;
     $session.loading;
@@ -254,8 +262,9 @@
             <ScrollToBottom show={showScrollFAB} onclick={scrollToBottom} />
           </div>
           <div class="input-row">
+            <CommandHistory onReplay={handleReplay} />
             <VoiceControl />
-            <CommandInput />
+            <CommandInput prefill={prefillText} />
             <GestureControl onGesture={onGestureDetected} />
             <button class="tab" type="button" onclick={() => session.exportChat("json")}>{$_('app.export_json')}</button>
             <button class="tab" type="button" onclick={() => session.exportChat("csv")}>{$_('app.export_csv')}</button>

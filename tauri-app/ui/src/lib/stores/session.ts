@@ -588,7 +588,7 @@ function createSession() {
 
     call("confirm", { plan_id: planId, confirmed: accepted }).catch(() => { });
   }
-  async function exportChat(format: "json" | "csv") {
+  async function exportChat(format: "json" | "csv" | "markdown") {
     let msgs: Message[] = [];
     const unsub = subscribe((s) => {
       msgs = s.messages;
