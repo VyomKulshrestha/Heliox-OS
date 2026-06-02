@@ -130,6 +130,7 @@ class ScreenContext:
 DISPLAY_OFF_TIMEOUT_DEFAULT = 10.0
 MAX_CONSECUTIVE_TIMEOUTS_DEFAULT = 3
 AUTO_RESUME_AFTER_SECONDS_DEFAULT = 30.0
+PAUSED_POLL_INTERVAL = 30.0
 
 
 class ScreenVisionAgent:
@@ -243,7 +244,7 @@ class ScreenVisionAgent:
                 logger.debug("Screen capture error", exc_info=True)
 
             if self._paused:
-                cap_sleep = min(self._interval_seconds, 5.0)
+                cap_sleep = max(self._interval_seconds, PAUSED_POLL_INTERVAL)
             else:
                 cap_sleep = self._interval_seconds
             await asyncio.sleep(cap_sleep)

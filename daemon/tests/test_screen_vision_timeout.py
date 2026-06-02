@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from pilot.agents.screen_vision import ScreenVisionAgent
+from pilot.agents.screen_vision import PAUSED_POLL_INTERVAL, ScreenVisionAgent
 
 # Short timeout for fast tests
 TIMEOUT = 0.05
@@ -38,7 +38,8 @@ class TestTimeoutPausesAgent:
             raise asyncio.TimeoutError()
 
         agent._capture_state = always_timeout
-        await agent.start(interval_seconds=0.01)
+        with patch("pilot.agents.screen_vision.PAUSED_POLL_INTERVAL", 0.1):
+            await agent.start(interval_seconds=0.01)
         paused = await wait_until(lambda: agent.is_paused(), max_wait=5.0)
 
         assert paused
@@ -95,12 +96,13 @@ class TestAutoResume:
             return AsyncMock()
 
         agent._capture_state = fail_then_succeed
-        await agent.start(interval_seconds=0.01)
+        with patch("pilot.agents.screen_vision.PAUSED_POLL_INTERVAL", 0.1):
+            await agent.start(interval_seconds=0.01)
 
-        await wait_until(
-            lambda: not agent.is_paused() and call_count > THRESHOLD + 1,
-            max_wait=10.0,
-        )
+            await wait_until(
+                lambda: not agent.is_paused() and call_count > THRESHOLD + 1,
+                max_wait=10.0,
+            )
 
         assert not agent.is_paused()
         assert agent._consecutive_timeouts == 0
@@ -120,9 +122,10 @@ class TestAutoResume:
         agent._capture_state = fail_then_succeed
 
         with patch("pilot.agents.screen_vision.logger") as mock_logger:
-            await agent.start(interval_seconds=0.01)
-            await wait_until(lambda: agent.is_paused(), max_wait=5.0)
-            await wait_until(lambda: not agent.is_paused(), max_wait=5.0)
+            with patch("pilot.agents.screen_vision.PAUSED_POLL_INTERVAL", 0.1):
+                await agent.start(interval_seconds=0.01)
+                await wait_until(lambda: agent.is_paused(), max_wait=5.0)
+                await wait_until(lambda: not agent.is_paused(), max_wait=5.0)
 
             info_messages = [c for c in mock_logger.info.call_args_list if "auto-resumed" in str(c)]
             assert info_messages
