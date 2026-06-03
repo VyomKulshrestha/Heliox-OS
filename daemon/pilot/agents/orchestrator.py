@@ -78,6 +78,8 @@ class AgentOrchestrator:
         self._broadcast_fn: Callable[..., Coroutine] | None = None
         self._budget_tracker: BudgetTracker | None = None
         self._circuit_breaker: CircuitBreaker | None = None
+        # ThreatContainmentBridge — injected via set_threat_bridge() in server.py
+        self._threat_bridge: Any = None
 
         self.task_queue = asyncio.PriorityQueue()
 
@@ -95,6 +97,31 @@ class AgentOrchestrator:
     def set_circuit_breaker(self, breaker: CircuitBreaker) -> None:
         """Inject the circuit breaker. Called by server.py during startup."""
         self._circuit_breaker = breaker
+
+    def set_threat_bridge(self, bridge: Any) -> None:
+        """Inject the ThreatContainmentBridge and wire it to the ForensicsAgent.
+
+        Looks up the ForensicsAgent in the agent registry and calls
+        ``set_threat_bridge()`` on it.  Safe to call before or after agent
+        registration — if the ForensicsAgent is not yet registered the bridge
+        is stored and applied when the agent is registered later.
+
+        Args:
+            bridge: An initialized :class:`~pilot.agents.threat_containment.ThreatContainmentBridge`.
+        """
+        self._threat_bridge = bridge
+
+        # Wire to the already-registered ForensicsAgent (if present)
+        forensics_agent = self._agents.get(AgentRole.FORENSICS)
+        if forensics_agent is not None and hasattr(forensics_agent, "set_threat_bridge"):
+            forensics_agent.set_threat_bridge(bridge)
+            logger.info(
+                "ThreatContainmentBridge wired to ForensicsAgent via Orchestrator."
+            )
+        else:
+            logger.info(
+                "ThreatContainmentBridge stored; will wire to ForensicsAgent on registration."
+            )
 
     async def scheduler_loop(self):
         """Continuously pulls tasks from the priority queue and handles context switching."""
@@ -132,6 +159,14 @@ class AgentOrchestrator:
         # Index action types → agent role
         for cap in agent.get_capabilities():
             self._action_registry[cap.action_type] = agent.role
+
+        # Auto-wire ThreatContainmentBridge to the ForensicsAgent
+        if agent.role == AgentRole.FORENSICS and self._threat_bridge is not None:
+            if hasattr(agent, "set_threat_bridge"):
+                agent.set_threat_bridge(self._threat_bridge)
+                logger.info(
+                    "ThreatContainmentBridge auto-wired to ForensicsAgent on registration."
+                )
 
         logger.info(
             "Registered agent %s with %d capabilities",
