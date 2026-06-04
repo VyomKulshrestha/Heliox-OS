@@ -373,6 +373,8 @@ class PilotServer:
         self._rss_agent: Any = None
         # ── LAN Mesh Network ──
         self._mesh: Any = None
+        # ── Authenticated WebSocket clients ──
+        self._authenticated_clients: set[ServerConnection] = set()
 
     async def initialize(self) -> None:
         """Initialize all agent components.
@@ -783,12 +785,66 @@ class PilotServer:
     async def _handle_connection(self, websocket: ServerConnection) -> None:
         """Handle a WebSocket connection from a client.
 
+        The first message MUST be an ``auth`` request carrying the daemon's
+        ``auth_token``.  Any other message — or a wrong token — closes the
+        connection immediately with a JSON-RPC error response.
+
         Args:
             websocket: The WebSocket connection to the client.
         """
-        self._clients.add(websocket)
         remote = websocket.remote_address
         logger.info("Client connected: %s", remote)
+
+        # ── Auth handshake ─────────────────────────────────────────────────
+        # Wait up to 10 s for the first message; reject if it's not a valid
+        # auth request with the correct token.
+        try:
+            first_raw = await asyncio.wait_for(websocket.recv(), timeout=10.0)
+        except asyncio.TimeoutError:
+            logger.warning("Auth handshake timeout from %s — closing", remote)
+            await websocket.close()
+            return
+        except websockets.exceptions.ConnectionClosed:
+            return
+
+        try:
+            first_req = JsonRpcRequest.parse(str(first_raw))
+        except (json.JSONDecodeError, ValueError, KeyError):
+            await websocket.send(_error_response(None, -32600, "First message must be a valid JSON-RPC auth request"))
+            await websocket.close()
+            return
+
+        if first_req.method != "auth":
+            await websocket.send(
+                _error_response(
+                    first_req.id,
+                    -32001,
+                    "Authentication required: send {method:'auth', params:{token:'...'}} first",
+                )
+            )
+            await websocket.close()
+            logger.warning("Unauthenticated method '%s' from %s — rejected", first_req.method, remote)
+            return
+
+        provided_token = first_req.params.get("token", "")
+        expected_token = self.config.server.auth_token
+
+        # Constant-time comparison prevents timing-based token oracle attacks
+        import hmac as _hmac
+
+        if not expected_token or not _hmac.compare_digest(str(provided_token), str(expected_token)):
+            await websocket.send(_error_response(first_req.id, -32001, "Invalid auth token"))
+            await websocket.close()
+            logger.warning("Invalid auth token from %s — connection rejected", remote)
+            return
+
+        # Auth passed — acknowledge and register as an active client
+        await websocket.send(_success_response(first_req.id, {"status": "authenticated"}))
+        self._clients.add(websocket)
+        self._authenticated_clients.add(websocket)
+        logger.info("Client authenticated: %s", remote)
+
+        # ── Normal message loop ────────────────────────────────────────────
         try:
             async for message in websocket:
                 try:
@@ -813,6 +869,7 @@ class PilotServer:
             logger.info("Connection closed during message loop: %s", remote)
         finally:
             self._clients.discard(websocket)
+            self._authenticated_clients.discard(websocket)
             logger.info("Client disconnected: %s", remote)
 
     async def _dispatch(self, request: JsonRpcRequest, ws: ServerConnection) -> str | None:
@@ -2863,6 +2920,21 @@ class PilotServer:
         port = self.config.server.port
         if not self.config.server.auth_token:
             self.config.server.auth_token = secrets.token_urlsafe(32)
+
+        # Write the auth token to a runtime file so the Tauri frontend can
+        # read it via a Rust command.  The file is chmod 600 (owner-read only).
+        from pilot.config import RUNTIME_DIR
+
+        RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+        token_file = RUNTIME_DIR / "auth_token"
+        token_file.write_text(self.config.server.auth_token, encoding="utf-8")
+        try:
+            import os as _os
+
+            _os.chmod(token_file, 0o600)
+        except Exception:
+            pass  # chmod not available on Windows — file is in user-private dir
+        logger.info("Auth token written to %s", token_file)
 
         logger.info("Starting Pilot daemon on ws://%s:%d", host, port)
         self._server = await websockets.serve(

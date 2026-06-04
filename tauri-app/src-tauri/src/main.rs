@@ -693,6 +693,7 @@ fn main() {
             commands::apply_git_conflict_resolution,
             commands::get_hotkey,
             commands::set_hotkey,
+            commands::get_auth_token,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Heliox OS")

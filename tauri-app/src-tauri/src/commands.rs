@@ -269,3 +269,38 @@ pub fn get_hotkey(app: AppHandle) -> String {
 pub fn set_hotkey(app: AppHandle, shortcut: String) -> Result<(), String> {
     crate::hotkey::update_shortcut(&app, &shortcut)
 }
+
+/// Read the daemon auth token from the runtime file written by the Python daemon.
+///
+/// The Python daemon writes the token to:
+///   $XDG_RUNTIME_DIR/pilot/auth_token   (Linux/macOS)
+///   %LOCALAPPDATA%\pilot\auth_token      (Windows fallback)
+///
+/// Returns an empty string if the file does not exist yet (daemon still starting up).
+#[tauri::command]
+pub fn get_auth_token() -> String {
+    // Build the expected path — mirrors the Python RUNTIME_DIR logic in config.py
+    let token_path = if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
+        std::path::PathBuf::from(runtime_dir).join("pilot").join("auth_token")
+    } else if cfg!(target_os = "windows") {
+        // Windows fallback: %LOCALAPPDATA%\pilot\auth_token
+        std::env::var("LOCALAPPDATA")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| dirs::home_dir().unwrap_or_default().join("AppData").join("Local"))
+            .join("pilot")
+            .join("auth_token")
+    } else {
+        // Linux/macOS fallback: /run/user/<uid>/pilot/auth_token
+        let uid = {
+            #[cfg(unix)]
+            unsafe { libc::getuid() }
+            #[cfg(not(unix))]
+            1000u32
+        };
+        std::path::PathBuf::from(format!("/run/user/{}/pilot/auth_token", uid))
+    };
+
+    std::fs::read_to_string(&token_path)
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default()
+}
