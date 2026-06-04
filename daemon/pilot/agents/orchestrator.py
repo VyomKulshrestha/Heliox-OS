@@ -115,13 +115,9 @@ class AgentOrchestrator:
         forensics_agent = self._agents.get(AgentRole.FORENSICS)
         if forensics_agent is not None and hasattr(forensics_agent, "set_threat_bridge"):
             forensics_agent.set_threat_bridge(bridge)
-            logger.info(
-                "ThreatContainmentBridge wired to ForensicsAgent via Orchestrator."
-            )
+            logger.info("ThreatContainmentBridge wired to ForensicsAgent via Orchestrator.")
         else:
-            logger.info(
-                "ThreatContainmentBridge stored; will wire to ForensicsAgent on registration."
-            )
+            logger.info("ThreatContainmentBridge stored; will wire to ForensicsAgent on registration.")
 
     async def scheduler_loop(self):
         """Continuously pulls tasks from the priority queue and handles context switching."""
@@ -164,9 +160,7 @@ class AgentOrchestrator:
         if agent.role == AgentRole.FORENSICS and self._threat_bridge is not None:
             if hasattr(agent, "set_threat_bridge"):
                 agent.set_threat_bridge(self._threat_bridge)
-                logger.info(
-                    "ThreatContainmentBridge auto-wired to ForensicsAgent on registration."
-                )
+                logger.info("ThreatContainmentBridge auto-wired to ForensicsAgent on registration.")
 
         logger.info(
             "Registered agent %s with %d capabilities",

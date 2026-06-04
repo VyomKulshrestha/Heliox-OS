@@ -14,18 +14,52 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
+import types
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from pilot.actions import Action, ActionPlan, ActionResult, ActionType, ProcessParams
+from pilot.actions import (
+    Action,
+    ActionPlan,
+    ActionResult,
+    ActionType,
+    LogAnalyzeParams,
+    PermissionTier,
+)
+from pilot.agents.forensics_agent import ForensicsAgent
 from pilot.agents.threat_containment import (
     ForensicsReport,
     ThreatContainmentBridge,
-    _extract_pids,
     _build_kill_action,
+    _extract_pids,
 )
+
+# ---------------------------------------------------------------------------
+# Shared mock for PendingConfirmation — avoids importing pilot.server which
+# starts WebSocket listeners at import time and hangs in CI.
+# ---------------------------------------------------------------------------
+
+
+class _MockPendingConfirmation:
+    """Minimal stand-in for server.PendingConfirmation used in tests."""
+
+    def __init__(self, plan_id: str, event: asyncio.Event, plan: Any) -> None:
+        self.plan_id = plan_id
+        self.event = event
+        self.plan = plan
+        self.confirmed = False
+
+
+# Install a fake 'pilot.server' module so the lazy
+#   `from pilot.server import PendingConfirmation`
+# inside route_and_confirm() never triggers a real server import.
+if "pilot.server" not in sys.modules:
+    _fake_server = types.ModuleType("pilot.server")
+    _fake_server.PendingConfirmation = _MockPendingConfirmation  # type: ignore[attr-defined]
+    sys.modules["pilot.server"] = _fake_server
 
 
 # ---------------------------------------------------------------------------
@@ -38,7 +72,7 @@ def _make_result(output: str, success: bool = True) -> ActionResult:
     action = Action(
         action_type=ActionType.LOG_ANALYZE,
         target="syslog",
-        parameters=MagicMock(),
+        parameters=LogAnalyzeParams(log_path="syslog"),
     )
     return ActionResult(action=action, success=success, output=output)
 
@@ -73,10 +107,7 @@ def _make_bridge(
 
     async def _fake_execute(user_input, plan, plan_id=None, **kwargs):
         # Simulate successful execution for each action
-        return [
-            ActionResult(action=a, success=True, output="killed")
-            for a in plan.actions
-        ]
+        return [ActionResult(action=a, success=True, output="killed") for a in plan.actions]
 
     mock_orchestrator.execute_plan = AsyncMock(side_effect=_fake_execute)
 
@@ -127,7 +158,6 @@ def _make_bridge(
         broadcast_fn=_fake_broadcast,
         pending_confirms=pending_confirms,
     )
-    # Patch PendingConfirmation import inside route_and_confirm
     return bridge
 
 
@@ -258,7 +288,6 @@ class TestTranslateResolution:
         plan = bridge.translate_resolution(report)
         for action in plan.actions:
             assert action.destructive is True
-            from pilot.actions import PermissionTier
             assert action.permission_tier == PermissionTier.DESTRUCTIVE
 
     def test_no_pid_fallback_to_shell_command(self):
@@ -281,10 +310,7 @@ class TestTranslateResolution:
             affected_pids=[7777],
         )
         plan = bridge.translate_resolution(report)
-        assert any(
-            a.action_type == ActionType.PROCESS_KILL and a.parameters.pid == 7777
-            for a in plan.actions
-        )
+        assert any(a.action_type == ActionType.PROCESS_KILL and a.parameters.pid == 7777 for a in plan.actions)
 
 
 # ---------------------------------------------------------------------------
@@ -327,9 +353,6 @@ class TestContainmentPipeline:
         broadcasts: list = []
         bridge = _make_bridge(confirmed=True, audit_called=audit_calls, broadcast_called=broadcasts)
 
-        # Patch PendingConfirmation
-        from pilot.server import PendingConfirmation
-
         results = [_make_result(_critical_json(pids=[1042]))]
         records = await bridge.intercept(results)
 
@@ -343,8 +366,6 @@ class TestContainmentPipeline:
         audit_calls: list = []
         bridge = _make_bridge(confirmed=True, audit_called=audit_calls)
 
-        from pilot.server import PendingConfirmation
-
         results = [_make_result(_critical_json(pids=[1042]))]
         await bridge.intercept(results)
 
@@ -356,8 +377,6 @@ class TestContainmentPipeline:
     async def test_denied_containment_does_not_execute(self):
         audit_calls: list = []
         bridge = _make_bridge(confirmed=False, audit_called=audit_calls)
-
-        from pilot.server import PendingConfirmation
 
         results = [_make_result(_critical_json(pids=[1042]))]
         records = await bridge.intercept(results)
@@ -373,7 +392,6 @@ class TestContainmentPipeline:
     @pytest.mark.asyncio
     async def test_multiple_criticals_in_one_batch(self):
         bridge = _make_bridge(confirmed=True)
-        from pilot.server import PendingConfirmation
 
         results = [
             _make_result(_critical_json(incident_type="brute_force", pids=[111])),
@@ -391,8 +409,6 @@ class TestContainmentPipeline:
 class TestForensicsAgentIntegration:
     def test_set_threat_bridge_stores_reference(self):
         """ForensicsAgent accepts the bridge via set_threat_bridge()."""
-        from pilot.agents.forensics_agent import ForensicsAgent
-
         mock_model = MagicMock()
         mock_executor = MagicMock()
         agent = ForensicsAgent(model_router=mock_model, executor=mock_executor)
@@ -406,8 +422,6 @@ class TestForensicsAgentIntegration:
     @pytest.mark.asyncio
     async def test_handle_task_spawns_background_intercept(self):
         """handle_task schedules _intercept_critical_threats as background task."""
-        from pilot.agents.forensics_agent import ForensicsAgent
-        from pilot.actions import ActionPlan
 
         mock_model = MagicMock()
 
@@ -436,7 +450,7 @@ class TestForensicsAgentIntegration:
                 Action(
                     action_type=ActionType.LOG_ANALYZE,
                     target="syslog",
-                    parameters=MagicMock(),
+                    parameters=LogAnalyzeParams(log_path="syslog"),
                 )
             ],
             explanation="Test",
@@ -468,8 +482,6 @@ class TestBuildKillAction:
         assert action.requires_root is False
 
     def test_permission_tier_is_destructive(self):
-        from pilot.actions import PermissionTier
-
         action = _build_kill_action(42)
         assert action.permission_tier == PermissionTier.DESTRUCTIVE
         assert action.requires_confirmation is True

@@ -71,11 +71,11 @@ class ForensicsAgent(BaseAgent):
             "Always follow best security investigation guidelines: present timelines, pinpoint root causes, and propose recommended action pathways. "
             "When a CRITICAL threat is found, you MUST output findings as a structured JSON object enclosed in a ```json code block. "
             "The JSON object must contain the following fields:\n"
-            "  - \"severity\": \"CRITICAL\"\n"
-            "  - \"incident_type\": string (e.g., \"brute_force\", \"malware_process\", \"privilege_escalation\")\n"
-            "  - \"proposed_resolution\": string (a clear action statement, e.g., \"Kill process 1042\")\n"
-            "  - \"affected_pids\": list of integers containing the relevant process IDs\n"
-            "  - \"summary\": string summarizing the incident"
+            '  - "severity": "CRITICAL"\n'
+            '  - "incident_type": string (e.g., "brute_force", "malware_process", "privilege_escalation")\n'
+            '  - "proposed_resolution": string (a clear action statement, e.g., "Kill process 1042")\n'
+            '  - "affected_pids": list of integers containing the relevant process IDs\n'
+            '  - "summary": string summarizing the incident'
         )
 
     def can_handle(self, action_type: ActionType) -> bool:
@@ -140,6 +140,4 @@ class ForensicsAgent(BaseAgent):
                     len(containment_records),
                 )
         except Exception:
-            logger.exception(
-                "[ForensicsAgent] Unexpected error in ThreatContainmentBridge.intercept()"
-            )
+            logger.exception("[ForensicsAgent] Unexpected error in ThreatContainmentBridge.intercept()")

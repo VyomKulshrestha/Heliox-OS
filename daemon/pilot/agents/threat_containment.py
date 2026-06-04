@@ -427,8 +427,7 @@ class ThreatContainmentBridge:
             await asyncio.wait_for(pending.event.wait(), timeout=CONFIRM_TIMEOUT_SECONDS)
         except TimeoutError:
             logger.warning(
-                "[ThreatContainment] Confirmation timed out after %ds for plan_id=%s — "
-                "threat containment ABORTED.",
+                "[ThreatContainment] Confirmation timed out after %ds for plan_id=%s — threat containment ABORTED.",
                 CONFIRM_TIMEOUT_SECONDS,
                 plan_id,
             )
@@ -503,7 +502,8 @@ class ThreatContainmentBridge:
         pids_killed = [
             r.action.parameters.pid
             for r in results
-            if r.success and r.action.action_type == ActionType.PROCESS_KILL
+            if r.success
+            and r.action.action_type == ActionType.PROCESS_KILL
             and hasattr(r.action.parameters, "pid")
             and r.action.parameters.pid
         ]
@@ -521,8 +521,10 @@ class ThreatContainmentBridge:
         if error:
             details["error"] = error
 
-        event_label = "threat_contained" if (confirmed and success) else (
-            "threat_containment_denied" if not confirmed else "threat_containment_failed"
+        event_label = (
+            "threat_contained"
+            if (confirmed and success)
+            else ("threat_containment_denied" if not confirmed else "threat_containment_failed")
         )
 
         try:
@@ -581,8 +583,10 @@ class ThreatContainmentBridge:
 
         # Step E — Broadcast result
         if self._broadcast_fn:
-            status = "contained" if (confirmed and all(r.success for r in results)) else (
-                "denied" if not confirmed else "failed"
+            status = (
+                "contained"
+                if (confirmed and all(r.success for r in results))
+                else ("denied" if not confirmed else "failed")
             )
             await self._broadcast_fn(
                 "threat_containment_result",

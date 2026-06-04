@@ -493,13 +493,9 @@ class PilotServer:
                 pending_confirms=self._pending_confirms,
             )
             self._orchestrator.set_threat_bridge(self._threat_bridge)
-            logger.info(
-                "ThreatContainmentBridge initialized and wired to ForensicsAgent."
-            )
+            logger.info("ThreatContainmentBridge initialized and wired to ForensicsAgent.")
         except Exception:
-            logger.warning(
-                "ThreatContainmentBridge init failed (non-critical)", exc_info=True
-            )
+            logger.warning("ThreatContainmentBridge init failed (non-critical)", exc_info=True)
         # ── End Threat Containment Bridge ──────────────────────────────────
 
         from pilot.agents.rss_agent import RssAgent
