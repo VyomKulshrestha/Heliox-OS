@@ -138,7 +138,11 @@ class ScreenVisionAgent:
         self._interval_seconds: float = 3.0
         self._last_hash: str = ""
         self._screenshot_dir = SCREENSHOTS_DIR
-        self._enable_llm_describe = False  # Disabled by default (expensive)
+        self._enable_llm_describe = False  # Disabled by default (expensive)# Delta-Frame Throttler State
+        # Delta-Frame Throttler State
+        self._visual_delta_threshold: float = 100.0  # Raised to ignore minor UI noise
+        self._last_frame_array = None
+
 
     def set_interval(self, interval_seconds: float) -> None:
         """Update the capture cadence while keeping it inside safe bounds."""
@@ -229,51 +233,80 @@ class ScreenVisionAgent:
             return await asyncio.to_thread(self._sync_fallback_screenshot_hash)
 
     def _sync_screenshot_hash(self) -> str:
-        """Synchronous screenshot hash — runs in a thread."""
+        """Synchronous screenshot hash — runs in a thread using MSE delta."""
         import mss
+        import numpy as np
+        from PIL import Image
+        import uuid
 
         with mss.mss() as sct:
             monitor = sct.monitors[1]  # Primary monitor
             img = sct.grab(monitor)
-            raw = img.rgb
-            sampled = bytes(raw[i] for i in range(0, len(raw), 1000))
-            return hashlib.md5(sampled).hexdigest()
+            
+            # Convert to PIL Image, resize to 64x64, and convert to grayscale
+            pil_img = Image.frombytes("RGB", img.size, img.bgra, "raw", "BGRX")
+            pil_img = pil_img.resize((64, 64)).convert("L")
+            current_frame = np.array(pil_img, dtype=np.float32)
+
+            if getattr(self, "_last_frame_array", None) is None:
+                self._last_frame_array = current_frame
+                self._last_hash = str(uuid.uuid4())
+                return self._last_hash
+
+            # Calculate Mean Squared Error (MSE)
+            mse = np.mean((current_frame - self._last_frame_array) ** 2)
+
+            # If the change is significant, update the array and generate a new hash
+            if mse > self._visual_delta_threshold:
+                self._last_frame_array = current_frame
+                self._last_hash = str(uuid.uuid4())
+
+            # If mse is low, this returns the old hash, telling the agent nothing changed
+            return self._last_hash
 
     def _sync_fallback_screenshot_hash(self) -> str:
-        """Synchronous fallback screenshot hash — runs in a thread."""
+        """Synchronous fallback screenshot hash using MSE delta."""
+        import platform
+        import subprocess
+        import numpy as np
+        from PIL import Image
+        import uuid
+        
         os_name = platform.system()
         tmp_path = self._screenshot_dir / "_latest.png"
         try:
             if os_name == "Windows":
-                ps_cmd = f"""
+                ps_cmd = """
                 Add-Type -AssemblyName System.Windows.Forms
                 $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
                 $bitmap = New-Object System.Drawing.Bitmap($screen.Width, $screen.Height)
                 $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
                 $graphics.CopyFromScreen($screen.Location, [System.Drawing.Point]::Empty, $screen.Size)
-                $bitmap.Save('{tmp_path}')
-                """
-                subprocess.run(
-                    ["powershell", "-Command", ps_cmd],
-                    capture_output=True,
-                    timeout=5,
-                )
+                $bitmap.Save('%s')
+                """ % str(tmp_path)
+                subprocess.run(["powershell", "-Command", ps_cmd], capture_output=True, timeout=5)
             elif os_name == "Darwin":
-                subprocess.run(
-                    ["screencapture", "-x", str(tmp_path)],
-                    capture_output=True,
-                    timeout=5,
-                )
+                subprocess.run(["screencapture", "-x", str(tmp_path)], capture_output=True, timeout=5)
             else:
-                subprocess.run(
-                    ["scrot", str(tmp_path)],
-                    capture_output=True,
-                    timeout=5,
-                )
+                subprocess.run(["scrot", str(tmp_path)], capture_output=True, timeout=5)
 
             if tmp_path.exists():
-                data = tmp_path.read_bytes()
-                return hashlib.md5(data[::1000]).hexdigest()
+                pil_img = Image.open(tmp_path).resize((64, 64)).convert("L")
+                current_frame = np.array(pil_img, dtype=np.float32)
+
+                if getattr(self, "_last_frame_array", None) is None:
+                    self._last_frame_array = current_frame
+                    self._last_hash = str(uuid.uuid4())
+                    return self._last_hash
+
+                mse = np.mean((current_frame - self._last_frame_array) ** 2)
+
+                if mse > self._visual_delta_threshold:
+                    self._last_frame_array = current_frame
+                    self._last_hash = str(uuid.uuid4())
+
+                return self._last_hash
+
         except Exception:
             logger.debug("Fallback screenshot failed", exc_info=True)
         return ""
