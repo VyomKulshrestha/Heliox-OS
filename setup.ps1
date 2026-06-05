@@ -25,7 +25,7 @@ $ErrorActionPreference = "Stop"
 $REQUIRED_PYTHON_MAJOR = 3
 $REQUIRED_PYTHON_MINOR = 11
 $REQUIRED_PYTHON_MAX_MINOR = 12  # tribev2/torch wheels are not yet available for 3.13+
-
+$script:PYTHON_VERSION = "$REQUIRED_PYTHON_MAJOR.$REQUIRED_PYTHON_MAX_MINOR"
 $REQUIRED_NODE_MAJOR = 20
 
 $CHOCOLATEY_DIR = Join-Path $env:ProgramData 'chocolatey'
@@ -115,54 +115,61 @@ function Initialize-Chocolatey {
 
 # Python
 
+function Get-CompatiblePythonVersion {
+    $pyLauncher = Get-Command py.exe -ErrorAction SilentlyContinue
+    if (-not $pyLauncher) {
+        return $null
+    }
+
+    $versions = py -0p 2>$null
+    if (-not $versions) {
+        return $null
+    }
+
+    $compatible = $versions | ForEach-Object {
+        if ($_ -match '-V:(\d+)\.(\d+)') {
+            [PSCustomObject]@{
+                Major = [int]$Matches[1]
+                Minor = [int]$Matches[2]
+            }
+        }
+    } | Where-Object {
+        $_.Major -eq $REQUIRED_PYTHON_MAJOR -and
+        $_.Minor -ge $REQUIRED_PYTHON_MINOR -and
+        $_.Minor -le $REQUIRED_PYTHON_MAX_MINOR
+    } | Sort-Object Minor -Descending | Select-Object -First 1
+
+    if ($compatible) {
+        return "$($compatible.Major).$($compatible.Minor)"
+    }
+
+    return $null
+}
+
 function Initialize-Python {
     Write-Host ""
     Write-Info "Checking Python installation..."
 
-    $pyRange     = "$REQUIRED_PYTHON_MAJOR.$REQUIRED_PYTHON_MINOR - $REQUIRED_PYTHON_MAJOR.$REQUIRED_PYTHON_MAX_MINOR"
-    $pyLauncher  = Get-Command py.exe -ErrorAction SilentlyContinue
+    $pyRange = "$REQUIRED_PYTHON_MAJOR.$REQUIRED_PYTHON_MINOR - $REQUIRED_PYTHON_MAJOR.$REQUIRED_PYTHON_MAX_MINOR"
+    $foundVersion = Get-CompatiblePythonVersion
 
-    if ($pyLauncher) {
-        $versions = py -0p 2>$null
-
-        if ($versions) {
-            Write-Info "Detected Python installations:"
-            $versions | ForEach-Object { Write-Info "  $_" }
-
-            $compatible = $versions | ForEach-Object {
-                if ($_ -match '-V:(\d+)\.(\d+)') {
-                    [PSCustomObject]@{
-                        Major = [int]$Matches[1]
-                        Minor = [int]$Matches[2]
-                    }
-                }
-            } | Where-Object {
-                $_.Major -eq $REQUIRED_PYTHON_MAJOR -and
-                $_.Minor -ge $REQUIRED_PYTHON_MINOR -and
-                $_.Minor -le $REQUIRED_PYTHON_MAX_MINOR
-            } | Sort-Object Minor -Descending | Select-Object -First 1
-
-            if ($compatible) {
-                Write-Success "Python $($compatible.Major).$($compatible.Minor) satisfies the requirement ($pyRange)."
-                return
-            }
-
-            Write-Warn "No compatible Python version found. Required: $pyRange."
-            Write-Warn "Python 3.13+ is not supported; torch/tribev2 wheels are unavailable for it."
-        }
-        else {
-            Write-Warn "Python launcher (py.exe) is present but reports no installed versions."
-        }
+    if ($foundVersion) {
+        $script:PYTHON_VERSION = $foundVersion
+        Write-Success "Python $PYTHON_VERSION satisfies the requirement ($pyRange)."
+        return
     }
-    else {
-        Write-Warn "Python launcher (py.exe) not found."
-    }
+
+    Write-Warn "No compatible Python version found. Required: $pyRange."
+    Write-Warn "Python 3.13+ is not supported; torch/tribev2 wheels are unavailable for it."
 
     Write-Info "Installing Python via Chocolatey..."
-
     choco install "python$REQUIRED_PYTHON_MAJOR$REQUIRED_PYTHON_MAX_MINOR" -y
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to install Python. choco exited with code $LASTEXITCODE"
+    }
 
     Update-EnvPath
+    $script:PYTHON_VERSION = "$REQUIRED_PYTHON_MAJOR.$REQUIRED_PYTHON_MAX_MINOR"
     Write-Success "Python installed."
 }
 
@@ -180,33 +187,51 @@ function Initialize-PythonVenv {
         exit 1
     }
 
-    $venvDir = Join-Path $daemonDir '.env'
-
-    # Create the virtual environment only if it does not already exist, or if it was built with the wrong Python version.
+    $venvDir = Join-Path $daemonDir '.venv'
+    $venvPython = $null
     $needsCreate = $true
 
     if (Test-Path $venvDir) {
         $venvPython = Join-Path $venvDir 'Scripts\python.exe'
         $venvVersionOutput = & $venvPython --version 2>$null
 
-        if ($venvVersionOutput -match "Python $REQUIRED_PYTHON_MAJOR\.$REQUIRED_PYTHON_MAX_MINOR\.") {
-            Write-Warn "Virtual environment already exists at '$venvDir'. Skipping creation."
-            $needsCreate = $false
+        if ($venvVersionOutput -match 'Python (\d+)\.(\d+)') {
+            $venvMajor = [int]$Matches[1]
+            $venvMinor = [int]$Matches[2]
+
+            if ($venvMajor -eq $REQUIRED_PYTHON_MAJOR -and
+                $venvMinor -ge $REQUIRED_PYTHON_MINOR -and
+                $venvMinor -le $REQUIRED_PYTHON_MAX_MINOR) {
+                Write-Warn "Virtual environment already exists at '$venvDir' with compatible Python $venvMajor.$venvMinor. Skipping creation."
+                $needsCreate = $false
+            }
+            else {
+                Write-Warn "Virtual environment at '$venvDir' uses wrong Python ($venvVersionOutput). Recreating..."
+                Remove-Item -LiteralPath $venvDir -Recurse -Force
+                $venvPython = $null
+            }
         }
         else {
-            Write-Warn "Virtual environment at '$venvDir' uses wrong Python ($venvVersionOutput). Recreating..."
+            Write-Warn "Could not determine the Python version in existing virtual environment. Recreating..."
             Remove-Item -LiteralPath $venvDir -Recurse -Force
+            $venvPython = $null
         }
     }
 
     if ($needsCreate) {
         Write-Info "Creating virtual environment at '$venvDir'..."
-
-        py "-$REQUIRED_PYTHON_MAJOR.$REQUIRED_PYTHON_MAX_MINOR" -m venv $venvDir
+        py "-$PYTHON_VERSION" -m venv $venvDir
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to create virtual environment. py.exe exited with code $LASTEXITCODE"
+        }
         Write-Success "Virtual environment created."
+        $venvPython = Join-Path $venvDir 'Scripts\python.exe'
     }
 
-    # Resolve the pip executable inside the .env
+    if (-not $venvPython) {
+        $venvPython = Join-Path $venvDir 'Scripts\python.exe'
+    }
+
     $venvPip = Join-Path $venvDir 'Scripts\pip.exe'
 
     if (-not (Test-Path $venvPip)) {
@@ -215,10 +240,21 @@ function Initialize-PythonVenv {
         exit 1
     }
 
-    # Always (re-)install dependencies so the .env is up to date even when it already existed.
     Write-Info "Installing Python dependencies (this may take a few minutes)..."
-    & $venvPython -m pip install --upgrade pip
-    & $venvPip install -e "$daemonDir[full,dev]"
+    Push-Location $daemonDir
+    try {
+        & $venvPython -m pip install --upgrade pip
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to upgrade pip. pip exited with code $LASTEXITCODE"
+        }
+        & $venvPython -m pip install -e ".[full,dev]"
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to install daemon dependencies. pip exited with code $LASTEXITCODE"
+        }
+    }
+    finally {
+        Pop-Location
+    }
     Write-Success "Python dependencies installed."
 }
 
@@ -251,6 +287,9 @@ function Initialize-Node {
     Write-Info "Installing Node.js LTS via Chocolatey..."
 
     choco install nodejs-lts -y
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to install Node.js. choco exited with code $LASTEXITCODE"
+    }
 
     Update-EnvPath
     Write-Success "Node.js installed."
@@ -324,6 +363,9 @@ function Initialize-CppBuildTools {
         --package-parameters `
         "--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --passive" `
         -y
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to install Microsoft C++ Build Tools. choco exited with code $LASTEXITCODE"
+    }
 
     Update-EnvPath
     Write-Success "Microsoft C++ Build Tools installed."
@@ -351,6 +393,9 @@ function Initialize-WebView2 {
     Write-Info "Installing WebView2 Runtime via Chocolatey..."
 
     choco install webview2-runtime -y
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to install WebView2 Runtime. choco exited with code $LASTEXITCODE"
+    }
 
     Update-EnvPath
     Write-Success "WebView2 Runtime installed."
@@ -378,12 +423,18 @@ function Initialize-Rust {
     Write-Info "Installing Rust via Chocolatey..."
 
     choco install rustup.install -y
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to install Rust. choco exited with code $LASTEXITCODE"
+    }
 
     Update-EnvPath
 
     Write-Info "Configuring Rust toolchain to stable-msvc..."
 
     rustup default stable-msvc
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to configure Rust toolchain. rustup exited with code $LASTEXITCODE"
+    }
 
     Write-Success "Rust installed and configured."
 }
@@ -411,6 +462,9 @@ function Initialize-TauriCli {
     Write-Warn "This step may take several minutes."
 
     cargo install tauri-cli --version "^2" --locked
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to install Tauri CLI. cargo exited with code $LASTEXITCODE"
+    }
 
     Write-Success "Tauri CLI installed."
 }
