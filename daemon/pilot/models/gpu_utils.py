@@ -152,6 +152,18 @@ def _free_ram_bytes_psutil() -> int:
         return 0
 
 
+def get_available_vram() -> tuple[int, bool]:
+    """Return (available_vram_bytes, is_gpu).
+
+    If an NVIDIA GPU is present, returns (free_vram, True).
+    Otherwise, falls back to (available_system_ram, False).
+    """
+    vram = _free_vram_bytes_nvidia()
+    if vram is not None:
+        return vram, True
+    return _free_ram_bytes_psutil(), False
+
+
 def calculate_gpu_layers(
     model_path: Path | None,
     *,
@@ -179,8 +191,7 @@ def calculate_gpu_layers(
     """
     n_layers, bytes_per_layer = _gguf_metadata(model_path) if model_path else (32, _FALLBACK_BYTES_PER_LAYER)
 
-    free_bytes = _free_vram_bytes_nvidia()
-    using_gpu = free_bytes is not None
+    free_bytes, using_gpu = get_available_vram()
 
     if not using_gpu:
         # No NVIDIA GPU detected — keep everything on CPU to avoid crashes.

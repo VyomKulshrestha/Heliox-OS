@@ -40,6 +40,8 @@ class PeerCapabilities:
     version: str = "0.7"
     can_execute: bool = True  # can accept delegated tasks
     cpu_load: float = 0.0  # 0.0–1.0, used for load balancing
+    vram_free: int = 0  # available VRAM in bytes
+    has_gpu: bool = False  # does the peer have an NVIDIA GPU?
     plugin_names: list[str] = field(default_factory=list)
 
 

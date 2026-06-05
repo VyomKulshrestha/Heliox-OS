@@ -127,10 +127,23 @@ class ScreenContext:
         return seen
 
 
+DISPLAY_OFF_TIMEOUT_DEFAULT = 10.0
+MAX_CONSECUTIVE_TIMEOUTS_DEFAULT = 3
+AUTO_RESUME_AFTER_SECONDS_DEFAULT = 30.0
+PAUSED_POLL_INTERVAL = 30.0
+
+
 class ScreenVisionAgent:
     """Monitors the screen and maintains awareness of what the user sees."""
 
-    def __init__(self, model_router: ModelRouter | None = None) -> None:
+    def __init__(
+        self,
+        model_router: ModelRouter | None = None,
+        *,
+        capture_timeout_seconds: float = DISPLAY_OFF_TIMEOUT_DEFAULT,
+        max_consecutive_timeouts: int = MAX_CONSECUTIVE_TIMEOUTS_DEFAULT,
+        auto_resume_after_seconds: float = AUTO_RESUME_AFTER_SECONDS_DEFAULT,
+    ) -> None:
         self._model = model_router
         self._context = ScreenContext()
         self._task: asyncio.Task[None] | None = None
@@ -138,7 +151,14 @@ class ScreenVisionAgent:
         self._interval_seconds: float = 3.0
         self._last_hash: str = ""
         self._screenshot_dir = SCREENSHOTS_DIR
-        self._enable_llm_describe = False  # Disabled by default (expensive)
+        self._enable_llm_describe = False
+        # Timeout / display-off handling
+        self._capture_timeout = capture_timeout_seconds
+        self._max_consecutive_timeouts = max_consecutive_timeouts
+        self._auto_resume_after = auto_resume_after_seconds
+        self._consecutive_timeouts: int = 0
+        self._paused: bool = False
+        self._last_active_timestamp: float = 0.0
 
     def set_interval(self, interval_seconds: float) -> None:
         """Update the capture cadence while keeping it inside safe bounds."""
@@ -154,6 +174,9 @@ class ScreenVisionAgent:
         if self._task and not self._task.done():
             await self.stop()
         self._running = True
+        self._consecutive_timeouts = 0
+        self._paused = False
+        self._last_active_timestamp = time.time()
         self._screenshot_dir.mkdir(parents=True, exist_ok=True)
         self._task = asyncio.create_task(self._capture_loop())
         logger.info("Screen vision started (every %.1fs, describe=%s)", self._interval_seconds, enable_describe)
@@ -169,17 +192,62 @@ class ScreenVisionAgent:
                 pass
         logger.info("Screen vision stopped")
 
+    def is_paused(self) -> bool:
+        """Whether the agent has paused due to repeated capture timeouts."""
+        return self._paused
+
+    def pause(self) -> None:
+        """Gracefully pause the capture loop."""
+        if not self._paused:
+            self._paused = True
+            logger.info("Screen vision paused by request")
+
+    def resume(self) -> None:
+        """Resume the capture loop after a pause."""
+        self._consecutive_timeouts = 0
+        self._last_active_timestamp = time.time()
+        if self._paused:
+            self._paused = False
+            logger.info("Screen vision resumed")
+
     async def _capture_loop(self) -> None:
-        """Main capture loop."""
+        """Main capture loop with timeout and display-off handling."""
         while self._running:
             try:
-                state = await self._capture_state()
+                state = await asyncio.wait_for(
+                    self._capture_state(),
+                    timeout=self._capture_timeout,
+                )
                 self._context.add(state)
+                self._consecutive_timeouts = 0
+                self._last_active_timestamp = time.time()
+                if self._paused:
+                    self._paused = False
+                    logger.info("Screen vision auto-resumed — display back online")
+            except asyncio.TimeoutError:
+                self._consecutive_timeouts += 1
+                logger.debug(
+                    "Screen capture timed out (%d/%d consecutive)",
+                    self._consecutive_timeouts,
+                    self._max_consecutive_timeouts,
+                )
+                if self._consecutive_timeouts >= self._max_consecutive_timeouts:
+                    if not self._paused:
+                        self._paused = True
+                        logger.warning(
+                            "Screen vision paused — display appears to be off (%d consecutive timeouts)",
+                            self._consecutive_timeouts,
+                        )
             except asyncio.CancelledError:
                 break
             except Exception:
                 logger.debug("Screen capture error", exc_info=True)
-            await asyncio.sleep(self._interval_seconds)
+
+            if self._paused:
+                cap_sleep = max(self._interval_seconds, PAUSED_POLL_INTERVAL)
+            else:
+                cap_sleep = self._interval_seconds
+            await asyncio.sleep(cap_sleep)
 
     async def _capture_state(self) -> ScreenState:
         """Capture current screen state."""
@@ -302,11 +370,15 @@ class ScreenVisionAgent:
         """Return vision agent statistics."""
         return {
             "running": self._running,
+            "paused": self._paused,
             "interval_seconds": self._interval_seconds,
             "buffer_size": len(self._context.states),
             "llm_describe_enabled": self._enable_llm_describe,
             "current": self._context.current().to_dict() if self._context.current() else None,
             "recent_apps": self._context._recent_apps(),
+            "consecutive_timeouts": self._consecutive_timeouts,
+            "max_consecutive_timeouts": self._max_consecutive_timeouts,
+            "capture_timeout_seconds": self._capture_timeout,
         }
 
     async def detect_actionable_elements(
