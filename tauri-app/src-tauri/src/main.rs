@@ -14,6 +14,10 @@ use sysinfo::System;
 use sysinfo::Disks;
 use sysinfo::Networks;
 use battery::Manager as BatteryManager;
+
+const DAEMON_HOST: &str = "127.0.0.1";
+const DAEMON_PORT: u16 = 8785;
+
 /// Global handle to the Python daemon process so we can kill it on exit.
 struct DaemonProcess(Mutex<Option<Child>>);
 fn get_app_data_dir() -> std::path::PathBuf {
@@ -693,6 +697,7 @@ fn main() {
             commands::apply_git_conflict_resolution,
             commands::get_hotkey,
             commands::set_hotkey,
+            commands::extract_file_text,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Heliox OS")

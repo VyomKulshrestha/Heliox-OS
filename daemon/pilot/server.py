@@ -697,6 +697,7 @@ class PilotServer:
             "proactive_dismiss": self._handle_proactive_dismiss,
             "budget_stats": self._handle_budget_stats,
             "budget_reset": self._handle_budget_reset,
+            "extract_file_text": self._handle_extract_file_text,
             # ── LAN Mesh Network ──
             "mesh_peers": self._handle_mesh_peers,
             "mesh_status": self._handle_mesh_status,
@@ -830,6 +831,24 @@ class PilotServer:
             return _error_response(request.id, -32601, f"Method not found: {request.method}")
         result = await handler(request.params, ws)
         return _success_response(request.id, result)
+
+    async def _handle_extract_file_text(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """Extract text from a file (e.g. PDF) for UI context injection."""
+        path = params.get("path")
+        if not path:
+            return {"status": "error", "message": "No file path provided"}
+
+        import os
+        if not os.path.exists(path):
+            return {"status": "error", "message": f"File not found: {path}"}
+
+        try:
+            from pilot.system.file_intel import parse_file
+            text = await parse_file(path)
+            return {"status": "ok", "text": text}
+        except Exception as e:
+            logger.error("Error extracting text from %s: %s", path, e)
+            return {"status": "error", "message": str(e)}
 
     # -- Core execution pipeline --
 
