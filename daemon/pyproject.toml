@@ -32,7 +32,7 @@ full = [
     "chromadb>=0.5",
     "pyperclip>=1.8",
     "SecretStorage>=3.3; sys_platform == 'linux'",
-    "zeroconf",
+    "zeroconf>=0.131",
 ]
 llamacpp = ["llama-cpp-python>=0.3", "pynvml>=11.5"]
 
@@ -55,7 +55,7 @@ pty = [
 
 # LAN mesh networking
 network = [
-    "zeroconf",
+    "zeroconf>=0.131",
 ]
 
 # Remote execution
