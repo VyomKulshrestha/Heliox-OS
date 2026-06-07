@@ -50,7 +50,12 @@ CREATE INDEX IF NOT EXISTS idx_prefs_key ON user_preferences(key);
 class MemoryStore:
     """Persistent memory with action history and semantic preference learning."""
 
-    def __init__(self, checkpoint_interval_seconds: int = 300) -> None:
+    def __init__(
+        self,
+        checkpoint_interval_seconds: int = 300,
+        pruning_interval_seconds: int = 3600,
+        pruning_min_memories: int = 10,
+    ) -> None:
         self._pool: AsyncSqlitePool | None = None
         self._chroma_collection: Any = None
         self._workspace_index = None
@@ -59,7 +64,8 @@ class MemoryStore:
         self._checkpoint_interval_seconds = checkpoint_interval_seconds
 
         self._pruning_task: asyncio.Task[None] | None = None
-        self._pruning_interval_seconds = 3600  # 1 hour
+        self._pruning_interval_seconds = pruning_interval_seconds
+        self._pruning_min_memories = pruning_min_memories
 
     async def initialize(self, router: ModelRouter = None) -> None:
         await aiofiles.os.makedirs(DATA_DIR, exist_ok=True)
@@ -144,12 +150,8 @@ class MemoryStore:
 
     async def _periodic_pruning_loop(self, router: ModelRouter) -> None:
         """Periodically cluster and prune semantic memory."""
-        # Set a reasonable interval, e.g., every 1 hour (3600 seconds)
-        # In a real implementation, this might come from pilot.config
-        pruning_interval = 3600
-
         while True:
-            await asyncio.sleep(pruning_interval)
+            await asyncio.sleep(self._pruning_interval_seconds)
 
             try:
                 logger.info("Starting background semantic memory pruning...")
@@ -180,7 +182,7 @@ class MemoryStore:
             include=["embeddings", "documents", "metadatas"],
         )
 
-        if not chroma_data["documents"] or len(chroma_data["documents"]) < 10:
+        if not chroma_data["documents"] or len(chroma_data["documents"]) < self._pruning_min_memories:
             logger.debug("Not enough granular memories to justify pruning.")
             return
 

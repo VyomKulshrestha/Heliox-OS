@@ -143,6 +143,8 @@ class ProxyConfig:
 @dataclass
 class MemoryConfig:
     checkpoint_interval_seconds: int = 300
+    pruning_interval_seconds: int = 3600
+    pruning_min_memories: int = 10
     max_context_tokens: int = 8000
     max_recent_messages: int = 10
 
@@ -325,6 +327,8 @@ def _validate_config_types(raw: dict) -> None:
         },
         "memory": {
             "checkpoint_interval_seconds": int,
+            "pruning_interval_seconds": int,
+            "pruning_min_memories": int,
             "max_context_tokens": int,
             "max_recent_messages": int,
         },
@@ -440,7 +444,13 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
     if "memory" in raw:
         for k, v in raw["memory"].items():
             if hasattr(config.memory, k):
-                if k in ("max_context_tokens", "max_recent_messages", "checkpoint_interval_seconds"):
+                if k in (
+                    "max_context_tokens",
+                    "max_recent_messages",
+                    "checkpoint_interval_seconds",
+                    "pruning_interval_seconds",
+                    "pruning_min_memories",
+                ):
                     setattr(config.memory, k, int(v))
                 else:
                     setattr(config.memory, k, v)

@@ -425,7 +425,11 @@ class PilotServer:
         await self._checkpoint_store.initialize()
         validator = ActionValidator(self.config)
         permissions = PermissionChecker(self.config)
-        self._memory = MemoryStore(checkpoint_interval_seconds=self.config.memory.checkpoint_interval_seconds)
+        self._memory = MemoryStore(
+            checkpoint_interval_seconds=self.config.memory.checkpoint_interval_seconds,
+            pruning_interval_seconds=self.config.memory.pruning_interval_seconds,
+            pruning_min_memories=self.config.memory.pruning_min_memories,
+        )
         await self._memory.initialize(model_router)
 
         # ── Plan History Audit Log ──
