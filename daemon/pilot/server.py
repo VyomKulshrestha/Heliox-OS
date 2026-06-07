@@ -829,10 +829,17 @@ class PilotServer:
         provided_token = first_req.params.get("token", "")
         expected_token = self.config.server.auth_token
 
+        # Reject non-string tokens immediately (e.g. null → None in Python)
+        if not isinstance(provided_token, str):
+            await websocket.send(_error_response(first_req.id, -32001, "Invalid auth token"))
+            await websocket.close()
+            logger.warning("Non-string auth token from %s — connection rejected", remote)
+            return
+
         # Constant-time comparison prevents timing-based token oracle attacks
         import hmac as _hmac
 
-        if not expected_token or not _hmac.compare_digest(str(provided_token), str(expected_token)):
+        if not expected_token or not _hmac.compare_digest(provided_token, expected_token):
             await websocket.send(_error_response(first_req.id, -32001, "Invalid auth token"))
             await websocket.close()
             logger.warning("Invalid auth token from %s — connection rejected", remote)

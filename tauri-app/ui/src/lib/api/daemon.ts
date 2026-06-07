@@ -41,12 +41,15 @@ export async function connect(): Promise<boolean> {
 
   // Fetch the auth token from the Rust backend before opening the socket.
   // get_auth_token() reads the file the Python daemon writes on startup.
+  // Fallback: VITE_DAEMON_TOKEN env var for browser-only dev mode (no Tauri).
   let authToken = "";
   try {
     const { invoke } = await import("@tauri-apps/api/core");
     authToken = (await invoke<string>("get_auth_token")) ?? "";
   } catch {
-    // Running in browser dev mode — no Tauri available
+    // Running in browser dev mode without Tauri — read from env variable.
+    // Set VITE_DAEMON_TOKEN in your .env.local to match the daemon token.
+    authToken = (import.meta as any).env?.VITE_DAEMON_TOKEN ?? "";
   }
 
   return new Promise((resolve) => {
