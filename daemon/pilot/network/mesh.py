@@ -36,6 +36,7 @@ import socket
 import uuid
 from typing import TYPE_CHECKING, Any
 
+from pilot.models.gpu_utils import get_available_vram
 from pilot.network.peer_connection import PeerCapabilities, PeerConnection
 
 if TYPE_CHECKING:
@@ -123,6 +124,9 @@ class HelioxMesh:
         self._discovery.on_peer_lost = self._on_peer_lost
         await self._discovery.start()
 
+        # Start periodic capability updates
+        asyncio.create_task(self._periodic_capability_update())
+
         logger.info(
             "HelioxMesh started (instance=%s, port=%d)",
             self._instance_id,
@@ -200,6 +204,23 @@ class HelioxMesh:
             # Broadcast our loaded plugins to the new peer
             if self._config.skill_sync_enabled and self._skill_sync:
                 asyncio.create_task(self._sync_plugins_to_peer(peer_id))
+
+    async def _periodic_capability_update(self) -> None:
+        """Periodically refresh VRAM/CPU stats and update discovery/peers."""
+        while self._running:
+            await asyncio.sleep(30)  # update every 30 seconds
+            if not self._running:
+                break
+
+            caps = self._build_own_capabilities()
+
+            # 1. Update mDNS (Zeroconf) record
+            if self._discovery:
+                await self._discovery.update_vram(caps.vram_free, caps.has_gpu)
+
+            # 2. Update connected peers via P2P
+            await self.broadcast("peer_info", caps.__dict__)
+            logger.debug("HelioxMesh: broadcasted updated capabilities (VRAM: %.1f MB)", caps.vram_free / 1024**2)
 
     def _on_connection_lost(self, peer_id: str) -> None:
         """Called by PeerConnection when a connection drops unexpectedly."""
@@ -339,11 +360,14 @@ class HelioxMesh:
             cpu_load = 0.0
 
         plugins = [p["name"] for p in self._plugin_manager.list_plugins() if p.get("loaded")]
+        vram_free, has_gpu = get_available_vram()
 
         return PeerCapabilities(
             instance_id=self._instance_id,
             hostname=socket.gethostname(),
             can_execute=self._config.collab_exec_enabled,
             cpu_load=cpu_load,
+            vram_free=vram_free,
+            has_gpu=has_gpu,
             plugin_names=plugins,
         )

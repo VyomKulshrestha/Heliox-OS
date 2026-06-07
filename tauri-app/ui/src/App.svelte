@@ -27,6 +27,7 @@
   import { Copy } from "lucide-svelte";
   import ScrollToBottom from "./lib/components/ScrollToBottom.svelte";
   import ConnectionStatus from "./lib/components/ConnectionStatus.svelte";
+  import HeaderMiniMonitor from "./lib/components/HeaderMiniMonitor.svelte";
   import CommandHistory from "./lib/components/CommandHistory.svelte";
   import { _, isLoading } from 'svelte-i18n';
 
@@ -192,6 +193,7 @@
       <button class="tab" class:active={activeTab === "settings"} title="Open Settings" onclick={() => activeTab = "settings"}>{$_('app.tab_settings')}</button>
     </nav>
     <div class="titlebar-right">
+      <HeaderMiniMonitor />
       <ConnectionStatus />
       <AmbientHUD />
     </div>

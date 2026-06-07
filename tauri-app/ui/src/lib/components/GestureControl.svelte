@@ -41,6 +41,7 @@
 
   import { session } from "../stores/session";
   import { tick } from "svelte";
+  import { Hands, type Results } from "@mediapipe/hands";
 
   // ── Props ──
   let { onGesture = (name: string) => {} }: { onGesture?: (name: string) => void } = $props();
@@ -57,7 +58,7 @@
   let canvasEl: HTMLCanvasElement | undefined = $state();
   let trailCanvas: HTMLCanvasElement | undefined = $state();
   let stream: MediaStream | null = null;
-  let hands: any = null;
+  let hands: Hands | null = null;
   let animFrameId: number = 0;
   let lastGestureTime = 0;
   let candidateGesture = "";
@@ -95,22 +96,16 @@
   // ── MediaPipe Hands Loading ──
   let mpLoaded = $state(false);
   let mpLoading = $state(false);
+  const MEDIAPIPE_HANDS_ASSET_BASE = "/mediapipe/hands";
 
   async function loadMediaPipe() {
     if (mpLoaded && hands) return true;
     mpLoading = true;
 
     try {
-      // @ts-ignore — CDN import has no type declarations
-      const module = await import(
-        /* @ts-ignore */
-        "https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js"
-      );
-      const Hands = module.Hands || (window as any).Hands;
-
       hands = new Hands({
         locateFile: (file: string) =>
-          `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${file}`,
+          `${MEDIAPIPE_HANDS_ASSET_BASE}/${file}`,
       });
 
       hands.setOptions({
@@ -121,10 +116,11 @@
       });
 
       hands.onResults(onHandResults);
+      await hands.initialize();
       mpLoaded = true;
       return true;
     } catch (e) {
-      cameraError = "Failed to load gesture detection. Check internet connection.";
+      cameraError = "Failed to load gesture detection assets.";
       console.error("MediaPipe load error:", e);
       return false;
     } finally {
@@ -219,7 +215,7 @@
     }
   }
 
-  function onHandResults(results: any) {
+  function onHandResults(results: Results) {
     if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
       currentGesture = "";
       confidence = 0;

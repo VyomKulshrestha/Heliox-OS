@@ -341,6 +341,8 @@ SYSTEM_MODIFY_ACTIONS = {
     # SSH is always a remote system modification surface
     ActionType.SSH_COMMAND,
     ActionType.SSH_SCRIPT,
+    ActionType.CODE_EXECUTE,
+    ActionType.SHELL_COMMAND,
 }
 
 
@@ -845,10 +847,8 @@ class Action(BaseModel):
             ActionType.FILE_LIST,
             ActionType.FILE_SEARCH,
             ActionType.FILE_COPY,
-            ActionType.CODE_EXECUTE,
             ActionType.CODE_GENERATE_AND_RUN,
             ActionType.SKILL_RUN,
-            ActionType.SHELL_COMMAND,
             ActionType.BROWSER_NAVIGATE,
             ActionType.BROWSER_EXTRACT,
             ActionType.BROWSER_EXTRACT_TABLE,
