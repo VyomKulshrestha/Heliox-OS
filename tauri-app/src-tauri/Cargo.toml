@@ -25,7 +25,7 @@ sysinfo = "0.30"
 battery = "0.7"
 screenshots = "0.8"
 
-opener = "0.7"
+opener = "0.8"
 
 
 [features]
