@@ -514,9 +514,226 @@ The easiest way to get started is to download the pre-compiled installer for you
 3. Install the app.
 4. Open Heliox OS and enter your API Key (e.g., Gemini, OpenAI, Claude) in the Settings tab.
 
-*Note: The Python backend requires Python 3.11+ installed on your system. You must start the local daemon manually for now.*
+*Note: The Python backend requires Python 3.11+ installed on your system. You must start the 
+local daemon manually for now.*
+## Windows Troubleshooting
+
+### Missing DLL Errors
+
+**Error Messages:**
+**Root Cause:** PyTorch requires CUDA runtime DLLs in system PATH
+
+**Fix:**
+
+1. Install Visual C++ Redistributable:
+   - Download: https://support.microsoft.com/en-us/help/2977003
+   - Install the **x64** version
+
+2. Reinstall PyTorch matching your CUDA version:
+```bash
+# For CUDA 12.1 (most common)
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+
+# For CUDA 11.8
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+
+# For CPU only
+pip install torch torchvision torchaudio
+```
+
+3. Verify installation:
+```bash
+python -c "import torch; print(torch.cuda.is_available())"
+```
+
+---
+
+### CUDA Version Mismatch
+
+**Error Messages:**
+CUDA runtime version mismatch
+CUDA version is insufficient for this model
+RuntimeError: CUDA out of memory
+
+**Root Cause:** PyTorch CUDA version doesn't match installed NVIDIA CUDA version
+
+**Fix:**
+
+1. Check your CUDA version:
+```bash
+nvidia-smi
+```
+
+2. Check PyTorch CUDA version:
+```bash
+python -c "import torch; print(torch.version.cuda)"
+```
+
+3. Match your CUDA version using this table:
+
+| NVIDIA CUDA | Installation Command |
+|---|---|
+| 12.4+ | `pip install torch --index-url https://download.pytorch.org/whl/cu124` |
+| 12.1 | `pip install torch --index-url https://download.pytorch.org/whl/cu121` |
+| 11.8 | `pip install torch --index-url https://download.pytorch.org/whl/cu118` |
+| CPU Only | `pip install torch` |
+
+4. Reinstall PyTorch:
+```bash
+pip uninstall torch torchvision torchaudio -y
+pip cache purge
+pip install torch --index-url https://download.pytorch.org/whl/cu121
+```
+
+---
+### TRIBE v2 Engine Installation
+
+**Requirements:**
+- Python 3.11+
+- CUDA 11.8 or 12.1
+- PyTorch installed first
+- Visual C++ 2019 or newer
+
+**Error Messages:**
+TRIBE v2 requires CUDA version 11.8 or higher
+ImportError: cannot import name 'TribeModel' from 'tribev2'
+
+**Installation Steps:**
+
+1. Install PyTorch first:
+```bash
+pip install torch --index-url https://download.pytorch.org/whl/cu121
+```
+
+2. Clone and install tribev2 from facebookresearch:
+```bash
+git clone https://github.com/facebookresearch/tribev2.git
+cd tribev2
+pip install -e .
+```
+
+3. Verify installation:
+```bash
+python -c "from tribev2 import TribeModel; print('TRIBE v2 loaded successfully')"
+```
+
+4. Load a pretrained model:
+```python
+from tribev2 import TribeModel
+
+model = TribeModel.from_pretrained("facebook/tribev2", cache_folder="./cache")
+```
+
+
+
+
+---
+
+### PATH Environment Variable Issues
+
+**Error Messages:**
+CUDA is not available
+Cannot find nvcc compiler
+
+**Fix:**
+
+1. Open Environment Variables:
+   - Press `Win + X` → Click "System"
+   - Click "Advanced system settings"
+   - Click "Environment Variables" button
+
+2. Add CUDA to PATH:
+   - Find **Path** variable and click Edit
+   - Add these two paths:
+     - `C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.1\bin`
+     - `C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.1\libnvvp`
+   - (Replace v12.1 with your CUDA version)
+
+3. Restart terminal and verify:
+```bash
+nvcc --version
+```
+
+---
+
+### GPU Out of Memory Errors
+
+**Error Message:**
+RuntimeError: CUDA out of memory. Tried to allocate X.XX GiB
+
+**Solutions:**
+
+1. Reduce batch size in your code:
+```python
+batch_size = 32  # Instead of 64 or 128
+```
+
+2. Clear GPU memory:
+```bash
+python -c "import torch; torch.cuda.empty_cache()"
+```
+
+3. Check GPU memory:
+```bash
+python -c "import torch; print(torch.cuda.get_device_properties(0))"
+```
+
+4. Use CPU if needed:
+```python
+device = "cpu"  # Instead of "cuda"
+```
+
+---
+
+### Visual C++ Build Tools Missing
+
+**Error Message:**
+error: Microsoft Visual C++ 14.0+ is required
+
+**Fix:**
+
+1. Download Visual Studio Build Tools:
+   - Go to: https://visualstudio.microsoft.com/downloads/
+   - Click "Build Tools for Visual Studio 2022"
+
+2. Run the installer and select:
+   - ✓ Desktop development with C++
+   - ✓ Windows 11 SDK
+
+3. Complete installation and **restart your computer**
+
+---
+
+### Quick Diagnostic
+
+Check your setup with this command:
+```bash
+python -c "import torch; print('PyTorch:', torch.__version__); print('CUDA Available:', torch.cuda.is_available()); print('CUDA Version:', torch.version.cuda if torch.cuda.is_available() else 'N/A')"
+```
+
+**Still having issues?**
+
+Try a clean reinstall:
+```bash
+pip cache purge
+pip install --upgrade pip setuptools wheel
+pip install torch --index-url https://download.pytorch.org/whl/cu121
+```
+
+For more information, see [PyTorch Installation Guide](https://pytorch.org/get-started/locally/)
+
+
+
+
+
+
+
+
 
 ### Option 2: Build from Source (For Developers)
+
+> Note: Windows contributors can use the automated `setup.ps1` script for environment setup.  
+> If PowerShell blocks the script, check the Windows setup instructions in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 If you want to contribute or modify Heliox OS, build it from the source code:
 

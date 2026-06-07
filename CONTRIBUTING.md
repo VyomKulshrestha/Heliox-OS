@@ -39,6 +39,40 @@ heliox-os/
 - **Rust toolchain** (for Tauri)
 - **Git**
 
+## Windows Setup
+
+For Windows users, after cloning the repository you can use the provided `setup.ps1` script to automatically set up the development environment.
+
+### Run the setup script
+
+Open PowerShell as administrator in the project root directory and run:
+
+```powershell
+.\setup.ps1
+```
+
+### If PowerShell blocks the script
+
+Some Windows systems restrict PowerShell scripts by default.  
+If you see an execution policy error, run the following command in PowerShell as administrator:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+After running the command:
+
+1. Close the terminal
+2. Reopen PowerShell
+3. Navigate back to the project directory
+4. Run the setup script again:
+
+```powershell
+.\setup.ps1
+```
+
+> Note: The `setup.ps1` script is intended for Windows users only.
+
 ### 1. Clone the repo
 
 ```bash
