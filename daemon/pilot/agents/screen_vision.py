@@ -138,11 +138,10 @@ class ScreenVisionAgent:
         self._interval_seconds: float = 3.0
         self._last_hash: str = ""
         self._screenshot_dir = SCREENSHOTS_DIR
-        self._enable_llm_describe = False  # Disabled by default (expensive)# Delta-Frame Throttler State
+        self._enable_llm_describe = False  # Disabled by default (expensive)
         # Delta-Frame Throttler State
         self._visual_delta_threshold: float = 100.0  # Raised to ignore minor UI noise
         self._last_frame_array = None
-
 
     def set_interval(self, interval_seconds: float) -> None:
         """Update the capture cadence while keeping it inside safe bounds."""
@@ -234,15 +233,16 @@ class ScreenVisionAgent:
 
     def _sync_screenshot_hash(self) -> str:
         """Synchronous screenshot hash — runs in a thread using MSE delta."""
+        import uuid
+
         import mss
         import numpy as np
         from PIL import Image
-        import uuid
 
         with mss.mss() as sct:
             monitor = sct.monitors[1]  # Primary monitor
             img = sct.grab(monitor)
-            
+
             # Convert to PIL Image, resize to 64x64, and convert to grayscale
             pil_img = Image.frombytes("RGB", img.size, img.bgra, "raw", "BGRX")
             pil_img = pil_img.resize((64, 64)).convert("L")
@@ -268,22 +268,24 @@ class ScreenVisionAgent:
         """Synchronous fallback screenshot hash using MSE delta."""
         import platform
         import subprocess
+        import uuid
+
         import numpy as np
         from PIL import Image
-        import uuid
-        
+
         os_name = platform.system()
         tmp_path = self._screenshot_dir / "_latest.png"
+        tmp_path.unlink(missing_ok=True)  # Clears the old screenshot to prevent false 0 MSE
         try:
             if os_name == "Windows":
-                ps_cmd = """
+                ps_cmd = f"""
                 Add-Type -AssemblyName System.Windows.Forms
                 $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
                 $bitmap = New-Object System.Drawing.Bitmap($screen.Width, $screen.Height)
                 $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
                 $graphics.CopyFromScreen($screen.Location, [System.Drawing.Point]::Empty, $screen.Size)
-                $bitmap.Save('%s')
-                """ % str(tmp_path)
+                $bitmap.Save('{str(tmp_path)}')
+                """
                 subprocess.run(["powershell", "-Command", ps_cmd], capture_output=True, timeout=5)
             elif os_name == "Darwin":
                 subprocess.run(["screencapture", "-x", str(tmp_path)], capture_output=True, timeout=5)
