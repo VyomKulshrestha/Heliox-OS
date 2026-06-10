@@ -49,6 +49,8 @@
             
             for (const path of paths) {
               try {
+                // Register path in the allowlist before reading
+                await invoke("register_allowed_path", { path });
                 // Extract filename
                 const filename = path.split('\\').pop()?.split('/').pop() || "unknown";
                 const content = await invoke("extract_file_text", { path });
@@ -141,11 +143,18 @@
         if (isTextLikeFile(file)) {
           content = await file.text();
         } else if (path) {
-          const res = (await call("extract_file_text", { path })) as Record<string, unknown>;
-          if (res && res.status === "ok" && typeof res.text === "string") {
-            content = res.text;
-          } else {
-            console.warn(`Failed to extract text from ${file.name}:`, res?.message);
+          try {
+            // Register path in the allowlist before reading
+            await invoke("register_allowed_path", { path });
+            const res = (await call("extract_file_text", { path })) as Record<string, unknown>;
+            if (res && res.status === "ok" && typeof res.text === "string") {
+              content = res.text;
+            } else {
+              console.warn(`Failed to extract text from ${file.name}:`, res?.message);
+              continue;
+            }
+          } catch (err) {
+            console.warn(`Failed to extract text from ${file.name}:`, err);
             continue;
           }
         } else {

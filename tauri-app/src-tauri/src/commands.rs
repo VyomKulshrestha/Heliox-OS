@@ -273,21 +273,52 @@ pub fn set_hotkey(app: AppHandle, shortcut: String) -> Result<(), String> {
 }
 
 // 7. Extract text from binary files (e.g. PDF, DOCX) for UI context injection
+//
+// SECURITY: This command is gated by the AllowedPaths managed state.
+// Only files explicitly selected by the user (drag-and-drop) are readable.
+// Paths are canonicalized to defeat traversal attacks.
 #[tauri::command]
-pub fn extract_file_text(path: String) -> Result<String, String> {
-    let extension = std::path::Path::new(&path)
+pub async fn extract_file_text(app: AppHandle, path: String) -> Result<String, String> {
+    // 1. Canonicalize — resolves "..", symlinks, etc.
+    let canonical = std::fs::canonicalize(&path)
+        .map_err(|e| format!("Invalid path: {}", e))?;
+
+    // 2. Check the user-consent allowlist
+    let allowed = app.state::<crate::file_access::AllowedPaths>();
+    if !allowed.contains(&canonical) {
+        return Err("Access denied: file was not selected by user".into());
+    }
+
+    // 3. Enforce a 50 MB size cap to prevent memory exhaustion
+    const MAX_FILE_BYTES: u64 = 50 * 1024 * 1024;
+    let metadata = std::fs::metadata(&canonical)
+        .map_err(|e| format!("Cannot stat file: {}", e))?;
+    if metadata.len() > MAX_FILE_BYTES {
+        return Err("File too large (>50 MB)".into());
+    }
+
+    // 4. Offload blocking I/O to a background thread
+    let path_str = canonical.to_string_lossy().to_string();
+    tokio::task::spawn_blocking(move || extract_text_from_path(&path_str))
+        .await
+        .map_err(|e| format!("Task join error: {}", e))?
+}
+
+/// Internal helper — performs the actual (blocking) text extraction.
+fn extract_text_from_path(path: &str) -> Result<String, String> {
+    let extension = std::path::Path::new(path)
         .extension()
         .and_then(|s| s.to_str())
         .unwrap_or("")
         .to_lowercase();
 
     if extension == "pdf" {
-        match pdf_extract::extract_text(&path) {
+        match pdf_extract::extract_text(path) {
             Ok(text) => Ok(text),
             Err(e) => Err(format!("Failed to parse PDF: {}", e)),
         }
     } else if extension == "docx" {
-        let file = std::fs::File::open(&path).map_err(|e| e.to_string())?;
+        let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
         let mut archive = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
         
         let mut document_xml = archive.by_name("word/document.xml").map_err(|e| e.to_string())?;
@@ -314,9 +345,9 @@ pub fn extract_file_text(path: String) -> Result<String, String> {
         }
         Ok(text)
     } else {
-        match std::fs::read_to_string(&path) {
+        match std::fs::read_to_string(path) {
             Ok(text) => Ok(text),
             Err(e) => Err(format!("Failed to read file: {}", e)),
         }
     }
-}
+}
