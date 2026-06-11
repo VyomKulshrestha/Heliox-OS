@@ -165,6 +165,7 @@ async def test_ollama_cost_is_zero(tmp_path):
     assert stats["cost_usd"] == 0.0
     await tracker.close()
 
+
 @pytest.mark.asyncio
 async def test_budget_cache_resets_on_month_rollover(tmp_path, monkeypatch):
     """check_budget() must compare against the current month only.
