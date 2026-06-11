@@ -21,7 +21,7 @@ tokio-tungstenite = "0.29"
 futures-util = "0.3"
 dirs = "5"
 
-sysinfo = "0.30"
+sysinfo = "0.39"
 battery = "0.7"
 screenshots = "0.8"
 
