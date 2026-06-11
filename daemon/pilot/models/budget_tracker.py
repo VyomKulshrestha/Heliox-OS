@@ -156,15 +156,15 @@ class BudgetTracker:
             return
         if provider in ("ollama", "local"):
             return
-        
+
         # If the month rolled over since the cache was last updated, the new
         # month starts fresh (sync gate, no I/O — record_usage keeps it
-        # accurate from the next call onward). 
+        # accurate from the next call onward).
         current_month = _current_month()
         if current_month != self._cost_month:
             self._cost_month = current_month
             self._monthly_cost = 0.0
-        
+
         if self._monthly_limit > 0 and self._monthly_cost >= self._monthly_limit:
             raise BudgetExceededError(
                 f"Monthly API budget of ${self._monthly_limit:.2f} exceeded "
@@ -275,7 +275,7 @@ class BudgetTracker:
                     (now, month, provider, model, input_tokens, output_tokens, cost, task_id),
                 )
                 await db.commit()
-                
+
             # Reset the cached monthly total when the calendar month rolls over,
             # so the budget gate compares against the new month's spend only.
             if month != self._cost_month:
