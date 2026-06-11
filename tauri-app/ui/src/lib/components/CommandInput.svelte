@@ -26,9 +26,6 @@
   let attachments = $state<Attachment[]>([]);
   let isDragging = $state(false);
 
-  const MAX_FILE_SIZE = 15 * 1024 * 1024;
-
-  const ALLOWED_TEXT_TYPES = ["text/plain", "text/markdown", "application/json", "application/xml"];
 
   $effect(() => {
     let unlisten: () => void;
@@ -74,13 +71,6 @@
     };
   });
 
-  function isTextLikeFile(file: File): boolean {
-    return (
-      file.type.startsWith("text/") ||
-      ALLOWED_TEXT_TYPES.includes(file.type) ||
-      /\.(ts|js|jsx|tsx|py|java|cpp|c|h|hpp|cs|go|rs|md|txt|json|xml|yaml|yml)$/i.test(file.name)
-    );
-  }
 
   function handleSubmit(e: Event) {
     e.preventDefault();
@@ -99,90 +89,7 @@
       handleSubmit(e);
     }
   }
-  let dragCounter = $state(0);
-
-  function handleDragEnter(e: DragEvent) {
-    e.preventDefault();
-    dragCounter++;
-    isDragging = true;
-  }
-
-  function handleDragOver(e: DragEvent) {
-    e.preventDefault();
-  }
-
-  function handleDragLeave(e: DragEvent) {
-    e.preventDefault();
-    dragCounter--;
-    if (dragCounter <= 0) {
-      dragCounter = 0;
-      isDragging = false;
-    }
-  }
-
-  async function handleDrop(e: DragEvent) {
-    e.preventDefault();
-    dragCounter = 0;
-    isDragging = false;
-
-    const droppedFiles = e.dataTransfer?.files;
-
-    if (!droppedFiles?.length) return;
-
-    for (const file of droppedFiles) {
-      try {
-        if (file.size > MAX_FILE_SIZE) {
-          console.warn(`Skipping ${file.name}: file too large`);
-          continue;
-        }
-
-        const path = (file as any).path;
-        let content = "";
-        let type = file.type;
-
-        if (isTextLikeFile(file)) {
-          content = await file.text();
-        } else if (path) {
-          try {
-            // Register path in the allowlist before reading
-            await invoke("register_allowed_path", { path });
-            const res = (await call("extract_file_text", { path })) as Record<string, unknown>;
-            if (res && res.status === "ok" && typeof res.text === "string") {
-              content = res.text;
-            } else {
-              console.warn(`Failed to extract text from ${file.name}:`, res?.message);
-              continue;
-            }
-          } catch (err) {
-            console.warn(`Failed to extract text from ${file.name}:`, err);
-            continue;
-          }
-        } else {
-          console.warn(`Skipping ${file.name}: unsupported file type and no path available`);
-          continue;
-        }
-
-        attachments = [
-          ...attachments,
-          {
-            name: file.name,
-            type,
-            content,
-          },
-        ];
-      } catch (err) {
-        console.error("Failed to read file:", err);
-      }
-    }
-  }
 </script>
-
-<svelte:window
-  ondragenter={handleDragEnter}
-  ondragover={handleDragOver}
-  ondragleave={handleDragLeave}
-  ondrop={handleDrop}
-/>
 
 <form class="command-input" onsubmit={handleSubmit}>
   {#if attachments.length}
