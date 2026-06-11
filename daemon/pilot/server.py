@@ -373,6 +373,8 @@ class PilotServer:
         self._rss_agent: Any = None
         # ── LAN Mesh Network ──
         self._mesh: Any = None
+        # ── Threat Containment Bridge (Issue #365) ──
+        self._threat_bridge: Any = None
         # ── Authenticated WebSocket clients ──
         self._authenticated_clients: set[ServerConnection] = set()
 
@@ -485,6 +487,24 @@ class PilotServer:
         )
         logger.info("Auto-registered %d agents via dynamic discovery", registered)
         await self._orchestrator.start_all()
+
+        # ── Threat Containment Bridge (Issue #365) ──────────────────────────────
+        # Must be created AFTER orchestrator.start_all() so the ForensicsAgent
+        # is already registered and can be wired immediately.
+        try:
+            from pilot.agents.threat_containment import ThreatContainmentBridge
+
+            self._threat_bridge = ThreatContainmentBridge(
+                orchestrator=self._orchestrator,
+                audit_logger=audit,
+                broadcast_fn=self._broadcast_notification,
+                pending_confirms=self._pending_confirms,
+            )
+            self._orchestrator.set_threat_bridge(self._threat_bridge)
+            logger.info("ThreatContainmentBridge initialized and wired to ForensicsAgent.")
+        except Exception:
+            logger.warning("ThreatContainmentBridge init failed (non-critical)", exc_info=True)
+        # ── End Threat Containment Bridge ──────────────────────────────────
 
         from pilot.agents.rss_agent import RssAgent
 
@@ -713,6 +733,8 @@ class PilotServer:
             # ── Plan History Audit Log ──
             "get_plan_history": self._handle_get_plan_history,
             "get_plan_detail": self._handle_get_plan_detail,
+            # ── Threat Containment (Issue #365) ──
+            "threat_containment_stats": self._handle_threat_containment_stats,
         }
 
         # ── LAN Mesh Network (opt-in via config) ──
@@ -3701,6 +3723,38 @@ class PilotServer:
             return {"error": f"No plan found with plan_id: {plan_id}"}
 
         return record
+
+    # ── Threat Containment (Issue #365) ──────────────────────────────────────
+
+    async def _handle_threat_containment_stats(self, params: dict, ws: ServerConnection) -> dict:
+        """Return the operational status of the ThreatContainmentBridge.
+
+        JSON-RPC method: ``threat_containment_stats``
+
+        Returns a simple status dict so the frontend can display whether
+        autonomous threat containment is active and ready.
+
+        Returns
+        -------
+        dict
+            ``status``: "active" | "inactive"
+            ``bridge_ready``: bool — True when the bridge is fully wired
+            ``pending_confirmations``: int — number of open confirmation gates
+        """
+        if self._threat_bridge is None:
+            return {
+                "status": "inactive",
+                "bridge_ready": False,
+                "pending_confirmations": 0,
+                "message": "ThreatContainmentBridge is not initialized.",
+            }
+
+        return {
+            "status": "active",
+            "bridge_ready": True,
+            "pending_confirmations": len(self._pending_confirms),
+            "message": "ThreatContainmentBridge is active and monitoring ForensicsAgent output.",
+        }
 
 
 def _setup_logging() -> None:
