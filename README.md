@@ -208,6 +208,7 @@ Heliox OS uses a **modular multi-agent architecture** where specialized agents c
 | 🌐 **Web Agent** | Web & APIs | Browser automation, scraping, HTTP requests, downloads |
 | 📊 **Monitor Agent** | Monitoring | CPU, RAM, disk, network monitoring with threshold alerts |
 | 📡 **Communication Agent** | Messaging | Email, Slack, Discord, webhooks, desktop notifications |
+| 📅 **Calendar Agent** | Scheduling | .ics parsing, CalDAV sync, event management |
 
 **How it works:** The Planner generates an action plan → the Orchestrator analyzes each action type → routes to the correct specialist → agents execute in sequence → results merge for verification.
 
@@ -297,6 +298,9 @@ Auto-detects: winget, choco, brew, apt, dnf, pacman
 
 ### Windows Registry
 `registry_read` · `registry_write`
+
+### Calendar Operations
+`calendar_parse` · `calendar_sync` · `calendar_create_event` · `calendar_list_events` · `calendar_delete_event`
 
 ### Open / Launch / Notify
 `open_url` · `open_application` · `notify`
