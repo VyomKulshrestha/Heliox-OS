@@ -482,6 +482,8 @@ class PilotServer:
             executor=self._executor,
             background_manager=self._background,
             model_router=model_router,
+            config=self.config,
+            vault=self._vault,
         )
         logger.info("Auto-registered %d agents via dynamic discovery", registered)
         await self._orchestrator.start_all()
