@@ -32,6 +32,8 @@ dependencies = [
 [project.optional-dependencies]
 full = [
     "chromadb>=0.5",
+    "faiss-cpu>=1.7.0",
+    "sentence-transformers>=2.2.0",
     "pyperclip>=1.8",
     "SecretStorage>=3.3; sys_platform == 'linux'",
     "zeroconf>=0.131",
