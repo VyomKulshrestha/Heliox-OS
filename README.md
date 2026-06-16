@@ -37,7 +37,35 @@
 </p>
 
 ---
+## 🌱 New Contributor Onboarding
 
+New to open source? New to Heliox OS? Start here.
+
+This guide helps first-time contributors understand the project structure, set up the development environment, and make their first contribution.
+
+### What is Heliox OS?
+
+Heliox OS is an AI-powered operating system agent that combines planning, execution, verification, memory, and security into a unified multi-agent system.
+
+### Before Contributing
+
+We recommend:
+
+1. Reading this README completely
+2. Reading CONTRIBUTING.md
+3. Understanding the project structure
+4. Running the project locally
+5. Exploring beginner-friendly issues
+
+### Project Structure Overview
+
+```text
+heliox-os/
+├── daemon/          Backend AI agent system
+├── tauri-app/       Desktop application
+├── schemas/         Shared validation schemas
+├── assets/          Images and media resources
+└── docs/            Project documentation
 ## Why Heliox OS?
 
 Unlike simple command runners, Heliox OS is a **true agentic system** inspired by robust autonomous architectures like OpenClaw, running a continuous ReAct loop with a **modular multi-agent orchestrator**:
