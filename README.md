@@ -744,7 +744,7 @@ If you want to contribute or modify Heliox OS, build it from the source code:
 **1. Install the Python daemon:**
 ```bash
 git clone https://github.com/VyomKulshrestha/Heliox-OS.git
-cd Heliox OS/daemon
+cd Heliox-OS/daemon
 pip install -e ".[full,dev]"
 ```
 
