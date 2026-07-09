@@ -603,7 +603,7 @@
               </button>
               {#if expandedThoughtStages[group.stageId]}
                 <div class="thought-stream-list" transition:slide={{ duration: 160 }}>
-                  {#each group.entries as thought (thought.seq)}
+                  {#each group.entries as thought, idx (`${thought.seq}-${idx}`)}
                     <div class="thought-entry {thought.type}" transition:fade={{ duration: 120 }}>
                       <span class="thought-seq">#{thought.seq}</span>
                       <span class="thought-type">{thoughtTypeLabel(thought.type)}</span>

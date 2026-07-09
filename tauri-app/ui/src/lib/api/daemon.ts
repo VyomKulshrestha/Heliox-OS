@@ -1,5 +1,5 @@
 import { listen } from '@tauri-apps/api/event';
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from './invoke';
 
 /**
  * WebSocket client for communicating with the Heliox OS Python daemon.
@@ -47,9 +47,18 @@ export async function connect(): Promise<boolean> {
     const { invoke } = await import("@tauri-apps/api/core");
     authToken = (await invoke<string>("get_auth_token")) ?? "";
   } catch {
-    // Running in browser dev mode without Tauri — read from env variable.
-    // Set VITE_DAEMON_TOKEN in your .env.local to match the daemon token.
-    authToken = (import.meta as any).env?.VITE_DAEMON_TOKEN ?? "";
+    // Running in browser dev mode without Tauri — try fetching from Vite dev server middleware first
+    try {
+      const res = await fetch("/api/auth_token");
+      if (res.ok) {
+        authToken = (await res.text()).trim();
+      }
+    } catch {
+      // ignore
+    }
+    if (!authToken) {
+      authToken = (import.meta as any).env?.VITE_DAEMON_TOKEN ?? "";
+    }
   }
 
   return new Promise((resolve) => {

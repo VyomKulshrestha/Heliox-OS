@@ -16,6 +16,9 @@ use sysinfo::Networks;
 use battery::Manager as BatteryManager;
 /// Global handle to the Python daemon process so we can kill it on exit.
 struct DaemonProcess(Mutex<Option<Child>>);
+
+const DAEMON_HOST: &str = "127.0.0.1";
+const DAEMON_PORT: u16 = 8785;
 fn get_app_data_dir() -> std::path::PathBuf {
     let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
     home.join(".config").join("heliox-os")
@@ -273,76 +276,37 @@ fn get_terminal_logs() -> Vec<String> {
 }
 #[tauri::command]
 fn get_rss_feed() -> Vec<serde_json::Value> {
-    let stats =
-        get_system_stats();
-    let cpu =
-        stats["cpu"]
-        .as_f64()
-        .unwrap_or(0.0);
-    let ram =
-        stats["ram"]
-        .as_f64()
-        .unwrap_or(0.0);
     let mut feed = vec![
         serde_json::json!({
-            "title":
-                "Heliox OS dashboard initialized",
-            "time":
-                "Just now"
-        }),
-        serde_json::json!({
-            "title":
-                "JSON-RPC daemon connected",
-            "time":
-                "1 min ago"
-        }),
-        serde_json::json!({
-            "title":
-                format!(
-                    "CPU usage {:.1}% active",
-                    cpu
-                ),
-            "time":
-                "Live"
-        }),
-        serde_json::json!({
-            "title":
-                format!(
-                    "RAM usage {:.1}% active",
-                    ram
-                ),
-            "time":
-                "Live"
-        }),
-    ];
-    if cpu > 60.0 {
-        feed.push(
-            serde_json::json!({
-                "title":
-                    "High CPU activity detected",
-                "time":
-                    "Alert"
-            })
-        );
-    }
-    if ram > 70.0 {
-        feed.push(
-            serde_json::json!({
-                "title":
-                    "Memory usage elevated",
-                "time":
-                    "Alert"
-            })
-        );
-    }
-    feed.push(
-        serde_json::json!({
-            "title":
-                "Background agents online",
-            "time":
-                "Live"
+            "title": "Heliox OS v0.7.1 Active Release (JARVIS Core Engine)",
+            "url": "https://github.com/VyomKulshrestha/Heliox-OS/releases",
+            "source": "Current Build"
         })
-    );
+    ];
+    if let Ok(output) = std::process::Command::new("git")
+        .args(["tag", "-l", "--sort=-creatordate", "--format=%(refname:short)|%(creatordate:short)|%(subject)"])
+        .output()
+    {
+        if let Ok(text) = String::from_utf8(output.stdout) {
+            for line in text.lines().take(4) {
+                let parts: Vec<&str> = line.split('|').collect();
+                if !parts.is_empty() && !parts[0].is_empty() {
+                    feed.push(serde_json::json!({
+                        "title": format!("Release {}: {}", parts[0], if parts.len() > 2 && !parts[2].is_empty() { parts[2] } else { "Official Heliox OS Distribution" }),
+                        "url": format!("https://github.com/VyomKulshrestha/Heliox-OS/releases/tag/{}", parts[0]),
+                        "source": format!("Release Tag ({})", if parts.len() > 1 && !parts[1].is_empty() { parts[1] } else { "Published" })
+                    }));
+                }
+            }
+        }
+    }
+    if feed.len() == 1 {
+        feed.push(serde_json::json!({
+            "title": "TRIBE v2 Cognitive Engine & Threat Containment Bridge Live",
+            "url": "https://github.com/VyomKulshrestha/Heliox-OS",
+            "source": "System Feature"
+        }));
+    }
     feed
 }
 #[tauri::command]

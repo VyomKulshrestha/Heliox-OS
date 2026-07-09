@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { invoke } from "@tauri-apps/api/core";
+  import { invoke } from "../api/invoke";
 import { pinnedWidgets } from "../stores/pinnedWidgets";
   type Temps = {
     cpu: number;
@@ -65,7 +65,19 @@ $: pinned =
   async function loadTemps() {
     try {
       const data = await invoke("get_temperature_stats");
-      temps = data as Temps;
+      if (data && typeof data === "object") {
+        temps = { ...temps, ...(data as Partial<Temps>) };
+      }
+      if (typeof navigator !== "undefined" && "getBattery" in (navigator as any)) {
+        try {
+          const battery: any = await (navigator as any).getBattery();
+          if (battery && typeof battery.level === "number") {
+            temps.battery_percent = Math.round(battery.level * 100);
+          }
+        } catch (e) {
+          // ignore
+        }
+      }
     } catch (err) {
       console.error("Temperature fetch failed:", err);
     }
@@ -94,25 +106,25 @@ $: pinned =
         ["Motherboard", temps.motherboard],
         ["SSD", temps.ssd],
         ["VRM", temps.vrm],
-        ["Battery", temps.battery]
+        ["Battery Temp", temps.battery]
       ] as [label, value]}
         <div class="temp-item">
           <div class="top">
             <span>{label}</span>
-            <p style={`color:${getColor(Number(value))}`}>
-              {Number(value).toFixed(0)}°C
+            <p style={`color:${getColor(Number(value || 0))}`}>
+              {Number(value || 0).toFixed(0)}°C
             </p>
           </div>
           <div class="bar">
             <div
               class="fill"
               style={`
-                width:${clamp(Number(Number(value)))}%;
+                width:${clamp(Number(value || 0))}%;
                 background:${function getColor(temp: number) {
                               if (temp >= 85) return "#ff1f7a";
                               if (temp >= 70) return "#ff4da6";
                              return "#ff66c4";
-                            }(Number(value))};
+                            }(Number(value || 0))};
               `}>
             </div>
           </div>
@@ -122,34 +134,34 @@ $: pinned =
       <div class="extra">
         <div class="stat-box">
           <span>🔋 Battery</span>
-  <strong>
-      {temps.battery_percent}%
-  </strong>
+          <strong>
+            {temps.battery_percent || 0}%
+          </strong>
         </div>
         <div class="stat-box">
           <span>🧠 CPU</span>
           <strong>
-                 {Math.round(temps.cpu || 0)}%
+            {Math.round(temps.cpu || 0)}%
           </strong>
         </div>
       </div>
-       <div class="stat-box">
-  <span>⚙ Threads</span>
-       <strong>
-       {temps.cpu_threads}
-      </strong>
-    </div>
+      <div class="stat-box">
+        <span>⚙ Threads</span>
+        <strong>
+          {temps.cpu_threads || 8}
+        </strong>
+      </div>
     </div>
     <!-- RIGHT -->
     <div class="right">
      <div class="circle"
      style={`
-      --temp:${clamp(temps.cpu)}%;
-      --circleColor:${getColor(temps.cpu)};
+      --temp:${clamp(Number(temps.cpu || 0))}%;
+      --circleColor:${getColor(Number(temps.cpu || 0))};
     `}
     >
       <div class="inner">
-         <h1>{temps.cpu.toFixed(0)}°</h1>
+         <h1>{Number(temps.cpu || 0).toFixed(0)}°</h1>
          <span>C</span>
       </div>
    </div>
