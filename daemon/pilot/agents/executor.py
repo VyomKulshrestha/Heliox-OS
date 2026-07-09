@@ -987,6 +987,7 @@ class Executor:
         import os
         import shutil
         import time
+
         from pilot.system.processes import process_kill
 
         params: ProcessParams = action.parameters  # type: ignore[assignment]
