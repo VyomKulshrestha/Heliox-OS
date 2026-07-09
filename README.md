@@ -208,6 +208,7 @@ Heliox OS uses a **modular multi-agent architecture** where specialized agents c
 | 🌐 **Web Agent** | Web & APIs | Browser automation, scraping, HTTP requests, downloads |
 | 📊 **Monitor Agent** | Monitoring | CPU, RAM, disk, network monitoring with threshold alerts |
 | 📡 **Communication Agent** | Messaging | Email, Slack, Discord, webhooks, desktop notifications |
+| 📅 **Calendar Agent** | Scheduling | .ics parsing, CalDAV sync, event management |
 
 **How it works:** The Planner generates an action plan → the Orchestrator analyzes each action type → routes to the correct specialist → agents execute in sequence → results merge for verification.
 
@@ -297,6 +298,9 @@ Auto-detects: winget, choco, brew, apt, dnf, pacman
 
 ### Windows Registry
 `registry_read` · `registry_write`
+
+### Calendar Operations
+`calendar_parse` · `calendar_sync` · `calendar_create_event` · `calendar_list_events` · `calendar_delete_event`
 
 ### Open / Launch / Notify
 `open_url` · `open_application` · `notify`
@@ -878,6 +882,23 @@ npm run dev
 ```
 
 Ensure all frontend dependencies are installed successfully before starting the app.
+
+#### Q8: PyTorch or TRIBE v2 installation issues on Windows (Missing DLLs / CUDA).
+**A:** Many Windows users encounter missing DLLs or CUDA version mismatches when installing the cognitive engine. Follow these steps:
+
+1.  **Missing DLLs (`msvcp140.dll`, `vcruntime140_1.dll`):** Install the [Microsoft Visual C++ Redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe). This is required for PyTorch's C++ extensions.
+2.  **CUDA Mismatch:** Ensure your PyTorch installation matches your system's CUDA version. Run `nvidia-smi` to check your driver's CUDA version, then reinstall PyTorch if necessary:
+    ```bash
+    # Example: For CUDA 12.1
+    pip install torch --index-url https://download.pytorch.org/whl/cu121
+    # For CPU-only (no GPU)
+    pip install torch --index-url https://download.pytorch.org/whl/cpu
+    ```
+3.  **OSError [WinError 126]:** This usually indicates a missing dependency for `torch` or `torchaudio`. Ensure you are using **Python 3.11+ (64-bit)** and try reinstalling the daemon dependencies:
+    ```bash
+    cd daemon
+    pip install -e ".[full]"
+    ```
 
 ## 🤝 Contributing
 

@@ -22,6 +22,8 @@ from pilot.models.budget_tracker import BudgetExceededError, BudgetTracker
 class FakeModelConfig:
     budget_enabled: bool = True
     budget_monthly_limit_usd: float = 1.0
+    max_tokens_per_task: int = 100_000
+    max_usd_per_task: float = 10.0
 
 
 # ---------------------------------------------------------------------------
@@ -161,4 +163,38 @@ async def test_ollama_cost_is_zero(tmp_path):
     await tracker.record_usage("ollama", "llama3", 10000, 10000)
     stats = await tracker.get_stats()
     assert stats["cost_usd"] == 0.0
+    await tracker.close()
+
+
+@pytest.mark.asyncio
+async def test_budget_cache_resets_on_month_rollover(tmp_path, monkeypatch):
+    """check_budget() must compare against the current month only.
+
+    Regression test for issue #403: the in-memory _monthly_cost was loaded
+    once and never reset when the calendar month changed, so a long-running
+    daemon kept the previous month's spend in the gate and tripped early.
+    """
+    import pilot.models.budget_tracker as bt
+
+    month = {"value": "2026-06"}
+    monkeypatch.setattr(bt, "_current_month", lambda: month["value"])
+
+    tracker = await make_tracker(tmp_path, budget_monthly_limit_usd=0.001)
+
+    # Exhaust June's budget so the gate trips this month.
+    await tracker.record_usage("openai", "gpt-4", 1000, 1000)
+    with pytest.raises(BudgetExceededError):
+        tracker.check_budget("openai")
+
+    # Roll over to July. The new month starts with ~0 spend, so the gate
+    # must NOT trip even before any July usage is recorded.
+    month["value"] = "2026-07"
+    tracker.check_budget("openai")  # should not raise
+
+    # A fresh July call accumulates only July's cost in the cache.
+    await tracker.record_usage("openai", "gpt-4", 1, 1)
+    stats = await tracker.get_stats()
+    assert stats["month"] == "2026-07"
+    tracker.check_budget("openai")  # still within July's budget
+
     await tracker.close()

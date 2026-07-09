@@ -337,6 +337,40 @@ class Executor:
 
         return batches if batches else [[a] for a in actions]
 
+    def _collect_batch_results(
+        self,
+        batch: list[Action],
+        batch_results: list,
+        results: list[ActionResult],
+    ) -> bool:
+        """Map parallel-batch results back to their actions and append to results.
+
+        asyncio.gather preserves input order, so batch_results[i] corresponds to
+        batch[i]. For a raised exception (which carries no index), the position
+        is the only link back to the action that failed — so attribute it to
+        batch[position] rather than batch[0] (issue #415).
+
+        Returns True if any action in the batch failed.
+        """
+        failed = False
+        for position, item in enumerate(batch_results):
+            if isinstance(item, Exception):
+                results.append(ActionResult(action=batch[position], success=False, error=str(item)))
+                failed = True
+            else:
+                _idx, result = item
+                results.append(result)
+                if result.success:
+                    self._last_output = result.output
+                    if not hasattr(self, "_largest_output") or len(result.output or "") > len(
+                        self._largest_output or ""
+                    ):
+                        self._largest_output = result.output
+                else:
+                    failed = True
+                    logger.error("Action in batch failed: %s", result.error)
+        return failed
+
     async def execute(
         self,
         plan: ActionPlan,
@@ -468,23 +502,7 @@ class Executor:
                 *[execute_single_action(action, i) for i, action in enumerate(batch)], return_exceptions=True
             )
 
-            failed = False
-            for item in batch_results:
-                if isinstance(item, Exception):
-                    results.append(ActionResult(action=batch[0], success=False, error=str(item)))
-                    failed = True
-                else:
-                    idx, result = item
-                    results.append(result)
-                    if result.success:
-                        self._last_output = result.output
-                        if not hasattr(self, "_largest_output") or len(result.output or "") > len(
-                            self._largest_output or ""
-                        ):
-                            self._largest_output = result.output
-                    else:
-                        failed = True
-                        logger.error("Action in batch failed: %s", result.error)
+            failed = self._collect_batch_results(batch, batch_results, results)
 
             if failed and batch_idx < len(batches) - 1:
                 remaining = sum(len(b) for b in batches[batch_idx + 1 :])

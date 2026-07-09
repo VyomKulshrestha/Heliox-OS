@@ -158,6 +158,15 @@ class RSSConfig:
 
 
 @dataclass
+class CalendarConfig:
+    enabled: bool = False
+    caldav_url: str = ""
+    caldav_username: str = ""
+    caldav_password_provider: str = ""  # Vault provider for password
+    ics_files: list[str] = field(default_factory=list)
+
+
+@dataclass
 class RedisConfig:
     enabled: bool = False
     host: str = "127.0.0.1"
@@ -220,6 +229,7 @@ class PilotConfig:
     screen_vision: ScreenVisionConfig = field(default_factory=ScreenVisionConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     rss: RSSConfig = field(default_factory=RSSConfig)
+    calendar: CalendarConfig = field(default_factory=CalendarConfig)
     network: NetworkConfig = field(default_factory=NetworkConfig)
     ssh: SshConfig = field(default_factory=SshConfig)
     proxy: ProxyConfig = field(default_factory=ProxyConfig)

@@ -196,6 +196,13 @@ class ActionType(StrEnum):
     CODE_EXECUTE = "code_execute"
     CODE_GENERATE_AND_RUN = "code_generate_and_run"
 
+    # -- Calendar operations --
+    CALENDAR_PARSE = "calendar_parse"
+    CALENDAR_SYNC = "calendar_sync"
+    CALENDAR_CREATE_EVENT = "calendar_create_event"
+    CALENDAR_LIST_EVENTS = "calendar_list_events"
+    CALENDAR_DELETE_EVENT = "calendar_delete_event"
+
     # -- File content intelligence --
     FILE_PARSE = "file_parse"
     FILE_SEARCH_CONTENT = "file_search_content"
@@ -302,6 +309,8 @@ READ_ONLY_ACTIONS = {
     # Calendar reconciliation (read-only — only reads ICS data)
     ActionType.CALENDAR_FETCH,
     ActionType.CALENDAR_RECONCILE,
+    ActionType.CALENDAR_PARSE,
+    ActionType.CALENDAR_LIST_EVENTS,
 }
 
 DESTRUCTIVE_ACTIONS = {
@@ -314,6 +323,7 @@ DESTRUCTIVE_ACTIONS = {
     ActionType.SCHEDULE_DELETE,
     ActionType.DISK_UNMOUNT,
     ActionType.WINDOW_CLOSE,
+    ActionType.CALENDAR_DELETE_EVENT,
 }
 
 SYSTEM_MODIFY_ACTIONS = {
@@ -344,6 +354,8 @@ SYSTEM_MODIFY_ACTIONS = {
     ActionType.SSH_SCRIPT,
     ActionType.CODE_EXECUTE,
     ActionType.SHELL_COMMAND,
+    ActionType.CALENDAR_SYNC,
+    ActionType.CALENDAR_CREATE_EVENT,
 }
 
 
@@ -739,8 +751,16 @@ class EmailParams(BaseModel):
 
 
 class CalendarParams(BaseModel):
-    """Parameters for calendar reconciliation actions."""
+    """Parameters for calendar operations (.ics and CalDAV)."""
 
+    file_path: str | None = None
+    summary: str | None = None
+    start: str | None = None
+    end: str | None = None
+    description: str | None = None
+    location: str | None = None
+    calendar_id: str | None = None
+    # Reconciliation fields
     emails_json: str = ""
     lookahead_hours: int = 24
     check_conflicts: bool = True

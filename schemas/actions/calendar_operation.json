@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CalendarOperationParams",
+  "type": "object",
+  "properties": {
+    "file_path": {
+      "type": ["string", "null"],
+      "description": "Path to local .ics file for parsing"
+    },
+    "summary": {
+      "type": ["string", "null"],
+      "description": "Event title/summary"
+    },
+    "start": {
+      "type": ["string", "null"],
+      "description": "Event start time (ISO-8601)"
+    },
+    "end": {
+      "type": ["string", "null"],
+      "description": "Event end time (ISO-8601)"
+    },
+    "description": {
+      "type": ["string", "null"],
+      "description": "Event description"
+    },
+    "location": {
+      "type": ["string", "null"],
+      "description": "Event location"
+    },
+    "calendar_id": {
+      "type": ["string", "null"],
+      "description": "Specific calendar identifier"
+    }
+  }
+}
