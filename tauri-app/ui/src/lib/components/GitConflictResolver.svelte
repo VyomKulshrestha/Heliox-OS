@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { invoke } from "@tauri-apps/api/core";
+  import { invoke } from "../api/invoke";
   import type { GitConflictPayload } from "../stores/session";
   import { session } from "../stores/session";
 

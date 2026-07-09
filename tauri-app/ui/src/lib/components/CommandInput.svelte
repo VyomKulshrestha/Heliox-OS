@@ -1,5 +1,7 @@
 <script lang="ts">
   import { session } from "../stores/session";
+  import { invoke } from "@tauri-apps/api/core";
+  import { getCurrentWebview } from "@tauri-apps/api/webview";
 
   let input = $state("");
   const MAX_CHARS = 20000;
@@ -23,17 +25,49 @@
   let attachments = $state<Attachment[]>([]);
   let isDragging = $state(false);
 
-  const MAX_FILE_SIZE = 500 * 1024;
+  $effect(() => {
+    let unlisten: () => void;
+    
+    // Attempt to register Tauri native drag/drop listener (WebView API)
+    async function setupTauri() {
+      try {
+        unlisten = await getCurrentWebview().onDragDropEvent(async (event) => {
+          const payload = event.payload;
+          
+          if (payload.type === "enter" || payload.type === "over") {
+            isDragging = true;
+          } else if (payload.type === "leave") {
+            isDragging = false;
+          } else if (payload.type === "drop") {
+            isDragging = false;
+            const paths = payload.paths || [];
+            
+            for (const path of paths) {
+              try {
+                // Register path in the allowlist before reading
+                await invoke("register_allowed_path", { path });
+                // Extract filename
+                const filename = path.split('\\').pop()?.split('/').pop() || "unknown";
+                const content = await invoke("extract_file_text", { path });
+                
+                attachments = [...attachments, { name: filename, type: "file", content: content as string }];
+              } catch (err) {
+                console.warn(`Failed to extract text from ${path}:`, err);
+              }
+            }
+          }
+        });
+      } catch (e) {
+        // Not running in Tauri (e.g. browser), ignore gracefully
+      }
+    }
+    
+    setupTauri();
 
-  const ALLOWED_TEXT_TYPES = ["text/plain", "text/markdown", "application/json", "application/xml"];
-
-  function isTextLikeFile(file: File): boolean {
-    return (
-      file.type.startsWith("text/") ||
-      ALLOWED_TEXT_TYPES.includes(file.type) ||
-      /\.(ts|js|jsx|tsx|py|java|cpp|c|h|hpp|cs|go|rs|md|txt|json|xml|yaml|yml)$/i.test(file.name)
-    );
-  }
+    return () => {
+      if (unlisten) unlisten();
+    };
+  });
 
   function handleSubmit(e: Event) {
     e.preventDefault();
@@ -52,51 +86,6 @@
       handleSubmit(e);
     }
   }
-  function handleDragOver(e: DragEvent) {
-    e.preventDefault();
-    isDragging = true;
-  }
-
-  function handleDragLeave(e: DragEvent) {
-    e.preventDefault();
-    isDragging = false;
-  }
-
-  async function handleDrop(e: DragEvent) {
-    e.preventDefault();
-    isDragging = false;
-
-    const droppedFiles = e.dataTransfer?.files;
-
-    if (!droppedFiles?.length) return;
-
-    for (const file of droppedFiles) {
-      try {
-        if (file.size > MAX_FILE_SIZE) {
-          console.warn(`Skipping ${file.name}: file too large`);
-          continue;
-        }
-
-        if (!isTextLikeFile(file)) {
-          console.warn(`Skipping ${file.name}: unsupported file type`);
-          continue;
-        }
-
-        const content = await file.text();
-
-        attachments = [
-          ...attachments,
-          {
-            name: file.name,
-            type: file.type,
-            content,
-          },
-        ];
-      } catch (err) {
-        console.error("Failed to read file:", err);
-      }
-    }
-  }
 </script>
 
 <form class="command-input" onsubmit={handleSubmit}>
@@ -113,9 +102,6 @@
   <div
     class="input-wrapper"
     class:dragging={isDragging}
-    ondragover={handleDragOver}
-    ondragleave={handleDragLeave}
-    ondrop={handleDrop}
   >
     <span class="prompt">&gt;</span>
 

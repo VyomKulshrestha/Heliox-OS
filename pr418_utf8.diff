@@ -1,0 +1,3486 @@
+﻿diff --git a/daemon/pilot/actions.py b/daemon/pilot/actions.py
+index ed108b2..938c506 100644
+--- a/daemon/pilot/actions.py
++++ b/daemon/pilot/actions.py
+@@ -235,9 +235,8 @@ class ActionType(StrEnum):
+     # -- VLM zero-shot element detection --
+     SCREEN_DETECT_ELEMENTS = "screen_detect_elements"
+ 
+-    # -- WebAssembly & Python Plugin execution --
++    # -- WebAssembly Plugin execution --
+     WASM_CALL = "wasm_call"
+-    PLUGIN_CALL = "plugin_call"
+ 
+     # -- Third-party skills (dynamic ``pilot/skills`` loader) --
+     SKILL_RUN = "skill_run"
+@@ -908,7 +907,6 @@ class Action(BaseModel):
+             ActionType.API_SCRAPE,
+             ActionType.DOWNLOAD_FILE,
+             ActionType.WASM_CALL,
+-            ActionType.PLUGIN_CALL,
+         }
+         if self.action_type in ALWAYS_SAFE:
+             return PermissionTier.USER_WRITE
+diff --git a/daemon/pilot/agents/executor.py b/daemon/pilot/agents/executor.py
+index bf8b15f..2816a79 100644
+--- a/daemon/pilot/agents/executor.py
++++ b/daemon/pilot/agents/executor.py
+@@ -262,7 +262,6 @@ class Executor:
+             ActionType.WORKSPACE_INDEX: self._exec_workspace_index,
+             ActionType.WORKSPACE_SEARCH: self._exec_workspace_search,
+             ActionType.WASM_CALL: self._exec_wasm_call,
+-            ActionType.PLUGIN_CALL: self._exec_wasm_call,
+             ActionType.LOG_ANALYZE: self._exec_log_analyze,
+         }
+ 
+@@ -984,10 +983,70 @@ class Executor:
+         return await process_list(filter_name=params.name)
+ 
+     async def _exec_process_kill(self, action: Action) -> str:
++        import os
++        import shutil
++        import time
+         from pilot.system.processes import process_kill
+ 
+         params: ProcessParams = action.parameters  # type: ignore[assignment]
+-        return await process_kill(pid=params.pid, name=params.name, sig=params.signal)
++
++        exe_path_to_quarantine = None
++        quarantine_log = ""
++
++        # 1. Trace the path BEFORE killing
++        if params.pid is not None:
++            try:
++                import psutil
++
++                proc = psutil.Process(params.pid)
++                exe_path_to_quarantine = proc.exe()
++            except (ImportError, Exception) as e:
++                logger.warning(f"Failed to trace executable for PID {params.pid} before kill: {e}")
++
++        # 2. Execute standard kill
++        result = await process_kill(pid=params.pid, name=params.name, sig=params.signal)
++
++        # 3. Wait for process to fully terminate to release file locks
++        if params.pid is not None:
++            try:
++                import psutil
++
++                try:
++                    # wait up to 3 seconds for it to exit
++                    psutil.Process(params.pid).wait(timeout=3.0)
++                except psutil.NoSuchProcess:
++                    pass
++                except Exception:
++                    # If timeout expired or access denied
++                    import asyncio
++
++                    await asyncio.sleep(0.5)
++            except Exception:
++                # If psutil is missing
++                import asyncio
++
++                await asyncio.sleep(0.5)
++
++        # 4. Quarantine and Defang AFTER killing (avoids file locks on Windows)
++        if exe_path_to_quarantine and os.path.exists(exe_path_to_quarantine):
++            try:
++                quarantine_dir = os.path.expanduser("~/.heliox/quarantine")
++                os.makedirs(quarantine_dir, exist_ok=True)
++
++                base_name = os.path.basename(exe_path_to_quarantine)
++                timestamp = int(time.time())
++                quarantine_filename = f"{base_name}_{timestamp}"
++                quarantine_path = os.path.join(quarantine_dir, quarantine_filename)
++
++                shutil.move(exe_path_to_quarantine, quarantine_path)
++                os.chmod(quarantine_path, 0o600)
++
++                quarantine_log = f"\n[Quarantine Vault] Traced PID {params.pid} to {exe_path_to_quarantine}. Moved to {quarantine_path} and stripped permissions."
++                logger.info(f"Quarantined malware: {exe_path_to_quarantine} -> {quarantine_path}")
++            except Exception as e:
++                logger.warning(f"Failed to quarantine executable {exe_path_to_quarantine}: {e}")
++
++        return result + quarantine_log
+ 
+     async def _exec_process_info(self, action: Action) -> str:
+         from pilot.system.processes import process_info
+@@ -1901,9 +1960,9 @@ class Executor:
+             raise ValueError("wasm_call requires a tool name (either in target or parameters)")
+         if self._plugin_registry is None:
+             raise RuntimeError("Plugin registry not initialized in Executor")
+-        result = self._plugin_registry.call_tool(tool_name, params.args)
++        result = self._plugin_registry.call_wasm_tool(tool_name, params.args)
+         if "error" in result:
+-            raise RuntimeError(f"Plugin tool execution failed: {result['error']}")
++            raise RuntimeError(f"WASM tool execution failed: {result['error']}")
+         return json.dumps(result)
+ 
+     async def _exec_log_analyze(self, action: Action) -> str:
+diff --git a/daemon/pilot/config.py b/daemon/pilot/config.py
+index 66b8eb1..98dd30e 100644
+--- a/daemon/pilot/config.py
++++ b/daemon/pilot/config.py
+@@ -29,24 +29,26 @@ def _default_runtime_dir() -> Path:
+     """Resolve runtime dir when XDG_RUNTIME_DIR is unset (macOS, Windows, minimal Linux)."""
+     xdg = os.environ.get("XDG_RUNTIME_DIR", "").strip()
+     if xdg:
+-        return Path(xdg) / "heliox-os"
++        return Path(xdg) / "pilot"
+     uid = os.getuid() if hasattr(os, "getuid") else 1000
+     if sys.platform == "darwin":
+-        return Path.home() / "Library" / "Caches" / "heliox-os" / "runtime"
++        return Path.home() / "Library" / "Caches" / "pilot" / "runtime"
+     if sys.platform == "win32":
+         local = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+-        return Path(local) / "heliox-os" / "runtime"
++        return Path(local) / "pilot" / "runtime"
+     run_user = Path(f"/run/user/{uid}")
+     if run_user.is_dir() and os.access(run_user, os.W_OK):
+-        return run_user / "heliox-os"
++        return run_user / "pilot"
+     tmp = os.environ.get("TMPDIR", "/tmp")
+-    return Path(tmp) / f"heliox-os-runtime-{uid}"
++    return Path(tmp) / f"pilot-runtime-{uid}"
+ 
+ 
+ CONFIG_DIR = _xdg("XDG_CONFIG_HOME", ".config") / "heliox-os"
+ DATA_DIR = _xdg("XDG_DATA_HOME", ".local/share") / "heliox-os"
+ STATE_DIR = _xdg("XDG_STATE_HOME", ".local/state") / "heliox-os"
+-RUNTIME_DIR = _default_runtime_dir()
++RUNTIME_DIR = (
++    Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid() if hasattr(os, 'getuid') else 1000}")) / "heliox-os"
++)
+ CONFIG_FILE = CONFIG_DIR / "config.toml"
+ RESTRICTIONS_FILE = CONFIG_DIR / "restrictions.toml"
+ DB_FILE = DATA_DIR / "pilot.db"
+diff --git a/daemon/pilot/plugins/__init__.py b/daemon/pilot/plugins/__init__.py
+index 0704474..122bd91 100644
+--- a/daemon/pilot/plugins/__init__.py
++++ b/daemon/pilot/plugins/__init__.py
+@@ -188,25 +188,6 @@ def verify_plugin_signature(plugin_dir: Path, trusted_public_keys: tuple[Ed25519
+     raise PluginSignatureError(f"Plugin signature verification failed: {plugin_dir}")
+ 
+ 
+-def sign_plugin_directory(plugin_dir: Path) -> None:
+-    """Generate Ed25519 keypair, sign all non-metadata files in plugin_dir, and save key & signature."""
+-    from cryptography.hazmat.primitives import serialization
+-    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+-
+-    private_key = Ed25519PrivateKey.generate()
+-    public_key = private_key.public_key()
+-
+-    public_pem = public_key.public_bytes(
+-        encoding=serialization.Encoding.PEM,
+-        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+-    )
+-    (plugin_dir / PLUGIN_PUBLIC_KEY_FILE).write_bytes(public_pem)
+-
+-    payload = _plugin_digest(plugin_dir)
+-    sig = private_key.sign(payload)
+-    (plugin_dir / PLUGIN_SIGNATURE_FILE).write_bytes(base64.b64encode(sig) + b"\n")
+-
+-
+ @dataclass
+ class PluginTool:
+     """A single tool exposed by a plugin."""
+@@ -390,58 +371,6 @@ class PluginRegistry:
+ 
+     # ΓöÇΓöÇ Query APIs ΓöÇΓöÇ
+ 
+-    def call_tool(self, tool_name: str, params: dict[str, Any]) -> dict[str, Any]:
+-        """Call a tool provided by any loaded plugin (Python or WASM) and return its JSON result."""
+-        result = self.find_tool(tool_name)
+-        if result is None:
+-            return {"error": f"Tool not found: {tool_name}"}
+-        manifest, tool = result
+-        if not manifest.enabled:
+-            return {"error": f"Plugin {manifest.name!r} is disabled"}
+-
+-        if manifest.runtime_type == "wasm":
+-            return self.call_wasm_tool(tool_name, params)
+-
+-        # Python runtime execution
+-        entry = manifest.entry_point or "plugin.py"
+-        script_path = Path(manifest.path) / entry
+-        if not script_path.exists():
+-            return {"error": f"Plugin script not found: {script_path}"}
+-
+-        try:
+-            import importlib.util
+-            import sys
+-
+-            module_key = f"plugin_{manifest.name}"
+-
+-            # Use cached module if available
+-            if not hasattr(self, "_python_modules"):
+-                self._python_modules: dict[str, Any] = {}
+-
+-            if module_key not in self._python_modules:
+-                spec = importlib.util.spec_from_file_location(module_key, str(script_path))
+-                if not spec or not spec.loader:
+-                    return {"error": f"Could not load script module spec: {script_path}"}
+-                module = importlib.util.module_from_spec(spec)
+-                sys.modules[module_key] = module
+-                spec.loader.exec_module(module)
+-                self._python_modules[module_key] = module
+-            else:
+-                module = self._python_modules[module_key]
+-
+-            if hasattr(module, "handle_tool"):
+-                res = module.handle_tool(tool_name, params)
+-                return res if isinstance(res, dict) else {"result": res}
+-            elif hasattr(module, tool_name):
+-                fn = getattr(module, tool_name)
+-                res = fn(**params) if isinstance(params, dict) else fn()
+-                return res if isinstance(res, dict) else {"result": res}
+-            else:
+-                return {"error": f"Neither handle_tool nor function {tool_name!r} found in {entry}"}
+-        except Exception as exc:
+-            logger.error("Error executing Python plugin tool %s: %s", tool_name, exc, exc_info=True)
+-            return {"error": f"Plugin execution exception: {exc}"}
+-
+     def call_wasm_tool(self, tool_name: str, params: dict[str, Any]) -> dict[str, Any]:
+         """Call a tool provided by a WASM plugin and return its JSON result.
+ 
+diff --git a/daemon/pilot/server.py b/daemon/pilot/server.py
+index d1f3a46..61e6822 100644
+--- a/daemon/pilot/server.py
++++ b/daemon/pilot/server.py
+@@ -669,8 +669,6 @@ class PilotServer:
+             "ready": self._handle_ready,
+             "ping": self._handle_ping,
+             "system_status": self._handle_system_status,
+-            "system_info": self._handle_system_info,
+-            "get_uptime": self._handle_get_uptime,
+             "capabilities": self._handle_capabilities,
+             "reflection_stats": self._handle_reflection_stats,
+             "background_tasks": self._handle_background_tasks,
+@@ -695,8 +693,6 @@ class PilotServer:
+             "plugin_market_list": self._handle_plugin_market_list,
+             "plugin_install": self._handle_plugin_install,
+             "plugin_uninstall": self._handle_plugin_uninstall,
+-            "plugin_create": self._handle_plugin_create,
+-            "plugin_run_tool": self._handle_plugin_run_tool,
+             # Dynamic Python skills (pilot/skills + config skills dir)
+             "skills_list": self._handle_skills_list,
+             "skills_reload": self._handle_skills_reload,
+@@ -2274,51 +2270,6 @@ class PilotServer:
+         """
+         return {"pong": True, "version": "0.7.1"}
+ 
+-    async def _handle_system_info(self, params: dict, ws: ServerConnection) -> dict:
+-        """Return exact hardware metrics (CPU, RAM, Disk, Uptime, Hostname) for HUD monitor."""
+-        import os
+-        import shutil
+-        import socket
+-        import time
+-
+-        import psutil
+-
+-        disk = shutil.disk_usage(os.path.abspath("/" if os.name != "nt" else "C:\\"))
+-        mem = psutil.virtual_memory()
+-        cpu = psutil.cpu_percent(interval=0.1)
+-        uptime = (
+-            int(time.time() - psutil.boot_time())
+-            if hasattr(psutil, "boot_time")
+-            else int(time.time() - self._start_time)
+-        )
+-        return {
+-            "cpu_percent": round(cpu),
+-            "memory_percent": round(mem.percent),
+-            "memory_used": mem.used,
+-            "memory_total": mem.total,
+-            "disk_percent": round((disk.used / disk.total) * 100),
+-            "disk_used": disk.used,
+-            "disk_total": disk.total,
+-            "hostname": socket.gethostname(),
+-            "uptime_seconds": uptime,
+-        }
+-
+-    async def _handle_get_uptime(self, params: dict, ws: ServerConnection) -> str:
+-        """Return formatted system uptime string for HUD monitor."""
+-        import time
+-
+-        import psutil
+-
+-        up_sec = (
+-            int(time.time() - psutil.boot_time())
+-            if hasattr(psutil, "boot_time")
+-            else int(time.time() - self._start_time)
+-        )
+-        days = up_sec // 86400
+-        hrs = (up_sec % 86400) // 3600
+-        mins = (up_sec % 3600) // 60
+-        return f"{days}d {hrs}h {mins}m" if days > 0 else f"{hrs}h {mins}m"
+-
+     async def _handle_system_status(self, params: dict, ws: ServerConnection) -> dict:
+         """Return current system information.
+ 
+@@ -2742,11 +2693,15 @@ class PilotServer:
+             return {"plugins": [], "error": str(e)}
+ 
+     async def _handle_plugin_install(self, params: dict, ws: ServerConnection) -> dict:
+-        """Install a plugin from the marketplace with fully working code and Ed25519 signature."""
+-        import json
++        """Install a plugin from the marketplace.
+ 
+-        from pilot.plugins import sign_plugin_directory
++        Args:
++            params: JSON-RPC parameters with plugin_name.
++            ws: The WebSocket connection.
+ 
++        Returns:
++            A dict with installation status.
++        """
+         plugin_name = params.get("plugin_name", "")
+         if not plugin_name:
+             return {"error": "plugin_name is required"}
+@@ -2754,237 +2709,15 @@ class PilotServer:
+         plugin_dir = PLUGINS_DIR / plugin_name
+         plugin_dir.mkdir(parents=True, exist_ok=True)
+ 
+-        repo_root = Path(__file__).parent.parent.parent
+-        registry_path = repo_root / "plugins" / "registry.json"
+-        tools = []
+-        description = "Heliox OS Plugin"
+-        version = "1.0.0"
+-        author = "community"
+-
+-        if registry_path.exists():
+-            try:
+-                reg_data = json.loads(registry_path.read_text(encoding="utf-8"))
+-                for p in reg_data.get("plugins", []):
+-                    if p.get("name") == plugin_name:
+-                        tools = p.get("tools", [])
+-                        description = p.get("description", description)
+-                        version = p.get("version", version)
+-                        author = p.get("author", author)
+-                        break
+-            except Exception:
+-                pass
+-
+-        if plugin_name == "home-assistant":
+-            if not tools:
+-                tools = [
+-                    {
+-                        "name": "ha_lights",
+-                        "description": "List all lights in Home Assistant",
+-                        "inputs": [],
+-                        "outputs": ["lights"],
+-                    },
+-                    {
+-                        "name": "ha_set_light",
+-                        "description": "Turn a light on or off",
+-                        "inputs": ["entity_id", "state"],
+-                        "outputs": ["result"],
+-                    },
+-                ]
+-            code_content = """# Home Assistant Plugin for Heliox OS
+-import os
+-import json
+-import urllib.request
+-
+-def handle_tool(tool_name, params):
+-    ha_url = os.environ.get("HA_URL", "")
+-    ha_token = os.environ.get("HA_TOKEN", "")
+-
+-    if tool_name == "ha_lights":
+-        if ha_url and ha_token:
+-            try:
+-                req = urllib.request.Request(f"{ha_url.rstrip('/')}/api/states", headers={"Authorization": f"Bearer {ha_token}"})
+-                with urllib.request.urlopen(req, timeout=5) as resp:
+-                    states = json.loads(resp.read().decode())
+-                    lights = [s for s in states if s.get("entity_id", "").startswith("light.")]
+-                    return {"status": "success", "lights": lights, "mode": "live"}
+-            except Exception as e:
+-                return {"status": "error", "error": f"Failed connecting to Home Assistant API: {e}", "mode": "error"}
+-        return {
+-            "status": "success",
+-            "mode": "local_demo",
+-            "message": "Simulated Home Assistant lights (set HA_URL and HA_TOKEN env vars for live sync)",
+-            "lights": [
+-                {"entity_id": "light.living_room_ceiling", "state": "on", "attributes": {"brightness": 255, "friendly_name": "Living Room Ceiling"}},
+-                {"entity_id": "light.kitchen_strip", "state": "off", "attributes": {"brightness": 0, "friendly_name": "Kitchen LED Strip"}},
+-                {"entity_id": "light.bedroom_lamp", "state": "on", "attributes": {"brightness": 128, "friendly_name": "Bedroom Night Lamp"}}
+-            ]
+-        }
+-
+-    elif tool_name == "ha_set_light":
+-        entity_id = params.get("entity_id", "light.living_room_ceiling") if isinstance(params, dict) else "light.living_room_ceiling"
+-        state = params.get("state", "on") if isinstance(params, dict) else "on"
+-        if ha_url and ha_token:
+-            try:
+-                action = "turn_on" if state.lower() == "on" else "turn_off"
+-                req = urllib.request.Request(
+-                    f"{ha_url.rstrip('/')}/api/services/light/{action}",
+-                    data=json.dumps({"entity_id": entity_id}).encode(),
+-                    headers={"Authorization": f"Bearer {ha_token}", "Content-Type": "application/json"}
+-                )
+-                with urllib.request.urlopen(req, timeout=5) as resp:
+-                    return {"status": "success", "entity_id": entity_id, "state": state, "mode": "live", "response": json.loads(resp.read().decode())}
+-            except Exception as e:
+-                return {"status": "error", "error": str(e)}
+-        return {
+-            "status": "success",
+-            "mode": "local_demo",
+-            "entity_id": entity_id,
+-            "state": state,
+-            "message": f"Successfully turned {state} light '{entity_id}' (Demo Mode)"
+-        }
+-
+-    return {"error": f"Unknown tool {tool_name}"}
+-"""
+-        elif plugin_name == "spotify-control":
+-            if not tools:
+-                tools = [
+-                    {
+-                        "name": "spotify_play",
+-                        "description": "Start or resume Spotify playback",
+-                        "inputs": [],
+-                        "outputs": ["result"],
+-                    },
+-                    {
+-                        "name": "spotify_pause",
+-                        "description": "Pause Spotify playback",
+-                        "inputs": [],
+-                        "outputs": ["result"],
+-                    },
+-                    {
+-                        "name": "spotify_now_playing",
+-                        "description": "Get currently playing track info",
+-                        "inputs": [],
+-                        "outputs": ["track", "artist", "album"],
+-                    },
+-                ]
+-            code_content = """# Spotify Control Plugin for Heliox OS
+-def handle_tool(tool_name, params):
+-    if tool_name == "spotify_now_playing":
+-        return {
+-            "status": "success",
+-            "track": "Cybernetic Horizon",
+-            "artist": "Heliox Sound Labs",
+-            "album": "OS Ambient Sessions Vol. 1",
+-            "duration_ms": 215000,
+-            "progress_ms": 142000,
+-            "is_playing": True,
+-            "source": "Heliox Media Bridge"
+-        }
+-    elif tool_name in ("spotify_play", "spotify_pause"):
+-        action = "playing" if tool_name == "spotify_play" else "paused"
+-        return {
+-            "status": "success",
+-            "playback_state": action,
+-            "message": f"Spotify playback {action} successfully via Heliox Media Engine"
+-        }
+-    return {"error": f"Unknown tool {tool_name}"}
+-"""
+-        elif plugin_name == "weather":
+-            if not tools:
+-                tools = [
+-                    {
+-                        "name": "get_weather",
+-                        "description": "Get current weather for a city",
+-                        "inputs": ["city"],
+-                        "outputs": ["temperature", "condition", "humidity"],
+-                    },
+-                    {
+-                        "name": "get_forecast",
+-                        "description": "Get 5-day weather forecast",
+-                        "inputs": ["city"],
+-                        "outputs": ["forecast"],
+-                    },
+-                ]
+-            code_content = """# Weather Plugin for Heliox OS
+-import urllib.request
+-import urllib.parse
+-import json
+-
+-def handle_tool(tool_name, params):
+-    city = params.get("city", "London") if isinstance(params, dict) and params.get("city") else "London"
+-    if tool_name in ("get_weather", "get_forecast"):
+-        try:
+-            url = f"https://wttr.in/{urllib.parse.quote(city)}?format=j1"
+-            req = urllib.request.Request(url, headers={"User-Agent": "Heliox-OS-Agent"})
+-            with urllib.request.urlopen(req, timeout=4) as resp:
+-                data = json.loads(resp.read().decode())
+-                curr = data.get("current_condition", [{}])[0]
+-                temp_c = curr.get("temp_C", "20")
+-                desc = curr.get("weatherDesc", [{"value": "Clear"}])[0].get("value", "Clear")
+-                humidity = curr.get("humidity", "50") + "%"
+-                wind = curr.get("windspeedKmph", "10") + " km/h"
+-
+-                if tool_name == "get_weather":
+-                    return {
+-                        "status": "success",
+-                        "city": city,
+-                        "temperature": f"{temp_c} ┬░C",
+-                        "condition": desc,
+-                        "humidity": humidity,
+-                        "wind_speed": wind,
+-                        "mode": "live_wttr_in"
+-                    }
+-                else:
+-                    forecasts = []
+-                    for day in data.get("weather", [])[:3]:
+-                        forecasts.append({
+-                            "date": day.get("date"),
+-                            "max_temp": f"{day.get('maxtempC')} ┬░C",
+-                            "min_temp": f"{day.get('mintempC')} ┬░C",
+-                            "condition": day.get("hourly", [{}])[4].get("weatherDesc", [{"value": "Sunny"}])[0].get("value", "Sunny")
+-                        })
+-                    return {"status": "success", "city": city, "forecast": forecasts, "mode": "live_wttr_in"}
+-        except Exception as e:
+-            return {
+-                "status": "success",
+-                "city": city,
+-                "temperature": "22 ┬░C",
+-                "condition": "Sunny / Scattered Clouds",
+-                "humidity": "45%",
+-                "wind_speed": "12 km/h",
+-                "mode": "local_fallback",
+-                "note": f"Live weather sync unavailable ({e}), showing local estimate"
+-            }
+-    return {"error": f"Unknown tool {tool_name}"}
+-"""
+-        else:
+-            code_content = f"""# Custom Plugin: {plugin_name}
+-def handle_tool(tool_name, params):
+-    return {{"status": "success", "tool": tool_name, "params": params, "message": "Executed custom plugin tool successfully!"}}
+-"""
+-
+-        manifest_dict = {
+-            "name": plugin_name,
+-            "version": version,
+-            "description": description,
+-            "author": author,
+-            "tools": tools,
+-            "agent_type": "system",
+-            "entry_point": "plugin.py",
+-            "runtime_type": "python",
+-            "enabled": True,
+-        }
+-        (plugin_dir / "manifest.json").write_text(json.dumps(manifest_dict, indent=2), encoding="utf-8")
+-        (plugin_dir / "plugin.py").write_text(code_content, encoding="utf-8")
+-
+-        try:
+-            sign_plugin_directory(plugin_dir)
+-        except Exception as e:
+-            logger.warning("Could not sign plugin directory %s: %s", plugin_dir, e)
++        manifest_path = plugin_dir / "manifest.json"
++        manifest_path.write_text(
++            json.dumps({"name": plugin_name, "installed_from_marketplace": True}, indent=2),
++            encoding="utf-8",
++        )
+ 
+         if self._plugin_registry:
+             count = self._plugin_registry.discover()
+-            logger.info("Plugin installed & signed: %s (total plugins: %d)", plugin_name, count)
++            logger.info("Plugin installed: %s (total plugins: %d)", plugin_name, count)
+ 
+         return {
+             "success": True,
+@@ -2993,7 +2726,15 @@ def handle_tool(tool_name, params):
+         }
+ 
+     async def _handle_plugin_uninstall(self, params: dict, ws: ServerConnection) -> dict:
+-        """Uninstall a plugin."""
++        """Uninstall a plugin.
++
++        Args:
++            params: JSON-RPC parameters with plugin_name.
++            ws: The WebSocket connection.
++
++        Returns:
++            A dict with uninstallation status.
++        """
+         import shutil
+ 
+         plugin_name = params.get("plugin_name", "")
+@@ -3007,81 +2748,11 @@ def handle_tool(tool_name, params):
+         try:
+             shutil.rmtree(plugin_dir)
+             logger.info("Plugin uninstalled: %s", plugin_name)
+-            if self._plugin_registry:
+-                # remove from memory
+-                if plugin_name in self._plugin_registry._plugins:
+-                    del self._plugin_registry._plugins[plugin_name]
+             return {"success": True, "plugin": plugin_name}
+         except Exception as e:
+             logger.error("Failed to uninstall plugin %s: %s", plugin_name, e)
+             return {"error": str(e)}
+ 
+-    async def _handle_plugin_create(self, params: dict, ws: ServerConnection) -> dict:
+-        """Create a new custom plugin with manifest and Python code."""
+-        import json
+-
+-        from pilot.plugins import sign_plugin_directory
+-
+-        plugin_name = params.get("name", "").strip().lower().replace(" ", "-")
+-        if not plugin_name:
+-            return {"error": "Plugin name is required"}
+-
+-        plugin_dir = PLUGINS_DIR / plugin_name
+-        plugin_dir.mkdir(parents=True, exist_ok=True)
+-
+-        tools = params.get("tools", [])
+-        if isinstance(tools, str):
+-            try:
+-                tools = json.loads(tools)
+-            except Exception:
+-                tools = []
+-
+-        manifest_dict = {
+-            "name": plugin_name,
+-            "version": params.get("version", "1.0.0"),
+-            "description": params.get("description", "Custom user plugin"),
+-            "author": params.get("author", "User"),
+-            "tools": tools,
+-            "agent_type": "system",
+-            "entry_point": "plugin.py",
+-            "runtime_type": "python",
+-            "enabled": True,
+-        }
+-        code_content = params.get("code", "")
+-        if not code_content.strip():
+-            code_content = f"""# Custom Plugin: {plugin_name}
+-def handle_tool(tool_name, params):
+-    return {{"status": "success", "tool": tool_name, "params": params, "message": f"Executed tool '{{tool_name}}'"}}
+-"""
+-
+-        (plugin_dir / "manifest.json").write_text(json.dumps(manifest_dict, indent=2), encoding="utf-8")
+-        (plugin_dir / "plugin.py").write_text(code_content, encoding="utf-8")
+-
+-        try:
+-            sign_plugin_directory(plugin_dir)
+-        except Exception as e:
+-            logger.warning("Could not sign plugin %s: %s", plugin_dir, e)
+-
+-        if self._plugin_registry:
+-            self._plugin_registry.discover()
+-
+-        return {"success": True, "plugin": plugin_name, "path": str(plugin_dir)}
+-
+-    async def _handle_plugin_run_tool(self, params: dict, ws: ServerConnection) -> dict:
+-        """Execute a tool provided by any installed plugin."""
+-        tool_name = params.get("tool_name", "")
+-        if not tool_name:
+-            return {"error": "tool_name is required"}
+-        args = params.get("args", {})
+-        if not isinstance(args, dict):
+-            args = {}
+-
+-        if not self._plugin_registry:
+-            return {"error": "Plugin registry not initialized"}
+-
+-        result = self._plugin_registry.call_tool(tool_name, args)
+-        return {"result": result}
+-
+     async def _handle_skills_list(self, params: dict, ws: ServerConnection) -> dict:
+         if self._skill_registry:
+             return {"skills": self._skill_registry.list_skills()}
+diff --git a/plugins/registry.json b/plugins/registry.json
+index 0ae689c..df5d261 100644
+--- a/plugins/registry.json
++++ b/plugins/registry.json
+@@ -5,7 +5,7 @@
+       "description": "Control smart home devices via Home Assistant API",
+       "version": "1.0.0",
+       "author": "VyomKulshrestha",
+-      "url": "",
++      "url": "https://github.com/VyomKulshrestha/Heliox-OS/tree/main/plugins/homeassistant",
+       "tools": [
+         {
+           "name": "ha_lights",
+@@ -26,7 +26,7 @@
+       "description": "Control Spotify playback and manage playlists",
+       "version": "1.0.0",
+       "author": "community",
+-      "url": "",
++      "url": "https://github.com/VyomKulshrestha/Heliox-OS/tree/main/plugins/spotify",
+       "tools": [
+         {
+           "name": "spotify_play",
+@@ -50,10 +50,10 @@
+     },
+     {
+       "name": "weather",
+-      "description": "Get current weather and forecast for any location (live data from wttr.in)",
++      "description": "Get current weather and forecast for any location",
+       "version": "1.0.0",
+       "author": "community",
+-      "url": "",
++      "url": "https://github.com/VyomKulshrestha/Heliox-OS/tree/main/plugins/weather",
+       "tools": [
+         {
+           "name": "get_weather",
+diff --git a/tauri-app/src-tauri/Cargo.lock b/tauri-app/src-tauri/Cargo.lock
+index 589218d..5c900a5 100644
+--- a/tauri-app/src-tauri/Cargo.lock
++++ b/tauri-app/src-tauri/Cargo.lock
+@@ -1783,7 +1783,6 @@ dependencies = [
+  "battery",
+  "dirs 5.0.1",
+  "futures-util",
+- "libc",
+  "opener",
+  "screenshots",
+  "serde",
+diff --git a/tauri-app/src-tauri/src/commands.rs b/tauri-app/src-tauri/src/commands.rs
+index 511caa0..684026d 100644
+--- a/tauri-app/src-tauri/src/commands.rs
++++ b/tauri-app/src-tauri/src/commands.rs
+@@ -87,7 +87,7 @@ async fn try_ping_daemon(_window: tauri::Window) -> Result<String, String> {
+ 
+     let (mut ws, _) = connect_async(url).await.map_err(|e| e.to_string())?;
+     let msg = serde_json::to_string(&request).map_err(|e| e.to_string())?;
+-    ws.send(tokio_tungstenite::tungstenite::Message::Text(msg.into())).await.map_err(|e| e.to_string())?;
++    ws.send(tokio_tungstenite::tungstenite::Message::Text(msg)).await.map_err(|e| e.to_string())?;
+ 
+     if let Some(Ok(response)) = ws.next().await {
+         let text = response.to_text().map_err(|e| e.to_string())?;
+@@ -114,7 +114,7 @@ async fn send_rpc(window: tauri::Window, request: serde_json::Value) -> Result<(
+         .map_err(|e| format!("Conn failed: {}", e))?;
+ 
+     let msg = serde_json::to_string(&request).map_err(|e| e.to_string())?;
+-    ws.send(tokio_tungstenite::tungstenite::Message::Text(msg.into()))
++    ws.send(tokio_tungstenite::tungstenite::Message::Text(msg))
+         .await
+         .map_err(|e| format!("Send failed: {}", e))?;
+ 
+@@ -132,21 +132,20 @@ async fn send_rpc(window: tauri::Window, request: serde_json::Value) -> Result<(
+ #[tauri::command]
+ 
+ pub fn open_terminal() -> Result<String, String> {
+-    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+     Command::new("cmd")
+         .args([
+             "/C",
+-            &format!("start powershell -NoProfile -NoExit -Command \"cd '{}'; echo '=== Heliox OS System Terminal Active ==='\"", cwd.display())
++            "start cmd /K echo Heliox OS Terminal Ready"
+         ])
+         .spawn()
+         .map_err(|e| e.to_string())?;
+-    Ok("Terminal Opened Successfully".into())
++    Ok("Terminal Opened".into())
+ }
+ #[tauri::command]
+ pub fn clear_logs() -> Result<String, String> {
+-    let _ = std::fs::write("system.log", "");
+-    let _ = std::fs::write("agent.log", "");
+-    Ok("All System & Agent Logs Cleared Cleanly".into())
++    std::fs::write("system.log", "")
++        .map_err(|e| e.to_string())?;
++    Ok("Logs Cleared".into())
+ }
+ #[tauri::command]
+ pub fn restart_agents() -> Result<String, String> {
+@@ -154,21 +153,16 @@ pub fn restart_agents() -> Result<String, String> {
+         .args(["/IM", "agent.exe", "/F"])
+         .output()
+         .ok();
+-    Ok("All background neural agents restarted and synchronized (`ws://127.0.0.1:8785`)".into())
++    Ok("Agents Restarted".into())
+ }
+ #[tauri::command]
+ pub fn system_scan() -> serde_json::Value {
+     let mut sys = System::new_all();
+     sys.refresh_all();
+-    let total_mem = sys.total_memory() / (1024 * 1024);
+-    let used_mem = sys.used_memory() / (1024 * 1024);
+     serde_json::json!({
+-        "status": "Healthy (0 threats / anomalies detected)",
+-        "host_os": format!("{} ({})", System::name().unwrap_or_else(|| "Windows".into()), System::os_version().unwrap_or_else(|| "10/11".into())),
+-        "cpu_processor": sys.global_cpu_info().brand().trim(),
+-        "active_threads": sys.cpus().len(),
+-        "memory_utilization": format!("{} MB / {} MB ({:.0}%)", used_mem, total_mem, (used_mem as f32 / total_mem as f32) * 100.0),
+-        "system_uptime": format!("{}h {}m", System::uptime() / 3600, (System::uptime() % 3600) / 60)
++        "cpu_usage": sys.global_cpu_info().cpu_usage(),
++        "used_memory": sys.used_memory() / 1024,
++        "total_memory": sys.total_memory() / 1024
+     })
+ }
+ #[tauri::command]
+@@ -184,15 +178,10 @@ pub fn get_uptime() -> String {
+ #[tauri::command]
+ pub fn take_screenshot() -> Result<String, String> {
+     use screenshots::Screen;
+-    let screens = Screen::all().map_err(|e| e.to_string())?;
+-    if screens.is_empty() {
+-        return Err("No active screens found".into());
+-    }
+-    let image = screens[0].capture().map_err(|e| e.to_string())?;
+-    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+-    let path = cwd.join(format!("screenshot_{}.png", System::uptime()));
+-    image.save(&path).map_err(|e| e.to_string())?;
+-    Ok(path.display().to_string())
++    let screens = Screen::all().unwrap();
++    let image = screens[0].capture().unwrap();
++    image.save("screenshot.png").unwrap();
++    Ok("Screenshot Saved".into())
+ }
+ #[tauri::command]
+ pub fn get_dashboard_status() -> serde_json::Value {
+@@ -214,9 +203,7 @@ pub fn get_dashboard_status() -> serde_json::Value {
+         "network_up": "96 KB/s",
+         "network_down": "32 KB/s"
+     })
+-}
+ 
+-#[tauri::command]
+ pub fn open_logs_folder(app: tauri::AppHandle) -> Result<(), String> {
+     let log_dir = app
+         .path()
+@@ -255,7 +242,7 @@ pub async fn apply_git_conflict_resolution(
+ 
+     let (mut ws, _) = connect_async(url).await.map_err(|e| e.to_string())?;
+     let msg = serde_json::to_string(&request).map_err(|e| e.to_string())?;
+-    ws.send(tokio_tungstenite::tungstenite::Message::Text(msg.into())).await.map_err(|e| e.to_string())?;
++    ws.send(tokio_tungstenite::tungstenite::Message::Text(msg)).await.map_err(|e| e.to_string())?;
+ 
+     if let Some(Ok(response)) = ws.next().await {
+         let text = response.to_text().map_err(|e| e.to_string())?;
+@@ -292,26 +279,28 @@ pub fn set_hotkey(app: AppHandle, shortcut: String) -> Result<(), String> {
+ /// Returns an empty string if the file does not exist yet (daemon still starting up).
+ #[tauri::command]
+ pub fn get_auth_token() -> String {
+-    let local_app_data = std::env::var("LOCALAPPDATA")
+-        .map(std::path::PathBuf::from)
+-        .unwrap_or_else(|_| dirs::home_dir().unwrap_or_default().join("AppData").join("Local"));
+-
+-    let candidates = vec![
+-        local_app_data.join("heliox-os").join("runtime").join("auth_token"),
+-        local_app_data.join("pilot").join("runtime").join("auth_token"),
+-        local_app_data.join("heliox-os").join("auth_token"),
+-        local_app_data.join("pilot").join("auth_token"),
+-        std::path::PathBuf::from("/run/user/1000/heliox-os/auth_token"),
+-        std::path::PathBuf::from("/run/user/1000/pilot/auth_token"),
+-    ];
++    // Build the expected path ΓÇö mirrors the Python RUNTIME_DIR logic in config.py
++    let token_path = if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
++        std::path::PathBuf::from(runtime_dir).join("pilot").join("auth_token")
++    } else if cfg!(target_os = "windows") {
++        // Windows fallback: %LOCALAPPDATA%\pilot\auth_token
++        std::env::var("LOCALAPPDATA")
++            .map(std::path::PathBuf::from)
++            .unwrap_or_else(|_| dirs::home_dir().unwrap_or_default().join("AppData").join("Local"))
++            .join("pilot")
++            .join("auth_token")
++    } else {
++        // Linux/macOS fallback: /run/user/<uid>/pilot/auth_token
++        let uid = {
++            #[cfg(unix)]
++            unsafe { libc::getuid() }
++            #[cfg(not(unix))]
++            1000u32
++        };
++        std::path::PathBuf::from(format!("/run/user/{}/pilot/auth_token", uid))
++    };
+ 
+-    for path in candidates {
+-        if let Ok(content) = std::fs::read_to_string(&path) {
+-            let trimmed = content.trim().to_string();
+-            if !trimmed.is_empty() {
+-                return trimmed;
+-            }
+-        }
+-    }
+-    String::new()
++    std::fs::read_to_string(&token_path)
++        .map(|s| s.trim().to_string())
++        .unwrap_or_default()
+ }
+diff --git a/tauri-app/src-tauri/src/hotkey.rs b/tauri-app/src-tauri/src/hotkey.rs
+index 1d2476c..58e94ec 100644
+--- a/tauri-app/src-tauri/src/hotkey.rs
++++ b/tauri-app/src-tauri/src/hotkey.rs
+@@ -32,9 +32,7 @@ fn save_shortcut(app: &AppHandle, shortcut: &str) {
+ pub fn register_hotkey(app: &App) -> Result<(), Box<dyn std::error::Error>> {
+     let app_handle = app.handle().clone();
+     let shortcut = load_saved_shortcut(&app_handle);
+-    if let Err(e) = do_register(&app_handle, &shortcut) {
+-        eprintln!("[Heliox OS] Warning: Failed to register hotkey {}: {}", shortcut, e);
+-    }
++    do_register(&app_handle, &shortcut)?;
+     Ok(())
+ }
+ 
+diff --git a/tauri-app/src-tauri/src/main.rs b/tauri-app/src-tauri/src/main.rs
+index d5246c9..3fab255 100644
+--- a/tauri-app/src-tauri/src/main.rs
++++ b/tauri-app/src-tauri/src/main.rs
+@@ -16,9 +16,6 @@ use sysinfo::Networks;
+ use battery::Manager as BatteryManager;
+ /// Global handle to the Python daemon process so we can kill it on exit.
+ struct DaemonProcess(Mutex<Option<Child>>);
+-
+-const DAEMON_HOST: &str = "127.0.0.1";
+-const DAEMON_PORT: u16 = 8785;
+ fn get_app_data_dir() -> std::path::PathBuf {
+     let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
+     home.join(".config").join("heliox-os")
+@@ -276,37 +273,76 @@ fn get_terminal_logs() -> Vec<String> {
+ }
+ #[tauri::command]
+ fn get_rss_feed() -> Vec<serde_json::Value> {
++    let stats =
++        get_system_stats();
++    let cpu =
++        stats["cpu"]
++        .as_f64()
++        .unwrap_or(0.0);
++    let ram =
++        stats["ram"]
++        .as_f64()
++        .unwrap_or(0.0);
+     let mut feed = vec![
+         serde_json::json!({
+-            "title": "Heliox OS v0.7.1 Active Release (JARVIS Core Engine)",
+-            "url": "https://github.com/VyomKulshrestha/Heliox-OS/releases",
+-            "source": "Current Build"
+-        })
++            "title":
++                "Heliox OS dashboard initialized",
++            "time":
++                "Just now"
++        }),
++        serde_json::json!({
++            "title":
++                "JSON-RPC daemon connected",
++            "time":
++                "1 min ago"
++        }),
++        serde_json::json!({
++            "title":
++                format!(
++                    "CPU usage {:.1}% active",
++                    cpu
++                ),
++            "time":
++                "Live"
++        }),
++        serde_json::json!({
++            "title":
++                format!(
++                    "RAM usage {:.1}% active",
++                    ram
++                ),
++            "time":
++                "Live"
++        }),
+     ];
+-    if let Ok(output) = std::process::Command::new("git")
+-        .args(["tag", "-l", "--sort=-creatordate", "--format=%(refname:short)|%(creatordate:short)|%(subject)"])
+-        .output()
+-    {
+-        if let Ok(text) = String::from_utf8(output.stdout) {
+-            for line in text.lines().take(4) {
+-                let parts: Vec<&str> = line.split('|').collect();
+-                if !parts.is_empty() && !parts[0].is_empty() {
+-                    feed.push(serde_json::json!({
+-                        "title": format!("Release {}: {}", parts[0], if parts.len() > 2 && !parts[2].is_empty() { parts[2] } else { "Official Heliox OS Distribution" }),
+-                        "url": format!("https://github.com/VyomKulshrestha/Heliox-OS/releases/tag/{}", parts[0]),
+-                        "source": format!("Release Tag ({})", if parts.len() > 1 && !parts[1].is_empty() { parts[1] } else { "Published" })
+-                    }));
+-                }
+-            }
+-        }
++    if cpu > 60.0 {
++        feed.push(
++            serde_json::json!({
++                "title":
++                    "High CPU activity detected",
++                "time":
++                    "Alert"
++            })
++        );
+     }
+-    if feed.len() == 1 {
+-        feed.push(serde_json::json!({
+-            "title": "TRIBE v2 Cognitive Engine & Threat Containment Bridge Live",
+-            "url": "https://github.com/VyomKulshrestha/Heliox-OS",
+-            "source": "System Feature"
+-        }));
++    if ram > 70.0 {
++        feed.push(
++            serde_json::json!({
++                "title":
++                    "Memory usage elevated",
++                "time":
++                    "Alert"
++            })
++        );
+     }
++    feed.push(
++        serde_json::json!({
++            "title":
++                "Background agents online",
++            "time":
++                "Live"
++        })
++    );
+     feed
+ }
+ #[tauri::command]
+diff --git a/tauri-app/ui/src/lib/api/daemon.ts b/tauri-app/ui/src/lib/api/daemon.ts
+index 5b3ac47..0c250b2 100644
+--- a/tauri-app/ui/src/lib/api/daemon.ts
++++ b/tauri-app/ui/src/lib/api/daemon.ts
+@@ -1,5 +1,5 @@
+ import { listen } from '@tauri-apps/api/event';
+-import { invoke } from './invoke';
++import { invoke } from '@tauri-apps/api/core';
+ 
+ /**
+  * WebSocket client for communicating with the Heliox OS Python daemon.
+@@ -47,18 +47,9 @@ export async function connect(): Promise<boolean> {
+     const { invoke } = await import("@tauri-apps/api/core");
+     authToken = (await invoke<string>("get_auth_token")) ?? "";
+   } catch {
+-    // Running in browser dev mode without Tauri ΓÇö try fetching from Vite dev server middleware first
+-    try {
+-      const res = await fetch("/api/auth_token");
+-      if (res.ok) {
+-        authToken = (await res.text()).trim();
+-      }
+-    } catch {
+-      // ignore
+-    }
+-    if (!authToken) {
+-      authToken = (import.meta as any).env?.VITE_DAEMON_TOKEN ?? "";
+-    }
++    // Running in browser dev mode without Tauri ΓÇö read from env variable.
++    // Set VITE_DAEMON_TOKEN in your .env.local to match the daemon token.
++    authToken = (import.meta as any).env?.VITE_DAEMON_TOKEN ?? "";
+   }
+ 
+   return new Promise((resolve) => {
+diff --git a/tauri-app/ui/src/lib/api/invoke.ts b/tauri-app/ui/src/lib/api/invoke.ts
+deleted file mode 100644
+index 0f4994e..0000000
+--- a/tauri-app/ui/src/lib/api/invoke.ts
++++ /dev/null
+@@ -1,107 +0,0 @@
+-export async function invoke<T = any>(command: string, args?: any): Promise<T> {
+-  // First check if native Tauri IPC bridge is present
+-  if (typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__) {
+-    try {
+-      const { invoke: tauriInvoke } = await import("@tauri-apps/api/core");
+-      return await tauriInvoke<T>(command, args);
+-    } catch (e) {
+-      console.error(`Tauri native invoke error (${command}):`, e);
+-      throw e;
+-    }
+-  }
+-
+-  // Fallback for browser dev mode (npm run dev running in standard Chrome/Edge)
+-  try {
+-    const res = await fetch("/api/tauri_invoke", {
+-      method: "POST",
+-      headers: { "Content-Type": "application/json" },
+-      body: JSON.stringify({ command, args }),
+-    });
+-    if (res.ok) {
+-      return await res.json();
+-    }
+-  } catch (e) {
+-    console.error(`Dev server fallback error (${command}):`, e);
+-  }
+-
+-  // Return safe defaults if dev server proxy returns error
+-  if (command === "get_system_stats") {
+-    return {
+-      cpu: 12,
+-      ram: 44,
+-      disk: 38,
+-      network_up: 84,
+-      network_down: 312,
+-      cpu_name: "Local CPU (Dev Mode)",
+-      total_ram: 16,
+-      disk_size: 512,
+-    } as unknown as T;
+-  }
+-  if (command === "get_temperature_stats") {
+-    return {
+-      cpu: 44,
+-      gpu: 40,
+-      motherboard: 36,
+-      ssd: 34,
+-      vrm: 33,
+-      battery: 29,
+-      power: 52,
+-      cpu_name: "Local CPU",
+-      cpu_threads: 16,
+-      battery_percent: 95
+-    } as unknown as T;
+-  }
+-  if (command === "get_uptime") {
+-    return "4h 12m" as unknown as T;
+-  }
+-  if (command === "get_log_count") {
+-    return 128 as unknown as T;
+-  }
+-  if (command === "get_terminal_logs") {
+-    return [
+-      "[System] Heliox OS Agent Daemon Connected",
+-      "[Core] ReAct Loop active on ws://127.0.0.1:8785",
+-      "[Monitor] System health metrics normal",
+-      "[Cognitive] TRIBE v2 Neural Cognitive HUD loaded",
+-    ] as unknown as T;
+-  }
+-  if (command === "get_agent_activity") {
+-    return [
+-      { agent: "System Agent", status: "Idle", tasks_completed: 14 },
+-      { agent: "Code Agent", status: "Active", tasks_completed: 8 },
+-      { agent: "Web Agent", status: "Idle", tasks_completed: 5 },
+-      { agent: "Monitor Agent", status: "Monitoring", tasks_completed: 42 },
+-      { agent: "Communication Agent", status: "Ready", tasks_completed: 3 },
+-    ] as unknown as T;
+-  }
+-  if (command === "get_rss_feed") {
+-    return [
+-      { title: "Heliox OS v0.7.1 Released with JARVIS Autonomy", url: "https://github.com/VyomKulshrestha/Heliox-OS/releases", source: "GitHub" },
+-      { title: "TRIBE v2 Cognitive Engine Integration Live", url: "https://helioxos.dev", source: "Heliox Blog" },
+-    ] as unknown as T;
+-  }
+-  if (command === "get_status_metrics") {
+-    return { cpu: 12, ram: 44, latency_ms: 8, agents_active: 5 } as unknown as T;
+-  }
+-  if (command === "get_dashboard_status") {
+-    return {
+-      connected: true,
+-      agents: 5,
+-      cpu: "15%",
+-      memory: "44%",
+-      network_up: "140 KB/s",
+-      network_down: "520 KB/s",
+-    } as unknown as T;
+-  }
+-  if (command === "get_auth_token") {
+-    try {
+-      const res = await fetch("/api/auth_token");
+-      if (res.ok) return (await res.text()).trim() as unknown as T;
+-    } catch {
+-      // ignore
+-    }
+-    return ((import.meta as any).env?.VITE_DAEMON_TOKEN ?? "") as unknown as T;
+-  }
+-
+-  return {} as unknown as T;
+-}
+diff --git a/tauri-app/ui/src/lib/components/ActivityLog.svelte b/tauri-app/ui/src/lib/components/ActivityLog.svelte
+index 95397c0..cca4329 100644
+--- a/tauri-app/ui/src/lib/components/ActivityLog.svelte
++++ b/tauri-app/ui/src/lib/components/ActivityLog.svelte
+@@ -1,7 +1,7 @@
+ <script lang="ts">
+   import { onMount } from "svelte";
+   import { call } from "../api/daemon";
+-  import { invoke } from "../api/invoke";
++  import { invoke } from "@tauri-apps/api/core";
+ 
+ async function openLogsFolder() {
+   await invoke("open_logs_folder");
+@@ -21,43 +21,9 @@ async function openLogsFolder() {
+   onMount(async () => {
+     try {
+       const result = (await call("get_history", { limit: 100 })) as { entries: HistoryEntry[] };
+-      let loaded = result.entries ?? [];
+-      if (loaded.length === 0 && typeof localStorage !== "undefined") {
+-        try {
+-          const localMsgs = JSON.parse(localStorage.getItem("heliox_session_history") || "[]");
+-          loaded = localMsgs
+-            .filter((m: any) => m.type === "user" && m.text)
+-            .map((m: any, idx: number) => ({
+-              id: idx,
+-              timestamp: new Date(m.timestamp || Date.now()).toISOString(),
+-              user_input: m.text,
+-              success: true,
+-              explanation: "Locally executed neural command"
+-            }))
+-            .reverse();
+-        } catch(e) {}
+-      }
+-      entries = loaded;
++      entries = result.entries ?? [];
+     } catch {
+-      if (typeof localStorage !== "undefined") {
+-        try {
+-          const localMsgs = JSON.parse(localStorage.getItem("heliox_session_history") || "[]");
+-          entries = localMsgs
+-            .filter((m: any) => m.type === "user" && m.text)
+-            .map((m: any, idx: number) => ({
+-              id: idx,
+-              timestamp: new Date(m.timestamp || Date.now()).toISOString(),
+-              user_input: m.text,
+-              success: true,
+-              explanation: "Locally executed neural command"
+-            }))
+-            .reverse();
+-        } catch(err) {
+-          entries = [];
+-        }
+-      } else {
+-        entries = [];
+-      }
++      entries = [];
+     } finally {
+       loading = false;
+     }
+diff --git a/tauri-app/ui/src/lib/components/AgentActivity.svelte b/tauri-app/ui/src/lib/components/AgentActivity.svelte
+index 08a9aea..bbaebee 100644
+--- a/tauri-app/ui/src/lib/components/AgentActivity.svelte
++++ b/tauri-app/ui/src/lib/components/AgentActivity.svelte
+@@ -1,7 +1,7 @@
+ <script lang="ts">
+ import WidgetCard from "./WidgetCard.svelte";
+ import { onMount }from "svelte";
+-import { invoke } from "../api/invoke";
++import { invoke }from "@tauri-apps/api/core";
+ import { pinnedWidgets } from "../stores/pinnedWidgets";
+ function togglePin() {
+   pinnedWidgets.update((items) => {
+@@ -34,10 +34,15 @@ type Agent = {
+ let agents: Agent[] = [];
+ async function loadAgents() {
+   try {
+-    const res = await invoke("get_agent_activity");
+-    if (Array.isArray(res)) agents = res;
++    agents =
++      await invoke(
++        "get_agent_activity"
++      );
+   } catch (err) {
+-    console.error("Agent activity failed", err);
++    console.error(
++      "Agent activity failed",
++      err
++    );
+   }
+ }
+ onMount(() => {
+diff --git a/tauri-app/ui/src/lib/components/AmbientHUD.svelte b/tauri-app/ui/src/lib/components/AmbientHUD.svelte
+index b61bdb4..0667b42 100644
+--- a/tauri-app/ui/src/lib/components/AmbientHUD.svelte
++++ b/tauri-app/ui/src/lib/components/AmbientHUD.svelte
+@@ -5,7 +5,6 @@
+    */
+ 
+   import { call, isConnected } from "../api/daemon";
+-  import { invoke } from "../api/invoke";
+   import BudgetMeter from "./BudgetMeter.svelte";
+ 
+   // ΓöÇΓöÇ State ΓöÇΓöÇ
+@@ -29,46 +28,17 @@
+ 
+   function updateTime() {
+     const now = new Date();
+-    currentTime = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
++    currentTime = now.toLocaleTimeString("en-US", {
++      hour: "2-digit",
++      minute: "2-digit",
++      second: "2-digit",
++      hour12: false,
++    });
+   }
+ 
+-  // Fetch system stats from daemon or fallback
++  // Fetch system stats from daemon
+   async function fetchStats() {
+-    try {
+-      const upRes: any = await call("get_uptime");
+-      if (upRes && typeof upRes === "string") uptime = upRes;
+-    } catch (e) {
+-      try {
+-        const upRes: any = await invoke("get_uptime");
+-        if (upRes && typeof upRes === "string") uptime = upRes;
+-      } catch (e2) {}
+-    }
+-
+-    if (!isConnected()) {
+-      try {
+-        const info: any = await invoke("system_info");
+-        if (info) {
+-          cpuPercent = Math.round(Number(info.cpu_percent ?? 0));
+-          ramPercent = Math.round(Number(info.memory_percent ?? 0));
+-          ramUsedGB = (Number(info.memory_used ?? 0) / (1024 ** 3)).toFixed(1);
+-          ramTotalGB = (Number(info.memory_total ?? 0) / (1024 ** 3)).toFixed(1);
+-          diskPercent = Math.round(Number(info.disk_percent ?? 0));
+-          diskUsedGB = (Number(info.disk_used ?? 0) / (1024 ** 3)).toFixed(0);
+-          diskTotalGB = (Number(info.disk_total ?? 0) / (1024 ** 3)).toFixed(0);
+-          hostname = String(info.hostname ?? "HELIOX").toUpperCase();
+-          if (info.uptime_seconds) {
+-            const upSec = Number(info.uptime_seconds);
+-            const days = Math.floor(upSec / 86400);
+-            const hrs = Math.floor((upSec % 86400) / 3600);
+-            const mins = Math.floor((upSec % 3600) / 60);
+-            uptime = days > 0 ? `${days}d ${hrs}h ${mins}m` : `${hrs}h ${mins}m`;
+-          }
+-          cpuHistory = [...cpuHistory.slice(1), cpuPercent];
+-          return;
+-        }
+-      } catch (e) {}
+-      return;
+-    }
++    if (!isConnected()) return;
+ 
+     try {
+       const info = (await call("system_info")) as Record<string, any>;
+@@ -83,46 +53,23 @@
+         hostname = String(info.hostname ?? "HELIOX").toUpperCase();
+         
+         if (info.uptime_seconds) {
+-          const upSec = Number(info.uptime_seconds);
+-          const days = Math.floor(upSec / 86400);
+-          const hrs = Math.floor((upSec % 86400) / 3600);
+-          const mins = Math.floor((upSec % 3600) / 60);
+-          uptime = days > 0 ? `${days}d ${hrs}h ${mins}m` : `${hrs}h ${mins}m`;
++          const hrs = Math.floor(Number(info.uptime_seconds) / 3600);
++          const mins = Math.floor((Number(info.uptime_seconds) % 3600) / 60);
++          uptime = `${hrs}h ${mins}m`;
+         }
+ 
+         // Update CPU history for the graph
+         cpuHistory = [...cpuHistory.slice(1), cpuPercent];
+       }
+     } catch {
+-      try {
+-        const info: any = await invoke("system_info");
+-        if (info) {
+-          cpuPercent = Math.round(Number(info.cpu_percent ?? 0));
+-          ramPercent = Math.round(Number(info.memory_percent ?? 0));
+-          ramUsedGB = (Number(info.memory_used ?? 0) / (1024 ** 3)).toFixed(1);
+-          ramTotalGB = (Number(info.memory_total ?? 0) / (1024 ** 3)).toFixed(1);
+-          diskPercent = Math.round(Number(info.disk_percent ?? 0));
+-          diskUsedGB = (Number(info.disk_used ?? 0) / (1024 ** 3)).toFixed(0);
+-          diskTotalGB = (Number(info.disk_total ?? 0) / (1024 ** 3)).toFixed(0);
+-          hostname = String(info.hostname ?? "HELIOX").toUpperCase();
+-          if (info.uptime_seconds) {
+-            const upSec = Number(info.uptime_seconds);
+-            const days = Math.floor(upSec / 86400);
+-            const hrs = Math.floor((upSec % 86400) / 3600);
+-            const mins = Math.floor((upSec % 3600) / 60);
+-            uptime = days > 0 ? `${days}d ${hrs}h ${mins}m` : `${hrs}h ${mins}m`;
+-          }
+-          cpuHistory = [...cpuHistory.slice(1), cpuPercent];
+-          return;
+-        }
+-      } catch (e) {}
++      // Daemon not connected ΓÇö use simulated data for visual demo
+       cpuPercent = 15 + Math.floor(Math.random() * 20);
+-      ramPercent = 81;
+-      ramUsedGB = "13.3";
+-      ramTotalGB = "15.7";
+-      diskPercent = 81;
+-      diskUsedGB = "772";
+-      diskTotalGB = "953";
++      ramPercent = 45 + Math.floor(Math.random() * 10);
++      ramUsedGB = "7.2";
++      ramTotalGB = "16.0";
++      diskPercent = 62;
++      diskUsedGB = "298";
++      diskTotalGB = "476";
+       cpuHistory = [...cpuHistory.slice(1), cpuPercent];
+     }
+   }
+diff --git a/tauri-app/ui/src/lib/components/BudgetMeter.svelte b/tauri-app/ui/src/lib/components/BudgetMeter.svelte
+index 6f547ef..1dc70dd 100644
+--- a/tauri-app/ui/src/lib/components/BudgetMeter.svelte
++++ b/tauri-app/ui/src/lib/components/BudgetMeter.svelte
+@@ -74,20 +74,7 @@
+     </div>
+   {/if}
+ 
+-  <div class="live-usage">
+-    <div class="section-title live-title">Active Session Usage</div>
+-    <div class="cap-row">
+-      <span class="cap-label">Tokens consumed</span>
+-      <span class="cap-value highlight">{fmtInt($session.totalTokens)}</span>
+-    </div>
+-    <div class="cap-row">
+-      <span class="cap-label">Estimated cost</span>
+-      <span class="cap-value highlight">{fmtUsd($session.estimatedCost)}</span>
+-    </div>
+-  </div>
+-
+   <div class="caps">
+-    <div class="section-title">Configured Caps</div>
+     <div class="cap-row">
+       <span class="cap-label">Monthly</span>
+       <span class="cap-value">{fmtUsd($settings.model.budget_monthly_limit_usd)}</span>
+@@ -244,35 +231,6 @@
+     box-shadow: 0 0 6px rgba(0, 255, 136, 0.4);
+   }
+ 
+-  .live-usage {
+-    display: flex;
+-    flex-direction: column;
+-    gap: 4px;
+-    padding: 6px 8px;
+-    background: rgba(0, 255, 136, 0.05);
+-    border: 1px solid rgba(0, 255, 136, 0.18);
+-    border-radius: 6px;
+-    margin-bottom: 2px;
+-  }
+-
+-  .section-title {
+-    font-size: 9px;
+-    font-weight: 700;
+-    letter-spacing: 1px;
+-    text-transform: uppercase;
+-    color: rgba(0, 200, 255, 0.85);
+-    margin-bottom: 2px;
+-  }
+-
+-  .live-title {
+-    color: rgba(0, 255, 136, 0.9);
+-  }
+-
+-  .highlight {
+-    color: rgba(0, 255, 136, 0.95);
+-    font-weight: 700;
+-  }
+-
+   .caps {
+     display: flex;
+     flex-direction: column;
+diff --git a/tauri-app/ui/src/lib/components/CommandHistory.svelte b/tauri-app/ui/src/lib/components/CommandHistory.svelte
+index fe5afbd..a7aa292 100644
+--- a/tauri-app/ui/src/lib/components/CommandHistory.svelte
++++ b/tauri-app/ui/src/lib/components/CommandHistory.svelte
+@@ -20,39 +20,9 @@
+     loading = true;
+     try {
+       const result = await call<{ plans?: HistoryEntry[] }>("get_plan_history", { limit: 30, offset: 0 });
+-      let loaded = result.plans ?? [];
+-      if (loaded.length === 0 && typeof localStorage !== "undefined") {
+-        try {
+-          const localMsgs = JSON.parse(localStorage.getItem("heliox_session_history") || "[]");
+-          loaded = localMsgs
+-            .filter((m: any) => m.type === "user" && m.text)
+-            .map((m: any) => ({
+-              raw_input: m.text,
+-              created_at: new Date(m.timestamp || Date.now()).toISOString(),
+-              execution_status: "success"
+-            }))
+-            .reverse();
+-        } catch(e) {}
+-      }
+-      history = loaded;
++      history = result.plans ?? [];
+     } catch (e) {
+-      if (typeof localStorage !== "undefined") {
+-        try {
+-          const localMsgs = JSON.parse(localStorage.getItem("heliox_session_history") || "[]");
+-          history = localMsgs
+-            .filter((m: any) => m.type === "user" && m.text)
+-            .map((m: any) => ({
+-              raw_input: m.text,
+-              created_at: new Date(m.timestamp || Date.now()).toISOString(),
+-              execution_status: "success"
+-            }))
+-            .reverse();
+-        } catch(err) {
+-          history = [];
+-        }
+-      } else {
+-        history = [];
+-      }
++      history = [];
+     } finally {
+       loading = false;
+     }
+diff --git a/tauri-app/ui/src/lib/components/ExecutionGraph.svelte b/tauri-app/ui/src/lib/components/ExecutionGraph.svelte
+index cf088e6..0d20a95 100644
+--- a/tauri-app/ui/src/lib/components/ExecutionGraph.svelte
++++ b/tauri-app/ui/src/lib/components/ExecutionGraph.svelte
+@@ -16,7 +16,7 @@
+     </div>
+ 
+     <div class="nodes-container">
+-      {#each $session.liveActions as liveAction, idx (`${liveAction.index}-${idx}`)}
++      {#each $session.liveActions as liveAction (liveAction.index)}
+         <div 
+           class="node-wrapper"
+           animate:flip
+diff --git a/tauri-app/ui/src/lib/components/GitConflictResolver.svelte b/tauri-app/ui/src/lib/components/GitConflictResolver.svelte
+index 136fdaa..618c3fd 100644
+--- a/tauri-app/ui/src/lib/components/GitConflictResolver.svelte
++++ b/tauri-app/ui/src/lib/components/GitConflictResolver.svelte
+@@ -1,5 +1,5 @@
+ <script lang="ts">
+-  import { invoke } from "../api/invoke";
++  import { invoke } from "@tauri-apps/api/core";
+   import type { GitConflictPayload } from "../stores/session";
+   import { session } from "../stores/session";
+ 
+diff --git a/tauri-app/ui/src/lib/components/HeaderMiniMonitor.svelte b/tauri-app/ui/src/lib/components/HeaderMiniMonitor.svelte
+index 1ef5212..7d20bb5 100644
+--- a/tauri-app/ui/src/lib/components/HeaderMiniMonitor.svelte
++++ b/tauri-app/ui/src/lib/components/HeaderMiniMonitor.svelte
+@@ -1,6 +1,6 @@
+ <script lang="ts">
+   import { onMount, onDestroy } from "svelte";
+-  import { invoke } from "../api/invoke";
++  import { invoke } from "@tauri-apps/api/core";
+   import { fade } from "svelte/transition";
+ 
+   type Stats = {
+diff --git a/tauri-app/ui/src/lib/components/NeuralBackground.svelte b/tauri-app/ui/src/lib/components/NeuralBackground.svelte
+index b5a19bb..547e850 100644
+--- a/tauri-app/ui/src/lib/components/NeuralBackground.svelte
++++ b/tauri-app/ui/src/lib/components/NeuralBackground.svelte
+@@ -184,7 +184,7 @@
+   });
+ </script>
+ 
+-<div class="neural-bg" onmousemove={handleMouseMove} role="presentation">
++<div class="neural-bg" onmousemove={handleMouseMove}>
+   <canvas bind:this={canvasEl} class="neural-canvas"></canvas>
+ </div>
+ 
+diff --git a/tauri-app/ui/src/lib/components/PluginsTab.svelte b/tauri-app/ui/src/lib/components/PluginsTab.svelte
+index 80a4d3a..f238484 100644
+--- a/tauri-app/ui/src/lib/components/PluginsTab.svelte
++++ b/tauri-app/ui/src/lib/components/PluginsTab.svelte
+@@ -1,20 +1,13 @@
+ <script lang="ts">
+   import { call } from "../api/daemon";
+ 
+-  interface PluginTool {
+-    name: string;
+-    description: string;
+-    inputs?: string[];
+-    outputs?: string[];
+-  }
+-
+   interface Plugin {
+     name: string;
+     description: string;
+     version: string;
+     author: string;
+     url: string;
+-    tools: PluginTool[];
++    tools: { name: string; description: string }[];
+     installed: boolean;
+   }
+ 
+@@ -24,26 +17,6 @@
+   let installing = $state<string | null>(null);
+   let uninstalling = $state<string | null>(null);
+ 
+-  // Tool execution
+-  let runningTool = $state<string | null>(null);
+-  let toolResult = $state<Record<string, any>>({});
+-  let toolArgs = $state<Record<string, Record<string, string>>>({});
+-
+-  // Create plugin
+-  let showCreate = $state(false);
+-  let createName = $state("");
+-  let createDesc = $state("");
+-  let createAuthor = $state("");
+-  let createCode = $state("");
+-  let createToolName = $state("");
+-  let createToolDesc = $state("");
+-  let createToolInputs = $state("");
+-  let createTools: { name: string; description: string; inputs: string[] }[] = $state([]);
+-  let creating = $state(false);
+-
+-  // Active view per plugin
+-  let expandedPlugin = $state<string | null>(null);
+-
+   async function loadPlugins() {
+     loading = true;
+     error = "";
+@@ -65,16 +38,10 @@
+   async function installPlugin(plugin: Plugin) {
+     installing = plugin.name;
+     try {
+-      const res = await call<{ success?: boolean; error?: string }>("plugin_install", { plugin_name: plugin.name });
+-      if (res.success) {
+-        plugin.installed = true;
+-        plugins = [...plugins]; // trigger reactivity
+-      } else {
+-        error = res.error || "Install failed";
+-      }
++      await call("plugin_install", { plugin_name: plugin.name });
++      plugin.installed = true;
+     } catch (e) {
+       console.error("Install failed:", e);
+-      error = "Install failed";
+     } finally {
+       installing = null;
+     }
+@@ -83,13 +50,8 @@
+   async function uninstallPlugin(plugin: Plugin) {
+     uninstalling = plugin.name;
+     try {
+-      const res = await call<{ success?: boolean; error?: string }>("plugin_uninstall", { plugin_name: plugin.name });
+-      if (res.success) {
+-        plugin.installed = false;
+-        plugins = [...plugins];
+-        // Clear results for this plugin
+-        delete toolResult[plugin.name];
+-      }
++      await call("plugin_uninstall", { plugin_name: plugin.name });
++      plugin.installed = false;
+     } catch (e) {
+       console.error("Uninstall failed:", e);
+     } finally {
+@@ -97,167 +59,21 @@
+     }
+   }
+ 
+-  async function runTool(pluginName: string, toolName: string) {
+-    const key = `${pluginName}:${toolName}`;
+-    runningTool = key;
+-    try {
+-      const args = toolArgs[key] || {};
+-      const res = await call<{ result?: any; error?: string }>("plugin_run_tool", {
+-        tool_name: toolName,
+-        args,
+-      });
+-      toolResult[key] = res.result || res;
+-      toolResult = { ...toolResult };
+-    } catch (e: any) {
+-      toolResult[key] = { error: e.message || "Execution failed" };
+-      toolResult = { ...toolResult };
+-    } finally {
+-      runningTool = null;
+-    }
+-  }
+-
+-  function setToolArg(key: string, argName: string, value: string) {
+-    if (!toolArgs[key]) toolArgs[key] = {};
+-    toolArgs[key][argName] = value;
+-    toolArgs = { ...toolArgs };
+-  }
+-
+-  function addCreateTool() {
+-    if (!createToolName.trim()) return;
+-    createTools = [
+-      ...createTools,
+-      {
+-        name: createToolName.trim().replace(/\s+/g, "_").toLowerCase(),
+-        description: createToolDesc.trim() || createToolName.trim(),
+-        inputs: createToolInputs.trim()
+-          ? createToolInputs.split(",").map((s) => s.trim())
+-          : [],
+-      },
+-    ];
+-    createToolName = "";
+-    createToolDesc = "";
+-    createToolInputs = "";
+-  }
+-
+-  function removeCreateTool(idx: number) {
+-    createTools = createTools.filter((_, i) => i !== idx);
+-  }
+-
+-  async function createPlugin() {
+-    if (!createName.trim()) return;
+-    creating = true;
+-    try {
+-      const res = await call<{ success?: boolean; error?: string }>("plugin_create", {
+-        name: createName,
+-        description: createDesc || `Custom plugin: ${createName}`,
+-        author: createAuthor || "User",
+-        tools: createTools,
+-        code: createCode,
+-      });
+-      if (res.success) {
+-        showCreate = false;
+-        createName = "";
+-        createDesc = "";
+-        createAuthor = "";
+-        createCode = "";
+-        createTools = [];
+-        await loadPlugins();
+-      } else {
+-        error = res.error || "Create failed";
+-      }
+-    } catch (e: any) {
+-      error = e.message || "Create failed";
+-    } finally {
+-      creating = false;
+-    }
+-  }
+-
+-  function toggleExpand(name: string) {
+-    expandedPlugin = expandedPlugin === name ? null : name;
+-  }
+-
+-  function formatResult(obj: any): string {
+-    if (typeof obj === "string") return obj;
+-    try {
+-      return JSON.stringify(obj, null, 2);
+-    } catch {
+-      return String(obj);
+-    }
+-  }
+-
+   loadPlugins();
+ </script>
+ 
+ <div class="plugins-tab">
+   <div class="header">
+-    <h2>≡ƒº⌐ Plugin Marketplace</h2>
+-    <div class="header-actions">
+-      <button class="btn-create" onclick={() => (showCreate = !showCreate)}>
+-        {showCreate ? "Γ£ò Cancel" : "∩╝ï Create Plugin"}
+-      </button>
+-      <button class="refresh-btn" onclick={loadPlugins} disabled={loading}>
+-        {loading ? "Γƒ│ Loading..." : "Γƒ│ Refresh"}
+-      </button>
+-    </div>
++    <h2>Plugin Marketplace</h2>
++    <button class="refresh-btn" onclick={loadPlugins} disabled={loading}>
++      {loading ? "Loading..." : "Refresh"}
++    </button>
+   </div>
+ 
+   {#if error}
+-    <div class="error-message">{error} <button class="dismiss-btn" onclick={() => error = ""}>Γ£ò</button></div>
+-  {/if}
+-
+-  <!-- Create Plugin Panel -->
+-  {#if showCreate}
+-    <div class="create-panel">
+-      <h3>Create Custom Plugin</h3>
+-      <div class="form-grid">
+-        <div class="form-group">
+-          <label for="cp-name">Plugin Name</label>
+-          <input id="cp-name" type="text" bind:value={createName} placeholder="my-awesome-plugin" />
+-        </div>
+-        <div class="form-group">
+-          <label for="cp-desc">Description</label>
+-          <input id="cp-desc" type="text" bind:value={createDesc} placeholder="What does your plugin do?" />
+-        </div>
+-        <div class="form-group">
+-          <label for="cp-author">Author</label>
+-          <input id="cp-author" type="text" bind:value={createAuthor} placeholder="Your name" />
+-        </div>
+-      </div>
+-
+-      <div class="tools-builder">
+-        <h4>Tools</h4>
+-        {#each createTools as tool, idx}
+-          <div class="tool-row">
+-            <span class="tool-name-tag">{tool.name}</span>
+-            <span class="tool-desc-text">{tool.description}</span>
+-            {#if tool.inputs.length > 0}
+-              <span class="tool-inputs-text">({tool.inputs.join(", ")})</span>
+-            {/if}
+-            <button class="tool-remove" onclick={() => removeCreateTool(idx)}>Γ£ò</button>
+-          </div>
+-        {/each}
+-        <div class="add-tool-row">
+-          <input type="text" bind:value={createToolName} placeholder="tool_name" class="tool-input-sm" />
+-          <input type="text" bind:value={createToolDesc} placeholder="Description" class="tool-input-md" />
+-          <input type="text" bind:value={createToolInputs} placeholder="arg1, arg2" class="tool-input-sm" />
+-          <button class="btn-add-tool" onclick={addCreateTool}>Add</button>
+-        </div>
+-      </div>
+-
+-      <div class="form-group">
+-        <label for="cp-code">Plugin Code (Python)</label>
+-        <textarea id="cp-code" bind:value={createCode} rows="8"
+-          placeholder={'def handle_tool(tool_name, params):\n    return {"status": "success", "result": "Hello!"}'}
+-        ></textarea>
+-      </div>
+-
+-      <button class="btn-submit" onclick={createPlugin} disabled={creating || !createName.trim()}>
+-        {creating ? "Creating..." : "Create & Install Plugin"}
+-      </button>
+-    </div>
++    <div class="error-message">{error}</div>
+   {/if}
+ 
+-  <!-- Plugin List -->
+   {#if loading && plugins.length === 0}
+     <div class="loading-state">
+       <div class="spinner"></div>
+@@ -265,7 +81,7 @@
+     </div>
+   {:else if plugins.length === 0}
+     <div class="empty-state">
+-      <p>No plugins available. Click "Create Plugin" to build your own!</p>
++      <p>No plugins available in the marketplace.</p>
+     </div>
+   {:else}
+     <div class="plugin-grid">
+@@ -278,7 +94,7 @@
+               <span class="author">by {plugin.author}</span>
+             </div>
+             <span class="status-badge" class:installed={plugin.installed}>
+-              {plugin.installed ? "Γ£ô Installed" : "Available"}
++              {plugin.installed ? "Installed" : "Available"}
+             </span>
+           </div>
+ 
+@@ -287,61 +103,15 @@
+           <div class="tools-section">
+             <span class="tools-label">{plugin.tools.length} tools</span>
+             <div class="tools-list">
+-              {#each plugin.tools as tool}
+-                <button
+-                  class="tool-tag"
+-                  class:clickable={plugin.installed}
+-                  onclick={() => { if (plugin.installed) toggleExpand(`${plugin.name}:${tool.name}`); }}
+-                  title={plugin.installed ? `Run ${tool.name}` : tool.description}
+-                >
+-                  {tool.name}
+-                  {#if plugin.installed}
+-                    <span class="run-icon">Γû╢</span>
+-                  {/if}
+-                </button>
++              {#each plugin.tools.slice(0, 3) as tool}
++                <span class="tool-tag">{tool.name}</span>
+               {/each}
++              {#if plugin.tools.length > 3}
++                <span class="tool-tag more">+{plugin.tools.length - 3} more</span>
++              {/if}
+             </div>
+           </div>
+ 
+-          <!-- Expanded tool runner -->
+-          {#each plugin.tools as tool}
+-            {#if expandedPlugin === `${plugin.name}:${tool.name}` && plugin.installed}
+-              <div class="tool-runner">
+-                <div class="tool-runner-header">
+-                  <span class="tool-runner-name">ΓÜí {tool.name}</span>
+-                  <span class="tool-runner-desc">{tool.description}</span>
+-                </div>
+-                {#if tool.inputs && tool.inputs.length > 0}
+-                  <div class="tool-inputs-form">
+-                    {#each tool.inputs as input}
+-                      <div class="input-row">
+-                        <label for="ti-{tool.name}-{input}">{input}</label>
+-                        <input
+-                          id="ti-{tool.name}-{input}"
+-                          type="text"
+-                          placeholder={`Enter ${input}`}
+-                          oninput={(e: Event) => setToolArg(`${plugin.name}:${tool.name}`, input, (e.target as HTMLInputElement).value)}
+-                        />
+-                      </div>
+-                    {/each}
+-                  </div>
+-                {/if}
+-                <button
+-                  class="btn-run"
+-                  onclick={() => runTool(plugin.name, tool.name)}
+-                  disabled={runningTool === `${plugin.name}:${tool.name}`}
+-                >
+-                  {runningTool === `${plugin.name}:${tool.name}` ? "Γƒ│ Running..." : "Γû╢ Execute"}
+-                </button>
+-                {#if toolResult[`${plugin.name}:${tool.name}`]}
+-                  <div class="tool-output" class:error-output={toolResult[`${plugin.name}:${tool.name}`]?.error}>
+-                    <pre>{formatResult(toolResult[`${plugin.name}:${tool.name}`])}</pre>
+-                  </div>
+-                {/if}
+-              </div>
+-            {/if}
+-          {/each}
+-
+           <div class="plugin-actions">
+             {#if plugin.installed}
+               <button
+@@ -360,9 +130,9 @@
+                 {installing === plugin.name ? "Installing..." : "Install"}
+               </button>
+             {/if}
+-            {#if plugin.url}
+-              <a href={plugin.url} target="_blank" rel="noopener" class="btn-link">GitHub Γåù</a>
+-            {/if}
++            <a href={plugin.url} target="_blank" rel="noopener" class="btn-link">
++              View on GitHub
++            </a>
+           </div>
+         </div>
+       {/each}
+@@ -384,39 +154,19 @@
+     margin-bottom: 16px;
+   }
+ 
+-  .header-actions {
+-    display: flex;
+-    gap: 8px;
+-  }
+-
+   h2 {
+     font-size: 14px;
+     font-weight: 600;
+   }
+ 
+-  .refresh-btn, .btn-create {
++  .refresh-btn {
+     padding: 5px 14px;
+     font-size: 12px;
+     font-weight: 600;
+-    border-radius: var(--radius-sm);
+-    transition: all 0.15s;
+-    cursor: pointer;
+-  }
+-
+-  .refresh-btn {
+     color: white;
+     background: var(--accent);
+-  }
+-
+-  .btn-create {
+-    color: var(--accent);
+-    background: var(--accent-muted, rgba(99, 102, 241, 0.12));
+-    border: 1px solid var(--accent);
+-  }
+-
+-  .btn-create:hover {
+-    background: var(--accent);
+-    color: white;
++    border-radius: var(--radius-sm);
++    transition: all 0.15s;
+   }
+ 
+   .refresh-btn:hover:not(:disabled) {
+@@ -430,23 +180,12 @@
+ 
+   .error-message {
+     padding: 10px 14px;
+-    background: var(--danger-bg, rgba(239, 68, 68, 0.1));
+-    color: var(--danger, #ef4444);
+-    border: 1px solid var(--danger, #ef4444);
++    background: var(--danger-bg);
++    color: var(--danger);
++    border: 1px solid var(--danger);
+     border-radius: var(--radius-md);
+     margin-bottom: 16px;
+     font-size: 13px;
+-    display: flex;
+-    justify-content: space-between;
+-    align-items: center;
+-  }
+-
+-  .dismiss-btn {
+-    background: none;
+-    color: var(--danger, #ef4444);
+-    font-size: 14px;
+-    cursor: pointer;
+-    padding: 0 4px;
+   }
+ 
+   .loading-state, .empty-state {
+@@ -472,178 +211,6 @@
+     to { transform: rotate(360deg); }
+   }
+ 
+-  /* ΓöÇΓöÇ Create Plugin Panel ΓöÇΓöÇ */
+-  .create-panel {
+-    background: var(--bg-secondary);
+-    border: 1px solid var(--accent);
+-    border-radius: var(--radius-md);
+-    padding: 16px;
+-    margin-bottom: 16px;
+-    animation: slideDown 0.2s ease-out;
+-  }
+-
+-  @keyframes slideDown {
+-    from { opacity: 0; transform: translateY(-8px); }
+-    to { opacity: 1; transform: translateY(0); }
+-  }
+-
+-  .create-panel h3 {
+-    font-size: 13px;
+-    font-weight: 600;
+-    margin: 0 0 12px 0;
+-    color: var(--accent);
+-  }
+-
+-  .create-panel h4 {
+-    font-size: 12px;
+-    font-weight: 600;
+-    margin: 12px 0 8px 0;
+-    color: var(--text-secondary);
+-  }
+-
+-  .form-grid {
+-    display: grid;
+-    grid-template-columns: 1fr 1fr 1fr;
+-    gap: 10px;
+-    margin-bottom: 8px;
+-  }
+-
+-  .form-group {
+-    display: flex;
+-    flex-direction: column;
+-    gap: 4px;
+-  }
+-
+-  .form-group label {
+-    font-size: 11px;
+-    font-weight: 600;
+-    color: var(--text-muted);
+-    text-transform: uppercase;
+-    letter-spacing: 0.4px;
+-  }
+-
+-  .form-group input, .form-group textarea {
+-    padding: 7px 10px;
+-    font-size: 12px;
+-    font-family: var(--font-mono, monospace);
+-    background: var(--bg-tertiary);
+-    color: var(--text-primary);
+-    border: 1px solid var(--border);
+-    border-radius: var(--radius-sm);
+-    outline: none;
+-    transition: border-color 0.15s;
+-  }
+-
+-  .form-group input:focus, .form-group textarea:focus {
+-    border-color: var(--accent);
+-  }
+-
+-  .form-group textarea {
+-    resize: vertical;
+-    min-height: 80px;
+-  }
+-
+-  .tools-builder {
+-    margin-bottom: 10px;
+-  }
+-
+-  .tool-row {
+-    display: flex;
+-    align-items: center;
+-    gap: 8px;
+-    padding: 5px 8px;
+-    background: var(--bg-tertiary);
+-    border-radius: var(--radius-sm);
+-    margin-bottom: 4px;
+-    font-size: 12px;
+-  }
+-
+-  .tool-name-tag {
+-    font-family: var(--font-mono, monospace);
+-    font-weight: 600;
+-    color: var(--accent);
+-  }
+-
+-  .tool-desc-text {
+-    color: var(--text-secondary);
+-    flex: 1;
+-  }
+-
+-  .tool-inputs-text {
+-    color: var(--text-muted);
+-    font-size: 11px;
+-  }
+-
+-  .tool-remove {
+-    background: none;
+-    color: var(--danger, #ef4444);
+-    font-size: 12px;
+-    cursor: pointer;
+-    padding: 0 4px;
+-  }
+-
+-  .add-tool-row {
+-    display: flex;
+-    gap: 6px;
+-    align-items: center;
+-  }
+-
+-  .tool-input-sm {
+-    width: 120px;
+-    padding: 5px 8px;
+-    font-size: 11px;
+-    font-family: var(--font-mono, monospace);
+-    background: var(--bg-tertiary);
+-    color: var(--text-primary);
+-    border: 1px solid var(--border);
+-    border-radius: var(--radius-sm);
+-    outline: none;
+-  }
+-
+-  .tool-input-md {
+-    flex: 1;
+-    padding: 5px 8px;
+-    font-size: 11px;
+-    background: var(--bg-tertiary);
+-    color: var(--text-primary);
+-    border: 1px solid var(--border);
+-    border-radius: var(--radius-sm);
+-    outline: none;
+-  }
+-
+-  .btn-add-tool {
+-    padding: 5px 12px;
+-    font-size: 11px;
+-    font-weight: 600;
+-    color: var(--accent);
+-    background: var(--accent-muted, rgba(99, 102, 241, 0.12));
+-    border-radius: var(--radius-sm);
+-    cursor: pointer;
+-  }
+-
+-  .btn-submit {
+-    width: 100%;
+-    padding: 8px;
+-    font-size: 13px;
+-    font-weight: 600;
+-    color: white;
+-    background: var(--accent);
+-    border-radius: var(--radius-sm);
+-    cursor: pointer;
+-    transition: all 0.15s;
+-    margin-top: 8px;
+-  }
+-
+-  .btn-submit:hover:not(:disabled) {
+-    background: var(--accent-hover);
+-  }
+-
+-  .btn-submit:disabled {
+-    opacity: 0.5;
+-    cursor: not-allowed;
+-  }
+-
+-  /* ΓöÇΓöÇ Plugin Cards ΓöÇΓöÇ */
+   .plugin-grid {
+     display: flex;
+     flex-direction: column;
+@@ -659,7 +226,7 @@
+   }
+ 
+   .plugin-card.installed {
+-    border-color: var(--success, #4ade80);
++    border-color: var(--success);
+     background: rgba(74, 222, 128, 0.05);
+   }
+ 
+@@ -698,13 +265,13 @@
+     font-weight: 600;
+     padding: 3px 10px;
+     border-radius: 20px;
+-    background: var(--accent-muted, rgba(99, 102, 241, 0.12));
++    background: var(--accent-muted);
+     color: var(--accent);
+   }
+ 
+   .status-badge.installed {
+     background: rgba(74, 222, 128, 0.15);
+-    color: var(--success, #4ade80);
++    color: var(--success);
+   }
+ 
+   .description {
+@@ -736,151 +303,17 @@
+ 
+   .tool-tag {
+     font-size: 10px;
+-    font-family: var(--font-mono, monospace);
+-    padding: 3px 10px;
++    font-family: var(--font-mono);
++    padding: 2px 8px;
+     background: var(--bg-tertiary);
+     color: var(--text-secondary);
+     border-radius: 10px;
+-    border: 1px solid transparent;
+-    transition: all 0.15s;
+-    display: flex;
+-    align-items: center;
+-    gap: 4px;
+   }
+ 
+-  .tool-tag.clickable {
+-    cursor: pointer;
+-    border-color: var(--border);
+-  }
+-
+-  .tool-tag.clickable:hover {
+-    background: var(--accent-muted, rgba(99, 102, 241, 0.12));
+-    border-color: var(--accent);
+-    color: var(--accent);
+-  }
+-
+-  .run-icon {
+-    font-size: 8px;
+-    opacity: 0.6;
+-  }
+-
+-  /* ΓöÇΓöÇ Tool Runner ΓöÇΓöÇ */
+-  .tool-runner {
+-    background: var(--bg-tertiary);
+-    border: 1px solid var(--accent);
+-    border-radius: var(--radius-sm);
+-    padding: 12px;
+-    margin-bottom: 10px;
+-    animation: slideDown 0.15s ease-out;
+-  }
+-
+-  .tool-runner-header {
+-    display: flex;
+-    align-items: center;
+-    gap: 8px;
+-    margin-bottom: 8px;
+-  }
+-
+-  .tool-runner-name {
+-    font-size: 13px;
+-    font-weight: 600;
+-    font-family: var(--font-mono, monospace);
+-    color: var(--accent);
+-  }
+-
+-  .tool-runner-desc {
+-    font-size: 11px;
++  .tool-tag.more {
+     color: var(--text-muted);
+   }
+ 
+-  .tool-inputs-form {
+-    display: flex;
+-    flex-direction: column;
+-    gap: 6px;
+-    margin-bottom: 8px;
+-  }
+-
+-  .input-row {
+-    display: flex;
+-    align-items: center;
+-    gap: 8px;
+-  }
+-
+-  .input-row label {
+-    font-size: 11px;
+-    font-weight: 600;
+-    font-family: var(--font-mono, monospace);
+-    color: var(--text-muted);
+-    min-width: 70px;
+-  }
+-
+-  .input-row input {
+-    flex: 1;
+-    padding: 5px 8px;
+-    font-size: 12px;
+-    font-family: var(--font-mono, monospace);
+-    background: var(--bg-secondary);
+-    color: var(--text-primary);
+-    border: 1px solid var(--border);
+-    border-radius: var(--radius-sm);
+-    outline: none;
+-  }
+-
+-  .input-row input:focus {
+-    border-color: var(--accent);
+-  }
+-
+-  .btn-run {
+-    padding: 6px 16px;
+-    font-size: 12px;
+-    font-weight: 600;
+-    color: white;
+-    background: linear-gradient(135deg, var(--accent), #8b5cf6);
+-    border-radius: var(--radius-sm);
+-    cursor: pointer;
+-    transition: all 0.15s;
+-  }
+-
+-  .btn-run:hover:not(:disabled) {
+-    filter: brightness(1.1);
+-    transform: translateY(-1px);
+-  }
+-
+-  .btn-run:disabled {
+-    opacity: 0.6;
+-    cursor: not-allowed;
+-    transform: none;
+-  }
+-
+-  .tool-output {
+-    margin-top: 8px;
+-    padding: 10px;
+-    background: rgba(16, 185, 129, 0.08);
+-    border: 1px solid rgba(16, 185, 129, 0.25);
+-    border-radius: var(--radius-sm);
+-    max-height: 200px;
+-    overflow-y: auto;
+-  }
+-
+-  .tool-output.error-output {
+-    background: rgba(239, 68, 68, 0.08);
+-    border-color: rgba(239, 68, 68, 0.25);
+-  }
+-
+-  .tool-output pre {
+-    font-size: 11px;
+-    font-family: var(--font-mono, monospace);
+-    color: var(--text-primary);
+-    margin: 0;
+-    white-space: pre-wrap;
+-    word-break: break-all;
+-  }
+-
+-  .error-output pre {
+-    color: var(--danger, #ef4444);
+-  }
+-
+-  /* ΓöÇΓöÇ Action Buttons ΓöÇΓöÇ */
+   .plugin-actions {
+     display: flex;
+     gap: 8px;
+@@ -893,7 +326,6 @@
+     font-weight: 600;
+     border-radius: var(--radius-sm);
+     transition: all 0.15s;
+-    cursor: pointer;
+   }
+ 
+   .btn-install {
+@@ -912,9 +344,9 @@
+   }
+ 
+   .btn-uninstall:hover:not(:disabled) {
+-    background: var(--danger-bg, rgba(239, 68, 68, 0.1));
+-    color: var(--danger, #ef4444);
+-    border-color: var(--danger, #ef4444);
++    background: var(--danger-bg);
++    color: var(--danger);
++    border-color: var(--danger);
+   }
+ 
+   .btn-install:disabled, .btn-uninstall:disabled {
+diff --git a/tauri-app/ui/src/lib/components/QuickAction.svelte b/tauri-app/ui/src/lib/components/QuickAction.svelte
+index 404336c..2c053e5 100644
+--- a/tauri-app/ui/src/lib/components/QuickAction.svelte
++++ b/tauri-app/ui/src/lib/components/QuickAction.svelte
+@@ -1,5 +1,5 @@
+ <script lang="ts">
+-  import { invoke } from "../api/invoke";
++  import { invoke } from "@tauri-apps/api/core";
+   import { onMount } from "svelte";
+   import { pinnedWidgets } from "../stores/pinnedWidgets";
+     let uptime = "Loading...";
+@@ -33,21 +33,19 @@ $: pinned =
+       item.title === "Quick Actions"
+   );
+   async function loadUptime() {
+-    try {
+-      const res = await invoke("get_uptime");
+-      if (res != null) uptime = String(res);
+-    } catch(err) {
+-      console.error(err);
+-    }
++  try {
++    uptime = await invoke("get_uptime");
++  } catch(err) {
++    console.error(err);
+   }
++}
+   async function loadLogCount() {
+-    try {
+-      const res = await invoke("get_log_count");
+-      if (typeof res === "number") logCount = res;
+-    } catch(err) {
+-      console.error(err);
+-    }
++  try {
++    logCount = await invoke("get_log_count");
++  } catch(err) {
++    console.error(err);
+   }
++}
+   onMount(() => {
+     loadUptime();
+     loadLogCount();
+@@ -59,53 +57,35 @@ $: pinned =
+       switch(title) {
+         case "Open Terminal":
+           await invoke("open_terminal");
+-          clearMessage = "System terminal window opened";
+-          setTimeout(() => { clearMessage = ""; }, 3000);
+-          break;
+-        case "Clear Logs":
+-          previousLogCount = logCount;
+-          await invoke("clear_logs");
+-          if (typeof localStorage !== "undefined") {
+-            localStorage.removeItem("heliox_activity_logs");
+-            localStorage.removeItem("heliox_terminal_logs");
+-          }
+-          await loadLogCount();
+-          clearMessage = `All ${previousLogCount || 'active'} Logs Cleared Cleanly`;
+-          setTimeout(() => { clearMessage = ""; }, 3000);
+           break;
++ case "Clear Logs":
++  previousLogCount = logCount;
++  await invoke("clear_logs");
++  await loadLogCount();
++  clearMessage = `Cleared ${previousLogCount} Active Logs`;
++  setTimeout(() => {
++    clearMessage = "";
++  }, 3000);
++  break;
+         case "Restart Agents":
+-          const restartRes = await invoke("restart_agents");
+-          alert(`Agent Status:\n${restartRes || "All background agents restarted & synchronized successfully."}`);
++          await invoke("restart_agents");
++          alert("Agents Restarted");
+           break;
+         case "System Scan":
+-          const stats: any = await invoke("system_scan");
++          const stats = await invoke("system_scan");
+           console.log(stats);
+-          const formatted = typeof stats === "object" ? Object.entries(stats).map(([k, v]) => `ΓÇó ${k.replace(/_/g, ' ')}: ${v}`).join('\n') : String(stats);
+-          alert(`=== HELIOX OS SYSTEM HEALTH SCAN ===\n\n${formatted}`);
++          alert(JSON.stringify(stats, null, 2));
+           break;
+         case "Take Screenshot":
+-          const shotPath = await invoke("take_screenshot");
+-          alert(`Screenshot Saved Successfully!\n\nFile Location:\n${shotPath || "c:\\Users\\marcu\\Videos\\cursor-os\\pilot\\tauri-app\\screenshot.png"}`);
++          await invoke("take_screenshot");
++          alert("Screenshot Saved");
+           break;
+         case "Voice Command":
+-          if (typeof window !== "undefined" && ("webkitSpeechRecognition" in window || "SpeechRecognition" in window)) {
+-            const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+-            const rec = new SpeechRec();
+-            rec.onresult = (e: any) => {
+-              const transcript = e.results[0][0].transcript;
+-              alert(`Voice Input Captured: "${transcript}"`);
+-            };
+-            rec.start();
+-            clearMessage = "Listening for voice command...";
+-            setTimeout(() => { clearMessage = ""; }, 4000);
+-          } else {
+-            alert("Voice Command: Microphone listening active on Heliox OS core channel.");
+-          }
++          alert("Voice command coming soon");
+           break;
+       }
+     } catch(err) {
+       console.error(err);
+-      alert(`Action error: ${err}`);
+     }
+   }
+   const actions = [
+diff --git a/tauri-app/ui/src/lib/components/RSSFeedWidget.svelte b/tauri-app/ui/src/lib/components/RSSFeedWidget.svelte
+index abb83c7..ddf9f89 100644
+--- a/tauri-app/ui/src/lib/components/RSSFeedWidget.svelte
++++ b/tauri-app/ui/src/lib/components/RSSFeedWidget.svelte
+@@ -1,7 +1,7 @@
+ <script lang="ts">
+   import WidgetCard from "./WidgetCard.svelte";
+   import { onMount } from "svelte";
+-  import { invoke } from "../api/invoke";
++  import { invoke } from "@tauri-apps/api/core";
+ type FeedItem = {
+   title: string;
+   time: string;
+@@ -13,10 +13,15 @@ function togglePin() {
+ let feed: FeedItem[] = [];
+ async function loadFeed() {
+   try {
+-    const res = await invoke("get_rss_feed");
+-    if (Array.isArray(res)) feed = res;
++    feed =
++      await invoke(
++        "get_rss_feed"
++      );
+   } catch (err) {
+-    console.error("RSS feed failed", err);
++    console.error(
++      "RSS feed failed",
++      err
++    );
+   }
+ }
+ onMount(() => {
+diff --git a/tauri-app/ui/src/lib/components/ReActPipeline.svelte b/tauri-app/ui/src/lib/components/ReActPipeline.svelte
+index a081623..e59756c 100644
+--- a/tauri-app/ui/src/lib/components/ReActPipeline.svelte
++++ b/tauri-app/ui/src/lib/components/ReActPipeline.svelte
+@@ -603,7 +603,7 @@
+               </button>
+               {#if expandedThoughtStages[group.stageId]}
+                 <div class="thought-stream-list" transition:slide={{ duration: 160 }}>
+-                  {#each group.entries as thought, idx (`${thought.seq}-${idx}`)}
++                  {#each group.entries as thought (thought.seq)}
+                     <div class="thought-entry {thought.type}" transition:fade={{ duration: 120 }}>
+                       <span class="thought-seq">#{thought.seq}</span>
+                       <span class="thought-type">{thoughtTypeLabel(thought.type)}</span>
+diff --git a/tauri-app/ui/src/lib/components/SettingsPanel.svelte b/tauri-app/ui/src/lib/components/SettingsPanel.svelte
+index 652115e..c16111c 100644
+--- a/tauri-app/ui/src/lib/components/SettingsPanel.svelte
++++ b/tauri-app/ui/src/lib/components/SettingsPanel.svelte
+@@ -3,13 +3,11 @@
+   import { _, locale } from 'svelte-i18n';
+   import { session } from "../stores/session";
+   import { call } from "../api/daemon";
+-  import { invoke } from "../api/invoke";
++  import { invoke } from "@tauri-apps/api/core";
+   import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
+   let apiKeyInput = $state("");
+   let apiKeySaved = $state(false);
+   let apiKeySaving = $state(false);
+-  let rootToast = $state("");
+-  let rootToastType = $state<"success" | "warning">("success");
+ 
+   $effect(() => {
+     if ($locale) {
+@@ -41,27 +39,9 @@
+   }
+ 
+   function toggleRoot() {
+-    const turningOn = !$settings.security.root_enabled;
+-    if (turningOn) {
+-      const confirmed = confirm(
+-        "ΓÜá∩╕Å ENABLE ROOT ACCESS?\n\n" +
+-        "This unlocks Heliox's full power:\n" +
+-        "ΓÇó Admin/sudo shell commands\n" +
+-        "ΓÇó System service management\n" +
+-        "ΓÇó Protected file modifications\n" +
+-        "ΓÇó Registry & disk-level operations\n\n" +
+-        "Actions requiring elevated privileges will no longer be blocked.\n" +
+-        "Only enable this if you trust the AI agent with system-level access."
+-      );
+-      if (!confirmed) return;
+-      rootToast = "≡ƒöô Root access ENABLED ΓÇö Heliox now has full system privileges";
+-      rootToastType = "warning";
+-    } else {
+-      rootToast = "≡ƒöÆ Root access DISABLED ΓÇö elevated actions will be blocked";
+-      rootToastType = "success";
+-    }
+-    settings.updateSection("security", { root_enabled: turningOn });
+-    setTimeout(() => (rootToast = ""), 5000);
++  settings.updateSection("security", {
++    root_enabled: !$settings.security.root_enabled
++  });
+   }
+  
+   function toggleDryRun() {
+@@ -142,7 +122,6 @@
+ 
+   async function testNotification() {
+     try {
+-      // Try Tauri native notification first
+       let granted = await isPermissionGranted();
+       if (!granted) {
+         const permission = await requestPermission();
+@@ -153,33 +132,11 @@
+           title: "Heliox OS",
+           body: "Test notification ΓÇö desktop notifications are working! ≡ƒÜÇ",
+         });
+-        return;
+-      }
+-    } catch {
+-      // Tauri plugin not available (running in browser) ΓÇö fall through
+-    }
+-
+-    // Fallback: browser Notification API
+-    try {
+-      if (!("Notification" in window)) {
+-        alert("Heliox OS ΓÇö Notifications are not supported in this browser.");
+-        return;
+-      }
+-      let perm = Notification.permission;
+-      if (perm === "default") {
+-        perm = await Notification.requestPermission();
+-      }
+-      if (perm === "granted") {
+-        new Notification("Heliox OS", {
+-          body: "Test notification ΓÇö desktop notifications are working! ≡ƒÜÇ",
+-          icon: "/favicon.png",
+-        });
+       } else {
+-        alert("Notification permission was denied. Enable it in your browser settings.");
++        console.warn("Notification permission was denied");
+       }
+     } catch (err) {
+-      console.error("Browser notification failed:", err);
+-      alert("Heliox OS ΓÇö Test notification triggered! (popups blocked by browser)");
++      console.error("Notification test failed:", err);
+     }
+   }
+ </script>
+@@ -246,12 +203,6 @@
+   <section class="settings-group">
+     <h3>{$_('settings.security')}</h3>
+ 
+-    {#if rootToast}
+-      <div class="root-toast" class:root-toast-warning={rootToastType === 'warning'} class:root-toast-success={rootToastType === 'success'}>
+-        {rootToast}
+-      </div>
+-    {/if}
+-
+     <div class="setting-row">
+       <div class="setting-info">
+         <span class="setting-label">{$_('settings.root_access')}</span>
+@@ -268,16 +219,6 @@
+       </button>
+     </div>
+ 
+-    {#if $settings.security.root_enabled}
+-      <div class="root-status-banner">
+-        <span class="root-icon">ΓÜí</span>
+-        <div class="root-status-info">
+-          <span class="root-status-title">Root Mode Active</span>
+-          <span class="root-status-desc">Admin commands, service control, registry writes and protected file access are now unlocked.</span>
+-        </div>
+-      </div>
+-    {/if}
+-
+     <div class="setting-row">
+       <div class="setting-info">
+         <span class="setting-label">{$_('settings.auto_snapshot')}</span>
+@@ -806,62 +747,4 @@
+     color: var(--text-secondary);
+     background: var(--bg-tertiary);
+   }
+-
+-  /* Root Access Toast & Banner */
+-  .root-toast {
+-    padding: 10px 14px;
+-    font-size: 12px;
+-    font-weight: 600;
+-    border-radius: 0;
+-    animation: toastSlide 0.3s ease-out;
+-  }
+-
+-  .root-toast-warning {
+-    background: rgba(245, 158, 11, 0.12);
+-    color: #f59e0b;
+-    border-bottom: 1px solid rgba(245, 158, 11, 0.3);
+-  }
+-
+-  .root-toast-success {
+-    background: rgba(16, 185, 129, 0.12);
+-    color: #10b981;
+-    border-bottom: 1px solid rgba(16, 185, 129, 0.3);
+-  }
+-
+-  @keyframes toastSlide {
+-    from { opacity: 0; transform: translateY(-6px); }
+-    to { opacity: 1; transform: translateY(0); }
+-  }
+-
+-  .root-status-banner {
+-    display: flex;
+-    align-items: center;
+-    gap: 10px;
+-    padding: 10px 14px;
+-    background: rgba(245, 158, 11, 0.08);
+-    border-bottom: 1px solid var(--border);
+-  }
+-
+-  .root-icon {
+-    font-size: 18px;
+-    flex-shrink: 0;
+-  }
+-
+-  .root-status-info {
+-    display: flex;
+-    flex-direction: column;
+-    gap: 1px;
+-  }
+-
+-  .root-status-title {
+-    font-size: 12px;
+-    font-weight: 600;
+-    color: #f59e0b;
+-  }
+-
+-  .root-status-desc {
+-    font-size: 11px;
+-    color: var(--text-muted);
+-    line-height: 1.3;
+-  }
+ </style>
+diff --git a/tauri-app/ui/src/lib/components/SetupWizard.svelte b/tauri-app/ui/src/lib/components/SetupWizard.svelte
+index 88b52c5..80af227 100644
+--- a/tauri-app/ui/src/lib/components/SetupWizard.svelte
++++ b/tauri-app/ui/src/lib/components/SetupWizard.svelte
+@@ -114,8 +114,8 @@
+         <div class="wizard-step">
+           <h2>Model Configuration</h2>
+ 
+-          <div class="field" role="group" aria-labelledby="provider-label">
+-            <label id="provider-label">Primary Provider</label>
++          <div class="field">
++            <label>Primary Provider</label>
+             <div class="radio-group">
+               <label class="radio-option" class:selected={modelProvider === "ollama"}>
+                 <input type="radio" bind:group={modelProvider} value="ollama" />
+@@ -136,28 +136,28 @@
+ 
+           {#if modelProvider === "ollama"}
+             <div class="field">
+-              <label for="ollama-model">Ollama Model</label>
++              <label>Ollama Model</label>
+               {#if loadingModels}
+                 <div class="model-status">Detecting models...</div>
+               {:else if ollamaModels.length > 0}
+-                <select id="ollama-model" bind:value={ollamaModel}>
++                <select bind:value={ollamaModel}>
+                   {#each ollamaModels as m}
+                     <option value={m}>{m}</option>
+                   {/each}
+                 </select>
+                 <span class="hint">{ollamaModels.length} model{ollamaModels.length === 1 ? "" : "s"} detected from Ollama</span>
+               {:else if ollamaAvailable}
+-                <input id="ollama-model-input" type="text" bind:value={ollamaModel} placeholder="llama3.1:8b" />
++                <input type="text" bind:value={ollamaModel} placeholder="llama3.1:8b" />
+                 <span class="hint warning">Ollama is running but no models found. Run <code>ollama pull qwen2.5:7b</code></span>
+               {:else}
+-                <input id="ollama-model-input-2" type="text" bind:value={ollamaModel} placeholder="llama3.1:8b" />
++                <input type="text" bind:value={ollamaModel} placeholder="llama3.1:8b" />
+                 <span class="hint warning">Ollama is not running. Start it first, or choose Cloud.</span>
+               {/if}
+             </div>
+           {:else}
+             <div class="field">
+-              <label for="cloud-provider">Cloud Provider</label>
+-              <select id="cloud-provider" bind:value={cloudProvider}>
++              <label>Cloud Provider</label>
++              <select bind:value={cloudProvider}>
+                 <option value="">Select...</option>
+                 <option value="openai">OpenAI</option>
+                 <option value="claude">Anthropic (Claude)</option>
+@@ -166,8 +166,8 @@
+             </div>
+             {#if cloudProvider}
+               <div class="field">
+-                <label for="cloud-api-key">API Key</label>
+-                <input id="cloud-api-key" type="password" bind:value={cloudApiKey} placeholder="sk-..." />
++                <label>API Key</label>
++                <input type="password" bind:value={cloudApiKey} placeholder="sk-..." />
+                 <span class="hint">Stored encrypted in GNOME Keyring or local vault</span>
+               </div>
+             {/if}
+@@ -179,9 +179,8 @@
+           <h2>Security Boundaries</h2>
+ 
+           <div class="field">
+-            <label for="protected-folders">Protected Folders</label>
++            <label>Protected Folders</label>
+             <textarea
+-              id="protected-folders"
+               bind:value={protectedFolders}
+               placeholder={"~/Documents/private\n~/ssh"}
+               rows={4}
+@@ -190,9 +189,8 @@
+           </div>
+ 
+           <div class="field">
+-            <label for="protected-packages">Protected Packages</label>
++            <label>Protected Packages</label>
+             <input
+-              id="protected-packages"
+               type="text"
+               bind:value={protectedPackages}
+               placeholder="firefox, nautilus, gnome-shell"
+diff --git a/tauri-app/ui/src/lib/components/StatusBar.svelte b/tauri-app/ui/src/lib/components/StatusBar.svelte
+index d936e25..2598f58 100644
+--- a/tauri-app/ui/src/lib/components/StatusBar.svelte
++++ b/tauri-app/ui/src/lib/components/StatusBar.svelte
+@@ -1,5 +1,5 @@
+ <script lang="ts">
+-  import { invoke } from "../api/invoke";
++  import { invoke } from "@tauri-apps/api/core";
+   import { onMount } from "svelte";
+   type DashboardStatus = {
+     connected: boolean;
+@@ -20,10 +20,10 @@
+   };
+   async function loadStatus() {
+     try {
+-      const res = await invoke("get_dashboard_status");
+-      if (res && typeof res === "object") {
+-        status = res;
+-      }
++      status =
++        await invoke(
++          "get_dashboard_status"
++        );
+     } catch (err) {
+       console.error(
+         "Dashboard status failed",
+diff --git a/tauri-app/ui/src/lib/components/SystemMonitorWidget.svelte b/tauri-app/ui/src/lib/components/SystemMonitorWidget.svelte
+index b341257..1ca406f 100644
+--- a/tauri-app/ui/src/lib/components/SystemMonitorWidget.svelte
++++ b/tauri-app/ui/src/lib/components/SystemMonitorWidget.svelte
+@@ -1,6 +1,6 @@
+ <script lang="ts">
+   import { onMount } from "svelte";
+-  import { invoke } from "../api/invoke";
++  import { invoke } from "@tauri-apps/api/core";
+   import { pinnedWidgets } from "../stores/pinnedWidgets";
+   import {
+     Chart as ChartJS,
+@@ -67,11 +67,11 @@ $: pinned =
+   let diskHistory = [30, 32, 35, 36, 38, 40];
+   let networkHistory = [10, 12, 15, 18, 20, 22];
+   async function loadStats() {
+-    try {
+-      const stats: Stats = await invoke("get_system_stats");
+-      if (!stats || typeof stats !== "object" || typeof stats?.cpu !== "number") return;
+-      console.log(stats);
+-      cpu = Number(stats.cpu.toFixed(1));
++  try {
++    const stats: Stats =
++  await invoke("get_system_stats");
++  console.log(stats);
++    cpu = Number(stats.cpu.toFixed(1));
+     ram = Number(stats.ram.toFixed(1));
+     disk = Number(stats.disk.toFixed(1));
+     networkUp = Number(
+diff --git a/tauri-app/ui/src/lib/components/SystemTemperature.svelte b/tauri-app/ui/src/lib/components/SystemTemperature.svelte
+index 04420e2..fcc35f9 100644
+--- a/tauri-app/ui/src/lib/components/SystemTemperature.svelte
++++ b/tauri-app/ui/src/lib/components/SystemTemperature.svelte
+@@ -1,6 +1,6 @@
+ <script lang="ts">
+   import { onMount } from "svelte";
+-  import { invoke } from "../api/invoke";
++  import { invoke } from "@tauri-apps/api/core";
+ import { pinnedWidgets } from "../stores/pinnedWidgets";
+   type Temps = {
+     cpu: number;
+@@ -65,19 +65,7 @@ $: pinned =
+   async function loadTemps() {
+     try {
+       const data = await invoke("get_temperature_stats");
+-      if (data && typeof data === "object") {
+-        temps = { ...temps, ...(data as Partial<Temps>) };
+-      }
+-      if (typeof navigator !== "undefined" && "getBattery" in (navigator as any)) {
+-        try {
+-          const battery: any = await (navigator as any).getBattery();
+-          if (battery && typeof battery.level === "number") {
+-            temps.battery_percent = Math.round(battery.level * 100);
+-          }
+-        } catch (e) {
+-          // ignore
+-        }
+-      }
++      temps = data as Temps;
+     } catch (err) {
+       console.error("Temperature fetch failed:", err);
+     }
+@@ -106,25 +94,25 @@ $: pinned =
+         ["Motherboard", temps.motherboard],
+         ["SSD", temps.ssd],
+         ["VRM", temps.vrm],
+-        ["Battery Temp", temps.battery]
++        ["Battery", temps.battery]
+       ] as [label, value]}
+         <div class="temp-item">
+           <div class="top">
+             <span>{label}</span>
+-            <p style={`color:${getColor(Number(value || 0))}`}>
+-              {Number(value || 0).toFixed(0)}┬░C
++            <p style={`color:${getColor(Number(value))}`}>
++              {Number(value).toFixed(0)}┬░C
+             </p>
+           </div>
+           <div class="bar">
+             <div
+               class="fill"
+               style={`
+-                width:${clamp(Number(value || 0))}%;
++                width:${clamp(Number(Number(value)))}%;
+                 background:${function getColor(temp: number) {
+                               if (temp >= 85) return "#ff1f7a";
+                               if (temp >= 70) return "#ff4da6";
+                              return "#ff66c4";
+-                            }(Number(value || 0))};
++                            }(Number(value))};
+               `}>
+             </div>
+           </div>
+@@ -134,34 +122,34 @@ $: pinned =
+       <div class="extra">
+         <div class="stat-box">
+           <span>≡ƒöï Battery</span>
+-          <strong>
+-            {temps.battery_percent || 0}%
+-          </strong>
++  <strong>
++      {temps.battery_percent}%
++  </strong>
+         </div>
+         <div class="stat-box">
+           <span>≡ƒºá CPU</span>
+           <strong>
+-            {Math.round(temps.cpu || 0)}%
++                 {Math.round(temps.cpu || 0)}%
+           </strong>
+         </div>
+       </div>
+-      <div class="stat-box">
+-        <span>ΓÜÖ Threads</span>
+-        <strong>
+-          {temps.cpu_threads || 8}
+-        </strong>
+-      </div>
++       <div class="stat-box">
++  <span>ΓÜÖ Threads</span>
++       <strong>
++       {temps.cpu_threads}
++      </strong>
++    </div>
+     </div>
+     <!-- RIGHT -->
+     <div class="right">
+      <div class="circle"
+      style={`
+-      --temp:${clamp(Number(temps.cpu || 0))}%;
+-      --circleColor:${getColor(Number(temps.cpu || 0))};
++      --temp:${clamp(temps.cpu)}%;
++      --circleColor:${getColor(temps.cpu)};
+     `}
+     >
+       <div class="inner">
+-         <h1>{Number(temps.cpu || 0).toFixed(0)}┬░</h1>
++         <h1>{temps.cpu.toFixed(0)}┬░</h1>
+          <span>C</span>
+       </div>
+    </div>
+diff --git a/tauri-app/ui/src/lib/components/TerminalTailWidget.svelte b/tauri-app/ui/src/lib/components/TerminalTailWidget.svelte
+index 069fc48..051e9ac 100644
+--- a/tauri-app/ui/src/lib/components/TerminalTailWidget.svelte
++++ b/tauri-app/ui/src/lib/components/TerminalTailWidget.svelte
+@@ -1,16 +1,11 @@
+ <script lang="ts">
+   import WidgetCard from "./WidgetCard.svelte";
+   import { onMount } from "svelte";
+-  import { invoke } from "../api/invoke";
++  import { invoke } from "@tauri-apps/api/core";
+   let logs: string[] = [];
+   async function loadLogs() {
+-    if (typeof localStorage !== "undefined" && localStorage.getItem("heliox_terminal_logs") === "cleared") {
+-      logs = ["[System] All terminal logs cleared cleanly."];
+-      return;
+-    }
+     try {
+-      const res = await invoke("get_terminal_logs");
+-      if (Array.isArray(res)) logs = res;
++      logs = await invoke("get_terminal_logs");
+     } catch (error) {
+       console.error("Failed to fetch terminal logs:", error);
+     }
+diff --git a/tauri-app/ui/src/lib/stores/session.ts b/tauri-app/ui/src/lib/stores/session.ts
+index 4559886..8e90b9f 100644
+--- a/tauri-app/ui/src/lib/stores/session.ts
++++ b/tauri-app/ui/src/lib/stores/session.ts
+@@ -100,7 +100,7 @@ export interface Attachment {
+ const initialState: SessionState = {
+   daemonConnected: false,
+   loading: false,
+-  messages: typeof localStorage !== "undefined" && localStorage.getItem("heliox_session_history") ? (() => { try { return JSON.parse(localStorage.getItem("heliox_session_history") || "[]"); } catch(e) { return []; } })() : [],
++  messages: [],
+   currentPlan: null,
+   confirmRequired: false,
+   confirmPlanId: "",
+@@ -267,19 +267,6 @@ function createSession() {
+         void notifyTaskComplete(p);
+         break;
+ 
+-      case "budget_update":
+-      case "token_usage":
+-        update((s) => {
+-          const tok = Number(p.tokens ?? p.total_tokens ?? 0);
+-          const cost = Number(p.cost_usd ?? p.estimated_cost ?? (tok * 0.000002));
+-          return {
+-            ...s,
+-            totalTokens: s.totalTokens + tok,
+-            estimatedCost: s.estimatedCost + cost,
+-          };
+-        });
+-        break;
+-
+       case "budget_exceeded":
+         update((s) => ({
+           ...s,
+@@ -331,16 +318,12 @@ function createSession() {
+ 
+   async function init() {
+     const connected = await connect();
+-    update((s) => ({ ...s, daemonConnected: connected || isConnected() }));
++    update((s) => ({ ...s, daemonConnected: connected }));
+ 
+     setInterval(async () => {
+-      const currentlyConnected = isConnected();
+-      update((s) => ({ ...s, daemonConnected: currentlyConnected }));
+-      if (!currentlyConnected) {
+-        const ok = await connect();
+-        if (ok) update((s) => ({ ...s, daemonConnected: true }));
+-      }
+-    }, 1500);
++      update((s) => ({ ...s, daemonConnected: isConnected() }));
++      if (!isConnected()) await connect();
++    }, 5000);
+   }
+ 
+   // Hooking up text generator stream listener
+@@ -639,9 +622,6 @@ function createSession() {
+   }
+ 
+   function clearMessages() {
+-    if (typeof localStorage !== "undefined") {
+-      localStorage.removeItem("heliox_session_history");
+-    }
+     update((s) => ({ ...s, messages: [] }));
+   }
+ 
+@@ -655,14 +635,6 @@ function createSession() {
+ 
+   init();
+ 
+-  subscribe((s) => {
+-    if (typeof localStorage !== "undefined" && s.messages && s.messages.length > 0) {
+-      try {
+-        localStorage.setItem("heliox_session_history", JSON.stringify(s.messages));
+-      } catch (e) {}
+-    }
+-  });
+-
+   function acknowledgeBudgetEvent() {
+     update((s) => ({ ...s, budget: null }));
+   }
+diff --git a/tauri-app/ui/tests/visual/__snapshots__/agent-thoughts.spec.ts-snapshots/pipeline-chat-panel-with-pipeline-chromium-win32.png b/tauri-app/ui/tests/visual/__snapshots__/agent-thoughts.spec.ts-snapshots/pipeline-chat-panel-with-pipeline-chromium-win32.png
+deleted file mode 100644
+index 6d8b740..0000000
+Binary files a/tauri-app/ui/tests/visual/__snapshots__/agent-thoughts.spec.ts-snapshots/pipeline-chat-panel-with-pipeline-chromium-win32.png and /dev/null differ
+diff --git a/tauri-app/ui/tests/visual/__snapshots__/agent-thoughts.spec.ts-snapshots/pipeline-collapsed-chromium-win32.png b/tauri-app/ui/tests/visual/__snapshots__/agent-thoughts.spec.ts-snapshots/pipeline-collapsed-chromium-win32.png
+deleted file mode 100644
+index 81319aa..0000000
+Binary files a/tauri-app/ui/tests/visual/__snapshots__/agent-thoughts.spec.ts-snapshots/pipeline-collapsed-chromium-win32.png and /dev/null differ
+diff --git a/tauri-app/ui/tests/visual/__snapshots__/agent-thoughts.spec.ts-snapshots/pipeline-executing-with-actions-chromium-win32.png b/tauri-app/ui/tests/visual/__snapshots__/agent-thoughts.spec.ts-snapshots/pipeline-executing-with-actions-chromium-win32.png
+deleted file mode 100644
+index 2140532..0000000
+Binary files a/tauri-app/ui/tests/visual/__snapshots__/agent-thoughts.spec.ts-snapshots/pipeline-executing-with-actions-chromium-win32.png and /dev/null differ
+diff --git a/tauri-app/ui/tests/visual/__snapshots__/agent-thoughts.spec.ts-snapshots/pipeline-idle-hidden-chromium-win32.png b/tauri-app/ui/tests/visual/__snapshots__/agent-thoughts.spec.ts-snapshots/pipeline-idle-hidden-chromium-win32.png
+deleted file mode 100644
+index b6fcdb5..0000000
+Binary files a/tauri-app/ui/tests/visual/__snapshots__/agent-thoughts.spec.ts-snapshots/pipeline-idle-hidden-chromium-win32.png and /dev/null differ
+diff --git a/tauri-app/ui/tests/visual/__snapshots__/agent-thoughts.spec.ts-snapshots/pipeline-multi-agent-badge-chromium-win32.png b/tauri-app/ui/tests/visual/__snapshots__/agent-thoughts.spec.ts-snapshots/pipeline-multi-agent-badge-chromium-win32.png
+deleted file mode 100644
+index 6a1a1d4..0000000
+Binary files a/tauri-app/ui/tests/visual/__snapshots__/agent-thoughts.spec.ts-snapshots/pipeline-multi-agent-badge-chromium-win32.png and /dev/null differ
+diff --git a/tauri-app/ui/tests/visual/__snapshots__/agent-thoughts.spec.ts-snapshots/pipeline-planning-active-chromium-win32.png b/tauri-app/ui/tests/visual/__snapshots__/agent-thoughts.spec.ts-snapshots/pipeline-planning-active-chromium-win32.png
+deleted file mode 100644
+index b133527..0000000
+Binary files a/tauri-app/ui/tests/visual/__snapshots__/agent-thoughts.spec.ts-snapshots/pipeline-planning-active-chromium-win32.png and /dev/null differ
+diff --git a/tauri-app/ui/tests/visual/__snapshots__/agent-thoughts.spec.ts-snapshots/pipeline-progress-partial-chromium-win32.png b/tauri-app/ui/tests/visual/__snapshots__/agent-thoughts.spec.ts-snapshots/pipeline-progress-partial-chromium-win32.png
+deleted file mode 100644
+index 5bc1735..0000000
+Binary files a/tauri-app/ui/tests/visual/__snapshots__/agent-thoughts.spec.ts-snapshots/pipeline-progress-partial-chromium-win32.png and /dev/null differ
+diff --git a/tauri-app/ui/tests/visual/__snapshots__/agent-thoughts.spec.ts-snapshots/pipeline-skeleton-chromium-win32.png b/tauri-app/ui/tests/visual/__snapshots__/agent-thoughts.spec.ts-snapshots/pipeline-skeleton-chromium-win32.png
+deleted file mode 100644
+index 8425e6e..0000000
+Binary files a/tauri-app/ui/tests/visual/__snapshots__/agent-thoughts.spec.ts-snapshots/pipeline-skeleton-chromium-win32.png and /dev/null differ
+diff --git a/tauri-app/ui/tests/visual/__snapshots__/agent-thoughts.spec.ts-snapshots/pipeline-thought-stream-expanded-chromium-win32.png b/tauri-app/ui/tests/visual/__snapshots__/agent-thoughts.spec.ts-snapshots/pipeline-thought-stream-expanded-chromium-win32.png
+deleted file mode 100644
+index 15896ec..0000000
+Binary files a/tauri-app/ui/tests/visual/__snapshots__/agent-thoughts.spec.ts-snapshots/pipeline-thought-stream-expanded-chromium-win32.png and /dev/null differ
+diff --git a/tauri-app/ui/tests/visual/__snapshots__/chat.spec.ts-snapshots/chat-empty-state-chromium-win32.png b/tauri-app/ui/tests/visual/__snapshots__/chat.spec.ts-snapshots/chat-empty-state-chromium-win32.png
+deleted file mode 100644
+index 87c9b97..0000000
+Binary files a/tauri-app/ui/tests/visual/__snapshots__/chat.spec.ts-snapshots/chat-empty-state-chromium-win32.png and /dev/null differ
+diff --git a/tauri-app/ui/tests/visual/__snapshots__/chat.spec.ts-snapshots/chat-error-message-chromium-win32.png b/tauri-app/ui/tests/visual/__snapshots__/chat.spec.ts-snapshots/chat-error-message-chromium-win32.png
+deleted file mode 100644
+index cd3845e..0000000
+Binary files a/tauri-app/ui/tests/visual/__snapshots__/chat.spec.ts-snapshots/chat-error-message-chromium-win32.png and /dev/null differ
+diff --git a/tauri-app/ui/tests/visual/__snapshots__/chat.spec.ts-snapshots/chat-full-panel-chromium-win32.png b/tauri-app/ui/tests/visual/__snapshots__/chat.spec.ts-snapshots/chat-full-panel-chromium-win32.png
+deleted file mode 100644
+index 343b470..0000000
+Binary files a/tauri-app/ui/tests/visual/__snapshots__/chat.spec.ts-snapshots/chat-full-panel-chromium-win32.png and /dev/null differ
+diff --git a/tauri-app/ui/tests/visual/__snapshots__/chat.spec.ts-snapshots/chat-input-bar-chromium-win32.png b/tauri-app/ui/tests/visual/__snapshots__/chat.spec.ts-snapshots/chat-input-bar-chromium-win32.png
+deleted file mode 100644
+index 76db131..0000000
+Binary files a/tauri-app/ui/tests/visual/__snapshots__/chat.spec.ts-snapshots/chat-input-bar-chromium-win32.png and /dev/null differ
+diff --git a/tauri-app/ui/tests/visual/__snapshots__/chat.spec.ts-snapshots/chat-input-focused-chromium-win32.png b/tauri-app/ui/tests/visual/__snapshots__/chat.spec.ts-snapshots/chat-input-focused-chromium-win32.png
+deleted file mode 100644
+index 824006a..0000000
+Binary files a/tauri-app/ui/tests/visual/__snapshots__/chat.spec.ts-snapshots/chat-input-focused-chromium-win32.png and /dev/null differ
+diff --git a/tauri-app/ui/tests/visual/__snapshots__/chat.spec.ts-snapshots/chat-suggestion-chips-chromium-win32.png b/tauri-app/ui/tests/visual/__snapshots__/chat.spec.ts-snapshots/chat-suggestion-chips-chromium-win32.png
+deleted file mode 100644
+index 3a5bc13..0000000
+Binary files a/tauri-app/ui/tests/visual/__snapshots__/chat.spec.ts-snapshots/chat-suggestion-chips-chromium-win32.png and /dev/null differ
+diff --git a/tauri-app/ui/tests/visual/__snapshots__/chat.spec.ts-snapshots/chat-user-message-chromium-win32.png b/tauri-app/ui/tests/visual/__snapshots__/chat.spec.ts-snapshots/chat-user-message-chromium-win32.png
+deleted file mode 100644
+index 1622109..0000000
+Binary files a/tauri-app/ui/tests/visual/__snapshots__/chat.spec.ts-snapshots/chat-user-message-chromium-win32.png and /dev/null differ
+diff --git a/tauri-app/ui/tests/visual/__snapshots__/settings.spec.ts-snapshots/settings-full-dark-chromium-win32.png b/tauri-app/ui/tests/visual/__snapshots__/settings.spec.ts-snapshots/settings-full-dark-chromium-win32.png
+index 2176690..a7590c0 100644
+Binary files a/tauri-app/ui/tests/visual/__snapshots__/settings.spec.ts-snapshots/settings-full-dark-chromium-win32.png and b/tauri-app/ui/tests/visual/__snapshots__/settings.spec.ts-snapshots/settings-full-dark-chromium-win32.png differ
+diff --git a/tauri-app/ui/tests/visual/__snapshots__/settings.spec.ts-snapshots/settings-full-light-chromium-win32.png b/tauri-app/ui/tests/visual/__snapshots__/settings.spec.ts-snapshots/settings-full-light-chromium-win32.png
+index 2f27ece..14cdfae 100644
+Binary files a/tauri-app/ui/tests/visual/__snapshots__/settings.spec.ts-snapshots/settings-full-light-chromium-win32.png and b/tauri-app/ui/tests/visual/__snapshots__/settings.spec.ts-snapshots/settings-full-light-chromium-win32.png differ
+diff --git a/tauri-app/ui/tests/visual/__snapshots__/settings.spec.ts-snapshots/settings-full-window-chromium-win32.png b/tauri-app/ui/tests/visual/__snapshots__/settings.spec.ts-snapshots/settings-full-window-chromium-win32.png
+deleted file mode 100644
+index b54b629..0000000
+Binary files a/tauri-app/ui/tests/visual/__snapshots__/settings.spec.ts-snapshots/settings-full-window-chromium-win32.png and /dev/null differ
+diff --git a/tauri-app/ui/tests/visual/__snapshots__/settings.spec.ts-snapshots/settings-toggle-active-chromium-win32.png b/tauri-app/ui/tests/visual/__snapshots__/settings.spec.ts-snapshots/settings-toggle-active-chromium-win32.png
+index cbb4f03..e7b17f3 100644
+Binary files a/tauri-app/ui/tests/visual/__snapshots__/settings.spec.ts-snapshots/settings-toggle-active-chromium-win32.png and b/tauri-app/ui/tests/visual/__snapshots__/settings.spec.ts-snapshots/settings-toggle-active-chromium-win32.png differ
+diff --git a/tauri-app/ui/vite.config.ts b/tauri-app/ui/vite.config.ts
+index d5dd4e8..a91c1bb 100644
+--- a/tauri-app/ui/vite.config.ts
++++ b/tauri-app/ui/vite.config.ts
+@@ -7,13 +7,9 @@ import {
+   copyFileSync,
+   existsSync,
+   createReadStream,
+-  readFileSync,
+-  writeFileSync,
+ } from "node:fs";
+ import { join, basename, dirname } from "node:path";
+ import { fileURLToPath } from "node:url";
+-import os from "node:os";
+-import { execSync } from "node:child_process";
+ 
+ const MEDIAPIPE_HANDS_ROUTE = "/mediapipe/hands";
+ const MEDIAPIPE_HANDS_ASSET_DIR = "mediapipe/hands";
+@@ -72,342 +68,8 @@ function mediapipeHandsAssets(): Plugin {
+   };
+ }
+ 
+-function daemonTokenDevPlugin(): Plugin {
+-  let lastCpus = os.cpus();
+-  return {
+-    name: "daemon-token-dev",
+-    configureServer(server) {
+-      server.middlewares.use((req, res, next) => {
+-        const pathname = new URL(req.url ?? "", "http://localhost").pathname;
+-        if (pathname === "/api/auth_token") {
+-          let token = "";
+-          try {
+-            const localAppData = process.env.LOCALAPPDATA || join(process.env.USERPROFILE || "", "AppData", "Local");
+-            const candidates = [
+-              join(localAppData, "heliox-os", "runtime", "auth_token"),
+-              join(localAppData, "pilot", "runtime", "auth_token"),
+-              join(localAppData, "heliox-os", "auth_token"),
+-              join(localAppData, "pilot", "auth_token"),
+-              "/run/user/1000/heliox-os/auth_token",
+-              "/run/user/1000/pilot/auth_token",
+-            ];
+-            for (const path of candidates) {
+-              if (existsSync(path)) {
+-                const content = readFileSync(path, "utf-8").trim();
+-                if (content) {
+-                  token = content;
+-                  break;
+-                }
+-              }
+-            }
+-          } catch {
+-            // ignore
+-          }
+-          res.setHeader("Content-Type", "text/plain");
+-          res.setHeader("Access-Control-Allow-Origin", "*");
+-          res.end(token);
+-          return;
+-        }
+-
+-        if (pathname === "/api/tauri_invoke" && req.method === "POST") {
+-          let body = "";
+-          req.on("data", (chunk) => { body += chunk; });
+-          req.on("end", () => {
+-            let command = "";
+-            try {
+-              const parsed = JSON.parse(body);
+-              command = parsed.command;
+-            } catch {
+-              // ignore
+-            }
+-
+-            res.setHeader("Content-Type", "application/json");
+-            res.setHeader("Access-Control-Allow-Origin", "*");
+-
+-            if (command === "get_system_stats") {
+-              const currentCpus = os.cpus();
+-              let totalDiff = 0;
+-              let idleDiff = 0;
+-              for (let i = 0; i < currentCpus.length; i++) {
+-                const c = currentCpus[i];
+-                const l = lastCpus[i] || c;
+-                for (const type in c.times) {
+-                  totalDiff += (c.times[type as keyof typeof c.times] - l.times[type as keyof typeof l.times]);
+-                }
+-                idleDiff += (c.times.idle - l.times.idle);
+-              }
+-              lastCpus = currentCpus;
+-              const cpu = totalDiff > 0 ? Math.max(1, Math.min(100, Math.round(100 - (idleDiff / totalDiff) * 100))) : 15;
+-              const totalRam = os.totalmem();
+-              const freeRam = os.freemem();
+-              const ram = Math.round(((totalRam - freeRam) / totalRam) * 100);
+-              const total_ram = Math.round(totalRam / (1024 * 1024 * 1024));
+-              const cpu_name = currentCpus[0]?.model?.split(" @")[0]?.trim() || "Local CPU";
+-
+-              res.end(JSON.stringify({
+-                cpu,
+-                ram,
+-                disk: 35,
+-                network_up: 140,
+-                network_down: 520,
+-                cpu_name,
+-                total_ram,
+-                disk_size: 512,
+-              }));
+-              return;
+-            }
+-
+-            if (command === "get_temperature_stats") {
+-              const currentCpus = os.cpus();
+-              let liveBatteryPercent = 95;
+-              try {
+-                const out = execSync(`powershell -NoProfile -Command "(Get-CimInstance -ClassName Win32_Battery -ErrorAction SilentlyContinue).EstimatedChargeRemaining"`, { timeout: 1500, encoding: 'utf-8' }).trim();
+-                const parsed = parseInt(out, 10);
+-                if (!isNaN(parsed) && parsed >= 0 && parsed <= 100) liveBatteryPercent = parsed;
+-              } catch (e) {
+-                // ignore
+-              }
+-              res.end(JSON.stringify({
+-                cpu: 44,
+-                gpu: 40,
+-                motherboard: 36,
+-                ssd: 34,
+-                vrm: 33,
+-                battery: 29,
+-                power: 52,
+-                cpu_name: currentCpus[0]?.model?.split(" @")[0]?.trim() || "Local CPU",
+-                cpu_threads: currentCpus.length || 8,
+-                battery_percent: liveBatteryPercent
+-              }));
+-              return;
+-            }
+-
+-            if (command === "get_uptime") {
+-              const uptimeSec = Math.round(os.uptime());
+-              const hours = Math.floor(uptimeSec / 3600);
+-              const minutes = Math.floor((uptimeSec % 3600) / 60);
+-              res.end(JSON.stringify(`${hours}h ${minutes}m`));
+-              return;
+-            }
+-
+-            if (command === "get_terminal_logs") {
+-              const logFile = join(CONFIG_DIR, "system.log");
+-              let logs = [
+-                "[System] Heliox OS Agent Daemon Connected",
+-                `[Monitor] Host: ${os.hostname()} (${os.platform()})`,
+-                "[Core] ReAct Loop active on ws://127.0.0.1:8785",
+-                "[System] Threat Containment Bridge initialized",
+-                "[Cognitive] TRIBE v2 Neural Cognitive HUD active",
+-              ];
+-              if (existsSync(logFile)) {
+-                try {
+-                  const diskLogs = readFileSync(logFile, "utf-8").split("\n").filter(Boolean).slice(-30);
+-                  if (diskLogs.length > 0) logs = diskLogs;
+-                } catch (e) {}
+-              }
+-              res.end(JSON.stringify(logs));
+-              return;
+-            }
+-
+-            if (command === "open_terminal") {
+-              try {
+-                execSync(`start powershell -NoProfile -NoExit -Command "cd '${CONFIG_DIR.replace(/\\/g, '/') }'; echo '=== Heliox OS System Terminal Active ==='"`);
+-              } catch (e) {
+-                try { execSync(`start cmd /K echo Heliox OS System Terminal`); } catch (e2) {}
+-              }
+-              res.end(JSON.stringify("Terminal opened successfully"));
+-              return;
+-            }
+-
+-            if (command === "clear_logs") {
+-              const logFile = join(CONFIG_DIR, "system.log");
+-              try { if (existsSync(logFile)) writeFileSync(logFile, "", "utf-8"); } catch (e) {}
+-              res.end(JSON.stringify("All logs cleared successfully"));
+-              return;
+-            }
+-
+-            if (command === "restart_agents") {
+-              res.end(JSON.stringify("All 4 neural background agents (System, Code, Web, Monitor) restarted & synchronized (`ws://127.0.0.1:8785`)."));
+-              return;
+-            }
+-
+-            if (command === "system_info") {
+-              const totalMem = os.totalmem();
+-              const freeMem = os.freemem();
+-              const usedMem = totalMem - freeMem;
+-              let diskUsedBytes = 771.8 * 1024 ** 3;
+-              let diskTotalBytes = 952.6 * 1024 ** 3;
+-              try {
+-                const psOut = execSync('powershell -NoProfile -Command "Get-CimInstance Win32_LogicalDisk -Filter \\"DeviceID=\'C:\'\\" | Select-Object -Property Size,FreeSpace | ConvertTo-Json -Compress"', { timeout: 2000, encoding: 'utf-8' }).trim();
+-                const diskJson = JSON.parse(psOut);
+-                if (diskJson && diskJson.Size) {
+-                  diskTotalBytes = Number(diskJson.Size);
+-                  diskUsedBytes = diskTotalBytes - Number(diskJson.FreeSpace || 0);
+-                }
+-              } catch (e) {}
+-              const cpus = os.cpus();
+-              let cpuPercent = 15;
+-              try {
+-                let totalIdle = 0, totalTick = 0;
+-                cpus.forEach(c => {
+-                  for (let type in c.times) totalTick += (c.times as any)[type];
+-                  totalIdle += c.times.idle;
+-                });
+-                cpuPercent = Math.round((1 - totalIdle / totalTick) * 100);
+-              } catch (e) {}
+-
+-              res.end(JSON.stringify({
+-                cpu_percent: cpuPercent,
+-                memory_percent: Math.round((usedMem / totalMem) * 100),
+-                memory_used: usedMem,
+-                memory_total: totalMem,
+-                disk_percent: Math.round((diskUsedBytes / diskTotalBytes) * 100),
+-                disk_used: diskUsedBytes,
+-                disk_total: diskTotalBytes,
+-                hostname: os.hostname(),
+-                uptime_seconds: os.uptime()
+-              }));
+-              return;
+-            }
+-
+-            if (command === "get_uptime") {
+-              const upSec = Math.round(os.uptime());
+-              const days = Math.floor(upSec / 86400);
+-              const hrs = Math.floor((upSec % 86400) / 3600);
+-              const mins = Math.floor((upSec % 3600) / 60);
+-              const formatted = days > 0 ? `${days}d ${hrs}h ${mins}m` : `${hrs}h ${mins}m`;
+-              res.end(JSON.stringify(formatted));
+-              return;
+-            }
+-
+-            if (command === "system_scan") {
+-              const totalMem = Math.round(os.totalmem() / (1024 * 1024 * 1024));
+-              const freeMem = Math.round(os.freemem() / (1024 * 1024 * 1024));
+-              const usedMem = totalMem - freeMem;
+-              const cpus = os.cpus();
+-              res.end(JSON.stringify({
+-                status: "Healthy (0 threats / anomalies detected)",
+-                host_os: `${os.type()} ${os.release()} (${os.arch()})`,
+-                cpu_processor: cpus[0]?.model?.trim() || "Local CPU",
+-                active_threads: cpus.length,
+-                memory_utilization: `${usedMem} GB / ${totalMem} GB (${Math.round((usedMem/totalMem)*100)}%)`,
+-                system_uptime: `${Math.round(os.uptime()/3600)}h ${Math.round((os.uptime()%3600)/60)}m`
+-              }));
+-              return;
+-            }
+-
+-            if (command === "take_screenshot") {
+-              const shotPath = join(CONFIG_DIR, `screenshot_${Date.now()}.png`);
+-              try {
+-                const psCmd = `Add-Type -AssemblyName System.Windows.Forms,System.Drawing; $bmp = New-Object System.Drawing.Bitmap([System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Width, [System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Height); $g = [System.Drawing.Graphics]::FromImage($bmp); $g.CopyFromScreen(0,0,0,0,$bmp.Size); $bmp.Save('${shotPath.replace(/\\/g, '\\\\')}'); $g.Dispose(); $bmp.Dispose();`;
+-                execSync(`powershell -NoProfile -Command "${psCmd}"`, { timeout: 4000 });
+-              } catch (e) {
+-                try { writeFileSync(shotPath, "Heliox OS Screenshot Capture Record"); } catch (e2) {}
+-              }
+-              res.end(JSON.stringify(shotPath));
+-              return;
+-            }
+-
+-            if (command === "get_agent_activity") {
+-              res.end(JSON.stringify([
+-                { agent: "System Agent", status: "Idle", tasks_completed: 14 },
+-                { agent: "Code Agent", status: "Active", tasks_completed: 8 },
+-                { agent: "Web Agent", status: "Idle", tasks_completed: 5 },
+-                { agent: "Monitor Agent", status: "Monitoring", tasks_completed: 42 },
+-                { agent: "Communication Agent", status: "Ready", tasks_completed: 3 },
+-              ]));
+-              return;
+-            }
+-
+-            if (command === "get_rss_feed") {
+-              let feedItems: any[] = [];
+-              try {
+-                const pkgPath = join(process.cwd(), "package.json");
+-                let currentVer = "0.7.1";
+-                if (existsSync(pkgPath)) {
+-                  try { currentVer = JSON.parse(readFileSync(pkgPath, "utf-8")).version || currentVer; } catch(e){}
+-                }
+-                feedItems.push({
+-                  title: `Heliox OS v${currentVer} Active Release (JARVIS Core Engine)`,
+-                  url: "https://github.com/VyomKulshrestha/Heliox-OS/releases",
+-                  source: "Current Build"
+-                });
+-
+-                try {
+-                  const tagOut = execSync('git tag -l --sort=-creatordate --format="%(refname:short)|%(creatordate:short)|%(subject)"', { cwd: CONFIG_DIR, encoding: 'utf-8' }).trim();
+-                  tagOut.split('\n').filter(Boolean).slice(0, 4).forEach(line => {
+-                    const parts = line.split('|');
+-                    if (parts[0]) {
+-                      feedItems.push({
+-                        title: `Release ${parts[0]}: ${parts[2] || 'Official Heliox OS Distribution'}`,
+-                        url: `https://github.com/VyomKulshrestha/Heliox-OS/releases/tag/${parts[0]}`,
+-                        source: `Release Tag (${parts[1] || 'Published'})`
+-                      });
+-                    }
+-                  });
+-                } catch (e) {}
+-
+-                if (feedItems.length === 1) {
+-                  feedItems.push({
+-                    title: `TRIBE v2 Cognitive Engine & Threat Containment Bridge Live`,
+-                    url: "https://github.com/VyomKulshrestha/Heliox-OS",
+-                    source: "System Feature"
+-                  });
+-                }
+-              } catch (e) {
+-                feedItems = [{ title: "Heliox OS v0.7.1 Active - JARVIS Core Running", url: "https://github.com/VyomKulshrestha/Heliox-OS", source: "System" }];
+-              }
+-              res.end(JSON.stringify(feedItems));
+-              return;
+-            }
+-
+-            if (command === "get_log_count") {
+-              const logFile = join(CONFIG_DIR, "system.log");
+-              let count = 128;
+-              if (existsSync(logFile)) {
+-                try {
+-                  const lines = readFileSync(logFile, "utf-8").split("\n").filter(Boolean);
+-                  count = lines.length || 0;
+-                } catch (e) {}
+-              }
+-              res.end(JSON.stringify(count));
+-              return;
+-            }
+-
+-            if (command === "get_status_metrics") {
+-              const totalRam = os.totalmem();
+-              const ram = Math.round(((totalRam - os.freemem()) / totalRam) * 100);
+-              res.end(JSON.stringify({ cpu: 15, ram, latency_ms: 8, agents_active: 5 }));
+-              return;
+-            }
+-
+-            if (command === "get_dashboard_status") {
+-              const totalRam = os.totalmem();
+-              const ram = Math.round(((totalRam - os.freemem()) / totalRam) * 100);
+-              res.end(JSON.stringify({
+-                connected: true,
+-                agents: 5,
+-                cpu: `15%`,
+-                memory: `${ram}%`,
+-                network_up: "140 KB/s",
+-                network_down: "520 KB/s",
+-              }));
+-              return;
+-            }
+-
+-            res.end(JSON.stringify({}));
+-          });
+-          return;
+-        }
+-
+-        next();
+-      });
+-    },
+-  };
+-}
+-
+ export default defineConfig({
+-  plugins: [svelte(), mediapipeHandsAssets(), daemonTokenDevPlugin()],
++  plugins: [svelte(), mediapipeHandsAssets()],
+   clearScreen: false,
+   server: {
+     port: 1420,

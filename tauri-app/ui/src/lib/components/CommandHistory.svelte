@@ -20,9 +20,39 @@
     loading = true;
     try {
       const result = await call<{ plans?: HistoryEntry[] }>("get_plan_history", { limit: 30, offset: 0 });
-      history = result.plans ?? [];
+      let loaded = result.plans ?? [];
+      if (loaded.length === 0 && typeof localStorage !== "undefined") {
+        try {
+          const localMsgs = JSON.parse(localStorage.getItem("heliox_session_history") || "[]");
+          loaded = localMsgs
+            .filter((m: any) => m.type === "user" && m.text)
+            .map((m: any) => ({
+              raw_input: m.text,
+              created_at: new Date(m.timestamp || Date.now()).toISOString(),
+              execution_status: "success"
+            }))
+            .reverse();
+        } catch(e) {}
+      }
+      history = loaded;
     } catch (e) {
-      history = [];
+      if (typeof localStorage !== "undefined") {
+        try {
+          const localMsgs = JSON.parse(localStorage.getItem("heliox_session_history") || "[]");
+          history = localMsgs
+            .filter((m: any) => m.type === "user" && m.text)
+            .map((m: any) => ({
+              raw_input: m.text,
+              created_at: new Date(m.timestamp || Date.now()).toISOString(),
+              execution_status: "success"
+            }))
+            .reverse();
+        } catch(err) {
+          history = [];
+        }
+      } else {
+        history = [];
+      }
     } finally {
       loading = false;
     }

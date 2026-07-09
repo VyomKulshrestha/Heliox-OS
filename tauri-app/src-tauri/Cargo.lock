@@ -1783,6 +1783,7 @@ dependencies = [
  "battery",
  "dirs 5.0.1",
  "futures-util",
+ "libc",
  "opener",
  "screenshots",
  "serde",

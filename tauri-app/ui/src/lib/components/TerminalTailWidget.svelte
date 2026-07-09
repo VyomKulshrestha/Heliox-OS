@@ -1,11 +1,16 @@
 <script lang="ts">
   import WidgetCard from "./WidgetCard.svelte";
   import { onMount } from "svelte";
-  import { invoke } from "@tauri-apps/api/core";
+  import { invoke } from "../api/invoke";
   let logs: string[] = [];
   async function loadLogs() {
+    if (typeof localStorage !== "undefined" && localStorage.getItem("heliox_terminal_logs") === "cleared") {
+      logs = ["[System] All terminal logs cleared cleanly."];
+      return;
+    }
     try {
-      logs = await invoke("get_terminal_logs");
+      const res = await invoke("get_terminal_logs");
+      if (Array.isArray(res)) logs = res;
     } catch (error) {
       console.error("Failed to fetch terminal logs:", error);
     }

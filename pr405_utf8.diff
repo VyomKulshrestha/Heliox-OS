@@ -1,0 +1,225 @@
+﻿diff --git a/daemon/pilot/actions.py b/daemon/pilot/actions.py
+index 938c506..3faa775 100644
+--- a/daemon/pilot/actions.py
++++ b/daemon/pilot/actions.py
+@@ -301,6 +301,7 @@ class PermissionTier(int, Enum):
+     ActionType.FILE_PARSE,
+     ActionType.FILE_SEARCH_CONTENT,
+     ActionType.API_SCRAPE,
++    ActionType.WORKSPACE_INDEX,
+     ActionType.WORKSPACE_SEARCH,
+     # Email agent read-only
+     ActionType.EMAIL_FETCH,
+diff --git a/daemon/pilot/agents/base_agent.py b/daemon/pilot/agents/base_agent.py
+index 4a209f3..4556ede 100644
+--- a/daemon/pilot/agents/base_agent.py
++++ b/daemon/pilot/agents/base_agent.py
+@@ -54,6 +54,7 @@ class AgentRole(StrEnum):
+     CALENDAR = "calendar_agent"
+     FORENSICS = "forensics_agent"
+     ORCHESTRATOR = "orchestrator"
++    SEMANTIC_SEARCH = "semantic_search_agent"
+     GENERAL = "general"
+ 
+ 
+diff --git a/daemon/pilot/agents/semantic_search_agent.py b/daemon/pilot/agents/semantic_search_agent.py
+new file mode 100644
+index 0000000..ae43405
+--- /dev/null
++++ b/daemon/pilot/agents/semantic_search_agent.py
+@@ -0,0 +1,132 @@
++"""Semantic search agent for local file indexing and search (RAG)."""
++
++from __future__ import annotations
++
++import json
++import logging
++from typing import TYPE_CHECKING, Any
++
++from pilot.actions import Action, ActionPlan, ActionResult, ActionType
++from pilot.agents.base_agent import AgentCapability, AgentRole, BaseAgent
++from pilot.agents.registry import auto_register
++from pilot.config import DATA_DIR
++from pilot.memory.workspace_index import WorkspaceIndex
++
++if TYPE_CHECKING:
++    from pilot.config import PilotConfig
++    from pilot.models.router import ModelRouter
++    from pilot.security.vault import Vault
++
++logger = logging.getLogger("pilot.agents.semantic_search_agent")
++
++
++@auto_register
++class SemanticSearchAgent(BaseAgent):
++    """Specialist agent for semantic file search (RAG)."""
++
++    def __init__(
++        self,
++        model_router: ModelRouter,
++        config: PilotConfig,
++        vault: Vault,
++    ) -> None:
++        super().__init__(role=AgentRole.SEMANTIC_SEARCH, model_router=model_router)
++        self._config = config
++        self._vault = vault
++        self._index: WorkspaceIndex | None = None
++
++    def _get_index(self) -> WorkspaceIndex:
++        if self._index is None:
++            index_dir = self._config.semantic_search.index_dir
++            if not index_dir:
++                index_dir = DATA_DIR / "semantic_index"
++            self._index = WorkspaceIndex(index_dir=index_dir)
++        return self._index
++
++    def get_capabilities(self) -> list[AgentCapability]:
++        return [
++            AgentCapability(
++                action_type=ActionType.WORKSPACE_INDEX,
++                description="Index workspace for semantic search",
++            ),
++            AgentCapability(
++                action_type=ActionType.WORKSPACE_SEARCH,
++                description="Semantically search indexed files",
++            ),
++        ]
++
++    def get_system_prompt(self) -> str:
++        return (
++            "You are the SEMANTIC SEARCH AGENT for Heliox OS. "
++            "You manage semantic indexing and search of local files. "
++            "You can index directories and perform natural language searches over them."
++        )
++
++    def can_handle(self, action_type: ActionType) -> bool:
++        return action_type in {
++            ActionType.WORKSPACE_INDEX,
++            ActionType.WORKSPACE_SEARCH,
++        }
++
++    async def handle_task(
++        self,
++        user_input: str,
++        plan: ActionPlan,
++        context: dict[str, Any] | None = None,
++    ) -> list[ActionResult]:
++        results = []
++        for action in plan.actions:
++            if not self.can_handle(action.action_type):
++                continue
++
++            payload = action.parameters.model_dump() if hasattr(action.parameters, "model_dump") else {}
++
++            if action.action_type == ActionType.WORKSPACE_INDEX:
++                res = await self._handle_index(action, payload)
++            elif action.action_type == ActionType.WORKSPACE_SEARCH:
++                res = await self._handle_search(action, payload)
++            else:
++                res = ActionResult(action=action, success=False, error="Unsupported action")
++
++            results.append(res)
++
++        return results
++
++    async def _handle_index(self, action: Action, payload: dict[str, Any]) -> ActionResult:
++        folder_path = payload.get("folder_path")
++        if not folder_path:
++            # Use configured folders if no specific folder is provided
++            if self._config.semantic_search.folders:
++                # If multiple folders, we'll index all of them
++                for folder in self._config.semantic_search.folders:
++                    try:
++                        index = self._get_index()
++                        index.index_workspace(folder)
++                    except Exception as e:
++                        logger.warning(f"Failed to index folder {folder}: {e}")
++                return ActionResult(action=action, success=True, output=json.dumps({"status": "indexed_configured_folders"}))
++            else:
++                return ActionResult(action=action, success=False, error="Missing folder_path and no configured folders")
++        try:
++            index = self._get_index()
++            result = index.index_workspace(folder_path)
++            if result.get("success"):
++                return ActionResult(action=action, success=True, output=json.dumps(result))
++            else:
++                return ActionResult(action=action, success=False, error=result.get("error", "Unknown error"))
++        except Exception as e:
++            logger.error(f"Failed to index workspace: {e}")
++            return ActionResult(action=action, success=False, error=str(e))
++
++    async def _handle_search(self, action: Action, payload: dict[str, Any]) -> ActionResult:
++        query = payload.get("query")
++        if not query:
++            return ActionResult(action=action, success=False, error="Missing query")
++        try:
++            n_results = payload.get("n_results", 5)
++            index = self._get_index()
++            results = index.search(query, n_results=n_results)
++            return ActionResult(action=action, success=True, output=json.dumps({"results": results}))
++        except Exception as e:
++            logger.error(f"Failed to search workspace: {e}")
++            return ActionResult(action=action, success=False, error=str(e))
+diff --git a/daemon/pilot/config.py b/daemon/pilot/config.py
+index 98dd30e..50246e3 100644
+--- a/daemon/pilot/config.py
++++ b/daemon/pilot/config.py
+@@ -166,6 +166,13 @@ class CalendarConfig:
+     ics_files: list[str] = field(default_factory=list)
+ 
+ 
++@dataclass
++class SemanticSearchConfig:
++    enabled: bool = False
++    folders: list[str] = field(default_factory=list)  # List of directories to index
++    index_dir: str = ""  # Custom directory to store index (defaults to DATA_DIR/semantic_index)
++
++
+ @dataclass
+ class RedisConfig:
+     enabled: bool = False
+@@ -230,6 +237,7 @@ class PilotConfig:
+     memory: MemoryConfig = field(default_factory=MemoryConfig)
+     rss: RSSConfig = field(default_factory=RSSConfig)
+     calendar: CalendarConfig = field(default_factory=CalendarConfig)
++    semantic_search: SemanticSearchConfig = field(default_factory=SemanticSearchConfig)
+     network: NetworkConfig = field(default_factory=NetworkConfig)
+     ssh: SshConfig = field(default_factory=SshConfig)
+     proxy: ProxyConfig = field(default_factory=ProxyConfig)
+@@ -371,6 +379,11 @@ def _validate_config_types(raw: dict) -> None:
+             "connect_timeout_seconds": int,
+             "allowed_hosts": list,
+         },
++        "semantic_search": {
++            "enabled": bool,
++            "folders": list,
++            "index_dir": str,
++        },
+         "proxy": {
+             "http": str,
+             "https": str,
+@@ -504,6 +517,11 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
+             if hasattr(config.redis, k):
+                 setattr(config.redis, k, v)
+ 
++    if "semantic_search" in raw:
++        for k, v in raw["semantic_search"].items():
++            if hasattr(config.semantic_search, k):
++                setattr(config.semantic_search, k, v)
++
+     if "proxy" in raw and isinstance(raw["proxy"], dict):
+         for k, v in raw["proxy"].items():
+             if hasattr(config.proxy, k):
+diff --git a/daemon/pyproject.toml b/daemon/pyproject.toml
+index 434ff3e..5766adb 100644
+--- a/daemon/pyproject.toml
++++ b/daemon/pyproject.toml
+@@ -32,6 +32,8 @@ dependencies = [
+ [project.optional-dependencies]
+ full = [
+     "chromadb>=0.5",
++    "faiss-cpu>=1.7.0",
++    "sentence-transformers>=2.2.0",
+     "pyperclip>=1.8",
+     "SecretStorage>=3.3; sys_platform == 'linux'",
+     "zeroconf>=0.131",

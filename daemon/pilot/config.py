@@ -29,26 +29,24 @@ def _default_runtime_dir() -> Path:
     """Resolve runtime dir when XDG_RUNTIME_DIR is unset (macOS, Windows, minimal Linux)."""
     xdg = os.environ.get("XDG_RUNTIME_DIR", "").strip()
     if xdg:
-        return Path(xdg) / "pilot"
+        return Path(xdg) / "heliox-os"
     uid = os.getuid() if hasattr(os, "getuid") else 1000
     if sys.platform == "darwin":
-        return Path.home() / "Library" / "Caches" / "pilot" / "runtime"
+        return Path.home() / "Library" / "Caches" / "heliox-os" / "runtime"
     if sys.platform == "win32":
         local = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
-        return Path(local) / "pilot" / "runtime"
+        return Path(local) / "heliox-os" / "runtime"
     run_user = Path(f"/run/user/{uid}")
     if run_user.is_dir() and os.access(run_user, os.W_OK):
-        return run_user / "pilot"
+        return run_user / "heliox-os"
     tmp = os.environ.get("TMPDIR", "/tmp")
-    return Path(tmp) / f"pilot-runtime-{uid}"
+    return Path(tmp) / f"heliox-os-runtime-{uid}"
 
 
 CONFIG_DIR = _xdg("XDG_CONFIG_HOME", ".config") / "heliox-os"
 DATA_DIR = _xdg("XDG_DATA_HOME", ".local/share") / "heliox-os"
 STATE_DIR = _xdg("XDG_STATE_HOME", ".local/state") / "heliox-os"
-RUNTIME_DIR = (
-    Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid() if hasattr(os, 'getuid') else 1000}")) / "heliox-os"
-)
+RUNTIME_DIR = _default_runtime_dir()
 CONFIG_FILE = CONFIG_DIR / "config.toml"
 RESTRICTIONS_FILE = CONFIG_DIR / "restrictions.toml"
 DB_FILE = DATA_DIR / "pilot.db"
@@ -167,6 +165,13 @@ class CalendarConfig:
 
 
 @dataclass
+class SemanticSearchConfig:
+    enabled: bool = False
+    folders: list[str] = field(default_factory=list)  # List of directories to index
+    index_dir: str = ""  # Custom directory to store index (defaults to DATA_DIR/semantic_index)
+
+
+@dataclass
 class RedisConfig:
     enabled: bool = False
     host: str = "127.0.0.1"
@@ -230,6 +235,7 @@ class PilotConfig:
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     rss: RSSConfig = field(default_factory=RSSConfig)
     calendar: CalendarConfig = field(default_factory=CalendarConfig)
+    semantic_search: SemanticSearchConfig = field(default_factory=SemanticSearchConfig)
     network: NetworkConfig = field(default_factory=NetworkConfig)
     ssh: SshConfig = field(default_factory=SshConfig)
     proxy: ProxyConfig = field(default_factory=ProxyConfig)
@@ -371,6 +377,11 @@ def _validate_config_types(raw: dict) -> None:
             "connect_timeout_seconds": int,
             "allowed_hosts": list,
         },
+        "semantic_search": {
+            "enabled": bool,
+            "folders": list,
+            "index_dir": str,
+        },
         "proxy": {
             "http": str,
             "https": str,
@@ -503,6 +514,11 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
         for k, v in raw["redis"].items():
             if hasattr(config.redis, k):
                 setattr(config.redis, k, v)
+
+    if "semantic_search" in raw:
+        for k, v in raw["semantic_search"].items():
+            if hasattr(config.semantic_search, k):
+                setattr(config.semantic_search, k, v)
 
     if "proxy" in raw and isinstance(raw["proxy"], dict):
         for k, v in raw["proxy"].items():

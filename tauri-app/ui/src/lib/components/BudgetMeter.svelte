@@ -74,7 +74,20 @@
     </div>
   {/if}
 
+  <div class="live-usage">
+    <div class="section-title live-title">Active Session Usage</div>
+    <div class="cap-row">
+      <span class="cap-label">Tokens consumed</span>
+      <span class="cap-value highlight">{fmtInt($session.totalTokens)}</span>
+    </div>
+    <div class="cap-row">
+      <span class="cap-label">Estimated cost</span>
+      <span class="cap-value highlight">{fmtUsd($session.estimatedCost)}</span>
+    </div>
+  </div>
+
   <div class="caps">
+    <div class="section-title">Configured Caps</div>
     <div class="cap-row">
       <span class="cap-label">Monthly</span>
       <span class="cap-value">{fmtUsd($settings.model.budget_monthly_limit_usd)}</span>
@@ -229,6 +242,35 @@
     border-radius: 50%;
     background: rgba(0, 255, 136, 0.7);
     box-shadow: 0 0 6px rgba(0, 255, 136, 0.4);
+  }
+
+  .live-usage {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px 8px;
+    background: rgba(0, 255, 136, 0.05);
+    border: 1px solid rgba(0, 255, 136, 0.18);
+    border-radius: 6px;
+    margin-bottom: 2px;
+  }
+
+  .section-title {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: rgba(0, 200, 255, 0.85);
+    margin-bottom: 2px;
+  }
+
+  .live-title {
+    color: rgba(0, 255, 136, 0.9);
+  }
+
+  .highlight {
+    color: rgba(0, 255, 136, 0.95);
+    font-weight: 700;
   }
 
   .caps {

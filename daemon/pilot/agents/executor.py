@@ -262,6 +262,7 @@ class Executor:
             ActionType.WORKSPACE_INDEX: self._exec_workspace_index,
             ActionType.WORKSPACE_SEARCH: self._exec_workspace_search,
             ActionType.WASM_CALL: self._exec_wasm_call,
+            ActionType.PLUGIN_CALL: self._exec_wasm_call,
             ActionType.LOG_ANALYZE: self._exec_log_analyze,
         }
 
@@ -1900,9 +1901,9 @@ class Executor:
             raise ValueError("wasm_call requires a tool name (either in target or parameters)")
         if self._plugin_registry is None:
             raise RuntimeError("Plugin registry not initialized in Executor")
-        result = self._plugin_registry.call_wasm_tool(tool_name, params.args)
+        result = self._plugin_registry.call_tool(tool_name, params.args)
         if "error" in result:
-            raise RuntimeError(f"WASM tool execution failed: {result['error']}")
+            raise RuntimeError(f"Plugin tool execution failed: {result['error']}")
         return json.dumps(result)
 
     async def _exec_log_analyze(self, action: Action) -> str:

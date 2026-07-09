@@ -16,7 +16,7 @@
     </div>
 
     <div class="nodes-container">
-      {#each $session.liveActions as liveAction (liveAction.index)}
+      {#each $session.liveActions as liveAction, idx (`${liveAction.index}-${idx}`)}
         <div 
           class="node-wrapper"
           animate:flip

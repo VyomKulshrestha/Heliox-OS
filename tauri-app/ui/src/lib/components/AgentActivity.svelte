@@ -1,7 +1,7 @@
 <script lang="ts">
 import WidgetCard from "./WidgetCard.svelte";
 import { onMount }from "svelte";
-import { invoke }from "@tauri-apps/api/core";
+import { invoke } from "../api/invoke";
 import { pinnedWidgets } from "../stores/pinnedWidgets";
 function togglePin() {
   pinnedWidgets.update((items) => {
@@ -34,15 +34,10 @@ type Agent = {
 let agents: Agent[] = [];
 async function loadAgents() {
   try {
-    agents =
-      await invoke(
-        "get_agent_activity"
-      );
+    const res = await invoke("get_agent_activity");
+    if (Array.isArray(res)) agents = res;
   } catch (err) {
-    console.error(
-      "Agent activity failed",
-      err
-    );
+    console.error("Agent activity failed", err);
   }
 }
 onMount(() => {

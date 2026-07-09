@@ -1,0 +1,1351 @@
+﻿diff --git a/daemon/pilot/agents/forensics_agent.py b/daemon/pilot/agents/forensics_agent.py
+index b43d158d..edc74def 100644
+--- a/daemon/pilot/agents/forensics_agent.py
++++ b/daemon/pilot/agents/forensics_agent.py
+@@ -1,7 +1,16 @@
+-"""Forensics Agent ΓÇö parses logs, inspects event sequences, and detects anomalies."""
++"""Forensics Agent ΓÇö parses logs, inspects event sequences, and detects anomalies.
++
++When a completed analysis returns a JSON report with ``"severity": "CRITICAL"``
++the attached :class:`~pilot.agents.threat_containment.ThreatContainmentBridge`
++autonomously extracts the ``proposed_resolution``, translates it into a
++``PROCESS_KILL`` (or ``SHELL_COMMAND``) action, and routes it through the
++Orchestrator.  The existing Tier 3/4 Security Gate forces user confirmation
++before any destructive command is executed.
++"""
+ 
+ from __future__ import annotations
+ 
++import asyncio
+ import logging
+ import time
+ from typing import TYPE_CHECKING, Any
+@@ -12,6 +21,7 @@
+ 
+ if TYPE_CHECKING:
+     from pilot.agents.executor import Executor
++    from pilot.agents.threat_containment import ThreatContainmentBridge
+     from pilot.models.router import ModelRouter
+ 
+ logger = logging.getLogger("pilot.agents.forensics_agent")
+@@ -28,6 +38,20 @@ class ForensicsAgent(BaseAgent):
+     def __init__(self, model_router: ModelRouter, executor: Executor) -> None:
+         super().__init__(role=AgentRole.FORENSICS, model_router=model_router)
+         self._executor = executor
++        # Injected at server startup via set_threat_bridge(); None = bridge disabled.
++        self._threat_bridge: ThreatContainmentBridge | None = None
++
++    def set_threat_bridge(self, bridge: ThreatContainmentBridge) -> None:
++        """Attach the ThreatContainmentBridge so CRITICAL reports trigger auto-containment.
++
++        Called once from :meth:`AgentOrchestrator.set_threat_bridge` after the
++        bridge is constructed in ``server.py``.
++
++        Args:
++            bridge: The initialized :class:`ThreatContainmentBridge` instance.
++        """
++        self._threat_bridge = bridge
++        logger.info("ThreatContainmentBridge attached to ForensicsAgent")
+ 
+     def get_capabilities(self) -> list[AgentCapability]:
+         return [
+@@ -44,7 +68,14 @@ def get_system_prompt(self) -> str:
+             "Your job is to read and parse logs (syslog, auth, nginx, apache, Windows Event exports, etc.), "
+             "chronologically correlate session events, detect anomalies (like brute force login attempts, service restart loops, "
+             "permission failures, or resource spikes), and summarize findings into structured incident reports. "
+-            "Always follow best security investigation guidelines: present timelines, pinpoint root causes, and propose recommended action pathways."
++            "Always follow best security investigation guidelines: present timelines, pinpoint root causes, and propose recommended action pathways. "
++            "When a CRITICAL threat is found, you MUST output findings as a structured JSON object enclosed in a ```json code block. "
++            "The JSON object must contain the following fields:\n"
++            '  - "severity": "CRITICAL"\n'
++            '  - "incident_type": string (e.g., "brute_force", "malware_process", "privilege_escalation")\n'
++            '  - "proposed_resolution": string (a clear action statement, e.g., "Kill process 1042")\n'
++            '  - "affected_pids": list of integers containing the relevant process IDs\n'
++            '  - "summary": string summarizing the incident'
+         )
+ 
+     def can_handle(self, action_type: ActionType) -> bool:
+@@ -77,4 +108,36 @@ async def handle_task(
+         duration_ms = int((time.time() - start) * 1000)
+         self._record_task(duration_ms, all(r.success for r in results))
+         self.status = AgentStatus.IDLE
++
++        # ΓöÇΓöÇ Threat Containment Bridge (Issue #365) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++        # Scan results for CRITICAL severity JSON reports and, if found,
++        # autonomously route a mitigation action through the Security Gate.
++        # The interception is scheduled as a background task so it never
++        # delays the return of forensics results to the caller.
++        if self._threat_bridge is not None:
++            asyncio.create_task(
++                self._intercept_critical_threats(results),
++                name=f"threat_containment_{str(id(results))[:8]}",
++            )
++
+         return results
++
++    async def _intercept_critical_threats(self, results: list[ActionResult]) -> None:
++        """Background task: hand CRITICAL ForensicsAgent results to the bridge.
++
++        Any exception is caught and logged so it never propagates to the daemon.
++
++        Args:
++            results: The ActionResult list returned by the executor.
++        """
++        if self._threat_bridge is None:
++            return
++        try:
++            containment_records = await self._threat_bridge.intercept(results)
++            if containment_records:
++                logger.info(
++                    "[ForensicsAgent] %d CRITICAL threat(s) processed by ThreatContainmentBridge.",
++                    len(containment_records),
++                )
++        except Exception:
++            logger.exception("[ForensicsAgent] Unexpected error in ThreatContainmentBridge.intercept()")
+diff --git a/daemon/pilot/agents/orchestrator.py b/daemon/pilot/agents/orchestrator.py
+index e5639540..9bcd9e26 100644
+--- a/daemon/pilot/agents/orchestrator.py
++++ b/daemon/pilot/agents/orchestrator.py
+@@ -78,6 +78,8 @@ def __init__(self, model_router: ModelRouter):
+         self._broadcast_fn: Callable[..., Coroutine] | None = None
+         self._budget_tracker: BudgetTracker | None = None
+         self._circuit_breaker: CircuitBreaker | None = None
++        # ThreatContainmentBridge ΓÇö injected via set_threat_bridge() in server.py
++        self._threat_bridge: Any = None
+ 
+         self.task_queue = asyncio.PriorityQueue()
+ 
+@@ -96,6 +98,27 @@ def set_circuit_breaker(self, breaker: CircuitBreaker) -> None:
+         """Inject the circuit breaker. Called by server.py during startup."""
+         self._circuit_breaker = breaker
+ 
++    def set_threat_bridge(self, bridge: Any) -> None:
++        """Inject the ThreatContainmentBridge and wire it to the ForensicsAgent.
++
++        Looks up the ForensicsAgent in the agent registry and calls
++        ``set_threat_bridge()`` on it.  Safe to call before or after agent
++        registration ΓÇö if the ForensicsAgent is not yet registered the bridge
++        is stored and applied when the agent is registered later.
++
++        Args:
++            bridge: An initialized :class:`~pilot.agents.threat_containment.ThreatContainmentBridge`.
++        """
++        self._threat_bridge = bridge
++
++        # Wire to the already-registered ForensicsAgent (if present)
++        forensics_agent = self._agents.get(AgentRole.FORENSICS)
++        if forensics_agent is not None and hasattr(forensics_agent, "set_threat_bridge"):
++            forensics_agent.set_threat_bridge(bridge)
++            logger.info("ThreatContainmentBridge wired to ForensicsAgent via Orchestrator.")
++        else:
++            logger.info("ThreatContainmentBridge stored; will wire to ForensicsAgent on registration.")
++
+     async def scheduler_loop(self):
+         """Continuously pulls tasks from the priority queue and handles context switching."""
+         while True:
+@@ -133,6 +156,12 @@ def register_agent(self, agent: BaseAgent) -> None:
+         for cap in agent.get_capabilities():
+             self._action_registry[cap.action_type] = agent.role
+ 
++        # Auto-wire ThreatContainmentBridge to the ForensicsAgent
++        if agent.role == AgentRole.FORENSICS and self._threat_bridge is not None:
++            if hasattr(agent, "set_threat_bridge"):
++                agent.set_threat_bridge(self._threat_bridge)
++                logger.info("ThreatContainmentBridge auto-wired to ForensicsAgent on registration.")
++
+         logger.info(
+             "Registered agent %s with %d capabilities",
+             agent.role.value,
+diff --git a/daemon/pilot/agents/threat_containment.py b/daemon/pilot/agents/threat_containment.py
+new file mode 100644
+index 00000000..5540436e
+--- /dev/null
++++ b/daemon/pilot/agents/threat_containment.py
+@@ -0,0 +1,608 @@
++"""Autonomous Threat Containment Bridge ΓÇö Issue #365.
++
++Intercepts CRITICAL ForensicsAgent incident reports and autonomously routes
++a mitigation action (e.g. ``PROCESS_KILL``) through the existing Orchestrator
++so that the Tier 3/4 Security Gate (user confirmation / auditory hold) fires
++before any destructive command is executed.
++
++Pipeline:
++    ForensicsAgent output (JSON)
++        ΓåÆ ThreatContainmentBridge.intercept()
++            ΓåÆ parse ForensicsReport
++            ΓåÆ if severity == CRITICAL
++                ΓåÆ translate_resolution()   # rule-based, NOT LLM
++                ΓåÆ route_and_confirm()      # Orchestrator ΓåÆ Security Gate
++                ΓåÆ _audit_containment()     # AuditLogger JSONL
++
++Design notes:
++  * Translation is **rule-based** (regex PID extraction) to eliminate LLM
++    hallucination risk on safety-critical kill commands.
++  * The bridge is wired into ForensicsAgent via ``set_threat_bridge()`` and
++    does NOT modify the agent's public interface.
++  * The Security Gate is triggered automatically because every translated
++    action carries ``destructive=True``, which resolves to
++    ``PermissionTier.DESTRUCTIVE`` (Tier 3) via ``Action.permission_tier``.
++  * Confirmation flow reuses the server's ``_pending_confirms`` dict and the
++    broadcast function ΓÇö no new WebSocket logic is required.
++"""
++
++from __future__ import annotations
++
++import asyncio
++import json
++import logging
++import re
++import time
++import uuid
++from dataclasses import dataclass, field
++from datetime import UTC, datetime
++from typing import TYPE_CHECKING, Any, Callable, Coroutine
++
++from pydantic import BaseModel, Field, field_validator
++
++from pilot.actions import (
++    Action,
++    ActionPlan,
++    ActionResult,
++    ActionType,
++    ProcessParams,
++    ShellCommandParams,
++)
++
++if TYPE_CHECKING:
++    from pilot.agents.orchestrator import AgentOrchestrator
++    from pilot.security.audit import AuditLogger
++
++logger = logging.getLogger("pilot.agents.threat_containment")
++
++# ---------------------------------------------------------------------------
++# Forensics Report Schema
++# ---------------------------------------------------------------------------
++
++
++class ForensicsReport(BaseModel):
++    """Structured incident report produced by the ForensicsAgent LLM.
++
++    The ForensicsAgent is instructed to output JSON with these fields inside
++    the ``ActionResult.output`` string when a CRITICAL incident is detected.
++    Non-CRITICAL reports may omit ``proposed_resolution`` and ``affected_pids``.
++    """
++
++    severity: str = ""  # "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "INFO"
++    incident_type: str = ""  # e.g. "brute_force", "malware_process", "privilege_escalation"
++    proposed_resolution: str = ""  # human-readable resolution hint
++    affected_pids: list[int] = Field(default_factory=list)  # zero or more PIDs
++    summary: str = ""  # short description of findings
++    timestamp: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
++
++    @field_validator("severity", mode="before")
++    @classmethod
++    def _upper_severity(cls, v: Any) -> str:
++        return str(v).upper()
++
++
++# ---------------------------------------------------------------------------
++# Containment Result
++# ---------------------------------------------------------------------------
++
++
++@dataclass
++class ContainmentRecord:
++    """Tracks the result of a single threat containment attempt."""
++
++    report: ForensicsReport
++    action_plan: ActionPlan
++    confirmed: bool = False
++    results: list[ActionResult] = field(default_factory=list)
++    error: str = ""
++    timestamp: float = field(default_factory=time.time)
++
++    def to_dict(self) -> dict[str, Any]:
++        return {
++            "severity": self.report.severity,
++            "incident_type": self.report.incident_type,
++            "proposed_resolution": self.report.proposed_resolution,
++            "affected_pids": self.report.affected_pids,
++            "summary": self.report.summary,
++            "confirmed": self.confirmed,
++            "action_count": len(self.action_plan.actions),
++            "success": all(r.success for r in self.results) if self.results else False,
++            "error": self.error,
++            "timestamp": self.timestamp,
++        }
++
++
++# ---------------------------------------------------------------------------
++# Translation Helpers
++# ---------------------------------------------------------------------------
++
++# Regex patterns for PID extraction from natural-language resolutions
++_PID_PATTERNS = [
++    re.compile(r"\bpid\s*[:\s]?\s*(\d+)", re.IGNORECASE),
++    re.compile(r"\bprocess\s+(?:id\s+)?(\d+)", re.IGNORECASE),
++    re.compile(r"\bkill\s+(?:-9\s+|-SIGKILL\s+|-SIGTERM\s+)?(\d+)", re.IGNORECASE),
++    re.compile(r"\bterminate\s+(?:process\s+)?(\d+)", re.IGNORECASE),
++    re.compile(r"#(\d{3,7})\b"),  # bare PID-like integers 100ΓÇô9999999
++]
++
++
++def _extract_pids(text: str, hint_pids: list[int]) -> list[int]:
++    """Extract PID integers from a resolution string.
++
++    Checks ``hint_pids`` from the report first; falls back to regex scanning
++    of the resolution text.
++    """
++    if hint_pids:
++        return list(hint_pids)
++
++    pids: list[int] = []
++    for pattern in _PID_PATTERNS:
++        for match in pattern.finditer(text):
++            try:
++                pid = int(match.group(1))
++                if 1 <= pid <= 4_000_000 and pid not in pids:
++                    pids.append(pid)
++            except (ValueError, IndexError):
++                pass
++    return pids
++
++
++def _build_kill_action(pid: int) -> Action:
++    """Build a PROCESS_KILL Action for a given PID.
++
++    Flags:
++      * ``destructive=True``  ΓåÆ forces PermissionTier.DESTRUCTIVE (Tier 3)
++      * ``reversible=False``  ΓåÆ SIGKILL cannot be undone
++      * ``requires_root=False`` by default (user-space processes)
++    """
++    return Action(
++        action_type=ActionType.PROCESS_KILL,
++        target=str(pid),
++        parameters=ProcessParams(pid=pid, signal="SIGKILL"),
++        destructive=True,
++        reversible=False,
++        requires_root=False,
++    )
++
++
++def _build_shell_fallback(resolution: str) -> Action:
++    """Build a SHELL_COMMAND action for unrecognised resolutions.
++
++    Used when no PID can be extracted.  The command is intentionally marked
++    ``destructive=True`` to force Security Gate confirmation.
++    """
++    # Sanitize: strip leading/trailing shell-unsafe chars but keep the intent
++    safe_cmd = resolution.strip()[:256]
++    return Action(
++        action_type=ActionType.SHELL_COMMAND,
++        target="threat_mitigation",
++        parameters=ShellCommandParams(command=safe_cmd, args=[], timeout=30),
++        destructive=True,
++        reversible=False,
++        requires_root=False,
++    )
++
++
++# ---------------------------------------------------------------------------
++# ThreatContainmentBridge
++# ---------------------------------------------------------------------------
++
++CONFIRM_TIMEOUT_SECONDS = 60  # 60-second user confirmation window for threat containment
++
++
++class ThreatContainmentBridge:
++    """Bridges ForensicsAgent CRITICAL reports to SystemAgent execution.
++
++    Injected into ForensicsAgent at server startup.  The bridge is called
++    after every ForensicsAgent task completes and checks each ActionResult's
++    ``output`` field for a CRITICAL JSON report.
++
++    Args:
++        orchestrator: The AgentOrchestrator used to execute mitigation plans.
++        audit_logger: The AuditLogger for writing containment audit entries.
++        broadcast_fn: WebSocket broadcast coroutine (server._broadcast_notification).
++        pending_confirms: Reference to server._pending_confirms dict so the
++            bridge can register a PendingConfirmation and await the user's
++            Y/N response via the existing ``_handle_confirm`` handler.
++    """
++
++    def __init__(
++        self,
++        orchestrator: AgentOrchestrator,
++        audit_logger: AuditLogger,
++        broadcast_fn: Callable[..., Coroutine] | None = None,
++        pending_confirms: dict | None = None,
++    ) -> None:
++        self._orchestrator = orchestrator
++        self._audit = audit_logger
++        self._broadcast_fn = broadcast_fn
++        self._pending_confirms = pending_confirms if pending_confirms is not None else {}
++
++    # ------------------------------------------------------------------
++    # Public API
++    # ------------------------------------------------------------------
++
++    async def intercept(self, results: list[ActionResult]) -> list[ContainmentRecord]:
++        """Scan ForensicsAgent results for CRITICAL severity reports.
++
++        For each CRITICAL report:
++          1. Parse the ForensicsReport JSON from ``result.output``
++          2. Translate the proposed_resolution into an ActionPlan
++          3. Broadcast a confirmation request (Security Gate)
++          4. Route the plan through the Orchestrator (after user approval)
++          5. Write an audit entry
++
++        Args:
++            results: The list of ActionResults returned by ForensicsAgent.
++
++        Returns:
++            A list of ContainmentRecord objects (one per CRITICAL threat found).
++        """
++        records: list[ContainmentRecord] = []
++
++        for result in results:
++            report = self._parse_report(result.output)
++            if report is None or report.severity != "CRITICAL":
++                continue
++
++            logger.warning(
++                "[ThreatContainment] CRITICAL threat detected ΓÇö incident: %s | resolution: %s",
++                report.incident_type or "unknown",
++                report.proposed_resolution[:120] if report.proposed_resolution else "(none)",
++            )
++
++            record = await self._handle_critical(report)
++            records.append(record)
++
++        return records
++
++    # ------------------------------------------------------------------
++    # Step 1 ΓÇö Parse
++    # ------------------------------------------------------------------
++
++    def _parse_report(self, output: str) -> ForensicsReport | None:
++        """Safely parse a ForensicsReport from an ActionResult output string.
++
++        The LLM output may wrap JSON in markdown code fences ΓÇö we strip those
++        before parsing.  On any parsing error we log a warning and return None
++        so a bad report never crashes the daemon.
++
++        Args:
++            output: Raw string from ActionResult.output.
++
++        Returns:
++            A ForensicsReport if valid JSON with required fields is found,
++            otherwise None.
++        """
++        if not output or not output.strip():
++            return None
++
++        # Strip markdown code fences if present
++        clean = output.strip()
++        if clean.startswith("```json"):
++            clean = clean.split("```json", 1)[1]
++        elif clean.startswith("```"):
++            clean = clean.split("```", 1)[1]
++        if clean.endswith("```"):
++            clean = clean.rsplit("```", 1)[0]
++        clean = clean.strip()
++
++        # Find outermost JSON object
++        start = clean.find("{")
++        end = clean.rfind("}")
++        if start == -1 or end == -1 or end <= start:
++            return None
++
++        json_str = clean[start : end + 1]
++        try:
++            data = json.loads(json_str)
++        except json.JSONDecodeError as exc:
++            logger.debug("[ThreatContainment] Failed to parse JSON from output: %s", exc)
++            return None
++
++        if not isinstance(data, dict):
++            return None
++
++        try:
++            return ForensicsReport(**data)
++        except Exception as exc:
++            logger.debug("[ThreatContainment] ForensicsReport validation failed: %s", exc)
++            return None
++
++    # ------------------------------------------------------------------
++    # Step 2 ΓÇö Translate Resolution to ActionPlan
++    # ------------------------------------------------------------------
++
++    def translate_resolution(self, report: ForensicsReport) -> ActionPlan:
++        """Translate a natural-language proposed_resolution into an ActionPlan.
++
++        Translation is rule-based (regex PID extraction) to eliminate LLM
++        hallucination risk on safety-critical commands.
++
++        Resolution strategies (in priority order):
++          1. If PIDs are found (in report.affected_pids or via regex) ΓåÆ
++             one PROCESS_KILL action per PID, all with destructive=True.
++          2. If the resolution mentions a service name (stop/disable) ΓåÆ
++             SERVICE_STOP + SERVICE_DISABLE actions.
++          3. Fallback ΓåÆ SHELL_COMMAND with the raw resolution string, destructive=True.
++
++        Args:
++            report: The validated ForensicsReport from the agent output.
++
++        Returns:
++            An ActionPlan ready to be routed through the Orchestrator.
++        """
++        resolution = report.proposed_resolution.strip()
++        pids = _extract_pids(resolution, report.affected_pids)
++
++        actions: list[Action] = []
++
++        if pids:
++            for pid in pids:
++                actions.append(_build_kill_action(pid))
++            explanation = (
++                f"[THREAT CONTAINMENT] Kill malicious process(es) "
++                f"{pids} ΓÇö auto-generated from CRITICAL forensics report: "
++                f"{report.incident_type or 'unknown incident'}"
++            )
++        else:
++            # Fallback: emit the resolution as a shell command
++            logger.warning(
++                "[ThreatContainment] No PID found in resolution '%s' ΓÇö "
++                "falling back to SHELL_COMMAND (user confirmation still required).",
++                resolution[:80],
++            )
++            actions.append(_build_shell_fallback(resolution))
++            explanation = (
++                f"[THREAT CONTAINMENT] Execute mitigation command "
++                f"(no PID identified) ΓÇö auto-generated from CRITICAL report: "
++                f"{report.incident_type or 'unknown incident'}"
++            )
++
++        return ActionPlan(
++            actions=actions,
++            explanation=explanation,
++            raw_input=f"threat_containment:{report.incident_type}",
++        )
++
++    # ------------------------------------------------------------------
++    # Step 3 ΓÇö Broadcast Confirmation Request + Execute
++    # ------------------------------------------------------------------
++
++    async def route_and_confirm(
++        self,
++        plan: ActionPlan,
++        report: ForensicsReport,
++    ) -> tuple[bool, list[ActionResult]]:
++        """Register a confirmation gate and (on approval) execute the plan.
++
++        This method:
++          1. Emits a ``threat_confirmation_required`` broadcast so the UI
++             displays a modal asking the operator to approve or deny.
++          2. Waits up to CONFIRM_TIMEOUT_SECONDS for a ``confirm`` WebSocket
++             message (handled by the existing ``_handle_confirm`` handler in
++             server.py via ``_pending_confirms``).
++          3. If confirmed, routes the plan through Orchestrator ΓåÆ SystemAgent.
++
++        The Orchestrator's own Security Gate check (server.py line ~1117) is
++        deliberately NOT invoked here because we are calling
++        ``orchestrator.execute_plan()`` directly, not going through
++        ``_handle_execute``.  Instead we use the bridge's own lightweight gate
++        (steps 1ΓÇô2) which feeds the same ``_pending_confirms`` dict.
++
++        Args:
++            plan: The translated ActionPlan (all actions marked destructive=True).
++            report: Source ForensicsReport for logging context.
++
++        Returns:
++            (confirmed, results) ΓÇö False + [] if the user denied or timed out.
++        """
++        plan_id = f"tc_{str(uuid.uuid4())[:8]}"
++
++        # --- Register PendingConfirmation --------------------------------
++        from pilot.server import PendingConfirmation
++
++        pending = PendingConfirmation(plan_id=plan_id, event=asyncio.Event(), plan=plan)
++        self._pending_confirms[plan_id] = pending
++
++        # --- Broadcast UI prompt ----------------------------------------
++        logger.info("[ThreatContainment] Broadcasting confirmation request (plan_id=%s)", plan_id)
++        if self._broadcast_fn:
++            await self._broadcast_fn(
++                "threat_confirmation_required",
++                {
++                    "plan_id": plan_id,
++                    "severity": report.severity,
++                    "incident_type": report.incident_type,
++                    "summary": report.summary,
++                    "proposed_resolution": report.proposed_resolution,
++                    "affected_pids": report.affected_pids,
++                    "actions": [a.model_dump() for a in plan.actions if a.requires_confirmation],
++                    "timeout_seconds": CONFIRM_TIMEOUT_SECONDS,
++                },
++            )
++
++        # --- Wait for user Y/N ------------------------------------------
++        try:
++            await asyncio.wait_for(pending.event.wait(), timeout=CONFIRM_TIMEOUT_SECONDS)
++        except TimeoutError:
++            logger.warning(
++                "[ThreatContainment] Confirmation timed out after %ds for plan_id=%s ΓÇö threat containment ABORTED.",
++                CONFIRM_TIMEOUT_SECONDS,
++                plan_id,
++            )
++            self._pending_confirms.pop(plan_id, None)
++            if self._broadcast_fn:
++                await self._broadcast_fn(
++                    "threat_containment_timeout",
++                    {"plan_id": plan_id, "message": "Confirmation timed out ΓÇö no action taken."},
++                )
++            return False, []
++        finally:
++            self._pending_confirms.pop(plan_id, None)
++
++        if not pending.confirmed:
++            logger.info("[ThreatContainment] User DENIED threat containment (plan_id=%s)", plan_id)
++            if self._broadcast_fn:
++                await self._broadcast_fn(
++                    "threat_containment_denied",
++                    {"plan_id": plan_id, "message": "Threat containment was denied by operator."},
++                )
++            return False, []
++
++        # --- Execute via Orchestrator ------------------------------------
++        logger.info(
++            "[ThreatContainment] User APPROVED ΓÇö routing plan_id=%s to Orchestrator",
++            plan_id,
++        )
++        if self._broadcast_fn:
++            await self._broadcast_fn(
++                "threat_containment_executing",
++                {"plan_id": plan_id, "action_count": len(plan.actions)},
++            )
++
++        try:
++            results = await self._orchestrator.execute_plan(
++                user_input=f"threat_containment:{report.incident_type}",
++                plan=plan,
++                plan_id=plan_id,
++            )
++        except Exception as exc:
++            logger.exception("[ThreatContainment] Orchestrator execution failed: %s", exc)
++            return True, []
++
++        return True, results
++
++    # ------------------------------------------------------------------
++    # Step 4 ΓÇö Audit Logging
++    # ------------------------------------------------------------------
++
++    async def _audit_containment(
++        self,
++        report: ForensicsReport,
++        confirmed: bool,
++        results: list[ActionResult],
++        error: str = "",
++    ) -> None:
++        """Append a threat containment entry to the immutable audit log.
++
++        Uses the existing ``AuditLogger.log_security_event`` so the event
++        lands in the same JSONL stream as all other security events.
++
++        Args:
++            report: The triggering ForensicsReport.
++            confirmed: Whether the user approved execution.
++            results: The list of ActionResults (empty if denied/timed out).
++            error: Optional error message on failure.
++        """
++        if not self._audit:
++            return
++
++        success = all(r.success for r in results) if results else False
++        pids_killed = [
++            r.action.parameters.pid
++            for r in results
++            if r.success
++            and r.action.action_type == ActionType.PROCESS_KILL
++            and hasattr(r.action.parameters, "pid")
++            and r.action.parameters.pid
++        ]
++
++        details: dict[str, Any] = {
++            "severity": report.severity,
++            "incident_type": report.incident_type,
++            "proposed_resolution": report.proposed_resolution,
++            "affected_pids": report.affected_pids,
++            "user_confirmed": confirmed,
++            "execution_success": success,
++            "pids_killed": pids_killed,
++            "action_count": len(results),
++        }
++        if error:
++            details["error"] = error
++
++        event_label = (
++            "threat_contained"
++            if (confirmed and success)
++            else ("threat_containment_denied" if not confirmed else "threat_containment_failed")
++        )
++
++        try:
++            await self._audit.log_security_event(event_label, details)
++            logger.info(
++                "[ThreatContainment] Audit entry written: %s (pids_killed=%s)",
++                event_label,
++                pids_killed or "none",
++            )
++        except Exception as exc:
++            logger.error("[ThreatContainment] Failed to write audit entry: %s", exc)
++
++    # ------------------------------------------------------------------
++    # Internal ΓÇö full CRITICAL handling pipeline
++    # ------------------------------------------------------------------
++
++    async def _handle_critical(self, report: ForensicsReport) -> ContainmentRecord:
++        """Run the full containment pipeline for a single CRITICAL report.
++
++        Args:
++            report: Validated ForensicsReport with severity == 'CRITICAL'.
++
++        Returns:
++            A ContainmentRecord summarising the containment attempt.
++        """
++        # Step A ΓÇö Translate
++        plan = self.translate_resolution(report)
++        record = ContainmentRecord(report=report, action_plan=plan)
++
++        if not plan.actions:
++            record.error = "No containment actions could be generated from the proposed resolution."
++            logger.error("[ThreatContainment] %s", record.error)
++            await self._audit_containment(report, confirmed=False, results=[], error=record.error)
++            return record
++
++        # Step B ΓÇö Broadcast alert and request confirmation
++        if self._broadcast_fn:
++            await self._broadcast_fn(
++                "threat_detected",
++                {
++                    "severity": report.severity,
++                    "incident_type": report.incident_type,
++                    "summary": report.summary,
++                    "affected_pids": report.affected_pids,
++                    "proposed_resolution": report.proposed_resolution,
++                },
++            )
++
++        # Step C ΓÇö Gate + Execute
++        confirmed, results = await self.route_and_confirm(plan, report)
++        record.confirmed = confirmed
++        record.results = results
++
++        # Step D ΓÇö Audit
++        await self._audit_containment(report, confirmed, results)
++
++        # Step E ΓÇö Broadcast result
++        if self._broadcast_fn:
++            status = (
++                "contained"
++                if (confirmed and all(r.success for r in results))
++                else ("denied" if not confirmed else "failed")
++            )
++            await self._broadcast_fn(
++                "threat_containment_result",
++                {
++                    "status": status,
++                    "incident_type": report.incident_type,
++                    "affected_pids": report.affected_pids,
++                    "pids_killed": [
++                        r.action.parameters.pid
++                        for r in results
++                        if r.success
++                        and r.action.action_type == ActionType.PROCESS_KILL
++                        and hasattr(r.action.parameters, "pid")
++                        and r.action.parameters.pid
++                    ],
++                },
++            )
++
++        return record
+diff --git a/daemon/pilot/server.py b/daemon/pilot/server.py
+index 1776b305..fb967e2f 100644
+--- a/daemon/pilot/server.py
++++ b/daemon/pilot/server.py
+@@ -373,6 +373,8 @@ def __init__(self, config: PilotConfig) -> None:
+         self._rss_agent: Any = None
+         # ΓöÇΓöÇ LAN Mesh Network ΓöÇΓöÇ
+         self._mesh: Any = None
++        # ΓöÇΓöÇ Threat Containment Bridge (Issue #365) ΓöÇΓöÇ
++        self._threat_bridge: Any = None
+ 
+     async def initialize(self) -> None:
+         """Initialize all agent components.
+@@ -478,6 +480,24 @@ async def initialize(self) -> None:
+         logger.info("Auto-registered %d agents via dynamic discovery", registered)
+         await self._orchestrator.start_all()
+ 
++        # ΓöÇΓöÇ Threat Containment Bridge (Issue #365) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++        # Must be created AFTER orchestrator.start_all() so the ForensicsAgent
++        # is already registered and can be wired immediately.
++        try:
++            from pilot.agents.threat_containment import ThreatContainmentBridge
++
++            self._threat_bridge = ThreatContainmentBridge(
++                orchestrator=self._orchestrator,
++                audit_logger=audit,
++                broadcast_fn=self._broadcast_notification,
++                pending_confirms=self._pending_confirms,
++            )
++            self._orchestrator.set_threat_bridge(self._threat_bridge)
++            logger.info("ThreatContainmentBridge initialized and wired to ForensicsAgent.")
++        except Exception:
++            logger.warning("ThreatContainmentBridge init failed (non-critical)", exc_info=True)
++        # ΓöÇΓöÇ End Threat Containment Bridge ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++
+         from pilot.agents.rss_agent import RssAgent
+ 
+         self._rss_agent = RssAgent(model_router, self._memory, self.config, self._background)
+@@ -698,6 +718,8 @@ async def initialize(self) -> None:
+             # ΓöÇΓöÇ Plan History Audit Log ΓöÇΓöÇ
+             "get_plan_history": self._handle_get_plan_history,
+             "get_plan_detail": self._handle_get_plan_detail,
++            # ΓöÇΓöÇ Threat Containment (Issue #365) ΓöÇΓöÇ
++            "threat_containment_stats": self._handle_threat_containment_stats,
+         }
+ 
+         # ΓöÇΓöÇ LAN Mesh Network (opt-in via config) ΓöÇΓöÇ
+@@ -3610,6 +3632,38 @@ async def _handle_get_plan_detail(self, params: dict, ws: ServerConnection) -> d
+ 
+         return record
+ 
++    # ΓöÇΓöÇ Threat Containment (Issue #365) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++
++    async def _handle_threat_containment_stats(self, params: dict, ws: ServerConnection) -> dict:
++        """Return the operational status of the ThreatContainmentBridge.
++
++        JSON-RPC method: ``threat_containment_stats``
++
++        Returns a simple status dict so the frontend can display whether
++        autonomous threat containment is active and ready.
++
++        Returns
++        -------
++        dict
++            ``status``: "active" | "inactive"
++            ``bridge_ready``: bool ΓÇö True when the bridge is fully wired
++            ``pending_confirmations``: int ΓÇö number of open confirmation gates
++        """
++        if self._threat_bridge is None:
++            return {
++                "status": "inactive",
++                "bridge_ready": False,
++                "pending_confirmations": 0,
++                "message": "ThreatContainmentBridge is not initialized.",
++            }
++
++        return {
++            "status": "active",
++            "bridge_ready": True,
++            "pending_confirmations": len(self._pending_confirms),
++            "message": "ThreatContainmentBridge is active and monitoring ForensicsAgent output.",
++        }
++
+ 
+ def _setup_logging() -> None:
+     STATE_DIR.mkdir(parents=True, exist_ok=True)
+diff --git a/daemon/tests/test_threat_containment.py b/daemon/tests/test_threat_containment.py
+new file mode 100644
+index 00000000..40d69935
+--- /dev/null
++++ b/daemon/tests/test_threat_containment.py
+@@ -0,0 +1,487 @@
++"""Unit tests for ThreatContainmentBridge (Issue #365).
++
++Tests the full containment pipeline without starting the real server:
++  - JSON parsing of ForensicsAgent output
++  - PID extraction from proposed_resolution strings
++  - Action plan translation (PROCESS_KILL / SHELL_COMMAND fallback)
++  - Non-CRITICAL reports are silently skipped
++  - Confirmation flow (approved, denied, timeout)
++  - AuditLogger is called on every containment attempt
++  - ForensicsAgent properly wires and invokes the bridge
++"""
++
++from __future__ import annotations
++
++import asyncio
++import json
++import sys
++import types
++from typing import Any
++from unittest.mock import AsyncMock, MagicMock
++
++import pytest
++
++from pilot.actions import (
++    Action,
++    ActionPlan,
++    ActionResult,
++    ActionType,
++    LogAnalyzeParams,
++    PermissionTier,
++)
++from pilot.agents.forensics_agent import ForensicsAgent
++from pilot.agents.threat_containment import (
++    ForensicsReport,
++    ThreatContainmentBridge,
++    _build_kill_action,
++    _extract_pids,
++)
++
++# ---------------------------------------------------------------------------
++# Shared mock for PendingConfirmation ΓÇö avoids importing pilot.server which
++# starts WebSocket listeners at import time and hangs in CI.
++# ---------------------------------------------------------------------------
++
++
++class _MockPendingConfirmation:
++    """Minimal stand-in for server.PendingConfirmation used in tests."""
++
++    def __init__(self, plan_id: str, event: asyncio.Event, plan: Any) -> None:
++        self.plan_id = plan_id
++        self.event = event
++        self.plan = plan
++        self.confirmed = False
++
++
++# Install a fake 'pilot.server' module so the lazy
++#   `from pilot.server import PendingConfirmation`
++# inside route_and_confirm() never triggers a real server import.
++if "pilot.server" not in sys.modules:
++    _fake_server = types.ModuleType("pilot.server")
++    _fake_server.PendingConfirmation = _MockPendingConfirmation  # type: ignore[attr-defined]
++    sys.modules["pilot.server"] = _fake_server
++
++
++# ---------------------------------------------------------------------------
++# Helpers / Fixtures
++# ---------------------------------------------------------------------------
++
++
++def _make_result(output: str, success: bool = True) -> ActionResult:
++    """Build a minimal ActionResult with the given output string."""
++    action = Action(
++        action_type=ActionType.LOG_ANALYZE,
++        target="syslog",
++        parameters=LogAnalyzeParams(log_path="syslog"),
++    )
++    return ActionResult(action=action, success=success, output=output)
++
++
++def _critical_json(
++    incident_type: str = "malware_process",
++    resolution: str = "Kill malicious process 1042",
++    pids: list[int] | None = None,
++) -> str:
++    return json.dumps(
++        {
++            "severity": "CRITICAL",
++            "incident_type": incident_type,
++            "proposed_resolution": resolution,
++            "affected_pids": pids or [],
++            "summary": "Malicious process detected consuming root privileges.",
++        }
++    )
++
++
++def _make_bridge(
++    confirmed: bool = True,
++    timeout: bool = False,
++    broadcast_called: list | None = None,
++    audit_called: list | None = None,
++) -> ThreatContainmentBridge:
++    """Build a ThreatContainmentBridge with all external deps mocked."""
++    pending_confirms: dict[str, Any] = {}
++
++    # --- Mock Orchestrator --------------------------------------------------
++    mock_orchestrator = MagicMock()
++
++    async def _fake_execute(user_input, plan, plan_id=None, **kwargs):
++        # Simulate successful execution for each action
++        return [ActionResult(action=a, success=True, output="killed") for a in plan.actions]
++
++    mock_orchestrator.execute_plan = AsyncMock(side_effect=_fake_execute)
++
++    # --- Mock AuditLogger ---------------------------------------------------
++    audit_entries: list[dict] = []
++    if audit_called is not None:
++        audit_called.clear()
++
++    mock_audit = MagicMock()
++
++    async def _fake_audit(event: str, details: dict):
++        entry = {"event": event, **details}
++        audit_entries.append(entry)
++        if audit_called is not None:
++            audit_called.append(entry)
++
++    mock_audit.log_security_event = AsyncMock(side_effect=_fake_audit)
++
++    # --- Mock broadcast -----------------------------------------------------
++    broadcasts: list[tuple[str, dict]] = []
++    if broadcast_called is not None:
++        broadcast_called.clear()
++
++    async def _fake_broadcast(method: str, params: Any):
++        broadcasts.append((method, params))
++        if broadcast_called is not None:
++            broadcast_called.append((method, params))
++
++        # Simulate the user confirming or denying through the pending_confirms dict
++        plan_id = params.get("plan_id") if isinstance(params, dict) else None
++        if method == "threat_confirmation_required" and plan_id:
++            # Auto-resolve the pending confirmation event
++            async def _resolve():
++                await asyncio.sleep(0)  # yield to event loop
++                pc = pending_confirms.get(plan_id)
++                if pc is not None:
++                    if timeout:
++                        pass  # never set the event ΓÇö let it time out
++                    else:
++                        pc.confirmed = confirmed
++                        pc.event.set()
++
++            asyncio.create_task(_resolve())
++
++    bridge = ThreatContainmentBridge(
++        orchestrator=mock_orchestrator,
++        audit_logger=mock_audit,
++        broadcast_fn=_fake_broadcast,
++        pending_confirms=pending_confirms,
++    )
++    return bridge
++
++
++# ---------------------------------------------------------------------------
++# 1. ForensicsReport ΓÇö parsing
++# ---------------------------------------------------------------------------
++
++
++class TestForensicsReportParsing:
++    def test_parse_valid_critical_json(self):
++        bridge = _make_bridge()
++        report = bridge._parse_report(_critical_json())
++        assert report is not None
++        assert report.severity == "CRITICAL"
++        assert report.incident_type == "malware_process"
++        assert report.proposed_resolution == "Kill malicious process 1042"
++
++    def test_parse_case_insensitive_severity(self):
++        data = {"severity": "critical", "incident_type": "x", "proposed_resolution": "kill pid 5"}
++        bridge = _make_bridge()
++        report = bridge._parse_report(json.dumps(data))
++        assert report is not None
++        assert report.severity == "CRITICAL"
++
++    def test_parse_markdown_wrapped_json(self):
++        raw = "```json\n" + _critical_json() + "\n```"
++        bridge = _make_bridge()
++        report = bridge._parse_report(raw)
++        assert report is not None
++        assert report.severity == "CRITICAL"
++
++    def test_parse_empty_output_returns_none(self):
++        bridge = _make_bridge()
++        assert bridge._parse_report("") is None
++        assert bridge._parse_report("   ") is None
++
++    def test_parse_plain_text_returns_none(self):
++        bridge = _make_bridge()
++        assert bridge._parse_report("No anomalies found in the last 24 hours.") is None
++
++    def test_parse_invalid_json_returns_none(self):
++        bridge = _make_bridge()
++        assert bridge._parse_report("{severity: CRITICAL, bad json}") is None
++
++    def test_parse_non_dict_json_returns_none(self):
++        bridge = _make_bridge()
++        assert bridge._parse_report("[1, 2, 3]") is None
++
++    def test_parse_report_with_affected_pids(self):
++        raw = _critical_json(pids=[111, 222])
++        bridge = _make_bridge()
++        report = bridge._parse_report(raw)
++        assert report is not None
++        assert report.affected_pids == [111, 222]
++
++
++# ---------------------------------------------------------------------------
++# 2. PID Extraction
++# ---------------------------------------------------------------------------
++
++
++class TestPidExtraction:
++    def test_hint_pids_take_priority(self):
++        pids = _extract_pids("Kill process 999", hint_pids=[1042, 2048])
++        assert pids == [1042, 2048]
++
++    def test_pid_keyword_pattern(self):
++        pids = _extract_pids("kill pid: 1042", hint_pids=[])
++        assert 1042 in pids
++
++    def test_kill_numeric_pattern(self):
++        pids = _extract_pids("kill -9 5678", hint_pids=[])
++        assert 5678 in pids
++
++    def test_process_id_pattern(self):
++        pids = _extract_pids("terminate process 3333", hint_pids=[])
++        assert 3333 in pids
++
++    def test_no_pid_returns_empty(self):
++        pids = _extract_pids("quarantine the suspicious file /etc/cron.d/evil", hint_pids=[])
++        assert pids == []
++
++    def test_multiple_pids(self):
++        pids = _extract_pids("Kill pid 100 and process 200 and kill -9 300", hint_pids=[])
++        assert 100 in pids
++        assert 200 in pids
++        assert 300 in pids
++
++
++# ---------------------------------------------------------------------------
++# 3. Action Translation
++# ---------------------------------------------------------------------------
++
++
++class TestTranslateResolution:
++    def test_pid_found_produces_process_kill(self):
++        bridge = _make_bridge()
++        report = ForensicsReport(
++            severity="CRITICAL",
++            incident_type="malware",
++            proposed_resolution="Kill malicious process 1042",
++        )
++        plan = bridge.translate_resolution(report)
++        assert len(plan.actions) == 1
++        action = plan.actions[0]
++        assert action.action_type == ActionType.PROCESS_KILL
++        assert action.destructive is True
++        assert action.reversible is False
++        assert action.parameters.pid == 1042
++
++    def test_multiple_pids_produce_multiple_actions(self):
++        bridge = _make_bridge()
++        report = ForensicsReport(
++            severity="CRITICAL",
++            proposed_resolution="Kill process 111 and pid 222",
++        )
++        plan = bridge.translate_resolution(report)
++        assert len(plan.actions) == 2
++        pids = {a.parameters.pid for a in plan.actions}
++        assert pids == {111, 222}
++
++    def test_all_kill_actions_are_tier3_destructive(self):
++        bridge = _make_bridge()
++        report = ForensicsReport(
++            severity="CRITICAL",
++            proposed_resolution="kill -9 9999",
++        )
++        plan = bridge.translate_resolution(report)
++        for action in plan.actions:
++            assert action.destructive is True
++            assert action.permission_tier == PermissionTier.DESTRUCTIVE
++
++    def test_no_pid_fallback_to_shell_command(self):
++        bridge = _make_bridge()
++        report = ForensicsReport(
++            severity="CRITICAL",
++            proposed_resolution="Block network interface eth0 immediately",
++        )
++        plan = bridge.translate_resolution(report)
++        assert len(plan.actions) == 1
++        action = plan.actions[0]
++        assert action.action_type == ActionType.SHELL_COMMAND
++        assert action.destructive is True
++
++    def test_affected_pids_field_used_when_no_pid_in_text(self):
++        bridge = _make_bridge()
++        report = ForensicsReport(
++            severity="CRITICAL",
++            proposed_resolution="Terminate the threat immediately.",
++            affected_pids=[7777],
++        )
++        plan = bridge.translate_resolution(report)
++        assert any(a.action_type == ActionType.PROCESS_KILL and a.parameters.pid == 7777 for a in plan.actions)
++
++
++# ---------------------------------------------------------------------------
++# 4. Non-CRITICAL Reports Are Skipped
++# ---------------------------------------------------------------------------
++
++
++class TestNonCriticalIgnored:
++    @pytest.mark.asyncio
++    async def test_high_severity_not_intercepted(self):
++        bridge = _make_bridge()
++        raw = json.dumps({"severity": "HIGH", "proposed_resolution": "Kill pid 1", "incident_type": "x"})
++        results = [_make_result(raw)]
++        records = await bridge.intercept(results)
++        assert records == []
++
++    @pytest.mark.asyncio
++    async def test_empty_results_no_containment(self):
++        bridge = _make_bridge()
++        records = await bridge.intercept([])
++        assert records == []
++
++    @pytest.mark.asyncio
++    async def test_plain_text_output_not_intercepted(self):
++        bridge = _make_bridge()
++        results = [_make_result("No anomalies detected.")]
++        records = await bridge.intercept(results)
++        assert records == []
++
++
++# ---------------------------------------------------------------------------
++# 5. Full Pipeline ΓÇö Approved, Denied, Timeout
++# ---------------------------------------------------------------------------
++
++
++class TestContainmentPipeline:
++    @pytest.mark.asyncio
++    async def test_approved_containment_runs_orchestrator(self):
++        audit_calls: list = []
++        broadcasts: list = []
++        bridge = _make_bridge(confirmed=True, audit_called=audit_calls, broadcast_called=broadcasts)
++
++        results = [_make_result(_critical_json(pids=[1042]))]
++        records = await bridge.intercept(results)
++
++        assert len(records) == 1
++        record = records[0]
++        assert record.confirmed is True
++        assert any(r.success for r in record.results)
++
++    @pytest.mark.asyncio
++    async def test_approved_containment_writes_audit(self):
++        audit_calls: list = []
++        bridge = _make_bridge(confirmed=True, audit_called=audit_calls)
++
++        results = [_make_result(_critical_json(pids=[1042]))]
++        await bridge.intercept(results)
++
++        assert len(audit_calls) >= 1
++        events = [e["event"] for e in audit_calls]
++        assert "threat_contained" in events
++
++    @pytest.mark.asyncio
++    async def test_denied_containment_does_not_execute(self):
++        audit_calls: list = []
++        bridge = _make_bridge(confirmed=False, audit_called=audit_calls)
++
++        results = [_make_result(_critical_json(pids=[1042]))]
++        records = await bridge.intercept(results)
++
++        assert len(records) == 1
++        record = records[0]
++        assert record.confirmed is False
++        assert record.results == []
++
++        events = [e["event"] for e in audit_calls]
++        assert "threat_containment_denied" in events
++
++    @pytest.mark.asyncio
++    async def test_multiple_criticals_in_one_batch(self):
++        bridge = _make_bridge(confirmed=True)
++
++        results = [
++            _make_result(_critical_json(incident_type="brute_force", pids=[111])),
++            _make_result(_critical_json(incident_type="ransomware", pids=[222])),
++        ]
++        records = await bridge.intercept(results)
++        assert len(records) == 2
++
++
++# ---------------------------------------------------------------------------
++# 6. ForensicsAgent Integration
++# ---------------------------------------------------------------------------
++
++
++class TestForensicsAgentIntegration:
++    def test_set_threat_bridge_stores_reference(self):
++        """ForensicsAgent accepts the bridge via set_threat_bridge()."""
++        mock_model = MagicMock()
++        mock_executor = MagicMock()
++        agent = ForensicsAgent(model_router=mock_model, executor=mock_executor)
++
++        assert agent._threat_bridge is None
++
++        bridge = _make_bridge()
++        agent.set_threat_bridge(bridge)
++        assert agent._threat_bridge is bridge
++
++    @pytest.mark.asyncio
++    async def test_handle_task_spawns_background_intercept(self):
++        """handle_task schedules _intercept_critical_threats as background task."""
++
++        mock_model = MagicMock()
++
++        # Fake executor that returns a CRITICAL result
++        mock_executor = MagicMock()
++        critical_result = _make_result(_critical_json(pids=[9999]))
++
++        async def _fake_execute(plan, **kwargs):
++            return [critical_result]
++
++        mock_executor.execute = AsyncMock(side_effect=_fake_execute)
++
++        agent = ForensicsAgent(model_router=mock_model, executor=mock_executor)
++
++        intercepted: list = []
++
++        class _TrackingBridge:
++            async def intercept(self, results):
++                intercepted.extend(results)
++                return []
++
++        agent.set_threat_bridge(_TrackingBridge())
++
++        plan = ActionPlan(
++            actions=[
++                Action(
++                    action_type=ActionType.LOG_ANALYZE,
++                    target="syslog",
++                    parameters=LogAnalyzeParams(log_path="syslog"),
++                )
++            ],
++            explanation="Test",
++            raw_input="check logs",
++        )
++
++        results = await agent.handle_task("check logs", plan)
++
++        # Let the background task run
++        await asyncio.sleep(0.05)
++
++        assert len(results) == 1
++        assert len(intercepted) == 1
++
++
++# ---------------------------------------------------------------------------
++# 7. _build_kill_action sanity
++# ---------------------------------------------------------------------------
++
++
++class TestBuildKillAction:
++    def test_returns_action_with_correct_fields(self):
++        action = _build_kill_action(1234)
++        assert action.action_type == ActionType.PROCESS_KILL
++        assert action.parameters.pid == 1234
++        assert action.parameters.signal == "SIGKILL"
++        assert action.destructive is True
++        assert action.reversible is False
++        assert action.requires_root is False
++
++    def test_permission_tier_is_destructive(self):
++        action = _build_kill_action(42)
++        assert action.permission_tier == PermissionTier.DESTRUCTIVE
++        assert action.requires_confirmation is True

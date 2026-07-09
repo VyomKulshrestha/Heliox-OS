@@ -1,0 +1,1461 @@
+﻿diff --git a/daemon/pilot/server.py b/daemon/pilot/server.py
+index 1776b305..81b55392 100644
+--- a/daemon/pilot/server.py
++++ b/daemon/pilot/server.py
+@@ -690,6 +690,7 @@ async def initialize(self) -> None:
+             "proactive_dismiss": self._handle_proactive_dismiss,
+             "budget_stats": self._handle_budget_stats,
+             "budget_reset": self._handle_budget_reset,
++            "extract_file_text": self._handle_extract_file_text,
+             # ΓöÇΓöÇ LAN Mesh Network ΓöÇΓöÇ
+             "mesh_peers": self._handle_mesh_peers,
+             "mesh_status": self._handle_mesh_status,
+@@ -824,6 +825,24 @@ async def _dispatch(self, request: JsonRpcRequest, ws: ServerConnection) -> str
+         result = await handler(request.params, ws)
+         return _success_response(request.id, result)
+ 
++    async def _handle_extract_file_text(self, params: dict[str, Any], ws: ServerConnection) -> dict:
++        """Extract text from a file (e.g. PDF) for UI context injection."""
++        path = params.get("path")
++        if not path:
++            return {"status": "error", "message": "No file path provided"}
++
++        import os
++        if not os.path.exists(path):
++            return {"status": "error", "message": f"File not found: {path}"}
++
++        try:
++            from pilot.system.file_intel import parse_file
++            text = await parse_file(path)
++            return {"status": "ok", "text": text}
++        except Exception as e:
++            logger.error("Error extracting text from %s: %s", path, e)
++            return {"status": "error", "message": str(e)}
++
+     # -- Core execution pipeline --
+ 
+     MAX_RETRIES = 2
+diff --git a/tauri-app/src-tauri/Cargo.lock b/tauri-app/src-tauri/Cargo.lock
+index 88b7ccb6..92cebf33 100644
+--- a/tauri-app/src-tauri/Cargo.lock
++++ b/tauri-app/src-tauri/Cargo.lock
+@@ -8,6 +8,26 @@ version = "2.0.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
+ 
++[[package]]
++name = "adobe-cmap-parser"
++version = "0.4.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "ae8abfa9a4688de8fc9f42b3f013b6fffec18ed8a554f5f113577e0b9b3212a3"
++dependencies = [
++ "pom",
++]
++
++[[package]]
++name = "aes"
++version = "0.8.4"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "b169f7a6d4742236a0a00c541b845991d0ac43e546831af1249753ab4c3aa3a0"
++dependencies = [
++ "cfg-if",
++ "cipher",
++ "cpufeatures",
++]
++
+ [[package]]
+ name = "aho-corasick"
+ version = "1.1.4"
+@@ -246,6 +266,12 @@ version = "0.22.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
+ 
++[[package]]
++name = "base64ct"
++version = "1.8.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
++
+ [[package]]
+ name = "battery"
+ version = "0.7.8"
+@@ -404,6 +430,26 @@ dependencies = [
+  "serde",
+ ]
+ 
++[[package]]
++name = "bzip2"
++version = "0.4.4"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "bdb116a6ef3f6c3698828873ad02c3014b3c85cadb88496095628e3ef1e347f8"
++dependencies = [
++ "bzip2-sys",
++ "libc",
++]
++
++[[package]]
++name = "bzip2-sys"
++version = "0.1.13+1.0.8"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "225bff33b2141874fe80d71e07d6eec4f85c5c216453dd96388240f96e1acc14"
++dependencies = [
++ "cc",
++ "pkg-config",
++]
++
+ [[package]]
+ name = "cairo-rs"
+ version = "0.18.5"
+@@ -478,6 +524,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "a1dce859f0832a7d088c4f1119888ab94ef4b5d6795d1ce05afb7fe159d79f98"
+ dependencies = [
+  "find-msvc-tools",
++ "jobserver",
++ "libc",
+  "shlex",
+ ]
+ 
+@@ -526,6 +574,16 @@ dependencies = [
+  "windows-link 0.2.1",
+ ]
+ 
++[[package]]
++name = "cipher"
++version = "0.4.4"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "773f3b9af64447d2ce9850330c473515014aa235e6a783b02db81ff39e4a3dad"
++dependencies = [
++ "crypto-common",
++ "inout",
++]
++
+ [[package]]
+ name = "clipboard-win"
+ version = "5.4.1"
+@@ -560,6 +618,12 @@ dependencies = [
+  "crossbeam-utils",
+ ]
+ 
++[[package]]
++name = "constant_time_eq"
++version = "0.1.5"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "245097e9a4535ee1e3e3931fcfcd55a796a44c643e8596ff6566d68f09b87bbc"
++
+ [[package]]
+ name = "cookie"
+ version = "0.18.1"
+@@ -870,6 +934,7 @@ checksum = "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292"
+ dependencies = [
+  "block-buffer",
+  "crypto-common",
++ "subtle",
+ ]
+ 
+ [[package]]
+@@ -1150,6 +1215,15 @@ version = "3.3.2"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "dea2df4cf52843e0452895c455a1a2cfbb842a1e7329671acf418fdc53ed4c59"
+ 
++[[package]]
++name = "euclid"
++version = "0.20.14"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "2bb7ef65b3777a325d1eeefefab5b6d4959da54747e33bd6258e789640f307ad"
++dependencies = [
++ "num-traits",
++]
++
+ [[package]]
+ name = "event-listener"
+ version = "5.4.1"
+@@ -1784,6 +1858,7 @@ dependencies = [
+  "dirs 5.0.1",
+  "futures-util",
+  "opener",
++ "pdf-extract",
+  "screenshots",
+  "serde",
+  "serde_json",
+@@ -1796,6 +1871,7 @@ dependencies = [
+  "tauri-plugin-shell",
+  "tokio",
+  "tokio-tungstenite",
++ "zip",
+ ]
+ 
+ [[package]]
+@@ -1816,6 +1892,15 @@ version = "0.4.3"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
+ 
++[[package]]
++name = "hmac"
++version = "0.12.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "6c49c37c09c17a53d937dfbb742eb3a961d65a994e6bcdcf37e7399d0cc8ab5e"
++dependencies = [
++ "digest",
++]
++
+ [[package]]
+ name = "html5ever"
+ version = "0.38.0"
+@@ -2121,6 +2206,15 @@ dependencies = [
+  "cfb",
+ ]
+ 
++[[package]]
++name = "inout"
++version = "0.1.4"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "879f10e63c20629ecabbb64a8010319738c66a5cd0c29b02d63d272b03751d01"
++dependencies = [
++ "generic-array",
++]
++
+ [[package]]
+ name = "io-lifetimes"
+ version = "1.0.11"
+@@ -2230,6 +2324,16 @@ dependencies = [
+  "syn 2.0.117",
+ ]
+ 
++[[package]]
++name = "jobserver"
++version = "0.1.34"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "9afb3de4395d6b3e67a780b6de64b51c978ecf11cb9a462c66be7d4ca9039d33"
++dependencies = [
++ "getrandom 0.3.4",
++ "libc",
++]
++
+ [[package]]
+ name = "jpeg-decoder"
+ version = "0.3.2"
+@@ -2404,6 +2508,24 @@ version = "0.4.29"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
+ 
++[[package]]
++name = "lopdf"
++version = "0.34.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "c5c8ecfc6c72051981c0459f75ccc585e7ff67c70829560cda8e647882a9abff"
++dependencies = [
++ "encoding_rs",
++ "flate2",
++ "indexmap 2.14.0",
++ "itoa",
++ "log",
++ "md-5",
++ "nom 7.1.3",
++ "rangemap",
++ "time",
++ "weezl",
++]
++
+ [[package]]
+ name = "mac-notification-sys"
+ version = "0.6.12"
+@@ -2436,6 +2558,16 @@ dependencies = [
+  "web_atoms",
+ ]
+ 
++[[package]]
++name = "md-5"
++version = "0.10.6"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "d89e7ee0cfbedfc4da3340218492196241d89eefb6dab27de5df917a6d2e78cf"
++dependencies = [
++ "cfg-if",
++ "digest",
++]
++
+ [[package]]
+ name = "memchr"
+ version = "2.8.0"
+@@ -2475,6 +2607,12 @@ version = "0.3.17"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "6877bb514081ee2a7ff5ef9de3281f14a4dd4bceac4c09388074a6b5df8a139a"
+ 
++[[package]]
++name = "minimal-lexical"
++version = "0.2.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
++
+ [[package]]
+ name = "miniz_oxide"
+ version = "0.8.9"
+@@ -2582,6 +2720,16 @@ dependencies = [
+  "pin-utils",
+ ]
+ 
++[[package]]
++name = "nom"
++version = "7.1.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "d273983c5a657a70a3e8f2a01329822f3b8c8172b73826411a55751e404a0a4a"
++dependencies = [
++ "memchr",
++ "minimal-lexical",
++]
++
+ [[package]]
+ name = "nom"
+ version = "8.0.0"
+@@ -2967,12 +3115,50 @@ dependencies = [
+  "windows-link 0.2.1",
+ ]
+ 
++[[package]]
++name = "password-hash"
++version = "0.4.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "7676374caaee8a325c9e7a2ae557f216c5563a171d6997b0ef8a65af35147700"
++dependencies = [
++ "base64ct",
++ "rand_core 0.6.4",
++ "subtle",
++]
++
+ [[package]]
+ name = "pathdiff"
+ version = "0.2.3"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "df94ce210e5bc13cb6651479fa48d14f601d9858cfe0467f43ae157023b938d3"
+ 
++[[package]]
++name = "pbkdf2"
++version = "0.11.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "83a0692ec44e4cf1ef28ca317f14f8f07da2d95ec3fa01f86e4467b725e60917"
++dependencies = [
++ "digest",
++ "hmac",
++ "password-hash",
++ "sha2",
++]
++
++[[package]]
++name = "pdf-extract"
++version = "0.7.12"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "cbb3a5387b94b9053c1e69d8abfd4dd6dae7afda65a5c5279bc1f42ab39df575"
++dependencies = [
++ "adobe-cmap-parser",
++ "encoding_rs",
++ "euclid",
++ "lopdf",
++ "postscript",
++ "type1-encoding-parser",
++ "unicode-normalization",
++]
++
+ [[package]]
+ name = "percent-encoding"
+ version = "2.3.2"
+@@ -3125,6 +3311,18 @@ dependencies = [
+  "windows-sys 0.61.2",
+ ]
+ 
++[[package]]
++name = "pom"
++version = "1.1.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "60f6ce597ecdcc9a098e7fddacb1065093a3d66446fa16c675e7e71d1b5c28e6"
++
++[[package]]
++name = "postscript"
++version = "0.14.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "78451badbdaebaf17f053fd9152b3ffb33b516104eacb45e7864aaa9c712f306"
++
+ [[package]]
+ name = "potential_utf"
+ version = "0.1.5"
+@@ -3364,6 +3562,12 @@ dependencies = [
+  "getrandom 0.3.4",
+ ]
+ 
++[[package]]
++name = "rangemap"
++version = "1.7.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "973443cf09a9c8656b574a866ab68dfa19f0867d0340648c7d2f6a71b8a8ea68"
++
+ [[package]]
+ name = "raw-window-handle"
+ version = "0.6.2"
+@@ -4004,6 +4208,12 @@ version = "0.11.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
+ 
++[[package]]
++name = "subtle"
++version = "2.6.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
++
+ [[package]]
+ name = "swift-rs"
+ version = "1.0.7"
+@@ -4874,7 +5084,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "b8765b90061cba6c22b5831f675da109ae5561588290f9fa2317adab2714d5a6"
+ dependencies = [
+  "memchr",
+- "nom",
++ "nom 8.0.0",
+  "petgraph",
+ ]
+ 
+@@ -4902,6 +5112,15 @@ dependencies = [
+  "utf-8",
+ ]
+ 
++[[package]]
++name = "type1-encoding-parser"
++version = "0.1.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "fa10c302f5a53b7ad27fd42a3996e23d096ba39b5b8dd6d9e683a05b01bee749"
++dependencies = [
++ "pom",
++]
++
+ [[package]]
+ name = "typeid"
+ version = "1.0.3"
+@@ -4972,6 +5191,15 @@ version = "1.0.24"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
+ 
++[[package]]
++name = "unicode-normalization"
++version = "0.1.25"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "5fd4f6878c9cb28d874b009da9e8d183b5abc80117c40bbd187a1fde336be6e8"
++dependencies = [
++ "tinyvec",
++]
++
+ [[package]]
+ name = "unicode-segmentation"
+ version = "1.13.2"
+@@ -6416,12 +6644,61 @@ dependencies = [
+  "syn 2.0.117",
+ ]
+ 
++[[package]]
++name = "zip"
++version = "0.6.6"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "760394e246e4c28189f19d488c058bf16f564016aefac5d32bb1f3b51d5e9261"
++dependencies = [
++ "aes",
++ "byteorder",
++ "bzip2",
++ "constant_time_eq",
++ "crc32fast",
++ "crossbeam-utils",
++ "flate2",
++ "hmac",
++ "pbkdf2",
++ "sha1",
++ "time",
++ "zstd",
++]
++
+ [[package]]
+ name = "zmij"
+ version = "1.0.21"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
+ 
++[[package]]
++name = "zstd"
++version = "0.11.2+zstd.1.5.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "20cc960326ece64f010d2d2107537f26dc589a6573a316bd5b1dba685fa5fde4"
++dependencies = [
++ "zstd-safe",
++]
++
++[[package]]
++name = "zstd-safe"
++version = "5.0.2+zstd.1.5.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "1d2a5585e04f9eea4b2a3d1eca508c4dee9592a89ef6f450c11719da0726f4db"
++dependencies = [
++ "libc",
++ "zstd-sys",
++]
++
++[[package]]
++name = "zstd-sys"
++version = "2.0.16+zstd.1.5.7"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "91e19ebc2adc8f83e43039e79776e3fda8ca919132d68a1fed6a5faca2683748"
++dependencies = [
++ "cc",
++ "pkg-config",
++]
++
+ [[package]]
+ name = "zune-core"
+ version = "0.5.1"
+diff --git a/tauri-app/src-tauri/Cargo.toml b/tauri-app/src-tauri/Cargo.toml
+index 4419757a..23e832c8 100644
+--- a/tauri-app/src-tauri/Cargo.toml
++++ b/tauri-app/src-tauri/Cargo.toml
+@@ -10,6 +10,8 @@ tauri-build = { version = "2", features = [] }
+ 
+ [dependencies]
+ tauri = { version = "2", features = ["tray-icon"] }
++pdf-extract = "0.7.2"
++zip = "0.6"
+ tauri-plugin-global-shortcut = "2"
+ tauri-plugin-clipboard-manager = "2"
+ tauri-plugin-shell = "2"
+diff --git a/tauri-app/src-tauri/src/commands.rs b/tauri-app/src-tauri/src/commands.rs
+index cf8ab5b4..856c760a 100644
+--- a/tauri-app/src-tauri/src/commands.rs
++++ b/tauri-app/src-tauri/src/commands.rs
+@@ -1,271 +1,353 @@
+-use serde::{Deserialize, Serialize};
+-use tauri::{AppHandle, Manager, Emitter};
+-use sysinfo::System;
+-use std::process::Command;
+-#[derive(Serialize, Deserialize, Clone)]
+-pub struct DaemonStatus {
+-    pub connected: bool,
+-    pub version: String,
+-}
+-
+-// 1. Command to show/hide main application window
+-#[tauri::command]
+-pub async fn toggle_window(app: AppHandle) -> Result<(), String> {
+-    let window = app
+-        .get_webview_window("main")
+-        .ok_or("Main window not found")?;
+-
+-    if window.is_visible().unwrap_or(false) {
+-        window.hide().map_err(|e| e.to_string())?;
+-    } else {
+-        window.show().map_err(|e| e.to_string())?;
+-        window.set_focus().map_err(|e| e.to_string())?;
+-    }
+-    Ok(())
+-}
+-
+-// 2. Command to check daemon connection and ping status
+-#[tauri::command]
+-pub async fn get_daemon_status(window: tauri::Window) -> Result<DaemonStatus, String> {
+-    // Pass window down to the ping checker
+-    let status = match try_ping_daemon(window).await {
+-        Ok(version) => DaemonStatus {
+-            connected: true,
+-            version,
+-        },
+-        Err(_) => DaemonStatus {
+-            connected: false,
+-            version: String::new(),
+-        },
+-    };
+-    Ok(status)
+-}
+-
+-// 3. Command triggered by UI input prompts
+-#[tauri::command]
+-pub async fn send_to_daemon(window: tauri::Window, method: String, params: serde_json::Value) -> Result<(), String> {
+-    let request = serde_json::json!({
+-        "jsonrpc": "2.0",
+-        "method": method,
+-        "params": params,
+-        "id": 1
+-    });
+-
+-    // Pass window directly to send streaming chunks
+-    send_rpc(window, request).await
+-}
+-
+-// 4. Command to confirm user specific milestones or plans
+-#[tauri::command]
+-pub async fn confirm_action(window: tauri::Window, plan_id: String, confirmed: bool) -> Result<(), String> {
+-    let request = serde_json::json!({
+-        "jsonrpc": "2.0",
+-        "method": "confirm",
+-        "params": {
+-            "plan_id": plan_id,
+-            "confirmed": confirmed
+-        },
+-        "id": 1
+-    });
+-
+-    send_rpc(window, request).await
+-}
+-
+-// Internal worker to parse handshake ping data
+-async fn try_ping_daemon(_window: tauri::Window) -> Result<String, String> {
+-    let request = serde_json::json!({
+-        "jsonrpc": "2.0",
+-        "method": "ping",
+-        "params": {},
+-        "id": 1
+-    });
+-
+-    // Temporary mock response parsing since ping won't stream chunks
+-    let url = "ws://127.0.0.1:8785";
+-    use tokio_tungstenite::connect_async;
+-    use futures_util::{SinkExt, StreamExt};
+-
+-    let (mut ws, _) = connect_async(url).await.map_err(|e| e.to_string())?;
+-    let msg = serde_json::to_string(&request).map_err(|e| e.to_string())?;
+-    ws.send(tokio_tungstenite::tungstenite::Message::Text(msg)).await.map_err(|e| e.to_string())?;
+-
+-    if let Some(Ok(response)) = ws.next().await {
+-        let text = response.to_text().map_err(|e| e.to_string())?;
+-        let parsed: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+-        let version = parsed
+-            .get("result")
+-            .and_then(|r| r.get("version"))
+-            .and_then(|v| v.as_str())
+-            .unwrap_or("unknown")
+-            .to_string();
+-        return Ok(version);
+-    }
+-    Err("Ping failed".to_string())
+-}
+-
+-// Main streaming loop broadcasting raw frames back to Svelte context
+-async fn send_rpc(window: tauri::Window, request: serde_json::Value) -> Result<(), String> {
+-    use tokio_tungstenite::connect_async;
+-    use futures_util::{SinkExt, StreamExt};
+-
+-    let url = "ws://127.0.0.1:8785";
+-    let (mut ws, _) = connect_async(url)
+-        .await
+-        .map_err(|e| format!("Conn failed: {}", e))?;
+-
+-    let msg = serde_json::to_string(&request).map_err(|e| e.to_string())?;
+-    ws.send(tokio_tungstenite::tungstenite::Message::Text(msg))
+-        .await
+-        .map_err(|e| format!("Send failed: {}", e))?;
+-
+-    // Actively loop over streaming messages instead of breaking instantly
+-    while let Some(Ok(response)) = ws.next().await {
+-        let text = response.to_text().map_err(|e| e.to_string())?;
+-        let parsed: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+-        
+-        window.emit("llm-chunk", &parsed).map_err(|e| e.to_string())?;
+-    }
+-
+-    window.emit("llm-complete", "DONE").map_err(|e| e.to_string())?;
+-    Ok(())
+-}
+-#[tauri::command]
+-
+-pub fn open_terminal() -> Result<String, String> {
+-    Command::new("cmd")
+-        .args([
+-            "/C",
+-            "start cmd /K echo Heliox OS Terminal Ready"
+-        ])
+-        .spawn()
+-        .map_err(|e| e.to_string())?;
+-    Ok("Terminal Opened".into())
+-}
+-#[tauri::command]
+-pub fn clear_logs() -> Result<String, String> {
+-    std::fs::write("system.log", "")
+-        .map_err(|e| e.to_string())?;
+-    Ok("Logs Cleared".into())
+-}
+-#[tauri::command]
+-pub fn restart_agents() -> Result<String, String> {
+-    Command::new("taskkill")
+-        .args(["/IM", "agent.exe", "/F"])
+-        .output()
+-        .ok();
+-    Ok("Agents Restarted".into())
+-}
+-#[tauri::command]
+-pub fn system_scan() -> serde_json::Value {
+-    let mut sys = System::new_all();
+-    sys.refresh_all();
+-    serde_json::json!({
+-        "cpu_usage": sys.global_cpu_info().cpu_usage(),
+-        "used_memory": sys.used_memory() / 1024,
+-        "total_memory": sys.total_memory() / 1024
+-    })
+-}
+-#[tauri::command]
+-pub fn get_uptime() -> String {
+-    let mut sys = System::new_all();
+-    sys.refresh_all();
+-    let uptime = System::uptime();
+-    let days = uptime / 86400;
+-    let hours = (uptime % 86400) / 3600;
+-    let mins = (uptime % 3600) / 60;
+-    format!("{}d {}h {}m", days, hours, mins)
+-}
+-#[tauri::command]
+-pub fn take_screenshot() -> Result<String, String> {
+-    use screenshots::Screen;
+-    let screens = Screen::all().unwrap();
+-    let image = screens[0].capture().unwrap();
+-    image.save("screenshot.png").unwrap();
+-    Ok("Screenshot Saved".into())
+-}
+-#[tauri::command]
+-pub fn get_dashboard_status() -> serde_json::Value {
+-    use sysinfo::System;
+-    let mut sys = System::new_all();
+-    sys.refresh_all();
+-    serde_json::json!({
+-        "connected": true,
+-        "agents": 4,
+-        "cpu": format!(
+-            "{:.0}%",
+-            sys.global_cpu_info().cpu_usage()
+-        ),
+-        "memory": format!(
+-            "{:.0}%",
+-            (sys.used_memory() as f32
+-            / sys.total_memory() as f32) * 100.0
+-        ),
+-        "network_up": "96 KB/s",
+-        "network_down": "32 KB/s"
+-    })
+-
+-pub fn open_logs_folder(app: tauri::AppHandle) -> Result<(), String> {
+-    let log_dir = app
+-        .path()
+-        .app_log_dir()
+-        .map_err(|e| e.to_string())?;
+-
+-    if !log_dir.exists() {
+-        std::fs::create_dir_all(&log_dir).map_err(|e| e.to_string())?;
+-    }
+-
+-    opener::open(&log_dir).map_err(|e| e.to_string())?;
+-    Ok(())
+-}
+-
+-#[tauri::command]
+-pub async fn apply_git_conflict_resolution(
+-    _window: tauri::Window,
+-    path: String,
+-    full_block: String,
+-    resolved_code: String,
+-) -> Result<serde_json::Value, String> {
+-    let request = serde_json::json!({
+-        "jsonrpc": "2.0",
+-        "method": "apply_git_resolution",
+-        "params": {
+-            "path": path,
+-            "full_block": full_block,
+-            "resolved_code": resolved_code
+-        },
+-        "id": 1
+-    });
+-
+-    let url = "ws://127.0.0.1:8785";
+-    use tokio_tungstenite::connect_async;
+-    use futures_util::{SinkExt, StreamExt};
+-
+-    let (mut ws, _) = connect_async(url).await.map_err(|e| e.to_string())?;
+-    let msg = serde_json::to_string(&request).map_err(|e| e.to_string())?;
+-    ws.send(tokio_tungstenite::tungstenite::Message::Text(msg)).await.map_err(|e| e.to_string())?;
+-
+-    if let Some(Ok(response)) = ws.next().await {
+-        let text = response.to_text().map_err(|e| e.to_string())?;
+-        let parsed: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+-        if let Some(result) = parsed.get("result") {
+-            return Ok(result.clone());
+-        }
+-        if let Some(error) = parsed.get("error") {
+-            return Err(error.get("message").and_then(|m| m.as_str()).unwrap_or("Daemon error").to_string());
+-        }
+-        return Ok(parsed);
+-    }
+-    Err("Failed to receive response from daemon".to_string())
+-}
+-
+-// 5. Get the currently active global shortcut
+-#[tauri::command]
+-pub fn get_hotkey(app: AppHandle) -> String {
+-    crate::hotkey::load_saved_shortcut(&app)
+-}
+-
+-// 6. Update the global shortcut from the frontend settings panel
+-#[tauri::command]
+-pub fn set_hotkey(app: AppHandle, shortcut: String) -> Result<(), String> {
+-    crate::hotkey::update_shortcut(&app, &shortcut)
+-}
+\ No newline at end of file
++use serde::{Deserialize, Serialize};
++use tauri::{AppHandle, Manager, Emitter};
++use sysinfo::System;
++use std::process::Command;
++#[derive(Serialize, Deserialize, Clone)]
++pub struct DaemonStatus {
++    pub connected: bool,
++    pub version: String,
++}
++
++// 1. Command to show/hide main application window
++#[tauri::command]
++pub async fn toggle_window(app: AppHandle) -> Result<(), String> {
++    let window = app
++        .get_webview_window("main")
++        .ok_or("Main window not found")?;
++
++    if window.is_visible().unwrap_or(false) {
++        window.hide().map_err(|e| e.to_string())?;
++    } else {
++        window.show().map_err(|e| e.to_string())?;
++        window.set_focus().map_err(|e| e.to_string())?;
++    }
++    Ok(())
++}
++
++// 2. Command to check daemon connection and ping status
++#[tauri::command]
++pub async fn get_daemon_status(window: tauri::Window) -> Result<DaemonStatus, String> {
++    // Pass window down to the ping checker
++    let status = match try_ping_daemon(window).await {
++        Ok(version) => DaemonStatus {
++            connected: true,
++            version,
++        },
++        Err(_) => DaemonStatus {
++            connected: false,
++            version: String::new(),
++        },
++    };
++    Ok(status)
++}
++
++// 3. Command triggered by UI input prompts
++#[tauri::command]
++pub async fn send_to_daemon(window: tauri::Window, method: String, params: serde_json::Value) -> Result<(), String> {
++    let request = serde_json::json!({
++        "jsonrpc": "2.0",
++        "method": method,
++        "params": params,
++        "id": 1
++    });
++
++    // Pass window directly to send streaming chunks
++    send_rpc(window, request).await
++}
++
++// 4. Command to confirm user specific milestones or plans
++#[tauri::command]
++pub async fn confirm_action(window: tauri::Window, plan_id: String, confirmed: bool) -> Result<(), String> {
++    let request = serde_json::json!({
++        "jsonrpc": "2.0",
++        "method": "confirm",
++        "params": {
++            "plan_id": plan_id,
++            "confirmed": confirmed
++        },
++        "id": 1
++    });
++
++    send_rpc(window, request).await
++}
++
++// Internal worker to parse handshake ping data
++async fn try_ping_daemon(_window: tauri::Window) -> Result<String, String> {
++    let request = serde_json::json!({
++        "jsonrpc": "2.0",
++        "method": "ping",
++        "params": {},
++        "id": 1
++    });
++
++    // Temporary mock response parsing since ping won't stream chunks
++    let url = "ws://127.0.0.1:8785";
++    use tokio_tungstenite::connect_async;
++    use futures_util::{SinkExt, StreamExt};
++
++    let (mut ws, _) = connect_async(url).await.map_err(|e| e.to_string())?;
++    let msg = serde_json::to_string(&request).map_err(|e| e.to_string())?;
++    ws.send(tokio_tungstenite::tungstenite::Message::Text(msg)).await.map_err(|e| e.to_string())?;
++
++    if let Some(Ok(response)) = ws.next().await {
++        let text = response.to_text().map_err(|e| e.to_string())?;
++        let parsed: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
++        let version = parsed
++            .get("result")
++            .and_then(|r| r.get("version"))
++            .and_then(|v| v.as_str())
++            .unwrap_or("unknown")
++            .to_string();
++        return Ok(version);
++    }
++    Err("Ping failed".to_string())
++}
++
++// Main streaming loop broadcasting raw frames back to Svelte context
++async fn send_rpc(window: tauri::Window, request: serde_json::Value) -> Result<(), String> {
++    use tokio_tungstenite::connect_async;
++    use futures_util::{SinkExt, StreamExt};
++
++    let url = "ws://127.0.0.1:8785";
++    let (mut ws, _) = connect_async(url)
++        .await
++        .map_err(|e| format!("Conn failed: {}", e))?;
++
++    let msg = serde_json::to_string(&request).map_err(|e| e.to_string())?;
++    ws.send(tokio_tungstenite::tungstenite::Message::Text(msg))
++        .await
++        .map_err(|e| format!("Send failed: {}", e))?;
++
++    // Actively loop over streaming messages instead of breaking instantly
++    while let Some(Ok(response)) = ws.next().await {
++        let text = response.to_text().map_err(|e| e.to_string())?;
++        let parsed: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
++        
++        window.emit("llm-chunk", &parsed).map_err(|e| e.to_string())?;
++    }
++
++    window.emit("llm-complete", "DONE").map_err(|e| e.to_string())?;
++    Ok(())
++}
++#[tauri::command]
++
++pub fn open_terminal() -> Result<String, String> {
++    Command::new("cmd")
++        .args([
++            "/C",
++            "start cmd /K echo Heliox OS Terminal Ready"
++        ])
++        .spawn()
++        .map_err(|e| e.to_string())?;
++    Ok("Terminal Opened".into())
++}
++#[tauri::command]
++pub fn clear_logs() -> Result<String, String> {
++    std::fs::write("system.log", "")
++        .map_err(|e| e.to_string())?;
++    Ok("Logs Cleared".into())
++}
++#[tauri::command]
++pub fn restart_agents() -> Result<String, String> {
++    Command::new("taskkill")
++        .args(["/IM", "agent.exe", "/F"])
++        .output()
++        .ok();
++    Ok("Agents Restarted".into())
++}
++#[tauri::command]
++pub fn system_scan() -> serde_json::Value {
++    let mut sys = System::new_all();
++    sys.refresh_all();
++    serde_json::json!({
++        "cpu_usage": sys.global_cpu_info().cpu_usage(),
++        "used_memory": sys.used_memory() / 1024,
++        "total_memory": sys.total_memory() / 1024
++    })
++}
++#[tauri::command]
++pub fn get_uptime() -> String {
++    let mut sys = System::new_all();
++    sys.refresh_all();
++    let uptime = System::uptime();
++    let days = uptime / 86400;
++    let hours = (uptime % 86400) / 3600;
++    let mins = (uptime % 3600) / 60;
++    format!("{}d {}h {}m", days, hours, mins)
++}
++#[tauri::command]
++pub fn take_screenshot() -> Result<String, String> {
++    use screenshots::Screen;
++    let screens = Screen::all().unwrap();
++    let image = screens[0].capture().unwrap();
++    image.save("screenshot.png").unwrap();
++    Ok("Screenshot Saved".into())
++}
++#[tauri::command]
++pub fn get_dashboard_status() -> serde_json::Value {
++    use sysinfo::System;
++    let mut sys = System::new_all();
++    sys.refresh_all();
++    serde_json::json!({
++        "connected": true,
++        "agents": 4,
++        "cpu": format!(
++            "{:.0}%",
++            sys.global_cpu_info().cpu_usage()
++        ),
++        "memory": format!(
++            "{:.0}%",
++            (sys.used_memory() as f32
++            / sys.total_memory() as f32) * 100.0
++        ),
++        "network_up": "96 KB/s",
++        "network_down": "32 KB/s"
++    })
++}
++
++#[tauri::command]
++pub fn open_logs_folder(app: tauri::AppHandle) -> Result<(), String> {
++    let log_dir = app
++        .path()
++        .app_log_dir()
++        .map_err(|e| e.to_string())?;
++
++    if !log_dir.exists() {
++        std::fs::create_dir_all(&log_dir).map_err(|e| e.to_string())?;
++    }
++
++    opener::open(&log_dir).map_err(|e| e.to_string())?;
++    Ok(())
++}
++
++#[tauri::command]
++pub async fn apply_git_conflict_resolution(
++    _window: tauri::Window,
++    path: String,
++    full_block: String,
++    resolved_code: String,
++) -> Result<serde_json::Value, String> {
++    let request = serde_json::json!({
++        "jsonrpc": "2.0",
++        "method": "apply_git_resolution",
++        "params": {
++            "path": path,
++            "full_block": full_block,
++            "resolved_code": resolved_code
++        },
++        "id": 1
++    });
++
++    let url = "ws://127.0.0.1:8785";
++    use tokio_tungstenite::connect_async;
++    use futures_util::{SinkExt, StreamExt};
++
++    let (mut ws, _) = connect_async(url).await.map_err(|e| e.to_string())?;
++    let msg = serde_json::to_string(&request).map_err(|e| e.to_string())?;
++    ws.send(tokio_tungstenite::tungstenite::Message::Text(msg)).await.map_err(|e| e.to_string())?;
++
++    if let Some(Ok(response)) = ws.next().await {
++        let text = response.to_text().map_err(|e| e.to_string())?;
++        let parsed: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
++        if let Some(result) = parsed.get("result") {
++            return Ok(result.clone());
++        }
++        if let Some(error) = parsed.get("error") {
++            return Err(error.get("message").and_then(|m| m.as_str()).unwrap_or("Daemon error").to_string());
++        }
++        return Ok(parsed);
++    }
++    Err("Failed to receive response from daemon".to_string())
++}
++
++// 5. Get the currently active global shortcut
++#[tauri::command]
++pub fn get_hotkey(app: AppHandle) -> String {
++    crate::hotkey::load_saved_shortcut(&app)
++}
++
++// 6. Update the global shortcut from the frontend settings panel
++#[tauri::command]
++pub fn set_hotkey(app: AppHandle, shortcut: String) -> Result<(), String> {
++    crate::hotkey::update_shortcut(&app, &shortcut)
++}
++
++// 7. Extract text from binary files (e.g. PDF, DOCX) for UI context injection
++//
++// SECURITY: This command is gated by the AllowedPaths managed state.
++// Only files explicitly selected by the user (drag-and-drop) are readable.
++// Paths are canonicalized to defeat traversal attacks.
++#[tauri::command]
++pub async fn extract_file_text(app: AppHandle, path: String) -> Result<String, String> {
++    // 1. Canonicalize ΓÇö resolves "..", symlinks, etc.
++    let canonical = std::fs::canonicalize(&path)
++        .map_err(|e| format!("Invalid path: {}", e))?;
++
++    // 2. Check the user-consent allowlist
++    let allowed = app.state::<crate::file_access::AllowedPaths>();
++    if !allowed.contains(&canonical) {
++        return Err("Access denied: file was not selected by user".into());
++    }
++
++    // 3. Enforce a 50 MB size cap to prevent memory exhaustion
++    const MAX_FILE_BYTES: u64 = 50 * 1024 * 1024;
++    let metadata = std::fs::metadata(&canonical)
++        .map_err(|e| format!("Cannot stat file: {}", e))?;
++    if metadata.len() > MAX_FILE_BYTES {
++        return Err("File too large (>50 MB)".into());
++    }
++
++    // 4. Offload blocking I/O to a background thread
++    let path_str = canonical.to_string_lossy().to_string();
++    tokio::task::spawn_blocking(move || extract_text_from_path(&path_str))
++        .await
++        .map_err(|e| format!("Task join error: {}", e))?
++}
++
++/// Internal helper ΓÇö performs the actual (blocking) text extraction.
++fn extract_text_from_path(path: &str) -> Result<String, String> {
++    let extension = std::path::Path::new(path)
++        .extension()
++        .and_then(|s| s.to_str())
++        .unwrap_or("")
++        .to_lowercase();
++
++    if extension == "pdf" {
++        match pdf_extract::extract_text(path) {
++            Ok(text) => Ok(text),
++            Err(e) => Err(format!("Failed to parse PDF: {}", e)),
++        }
++    } else if extension == "docx" {
++        let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
++        let mut archive = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
++        
++        let mut document_xml = archive.by_name("word/document.xml").map_err(|e| e.to_string())?;
++        let mut xml_content = String::new();
++        std::io::Read::read_to_string(&mut document_xml, &mut xml_content).map_err(|e| e.to_string())?;
++        
++        let mut text = String::new();
++        let mut in_tag = false;
++        let mut tag_name = String::new();
++        for c in xml_content.chars() {
++            if c == '<' {
++                in_tag = true;
++                tag_name.clear();
++            } else if c == '>' {
++                in_tag = false;
++                if tag_name.starts_with("w:p") {
++                    text.push('\n');
++                }
++            } else if in_tag {
++                tag_name.push(c);
++            } else {
++                text.push(c);
++            }
++        }
++        Ok(text)
++    } else {
++        match std::fs::read_to_string(path) {
++            Ok(text) => Ok(text),
++            Err(e) => Err(format!("Failed to read file: {}", e)),
++        }
++    }
++}
+\ No newline at end of file
+diff --git a/tauri-app/src-tauri/src/file_access.rs b/tauri-app/src-tauri/src/file_access.rs
+new file mode 100644
+index 00000000..e1b7bf2e
+--- /dev/null
++++ b/tauri-app/src-tauri/src/file_access.rs
+@@ -0,0 +1,67 @@
++use std::collections::HashSet;
++use std::path::PathBuf;
++use std::sync::Mutex;
++
++/// Thread-safe allowlist of file paths the user has explicitly selected
++/// (e.g. via drag-and-drop). Only files in this set may be read by
++/// `extract_file_text`, preventing Local File Disclosure attacks from
++/// a compromised webview.
++pub struct AllowedPaths(Mutex<HashSet<PathBuf>>);
++
++impl AllowedPaths {
++    pub fn new() -> Self {
++        Self(Mutex::new(HashSet::new()))
++    }
++
++    /// Check whether a canonicalized path is in the allowlist.
++    pub fn contains(&self, path: &PathBuf) -> bool {
++        self.0
++            .lock()
++            .map(|set| set.contains(path))
++            .unwrap_or(false)
++    }
++
++    /// Add a canonicalized path to the allowlist.
++    pub fn insert(&self, path: PathBuf) {
++        if let Ok(mut set) = self.0.lock() {
++            set.insert(path);
++        }
++    }
++
++    /// Remove a path from the allowlist.
++    pub fn remove(&self, path: &PathBuf) {
++        if let Ok(mut set) = self.0.lock() {
++            set.remove(path);
++        }
++    }
++}
++
++// ΓöÇΓöÇ Tauri commands ΓöÇΓöÇ
++
++/// Register a user-selected file path so `extract_file_text` may read it.
++/// Called from the frontend immediately after a drag-and-drop event provides
++/// the path, *before* requesting text extraction.
++#[tauri::command]
++pub fn register_allowed_path(app: tauri::AppHandle, path: String) -> Result<(), String> {
++    use tauri::Manager;
++
++    let canonical = std::fs::canonicalize(&path)
++        .map_err(|e| format!("Cannot resolve path: {}", e))?;
++
++    let state = app.state::<AllowedPaths>();
++    state.insert(canonical);
++    Ok(())
++}
++
++/// Remove a file path from the allowlist (e.g. when the user removes an
++/// attachment chip).
++#[tauri::command]
++pub fn revoke_allowed_path(app: tauri::AppHandle, path: String) -> Result<(), String> {
++    use tauri::Manager;
++
++    if let Ok(canonical) = std::fs::canonicalize(&path) {
++        let state = app.state::<AllowedPaths>();
++        state.remove(&canonical);
++    }
++    Ok(())
++}
+diff --git a/tauri-app/src-tauri/src/main.rs b/tauri-app/src-tauri/src/main.rs
+index b93093b9..9caa5b56 100644
+--- a/tauri-app/src-tauri/src/main.rs
++++ b/tauri-app/src-tauri/src/main.rs
+@@ -2,6 +2,7 @@
+ // Tauri v2 application entry point
+ #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+ mod commands;
++mod file_access;
+ mod hotkey;
+ mod tray;
+ use std::net::TcpStream;
+@@ -14,6 +15,10 @@ use sysinfo::System;
+ use sysinfo::Disks;
+ use sysinfo::Networks;
+ use battery::Manager as BatteryManager;
++
++const DAEMON_HOST: &str = "127.0.0.1";
++const DAEMON_PORT: u16 = 8785;
++
+ /// Global handle to the Python daemon process so we can kill it on exit.
+ struct DaemonProcess(Mutex<Option<Child>>);
+ fn get_app_data_dir() -> std::path::PathBuf {
+@@ -656,6 +661,7 @@ fn main() {
+         .plugin(tauri_plugin_shell::init())
+         .plugin(tauri_plugin_notification::init())
+         .manage(DaemonProcess(Mutex::new(daemon_child)))
++        .manage(file_access::AllowedPaths::new())
+         .setup(|app| {
+             let window = app.get_webview_window("main").unwrap();
+             
+@@ -693,6 +699,9 @@ fn main() {
+             commands::apply_git_conflict_resolution,
+             commands::get_hotkey,
+             commands::set_hotkey,
++            commands::extract_file_text,
++            file_access::register_allowed_path,
++            file_access::revoke_allowed_path,
+         ])
+         .build(tauri::generate_context!())
+         .expect("error while building Heliox OS")
+diff --git a/tauri-app/ui/package-lock.json b/tauri-app/ui/package-lock.json
+index b381029f..5c4a7676 100644
+--- a/tauri-app/ui/package-lock.json
++++ b/tauri-app/ui/package-lock.json
+@@ -956,7 +956,6 @@
+       "integrity": "sha512-Y1Cs7hhTc+a5E9Va/xwKlAJoariQyHY+5zBgCZg4PFWNYQ1nMN9sjK1zhw1gK69DuqVP++sht/1GZg1aRwmAXQ==",
+       "dev": true,
+       "license": "MIT",
+-      "peer": true,
+       "dependencies": {
+         "@sveltejs/vite-plugin-svelte-inspector": "^4.0.1",
+         "debug": "^4.4.1",
+@@ -1053,7 +1052,6 @@
+       "resolved": "https://registry.npmjs.org/acorn/-/acorn-8.16.0.tgz",
+       "integrity": "sha512-UVJyE9MttOsBQIDKw1skb9nAwQuR5wuGD3+82K6JgJlm/Y+KI92oNsMNGZCYdDsVtRHSak0pcV5Dno5+4jh9sw==",
+       "license": "MIT",
+-      "peer": true,
+       "bin": {
+         "acorn": "bin/acorn"
+       },
+@@ -1084,7 +1082,6 @@
+       "resolved": "https://registry.npmjs.org/chart.js/-/chart.js-4.5.1.tgz",
+       "integrity": "sha512-GIjfiT9dbmHRiYi6Nl2yFCq7kkwdkp1W/lp2J99rX0yo9tgJGn3lKQATztIjb5tVtevcBtIdICNWqlq5+E8/Pw==",
+       "license": "MIT",
+-      "peer": true,
+       "dependencies": {
+         "@kurkle/color": "^0.3.0"
+       },
+@@ -1560,7 +1557,6 @@
+       "integrity": "sha512-QP88BAKvMam/3NxH6vj2o21R6MjxZUAd6nlwAS/pnGvN9IVLocLHxGYIzFhg6fUQ+5th6P4dv4eW9jX3DSIj7A==",
+       "dev": true,
+       "license": "MIT",
+-      "peer": true,
+       "engines": {
+         "node": ">=12"
+       },
+@@ -1730,7 +1726,6 @@
+       "resolved": "https://registry.npmjs.org/svelte/-/svelte-5.55.7.tgz",
+       "integrity": "sha512-ymI5ykLPwIHW839E053FQbI1G+jnRFJEw3Kv5Y4njixVWywQBx+NUFpkkKyk5LIb36Fg9DVXSYpqiGekLD0hyw==",
+       "license": "MIT",
+-      "peer": true,
+       "dependencies": {
+         "@jridgewell/remapping": "^2.3.4",
+         "@jridgewell/sourcemap-codec": "^1.5.0",
+@@ -2275,7 +2270,6 @@
+       "integrity": "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==",
+       "dev": true,
+       "license": "Apache-2.0",
+-      "peer": true,
+       "bin": {
+         "tsc": "bin/tsc",
+         "tsserver": "bin/tsserver"
+@@ -2290,7 +2284,6 @@
+       "integrity": "sha512-2N/55r4JDJ4gdrCvGgINMy+HH3iRpNIz8K6SFwVsA+JbQScLiC+clmAxBgwiSPgcG9U15QmvqCGWzMbqda5zGQ==",
+       "dev": true,
+       "license": "MIT",
+-      "peer": true,
+       "dependencies": {
+         "esbuild": "^0.25.0",
+         "fdir": "^6.4.4",
+diff --git a/tauri-app/ui/src/lib/components/CommandInput.svelte b/tauri-app/ui/src/lib/components/CommandInput.svelte
+index 45ff370a..838bf84a 100644
+--- a/tauri-app/ui/src/lib/components/CommandInput.svelte
++++ b/tauri-app/ui/src/lib/components/CommandInput.svelte
+@@ -1,5 +1,8 @@
+ <script lang="ts">
+   import { session } from "../stores/session";
++  import { invoke } from "@tauri-apps/api/core";
++  import { getCurrentWebview } from "@tauri-apps/api/webview";
++  import { call } from "../api/daemon";
+ 
+   let input = $state("");
+   const MAX_CHARS = 20000;
+@@ -23,17 +26,51 @@
+   let attachments = $state<Attachment[]>([]);
+   let isDragging = $state(false);
+ 
+-  const MAX_FILE_SIZE = 500 * 1024;
+ 
+-  const ALLOWED_TEXT_TYPES = ["text/plain", "text/markdown", "application/json", "application/xml"];
++  $effect(() => {
++    let unlisten: () => void;
++    
++    // Attempt to register Tauri native drag/drop listener (WebView API)
++    async function setupTauri() {
++      try {
++        unlisten = await getCurrentWebview().onDragDropEvent(async (event) => {
++          const payload = event.payload;
++          
++          if (payload.type === "enter" || payload.type === "over") {
++            isDragging = true;
++          } else if (payload.type === "leave") {
++            isDragging = false;
++          } else if (payload.type === "drop") {
++            isDragging = false;
++            const paths = payload.paths || [];
++            
++            for (const path of paths) {
++              try {
++                // Register path in the allowlist before reading
++                await invoke("register_allowed_path", { path });
++                // Extract filename
++                const filename = path.split('\\').pop()?.split('/').pop() || "unknown";
++                const content = await invoke("extract_file_text", { path });
++                
++                attachments = [...attachments, { name: filename, type: "file", content: content as string }];
++              } catch (err) {
++                console.warn(`Failed to extract text from ${path}:`, err);
++              }
++            }
++          }
++        });
++      } catch (e) {
++        // Not running in Tauri (e.g. browser), ignore gracefully
++      }
++    }
++    
++    setupTauri();
++
++    return () => {
++      if (unlisten) unlisten();
++    };
++  });
+ 
+-  function isTextLikeFile(file: File): boolean {
+-    return (
+-      file.type.startsWith("text/") ||
+-      ALLOWED_TEXT_TYPES.includes(file.type) ||
+-      /\.(ts|js|jsx|tsx|py|java|cpp|c|h|hpp|cs|go|rs|md|txt|json|xml|yaml|yml)$/i.test(file.name)
+-    );
+-  }
+ 
+   function handleSubmit(e: Event) {
+     e.preventDefault();
+@@ -52,51 +89,6 @@
+       handleSubmit(e);
+     }
+   }
+-  function handleDragOver(e: DragEvent) {
+-    e.preventDefault();
+-    isDragging = true;
+-  }
+-
+-  function handleDragLeave(e: DragEvent) {
+-    e.preventDefault();
+-    isDragging = false;
+-  }
+-
+-  async function handleDrop(e: DragEvent) {
+-    e.preventDefault();
+-    isDragging = false;
+-
+-    const droppedFiles = e.dataTransfer?.files;
+-
+-    if (!droppedFiles?.length) return;
+-
+-    for (const file of droppedFiles) {
+-      try {
+-        if (file.size > MAX_FILE_SIZE) {
+-          console.warn(`Skipping ${file.name}: file too large`);
+-          continue;
+-        }
+-
+-        if (!isTextLikeFile(file)) {
+-          console.warn(`Skipping ${file.name}: unsupported file type`);
+-          continue;
+-        }
+-
+-        const content = await file.text();
+-
+-        attachments = [
+-          ...attachments,
+-          {
+-            name: file.name,
+-            type: file.type,
+-            content,
+-          },
+-        ];
+-      } catch (err) {
+-        console.error("Failed to read file:", err);
+-      }
+-    }
+-  }
+ </script>
+ 
+ <form class="command-input" onsubmit={handleSubmit}>
+@@ -113,9 +105,6 @@
+   <div
+     class="input-wrapper"
+     class:dragging={isDragging}
+-    ondragover={handleDragOver}
+-    ondragleave={handleDragLeave}
+-    ondrop={handleDrop}
+   >
+     <span class="prompt">&gt;</span>
+ 

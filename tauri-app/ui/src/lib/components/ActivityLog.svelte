@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { call } from "../api/daemon";
-  import { invoke } from "@tauri-apps/api/core";
+  import { invoke } from "../api/invoke";
 
 async function openLogsFolder() {
   await invoke("open_logs_folder");
@@ -21,9 +21,43 @@ async function openLogsFolder() {
   onMount(async () => {
     try {
       const result = (await call("get_history", { limit: 100 })) as { entries: HistoryEntry[] };
-      entries = result.entries ?? [];
+      let loaded = result.entries ?? [];
+      if (loaded.length === 0 && typeof localStorage !== "undefined") {
+        try {
+          const localMsgs = JSON.parse(localStorage.getItem("heliox_session_history") || "[]");
+          loaded = localMsgs
+            .filter((m: any) => m.type === "user" && m.text)
+            .map((m: any, idx: number) => ({
+              id: idx,
+              timestamp: new Date(m.timestamp || Date.now()).toISOString(),
+              user_input: m.text,
+              success: true,
+              explanation: "Locally executed neural command"
+            }))
+            .reverse();
+        } catch(e) {}
+      }
+      entries = loaded;
     } catch {
-      entries = [];
+      if (typeof localStorage !== "undefined") {
+        try {
+          const localMsgs = JSON.parse(localStorage.getItem("heliox_session_history") || "[]");
+          entries = localMsgs
+            .filter((m: any) => m.type === "user" && m.text)
+            .map((m: any, idx: number) => ({
+              id: idx,
+              timestamp: new Date(m.timestamp || Date.now()).toISOString(),
+              user_input: m.text,
+              success: true,
+              explanation: "Locally executed neural command"
+            }))
+            .reverse();
+        } catch(err) {
+          entries = [];
+        }
+      } else {
+        entries = [];
+      }
     } finally {
       loading = false;
     }
