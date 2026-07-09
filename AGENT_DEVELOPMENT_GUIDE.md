@@ -10,7 +10,7 @@ Heliox OS uses a **dynamic agent registry** that automatically discovers and reg
 
 1. Subclass `BaseAgent`
 2. Decorate your class with `@auto_register`
-3. Place it in the `pilot/agents/` package
+3. Place it in the `daemon/pilot/agents/` package
 
 The registry handles the rest.
 
@@ -20,10 +20,10 @@ The registry handles the rest.
 
 | Component | Location | Purpose |
 |-----------|----------|---------|
-| `AgentRegistry` | `pilot/agents/registry.py` | Singleton registry that stores all agents |
-| `BaseAgent` | `pilot/agents/base_agent.py` | Abstract base class all agents must extend |
-| `auto_register` | `pilot/agents/registry.py` | Decorator that registers an agent on import |
-| `discover_agents()` | `pilot/agents/registry.py` | Scans the package and imports all agent modules |
+| `AgentRegistry` | `daemon/pilot/agents/registry.py` | Singleton registry that stores all agents |
+| `BaseAgent` | `daemon/pilot/agents/base_agent.py` | Abstract base class all agents must extend |
+| `auto_register` | `daemon/pilot/agents/registry.py` | Decorator that registers an agent on import |
+| `discover_agents()` | `daemon/pilot/agents/registry.py` | Scans the package and imports all agent modules |
 
 ---
 
@@ -172,7 +172,7 @@ Set your agent's permission tier by overriding `get_permission_tier()` in `BaseA
 
 ## 💡 Tips for Contributors
 
-- **One agent per file** — keep each agent in its own module inside `pilot/agents/`
+- **One agent per file** — keep each agent in its own module inside `daemon/pilot/agents/`
 - **Use `@auto_register`** — don't manually add agents to the registry
 - **Override `can_handle()`** — use a set of `ActionType` values for efficient lookup
 - **Log with the module logger** — use `logging.getLogger("pilot.agents.your_agent")`

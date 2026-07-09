@@ -676,6 +676,7 @@ class PilotServer:
             "background_tasks": self._handle_background_tasks,
             "background_start": self._handle_background_start,
             "background_stop": self._handle_background_stop,
+            "extract_file_text": self._handle_extract_file_text,
             "agent_routing": self._handle_agent_routing,
             "agent_stats": self._handle_agent_stats,
             "agent_capabilities": self._handle_agent_capabilities,
@@ -806,6 +807,26 @@ class PilotServer:
                     }
             except Exception as e:
                 logger.error("Attention scoring failed: %s", e)
+
+    async def _handle_extract_file_text(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """Extract text from a file (e.g. PDF) for UI context injection."""
+        path = params.get("path")
+        if not path:
+            return {"status": "error", "message": "No file path provided"}
+
+        import os
+
+        if not os.path.exists(path):
+            return {"status": "error", "message": f"File not found: {path}"}
+
+        try:
+            from pilot.system.file_intel import parse_file
+
+            text = await parse_file(path)
+            return {"status": "ok", "text": text}
+        except Exception as e:
+            logger.error("Error extracting text from %s: %s", path, e)
+            return {"status": "error", "message": str(e)}
 
         msg = _notification(method, params)
         for client in list(self._clients):

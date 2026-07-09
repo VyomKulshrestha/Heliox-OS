@@ -302,6 +302,7 @@ READ_ONLY_ACTIONS = {
     ActionType.FILE_PARSE,
     ActionType.FILE_SEARCH_CONTENT,
     ActionType.API_SCRAPE,
+    ActionType.WORKSPACE_INDEX,
     ActionType.WORKSPACE_SEARCH,
     # Email agent read-only
     ActionType.EMAIL_FETCH,

@@ -54,6 +54,7 @@ class AgentRole(StrEnum):
     CALENDAR = "calendar_agent"
     FORENSICS = "forensics_agent"
     ORCHESTRATOR = "orchestrator"
+    SEMANTIC_SEARCH = "semantic_search_agent"
     GENERAL = "general"
 
 

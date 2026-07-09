@@ -1,3 +1,0 @@
-datetime
-aiosqlite
-pilot.config

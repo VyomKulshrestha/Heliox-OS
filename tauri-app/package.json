@@ -1,0 +1,13 @@
+{
+  "name": "heliox-os-tauri",
+  "private": true,
+  "version": "0.7.1",
+  "scripts": {
+    "dev": "npm --prefix ./ui run dev",
+    "build": "npm --prefix ./ui run build",
+    "tauri": "npx @tauri-apps/cli"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.0"
+  }
+}

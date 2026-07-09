@@ -26,6 +26,7 @@ from typing import Any
 
 from pilot.cognitive.ambient_intelligence import AmbientIntelligenceEngine, ProactiveSuggestion
 from pilot.cognitive.biometric_loop import BiometricLearningLoop
+from pilot.cognitive.clipboard_manager import clipboard_buffer
 from pilot.cognitive.cognitive_handoff import CognitiveHandoffEngine
 from pilot.cognitive.cognitive_offload import CognitiveOffloader
 from pilot.cognitive.evolving_persona import EvolvingPersonaEngine
@@ -211,6 +212,18 @@ class CognitiveHub:
             state.is_overloaded = self._offloader._state.is_overloaded
             state.active_anchors = len(self._offloader.get_relevant_anchors())
 
+        if state.is_overloaded or state.load > 0.80:
+            try:
+                import pyperclip
+
+                current_clip = pyperclip.paste()
+                if current_clip:
+                    clipboard_buffer.push_text(current_clip)
+                    # Sync active anchors metric to reflect the buffered items
+                    state.active_anchors = len(clipboard_buffer.get_history())
+            except Exception as clipboard_err:
+                logger.warning(f"Could not read system clipboard buffer: {clipboard_err}")
+
         # 6. Update Persona
         if self._persona:
             self._persona.record_interaction(
@@ -302,10 +315,21 @@ class CognitiveHub:
     # ── Context Offloading ──
 
     def get_offload_surface(self) -> dict[str, Any]:
-        """Get cognitive offload surface."""
+        """Get cognitive offload surface augmented with high-stress clipboard anchors."""
+        surface = {}
+
         if self._offloader:
-            return self._offloader.get_offload_surface()
-        return {}
+            surface = self._offloader.get_offload_surface()
+
+        if not isinstance(surface, dict):
+            surface = {}
+
+        if "anchors" not in surface or not surface["anchors"]:
+            surface["anchors"] = clipboard_buffer.get_history()
+        else:
+            surface["anchors"] = list(surface["anchors"]) + clipboard_buffer.get_history()
+
+        return surface
 
     def create_anchor(
         self,

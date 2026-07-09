@@ -165,6 +165,13 @@ class CalendarConfig:
 
 
 @dataclass
+class SemanticSearchConfig:
+    enabled: bool = False
+    folders: list[str] = field(default_factory=list)  # List of directories to index
+    index_dir: str = ""  # Custom directory to store index (defaults to DATA_DIR/semantic_index)
+
+
+@dataclass
 class RedisConfig:
     enabled: bool = False
     host: str = "127.0.0.1"
@@ -228,6 +235,7 @@ class PilotConfig:
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     rss: RSSConfig = field(default_factory=RSSConfig)
     calendar: CalendarConfig = field(default_factory=CalendarConfig)
+    semantic_search: SemanticSearchConfig = field(default_factory=SemanticSearchConfig)
     network: NetworkConfig = field(default_factory=NetworkConfig)
     ssh: SshConfig = field(default_factory=SshConfig)
     proxy: ProxyConfig = field(default_factory=ProxyConfig)
@@ -369,6 +377,11 @@ def _validate_config_types(raw: dict) -> None:
             "connect_timeout_seconds": int,
             "allowed_hosts": list,
         },
+        "semantic_search": {
+            "enabled": bool,
+            "folders": list,
+            "index_dir": str,
+        },
         "proxy": {
             "http": str,
             "https": str,
@@ -501,6 +514,11 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
         for k, v in raw["redis"].items():
             if hasattr(config.redis, k):
                 setattr(config.redis, k, v)
+
+    if "semantic_search" in raw:
+        for k, v in raw["semantic_search"].items():
+            if hasattr(config.semantic_search, k):
+                setattr(config.semantic_search, k, v)
 
     if "proxy" in raw and isinstance(raw["proxy"], dict):
         for k, v in raw["proxy"].items():
