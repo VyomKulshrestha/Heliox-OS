@@ -984,10 +984,71 @@ class Executor:
         return await process_list(filter_name=params.name)
 
     async def _exec_process_kill(self, action: Action) -> str:
+        import os
+        import shutil
+        import time
+
         from pilot.system.processes import process_kill
 
         params: ProcessParams = action.parameters  # type: ignore[assignment]
-        return await process_kill(pid=params.pid, name=params.name, sig=params.signal)
+
+        exe_path_to_quarantine = None
+        quarantine_log = ""
+
+        # 1. Trace the path BEFORE killing
+        if params.pid is not None:
+            try:
+                import psutil
+
+                proc = psutil.Process(params.pid)
+                exe_path_to_quarantine = proc.exe()
+            except (ImportError, Exception) as e:
+                logger.warning(f"Failed to trace executable for PID {params.pid} before kill: {e}")
+
+        # 2. Execute standard kill
+        result = await process_kill(pid=params.pid, name=params.name, sig=params.signal)
+
+        # 3. Wait for process to fully terminate to release file locks
+        if params.pid is not None:
+            try:
+                import psutil
+
+                try:
+                    # wait up to 3 seconds for it to exit
+                    psutil.Process(params.pid).wait(timeout=3.0)
+                except psutil.NoSuchProcess:
+                    pass
+                except Exception:
+                    # If timeout expired or access denied
+                    import asyncio
+
+                    await asyncio.sleep(0.5)
+            except Exception:
+                # If psutil is missing
+                import asyncio
+
+                await asyncio.sleep(0.5)
+
+        # 4. Quarantine and Defang AFTER killing (avoids file locks on Windows)
+        if exe_path_to_quarantine and os.path.exists(exe_path_to_quarantine):
+            try:
+                quarantine_dir = os.path.expanduser("~/.heliox/quarantine")
+                os.makedirs(quarantine_dir, exist_ok=True)
+
+                base_name = os.path.basename(exe_path_to_quarantine)
+                timestamp = int(time.time())
+                quarantine_filename = f"{base_name}_{timestamp}"
+                quarantine_path = os.path.join(quarantine_dir, quarantine_filename)
+
+                shutil.move(exe_path_to_quarantine, quarantine_path)
+                os.chmod(quarantine_path, 0o600)
+
+                quarantine_log = f"\n[Quarantine Vault] Traced PID {params.pid} to {exe_path_to_quarantine}. Moved to {quarantine_path} and stripped permissions."
+                logger.info(f"Quarantined malware: {exe_path_to_quarantine} -> {quarantine_path}")
+            except Exception as e:
+                logger.warning(f"Failed to quarantine executable {exe_path_to_quarantine}: {e}")
+
+        return result + quarantine_log
 
     async def _exec_process_info(self, action: Action) -> str:
         from pilot.system.processes import process_info
