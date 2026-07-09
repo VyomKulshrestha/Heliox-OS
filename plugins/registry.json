@@ -5,7 +5,7 @@
       "description": "Control smart home devices via Home Assistant API",
       "version": "1.0.0",
       "author": "VyomKulshrestha",
-      "url": "https://github.com/VyomKulshrestha/Heliox-OS/tree/main/plugins/homeassistant",
+      "url": "",
       "tools": [
         {
           "name": "ha_lights",
@@ -26,7 +26,7 @@
       "description": "Control Spotify playback and manage playlists",
       "version": "1.0.0",
       "author": "community",
-      "url": "https://github.com/VyomKulshrestha/Heliox-OS/tree/main/plugins/spotify",
+      "url": "",
       "tools": [
         {
           "name": "spotify_play",
@@ -50,10 +50,10 @@
     },
     {
       "name": "weather",
-      "description": "Get current weather and forecast for any location",
+      "description": "Get current weather and forecast for any location (live data from wttr.in)",
       "version": "1.0.0",
       "author": "community",
-      "url": "https://github.com/VyomKulshrestha/Heliox-OS/tree/main/plugins/weather",
+      "url": "",
       "tools": [
         {
           "name": "get_weather",

@@ -3,11 +3,13 @@
   import { _, locale } from 'svelte-i18n';
   import { session } from "../stores/session";
   import { call } from "../api/daemon";
-  import { invoke } from "@tauri-apps/api/core";
+  import { invoke } from "../api/invoke";
   import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
   let apiKeyInput = $state("");
   let apiKeySaved = $state(false);
   let apiKeySaving = $state(false);
+  let rootToast = $state("");
+  let rootToastType = $state<"success" | "warning">("success");
 
   $effect(() => {
     if ($locale) {
@@ -39,9 +41,27 @@
   }
 
   function toggleRoot() {
-  settings.updateSection("security", {
-    root_enabled: !$settings.security.root_enabled
-  });
+    const turningOn = !$settings.security.root_enabled;
+    if (turningOn) {
+      const confirmed = confirm(
+        "⚠️ ENABLE ROOT ACCESS?\n\n" +
+        "This unlocks Heliox's full power:\n" +
+        "• Admin/sudo shell commands\n" +
+        "• System service management\n" +
+        "• Protected file modifications\n" +
+        "• Registry & disk-level operations\n\n" +
+        "Actions requiring elevated privileges will no longer be blocked.\n" +
+        "Only enable this if you trust the AI agent with system-level access."
+      );
+      if (!confirmed) return;
+      rootToast = "🔓 Root access ENABLED — Heliox now has full system privileges";
+      rootToastType = "warning";
+    } else {
+      rootToast = "🔒 Root access DISABLED — elevated actions will be blocked";
+      rootToastType = "success";
+    }
+    settings.updateSection("security", { root_enabled: turningOn });
+    setTimeout(() => (rootToast = ""), 5000);
   }
  
   function toggleDryRun() {
@@ -122,6 +142,7 @@
 
   async function testNotification() {
     try {
+      // Try Tauri native notification first
       let granted = await isPermissionGranted();
       if (!granted) {
         const permission = await requestPermission();
@@ -132,11 +153,33 @@
           title: "Heliox OS",
           body: "Test notification — desktop notifications are working! 🚀",
         });
+        return;
+      }
+    } catch {
+      // Tauri plugin not available (running in browser) — fall through
+    }
+
+    // Fallback: browser Notification API
+    try {
+      if (!("Notification" in window)) {
+        alert("Heliox OS — Notifications are not supported in this browser.");
+        return;
+      }
+      let perm = Notification.permission;
+      if (perm === "default") {
+        perm = await Notification.requestPermission();
+      }
+      if (perm === "granted") {
+        new Notification("Heliox OS", {
+          body: "Test notification — desktop notifications are working! 🚀",
+          icon: "/favicon.png",
+        });
       } else {
-        console.warn("Notification permission was denied");
+        alert("Notification permission was denied. Enable it in your browser settings.");
       }
     } catch (err) {
-      console.error("Notification test failed:", err);
+      console.error("Browser notification failed:", err);
+      alert("Heliox OS — Test notification triggered! (popups blocked by browser)");
     }
   }
 </script>
@@ -203,6 +246,12 @@
   <section class="settings-group">
     <h3>{$_('settings.security')}</h3>
 
+    {#if rootToast}
+      <div class="root-toast" class:root-toast-warning={rootToastType === 'warning'} class:root-toast-success={rootToastType === 'success'}>
+        {rootToast}
+      </div>
+    {/if}
+
     <div class="setting-row">
       <div class="setting-info">
         <span class="setting-label">{$_('settings.root_access')}</span>
@@ -218,6 +267,16 @@
         <span class="toggle-knob"></span>
       </button>
     </div>
+
+    {#if $settings.security.root_enabled}
+      <div class="root-status-banner">
+        <span class="root-icon">⚡</span>
+        <div class="root-status-info">
+          <span class="root-status-title">Root Mode Active</span>
+          <span class="root-status-desc">Admin commands, service control, registry writes and protected file access are now unlocked.</span>
+        </div>
+      </div>
+    {/if}
 
     <div class="setting-row">
       <div class="setting-info">
@@ -746,5 +805,63 @@
     cursor: not-allowed;
     color: var(--text-secondary);
     background: var(--bg-tertiary);
+  }
+
+  /* Root Access Toast & Banner */
+  .root-toast {
+    padding: 10px 14px;
+    font-size: 12px;
+    font-weight: 600;
+    border-radius: 0;
+    animation: toastSlide 0.3s ease-out;
+  }
+
+  .root-toast-warning {
+    background: rgba(245, 158, 11, 0.12);
+    color: #f59e0b;
+    border-bottom: 1px solid rgba(245, 158, 11, 0.3);
+  }
+
+  .root-toast-success {
+    background: rgba(16, 185, 129, 0.12);
+    color: #10b981;
+    border-bottom: 1px solid rgba(16, 185, 129, 0.3);
+  }
+
+  @keyframes toastSlide {
+    from { opacity: 0; transform: translateY(-6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .root-status-banner {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    background: rgba(245, 158, 11, 0.08);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .root-icon {
+    font-size: 18px;
+    flex-shrink: 0;
+  }
+
+  .root-status-info {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+
+  .root-status-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: #f59e0b;
+  }
+
+  .root-status-desc {
+    font-size: 11px;
+    color: var(--text-muted);
+    line-height: 1.3;
   }
 </style>
