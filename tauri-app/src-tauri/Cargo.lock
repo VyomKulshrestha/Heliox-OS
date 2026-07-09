@@ -2878,14 +2878,13 @@ dependencies = [
 
 [[package]]
 name = "opener"
-version = "0.7.2"
+version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d0812e5e4df08da354c851a3376fead46db31c2214f849d3de356d774d057681"
+checksum = "a2fa337e0cf13357c13ef1dc108df1333eb192f75fc170bea03fcf1fd404c2ee"
 dependencies = [
  "bstr",
- "dbus",
  "normpath",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
