@@ -209,6 +209,7 @@ Heliox OS uses a **modular multi-agent architecture** where specialized agents c
 | 📊 **Monitor Agent** | Monitoring | CPU, RAM, disk, network monitoring with threshold alerts |
 | 📡 **Communication Agent** | Messaging | Email, Slack, Discord, webhooks, desktop notifications |
 | 📅 **Calendar Agent** | Scheduling | .ics parsing, CalDAV sync, event management |
+| 🔎 **Forensics Agent** | Security | Log parsing, incident reporting, threat containment, PID translation |
 
 **How it works:** The Planner generates an action plan → the Orchestrator analyzes each action type → routes to the correct specialist → agents execute in sequence → results merge for verification.
 
@@ -298,9 +299,6 @@ Auto-detects: winget, choco, brew, apt, dnf, pacman
 
 ### Windows Registry
 `registry_read` · `registry_write`
-
-### Calendar Operations
-`calendar_parse` · `calendar_sync` · `calendar_create_event` · `calendar_list_events` · `calendar_delete_event`
 
 ### Open / Launch / Notify
 `open_url` · `open_application` · `notify`
@@ -899,6 +897,17 @@ Ensure all frontend dependencies are installed successfully before starting the 
     cd daemon
     pip install -e ".[full]"
     ```
+
+## 📖 Developer Guides & Documentation
+
+To help newcomers and contributors navigate the Heliox-OS codebase, please refer to the following comprehensive documentation guides:
+
+- 🔍 **[Forensics Agent Runbook](docs/FORENSICS_RUNBOOK.md)** — Learn about the autonomous threat containment pipeline, the JSON schema for forensics logs, and the Tier 3/4 Security Gate.
+- ⚙️ **[Agent Development Guide](AGENT_DEVELOPMENT_GUIDE.md)** — Step-by-step instructions on designing and registering custom specialist agents.
+- 💬 **[IPC Message Formats](IPC_MESSAGE_FORMATS.md)** — Detailed specification of frontend-to-daemon WebSocket payloads and schemas.
+- 🎛️ **[Gesture Control Guide](GESTURES.md)** — Setup instructions and mapping for OpenCV static and motion gestures.
+- 🔒 **[Security Policy](SECURITY.md)** — Overview of permission tiers, encrypted keyring stores, and snapshot rollbacks.
+- ⚡ **[Cache Architecture](CACHE_IMPLEMENTATION.md)** — Internal mechanics of state storage and model response caching.
 
 ## 🤝 Contributing
 
