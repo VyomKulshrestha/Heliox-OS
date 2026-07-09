@@ -180,7 +180,7 @@ jobs:
 
       - name: Upload diff artifacts on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: visual-regression-diffs-${{ matrix.os }}
           path: tauri-app/ui/test-results/
