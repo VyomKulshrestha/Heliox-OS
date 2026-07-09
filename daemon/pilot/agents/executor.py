@@ -1011,10 +1011,18 @@ class Executor:
             try:
                 import psutil
 
-                # wait up to 3 seconds for it to exit
-                psutil.Process(params.pid).wait(timeout=3.0)
+                try:
+                    # wait up to 3 seconds for it to exit
+                    psutil.Process(params.pid).wait(timeout=3.0)
+                except psutil.NoSuchProcess:
+                    pass
+                except Exception:
+                    # If timeout expired or access denied
+                    import asyncio
+
+                    await asyncio.sleep(0.5)
             except Exception:
-                # If psutil is missing, or process is already gone, or timeout expired
+                # If psutil is missing
                 import asyncio
 
                 await asyncio.sleep(0.5)
