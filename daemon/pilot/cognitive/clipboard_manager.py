@@ -1,7 +1,8 @@
-from collections import deque
 import logging
+from collections import deque
 
 logger = logging.getLogger(__name__)
+
 
 class ClipboardBufferManager:
     def __init__(self, max_size=5):
@@ -12,7 +13,7 @@ class ClipboardBufferManager:
         """Pushes a unique text snippet onto the rolling high-stress queue."""
         if not text:
             return False
-            
+
         text_striped = text.strip()
         if not text_striped:
             return False
@@ -31,6 +32,7 @@ class ClipboardBufferManager:
     def clear(self):
         """Flushes the buffer cache completely."""
         self.buffer.clear()
+
 
 # Global instance for easy import across modules
 clipboard_buffer = ClipboardBufferManager()

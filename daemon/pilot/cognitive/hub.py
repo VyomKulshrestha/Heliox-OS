@@ -26,12 +26,12 @@ from typing import Any
 
 from pilot.cognitive.ambient_intelligence import AmbientIntelligenceEngine, ProactiveSuggestion
 from pilot.cognitive.biometric_loop import BiometricLearningLoop
+from pilot.cognitive.clipboard_manager import clipboard_buffer
 from pilot.cognitive.cognitive_handoff import CognitiveHandoffEngine
 from pilot.cognitive.cognitive_offload import CognitiveOffloader
 from pilot.cognitive.evolving_persona import EvolvingPersonaEngine
 from pilot.cognitive.neural_bridge import NeuralBridge, NeuralWorkspace
 from pilot.cognitive.quantum_cognitive import CognitiveOutput, QuantumCognitivePipeline
-from pilot.cognitive.clipboard_manager import clipboard_buffer
 
 logger = logging.getLogger("pilot.cognitive.hub")
 
@@ -215,6 +215,7 @@ class CognitiveHub:
         if state.is_overloaded or state.load > 0.80:
             try:
                 import pyperclip
+
                 current_clip = pyperclip.paste()
                 if current_clip:
                     clipboard_buffer.push_text(current_clip)
@@ -316,16 +317,16 @@ class CognitiveHub:
     def get_offload_surface(self) -> dict[str, Any]:
         """Get cognitive offload surface augmented with high-stress clipboard anchors."""
         surface = {}
-        
+
         if self._offloader:
             surface = self._offloader.get_offload_surface()
-            
+
         if not isinstance(surface, dict):
             surface = {}
-            
+
         if "anchors" not in surface or not surface["anchors"]:
             surface["anchors"] = clipboard_buffer.get_history()
-        else:    
+        else:
             surface["anchors"] = list(surface["anchors"]) + clipboard_buffer.get_history()
 
         return surface
