@@ -2276,11 +2276,21 @@ class PilotServer:
 
     async def _handle_system_info(self, params: dict, ws: ServerConnection) -> dict:
         """Return exact hardware metrics (CPU, RAM, Disk, Uptime, Hostname) for HUD monitor."""
-        import psutil, shutil, time, os, socket
-        disk = shutil.disk_usage(os.path.abspath('/' if os.name != 'nt' else 'C:\\'))
+        import os
+        import shutil
+        import socket
+        import time
+
+        import psutil
+
+        disk = shutil.disk_usage(os.path.abspath("/" if os.name != "nt" else "C:\\"))
         mem = psutil.virtual_memory()
         cpu = psutil.cpu_percent(interval=0.1)
-        uptime = int(time.time() - psutil.boot_time()) if hasattr(psutil, 'boot_time') else int(time.time() - self._start_time)
+        uptime = (
+            int(time.time() - psutil.boot_time())
+            if hasattr(psutil, "boot_time")
+            else int(time.time() - self._start_time)
+        )
         return {
             "cpu_percent": round(cpu),
             "memory_percent": round(mem.percent),
@@ -2290,13 +2300,20 @@ class PilotServer:
             "disk_used": disk.used,
             "disk_total": disk.total,
             "hostname": socket.gethostname(),
-            "uptime_seconds": uptime
+            "uptime_seconds": uptime,
         }
 
     async def _handle_get_uptime(self, params: dict, ws: ServerConnection) -> str:
         """Return formatted system uptime string for HUD monitor."""
-        import psutil, time
-        up_sec = int(time.time() - psutil.boot_time()) if hasattr(psutil, 'boot_time') else int(time.time() - self._start_time)
+        import time
+
+        import psutil
+
+        up_sec = (
+            int(time.time() - psutil.boot_time())
+            if hasattr(psutil, "boot_time")
+            else int(time.time() - self._start_time)
+        )
         days = up_sec // 86400
         hrs = (up_sec % 86400) // 3600
         mins = (up_sec % 3600) // 60
@@ -2727,6 +2744,7 @@ class PilotServer:
     async def _handle_plugin_install(self, params: dict, ws: ServerConnection) -> dict:
         """Install a plugin from the marketplace with fully working code and Ed25519 signature."""
         import json
+
         from pilot.plugins import sign_plugin_directory
 
         plugin_name = params.get("plugin_name", "")
@@ -2759,8 +2777,18 @@ class PilotServer:
         if plugin_name == "home-assistant":
             if not tools:
                 tools = [
-                    {"name": "ha_lights", "description": "List all lights in Home Assistant", "inputs": [], "outputs": ["lights"]},
-                    {"name": "ha_set_light", "description": "Turn a light on or off", "inputs": ["entity_id", "state"], "outputs": ["result"]}
+                    {
+                        "name": "ha_lights",
+                        "description": "List all lights in Home Assistant",
+                        "inputs": [],
+                        "outputs": ["lights"],
+                    },
+                    {
+                        "name": "ha_set_light",
+                        "description": "Turn a light on or off",
+                        "inputs": ["entity_id", "state"],
+                        "outputs": ["result"],
+                    },
                 ]
             code_content = """# Home Assistant Plugin for Heliox OS
 import os
@@ -2820,9 +2848,24 @@ def handle_tool(tool_name, params):
         elif plugin_name == "spotify-control":
             if not tools:
                 tools = [
-                    {"name": "spotify_play", "description": "Start or resume Spotify playback", "inputs": [], "outputs": ["result"]},
-                    {"name": "spotify_pause", "description": "Pause Spotify playback", "inputs": [], "outputs": ["result"]},
-                    {"name": "spotify_now_playing", "description": "Get currently playing track info", "inputs": [], "outputs": ["track", "artist", "album"]}
+                    {
+                        "name": "spotify_play",
+                        "description": "Start or resume Spotify playback",
+                        "inputs": [],
+                        "outputs": ["result"],
+                    },
+                    {
+                        "name": "spotify_pause",
+                        "description": "Pause Spotify playback",
+                        "inputs": [],
+                        "outputs": ["result"],
+                    },
+                    {
+                        "name": "spotify_now_playing",
+                        "description": "Get currently playing track info",
+                        "inputs": [],
+                        "outputs": ["track", "artist", "album"],
+                    },
                 ]
             code_content = """# Spotify Control Plugin for Heliox OS
 def handle_tool(tool_name, params):
@@ -2849,8 +2892,18 @@ def handle_tool(tool_name, params):
         elif plugin_name == "weather":
             if not tools:
                 tools = [
-                    {"name": "get_weather", "description": "Get current weather for a city", "inputs": ["city"], "outputs": ["temperature", "condition", "humidity"]},
-                    {"name": "get_forecast", "description": "Get 5-day weather forecast", "inputs": ["city"], "outputs": ["forecast"]}
+                    {
+                        "name": "get_weather",
+                        "description": "Get current weather for a city",
+                        "inputs": ["city"],
+                        "outputs": ["temperature", "condition", "humidity"],
+                    },
+                    {
+                        "name": "get_forecast",
+                        "description": "Get 5-day weather forecast",
+                        "inputs": ["city"],
+                        "outputs": ["forecast"],
+                    },
                 ]
             code_content = """# Weather Plugin for Heliox OS
 import urllib.request
@@ -2905,10 +2958,10 @@ def handle_tool(tool_name, params):
     return {"error": f"Unknown tool {tool_name}"}
 """
         else:
-            code_content = f'''# Custom Plugin: {plugin_name}
+            code_content = f"""# Custom Plugin: {plugin_name}
 def handle_tool(tool_name, params):
     return {{"status": "success", "tool": tool_name, "params": params, "message": "Executed custom plugin tool successfully!"}}
-'''
+"""
 
         manifest_dict = {
             "name": plugin_name,
@@ -2919,7 +2972,7 @@ def handle_tool(tool_name, params):
             "agent_type": "system",
             "entry_point": "plugin.py",
             "runtime_type": "python",
-            "enabled": True
+            "enabled": True,
         }
         (plugin_dir / "manifest.json").write_text(json.dumps(manifest_dict, indent=2), encoding="utf-8")
         (plugin_dir / "plugin.py").write_text(code_content, encoding="utf-8")
@@ -2966,6 +3019,7 @@ def handle_tool(tool_name, params):
     async def _handle_plugin_create(self, params: dict, ws: ServerConnection) -> dict:
         """Create a new custom plugin with manifest and Python code."""
         import json
+
         from pilot.plugins import sign_plugin_directory
 
         plugin_name = params.get("name", "").strip().lower().replace(" ", "-")
@@ -2991,14 +3045,14 @@ def handle_tool(tool_name, params):
             "agent_type": "system",
             "entry_point": "plugin.py",
             "runtime_type": "python",
-            "enabled": True
+            "enabled": True,
         }
         code_content = params.get("code", "")
         if not code_content.strip():
-            code_content = f'''# Custom Plugin: {plugin_name}
+            code_content = f"""# Custom Plugin: {plugin_name}
 def handle_tool(tool_name, params):
     return {{"status": "success", "tool": tool_name, "params": params, "message": f"Executed tool '{{tool_name}}'"}}
-'''
+"""
 
         (plugin_dir / "manifest.json").write_text(json.dumps(manifest_dict, indent=2), encoding="utf-8")
         (plugin_dir / "plugin.py").write_text(code_content, encoding="utf-8")
