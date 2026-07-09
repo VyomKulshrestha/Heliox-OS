@@ -2,6 +2,7 @@
 // Tauri v2 application entry point
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod commands;
+mod file_access;
 mod hotkey;
 mod tray;
 use std::net::TcpStream;
@@ -620,6 +621,7 @@ fn main() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_notification::init())
         .manage(DaemonProcess(Mutex::new(daemon_child)))
+        .manage(file_access::AllowedPaths::new())
         .setup(|app| {
             let window = app.get_webview_window("main").unwrap();
             
@@ -658,6 +660,9 @@ fn main() {
             commands::get_hotkey,
             commands::set_hotkey,
             commands::get_auth_token,
+            commands::extract_file_text,
+            file_access::register_allowed_path,
+            file_access::revoke_allowed_path,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Heliox OS")
