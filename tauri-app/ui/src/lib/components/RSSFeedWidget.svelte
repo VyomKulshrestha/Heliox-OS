@@ -1,7 +1,7 @@
 <script lang="ts">
   import WidgetCard from "./WidgetCard.svelte";
   import { onMount } from "svelte";
-  import { invoke } from "@tauri-apps/api/core";
+  import { invoke } from "../api/invoke";
 type FeedItem = {
   title: string;
   time: string;
@@ -13,15 +13,10 @@ function togglePin() {
 let feed: FeedItem[] = [];
 async function loadFeed() {
   try {
-    feed =
-      await invoke(
-        "get_rss_feed"
-      );
+    const res = await invoke("get_rss_feed");
+    if (Array.isArray(res)) feed = res;
   } catch (err) {
-    console.error(
-      "RSS feed failed",
-      err
-    );
+    console.error("RSS feed failed", err);
   }
 }
 onMount(() => {

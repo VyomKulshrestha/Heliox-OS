@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { invoke } from "@tauri-apps/api/core";
+  import { invoke } from "../api/invoke";
   import { pinnedWidgets } from "../stores/pinnedWidgets";
   import {
     Chart as ChartJS,
@@ -67,11 +67,11 @@ $: pinned =
   let diskHistory = [30, 32, 35, 36, 38, 40];
   let networkHistory = [10, 12, 15, 18, 20, 22];
   async function loadStats() {
-  try {
-    const stats: Stats =
-  await invoke("get_system_stats");
-  console.log(stats);
-    cpu = Number(stats.cpu.toFixed(1));
+    try {
+      const stats: Stats = await invoke("get_system_stats");
+      if (!stats || typeof stats !== "object" || typeof stats?.cpu !== "number") return;
+      console.log(stats);
+      cpu = Number(stats.cpu.toFixed(1));
     ram = Number(stats.ram.toFixed(1));
     disk = Number(stats.disk.toFixed(1));
     networkUp = Number(

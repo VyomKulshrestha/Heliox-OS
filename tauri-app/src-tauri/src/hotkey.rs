@@ -32,7 +32,9 @@ fn save_shortcut(app: &AppHandle, shortcut: &str) {
 pub fn register_hotkey(app: &App) -> Result<(), Box<dyn std::error::Error>> {
     let app_handle = app.handle().clone();
     let shortcut = load_saved_shortcut(&app_handle);
-    do_register(&app_handle, &shortcut)?;
+    if let Err(e) = do_register(&app_handle, &shortcut) {
+        eprintln!("[Heliox OS] Warning: Failed to register hotkey {}: {}", shortcut, e);
+    }
     Ok(())
 }
 

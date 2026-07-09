@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { invoke } from "@tauri-apps/api/core";
+  import { invoke } from "../api/invoke";
   import { onMount } from "svelte";
   type DashboardStatus = {
     connected: boolean;
@@ -20,10 +20,10 @@
   };
   async function loadStatus() {
     try {
-      status =
-        await invoke(
-          "get_dashboard_status"
-        );
+      const res = await invoke("get_dashboard_status");
+      if (res && typeof res === "object") {
+        status = res;
+      }
     } catch (err) {
       console.error(
         "Dashboard status failed",

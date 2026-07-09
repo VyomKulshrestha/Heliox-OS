@@ -100,7 +100,7 @@ export interface Attachment {
 const initialState: SessionState = {
   daemonConnected: false,
   loading: false,
-  messages: [],
+  messages: typeof localStorage !== "undefined" && localStorage.getItem("heliox_session_history") ? (() => { try { return JSON.parse(localStorage.getItem("heliox_session_history") || "[]"); } catch(e) { return []; } })() : [],
   currentPlan: null,
   confirmRequired: false,
   confirmPlanId: "",
@@ -267,6 +267,19 @@ function createSession() {
         void notifyTaskComplete(p);
         break;
 
+      case "budget_update":
+      case "token_usage":
+        update((s) => {
+          const tok = Number(p.tokens ?? p.total_tokens ?? 0);
+          const cost = Number(p.cost_usd ?? p.estimated_cost ?? (tok * 0.000002));
+          return {
+            ...s,
+            totalTokens: s.totalTokens + tok,
+            estimatedCost: s.estimatedCost + cost,
+          };
+        });
+        break;
+
       case "budget_exceeded":
         update((s) => ({
           ...s,
@@ -318,12 +331,16 @@ function createSession() {
 
   async function init() {
     const connected = await connect();
-    update((s) => ({ ...s, daemonConnected: connected }));
+    update((s) => ({ ...s, daemonConnected: connected || isConnected() }));
 
     setInterval(async () => {
-      update((s) => ({ ...s, daemonConnected: isConnected() }));
-      if (!isConnected()) await connect();
-    }, 5000);
+      const currentlyConnected = isConnected();
+      update((s) => ({ ...s, daemonConnected: currentlyConnected }));
+      if (!currentlyConnected) {
+        const ok = await connect();
+        if (ok) update((s) => ({ ...s, daemonConnected: true }));
+      }
+    }, 1500);
   }
 
   // Hooking up text generator stream listener
@@ -622,6 +639,9 @@ function createSession() {
   }
 
   function clearMessages() {
+    if (typeof localStorage !== "undefined") {
+      localStorage.removeItem("heliox_session_history");
+    }
     update((s) => ({ ...s, messages: [] }));
   }
 
@@ -634,6 +654,14 @@ function createSession() {
   }
 
   init();
+
+  subscribe((s) => {
+    if (typeof localStorage !== "undefined" && s.messages && s.messages.length > 0) {
+      try {
+        localStorage.setItem("heliox_session_history", JSON.stringify(s.messages));
+      } catch (e) {}
+    }
+  });
 
   function acknowledgeBudgetEvent() {
     update((s) => ({ ...s, budget: null }));

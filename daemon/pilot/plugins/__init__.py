@@ -188,6 +188,25 @@ def verify_plugin_signature(plugin_dir: Path, trusted_public_keys: tuple[Ed25519
     raise PluginSignatureError(f"Plugin signature verification failed: {plugin_dir}")
 
 
+def sign_plugin_directory(plugin_dir: Path) -> None:
+    """Generate Ed25519 keypair, sign all non-metadata files in plugin_dir, and save key & signature."""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    private_key = Ed25519PrivateKey.generate()
+    public_key = private_key.public_key()
+
+    public_pem = public_key.public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    (plugin_dir / PLUGIN_PUBLIC_KEY_FILE).write_bytes(public_pem)
+
+    payload = _plugin_digest(plugin_dir)
+    sig = private_key.sign(payload)
+    (plugin_dir / PLUGIN_SIGNATURE_FILE).write_bytes(base64.b64encode(sig) + b"\n")
+
+
 @dataclass
 class PluginTool:
     """A single tool exposed by a plugin."""
@@ -370,6 +389,58 @@ class PluginRegistry:
             logger.error("Failed to load WASM plugin %s: %s", manifest.name, exc)
 
     # ── Query APIs ──
+
+    def call_tool(self, tool_name: str, params: dict[str, Any]) -> dict[str, Any]:
+        """Call a tool provided by any loaded plugin (Python or WASM) and return its JSON result."""
+        result = self.find_tool(tool_name)
+        if result is None:
+            return {"error": f"Tool not found: {tool_name}"}
+        manifest, tool = result
+        if not manifest.enabled:
+            return {"error": f"Plugin {manifest.name!r} is disabled"}
+
+        if manifest.runtime_type == "wasm":
+            return self.call_wasm_tool(tool_name, params)
+
+        # Python runtime execution
+        entry = manifest.entry_point or "plugin.py"
+        script_path = Path(manifest.path) / entry
+        if not script_path.exists():
+            return {"error": f"Plugin script not found: {script_path}"}
+
+        try:
+            import importlib.util
+            import sys
+
+            module_key = f"plugin_{manifest.name}"
+
+            # Use cached module if available
+            if not hasattr(self, "_python_modules"):
+                self._python_modules: dict[str, Any] = {}
+
+            if module_key not in self._python_modules:
+                spec = importlib.util.spec_from_file_location(module_key, str(script_path))
+                if not spec or not spec.loader:
+                    return {"error": f"Could not load script module spec: {script_path}"}
+                module = importlib.util.module_from_spec(spec)
+                sys.modules[module_key] = module
+                spec.loader.exec_module(module)
+                self._python_modules[module_key] = module
+            else:
+                module = self._python_modules[module_key]
+
+            if hasattr(module, "handle_tool"):
+                res = module.handle_tool(tool_name, params)
+                return res if isinstance(res, dict) else {"result": res}
+            elif hasattr(module, tool_name):
+                fn = getattr(module, tool_name)
+                res = fn(**params) if isinstance(params, dict) else fn()
+                return res if isinstance(res, dict) else {"result": res}
+            else:
+                return {"error": f"Neither handle_tool nor function {tool_name!r} found in {entry}"}
+        except Exception as exc:
+            logger.error("Error executing Python plugin tool %s: %s", tool_name, exc, exc_info=True)
+            return {"error": f"Plugin execution exception: {exc}"}
 
     def call_wasm_tool(self, tool_name: str, params: dict[str, Any]) -> dict[str, Any]:
         """Call a tool provided by a WASM plugin and return its JSON result.

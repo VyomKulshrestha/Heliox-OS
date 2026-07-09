@@ -184,7 +184,7 @@
   });
 </script>
 
-<div class="neural-bg" onmousemove={handleMouseMove}>
+<div class="neural-bg" onmousemove={handleMouseMove} role="presentation">
   <canvas bind:this={canvasEl} class="neural-canvas"></canvas>
 </div>
 

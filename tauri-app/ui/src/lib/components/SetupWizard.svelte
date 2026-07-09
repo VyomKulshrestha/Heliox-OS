@@ -114,8 +114,8 @@
         <div class="wizard-step">
           <h2>Model Configuration</h2>
 
-          <div class="field">
-            <label>Primary Provider</label>
+          <div class="field" role="group" aria-labelledby="provider-label">
+            <label id="provider-label">Primary Provider</label>
             <div class="radio-group">
               <label class="radio-option" class:selected={modelProvider === "ollama"}>
                 <input type="radio" bind:group={modelProvider} value="ollama" />
@@ -136,28 +136,28 @@
 
           {#if modelProvider === "ollama"}
             <div class="field">
-              <label>Ollama Model</label>
+              <label for="ollama-model">Ollama Model</label>
               {#if loadingModels}
                 <div class="model-status">Detecting models...</div>
               {:else if ollamaModels.length > 0}
-                <select bind:value={ollamaModel}>
+                <select id="ollama-model" bind:value={ollamaModel}>
                   {#each ollamaModels as m}
                     <option value={m}>{m}</option>
                   {/each}
                 </select>
                 <span class="hint">{ollamaModels.length} model{ollamaModels.length === 1 ? "" : "s"} detected from Ollama</span>
               {:else if ollamaAvailable}
-                <input type="text" bind:value={ollamaModel} placeholder="llama3.1:8b" />
+                <input id="ollama-model-input" type="text" bind:value={ollamaModel} placeholder="llama3.1:8b" />
                 <span class="hint warning">Ollama is running but no models found. Run <code>ollama pull qwen2.5:7b</code></span>
               {:else}
-                <input type="text" bind:value={ollamaModel} placeholder="llama3.1:8b" />
+                <input id="ollama-model-input-2" type="text" bind:value={ollamaModel} placeholder="llama3.1:8b" />
                 <span class="hint warning">Ollama is not running. Start it first, or choose Cloud.</span>
               {/if}
             </div>
           {:else}
             <div class="field">
-              <label>Cloud Provider</label>
-              <select bind:value={cloudProvider}>
+              <label for="cloud-provider">Cloud Provider</label>
+              <select id="cloud-provider" bind:value={cloudProvider}>
                 <option value="">Select...</option>
                 <option value="openai">OpenAI</option>
                 <option value="claude">Anthropic (Claude)</option>
@@ -166,8 +166,8 @@
             </div>
             {#if cloudProvider}
               <div class="field">
-                <label>API Key</label>
-                <input type="password" bind:value={cloudApiKey} placeholder="sk-..." />
+                <label for="cloud-api-key">API Key</label>
+                <input id="cloud-api-key" type="password" bind:value={cloudApiKey} placeholder="sk-..." />
                 <span class="hint">Stored encrypted in GNOME Keyring or local vault</span>
               </div>
             {/if}
@@ -179,8 +179,9 @@
           <h2>Security Boundaries</h2>
 
           <div class="field">
-            <label>Protected Folders</label>
+            <label for="protected-folders">Protected Folders</label>
             <textarea
+              id="protected-folders"
               bind:value={protectedFolders}
               placeholder={"~/Documents/private\n~/ssh"}
               rows={4}
@@ -189,8 +190,9 @@
           </div>
 
           <div class="field">
-            <label>Protected Packages</label>
+            <label for="protected-packages">Protected Packages</label>
             <input
+              id="protected-packages"
               type="text"
               bind:value={protectedPackages}
               placeholder="firefox, nautilus, gnome-shell"

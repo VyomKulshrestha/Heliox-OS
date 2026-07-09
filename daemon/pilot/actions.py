@@ -235,8 +235,9 @@ class ActionType(StrEnum):
     # -- VLM zero-shot element detection --
     SCREEN_DETECT_ELEMENTS = "screen_detect_elements"
 
-    # -- WebAssembly Plugin execution --
+    # -- WebAssembly & Python Plugin execution --
     WASM_CALL = "wasm_call"
+    PLUGIN_CALL = "plugin_call"
 
     # -- Third-party skills (dynamic ``pilot/skills`` loader) --
     SKILL_RUN = "skill_run"
@@ -907,6 +908,7 @@ class Action(BaseModel):
             ActionType.API_SCRAPE,
             ActionType.DOWNLOAD_FILE,
             ActionType.WASM_CALL,
+            ActionType.PLUGIN_CALL,
         }
         if self.action_type in ALWAYS_SAFE:
             return PermissionTier.USER_WRITE
