@@ -26,7 +26,7 @@
   import { tick, onDestroy } from "svelte";
   import { Copy } from "lucide-svelte";
   import ScrollToBottom from "./lib/components/ScrollToBottom.svelte";
-  import ConnectionStatus from "./lib/components/ConnectionStatus.svelte";
+  import ConnectionBadge from "./lib/components/ConnectionBadge.svelte";
   import HeaderMiniMonitor from "./lib/components/HeaderMiniMonitor.svelte";
   import CommandHistory from "./lib/components/CommandHistory.svelte";
   import { _, isLoading } from 'svelte-i18n';
@@ -174,6 +174,7 @@
 >
   <header
     class="titlebar"
+    role="none"
     data-tauri-drag-region
     onmousedown={() => {isDragging = true}}
     onmouseup={() => {isDragging = false}}
@@ -181,9 +182,6 @@
     <div class="titlebar-left">
       <ArcReactor />
       <span class="title">{$_('app.title')}</span>
-      <span class="badge" class:connected={$session.daemonConnected}>
-        {$session.daemonConnected ? $_('app.online') : $_('app.connecting')}
-      </span>
     </div>
     <nav class="tabs">
       <button class="tab" class:active={activeTab === "chat"} title="Open Command Panel" onclick={() => activeTab = "chat"}>{$_('app.tab_command')}</button>
@@ -194,7 +192,7 @@
     </nav>
     <div class="titlebar-right">
       <HeaderMiniMonitor />
-      <ConnectionStatus />
+      <ConnectionBadge />
       <AmbientHUD />
     </div>
   </header>
@@ -473,20 +471,6 @@
   }
 
   .title { font-weight: 600; font-size: 14px; letter-spacing: 0.5px; }
-
-  .badge {
-    font-size: 11px;
-    padding: 2px 8px;
-    border-radius: 20px;
-    background: var(--danger-bg);
-    color: var(--danger);
-    transition: all 0.3s;
-  }
-
-  .badge.connected {
-    background: rgba(74, 222, 128, 0.1);
-    color: var(--success);
-  }
 
   .tabs {
     display: flex;

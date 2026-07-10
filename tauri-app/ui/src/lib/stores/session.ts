@@ -330,17 +330,12 @@ function createSession() {
   });
 
   async function init() {
-    const connected = await connect();
-    update((s) => ({ ...s, daemonConnected: connected || isConnected() }));
+    await connect();
+    update((s) => ({ ...s, daemonConnected: isConnected() }));
 
-    setInterval(async () => {
-      const currentlyConnected = isConnected();
-      update((s) => ({ ...s, daemonConnected: currentlyConnected }));
-      if (!currentlyConnected) {
-        const ok = await connect();
-        if (ok) update((s) => ({ ...s, daemonConnected: true }));
-      }
-    }, 1500);
+    setInterval(() => {
+      update((s) => ({ ...s, daemonConnected: isConnected() }));
+    }, 500);
   }
 
   // Hooking up text generator stream listener
