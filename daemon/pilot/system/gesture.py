@@ -128,12 +128,14 @@ def classify_gesture(landmarks) -> tuple[str, float]:
 async def start_gesture_listener(
     on_gesture: Callable[[str, float], None] | None = None,
     cooldown_ms: int = 1500,
+    camera_index: int = 0,
 ) -> None:
     """Start webcam gesture detection loop.
 
     Args:
         on_gesture: Callback(gesture_name, confidence) when a gesture is detected.
         cooldown_ms: Minimum time between gesture triggers.
+        camera_index: Web camera index to use.
     """
     global _running, _cap, _mp_hands
 
@@ -147,10 +149,8 @@ async def start_gesture_listener(
 
     import cv2 as cv
     import mediapipe as _mp
-    from pilot.config import PilotConfig
 
-    cfg = PilotConfig.load()
-    _cap = cv.VideoCapture(cfg.vision.camera_index)
+    _cap = cv.VideoCapture(camera_index)
     if not _cap.isOpened():
         logger.error("Cannot open webcam for gesture detection")
         return
