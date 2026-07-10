@@ -36,32 +36,40 @@ export function isConnected(): boolean {
   return ws !== null && ws.readyState === WebSocket.OPEN;
 }
 
+let connectPromise: Promise<boolean> | null = null;
+
 export async function connect(): Promise<boolean> {
   if (isConnected()) return true;
+  if (connectPromise) return connectPromise;
 
-  // Fetch the auth token from the Rust backend before opening the socket.
-  // get_auth_token() reads the file the Python daemon writes on startup.
-  // Fallback: VITE_DAEMON_TOKEN env var for browser-only dev mode (no Tauri).
-  let authToken = "";
-  try {
-    const { invoke } = await import("@tauri-apps/api/core");
-    authToken = (await invoke<string>("get_auth_token")) ?? "";
-  } catch {
-    // Running in browser dev mode without Tauri — try fetching from Vite dev server middleware first
+  connectPromise = new Promise(async (resolve) => {
+    const finish = (result: boolean) => {
+      connectPromise = null;
+      resolve(result);
+    };
+
+    // Fetch the auth token from the Rust backend before opening the socket.
+    // get_auth_token() reads the file the Python daemon writes on startup.
+    // Fallback: VITE_DAEMON_TOKEN env var for browser-only dev mode (no Tauri).
+    let authToken = "";
     try {
-      const res = await fetch("/api/auth_token");
-      if (res.ok) {
-        authToken = (await res.text()).trim();
-      }
+      const { invoke } = await import("@tauri-apps/api/core");
+      authToken = (await invoke<string>("get_auth_token")) ?? "";
     } catch {
-      // ignore
+      // Running in browser dev mode without Tauri — try fetching from Vite dev server middleware first
+      try {
+        const res = await fetch("/api/auth_token");
+        if (res.ok) {
+          authToken = (await res.text()).trim();
+        }
+      } catch {
+        // ignore
+      }
+      if (!authToken) {
+        authToken = (import.meta as any).env?.VITE_DAEMON_TOKEN ?? "";
+      }
     }
-    if (!authToken) {
-      authToken = (import.meta as any).env?.VITE_DAEMON_TOKEN ?? "";
-    }
-  }
 
-  return new Promise((resolve) => {
     try {
       ws = new WebSocket(DAEMON_URL);
 
@@ -83,14 +91,26 @@ export async function connect(): Promise<boolean> {
 
         // Register a one-shot pending resolver for the auth response
         pending.set(authId, {
-          resolve: (_v) => resolve(true),
+          resolve: (_v) => finish(true),
           reject: (_e) => {
             ws = null;
-            resolve(false);
+            finish(false);
           },
         });
 
         ws!.send(JSON.stringify(authRequest));
+
+        // Timeout auth handshake after 5 seconds to prevent hanging
+        setTimeout(() => {
+          if (pending.has(authId)) {
+            pending.delete(authId);
+            if (ws) {
+              ws.close();
+              ws = null;
+            }
+            finish(false);
+          }
+        }, 5000);
       };
 
       ws.onmessage = (event) => {
@@ -119,16 +139,19 @@ export async function connect(): Promise<boolean> {
       ws.onclose = () => {
         ws = null;
         scheduleReconnect();
+        finish(false);
       };
 
       ws.onerror = () => {
         ws = null;
-        resolve(false);
+        finish(false);
       };
     } catch {
-      resolve(false);
+      finish(false);
     }
   });
+
+  return connectPromise;
 }
 
 export async function call<T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> {
