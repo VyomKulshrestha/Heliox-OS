@@ -147,8 +147,10 @@ async def start_gesture_listener(
 
     import cv2 as cv
     import mediapipe as _mp
+    from pilot.config import PilotConfig
 
-    _cap = cv.VideoCapture(0)
+    cfg = PilotConfig.load()
+    _cap = cv.VideoCapture(cfg.vision.camera_index)
     if not _cap.isOpened():
         logger.error("Cannot open webcam for gesture detection")
         return
