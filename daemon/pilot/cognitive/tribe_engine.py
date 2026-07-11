@@ -197,7 +197,7 @@ class TribeEngine:
                 _UNGATED_LLAMA = "unsloth/Llama-3.2-3B"
                 import torch as _torch
 
-                _device = "cuda" if _torch.cuda.is_available() else "cpu"
+                _device = "accelerate" if _torch.cuda.is_available() else "cpu"
 
                 try:
                     text_ext = model.data.text_feature

@@ -178,7 +178,7 @@ class SemanticSearchConfig:
 
 @dataclass
 class CognitiveConfig:
-    enabled: bool = False
+    enabled: bool = True
 
 @dataclass
 class RedisConfig:
