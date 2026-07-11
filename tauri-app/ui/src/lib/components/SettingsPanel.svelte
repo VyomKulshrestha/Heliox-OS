@@ -21,6 +21,22 @@
   let hotkeySaved = $state(false);
   let hotkeyError = $state("");
 
+  const cloudModels: Record<string, string[]> = {
+    gemini: ["gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash"],
+    openai: ["gpt-4o", "gpt-4o-mini", "o1", "o3-mini"],
+    claude: ["claude-3-7-sonnet-latest", "claude-3-5-haiku-latest", "claude-3-opus-latest"]
+  };
+
+  let availableOllamaModels = $state<string[]>([]);
+
+  $effect(() => {
+    call("list_ollama_models").then((res: any) => {
+      if (res && res.models) {
+        availableOllamaModels = res.models;
+      }
+    }).catch(console.error);
+  });
+
   // Load the current hotkey when component mounts
   invoke("get_hotkey").then((val) => {
     hotkeyInput = val as string;
@@ -405,13 +421,25 @@
         <span class="setting-label">{$_('settings.ollama_model')}</span>
         <span class="setting-desc">{$_('settings.ollama_model_desc')}</span>
       </div>
-      <input
-        type="text"
-        class="input-md"
-        value={$settings.model.ollama_model}
-        onchange={updateOllamaModel}
-        placeholder="llama3.1:8b"
-      />
+      {#if availableOllamaModels.length > 0}
+        <select
+          class="input-md"
+          value={$settings.model.ollama_model}
+          onchange={updateOllamaModel}
+        >
+          {#each availableOllamaModels as modelOption}
+            <option value={modelOption}>{modelOption}</option>
+          {/each}
+        </select>
+      {:else}
+        <input
+          type="text"
+          class="input-md"
+          value={$settings.model.ollama_model}
+          onchange={updateOllamaModel}
+          placeholder="llama3.1:8b"
+        />
+      {/if}
     </div>
 
     <div class="setting-row">
@@ -450,13 +478,16 @@
         <span class="setting-label">{$_('settings.cloud_model')}</span>
         <span class="setting-desc">{$_('settings.cloud_model_desc')}</span>
       </div>
-      <input
-        type="text"
+      <select
         class="input-md"
         value={$settings.model.cloud_model}
         onchange={updateCloudModel}
-        placeholder="gemini-2.0-flash"
-      />
+      >
+        <option value="">Default for provider</option>
+        {#each (cloudModels[$settings.model.cloud_provider || "gemini"] || []) as modelOption}
+          <option value={modelOption}>{modelOption}</option>
+        {/each}
+      </select>
     </div>
 
     <div class="setting-row">
