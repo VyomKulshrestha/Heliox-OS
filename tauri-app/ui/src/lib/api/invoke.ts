@@ -102,6 +102,9 @@ export async function invoke<T = any>(command: string, args?: any): Promise<T> {
     }
     return ((import.meta as any).env?.VITE_DAEMON_TOKEN ?? "") as unknown as T;
   }
+  if (command === "get_hotkey") {
+    return "Ctrl+Space" as unknown as T;
+  }
 
   return {} as unknown as T;
 }
