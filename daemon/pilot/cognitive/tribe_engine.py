@@ -216,6 +216,13 @@ class TribeEngine:
                             )
                         text_ext.model_name = _UNGATED_LLAMA
                         text_ext.device = _device
+                        
+                        # Disable exca/HuggingFace multiprocessing which freezes on Windows
+                        import os
+                        os.environ["TOKENIZERS_PARALLELISM"] = "false"
+                        if hasattr(text_ext, "infra"):
+                            text_ext.infra.jobs = 1
+                            text_ext.infra.backend = "local"
 
                         from transformers import AutoTokenizer
 
@@ -397,6 +404,19 @@ class TribeEngine:
 
                 # Add a dummy Fixation event to ensure the dataset has >1 class.
                 # This resolves the neuralset LabelEncoder UserWarning.
+                warnings.filterwarnings(
+                    "ignore",
+                    message=".*treat_missing_as_separate_class.*",
+                )
+                warnings.filterwarnings(
+                    "ignore",
+                    message=".*event_types has not been set.*",
+                )
+                warnings.filterwarnings(
+                    "ignore",
+                    category=FutureWarning,
+                    module="x_transformers",
+                )
                 events.append(
                     {
                         "type": "Fixation",
