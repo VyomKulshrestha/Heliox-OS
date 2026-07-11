@@ -63,7 +63,7 @@ def classify_gesture(landmarks) -> tuple[str, float]:
     if not landmarks:
         return ("", 0.0)
 
-    lm = landmarks.landmark
+    lm = landmarks.landmark if hasattr(landmarks, "landmark") else landmarks
 
     def is_extended(tip_idx: int, pip_idx: int) -> bool:
         return lm[tip_idx].y < lm[pip_idx].y
@@ -149,25 +149,33 @@ async def start_gesture_listener(
 
     import cv2 as cv
     import mediapipe as _mp
+    import os
+    import urllib.request
+    from mediapipe.tasks import python
+    from mediapipe.tasks.python import vision
 
-    try:
-        _ = _mp.solutions.hands
-    except AttributeError:
-        logger.warning("MediaPipe solutions API not found (version >= 0.10.14). Gesture recognition disabled.")
-        return
+    model_path = os.path.join(os.path.dirname(__file__), "hand_landmarker.task")
+    if not os.path.exists(model_path):
+        logger.info("Downloading MediaPipe hand_landmarker.task model...")
+        urllib.request.urlretrieve(
+            "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task", 
+            model_path
+        )
 
     _cap = cv.VideoCapture(camera_index)
     if not _cap.isOpened():
         logger.error("Cannot open webcam for gesture detection")
         return
 
-    hands = _mp.solutions.hands.Hands(
-        static_image_mode=False,
-        max_num_hands=1,
-        model_complexity=0,
-        min_detection_confidence=0.6,
+    base_options = python.BaseOptions(model_asset_path=model_path)
+    options = vision.HandLandmarkerOptions(
+        base_options=base_options, 
+        num_hands=1,
+        min_hand_detection_confidence=0.6,
+        min_hand_presence_confidence=0.5,
         min_tracking_confidence=0.5,
     )
+    hands = vision.HandLandmarker.create_from_options(options)
     _mp_hands = hands
     _running = True
 
@@ -185,10 +193,12 @@ async def start_gesture_listener(
 
             # Convert BGR to RGB for MediaPipe
             rgb = cv.cvtColor(frame, cv.COLOR_BGR2RGB)
-            results = hands.process(rgb)
+            
+            mp_image = _mp.Image(image_format=_mp.ImageFormat.SRGB, data=rgb)
+            results = hands.detect(mp_image)
 
-            if results.multi_hand_landmarks:
-                gesture_name, confidence = classify_gesture(results.multi_hand_landmarks[0])
+            if results.hand_landmarks:
+                gesture_name, confidence = classify_gesture(results.hand_landmarks[0])
 
                 if gesture_name and gesture_name != last_gesture:
                     import time
