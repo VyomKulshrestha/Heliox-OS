@@ -235,26 +235,25 @@ class TribeEngine:
                             text_ext.infra.jobs = 1
                             text_ext.infra.backend = "local"
                             
-                        # Monkey-patch _load_model to force 8-bit quantization
-                        # to fit Llama 3B into 8GB VRAM without swapping.
+                        # Monkey-patch caching_allocator_warmup to do nothing!
+                        # This prevents the 5.35 GB contiguous VRAM allocation crash,
+                        # while keeping device_map="auto" to prevent system RAM page file exhaustion.
                         if _device == "accelerate":
+                            import transformers.modeling_utils
+                            _orig_warmup = getattr(transformers.modeling_utils, "caching_allocator_warmup", None)
+                            if _orig_warmup:
+                                def _noop_warmup(*args, **kwargs):
+                                    pass
+                                transformers.modeling_utils.caching_allocator_warmup = _noop_warmup
+                            
                             original_load = getattr(text_ext.__class__, "_load_model", None)
                             if original_load:
                                 def _patched_load(self_instance, **kwargs):
-                                    import transformers
-                                    orig_from = transformers.AutoModelForCausalLM.from_pretrained
-                                    
-                                    @classmethod
-                                    def _from_pretrained_8bit(cls, name, *a, **kw):
-                                        from transformers import BitsAndBytesConfig
-                                        kw["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)
-                                        return orig_from.__func__(cls, name, *a, **kw)
-                                        
-                                    transformers.AutoModelForCausalLM.from_pretrained = _from_pretrained_8bit
                                     try:
                                         return original_load(self_instance, **kwargs)
                                     finally:
-                                        transformers.AutoModelForCausalLM.from_pretrained = orig_from
+                                        if _orig_warmup:
+                                            transformers.modeling_utils.caching_allocator_warmup = _orig_warmup
                                 text_ext.__class__._load_model = _patched_load
 
                         from transformers import AutoTokenizer
