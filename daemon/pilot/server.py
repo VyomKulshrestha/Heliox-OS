@@ -512,7 +512,7 @@ class PilotServer:
         self._orchestrator.register_agent(self._rss_agent)
 
         # Multimodal Fusion Engine — voice + gesture intent fusion
-        from pilot.multimodal.fusion import ModalityType, MultimodalEvent, MultimodalFusionEngine
+        from pilot.multimodal.fusion import InputEvent, ModalityType, MultimodalFusionEngine
 
         self._fusion = MultimodalFusionEngine()
         self._fusion.set_broadcast(self._broadcast_notification)
@@ -522,7 +522,7 @@ class PilotServer:
             from pilot.system.gesture import start_gesture_listener
 
             def _on_local_gesture(name: str, conf: float):
-                event = MultimodalEvent(
+                event = InputEvent(
                     modality=ModalityType.GESTURE, gesture_name=name, gesture_confidence=conf, gesture_data={}
                 )
                 asyncio.create_task(self._fusion.on_gesture_event(event))
