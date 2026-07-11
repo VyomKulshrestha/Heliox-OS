@@ -246,7 +246,8 @@ class TribeEngine:
                                     
                                     @classmethod
                                     def _from_pretrained_8bit(cls, name, *a, **kw):
-                                        kw["load_in_8bit"] = True
+                                        from transformers import BitsAndBytesConfig
+                                        kw["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)
                                         return orig_from.__func__(cls, name, *a, **kw)
                                         
                                     transformers.AutoModelForCausalLM.from_pretrained = _from_pretrained_8bit
