@@ -186,6 +186,11 @@ class TribeEngine:
                 ckpt_path = hf_hub_download(repo_id, "best.ckpt")
 
                 import os
+                import warnings
+
+                # Suppress neuralset warnings about Fixation events and missing classes
+                # since the pre-trained model expects the default behavior anyway.
+                warnings.filterwarnings("ignore", category=UserWarning, module="neuralset.*")
 
                 local_dir = os.path.dirname(config_path)
                 model = _TribeModel.from_pretrained(
