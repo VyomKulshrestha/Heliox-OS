@@ -512,10 +512,27 @@ class PilotServer:
         self._orchestrator.register_agent(self._rss_agent)
 
         # Multimodal Fusion Engine — voice + gesture intent fusion
-        from pilot.multimodal.fusion import MultimodalFusionEngine
+        from pilot.multimodal.fusion import ModalityType, MultimodalEvent, MultimodalFusionEngine
 
         self._fusion = MultimodalFusionEngine()
         self._fusion.set_broadcast(self._broadcast_notification)
+
+        # ── Gesture Recognition (Local Backend) ──
+        try:
+            from pilot.system.gesture import start_gesture_listener
+
+            def _on_local_gesture(name: str, conf: float):
+                event = MultimodalEvent(
+                    modality=ModalityType.GESTURE, gesture_name=name, gesture_confidence=conf, gesture_data={}
+                )
+                asyncio.create_task(self._fusion.on_gesture_event(event))
+
+            asyncio.create_task(
+                start_gesture_listener(on_gesture=_on_local_gesture, camera_index=self.config.vision.camera_index)
+            )
+            logger.info("Local gesture listener auto-started (camera %s)", self.config.vision.camera_index)
+        except Exception:
+            logger.warning("Local gesture listener init failed (non-critical)", exc_info=True)
 
         # Reasoning Event Emitter — thought visualization telemetry
         from pilot.reasoning.events import ReasoningEmitter

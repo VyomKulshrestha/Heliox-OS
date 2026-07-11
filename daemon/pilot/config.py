@@ -132,6 +132,11 @@ class ScreenVisionConfig:
 
 
 @dataclass
+class VisionConfig:
+    camera_index: int = 0
+
+
+@dataclass
 class ProxyConfig:
     http: str | None = None
     https: str | None = None
@@ -232,6 +237,7 @@ class PilotConfig:
     server: ServerConfig = field(default_factory=ServerConfig)
     voice: VoiceConfig = field(default_factory=VoiceConfig)
     screen_vision: ScreenVisionConfig = field(default_factory=ScreenVisionConfig)
+    vision: VisionConfig = field(default_factory=VisionConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     rss: RSSConfig = field(default_factory=RSSConfig)
     calendar: CalendarConfig = field(default_factory=CalendarConfig)
@@ -340,6 +346,9 @@ def _validate_config_types(raw: dict) -> None:
             "capture_timeout_seconds": (int, float),
             "max_consecutive_timeouts": int,
             "auto_resume_after_seconds": (int, float),
+        },
+        "vision": {
+            "camera_index": int,
         },
         "memory": {
             "checkpoint_interval_seconds": int,
@@ -461,6 +470,11 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
                     setattr(config.screen_vision, k, int(v))
                 else:
                     setattr(config.screen_vision, k, float(v))
+
+    if "vision" in raw:
+        for k, v in raw["vision"].items():
+            if hasattr(config.vision, k):
+                setattr(config.vision, k, v)
 
     if "memory" in raw:
         for k, v in raw["memory"].items():
