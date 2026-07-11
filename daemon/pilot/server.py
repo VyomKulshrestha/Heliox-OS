@@ -484,6 +484,7 @@ class PilotServer:
             model_router=model_router,
             config=self.config,
             vault=self._vault,
+            memory=self.memory_store,
         )
         logger.info("Auto-registered %d agents via dynamic discovery", registered)
         await self._orchestrator.start_all()

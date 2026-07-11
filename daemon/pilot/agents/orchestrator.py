@@ -187,6 +187,7 @@ class AgentOrchestrator:
         model_router: Any = None,
         config: Any = None,
         vault: Any = None,
+        memory: Any = None,
     ) -> int:
         """Auto-register all discovered agents from the registry."""
         import inspect
@@ -207,6 +208,8 @@ class AgentOrchestrator:
                     kwargs["config"] = config
                 if vault:
                     kwargs["vault"] = vault
+                if memory:
+                    kwargs["memory"] = memory
 
                 # Only pass supported kwargs to avoid breaking agents with narrower constructors.
                 sig = inspect.signature(agent_class.__init__)
