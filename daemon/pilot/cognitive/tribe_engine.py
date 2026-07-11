@@ -168,6 +168,20 @@ class TribeEngine:
         self._loading = True
 
         try:
+            import psutil
+            vm = psutil.virtual_memory()
+            if vm.available < 3 * 1024 * 1024 * 1024:
+                logger.warning(
+                    f"Critically low free RAM ({vm.available / 1e9:.1f} GB). "
+                    "Aborting TRIBE v2 load to prevent Windows page file exhaustion and system crashes. "
+                    "Close other applications or increase your Windows Page File size."
+                )
+                self._fallback_mode = True
+                async with self._load_cv:
+                    self._loading = False
+                    self._load_cv.notify_all()
+                return False
+                
             logger.info("Loading TRIBE v2 model from facebook/tribev2...")
             _CACHE_DIR.mkdir(parents=True, exist_ok=True)
             cache_str = str(_CACHE_DIR)
