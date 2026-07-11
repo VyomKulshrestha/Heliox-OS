@@ -217,11 +217,11 @@ class TribeEngine:
                             )
                         text_ext.model_name = _UNGATED_LLAMA
                         text_ext.device = _device
-                        
+
                         # Disable exca/HuggingFace multiprocessing which freezes on Windows
                         import os
                         os.environ["TOKENIZERS_PARALLELISM"] = "false"
-                        
+
                         import exca.cachedict.inflight
                         _orig_is_pid_alive = exca.cachedict.inflight._is_pid_alive
                         def safe_is_pid_alive(pid):
@@ -230,11 +230,11 @@ class TribeEngine:
                             except OSError:
                                 return False
                         exca.cachedict.inflight._is_pid_alive = safe_is_pid_alive
-                        
+
                         if hasattr(text_ext, "infra"):
                             text_ext.infra.jobs = 1
                             text_ext.infra.backend = "local"
-                            
+
                         # Monkey-patch caching_allocator_warmup to do nothing!
                         # This prevents the 5.35 GB contiguous VRAM allocation crash,
                         # while keeping device_map="auto" to prevent system RAM page file exhaustion.
@@ -245,7 +245,7 @@ class TribeEngine:
                                 def _noop_warmup(*args, **kwargs):
                                     pass
                                 transformers.modeling_utils.caching_allocator_warmup = _noop_warmup
-                            
+
                             original_load = getattr(text_ext.__class__, "_load_model", None)
                             if original_load:
                                 def _patched_load(self_instance, **kwargs):
