@@ -223,6 +223,27 @@ class TribeEngine:
                         if hasattr(text_ext, "infra"):
                             text_ext.infra.jobs = 1
                             text_ext.infra.backend = "local"
+                            
+                        # Monkey-patch _load_model to force 8-bit quantization
+                        # to fit Llama 3B into 8GB VRAM without swapping.
+                        if _device == "accelerate":
+                            original_load = getattr(text_ext.__class__, "_load_model", None)
+                            if original_load:
+                                def _patched_load(self_instance, **kwargs):
+                                    import transformers
+                                    orig_from = transformers.AutoModelForCausalLM.from_pretrained
+                                    
+                                    @classmethod
+                                    def _from_pretrained_8bit(cls, name, *a, **kw):
+                                        kw["load_in_8bit"] = True
+                                        return orig_from.__func__(cls, name, *a, **kw)
+                                        
+                                    transformers.AutoModelForCausalLM.from_pretrained = _from_pretrained_8bit
+                                    try:
+                                        return original_load(self_instance, **kwargs)
+                                    finally:
+                                        transformers.AutoModelForCausalLM.from_pretrained = orig_from
+                                text_ext.__class__._load_model = _patched_load
 
                         from transformers import AutoTokenizer
 
