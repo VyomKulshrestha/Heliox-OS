@@ -424,7 +424,8 @@ class TribeEngine:
 
                 return mean_activation, max_activation, std_activation, n_vertices
 
-            mean_act, max_act, std_act, n_verts = await loop.run_in_executor(None, _run_prediction)
+            async with self._lock:
+                mean_act, max_act, std_act, n_verts = await loop.run_in_executor(None, _run_prediction)
 
             # Map brain activations to cognitive metrics
             attention = min(1.0, mean_act * 2.5)
