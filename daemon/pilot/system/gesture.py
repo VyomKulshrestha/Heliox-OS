@@ -150,6 +150,12 @@ async def start_gesture_listener(
     import cv2 as cv
     import mediapipe as _mp
 
+    try:
+        _ = _mp.solutions.hands
+    except AttributeError:
+        logger.warning("MediaPipe solutions API not found (version >= 0.10.14). Gesture recognition disabled.")
+        return
+
     _cap = cv.VideoCapture(camera_index)
     if not _cap.isOpened():
         logger.error("Cannot open webcam for gesture detection")

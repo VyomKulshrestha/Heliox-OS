@@ -50,7 +50,7 @@ vision = [
     "easyocr>=1.7",
     "Pillow>=10.0",
     "opencv-python>=4.9.0.80",
-    "mediapipe<=0.10.13",
+    "mediapipe>=0.10.11",
 ]
 browser = [
     "playwright>=1.40",
