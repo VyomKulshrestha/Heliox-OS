@@ -221,6 +221,16 @@ class TribeEngine:
                         # Disable exca/HuggingFace multiprocessing which freezes on Windows
                         import os
                         os.environ["TOKENIZERS_PARALLELISM"] = "false"
+                        
+                        import exca.cachedict.inflight
+                        _orig_is_pid_alive = exca.cachedict.inflight._is_pid_alive
+                        def safe_is_pid_alive(pid):
+                            try:
+                                return _orig_is_pid_alive(pid)
+                            except OSError:
+                                return False
+                        exca.cachedict.inflight._is_pid_alive = safe_is_pid_alive
+                        
                         if hasattr(text_ext, "infra"):
                             text_ext.infra.jobs = 1
                             text_ext.infra.backend = "local"
@@ -470,6 +480,8 @@ class TribeEngine:
                 },
             )
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             logger.warning("TRIBE v2 prediction failed: %s — using fallback", e)
             return self._predict_with_heuristics()
 
