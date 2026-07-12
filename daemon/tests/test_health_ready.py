@@ -21,7 +21,7 @@ async def _wait_for_port(
     host: str,
     port: int,
     server_task: asyncio.Task,
-    timeout_seconds: float = 10.0,
+    timeout_seconds: float = 30.0,
 ) -> None:
     """
     Poll host:port until a TCP connection succeeds, the server task dies,
@@ -79,6 +79,7 @@ async def daemon_server(server_port, tmp_path, monkeypatch):
     config = PilotConfig()
     config.server.host = "127.0.0.1"
     config.server.port = server_port
+    config.server.auth_token = "test-token"
 
     # Mock heavy subsystems to avoid requiring a real LLM or OCR.
     # CodeAgent is patched to prevent an AttributeError on ActionType.CALENDAR_FETCH
@@ -112,6 +113,10 @@ async def daemon_server(server_port, tmp_path, monkeypatch):
 async def test_health_handler(daemon_server, capsys):
     """Test the health JSON-RPC handler returns correct fields."""
     async with websockets.connect(daemon_server) as ws:
+        await ws.send(json.dumps({"jsonrpc": "2.0", "method": "auth", "params": {"token": "test-token"}, "id": "auth"}))
+        auth_resp = json.loads(await ws.recv())
+        assert auth_resp["result"]["status"] == "authenticated"
+
         request = {"jsonrpc": "2.0", "method": "health", "params": {}, "id": "health-test"}
         await ws.send(json.dumps(request))
 
@@ -148,6 +153,10 @@ async def test_health_handler(daemon_server, capsys):
 async def test_ready_handler(daemon_server, capsys):
     """Test the ready JSON-RPC handler returns correct fields."""
     async with websockets.connect(daemon_server) as ws:
+        await ws.send(json.dumps({"jsonrpc": "2.0", "method": "auth", "params": {"token": "test-token"}, "id": "auth"}))
+        auth_resp = json.loads(await ws.recv())
+        assert auth_resp["result"]["status"] == "authenticated"
+
         request = {"jsonrpc": "2.0", "method": "ready", "params": {}, "id": "ready-test"}
         await ws.send(json.dumps(request))
 

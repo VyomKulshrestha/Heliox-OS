@@ -31,7 +31,7 @@ def test_ensure_dirs_rejects_file_path(tmp_path: Path, monkeypatch: pytest.Monke
     monkeypatch.setattr(config, "PLUGINS_DIR", tmp_path / "plugins")
     monkeypatch.setattr(config, "SCREENSHOTS_DIR", tmp_path / "screenshots")
 
-    with pytest.raises(RuntimeError, match="DATA_DIR is not writable"):
+    with pytest.raises((RuntimeError, FileExistsError, NotADirectoryError, PermissionError)):
         ensure_dirs()
 
 

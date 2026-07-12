@@ -15,6 +15,29 @@ async def server_port(unused_tcp_port):
     return unused_tcp_port
 
 
+async def _wait_for_port(
+    host: str,
+    port: int,
+    server_task: asyncio.Task,
+    timeout_seconds: float = 30.0,
+) -> None:
+    deadline = asyncio.get_running_loop().time() + timeout_seconds
+    while True:
+        if server_task.done():
+            if server_task.cancelled():
+                raise RuntimeError("Server task was cancelled before port became ready.")
+            raise RuntimeError("Server task failed before port became ready.") from server_task.exception()
+        try:
+            _, writer = await asyncio.open_connection(host, port)
+            writer.close()
+            await writer.wait_closed()
+            return
+        except OSError:
+            if asyncio.get_running_loop().time() >= deadline:
+                raise TimeoutError(f"Server did not bind on {host}:{port} within {timeout_seconds}s.") from None
+            await asyncio.sleep(0.05)
+
+
 @pytest.fixture
 async def daemon_server(server_port, tmp_path, monkeypatch):
     """
@@ -40,6 +63,7 @@ async def daemon_server(server_port, tmp_path, monkeypatch):
     config = PilotConfig()
     config.server.host = "127.0.0.1"
     config.server.port = server_port
+    config.server.auth_token = "test-token"
 
     # Mock heavy subsystems to avoid requiring a real LLM or OCR
     # These mocks ensure the test focuses on the IPC layer.
@@ -53,12 +77,13 @@ async def daemon_server(server_port, tmp_path, monkeypatch):
         patch("pilot.agents.prompt_improver.PromptImprover.initialize", new_callable=AsyncMock),
         patch("pilot.agents.subconscious.SubconsciousAgent.initialize", new_callable=AsyncMock),
         patch("pilot.security.audit.AuditLogger", return_value=MagicMock()),
+        patch("pilot.agents.code_agent.CodeAgent", new_callable=MagicMock),
     ):
         server = PilotServer(config)
         server_task = asyncio.create_task(server.start())
 
         # Give the server a moment to start the websocket listener
-        await asyncio.sleep(0.2)
+        await _wait_for_port("127.0.0.1", server_port, server_task)
 
         uri = f"ws://127.0.0.1:{server_port}"
         yield uri
@@ -72,6 +97,10 @@ async def daemon_server(server_port, tmp_path, monkeypatch):
 async def test_ipc_ping_pong(daemon_server):
     """Verify that the basic ping-pong handshake works."""
     async with websockets.connect(daemon_server) as ws:
+        await ws.send(json.dumps({"jsonrpc": "2.0", "method": "auth", "params": {"token": "test-token"}, "id": "auth"}))
+        auth_resp = json.loads(await ws.recv())
+        assert auth_resp["result"]["status"] == "authenticated"
+
         request = {"jsonrpc": "2.0", "method": "ping", "params": {}, "id": "test-1"}
         await ws.send(json.dumps(request))
 
@@ -85,6 +114,10 @@ async def test_ipc_ping_pong(daemon_server):
 async def test_ipc_parse_error(daemon_server):
     """Verify that invalid JSON returns a Parse error (-32700)."""
     async with websockets.connect(daemon_server) as ws:
+        await ws.send(json.dumps({"jsonrpc": "2.0", "method": "auth", "params": {"token": "test-token"}, "id": "auth"}))
+        auth_resp = json.loads(await ws.recv())
+        assert auth_resp["result"]["status"] == "authenticated"
+
         await ws.send("invalid json {")
 
         response = json.loads(await ws.recv())
@@ -97,6 +130,10 @@ async def test_ipc_parse_error(daemon_server):
 async def test_ipc_method_not_found(daemon_server):
     """Verify that calling a non-existent method returns -32601."""
     async with websockets.connect(daemon_server) as ws:
+        await ws.send(json.dumps({"jsonrpc": "2.0", "method": "auth", "params": {"token": "test-token"}, "id": "auth"}))
+        auth_resp = json.loads(await ws.recv())
+        assert auth_resp["result"]["status"] == "authenticated"
+
         request = {"jsonrpc": "2.0", "method": "non_existent_method", "id": 99}
         await ws.send(json.dumps(request))
 
@@ -109,6 +146,10 @@ async def test_ipc_method_not_found(daemon_server):
 async def test_ipc_get_config(daemon_server):
     """Verify that get_config returns the expected configuration sections."""
     async with websockets.connect(daemon_server) as ws:
+        await ws.send(json.dumps({"jsonrpc": "2.0", "method": "auth", "params": {"token": "test-token"}, "id": "auth"}))
+        auth_resp = json.loads(await ws.recv())
+        assert auth_resp["result"]["status"] == "authenticated"
+
         request = {"jsonrpc": "2.0", "method": "get_config", "id": "cfg-1"}
         await ws.send(json.dumps(request))
 
@@ -124,6 +165,10 @@ async def test_ipc_get_config(daemon_server):
 async def test_ipc_update_screen_vision_interval(daemon_server):
     """Verify screen vision interval updates round-trip through config IPC."""
     async with websockets.connect(daemon_server) as ws:
+        await ws.send(json.dumps({"jsonrpc": "2.0", "method": "auth", "params": {"token": "test-token"}, "id": "auth"}))
+        auth_resp = json.loads(await ws.recv())
+        assert auth_resp["result"]["status"] == "authenticated"
+
         request = {
             "jsonrpc": "2.0",
             "method": "update_config",
@@ -177,6 +222,12 @@ async def test_ipc_execute_flow_broadcast(daemon_server):
         # Mock the planner so it doesn't try to call an LLM
         with patch("pilot.agents.planner.Planner.plan", new_callable=AsyncMock) as mock_plan:
             mock_plan.return_value = MagicMock(error=None, actions=[], explanation="Mocked plan")
+
+            await ws.send(
+                json.dumps({"jsonrpc": "2.0", "method": "auth", "params": {"token": "test-token"}, "id": "auth"})
+            )
+            auth_resp = json.loads(await ws.recv())
+            assert auth_resp["result"]["status"] == "authenticated"
 
             request = {"jsonrpc": "2.0", "method": "execute", "params": {"input": "test command"}, "id": "exec-1"}
             await ws.send(json.dumps(request))
