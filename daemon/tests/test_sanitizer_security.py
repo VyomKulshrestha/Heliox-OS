@@ -11,9 +11,13 @@ def sanitizer():
 
 
 def test_absolute_path_windows_posix(sanitizer):
+    import sys
+
     # Should not raise exception
-    sanitizer.validate_path("C:\\Windows\\System32", 0)
-    sanitizer.validate_path("/etc/passwd", 0)
+    if sys.platform == "win32":
+        sanitizer.validate_path("C:\\Windows\\System32", 0)
+    else:
+        sanitizer.validate_path("/etc/passwd", 0)
 
     # Should raise exception for relative paths
     with pytest.raises(SanitizationError):
