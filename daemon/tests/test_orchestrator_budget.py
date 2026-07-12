@@ -65,10 +65,11 @@ async def tracker(model_config, tmp_path):
 
 
 @pytest.fixture
-def orchestrator(tracker):
+async def orchestrator(tracker):
     o = AgentOrchestrator(model_router=MagicMock())
     o.set_budget_tracker(tracker)
-    return o
+    yield o
+    await o.stop()
 
 
 @pytest.mark.asyncio

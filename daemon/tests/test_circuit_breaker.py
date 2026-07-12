@@ -117,11 +117,12 @@ def test_concurrent_tasks_isolated():
 
 
 @pytest.fixture
-def orchestrator_with_breaker():
+async def orchestrator_with_breaker():
     o = AgentOrchestrator(model_router=MagicMock())
     breaker = CircuitBreaker(threshold=2)
     o.set_circuit_breaker(breaker)
-    return o, breaker
+    yield o, breaker
+    await o.stop()
 
 
 @pytest.mark.asyncio

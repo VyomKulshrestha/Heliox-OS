@@ -88,7 +88,16 @@ class AgentOrchestrator:
         self.background_allowed.set()  # Start unpaused
 
         # Start the continuous scheduler loop in the background
-        asyncio.create_task(self.scheduler_loop())
+        self._scheduler_task = asyncio.create_task(self.scheduler_loop())
+
+    async def stop(self) -> None:
+        """Cancel the background scheduler task cleanly."""
+        if hasattr(self, "_scheduler_task") and not self._scheduler_task.done():
+            self._scheduler_task.cancel()
+            try:
+                await self._scheduler_task
+            except asyncio.CancelledError:
+                pass
 
     def set_budget_tracker(self, tracker: BudgetTracker) -> None:
         """Inject the budget tracker. Called by server.py during startup."""
