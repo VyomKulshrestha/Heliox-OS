@@ -3382,6 +3382,12 @@ def handle_tool(tool_name, params):
             await self._budget_tracker.close()
         if self._background:
             self._background.stop_all()
+        if hasattr(self, "_proactive") and self._proactive:
+            await self._proactive.stop()
+        if hasattr(self, "_subconscious") and self._subconscious:
+            await self._subconscious.stop()
+        if hasattr(self, "_screen_vision") and self._screen_vision:
+            await self._screen_vision.stop()
         for pending in self._pending_confirms.values():
             pending.event.set()
         self._pending_confirms.clear()

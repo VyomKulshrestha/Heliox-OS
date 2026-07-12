@@ -42,7 +42,7 @@ jobs:
         run: ruff format --check . --no-cache
 
       - name: Run tests
-        run: pytest tests/ -v --tb=short
+        run: pip install pytest-timeout && pytest tests/ -v --tb=short --timeout=300
 
   # ── Frontend Linting ──
   frontend:
