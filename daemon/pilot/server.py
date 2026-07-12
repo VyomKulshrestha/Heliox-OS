@@ -3384,10 +3384,22 @@ def handle_tool(tool_name, params):
             self._background.stop_all()
         if hasattr(self, "_proactive") and self._proactive:
             await self._proactive.stop()
+            if hasattr(self._proactive, "close"):
+                await self._proactive.close()
         if hasattr(self, "_subconscious") and self._subconscious:
             await self._subconscious.stop()
+            if hasattr(self._subconscious, "close"):
+                await self._subconscious.close()
         if hasattr(self, "_screen_vision") and self._screen_vision:
             await self._screen_vision.stop()
+            if hasattr(self._screen_vision, "close"):
+                await self._screen_vision.close()
+        if hasattr(self, "_prompt_improver") and self._prompt_improver:
+            if hasattr(self._prompt_improver, "close"):
+                await self._prompt_improver.close()
+        if hasattr(self, "_reflector") and self._reflector:
+            if hasattr(self._reflector, "close"):
+                await self._reflector.close()
         for pending in self._pending_confirms.values():
             pending.event.set()
         self._pending_confirms.clear()
