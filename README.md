@@ -853,6 +853,9 @@ snapshot_on_destructive = true
 host = "127.0.0.1"
 port = 8785
 
+[vision]
+target_fps = 20               # Limits gesture capture rate to save CPU
+
 [proxy]
 http = "http://proxy.example.com:8080"
 https = "http://proxy.example.com:8080"

@@ -205,7 +205,7 @@ async def start_gesture_listener(
 
             elapsed_time = time.time() - start_time
             if elapsed_time < target_frame_duration:
-                time.sleep(target_frame_duration - elapsed_time)
+                await asyncio.sleep(target_frame_duration - elapsed_time)
     finally:
         _running = False
         if _cap:
