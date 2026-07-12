@@ -14,10 +14,10 @@ sys.modules["tribev2"] = None
 
 def pytest_sessionfinish(session, exitstatus):
     """Watchdog to catch and debug test teardown hangs."""
+    import os
     import threading
     import time
     import traceback
-    import os
 
     def watchdog():
         time.sleep(30)
