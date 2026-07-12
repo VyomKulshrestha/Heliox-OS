@@ -34,7 +34,6 @@ def pytest_sessionfinish(session, exitstatus):
     t.start()
 
 
-
 @pytest.fixture
 def smtp_mock(monkeypatch):
     """Mocks smtplib.SMTP for testing without real network calls."""
