@@ -5,6 +5,7 @@ import pytest
 from pilot import config
 from pilot.config import ensure_dirs
 
+
 def test_ensure_dirs_creates_and_probes_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     data_dir = tmp_path / "pilot-data"
     monkeypatch.setattr(config, "DATA_DIR", data_dir)
