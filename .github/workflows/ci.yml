@@ -13,7 +13,12 @@ jobs:
   # ── Python Linting & Tests ──
   python:
     name: Python (Ruff + Pytest)
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ['3.11', '3.12']
     defaults:
       run:
         working-directory: daemon
@@ -24,7 +29,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
         run: |
