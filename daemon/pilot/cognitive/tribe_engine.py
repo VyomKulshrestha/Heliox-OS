@@ -28,6 +28,7 @@ import json
 import logging
 import os
 import time
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -167,6 +168,21 @@ class TribeEngine:
         self._loading = True
 
         try:
+            import psutil
+
+            vm = psutil.virtual_memory()
+            if vm.available < 3 * 1024 * 1024 * 1024:
+                logger.warning(
+                    f"Critically low free RAM ({vm.available / 1e9:.1f} GB). "
+                    "Aborting TRIBE v2 load to prevent Windows page file exhaustion and system crashes. "
+                    "Close other applications or increase your Windows Page File size."
+                )
+                self._fallback_mode = True
+                async with self._load_cv:
+                    self._loading = False
+                    self._load_cv.notify_all()
+                return False
+
             logger.info("Loading TRIBE v2 model from facebook/tribev2...")
             _CACHE_DIR.mkdir(parents=True, exist_ok=True)
             cache_str = str(_CACHE_DIR)
@@ -186,6 +202,11 @@ class TribeEngine:
                 ckpt_path = hf_hub_download(repo_id, "best.ckpt")
 
                 import os
+                import warnings
+
+                # Suppress neuralset warnings about Fixation events and missing classes
+                # since the pre-trained model expects the default behavior anyway.
+                warnings.filterwarnings("ignore", category=UserWarning, module="neuralset.*")
 
                 local_dir = os.path.dirname(config_path)
                 model = _TribeModel.from_pretrained(
@@ -197,7 +218,7 @@ class TribeEngine:
                 _UNGATED_LLAMA = "unsloth/Llama-3.2-3B"
                 import torch as _torch
 
-                _device = "cuda" if _torch.cuda.is_available() else "cpu"
+                _device = "accelerate" if _torch.cuda.is_available() else "cpu"
 
                 try:
                     text_ext = model.data.text_feature
@@ -211,6 +232,53 @@ class TribeEngine:
                             )
                         text_ext.model_name = _UNGATED_LLAMA
                         text_ext.device = _device
+
+                        # Disable exca/HuggingFace multiprocessing which freezes on Windows
+                        import os
+
+                        os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+                        import exca.cachedict.inflight
+
+                        _orig_is_pid_alive = exca.cachedict.inflight._is_pid_alive
+
+                        def safe_is_pid_alive(pid):
+                            try:
+                                return _orig_is_pid_alive(pid)
+                            except OSError:
+                                return False
+
+                        exca.cachedict.inflight._is_pid_alive = safe_is_pid_alive
+
+                        if hasattr(text_ext, "infra"):
+                            text_ext.infra.jobs = 1
+                            text_ext.infra.backend = "local"
+
+                        # Monkey-patch caching_allocator_warmup to do nothing!
+                        # This prevents the 5.35 GB contiguous VRAM allocation crash,
+                        # while keeping device_map="auto" to prevent system RAM page file exhaustion.
+                        if _device == "accelerate":
+                            import transformers.modeling_utils
+
+                            _orig_warmup = getattr(transformers.modeling_utils, "caching_allocator_warmup", None)
+                            if _orig_warmup:
+
+                                def _noop_warmup(*args, **kwargs):
+                                    pass
+
+                                transformers.modeling_utils.caching_allocator_warmup = _noop_warmup
+
+                            original_load = getattr(text_ext.__class__, "_load_model", None)
+                            if original_load:
+
+                                def _patched_load(self_instance, **kwargs):
+                                    try:
+                                        return original_load(self_instance, **kwargs)
+                                    finally:
+                                        if _orig_warmup:
+                                            transformers.modeling_utils.caching_allocator_warmup = _orig_warmup
+
+                                text_ext.__class__._load_model = _patched_load
 
                         from transformers import AutoTokenizer
 
@@ -392,6 +460,19 @@ class TribeEngine:
 
                 # Add a dummy Fixation event to ensure the dataset has >1 class.
                 # This resolves the neuralset LabelEncoder UserWarning.
+                warnings.filterwarnings(
+                    "ignore",
+                    message=".*treat_missing_as_separate_class.*",
+                )
+                warnings.filterwarnings(
+                    "ignore",
+                    message=".*event_types has not been set.*",
+                )
+                warnings.filterwarnings(
+                    "ignore",
+                    category=FutureWarning,
+                    module="x_transformers",
+                )
                 events.append(
                     {
                         "type": "Fixation",
@@ -419,7 +500,8 @@ class TribeEngine:
 
                 return mean_activation, max_activation, std_activation, n_vertices
 
-            mean_act, max_act, std_act, n_verts = await loop.run_in_executor(None, _run_prediction)
+            async with self._lock:
+                mean_act, max_act, std_act, n_verts = await loop.run_in_executor(None, _run_prediction)
 
             # Map brain activations to cognitive metrics
             attention = min(1.0, mean_act * 2.5)
@@ -443,6 +525,9 @@ class TribeEngine:
                 },
             )
         except Exception as e:
+            import traceback
+
+            traceback.print_exc()
             logger.warning("TRIBE v2 prediction failed: %s — using fallback", e)
             return self._predict_with_heuristics()
 

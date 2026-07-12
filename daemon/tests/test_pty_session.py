@@ -13,6 +13,11 @@ warnings.filterwarnings("ignore", message=".*forkpty.*", category=DeprecationWar
 if sys.platform == "win32":
     pytest.skip("PTY sessions are Unix-only", allow_module_level=True)
 
+try:
+    import ptyprocess  # noqa: F401
+except ImportError:
+    pytest.skip("ptyprocess not installed", allow_module_level=True)
+
 
 @pytest.fixture(autouse=True)
 def isolate_sessions():

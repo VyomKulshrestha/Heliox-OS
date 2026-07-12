@@ -232,6 +232,11 @@ class ActionValidator:
 
         elif isinstance(params, ShellCommandParams):
             self._sanitizer.validate_shell_command(params.command, params.args, idx)
+            from pilot.security.sanitizer import ELEVATED_COMMANDS
+
+            if params.command in ELEVATED_COMMANDS:
+                if not action.destructive and not action.requires_root:
+                    raise ValidationError(idx, f"Elevated command '{params.command}' requires destructive or root flag")
 
         elif isinstance(params, ShellScriptParams):
             # Scripts get validated more loosely — they're inherently powerful
@@ -290,10 +295,21 @@ class ActionValidator:
         restrictions = self._config.restrictions
 
         if isinstance(action.parameters, (FileParams, GitResolveParams)):
-            path_str = action.parameters.path
+            import os
+
+            try:
+                resolved_path = os.path.realpath(action.parameters.path)
+            except Exception:
+                resolved_path = action.parameters.path
+
             for protected in restrictions.protected_folders:
-                if path_str.startswith(protected):
-                    raise ValidationError(idx, f"Path {path_str} is in protected folder {protected}")
+                try:
+                    resolved_protected = os.path.realpath(protected)
+                except Exception:
+                    resolved_protected = protected
+
+                if resolved_path.startswith(resolved_protected):
+                    raise ValidationError(idx, f"Path {action.parameters.path} is in protected folder {protected}")
 
         if isinstance(action.parameters, PackageParams) and action.action_type == ActionType.PACKAGE_REMOVE:
             if action.parameters.name in restrictions.protected_packages:

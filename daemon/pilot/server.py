@@ -484,6 +484,7 @@ class PilotServer:
             model_router=model_router,
             config=self.config,
             vault=self._vault,
+            memory=self._memory,
         )
         logger.info("Auto-registered %d agents via dynamic discovery", registered)
         await self._orchestrator.start_all()
@@ -512,7 +513,7 @@ class PilotServer:
         self._orchestrator.register_agent(self._rss_agent)
 
         # Multimodal Fusion Engine — voice + gesture intent fusion
-        from pilot.multimodal.fusion import ModalityType, MultimodalEvent, MultimodalFusionEngine
+        from pilot.multimodal.fusion import InputEvent, ModalityType, MultimodalFusionEngine
 
         self._fusion = MultimodalFusionEngine()
         self._fusion.set_broadcast(self._broadcast_notification)
@@ -522,15 +523,19 @@ class PilotServer:
             from pilot.system.gesture import start_gesture_listener
 
             def _on_local_gesture(name: str, conf: float):
-                event = MultimodalEvent(
+                event = InputEvent(
                     modality=ModalityType.GESTURE, gesture_name=name, gesture_confidence=conf, gesture_data={}
                 )
                 asyncio.create_task(self._fusion.on_gesture_event(event))
 
-            asyncio.create_task(
-                start_gesture_listener(on_gesture=_on_local_gesture, camera_index=self.config.vision.camera_index)
-            )
-            logger.info("Local gesture listener auto-started (camera %s)", self.config.vision.camera_index)
+            # DISABLED: The backend gesture listener locks the Windows webcam hardware,
+            # which prevents the frontend Tauri UI (GestureControl.svelte) from accessing it.
+            # We defer gesture recognition exclusively to the rich frontend UI.
+            # asyncio.create_task(
+            #     start_gesture_listener(on_gesture=_on_local_gesture, camera_index=self.config.vision.camera_index)
+            # )
+            # logger.info("Local gesture listener auto-started (camera %s)", self.config.vision.camera_index)
+            logger.info("Local gesture listener disabled in favor of frontend UI MediaPipe engine")
         except Exception:
             logger.warning("Local gesture listener init failed (non-critical)", exc_info=True)
 
@@ -605,18 +610,21 @@ class PilotServer:
             asyncio.create_task(
                 self._screen_vision.start(interval_seconds=sv_config.capture_interval_seconds, enable_describe=False)
             )
-            logger.info("ScreenVisionAgent auto-started (every %.1fs, JARVIS mode)", interval_seconds)
+            logger.info("ScreenVisionAgent auto-started (every %.1fs, JARVIS mode)", sv_config.capture_interval_seconds)
         except Exception:
             logger.warning("ScreenVisionAgent init failed (non-critical)", exc_info=True)
 
         # ── Cognitive Intelligence (TRIBE v2) ──
         try:
-            from pilot.cognitive.attention_scorer import AttentionAwareUI
-            from pilot.cognitive.intent_predictor import IntentPredictor
-            from pilot.cognitive.stress_gate import StressGate
-            from pilot.cognitive.tribe_engine import TribeEngine
+            if not self.config.cognitive.enabled:
+                logger.info("Cognitive intelligence disabled in config.toml (tribe v2 skipped)")
+            else:
+                from pilot.cognitive.attention_scorer import AttentionAwareUI
+                from pilot.cognitive.intent_predictor import IntentPredictor
+                from pilot.cognitive.stress_gate import StressGate
+                from pilot.cognitive.tribe_engine import TribeEngine
 
-            self._tribe_engine = TribeEngine.get_instance()
+                self._tribe_engine = TribeEngine.get_instance()
             self._attention_ui = AttentionAwareUI(self._tribe_engine)
             self._attention_ui.set_broadcast(self._broadcast_notification)
             self._stress_gate = StressGate(self._tribe_engine)
