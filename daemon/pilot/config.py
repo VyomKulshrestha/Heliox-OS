@@ -134,6 +134,7 @@ class ScreenVisionConfig:
 @dataclass
 class VisionConfig:
     camera_index: int = 0
+    target_fps: int = 20
 
 
 @dataclass
@@ -355,6 +356,7 @@ def _validate_config_types(raw: dict) -> None:
         },
         "vision": {
             "camera_index": int,
+            "target_fps": int,
         },
         "memory": {
             "checkpoint_interval_seconds": int,

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Callable
 
 logger = logging.getLogger("pilot.system.gesture")
@@ -185,8 +186,13 @@ async def start_gesture_listener(
 
     logger.info("Gesture listener started")
 
+    from pilot.config import PilotConfig
+    config = PilotConfig.load().vision
+    target_frame_duration = 1.0 / config.target_fps
+
     try:
         while _running:
+            start_time = time.time()
             ret, frame = _cap.read()
             if not ret:
                 await asyncio.sleep(0.1)
@@ -214,7 +220,9 @@ async def start_gesture_listener(
                 elif not gesture_name:
                     last_gesture = ""
 
-            await asyncio.sleep(0.033)  # ~30 FPS
+            elapsed_time = time.time() - start_time
+            if elapsed_time < target_frame_duration:
+                await asyncio.sleep(target_frame_duration - elapsed_time)
     finally:
         _running = False
         if _cap:
