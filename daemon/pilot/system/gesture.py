@@ -171,11 +171,24 @@ async def start_gesture_listener(
     logger.info("Gesture listener started")
 
     try:
+        max_retries = 5
+        retry_count = 0
         while _running:
             ret, frame = _cap.read()
             if not ret:
-                await asyncio.sleep(0.1)
+                # Handle intermittent camera disconnects with an auto-retry loop.
+                # Releases and reinitializes the VideoCapture up to 5 times.
+                retry_count += 1
+                if retry_count > max_retries:
+                    logger.error("Hardware failure: Unable to reconnect to the camera after %s retries.", max_retries)
+                    break
+                logger.warning(f"Camera disconnected. Attempting to reconnect (Attempt {retry_count}/{max_retries})...")
+                _cap.release()
+                time.sleep(2)
+                _cap = cv.VideoCapture(camera_index)
                 continue
+            else:
+                retry_count = 0
 
             # Convert BGR to RGB for MediaPipe
             rgb = cv.cvtColor(frame, cv.COLOR_BGR2RGB)
