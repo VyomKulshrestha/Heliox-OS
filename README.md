@@ -835,7 +835,7 @@ npm run dev
 
 ## Configuration
 
-Config file: `~/.config/pilot/config.toml`
+Config file: `~/.config/heliox-os/config.toml`
 
 ```toml
 [model]
@@ -857,6 +857,9 @@ port = 8785
 http = "http://proxy.example.com:8080"
 https = "http://proxy.example.com:8080"
 no_proxy = "localhost,127.0.0.1"
+
+[vision]
+camera_index = 0
 ```
 ## 🛠️ Troubleshooting
 
@@ -881,7 +884,7 @@ cloud_provider = "gemini"
 **A:** Ensure that `portaudio19-dev` and `python3-pyaudio` are installed on your system. You may also need to grant your terminal or the Heliox app permission to access the microphone in your system settings.
 
 #### Q5: Hand gesture control requires a webcam — which ones are supported?
-**A:** Any standard USB or integrated webcam supported by your OS will work. Heliox OS uses OpenCV for vision tasks. If your camera isn't detected, ensure no other application is currently using it. Note that there is no `CAMERA_INDEX` configuration variable; the system automatically attempts to find the default camera.
+**A:** Any standard USB or integrated webcam supported by your OS will work. Heliox OS uses OpenCV for vision tasks. If your camera isn't detected, ensure no other application is currently using it. You can specify which camera to use by setting `camera_index` under the `[vision]` section in your `config.toml` (defaults to 0 for the primary camera).
 
 #### Q6: Port already in use (8785 or 8786).
 **A:** Heliox OS uses port `8785` for the API and `8786` for mesh networking. If these ports are occupied, you can identify and stop the conflicting process:

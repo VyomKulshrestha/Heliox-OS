@@ -113,9 +113,6 @@ SAFE_COMMANDS = frozenset(
         "nbtstat",
         # Process
         "tasklist",
-        "taskkill",
-        "kill",
-        "pkill",
         "pgrep",
         # System
         "systeminfo",
@@ -124,16 +121,11 @@ SAFE_COMMANDS = frozenset(
         "pwsh",
         # File
         "mkdir",
-        "rmdir",
         "cp",
         "mv",
-        "rm",
         "touch",
-        "chmod",
-        "chown",
         "copy",
         "move",
-        "del",
         "type",
         "more",
         # Python / dev
@@ -163,11 +155,7 @@ SAFE_COMMANDS = frozenset(
         "awk",
         "xargs",
         "yes",
-        "ssh",
-        "scp",
         "rsync",
-        "docker",
-        "docker-compose",
         "code",
         "notepad",
         "nano",
@@ -193,6 +181,10 @@ SAFE_COMMANDS = frozenset(
         "icacls",
         "attrib",
     }
+)
+
+ELEVATED_COMMANDS = frozenset(
+    {"rm", "rmdir", "del", "chmod", "chown", "kill", "pkill", "taskkill", "docker", "docker-compose", "ssh", "scp"}
 )
 
 VALID_URL = re.compile(r"^https?://[^\s]+$")
@@ -221,16 +213,12 @@ class Sanitizer:
             raise SanitizationError(idx, f"Path traversal detected: {path!r}")
 
         # Platform-aware absolute path check
-        if self._is_windows:
-            p = PureWindowsPath(path)
-            if not p.is_absolute():
-                raise SanitizationError(idx, f"Path must be absolute: {path!r}")
-        else:
-            p = PurePosixPath(path)
-            if not p.is_absolute():
-                raise SanitizationError(idx, f"Path must be absolute: {path!r}")
+        p_win = PureWindowsPath(path)
+        p_posix = PurePosixPath(path)
+        if not (p_win.is_absolute() or p_posix.is_absolute()):
+            raise SanitizationError(idx, f"Path must be absolute: {path!r}")
 
-        if any(part == ".." for part in p.parts):
+        if any(part == ".." for part in p_posix.parts) or any(part == ".." for part in p_win.parts):
             raise SanitizationError(idx, f"Path contains ..: {path!r}")
 
     def validate_package_name(self, name: str, idx: int) -> None:
@@ -255,7 +243,7 @@ class Sanitizer:
         With the expanded agent model, we allow all commands from the safe list.
         Unknown commands are still blocked unless the config allows unrestricted mode.
         """
-        if command not in SAFE_COMMANDS:
+        if command not in SAFE_COMMANDS and command not in ELEVATED_COMMANDS:
             # Check if unrestricted shell is enabled in config
             if hasattr(self._config, "security") and getattr(self._config.security, "unrestricted_shell", False):
                 logger.warning("Allowing non-whitelisted command in unrestricted mode: %s", command)
@@ -275,6 +263,13 @@ class Sanitizer:
     def validate_url(self, url: str, idx: int) -> None:
         if not url:
             raise SanitizationError(idx, "Empty URL")
+
+        # Prevent non-http schemes from being wrapped
+        if re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*:", url) and not url.startswith(
+            ("http://", "https://", "http:", "https:")
+        ):
+            raise SanitizationError(idx, f"Invalid URL scheme: {url!r}")
+
         normalized = url if url.startswith(("http://", "https://")) else f"https://{url}"
         if not VALID_URL.match(normalized):
             raise SanitizationError(idx, f"Invalid URL: {url!r}")

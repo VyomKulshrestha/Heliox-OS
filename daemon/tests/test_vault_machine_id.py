@@ -48,7 +48,9 @@ def test_machine_id_linux_primary():
     """Returns the content of /etc/machine-id when the file is present."""
 
     def fake_read_text(self, *args, **kwargs):  # noqa: ANN001
-        if str(self) in ("/etc/machine-id", "/var/lib/dbus/machine-id"):
+        from pathlib import Path
+
+        if Path(self).as_posix() in ("/etc/machine-id", "/var/lib/dbus/machine-id"):
             return "abc123linux\n"
         raise OSError("not found")
 
@@ -62,9 +64,12 @@ def test_machine_id_linux_fallback_to_dbus():
     """/var/lib/dbus/machine-id is used when /etc/machine-id is absent."""
 
     def fake_read_text(self, *args, **kwargs):  # noqa: ANN001
-        if str(self) == "/etc/machine-id":
+        from pathlib import Path
+
+        posix_path = Path(self).as_posix()
+        if posix_path == "/etc/machine-id":
             raise OSError("no such file")
-        if str(self) == "/var/lib/dbus/machine-id":
+        if posix_path == "/var/lib/dbus/machine-id":
             return "dbus999\n"
         raise OSError("not found")
 

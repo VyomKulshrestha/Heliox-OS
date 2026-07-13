@@ -12,6 +12,28 @@ sys.modules["torch"] = None
 sys.modules["tribev2"] = None
 
 
+def pytest_sessionfinish(session, exitstatus):
+    """Watchdog to catch and debug test teardown hangs."""
+    import os
+    import threading
+    import time
+    import traceback
+
+    def watchdog():
+        time.sleep(30)
+        print("\n\n!!! WATCHDOG: Test suite hung during teardown! Dumping threads: !!!\n", file=sys.stderr)
+        for th in threading.enumerate():
+            print(f"--- Thread: {th.name} ---", file=sys.stderr)
+            frame = sys._current_frames().get(th.ident)
+            if frame:
+                traceback.print_stack(frame, file=sys.stderr)
+        print("\n!!! Forcing exit !!!\n", file=sys.stderr)
+        os._exit(1)
+
+    t = threading.Thread(target=watchdog, daemon=True, name="TeardownWatchdog")
+    t.start()
+
+
 @pytest.fixture
 def smtp_mock(monkeypatch):
     """Mocks smtplib.SMTP for testing without real network calls."""

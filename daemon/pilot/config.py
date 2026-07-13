@@ -177,6 +177,11 @@ class SemanticSearchConfig:
 
 
 @dataclass
+class CognitiveConfig:
+    enabled: bool = True
+
+
+@dataclass
 class RedisConfig:
     enabled: bool = False
     host: str = "127.0.0.1"
@@ -248,6 +253,7 @@ class PilotConfig:
     restrictions: Restrictions = field(default_factory=Restrictions)
     first_run_complete: bool = False
     redis: RedisConfig = field(default_factory=RedisConfig)
+    cognitive: CognitiveConfig = field(default_factory=CognitiveConfig)
 
     @classmethod
     def load(cls) -> PilotConfig:

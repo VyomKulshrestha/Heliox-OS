@@ -132,6 +132,9 @@ class PeerDiscovery:
         """Deregister and shut down."""
         if not _ZEROCONF_AVAILABLE or self._zc is None:
             return
+        if self._browser:
+            await self._browser.async_cancel()
+            self._browser = None
         if self._service_info:
             await self._zc.async_unregister_service(self._service_info)
         await self._zc.async_close()

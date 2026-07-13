@@ -142,8 +142,9 @@
       stream = await navigator.mediaDevices.getUserMedia({
         video: { width: 320, height: 240, facingMode: "user" },
       });
-    } catch {
-      cameraError = "Camera access denied.";
+    } catch (e: any) {
+      cameraError = `Camera error: ${e.name || e.message || 'Access denied or no device found'}`;
+      console.error("Camera error:", e);
       return;
     }
 
