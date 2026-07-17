@@ -170,6 +170,12 @@ Return the daemon's full runtime configuration.
     "protected_packages": [],
     "blocked_commands": []
   },
+  "gesture_cursor": {
+    "enabled": false,
+    "sensitivity": 1.0,
+    "prediction_ms": 80.0,
+    "blend": 0.3
+  },
   "first_run_complete": true
 }
 ```
@@ -343,6 +349,37 @@ Return fusion engine statistics.
 
 **Params:** `{}`
 **Result:** fusion engine stats dict.
+
+---
+
+### Gesture Cursor Control (browser/dev-mode fallback)
+
+`cursor_move`/`cursor_click` are the **degraded fallback path** for the
+continuous gesture-to-cursor bridge (see GESTURES.md) — used when testing
+the wiring in a plain browser (`npm run dev`) without a compiled Tauri
+binary. The primary, real-time path never touches these RPCs at all: it's a
+native Rust Tauri command (`move_gesture_cursor`/`click_gesture_cursor` in
+`tauri-app/src-tauri/src/commands.rs`, backed by the `enigo` crate) invoked
+directly over the Tauri IPC bridge, in-process, with no WebSocket round-trip.
+The daemon path exists only because the daemon's `mouse_move` (pyautogui,
+300ms tween + 50ms pause per call) plus a fresh WebSocket connection per
+invocation cannot sustain the bridge's ~30fps update rate.
+
+Both bypass Planner/Executor/confirmation entirely — `MOUSE_MOVE`/
+`MOUSE_CLICK` are Tier 1 (USER_WRITE), already never requiring confirmation.
+
+#### `cursor_move`
+Move the OS mouse cursor to an absolute screen position via
+`pilot.system.input_control.mouse_move(x, y, duration=0.0)`.
+
+**Params:** `{ "x": 640, "y": 400 }`
+**Result:** `{ "status": "ok", "message": "Moved mouse to (640, 400) [absolute]" }`, or `{ "status": "error", "message": "x/y must be integers" }`.
+
+#### `cursor_click`
+Click at a screen position via `pilot.system.input_control.mouse_click(x, y, button="left")` — the gesture-cursor bridge passes the same coordinates it last sent to `cursor_move`.
+
+**Params:** `{ "x": 640, "y": 400 }`
+**Result:** `{ "status": "ok", "message": "Clicked (left, 1x) at (640, 400)" }`
 
 ---
 
@@ -1167,7 +1204,10 @@ If verification fails, the daemon re-plans and the cycle repeats (up to 2 retrie
 |------|----------|
 | `daemon/pilot/server.py` | All request handlers and notification senders |
 | `daemon/pilot/actions.py` | `ActionType` enum, parameter models, `is_irreversible`/`dangerous_flags` |
-| `daemon/pilot/config.py` | `PilotConfig`, `ModelConfig`, `SecurityConfig` |
+| `daemon/pilot/config.py` | `PilotConfig`, `ModelConfig`, `SecurityConfig`, `GestureCursorConfig` |
+| `daemon/pilot/system/input_control.py` | `mouse_move`/`mouse_click` — backing implementation for the `cursor_move`/`cursor_click` fallback |
+| `tauri-app/src-tauri/src/commands.rs` | `move_gesture_cursor`/`click_gesture_cursor` — the primary, real-time gesture-cursor path (enigo) |
+| `tauri-app/ui/src/lib/gesture/spatialModel.ts` | `predictAhead()`/`predictCursorTarget()` — the kinematic prediction feeding the cursor bridge |
 | `daemon/pilot/security/permissions.py` | `PermissionChecker` — single source of truth for confirmation/snapshot policy |
 | `daemon/pilot/security/sanitizer.py` | Command whitelist, dangerous-argument pattern detection |
 | `daemon/pilot/agents/destructive_critic.py` | `DestructiveCriticAgent`, `heuristic_risk()` (Tier-3 LLM-review skip heuristic) |

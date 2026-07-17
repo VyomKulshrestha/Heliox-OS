@@ -93,6 +93,61 @@ first so the recalibration can actually be verified.
 
 ---
 
+## Gesture Cursor Control (continuous cursor bridge)
+
+A separate, **off-by-default** mode that continuously drives the real OS
+mouse cursor from hand position, rather than firing discrete named gestures.
+Enable it in Settings → Gesture Cursor Control (`gesture_cursor.enabled`),
+then toggle "Cursor Mode" in the gesture panel while the engine is running —
+it is never enabled by a gesture itself.
+
+**While active:**
+- The index fingertip's filtered position, blended with its predicted
+  near-future position (`prediction_ms`/`blend` settings — see "Prediction"
+  below), drives the OS cursor.
+- **Pinch fires a click** — evaluated against the *predicted* pinch distance,
+  so the click registers a little before the pinch pose has fully, stably
+  closed. This is the concrete case of "fire before a gesture completes."
+- Every other discrete gesture (all 31 above) is **suppressed** — reaching
+  for a swipe or a thumbs-up while pointing would otherwise misfire
+  constantly against the cursor-tracking logic.
+- **Open palm exits cursor mode immediately** (its existing "Cancel/Stop"
+  meaning), checked first every frame, before anything else. The gesture
+  panel's stop button and the "Cursor Mode" toggle button both work too.
+
+**Coordinate mapping:** the camera video is mirrored (`scaleX(-1)`) for
+natural selfie-view display, but MediaPipe processes the raw, unmirrored
+frame — the x coordinate is flipped when mapping to screen pixels so moving
+your hand right visually moves the cursor right, matching what you see on
+screen rather than the raw camera data.
+
+**Where cursor movement actually comes from:** a native Rust Tauri command
+(`move_gesture_cursor`/`click_gesture_cursor` in
+`tauri-app/src-tauri/src/commands.rs`, using the `enigo` crate) — not the
+Python daemon. The daemon's existing `mouse_move` defaults to a 300ms
+pyautogui tween plus a 50ms pause after every call, and the Tauri↔daemon
+bridge opens a fresh WebSocket connection per invocation — both make a
+sustained ~30fps cursor stream impractical. `enigo` runs in-process instead.
+A `cursor_move`/`cursor_click` daemon RPC pair still exists as a degraded
+fallback for testing the wiring in a plain browser dev session without a
+compiled Tauri binary — see IPC_MESSAGE_FORMATS.md.
+
+**Prediction**: reuses the same `predictAhead()` kinematic extrapolation
+described above — a constant-velocity estimate, not a generative model.
+`gesture_cursor.blend` (default `0.3`) controls how much of the predicted
+vs. current position feeds the cursor; kept modest by default because the
+predictor's velocity estimate is empirically amplified for a sustained
+motion (see `spatialModel.test.ts`), so a larger blend risks visible
+overshoot until this is tuned against real camera data.
+
+**Safety notes:** this is the first gesture feature that continuously drives
+real OS input without a per-action confirmation gate, so treat the escape
+hatches above as load-bearing, not optional — cursor coordinates are also
+clamped to screen bounds before every move, and `Enigo::new()` failing (e.g.
+no display session) degrades to a clear error rather than a crash.
+
+---
+
 ## Static Pose Gestures (21)
 
 These are recognized by analyzing which fingers are extended, curled, or touching.
@@ -219,8 +274,14 @@ To add a new gesture:
 
 | File | Role |
 |------|------|
-| `tauri-app/ui/src/lib/components/GestureControl.svelte` | Core gesture engine |
-| `tauri-app/ui/src/lib/gesture/spatialModel.ts` | Spatial/world-model layer — temporal filtering, thumb-extension check, hand quality scoring |
+| `tauri-app/ui/src/lib/components/GestureControl.svelte` | Core gesture engine + gesture-cursor bridge |
+| `tauri-app/ui/src/lib/gesture/spatialModel.ts` | Spatial/world-model layer — temporal filtering, thumb-extension check, hand quality scoring, kinematic prediction |
 | `tauri-app/ui/src/lib/gesture/spatialModel.test.ts` | Unit tests for the spatial model's pure functions |
+| `tauri-app/ui/src/lib/utils/runtime.ts` | `isTauriRuntime()` — used to pick the native vs. daemon-RPC cursor path |
+| `tauri-app/ui/src/lib/stores/settings.ts` | `gesture_cursor` settings section |
+| `tauri-app/ui/src/lib/components/SettingsPanel.svelte` | Gesture Cursor Control settings UI |
+| `tauri-app/src-tauri/src/commands.rs` | `move_gesture_cursor`/`click_gesture_cursor` Tauri commands (enigo) |
+| `daemon/pilot/server.py` | `cursor_move`/`cursor_click` RPC fallback handlers |
+| `daemon/pilot/config.py` | `GestureCursorConfig` |
 | `tauri-app/ui/src/App.svelte` | Gesture to UI navigation handler |
 | `tauri-app/src-tauri/tauri.conf.json` | CSP allowing MediaPipe CDN |

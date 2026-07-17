@@ -86,7 +86,8 @@ Heliox OS has achieved true proactive autonomy, transitioning from a reactive as
 - ⚡ **Fire-and-Forget Autonomous Jobs**: Spawn complex multi-step background tasks that decompose, execute, and verify completely independent of the UI or main event loop.
 - 👁️ **Always-On Screen Awareness**: Automatically bootstrapped computer vision that tracks your contextual state cross-platform, natively bridging exactly what you see into the LLM planner. 
 - 🎤 **Continuous Voice Listener**: Real-time push-free 'Hey Heliox' ambient wake-word dispatch for frictionless task execution.
-- 🤚 **30+ Hand Gestures & Air Drawing**: Control your PC via webcam with static poses (Palm, Pinch) and motion gestures (Two-Finger Swipe).
+- 🤚 **30+ Hand Gestures & Air Drawing**: Control your PC via webcam with static poses (Palm, Pinch) and motion gestures (Two-Finger Swipe). A lightweight kinematic prediction layer smooths tracking and reduces misfires.
+- 🖱️ **Gesture Cursor Control** *(off by default)*: Point to move the real OS cursor, pinch to click — opt in via Settings. Open palm always exits instantly.
 - 🌀 **Arc Reactor UI & Ambient HUD**: Animated, immersive Tauri overlays responding contextually to system actions.
 
 ## 🧠 TRIBE v2 Cognitive Engine Integrations (v0.7.1)
@@ -822,6 +823,7 @@ npm run dev
 - Dangerous shell argument patterns (recursive+force deletes, wildcard/root path targets) are flagged even on already-whitelisted commands
 - **Snapshot-based rollback via Btrfs or Timeshift (Linux)** — snapshots taken before destructive plans can actually be reverted afterward via an in-app "Undo" action (filesystem-wide, not per-action — the UI spells this out before you confirm)
 - **Tamper-evident, HMAC-chained audit log** for every elevated permission decision, viewable and independently verifiable (integrity check) from the Settings panel
+- **Gesture cursor control is off by default** — the continuous gesture-to-cursor bridge drives the real OS mouse cursor and is the one feature in this app that acts without a per-action confirmation gate, so it requires an explicit opt-in in Settings and always exits instantly on an open palm, the panel's stop button, or disabling the toggle
 - Command whitelist with optional unrestricted mode
 - **Encrypted API key storage** via platform keyring (GNOME Keyring / Windows Credential Manager)
 - API keys are NEVER logged, included in plans, or sent to local LLMs

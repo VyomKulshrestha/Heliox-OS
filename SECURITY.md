@@ -24,6 +24,7 @@ This policy covers the following Helix OS components:
 - **🧩 Plugin Loading** — how third-party plugins are installed, verified, and executed at startup
 - **🌐 WebSocket IPC** — the communication bridge between the Tauri UI and Python Daemon
 - **🤖 Python Daemon** — the core backend driving agent orchestration, planning, and verification
+- **🖱️ Gesture Cursor Control** — the continuous gesture-to-cursor bridge (off by default, opt-in only) that drives the real OS mouse cursor; the one capability in Heliox OS that acts without a per-action confirmation gate, so its escape hatches (open palm, stop button, disabling the setting) and screen-bounds clamping are treated as security-relevant, not just UX
 
 **Out of scope:**
 - Third-party plugins not maintained by the Helix OS team
