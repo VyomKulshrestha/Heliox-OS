@@ -719,6 +719,8 @@ class PilotServer:
             "agent_spawn": self._handle_agent_spawn,
             "voice_event": self._handle_voice_event,
             "gesture_event": self._handle_gesture_event,
+            "cursor_move": self._handle_cursor_move,
+            "cursor_click": self._handle_cursor_click,
             "multimodal_stats": self._handle_multimodal_stats,
             "reasoning_log": self._handle_reasoning_log,
             "reasoning_stats": self._handle_reasoning_stats,
@@ -2487,6 +2489,63 @@ class PilotServer:
             A dict with pong and version.
         """
         return {"pong": True, "version": "0.7.1"}
+
+    async def _handle_cursor_move(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """Move the OS mouse cursor to an absolute screen position.
+
+        This is the browser/dev-mode fallback for the gesture-cursor bridge
+        (see GESTURES.md) — the primary path is a native Rust Tauri command
+        (`move_gesture_cursor`, uses the `enigo` crate) that stays entirely
+        in-process for ~30fps latency. This RPC goes through a WebSocket
+        round-trip plus pyautogui's own PAUSE delay, which is fine for
+        testing the wiring in a browser without a compiled Tauri binary but
+        will not feel as smooth as the native path. Bypasses
+        Planner/Executor/confirmation entirely — MOUSE_MOVE is Tier 1
+        (USER_WRITE), already confirmed to never require confirmation.
+
+        Args:
+            params: JSON-RPC parameters containing x and y (absolute screen
+                coordinates).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with status and a human-readable message.
+        """
+        from pilot.system import input_control
+
+        try:
+            x = int(params.get("x", 0))
+            y = int(params.get("y", 0))
+        except (TypeError, ValueError):
+            return {"status": "error", "message": "x/y must be integers"}
+
+        message = await input_control.mouse_move(x, y, duration=0.0)
+        return {"status": "ok", "message": message}
+
+    async def _handle_cursor_click(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """Click at the given screen position — the fallback counterpart to
+        the Rust `click_gesture_cursor` command, used for the pinch-to-click
+        gesture while cursor mode is active. See `_handle_cursor_move` for
+        why this path exists and its latency caveats.
+
+        Args:
+            params: JSON-RPC parameters containing x and y (the position the
+                gesture-cursor bridge last moved to).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with status and a human-readable message.
+        """
+        from pilot.system import input_control
+
+        try:
+            x = int(params.get("x", 0))
+            y = int(params.get("y", 0))
+        except (TypeError, ValueError):
+            return {"status": "error", "message": "x/y must be integers"}
+
+        message = await input_control.mouse_click(x, y, button="left")
+        return {"status": "ok", "message": message}
 
     async def _handle_system_info(self, params: dict, ws: ServerConnection) -> dict:
         """Return exact hardware metrics (CPU, RAM, Disk, Uptime, Hostname) for HUD monitor."""
