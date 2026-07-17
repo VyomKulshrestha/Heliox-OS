@@ -1194,10 +1194,24 @@ class PilotServer:
             )
 
             from pilot.actions import PermissionTier
+            from pilot.agents.destructive_critic import HEURISTIC_RISK_THRESHOLD, heuristic_risk
 
             critic_verdict_payload: dict[str, Any] | None = None
             plan_has_tier4 = any(a.permission_tier == PermissionTier.ROOT_CRITICAL for a in plan.actions)
-            if plan_has_tier4 and self._destructive_critic and not dry_run:
+            plan_has_tier3 = any(a.permission_tier == PermissionTier.DESTRUCTIVE for a in plan.actions)
+            plan_has_irreversible = any(getattr(a, "is_irreversible", False) for a in plan.actions)
+            risk_score = heuristic_risk(plan) if (plan_has_tier3 or plan_has_irreversible) else 0.0
+            # Tier 4 always gets the LLM critic. Tier 3 / irreversible-only plans
+            # only pay for the LLM round-trip when the cheap heuristic flags them
+            # as ambiguous/high-risk — trivial single-file deletes skip straight
+            # to the confirmation dialog, but say so explicitly in the audit trail.
+            needs_critic_review = plan_has_tier4 or plan_has_tier3 or plan_has_irreversible
+            critic_skipped_reason: str | None = None
+            if needs_critic_review and not (plan_has_tier4 or risk_score >= HEURISTIC_RISK_THRESHOLD):
+                needs_critic_review = False
+                critic_skipped_reason = "low_risk_heuristic"
+
+            if needs_critic_review and self._destructive_critic and not dry_run:
                 critic_phase = ""
                 await ws.send(_notification("status", {"phase": "critic review"}))
                 if emit:
@@ -1208,7 +1222,7 @@ class PilotServer:
                     )
                     await emit.thought(
                         "critic_review",
-                        "Tier 4 actions detected — running independent safety review...",
+                        "Destructive/irreversible actions detected — running independent safety review...",
                         parent_id=critic_phase,
                     )
 
@@ -1262,6 +1276,21 @@ class PilotServer:
                         verdict.to_dict(),
                         parent_id=critic_phase,
                     )
+            elif critic_skipped_reason and not dry_run:
+                # Tier 3 / irreversible plan whose heuristic risk score was low
+                # enough to skip the LLM round-trip — keep the audit trail
+                # honest that a deeper review did not run, rather than implying
+                # one silently approved it.
+                critic_verdict_payload = {
+                    "verdict": "SKIPPED",
+                    "risk_score": risk_score,
+                    "issues": [],
+                    "safe_actions": [],
+                    "flagged_actions": [],
+                    "recommendation": "Low-risk heuristic — LLM safety review was skipped.",
+                    "critic_skipped": critic_skipped_reason,
+                }
+                await ws.send(_notification("critic_verdict", critic_verdict_payload))
 
             needs_confirm = any(a.requires_confirmation for a in plan.actions) and not dry_run
             if needs_confirm:

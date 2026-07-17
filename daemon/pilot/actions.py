@@ -359,6 +359,28 @@ SYSTEM_MODIFY_ACTIONS = {
     ActionType.CALENDAR_CREATE_EVENT,
 }
 
+# Actions that cannot be undone by the local snapshot/rollback mechanism
+# (SnapshotManager only reverts local disk/filesystem state), regardless of
+# their permission tier. A Tier 2 email send is not "destructive" to local
+# files but is just as unrecoverable as a Tier 3 file delete once it fires.
+IRREVERSIBLE_ACTIONS = {
+    # External communications — cannot be recalled once sent
+    ActionType.API_SEND_EMAIL,
+    ActionType.API_WEBHOOK,
+    ActionType.API_SLACK,
+    ActionType.API_DISCORD,
+    ActionType.EMAIL_REPLY,
+    # Remote hosts — outside the local snapshot's reach entirely
+    ActionType.SSH_COMMAND,
+    ActionType.SSH_SCRIPT,
+    # Power actions — cannot be "rolled back" once they take effect
+    ActionType.POWER_SHUTDOWN,
+    ActionType.POWER_RESTART,
+    ActionType.POWER_LOGOUT,
+    # Package removal can lose config/data a simple reinstall won't restore
+    ActionType.PACKAGE_REMOVE,
+}
+
 
 # -- Parameter models --
 
@@ -858,6 +880,7 @@ class Action(BaseModel):
     reversible: bool = True
     rollback_action: Action | None = None
     use_previous_output: bool = False  # Inject previous step's output into this action
+    dangerous_flags: list[str] = Field(default_factory=list)  # populated by ActionValidator
 
     @property
     def permission_tier(self) -> PermissionTier:
@@ -931,6 +954,22 @@ class Action(BaseModel):
     def requires_snapshot(self) -> bool:
         return self.permission_tier >= PermissionTier.DESTRUCTIVE
 
+    @property
+    def is_irreversible(self) -> bool:
+        """True when this action cannot be undone via local snapshot rollback.
+
+        Distinct from ``permission_tier``/``destructive``: a Tier 2 email send
+        is irreversible even though it isn't a Tier 3+ "destructive" action,
+        while most Tier 3 file operations ARE recoverable via snapshot and so
+        are NOT irreversible. Confirmation gating must never be bypassable for
+        an irreversible action regardless of global config toggles.
+        """
+        if self.permission_tier == PermissionTier.ROOT_CRITICAL:
+            return True
+        if self.dangerous_flags:
+            return True
+        return self.action_type in IRREVERSIBLE_ACTIONS
+
 
 Action.model_rebuild()
 
@@ -952,6 +991,12 @@ class ActionPlan(BaseModel):
     @property
     def needs_snapshot(self) -> bool:
         return any(a.requires_snapshot for a in self.actions)
+
+    @property
+    def needs_confirmation_unconditional(self) -> bool:
+        """True if the plan contains an action that must be confirmed no
+        matter what confirmation-bypass config toggles are set."""
+        return any(a.is_irreversible for a in self.actions)
 
 
 class ActionResult(BaseModel):

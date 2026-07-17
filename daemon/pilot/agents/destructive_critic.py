@@ -19,11 +19,53 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from pilot.actions import PermissionTier
+
 if TYPE_CHECKING:
     from pilot.actions import ActionPlan
     from pilot.models.router import ModelRouter
 
 logger = logging.getLogger("pilot.agents.destructive_critic")
+
+# Below this heuristic risk score, a Tier-3-only plan (no Tier 4, no flagged
+# dangerous arguments) skips the LLM critic round-trip entirely and goes
+# straight to the confirmation dialog — see heuristic_risk().
+HEURISTIC_RISK_THRESHOLD = 0.3
+
+
+def heuristic_risk(plan: "ActionPlan") -> float:
+    """Cheap, non-LLM risk estimate for a plan, used to decide whether a
+    Tier-3-only (non-root) plan is worth an LLM critic round-trip.
+
+    Tier 4 (ROOT_CRITICAL) plans always go through the LLM critic regardless
+    of this score — it only gates the *additional* Tier 3 coverage so trivial
+    single-file deletes don't all pay for a model call.
+    """
+    if not plan.actions:
+        return 0.0
+
+    score = 0.0
+
+    if len(plan.actions) > 3:
+        score += 0.2
+
+    distinct_targets = {a.target for a in plan.actions if a.target}
+    if len(distinct_targets) > 2:
+        score += 0.2
+
+    if any(getattr(a, "dangerous_flags", None) for a in plan.actions):
+        score += 0.4
+
+    if any(a.is_irreversible for a in plan.actions):
+        score += 0.3
+
+    tiers = {a.permission_tier for a in plan.actions}
+    low_tiers = {PermissionTier.READ_ONLY, PermissionTier.USER_WRITE}
+    high_tiers = {PermissionTier.DESTRUCTIVE, PermissionTier.ROOT_CRITICAL}
+    if tiers & low_tiers and tiers & high_tiers:
+        score += 0.1
+
+    return min(1.0, score)
 
 # ---------------------------------------------------------------------------
 # Prompts

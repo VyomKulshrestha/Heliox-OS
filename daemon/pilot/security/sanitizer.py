@@ -189,6 +189,20 @@ ELEVATED_COMMANDS = frozenset(
 
 VALID_URL = re.compile(r"^https?://[^\s]+$")
 
+# Defense-in-depth only: argv pattern-matching is inherently incomplete (e.g.
+# split flags like `-r -f` instead of `-rf`, or `find . -delete`). These rules
+# exist to catch the common, high-blast-radius cases and escalate them to
+# irreversible rather than to gate command execution outright — an elevated
+# command that's otherwise allowed should not be blocked here, just flagged.
+_DANGEROUS_ARG_RULES: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"\brm\b.*(-\w*r\w*f\w*|-\w*f\w*r\w*)"), "recursive + force delete"),
+    (re.compile(r"\bchmod\b.*-R.*\b(777|000)\b"), "recursive permission wipe (777/000)"),
+    (re.compile(r"\bchown\b.*-R\b"), "recursive ownership change"),
+    (re.compile(r"\bdel\b.*/[sS].*/[qQ]|\bdel\b.*/[qQ].*/[sS]"), "recursive quiet delete (del /s /q)"),
+]
+
+_DANGEROUS_ARG_TARGETS = {"/", "*", "/*", "~", "c:\\", "c:/"}
+
 
 class SanitizationError(Exception):
     def __init__(self, action_index: int, message: str) -> None:
@@ -259,6 +273,24 @@ class Sanitizer:
             for i, arg in enumerate(args):
                 if SHELL_METACHARACTERS.search(arg):
                     raise SanitizationError(idx, f"Argument {i} contains shell metacharacters: {arg!r}")
+
+    def check_dangerous_arguments(self, command: str, args: list[str]) -> str | None:
+        """Flag high-risk argument patterns within an already-allowed command.
+
+        Returns a human-readable reason string if a dangerous pattern is
+        found, else None. This never raises/blocks — callers should use the
+        result to escalate the action's irreversibility, not to reject it.
+        """
+        joined = f"{command} {' '.join(args)}"
+        for pattern, reason in _DANGEROUS_ARG_RULES:
+            if pattern.search(joined):
+                return reason
+
+        for arg in args:
+            if arg.strip().lower() in _DANGEROUS_ARG_TARGETS:
+                return f"argument targets root/wildcard path: {arg!r}"
+
+        return None
 
     def validate_url(self, url: str, idx: int) -> None:
         if not url:

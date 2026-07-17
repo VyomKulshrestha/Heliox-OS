@@ -238,6 +238,15 @@ class ActionValidator:
                 if not action.destructive and not action.requires_root:
                     raise ValidationError(idx, f"Elevated command '{params.command}' requires destructive or root flag")
 
+            dangerous_reason = self._sanitizer.check_dangerous_arguments(params.command, params.args)
+            if dangerous_reason:
+                logger.warning(
+                    "Action [%d]: dangerous argument pattern detected (%s) — escalating to irreversible",
+                    idx,
+                    dangerous_reason,
+                )
+                action.dangerous_flags.append(dangerous_reason)
+
         elif isinstance(params, ShellScriptParams):
             # Scripts get validated more loosely — they're inherently powerful
             if not params.script or not params.script.strip():
