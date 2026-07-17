@@ -75,6 +75,11 @@ export interface BudgetInfo {
   timestamp: number;
 }
 
+export interface RollbackAvailable {
+  planId: string;
+  snapshotId: string;
+}
+
 interface SessionState {
   daemonConnected: boolean;
   loading: boolean;
@@ -89,6 +94,8 @@ interface SessionState {
   estimatedCost: number;
   streamingText: string;
   budget: BudgetInfo | null;
+  rollback: RollbackAvailable | null;
+  rollbackPending: boolean;
 }
 
 export interface Attachment {
@@ -111,6 +118,8 @@ const initialState: SessionState = {
   estimatedCost: 0,
   streamingText: "",
   budget: null,
+  rollback: null,
+  rollbackPending: false,
 };
 
 const MODEL_RATES: Record<string, number> = {
@@ -229,8 +238,10 @@ function createSession() {
       case "action_complete": {
         const resultObj = p.result as Record<string, unknown>;
         const success = Boolean(resultObj.success);
+        const snapshotId = resultObj.snapshot_id ? String(resultObj.snapshot_id) : "";
         update(s => {
           const runningIdx = s.liveActions.findIndex(a => a.status === "running");
+          let next = s;
           if (runningIdx !== -1) {
             const live = [...s.liveActions];
             live[runningIdx] = {
@@ -239,12 +250,31 @@ function createSession() {
               output: String(resultObj.output || ""),
               error: String(resultObj.error || "")
             };
-            return { ...s, liveActions: live };
+            next = { ...next, liveActions: live };
           }
-          return s;
+          if (snapshotId && next.currentPlan?.plan_id) {
+            next = { ...next, rollback: { planId: next.currentPlan.plan_id, snapshotId } };
+          }
+          return next;
         });
         break;
       }
+
+      case "rollback_complete":
+        update((s) => ({
+          ...s,
+          rollback: null,
+          rollbackPending: false,
+          messages: [
+            ...s.messages,
+            {
+              type: "system" as MessageType,
+              text: String(p.message ?? "Rollback complete."),
+              timestamp: Date.now(),
+            },
+          ],
+        }));
+        break;
 
       case "confirm_required":
         update((s) => ({
@@ -600,6 +630,37 @@ function createSession() {
 
     call("confirm", { plan_id: planId, confirmed: accepted }).catch(() => { });
   }
+
+  function requestRollback() {
+    update((s) => ({ ...s, rollbackPending: true }));
+  }
+
+  function cancelRollback() {
+    update((s) => ({ ...s, rollbackPending: false }));
+  }
+
+  async function confirmRollback() {
+    let planId = "";
+    const unsub = subscribe((s) => { planId = s.rollback?.planId ?? ""; });
+    unsub();
+    if (!planId) {
+      update((s) => ({ ...s, rollbackPending: false }));
+      return;
+    }
+
+    try {
+      const res = (await call("rollback_plan", { plan_id: planId })) as { status: string; message?: string };
+      if (res.status !== "ok") {
+        update((s) => ({ ...s, rollbackPending: false }));
+        addSystemMessage(`Undo failed: ${res.message ?? "unknown error"}`);
+      }
+      // On success, the "rollback_complete" notification clears rollback/rollbackPending state.
+    } catch (err) {
+      update((s) => ({ ...s, rollbackPending: false }));
+      addSystemMessage(`Undo failed: ${String(err instanceof Error ? err.message : err)}`);
+    }
+  }
+
   async function exportChat(format: "json" | "csv" | "markdown") {
     let msgs: Message[] = [];
     const unsub = subscribe((s) => {
@@ -666,6 +727,9 @@ function createSession() {
     subscribe,
     sendCommand,
     confirm,
+    requestRollback,
+    cancelRollback,
+    confirmRollback,
     exportChat,
     addSystemMessage,
     clearMessages,

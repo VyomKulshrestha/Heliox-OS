@@ -369,6 +369,8 @@ class PilotServer:
         self._budget_tracker: Any = None
         self._running = False
         self._pending_confirms: dict[str, PendingConfirmation] = {}
+        # ── Undo (rollback_plan RPC) ── plan_id -> snapshot_id taken before execution
+        self._plan_snapshots: dict[str, str] = {}
         # ── Cancel Token (Issue #92) ──
         self._cancel_event: asyncio.Event | None = None
         self._rss_agent: Any = None
@@ -681,6 +683,7 @@ class PilotServer:
             "resume_plan": self._handle_resume_plan,
             "export_session_chat": self._handle_export_session_chat,
             "confirm": self._handle_confirm,
+            "rollback_plan": self._handle_rollback_plan,
             # ── Cancel Token (Issue #92) ──
             "abort": self._handle_abort,
             "get_config": self._handle_get_config,
@@ -1424,6 +1427,10 @@ class PilotServer:
                     plan_id=plan_id,
                 )
             all_results = results
+            if not dry_run:
+                _snapshot_id = next((r.snapshot_id for r in results if getattr(r, "snapshot_id", None)), None)
+                if _snapshot_id:
+                    self._plan_snapshots[plan_id] = _snapshot_id
             if needs_confirm and not dry_run:
                 await self._record_permission_escalations(
                     plan_id=plan_id,
@@ -1935,6 +1942,48 @@ class PilotServer:
         pending.confirmed = bool(confirmed)
         pending.event.set()
         return {"status": "ok", "confirmed": pending.confirmed}
+
+    async def _handle_rollback_plan(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """Roll back the filesystem snapshot taken before a plan executed.
+
+        This is filesystem-wide (btrfs subvolume / timeshift snapshot), NOT
+        per-action — it reverts everything since the snapshot, including any
+        unrelated changes made after it. The frontend must gate this behind
+        its own explicit confirmation step; this handler does not re-confirm.
+
+        Args:
+            params: JSON-RPC parameters containing plan_id.
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with status and a human-readable message.
+        """
+        plan_id = params.get("plan_id", "")
+        snapshot_id = self._plan_snapshots.get(plan_id)
+        if not snapshot_id:
+            return {
+                "status": "error",
+                "message": f"No snapshot on record for plan_id: {plan_id} (either none was taken, or it was already rolled back)",
+            }
+
+        from pilot.system.snapshots import SnapshotManager
+
+        snapshot_mgr = SnapshotManager(self.config)
+        try:
+            result_message = await snapshot_mgr.rollback(snapshot_id)
+        except Exception as exc:
+            logger.warning("Rollback failed for plan %s (snapshot %s): %s", plan_id, snapshot_id, exc)
+            return {"status": "error", "message": f"Rollback failed: {exc}"}
+
+        self._plan_snapshots.pop(plan_id, None)
+        await ws.send(
+            _notification(
+                "rollback_complete",
+                {"plan_id": plan_id, "snapshot_id": snapshot_id, "message": result_message},
+            )
+        )
+        logger.info("Rolled back plan %s to snapshot %s", plan_id, snapshot_id)
+        return {"status": "ok", "message": result_message}
 
     async def _handle_abort(self, params: dict[str, Any], ws: ServerConnection) -> dict:
         """Signal the current execution to stop gracefully (Issue #92).

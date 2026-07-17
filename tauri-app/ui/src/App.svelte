@@ -5,6 +5,7 @@
   import { getJarvisGreeting } from "./lib/utils/greeting";
   import { renderMarkdown } from "./lib/utils/markdown";
   import ConfirmDialog from "./lib/components/ConfirmDialog.svelte";
+  import RollbackDialog from "./lib/components/RollbackDialog.svelte";
   import BudgetExceededDialog from "./lib/components/BudgetExceededDialog.svelte";
   import ActivityLog from "./lib/components/ActivityLog.svelte";
   import SettingsPanel from "./lib/components/SettingsPanel.svelte";
@@ -214,6 +215,20 @@
             />
           {/if}
 
+          {#if $session.rollbackPending}
+            <RollbackDialog
+              onconfirm={() => session.confirmRollback()}
+              oncancel={() => session.cancelRollback()}
+            />
+          {/if}
+
+          {#if $session.rollback && !$session.rollbackPending}
+            <div class="undo-banner">
+              <span>A snapshot was taken before the last action.</span>
+              <button class="undo-btn" onclick={() => session.requestRollback()}>Undo</button>
+            </div>
+          {/if}
+
           <BudgetExceededDialog />
 
           <div class="results">
@@ -417,6 +432,36 @@
 {/snippet}
 
 <style>
+  .undo-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 14px;
+    margin: 0 0 8px 0;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+
+  .undo-btn {
+    padding: 4px 14px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-primary);
+    background: var(--bg-hover);
+    border-radius: var(--radius-sm);
+    transition: background 0.15s;
+    white-space: nowrap;
+  }
+
+  .undo-btn:hover {
+    background: var(--danger-bg);
+    color: var(--danger);
+  }
+
   .window {
     height: 100%;
     display: flex;
