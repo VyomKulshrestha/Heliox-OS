@@ -816,9 +816,12 @@ npm run dev
 
 - All AI outputs pass through structured schema validation before execution
 - Five-tier permission system (read-only through root-level)
-- Confirmation required for system-modifying and destructive actions
-- Snapshot-based rollback via Btrfs or Timeshift (Linux)
-- Append-only audit log for all executed actions
+- Confirmation required for system-modifying and destructive actions, with **per-action granular approve/deny** — reject individual actions in a multi-step plan instead of all-or-nothing
+- **Irreversibility is tracked independently of tier** — actions that can't be undone by a snapshot rollback (external emails/webhooks, SSH commands, power actions, package removal) always require confirmation, even at a lower tier, and are flagged distinctly in the approval dialog
+- A secondary **LLM safety critic** independently reviews Tier 3 (destructive) and Tier 4 (root-critical) plans before the confirmation gate fires — it can block a plan outright or surface warnings alongside the approval dialog. Low-risk Tier 3 plans skip the LLM round-trip via a cheap heuristic pre-check, but the audit trail records when that happened
+- Dangerous shell argument patterns (recursive+force deletes, wildcard/root path targets) are flagged even on already-whitelisted commands
+- **Snapshot-based rollback via Btrfs or Timeshift (Linux)** — snapshots taken before destructive plans can actually be reverted afterward via an in-app "Undo" action (filesystem-wide, not per-action — the UI spells this out before you confirm)
+- **Tamper-evident, HMAC-chained audit log** for every elevated permission decision, viewable and independently verifiable (integrity check) from the Settings panel
 - Command whitelist with optional unrestricted mode
 - **Encrypted API key storage** via platform keyring (GNOME Keyring / Windows Credential Manager)
 - API keys are NEVER logged, included in plans, or sent to local LLMs
@@ -832,6 +835,8 @@ npm run dev
 | 2 - System Modify | 🟠 | Needs Confirm | package_install, service_restart, wifi_connect |
 | 3 - Destructive | 🔴 | Needs Confirm | file_delete, process_kill, power_shutdown |
 | 4 - Root Critical | ⛔ | Needs Confirm | root operations, disk operations |
+
+Tier isn't the whole story: some Tier 2 actions (e.g. `api_send_email`, `ssh_command`) are flagged **irreversible** even though they're not "destructive" in the traditional sense — there's no local snapshot to roll them back with once they fire.
 
 ## Configuration
 

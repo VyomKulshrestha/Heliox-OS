@@ -10,16 +10,28 @@ Webcam Feed
     ▼
 MediaPipe Hands (21 landmarks per hand)
     │
+    ▼
+Spatial/World-Model Layer (spatialModel.ts)
+    │   ├─ One Euro filter — temporal smoothing of landmark positions
+    │   │  (feeds static-pose classification; motion buffers below stay raw)
+    │   └─ Hand quality score — MediaPipe's own detection confidence ×
+    │      geometric self-consistency check (catches occluded/edge-on poses)
+    │
     ├──► classifyGesture() ──► Static Pose Detection
     │                              (finger extension patterns,
-    │                               tip distances, orientation)
+    │                               tip distances, orientation-invariant
+    │                               thumb-extension check)
     │
     ├──► detectCircularMotion() ──► Circular Gesture Detection
     │                                  (cross product analysis on
-    │                                   12-point index finger buffer)
+    │                                   12-point index finger buffer, raw landmarks)
     │
     └──► detectPushPull() ──► Z-Axis Depth Detection
-                                (8-point wrist Z-history)
+                                (8-point wrist Z-history, raw landmarks)
+    │
+    ▼
+Quality Gate (confidence × hand-quality score; low-quality frames don't
+              advance the frame stabilizer below)
     │
     ▼
 Frame Stabilizer (5 consecutive identical frames required)
@@ -36,13 +48,48 @@ UI Feedback (emoji badge, particle burst, gesture history)
 
 ## Debouncing & Stability
 
-The gesture engine uses a **3-layer anti-jitter system** to prevent false triggers:
+The gesture engine uses a **4-layer anti-jitter system** to prevent false triggers:
 
 | Layer | Mechanism | Purpose |
 |-------|-----------|---------|
+| **Temporal Filtering** | One Euro filter smooths landmark positions before classification | Reduces single-frame jitter without adding perceptible lag |
+| **Quality Gate** | Confidence scaled by detection + geometric quality; sub-threshold frames don't advance the stabilizer | Prevents a degenerate/occluded pose from misfiring |
 | **Frame Stabilizer** | Gesture must be detected for 5 consecutive frames | Eliminates transition noise |
 | **Cooldown Gate** | 1200ms lockout after each trigger | Prevents double-fires |
 | **Buffer Clearing** | Motion buffers reset after circular/push gestures | Prevents re-triggering |
+
+## Spatial/World-Model Layer
+
+`lib/gesture/spatialModel.ts` sits between raw MediaPipe landmark output and
+the classifiers above. It's pure TypeScript with no MediaPipe/DOM dependency
+(and has its own unit tests — see `spatialModel.test.ts`), covering three
+things:
+
+1. **Temporal filtering** — a One Euro filter (adaptive: heavy smoothing at
+   rest, low lag during fast motion) smooths landmark positions before static-
+   pose classification. Swipe/circular/push-pull motion buffers deliberately
+   stay on **raw** (unfiltered) landmarks, since their thresholds are already
+   tuned against raw jitter and filtering would risk damping the fast motion
+   they're built to detect.
+2. **Orientation/handedness-invariant thumb detection** — replaces the old
+   `thumb_tip.x < thumb_ip.x` check (which silently assumed a right hand
+   facing the camera and misclassified left hands or a rotated wrist) with a
+   hand-size-normalized distance ratio from the thumb tip to the index MCP.
+   Tucked-against-the-palm vs. extended-out reads the same regardless of
+   which hand or which way it's rotated.
+3. **Hand quality scoring** — combines MediaPipe's own per-hand detection
+   confidence with a geometric self-consistency check (do finger tip-to-MCP
+   distances fall in a plausible range) into a single score that scales down
+   reported gesture confidence, so a degenerate/occluded/edge-on hand pose
+   gets suppressed rather than misfiring at full confidence.
+
+This intentionally does **not** re-express every `classifyGesture()`
+threshold in a fully hand-local, scale-normalized coordinate frame — that
+would touch ~20 empirically-tuned distance constants with no way to validate
+the recalibration against real camera input outside a live testing session,
+and risks silently breaking gestures that work today. If you want to take
+that further, add a recorded-landmark-sequence regression fixture per gesture
+first so the recalibration can actually be verified.
 
 ---
 
@@ -99,9 +146,13 @@ These detect **hand movement over time** using position history buffers.
 
 ### Static Pose Detection
 
-Each of the 21 hand landmarks from MediaPipe is analyzed:
+Each of the 21 hand landmarks from MediaPipe is analyzed (landmarks are
+temporally filtered by the spatial/world-model layer before this step — see
+above):
 - **Finger extension**: `tip.y < pip.y` means the finger is extended (up)
-- **Thumb extension**: `thumb_tip.x < thumb_ip.x` (lateral movement)
+- **Thumb extension**: hand-size-normalized distance from thumb tip to index
+  MCP (`spatialModel.ts`'s `isThumbExtended()`) — orientation and handedness
+  invariant, unlike a raw `x` coordinate comparison
 - **Tip distance**: `dist(thumb_tip, index_tip)` for OK/Pinch gestures
 - **Orientation**: Comparing average fingertip Y vs wrist Y for palm up/down
 
@@ -169,5 +220,7 @@ To add a new gesture:
 | File | Role |
 |------|------|
 | `tauri-app/ui/src/lib/components/GestureControl.svelte` | Core gesture engine |
+| `tauri-app/ui/src/lib/gesture/spatialModel.ts` | Spatial/world-model layer — temporal filtering, thumb-extension check, hand quality scoring |
+| `tauri-app/ui/src/lib/gesture/spatialModel.test.ts` | Unit tests for the spatial model's pure functions |
 | `tauri-app/ui/src/App.svelte` | Gesture to UI navigation handler |
 | `tauri-app/src-tauri/tauri.conf.json` | CSP allowing MediaPipe CDN |
