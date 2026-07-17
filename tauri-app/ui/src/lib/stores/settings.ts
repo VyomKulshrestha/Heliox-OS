@@ -41,6 +41,10 @@ export interface PilotSettings {
     prediction_ms: number;
     blend: number;
   };
+  adaptive_calibration: {
+    gesture_enabled: boolean;
+    voice_wake_word_enabled: boolean;
+  };
   restrictions: {
     protected_folders: string[];
     protected_packages: string[];
@@ -87,6 +91,10 @@ const defaultSettings: PilotSettings = {
     sensitivity: 1.0,
     prediction_ms: 80.0,
     blend: 0.3,
+  },
+  adaptive_calibration: {
+    gesture_enabled: true,
+    voice_wake_word_enabled: true,
   },
   restrictions: {
     protected_folders: [],

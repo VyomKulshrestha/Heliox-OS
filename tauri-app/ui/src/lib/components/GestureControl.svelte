@@ -47,12 +47,15 @@
     LandmarkFilterBank,
     computeHandQuality,
     isThumbExtended,
+    thumbExtensionRatio,
     handSize,
     predictCursorTarget,
     trajectoryAgreement,
+    THUMB_EXTENDED_RATIO,
     type Landmark,
   } from "../gesture/spatialModel";
   import { isTauriRuntime } from "../utils/runtime";
+  import { GestureCalibrationStore, classifyOutcome, REVERSAL_WINDOW_MS, type GestureEvent } from "../gesture/calibration";
 
   // ── Props ──
   let { onGesture = (name: string) => {} }: { onGesture?: (name: string) => void } = $props();
@@ -90,6 +93,54 @@
   // prediction_ms setting): this only nudges confidence for an
   // already-classified swipe, it doesn't drive anything continuous.
   const MOTION_PREDICTION_MS = 50;
+
+  // ── On-device gesture calibration (continual-learning loop) ──
+  //
+  // Personalizes PINCH_DISTANCE_THRESHOLD/THUMB_EXTENDED_RATIO from implicit
+  // confirm/reversal signals — see calibration.ts. Gated on
+  // $settings.adaptive_calibration.gesture_enabled (default on); the store
+  // itself is always constructed (cheap, a no-op localStorage read) so
+  // toggling the setting mid-session doesn't require re-mounting anything.
+  const gestureCalibration = new GestureCalibrationStore();
+  let pendingCalibrationEvent: GestureEvent | null = null;
+  let pendingCalibrationTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function resolvePendingCalibration(next: GestureEvent | null) {
+    if (pendingCalibrationTimer) {
+      clearTimeout(pendingCalibrationTimer);
+      pendingCalibrationTimer = null;
+    }
+    if (!pendingCalibrationEvent) return;
+    const outcome = classifyOutcome(pendingCalibrationEvent, next);
+    gestureCalibration.recordOutcome(pendingCalibrationEvent, outcome);
+    pendingCalibrationEvent = null;
+  }
+
+  /** Drops any pending calibration window WITHOUT recording an outcome —
+   * used when the engine itself stops mid-window, since we genuinely don't
+   * know whether that gesture would have been confirmed or reversed. */
+  function cancelPendingCalibration() {
+    if (pendingCalibrationTimer) {
+      clearTimeout(pendingCalibrationTimer);
+      pendingCalibrationTimer = null;
+    }
+    pendingCalibrationEvent = null;
+  }
+
+  /** Called right after a gesture fires (executeGestureAction/onGesture) —
+   * resolves whatever calibration-relevant gesture was pending (this new
+   * fire is its "next"), then starts a new pending window if the gesture
+   * that just fired is itself calibration-relevant. */
+  function trackGestureForCalibration(name: string, metricValue: number) {
+    if (!$settings.adaptive_calibration?.gesture_enabled) return;
+    const now = Date.now();
+    resolvePendingCalibration({ name, timestamp: now, metricValue });
+
+    if (name === "pinch" || name === "ok" || name === "thumbs_up" || name === "thumbs_down") {
+      pendingCalibrationEvent = { name, timestamp: now, metricValue };
+      pendingCalibrationTimer = setTimeout(() => resolvePendingCalibration(null), REVERSAL_WINDOW_MS);
+    }
+  }
 
   // ── Gesture Cursor Control (continuous gesture-to-cursor bridge) ──
   //
@@ -179,8 +230,11 @@
     const predictedThumb = predicted ? predicted[4] : thumbTip;
     const predictedIndex = predicted ? predicted[8] : indexTip;
     const predictedPinchDist = Math.hypot(predictedThumb.x - predictedIndex.x, predictedThumb.y - predictedIndex.y);
+    const effectivePinchThreshold = $settings.adaptive_calibration?.gesture_enabled
+      ? gestureCalibration.getEffectivePinchThreshold(PINCH_DISTANCE_THRESHOLD)
+      : PINCH_DISTANCE_THRESHOLD;
 
-    if (predictedPinchDist < PINCH_DISTANCE_THRESHOLD) {
+    if (predictedPinchDist < effectivePinchThreshold) {
       if (!pinchClickFired) {
         pinchClickFired = true;
         void clickGestureCursor(screenX, screenY);
@@ -331,6 +385,7 @@
     indexHistory = [];
     landmarkFilter.reset();
     exitCursorMode(); // safety hatch: never leave cursor mode active with the engine stopped
+    cancelPendingCalibration();
 
     stopping = false;
   }
@@ -412,6 +467,7 @@
             executeGestureAction(gesture.name);
             gestureHistory = [...gestureHistory.slice(-4), gesture.name];
             onGesture(gesture.name);
+            trackGestureForCalibration(gesture.name, gesture.metricValue ?? 0);
           }
         }
       } else {
@@ -497,7 +553,14 @@
   }
 
   // ── Enhanced Gesture Classification ──
-  interface Gesture { name: string; confidence: number; }
+  interface Gesture {
+    name: string;
+    confidence: number;
+    /** The raw measured value behind a calibration-relevant classification
+     * (pinch/OK's thumb-index distance, or thumbs_up/down's thumb-extension
+     * ratio) — populated only for gestures calibration.ts tracks. */
+    metricValue?: number;
+  }
 
   function classifyGesture(landmarks: any[]): Gesture {
     const THUMB_TIP = 4, INDEX_TIP = 8, MIDDLE_TIP = 12, RING_TIP = 16, PINKY_TIP = 20;
@@ -508,8 +571,19 @@
     const isExtended = (tip: number, pip: number) => landmarks[tip].y < landmarks[pip].y;
     // Orientation/handedness-invariant — see spatialModel.ts for why the old
     // `landmarks[THUMB_TIP].x < landmarks[THUMB_IP].x` check broke for left
-    // hands and rotated wrists.
-    const thumbExtended = isThumbExtended(landmarks, handSize(landmarks));
+    // hands and rotated wrists. Threshold may be personalized by the
+    // on-device calibration loop (calibration.ts) — falls back to the
+    // shipped THUMB_EXTENDED_RATIO default until enough confirmed samples
+    // exist.
+    const effectiveThumbRatio = $settings.adaptive_calibration?.gesture_enabled
+      ? gestureCalibration.getEffectiveThumbRatio(THUMB_EXTENDED_RATIO)
+      : THUMB_EXTENDED_RATIO;
+    const thumbExtended = isThumbExtended(landmarks, handSize(landmarks), effectiveThumbRatio);
+
+    // Same calibration treatment for the pinch/OK-sign distance threshold.
+    const effectivePinchThreshold = $settings.adaptive_calibration?.gesture_enabled
+      ? gestureCalibration.getEffectivePinchThreshold(PINCH_DISTANCE_THRESHOLD)
+      : PINCH_DISTANCE_THRESHOLD;
 
     const indexUp = isExtended(INDEX_TIP, INDEX_PIP);
     const middleUp = isExtended(MIDDLE_TIP, MIDDLE_PIP);
@@ -604,13 +678,13 @@
     }
 
     // 👌 OK Sign — thumb tip touching index tip, others up
-    if (dist(THUMB_TIP, INDEX_TIP) < PINCH_DISTANCE_THRESHOLD && middleUp && ringUp && pinkyUp) {
-      return { name: "ok", confidence: 0.85 };
+    if (dist(THUMB_TIP, INDEX_TIP) < effectivePinchThreshold && middleUp && ringUp && pinkyUp) {
+      return { name: "ok", confidence: 0.85, metricValue: dist(THUMB_TIP, INDEX_TIP) };
     }
 
     // 🤏 Pinch — thumb tip close to index tip, others curled
-    if (dist(THUMB_TIP, INDEX_TIP) < PINCH_DISTANCE_THRESHOLD && !middleUp && !ringUp && !pinkyUp) {
-      return { name: "pinch", confidence: 0.85 };
+    if (dist(THUMB_TIP, INDEX_TIP) < effectivePinchThreshold && !middleUp && !ringUp && !pinkyUp) {
+      return { name: "pinch", confidence: 0.85, metricValue: dist(THUMB_TIP, INDEX_TIP) };
     }
 
     // 🫰 Snap Ready — thumb touching middle finger, index curled
@@ -658,10 +732,10 @@
     // 👎 Thumbs Down / 👍 Thumbs Up
     if (thumbExtended && !indexUp && !middleUp && !ringUp && !pinkyUp) {
       if (landmarks[THUMB_TIP].y > landmarks[WRIST].y) {
-        return { name: "thumbs_down", confidence: 0.8 };
+        return { name: "thumbs_down", confidence: 0.8, metricValue: thumbExtensionRatio(landmarks) };
       }
       if (landmarks[THUMB_TIP].y < landmarks[WRIST].y) {
-        return { name: "thumbs_up", confidence: 0.8 };
+        return { name: "thumbs_up", confidence: 0.8, metricValue: thumbExtensionRatio(landmarks) };
       }
     }
 
