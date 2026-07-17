@@ -210,7 +210,7 @@
           {#if $session.confirmRequired}
             <ConfirmDialog
               actions={$session.confirmActions}
-              onconfirm={() => session.confirm(true)}
+              onconfirm={(approvedIndices) => session.confirm(true, approvedIndices)}
               ondeny={() => session.confirm(false)}
             />
           {/if}

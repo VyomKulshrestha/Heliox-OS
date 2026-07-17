@@ -83,6 +83,10 @@ class PendingConfirmation:
     event: asyncio.Event
     confirmed: bool = False
     plan: Any = None
+    # Indices of actions the user approved out of those requiring confirmation.
+    # None means "not specified" -> treat as all-approved (back-compat with
+    # older frontend builds that only send {plan_id, confirmed}).
+    approved_indices: set[int] | None = None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1298,6 +1302,7 @@ class PilotServer:
                 await ws.send(_notification("critic_verdict", critic_verdict_payload))
 
             needs_confirm = self._permission_checker.plan_requires_confirmation(plan) and not dry_run
+            partially_approved = False
             if needs_confirm:
                 confirm_phase = ""
                 if emit:
@@ -1308,7 +1313,7 @@ class PilotServer:
                         parent_id=confirm_phase,
                     )
 
-                confirmed = await self._wait_for_confirmation(plan_id, plan, ws)
+                confirmed, approved_indices, required_indices = await self._wait_for_confirmation(plan_id, plan, ws)
 
                 if emit:
                     if confirmed:
@@ -1350,12 +1355,29 @@ class PilotServer:
                         "message": "Plan was denied by user.",
                         "explanation": plan.explanation,
                     }
+
+                # Per-action granular approval: drop any confirmation-required
+                # action the user didn't check, keeping order for dependency
+                # correctness. Actions that don't require confirmation at all
+                # are untouched.
+                denied_indices = required_indices - approved_indices
+                partially_approved = bool(denied_indices)
+                if partially_approved:
+                    logger.info(
+                        "Plan %s partially approved — skipping %d action(s) denied by user: %s",
+                        plan_id,
+                        len(denied_indices),
+                        sorted(denied_indices),
+                    )
+                    plan.actions = [a for i, a in enumerate(plan.actions) if i not in denied_indices]
             elif not dry_run:
                 if emit:
                     skip_phase = await emit.phase_start("confirmation", "confirmation_skipped")
                     await emit.phase_complete(
                         "confirmation", "confirmation_skipped", {"reason": "No dangerous actions"}, parent_id=skip_phase
                     )
+
+            approved_decision = "partially_approved" if partially_approved else "approved"
 
             exec_phase = ""
             if emit:
@@ -1435,7 +1457,7 @@ class PilotServer:
                 await self._record_permission_escalations(
                     plan_id=plan_id,
                     plan=plan,
-                    confirmation_decision="approved",
+                    confirmation_decision=approved_decision,
                     critic_verdict=critic_verdict_payload,
                     results=results,
                 )
@@ -1453,7 +1475,7 @@ class PilotServer:
                         raw_input=user_input,
                         plan=plan,
                         critic_verdict=critic_verdict_payload,
-                        confirmation_decision="approved" if needs_confirm else "skipped",
+                        confirmation_decision=approved_decision if needs_confirm else "skipped",
                         execution_status="cancelled",
                         results=results,
                         verification=None,
@@ -1551,7 +1573,7 @@ class PilotServer:
                         raw_input=user_input,
                         plan=plan,
                         critic_verdict=critic_verdict_payload,
-                        confirmation_decision="approved" if needs_confirm else ("n/a" if dry_run else "skipped"),
+                        confirmation_decision=approved_decision if needs_confirm else ("n/a" if dry_run else "skipped"),
                         execution_status="dry_run" if dry_run else "success",
                         results=results,
                         verification=verification,
@@ -1631,7 +1653,7 @@ class PilotServer:
                 raw_input=user_input,
                 plan=plan,
                 critic_verdict=critic_verdict_payload,
-                confirmation_decision="approved" if needs_confirm else "skipped",
+                confirmation_decision=approved_decision if needs_confirm else "skipped",
                 execution_status="partial_failure",
                 results=all_results,
                 verification=last_verification,
@@ -1881,7 +1903,9 @@ class PilotServer:
     def _action_signature(action: Any) -> str:
         return json.dumps(action.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
 
-    async def _wait_for_confirmation(self, plan_id: str, plan: Any, ws: ServerConnection) -> bool:
+    async def _wait_for_confirmation(
+        self, plan_id: str, plan: Any, ws: ServerConnection
+    ) -> tuple[bool, set[int], set[int]]:
         """Send a confirmation request and block until the user responds or timeout.
 
         Args:
@@ -1890,14 +1914,21 @@ class PilotServer:
             ws: The WebSocket connection for sending/receiving messages.
 
         Returns:
-            True if the user approved the plan, False otherwise.
+            A (confirmed, approved_indices, required_indices) tuple.
+            ``required_indices`` are the original ``plan.actions`` indices
+            that needed confirmation; ``approved_indices`` is the subset of
+            those the user approved (all of them for a plain approve/deny
+            response, a subset for per-action granular approval).
         """
         pending = PendingConfirmation(plan_id=plan_id, event=asyncio.Event())
         self._pending_confirms[plan_id] = pending
 
-        def _dump_confirm_action(a: Any) -> dict[str, Any]:
+        confirm_indices = [i for i, a in enumerate(plan.actions) if a.requires_confirmation or a.is_irreversible]
+
+        def _dump_confirm_action(idx: int, a: Any) -> dict[str, Any]:
             payload = a.model_dump()
             payload["irreversible"] = a.is_irreversible
+            payload["index"] = idx
             return payload
 
         await ws.send(
@@ -1905,28 +1936,31 @@ class PilotServer:
                 "confirm_required",
                 {
                     "plan_id": plan_id,
-                    "actions": [
-                        _dump_confirm_action(a) for a in plan.actions if a.requires_confirmation or a.is_irreversible
-                    ],
+                    "actions": [_dump_confirm_action(i, plan.actions[i]) for i in confirm_indices],
                 },
             )
         )
 
+        required = set(confirm_indices)
         try:
             await asyncio.wait_for(pending.event.wait(), timeout=CONFIRM_TIMEOUT_SECONDS)
         except TimeoutError:
             logger.warning("Confirmation timed out for plan %s", plan_id)
-            return False
+            return False, set(), required
         finally:
             self._pending_confirms.pop(plan_id, None)
 
-        return pending.confirmed
+        approved = pending.approved_indices if pending.approved_indices is not None else required
+        return pending.confirmed, (approved & required), required
 
     async def _handle_confirm(self, params: dict[str, Any], ws: ServerConnection) -> dict:
         """Resolve a pending confirmation request from the UI.
 
         Args:
-            params: JSON-RPC parameters containing plan_id and confirmed status.
+            params: JSON-RPC parameters containing plan_id, confirmed status,
+                and an optional approved_indices list for per-action granular
+                approval (omit/empty to approve all confirmation-requiring
+                actions, preserving the old all-or-nothing behavior).
             ws: The WebSocket connection.
 
         Returns:
@@ -1934,12 +1968,18 @@ class PilotServer:
         """
         plan_id = params.get("plan_id", "")
         confirmed = params.get("confirmed", False)
+        raw_approved = params.get("approved_indices")
 
         pending = self._pending_confirms.get(plan_id)
         if pending is None:
             return {"status": "error", "message": f"No pending confirmation for plan_id: {plan_id}"}
 
         pending.confirmed = bool(confirmed)
+        if raw_approved is not None:
+            try:
+                pending.approved_indices = {int(i) for i in raw_approved}
+            except (TypeError, ValueError):
+                pending.approved_indices = None
         pending.event.set()
         return {"status": "ok", "confirmed": pending.confirmed}
 

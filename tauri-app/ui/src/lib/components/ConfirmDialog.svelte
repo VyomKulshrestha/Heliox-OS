@@ -3,11 +3,25 @@
 
   interface Props {
     actions: PlanAction[];
-    onconfirm: () => void;
+    onconfirm: (approvedIndices: number[]) => void;
     ondeny: () => void;
   }
 
   let { actions, onconfirm, ondeny }: Props = $props();
+
+  let approved = $state<boolean[]>(actions.map(() => true));
+  let anyApproved = $derived(approved.some((v) => v));
+
+  function toggle(i: number) {
+    approved[i] = !approved[i];
+  }
+
+  function handleConfirm() {
+    const approvedIndices = actions
+      .map((a, i) => (approved[i] ? (a.index ?? i) : -1))
+      .filter((i) => i !== -1);
+    onconfirm(approvedIndices);
+  }
 </script>
 
 <div class="confirm-overlay">
@@ -18,12 +32,16 @@
     </div>
 
     <p class="confirm-body">
-      The following actions require your approval before execution:
+      The following actions require your approval before execution. Uncheck any you
+      don't want to run — the rest will be skipped.
     </p>
 
     <ul class="confirm-list">
-      {#each actions as action}
+      {#each actions as action, i}
         <li>
+          <label class="confirm-checkbox">
+            <input type="checkbox" checked={approved[i]} onchange={() => toggle(i)} />
+          </label>
           <strong>{action.action_type}</strong> on
           <code>{action.target}</code>
           {#if action.requires_root}
@@ -32,13 +50,18 @@
           {#if action.destructive}
             <span class="destructive-tag">DESTRUCTIVE</span>
           {/if}
+          {#if action.irreversible}
+            <span class="irreversible-tag">IRREVERSIBLE</span>
+          {/if}
         </li>
       {/each}
     </ul>
 
     <div class="confirm-actions">
       <button class="btn-deny" title="Deny" onclick={ondeny}>Deny</button>
-      <button class="btn-confirm" title="Confirm" onclick={onconfirm}>Approve & Execute</button>
+      <button class="btn-confirm" title="Confirm" disabled={!anyApproved} onclick={handleConfirm}>
+        Approve & Execute
+      </button>
     </div>
   </div>
 </div>
@@ -128,6 +151,28 @@
     color: var(--warning);
   }
 
+  .irreversible-tag {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 10px;
+    background: var(--danger);
+    color: white;
+  }
+
+  .confirm-checkbox {
+    display: flex;
+    align-items: center;
+    margin-right: 2px;
+  }
+
+  .confirm-checkbox input {
+    width: 15px;
+    height: 15px;
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
+
   .confirm-actions {
     display: flex;
     justify-content: flex-end;
@@ -161,5 +206,11 @@
 
   .btn-confirm:hover {
     background: var(--accent-hover);
+  }
+
+  .btn-confirm:disabled {
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    cursor: not-allowed;
   }
 </style>

@@ -13,6 +13,8 @@ export interface PlanAction {
   destructive: boolean;
   parameters: Record<string, unknown>;
   dry_run?: boolean;
+  irreversible?: boolean;
+  index?: number;
 }
 
 export interface ActionResultData {
@@ -606,9 +608,13 @@ function createSession() {
     }
   }
 
-  function confirm(accepted: boolean) {
+  function confirm(accepted: boolean, approvedIndices?: number[]) {
     let planId = "";
-    const unsub = subscribe((s) => { planId = s.confirmPlanId; });
+    let totalRequired = 0;
+    const unsub = subscribe((s) => {
+      planId = s.confirmPlanId;
+      totalRequired = s.confirmActions.length;
+    });
     unsub();
 
     update((s) => ({
@@ -626,9 +632,21 @@ function createSession() {
           { type: "system" as MessageType, text: "Action denied.", timestamp: Date.now() },
         ],
       }));
+    } else if (approvedIndices !== undefined && approvedIndices.length < totalRequired) {
+      update((s) => ({
+        ...s,
+        messages: [
+          ...s.messages,
+          { type: "system" as MessageType, text: `Approved ${approvedIndices.length} of ${totalRequired} action(s); the rest were skipped.`, timestamp: Date.now() },
+        ],
+      }));
     }
 
-    call("confirm", { plan_id: planId, confirmed: accepted }).catch(() => { });
+    const params: Record<string, unknown> = { plan_id: planId, confirmed: accepted };
+    if (approvedIndices !== undefined) {
+      params.approved_indices = approvedIndices;
+    }
+    call("confirm", params).catch(() => { });
   }
 
   function requestRollback() {
