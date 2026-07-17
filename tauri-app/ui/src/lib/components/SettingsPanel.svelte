@@ -5,6 +5,20 @@
   import { call } from "../api/daemon";
   import { invoke } from "../api/invoke";
   import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
+  import ConfirmPrompt from "./ConfirmPrompt.svelte";
+  import PermissionAuditLog from "./PermissionAuditLog.svelte";
+
+  let pendingConfirm = $state<{ message: string; danger: boolean; onConfirm: () => void } | null>(null);
+
+  function askConfirm(message: string, onConfirm: () => void, danger = false) {
+    pendingConfirm = { message, danger, onConfirm };
+  }
+
+  function resolveConfirm(accepted: boolean) {
+    const action = pendingConfirm?.onConfirm;
+    pendingConfirm = null;
+    if (accepted && action) action();
+  }
   let apiKeyInput = $state("");
   let apiKeySaved = $state(false);
   let apiKeySaving = $state(false);
@@ -56,20 +70,8 @@
     }
   }
 
-  function toggleRoot() {
-    const turningOn = !$settings.security.root_enabled;
+  function applyRootToggle(turningOn: boolean) {
     if (turningOn) {
-      const confirmed = confirm(
-        "⚠️ ENABLE ROOT ACCESS?\n\n" +
-        "This unlocks Heliox's full power:\n" +
-        "• Admin/sudo shell commands\n" +
-        "• System service management\n" +
-        "• Protected file modifications\n" +
-        "• Registry & disk-level operations\n\n" +
-        "Actions requiring elevated privileges will no longer be blocked.\n" +
-        "Only enable this if you trust the AI agent with system-level access."
-      );
-      if (!confirmed) return;
       rootToast = "🔓 Root access ENABLED — Heliox now has full system privileges";
       rootToastType = "warning";
     } else {
@@ -78,6 +80,26 @@
     }
     settings.updateSection("security", { root_enabled: turningOn });
     setTimeout(() => (rootToast = ""), 5000);
+  }
+
+  function toggleRoot() {
+    const turningOn = !$settings.security.root_enabled;
+    if (turningOn) {
+      askConfirm(
+        "⚠️ ENABLE ROOT ACCESS?\n\n" +
+        "This unlocks Heliox's full power:\n" +
+        "• Admin/sudo shell commands\n" +
+        "• System service management\n" +
+        "• Protected file modifications\n" +
+        "• Registry & disk-level operations\n\n" +
+        "Actions requiring elevated privileges will no longer be blocked.\n" +
+        "Only enable this if you trust the AI agent with system-level access.",
+        () => applyRootToggle(true),
+        true
+      );
+      return;
+    }
+    applyRootToggle(false);
   }
  
   function toggleDryRun() {
@@ -142,10 +164,8 @@
   }
   
   // Function to reset all settings to defaults
-  async function handleReset() {
-    const confirmed = confirm($_('settings.reset_confirm'));
-    if (!confirmed) return;
-    await settings.reset();
+  function handleReset() {
+    askConfirm($_('settings.reset_confirm'), () => { void settings.reset(); }, true);
   }
   function toggleTheme() {
     const currentTheme = $settings.theme || "dark";
@@ -198,9 +218,49 @@
       alert("Heliox OS — Test notification triggered! (popups blocked by browser)");
     }
   }
+
+  type RestrictionKey = "protected_folders" | "protected_packages" | "blocked_commands";
+
+  let newRestrictionEntry = $state<Record<RestrictionKey, string>>({
+    protected_folders: "",
+    protected_packages: "",
+    blocked_commands: "",
+  });
+
+  function addRestrictionEntry(key: RestrictionKey) {
+    const value = newRestrictionEntry[key].trim();
+    if (!value) return;
+    const current = $settings.restrictions?.[key] ?? [];
+    if (current.includes(value)) {
+      newRestrictionEntry[key] = "";
+      return;
+    }
+    settings.updateSection("restrictions", { [key]: [...current, value] });
+    newRestrictionEntry[key] = "";
+  }
+
+  function removeRestrictionEntry(key: RestrictionKey, value: string) {
+    const current = $settings.restrictions?.[key] ?? [];
+    settings.updateSection("restrictions", { [key]: current.filter((v) => v !== value) });
+  }
+
+  const restrictionFields: { key: RestrictionKey; labelKey: string; placeholder: string }[] = [
+    { key: "protected_folders", labelKey: "settings.protected_folders", placeholder: "/path/to/folder" },
+    { key: "protected_packages", labelKey: "settings.protected_packages", placeholder: "package-name" },
+    { key: "blocked_commands", labelKey: "settings.blocked_commands", placeholder: "command-name" },
+  ];
 </script>
 
 <div class="settings-panel">
+  {#if pendingConfirm}
+    <ConfirmPrompt
+      message={pendingConfirm.message}
+      danger={pendingConfirm.danger}
+      onconfirm={() => resolveConfirm(true)}
+      oncancel={() => resolveConfirm(false)}
+    />
+  {/if}
+
   <h2>{$_('settings.title')}</h2>
 
   <section class="settings-group">
@@ -506,11 +566,40 @@
 
   <section class="settings-group">
     <h3>{$_('settings.restrictions')}</h3>
-    <div class="restriction-info">
-      <p>{$_('settings.protected_folders')}: {$settings.restrictions?.protected_folders?.length || 0} {$_('settings.configured')}</p>
-      <p>{$_('settings.protected_packages')}: {$settings.restrictions?.protected_packages?.length || 0} {$_('settings.configured')}</p>
-      <p>{$_('settings.blocked_commands')}: {$settings.restrictions?.blocked_commands?.length || 0} {$_('settings.configured')}</p>
-    </div>
+
+    {#each restrictionFields as field}
+      <div class="restriction-editor">
+        <span class="setting-label">{$_(field.labelKey)}</span>
+        <div class="restriction-chips">
+          {#each ($settings.restrictions?.[field.key] ?? []) as entry}
+            <span class="restriction-chip">
+              <code>{entry}</code>
+              <button
+                class="chip-remove"
+                title="Remove"
+                onclick={() => removeRestrictionEntry(field.key, entry)}
+              >&times;</button>
+            </span>
+          {:else}
+            <span class="restriction-empty">{$_('settings.configured')}: 0</span>
+          {/each}
+        </div>
+        <div class="restriction-add-row">
+          <input
+            type="text"
+            class="input-md"
+            placeholder={field.placeholder}
+            bind:value={newRestrictionEntry[field.key]}
+            onkeydown={(e) => { if (e.key === "Enter") addRestrictionEntry(field.key); }}
+          />
+          <button class="btn-save" onclick={() => addRestrictionEntry(field.key)}>Add</button>
+        </div>
+      </div>
+    {/each}
+  </section>
+
+  <section class="settings-group audit-log-section">
+    <PermissionAuditLog />
   </section>
 
   <section class="settings-group">
@@ -675,6 +764,10 @@
     overflow: hidden;
   }
 
+  .audit-log-section {
+    height: 420px;
+  }
+
   h3 {
     font-size: 11px;
     font-weight: 600;
@@ -793,15 +886,67 @@
     border-radius: var(--radius-sm);
   }
 
-  .restriction-info {
+  .restriction-editor {
     padding: 10px 14px;
-    font-size: 12px;
-    color: var(--text-secondary);
-    line-height: 1.6;
+    border-bottom: 1px solid var(--border);
   }
 
-  .restriction-info p {
-    margin: 0;
+  .restriction-editor:last-child {
+    border-bottom: none;
+  }
+
+  .restriction-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 8px 0;
+  }
+
+  .restriction-chip {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 4px 3px 10px;
+    background: var(--bg-tertiary);
+    border-radius: 12px;
+    font-size: 12px;
+  }
+
+  .restriction-chip code {
+    font-family: var(--font-mono);
+    color: var(--text-primary);
+  }
+
+  .chip-remove {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 1;
+  }
+
+  .chip-remove:hover {
+    background: var(--danger-bg);
+    color: var(--danger);
+  }
+
+  .restriction-empty {
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+
+  .restriction-add-row {
+    display: flex;
+    gap: 6px;
+  }
+
+  .restriction-add-row .input-md {
+    flex: 1;
+    width: auto;
   }
 
   .api-key-row {

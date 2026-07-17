@@ -41,7 +41,22 @@
   "tier": {
     "root": "ROOT",
     "destructive": "DESTRUCTIVE",
+    "irreversible": "IRREVERSIBLE",
     "safe": "SAFE"
+  },
+  "confirm": {
+    "title": "Confirmation Required",
+    "body": "The following actions require your approval before execution. Uncheck any you don't want to run — the rest will be skipped.",
+    "deny": "Deny",
+    "approve": "Approve & Execute"
+  },
+  "rollback": {
+    "title": "Undo Last Action?",
+    "body": "This will revert your entire disk state to the snapshot taken just before the last action ran — including any other changes made since then, not just what the action did. This cannot be undone.",
+    "cancel": "Cancel",
+    "confirm": "Yes, revert everything",
+    "banner": "A snapshot was taken before the last action.",
+    "undo": "Undo"
   },
   "settings": {
     "title": "Settings",

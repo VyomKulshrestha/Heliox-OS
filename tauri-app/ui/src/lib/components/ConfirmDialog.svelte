@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { PlanAction } from "../stores/session";
+  import { _ } from "svelte-i18n";
 
   interface Props {
     actions: PlanAction[];
@@ -28,12 +29,11 @@
   <div class="confirm-dialog">
     <div class="confirm-header">
       <span class="warn-icon">&#9888;</span>
-      <span>Confirmation Required</span>
+      <span>{$_('confirm.title')}</span>
     </div>
 
     <p class="confirm-body">
-      The following actions require your approval before execution. Uncheck any you
-      don't want to run — the rest will be skipped.
+      {$_('confirm.body')}
     </p>
 
     <ul class="confirm-list">
@@ -45,22 +45,22 @@
           <strong>{action.action_type}</strong> on
           <code>{action.target}</code>
           {#if action.requires_root}
-            <span class="root-tag">ROOT</span>
+            <span class="root-tag">{$_('tier.root')}</span>
           {/if}
           {#if action.destructive}
-            <span class="destructive-tag">DESTRUCTIVE</span>
+            <span class="destructive-tag">{$_('tier.destructive')}</span>
           {/if}
           {#if action.irreversible}
-            <span class="irreversible-tag">IRREVERSIBLE</span>
+            <span class="irreversible-tag">{$_('tier.irreversible')}</span>
           {/if}
         </li>
       {/each}
     </ul>
 
     <div class="confirm-actions">
-      <button class="btn-deny" title="Deny" onclick={ondeny}>Deny</button>
-      <button class="btn-confirm" title="Confirm" disabled={!anyApproved} onclick={handleConfirm}>
-        Approve & Execute
+      <button class="btn-deny" title={$_('confirm.deny')} onclick={ondeny}>{$_('confirm.deny')}</button>
+      <button class="btn-confirm" title={$_('confirm.approve')} disabled={!anyApproved} onclick={handleConfirm}>
+        {$_('confirm.approve')}
       </button>
     </div>
   </div>

@@ -224,8 +224,8 @@
 
           {#if $session.rollback && !$session.rollbackPending}
             <div class="undo-banner">
-              <span>A snapshot was taken before the last action.</span>
-              <button class="undo-btn" onclick={() => session.requestRollback()}>Undo</button>
+              <span>{$_('rollback.banner')}</span>
+              <button class="undo-btn" onclick={() => session.requestRollback()}>{$_('rollback.undo')}</button>
             </div>
           {/if}
 

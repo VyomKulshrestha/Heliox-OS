@@ -152,6 +152,50 @@ class PermissionEscalationAuditStore:
             await db.commit()
             return entry_hmac
 
+    async def list_events(self, limit: int = 50, plan_id: str | None = None) -> list[dict[str, Any]]:
+        """Return the most recent permission-escalation events for display.
+
+        Args:
+            limit: Maximum number of rows to return, most recent first.
+            plan_id: Optional filter to a single plan's events.
+
+        Returns:
+            List of event dicts with parsed critic_verdict JSON.
+        """
+        await self.initialize()
+        query = """
+            SELECT id, timestamp, plan_id, action_index, action_type, target,
+                   permission_tier, requires_root, destructive,
+                   confirmation_decision, critic_verdict,
+                   execution_success, execution_error
+            FROM permission_escalation_audit
+        """
+        args: tuple[Any, ...] = ()
+        if plan_id:
+            query += " WHERE plan_id = ?"
+            args = (plan_id,)
+        query += " ORDER BY id DESC LIMIT ?"
+        args = (*args, limit)
+
+        async with aiosqlite.connect(self._db_file) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(query, args) as cursor:
+                rows = await cursor.fetchall()
+
+        events = []
+        for row in rows:
+            event = dict(row)
+            event["requires_root"] = bool(event["requires_root"])
+            event["destructive"] = bool(event["destructive"])
+            if event["execution_success"] is not None:
+                event["execution_success"] = bool(event["execution_success"])
+            try:
+                event["critic_verdict"] = json.loads(event["critic_verdict"]) if event["critic_verdict"] else {}
+            except (json.JSONDecodeError, TypeError):
+                pass
+            events.append(event)
+        return events
+
     async def verify_chain(self) -> ChainVerificationResult:
         await self.initialize()
         expected_previous = ""

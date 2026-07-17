@@ -688,6 +688,8 @@ class PilotServer:
             "export_session_chat": self._handle_export_session_chat,
             "confirm": self._handle_confirm,
             "rollback_plan": self._handle_rollback_plan,
+            "list_permission_events": self._handle_list_permission_events,
+            "verify_permission_audit": self._handle_verify_permission_audit,
             # ── Cancel Token (Issue #92) ──
             "abort": self._handle_abort,
             "get_config": self._handle_get_config,
@@ -2024,6 +2026,45 @@ class PilotServer:
         )
         logger.info("Rolled back plan %s to snapshot %s", plan_id, snapshot_id)
         return {"status": "ok", "message": result_message}
+
+    async def _handle_list_permission_events(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """List recent permission-escalation audit events for display.
+
+        Args:
+            params: JSON-RPC parameters, optionally {limit, plan_id}.
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with status and the list of events.
+        """
+        if not self._permission_audit:
+            return {"status": "error", "message": "Permission audit store is not initialized.", "events": []}
+
+        limit = int(params.get("limit", 50))
+        plan_id = params.get("plan_id") or None
+        events = await self._permission_audit.list_events(limit=limit, plan_id=plan_id)
+        return {"status": "ok", "events": events}
+
+    async def _handle_verify_permission_audit(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """Verify the tamper-evident HMAC chain of the permission audit log.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with status and the ChainVerificationResult fields.
+        """
+        if not self._permission_audit:
+            return {"status": "error", "message": "Permission audit store is not initialized."}
+
+        result = await self._permission_audit.verify_chain()
+        return {
+            "status": "ok",
+            "valid": result.valid,
+            "checked_entries": result.checked_entries,
+            "error": result.error,
+        }
 
     async def _handle_abort(self, params: dict[str, Any], ws: ServerConnection) -> dict:
         """Signal the current execution to stop gracefully (Issue #92).

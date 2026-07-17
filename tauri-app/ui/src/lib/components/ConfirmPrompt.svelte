@@ -1,29 +1,29 @@
 <script lang="ts">
-  import { _ } from "svelte-i18n";
-
   interface Props {
+    message: string;
+    confirmLabel?: string;
+    cancelLabel?: string;
+    danger?: boolean;
     onconfirm: () => void;
     oncancel: () => void;
   }
 
-  let { onconfirm, oncancel }: Props = $props();
+  let { message, confirmLabel = "Confirm", cancelLabel = "Cancel", danger = false, onconfirm, oncancel }: Props =
+    $props();
 </script>
 
 <div class="confirm-overlay">
   <div class="confirm-dialog">
     <div class="confirm-header">
       <span class="warn-icon">&#9888;</span>
-      <span>{$_('rollback.title')}</span>
     </div>
 
-    <p class="confirm-body">
-      {$_('rollback.body')}
-    </p>
+    <p class="confirm-body">{message}</p>
 
     <div class="confirm-actions">
-      <button class="btn-deny" title={$_('rollback.cancel')} onclick={oncancel}>{$_('rollback.cancel')}</button>
-      <button class="btn-confirm btn-danger" title={$_('rollback.confirm')} onclick={onconfirm}>
-        {$_('rollback.confirm')}
+      <button class="btn-deny" onclick={oncancel}>{cancelLabel}</button>
+      <button class={danger ? "btn-confirm btn-danger" : "btn-confirm"} onclick={onconfirm}>
+        {confirmLabel}
       </button>
     </div>
   </div>
@@ -31,13 +31,13 @@
 
 <style>
   .confirm-overlay {
-    position: absolute;
+    position: fixed;
     inset: 0;
     background: rgba(0, 0, 0, 0.6);
     display: flex;
     align-items: center;
     justify-content: center;
-    z-index: 100;
+    z-index: 200;
     padding: 24px;
   }
 
@@ -61,7 +61,7 @@
   }
 
   .warn-icon {
-    color: var(--danger);
+    color: var(--warning);
     font-size: 20px;
   }
 
@@ -70,6 +70,7 @@
     color: var(--text-secondary);
     margin-bottom: 20px;
     line-height: 1.5;
+    white-space: pre-line;
   }
 
   .confirm-actions {
@@ -101,6 +102,10 @@
     background: var(--accent);
     border-radius: var(--radius-sm);
     transition: background 0.15s;
+  }
+
+  .btn-confirm:hover {
+    background: var(--accent-hover);
   }
 
   .btn-danger {
