@@ -584,6 +584,47 @@ Return voice listener statistics.
 
 ---
 
+### Voice Calibration (on-device continual learning)
+
+`reset_wake_calibration`/`list_wake_variants` back the Settings → Voice
+Calibration UI (see GESTURES.md's gesture-side "Gesture Calibration" for the
+parallel frontend feature). Both are direct handlers, bypassing Planner/
+Executor entirely — same pattern as `cursor_move`/`cursor_click` above.
+
+The underlying `WakeWordCalibrator` (`daemon/pilot/system/voice_calibration.py`)
+is a fallback tried only after `_listen_loop()`'s fixed exact-substring
+wake-word match misses: it learns accent/mic-specific near-miss transcripts
+that are followed shortly after by a real wake-word hit, and once a variant
+has accumulated `PROMOTION_THRESHOLD` (5) such confirmations it's trusted
+going forward. Storage is a local JSON file at
+`~/.cache/heliox/voice_calibration/wake_variants.json` — no audio, no general
+transcripts, nothing transmitted anywhere.
+
+#### `reset_wake_calibration`
+Clear all learned wake-word variants and delete the on-device store. If a
+voice listener is currently running, its live calibrator is reset in place
+so the change takes effect without restarting the listener.
+
+**Params:** `{}`
+**Result:** `{ "status": "ok" }`
+
+#### `list_wake_variants`
+List learned wake-word variants for the Settings transparency view.
+
+**Params:** `{}`
+**Result:**
+```json
+{
+  "status": "ok",
+  "variants": [
+    { "text": "hey iliox", "confirmed_count": 3, "first_seen": 1234567890.0, "last_confirmed": 1234567999.0 }
+  ],
+  "promotion_threshold": 5
+}
+```
+
+---
+
 ### Autonomous Executor (Background Jobs)
 
 #### `autonomous_submit`
@@ -1204,8 +1245,9 @@ If verification fails, the daemon re-plans and the cycle repeats (up to 2 retrie
 |------|----------|
 | `daemon/pilot/server.py` | All request handlers and notification senders |
 | `daemon/pilot/actions.py` | `ActionType` enum, parameter models, `is_irreversible`/`dangerous_flags` |
-| `daemon/pilot/config.py` | `PilotConfig`, `ModelConfig`, `SecurityConfig`, `GestureCursorConfig` |
+| `daemon/pilot/config.py` | `PilotConfig`, `ModelConfig`, `SecurityConfig`, `GestureCursorConfig`, `AdaptiveCalibrationConfig` |
 | `daemon/pilot/system/input_control.py` | `mouse_move`/`mouse_click` — backing implementation for the `cursor_move`/`cursor_click` fallback |
+| `daemon/pilot/system/voice_calibration.py` | `WakeWordCalibrator`, `VoiceCalibrationStore` — backing implementation for `reset_wake_calibration`/`list_wake_variants` |
 | `tauri-app/src-tauri/src/commands.rs` | `move_gesture_cursor`/`click_gesture_cursor` — the primary, real-time gesture-cursor path (enigo) |
 | `tauri-app/ui/src/lib/gesture/spatialModel.ts` | `predictAhead()`/`predictCursorTarget()` — the kinematic prediction feeding the cursor bridge |
 | `daemon/pilot/security/permissions.py` | `PermissionChecker` — single source of truth for confirmation/snapshot policy |

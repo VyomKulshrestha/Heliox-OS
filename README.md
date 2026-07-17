@@ -88,6 +88,7 @@ Heliox OS has achieved true proactive autonomy, transitioning from a reactive as
 - 🎤 **Continuous Voice Listener**: Real-time push-free 'Hey Heliox' ambient wake-word dispatch for frictionless task execution.
 - 🤚 **30+ Hand Gestures & Air Drawing**: Control your PC via webcam with static poses (Palm, Pinch) and motion gestures (Two-Finger Swipe). A lightweight kinematic prediction layer smooths tracking and reduces misfires.
 - 🖱️ **Gesture Cursor Control** *(off by default)*: Point to move the real OS cursor, pinch to click — opt in via Settings. Open palm always exits instantly.
+- 🎯 **Adaptive Voice & Gesture Calibration** *(on by default)*: A lightweight on-device continual-learning loop personalizes pinch/thumb thresholds and wake-word matching from implicit usage signals — no retraining, no new prompts, bounded and resettable in Settings.
 - 🌀 **Arc Reactor UI & Ambient HUD**: Animated, immersive Tauri overlays responding contextually to system actions.
 
 ## 🧠 TRIBE v2 Cognitive Engine Integrations (v0.7.1)

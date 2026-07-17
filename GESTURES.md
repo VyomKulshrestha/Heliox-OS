@@ -148,6 +148,46 @@ no display session) degrades to a clear error rather than a crash.
 
 ---
 
+## Gesture Calibration (on-device continual learning)
+
+A **lightweight, on-by-default** personalization loop that nudges exactly
+two of the ~20 hardcoded static-pose constants —
+`PINCH_DISTANCE_THRESHOLD` (Pinch/OK) and `THUMB_EXTENDED_RATIO`
+(Thumbs Up/Down) — toward an individual user's hand anatomy and pinch
+style. These two were chosen because they depend on the hand itself, unlike
+e.g. swipe velocity or cooldown timing, which are motion-preference/safety
+knobs left untouched.
+
+This is **not** model retraining — MediaPipe stays frozen — and there is no
+new "was this right? 👍/👎" prompt. Instead it reads an implicit signal
+already latent in normal usage: **gesture reversal detection**. If a
+calibrated gesture (pinch/OK/thumbs-up/thumbs-down) fires and is
+immediately followed by a semantically contradictory gesture (e.g. an open
+palm right after a pinch) within `REVERSAL_WINDOW_MS` (2500ms), that's read
+as an implicit misfire and simply isn't reinforced. If nothing contradicts
+it in time, the gesture's measured metric (pinch distance / thumb ratio at
+the moment it fired) feeds an exponential moving average (`EMA_ALPHA =
+0.08`).
+
+The learned EMA only takes effect once at least `MIN_SAMPLES_TO_APPLY`
+(8) confirmed observations exist, and is always clamped to
+`[0.6x, 1.4x]` of the shipped default — so a single unusual session can't
+swing recognition, and drift stays bounded and reversible. Below the sample
+floor, the shipped constant is used unchanged.
+
+**Storage:** exclusively browser `localStorage`
+(`heliox_gesture_calibration`) — gesture recognition never leaves the
+frontend today, so this personalization never needs to either. Nothing is
+transmitted anywhere. Visible and resettable from Settings → Gesture
+Calibration (`adaptive_calibration.gesture_enabled`), which also shows the
+current pinch/thumb sample counts.
+
+See `tauri-app/ui/src/lib/gesture/calibration.ts` for the implementation
+and `calibration.test.ts` for coverage of the EMA math, clamping, and
+reversal-pairing logic.
+
+---
+
 ## Static Pose Gestures (21)
 
 These are recognized by analyzing which fingers are extended, curled, or touching.
@@ -277,11 +317,14 @@ To add a new gesture:
 | `tauri-app/ui/src/lib/components/GestureControl.svelte` | Core gesture engine + gesture-cursor bridge |
 | `tauri-app/ui/src/lib/gesture/spatialModel.ts` | Spatial/world-model layer — temporal filtering, thumb-extension check, hand quality scoring, kinematic prediction |
 | `tauri-app/ui/src/lib/gesture/spatialModel.test.ts` | Unit tests for the spatial model's pure functions |
+| `tauri-app/ui/src/lib/gesture/calibration.ts` | On-device gesture calibration — EMA, reversal detection, localStorage store |
+| `tauri-app/ui/src/lib/gesture/calibration.test.ts` | Unit tests for calibration EMA/clamping/reversal-pairing logic |
 | `tauri-app/ui/src/lib/utils/runtime.ts` | `isTauriRuntime()` — used to pick the native vs. daemon-RPC cursor path |
-| `tauri-app/ui/src/lib/stores/settings.ts` | `gesture_cursor` settings section |
-| `tauri-app/ui/src/lib/components/SettingsPanel.svelte` | Gesture Cursor Control settings UI |
+| `tauri-app/ui/src/lib/stores/settings.ts` | `gesture_cursor`, `adaptive_calibration` settings sections |
+| `tauri-app/ui/src/lib/components/SettingsPanel.svelte` | Gesture Cursor Control + Gesture/Voice Calibration settings UI |
 | `tauri-app/src-tauri/src/commands.rs` | `move_gesture_cursor`/`click_gesture_cursor` Tauri commands (enigo) |
-| `daemon/pilot/server.py` | `cursor_move`/`cursor_click` RPC fallback handlers |
-| `daemon/pilot/config.py` | `GestureCursorConfig` |
+| `daemon/pilot/server.py` | `cursor_move`/`cursor_click`, `reset_wake_calibration`/`list_wake_variants` RPC handlers |
+| `daemon/pilot/config.py` | `GestureCursorConfig`, `AdaptiveCalibrationConfig` |
+| `daemon/pilot/system/voice_calibration.py` | On-device wake-word calibration — Levenshtein near-miss detection, promotion, JSON store |
 | `tauri-app/ui/src/App.svelte` | Gesture to UI navigation handler |
 | `tauri-app/src-tauri/tauri.conf.json` | CSP allowing MediaPipe CDN |
