@@ -42,6 +42,7 @@
   import { session } from "../stores/session";
   import { tick } from "svelte";
   import { Hands, type Results } from "@mediapipe/hands";
+  import { LandmarkFilterBank, computeHandQuality, isThumbExtended, handSize } from "../gesture/spatialModel";
 
   // ── Props ──
   let { onGesture = (name: string) => {} }: { onGesture?: (name: string) => void } = $props();
@@ -64,6 +65,10 @@
   let candidateGesture = "";
   let candidateCount = 0;
   const REQUIRED_FRAMES = 5;
+
+  // ── Spatial/world-model layer: temporal landmark filtering + quality gating ──
+  const landmarkFilter = new LandmarkFilterBank();
+  const QUALITY_CONFIDENCE_FLOOR = 0.35;
 
   // Finger trail tracking for air drawing
   let fingerTrail: { x: number; y: number; t: number }[] = [];
@@ -204,6 +209,7 @@
     candidateCount = 0;
     wristHistory = [];
     indexHistory = [];
+    landmarkFilter.reset();
 
     stopping = false;
   }
@@ -223,12 +229,15 @@
       prevIndexPos = null;
       candidateGesture = "";
       candidateCount = 0;
+      landmarkFilter.reset(); // avoid smearing stale filter state into the next detected hand
       return;
     }
 
     const landmarks = results.multiHandLandmarks[0];
 
-    // Update motion buffers
+    // Update motion buffers — deliberately built from RAW (unfiltered) landmarks.
+    // Swipe/circular/push-pull thresholds are already tuned against raw jitter;
+    // filtering the buffers themselves risks damping the fast motion they detect.
     const now = Date.now();
     const wrist = landmarks[0];
     wristHistory.push({ x: wrist.x, y: wrist.y, z: wrist.z || 0, t: now });
@@ -237,7 +246,19 @@
     indexHistory.push({ x: idx.x, y: idx.y, t: now });
     if (indexHistory.length > MOTION_BUFFER_SIZE) indexHistory.shift();
 
-    const gesture = classifyGesture(landmarks);
+    // Temporally-filtered landmarks feed static-pose classification, where
+    // single-frame jitter causes flicker between adjacent gesture readings.
+    const filteredLandmarks = landmarkFilter.filter(landmarks, now);
+    const gesture = classifyGesture(filteredLandmarks);
+
+    // Scale confidence by detection/geometric quality instead of letting a
+    // degenerate (occluded/edge-on) hand pose misfire at full confidence.
+    const quality = computeHandQuality(landmarks, results.multiHandedness?.[0]?.score);
+    gesture.confidence *= quality;
+    if (gesture.name && gesture.confidence < QUALITY_CONFIDENCE_FLOOR) {
+      gesture.name = "";
+      gesture.confidence = 0;
+    }
 
     // Track index finger for air drawing
     trackFingerTrail(landmarks);
@@ -343,12 +364,15 @@
 
   function classifyGesture(landmarks: any[]): Gesture {
     const THUMB_TIP = 4, INDEX_TIP = 8, MIDDLE_TIP = 12, RING_TIP = 16, PINKY_TIP = 20;
-    const THUMB_IP = 3, INDEX_PIP = 6, MIDDLE_PIP = 10, RING_PIP = 14, PINKY_PIP = 18;
+    const INDEX_PIP = 6, MIDDLE_PIP = 10, RING_PIP = 14, PINKY_PIP = 18;
     const THUMB_MCP = 2, INDEX_MCP = 5;
     const WRIST = 0;
 
     const isExtended = (tip: number, pip: number) => landmarks[tip].y < landmarks[pip].y;
-    const thumbExtended = landmarks[THUMB_TIP].x < landmarks[THUMB_IP].x;
+    // Orientation/handedness-invariant — see spatialModel.ts for why the old
+    // `landmarks[THUMB_TIP].x < landmarks[THUMB_IP].x` check broke for left
+    // hands and rotated wrists.
+    const thumbExtended = isThumbExtended(landmarks, handSize(landmarks));
 
     const indexUp = isExtended(INDEX_TIP, INDEX_PIP);
     const middleUp = isExtended(MIDDLE_TIP, MIDDLE_PIP);

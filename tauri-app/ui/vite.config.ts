@@ -423,5 +423,7 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     globals: true,
+    include: ["src/**/*.{test,spec}.{js,ts}"],
+    exclude: ["tests/visual/**", "tests/static/**", "node_modules/**"],
   },
 });
