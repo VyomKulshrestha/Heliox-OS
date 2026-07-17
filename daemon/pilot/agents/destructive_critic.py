@@ -33,7 +33,7 @@ logger = logging.getLogger("pilot.agents.destructive_critic")
 HEURISTIC_RISK_THRESHOLD = 0.3
 
 
-def heuristic_risk(plan: "ActionPlan") -> float:
+def heuristic_risk(plan: ActionPlan) -> float:
     """Cheap, non-LLM risk estimate for a plan, used to decide whether a
     Tier-3-only (non-root) plan is worth an LLM critic round-trip.
 
@@ -66,6 +66,7 @@ def heuristic_risk(plan: "ActionPlan") -> float:
         score += 0.1
 
     return min(1.0, score)
+
 
 # ---------------------------------------------------------------------------
 # Prompts
