@@ -757,6 +757,8 @@ class PilotServer:
             "voice_listener_start": self._handle_voice_listener_start,
             "voice_listener_stop": self._handle_voice_listener_stop,
             "voice_listener_stats": self._handle_voice_listener_stats,
+            "reset_wake_calibration": self._handle_reset_wake_calibration,
+            "list_wake_variants": self._handle_list_wake_variants,
             "autonomous_submit": self._handle_autonomous_submit,
             "autonomous_cancel": self._handle_autonomous_cancel,
             "autonomous_jobs": self._handle_autonomous_jobs,
@@ -4023,6 +4025,52 @@ def handle_tool(tool_name, params):
         if not self._voice_listener:
             return {"running": False, "message": "Voice listener not initialized"}
         return self._voice_listener.get_stats()
+
+    async def _handle_reset_wake_calibration(self, params: dict, ws: ServerConnection) -> dict:
+        """Clear all learned wake-word calibration data.
+
+        Deletes the on-device JSON store entirely — this is the "reset
+        learned wake words" action in Settings. If the voice listener is
+        currently running, its live WakeWordCalibrator is reset too so the
+        change takes effect immediately without restarting the listener.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with status.
+        """
+        if self._voice_listener:
+            self._voice_listener._wake_calibrator.reset()
+        else:
+            from pilot.system.voice_calibration import VoiceCalibrationStore
+
+            VoiceCalibrationStore().reset()
+        return {"status": "ok"}
+
+    async def _handle_list_wake_variants(self, params: dict, ws: ServerConnection) -> dict:
+        """List learned wake-word variants for the Settings transparency view.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with a list of variants (text, confirmed_count,
+            first_seen, last_confirmed) and the promotion threshold so the
+            UI can show progress toward it.
+        """
+        from dataclasses import asdict
+
+        from pilot.system.voice_calibration import VoiceCalibrationStore, WakeWordCalibrator
+
+        variants = VoiceCalibrationStore().load()
+        return {
+            "status": "ok",
+            "variants": [asdict(v) for v in variants.values()],
+            "promotion_threshold": WakeWordCalibrator.PROMOTION_THRESHOLD,
+        }
 
     # ── Autonomous Executor Handlers ──
 

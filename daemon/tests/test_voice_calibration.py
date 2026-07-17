@@ -126,3 +126,23 @@ class TestWakeWordCalibrator:
         calibrator.record_pending("hey heliocks")
         calibrator.confirm_pending_if_followed_by_hit()  # only 1 confirmation
         assert calibrator.match_promoted_variant("hey heliocks turn on the lights") is None
+
+    def test_reset_clears_variants_pending_and_the_store(self, tmp_path):
+        calibrator = self._calibrator(tmp_path)
+        for _ in range(calibrator.PROMOTION_THRESHOLD):
+            calibrator.record_pending("hey heliocks")
+            calibrator.confirm_pending_if_followed_by_hit()
+        assert calibrator.get_variants() != []
+
+        calibrator.record_pending("still pending")
+        calibrator.reset()
+
+        assert calibrator.get_variants() == []
+        assert calibrator.match_promoted_variant("hey heliocks turn on the lights") is None
+        # A hit right after reset shouldn't confirm the now-cleared pending candidate.
+        calibrator.confirm_pending_if_followed_by_hit()
+        assert calibrator.get_variants() == []
+
+        # The on-device store itself was cleared too, not just in-memory state.
+        fresh_calibrator = self._calibrator(tmp_path)
+        assert fresh_calibrator.get_variants() == []

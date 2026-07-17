@@ -7,6 +7,7 @@
   import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
   import ConfirmPrompt from "./ConfirmPrompt.svelte";
   import PermissionAuditLog from "./PermissionAuditLog.svelte";
+  import { GestureCalibrationStore } from "../gesture/calibration";
 
   let pendingConfirm = $state<{ message: string; danger: boolean; onConfirm: () => void } | null>(null);
 
@@ -160,6 +161,55 @@
     if (!Number.isFinite(rawValue)) return;
     const blend = Math.min(1, Math.max(0, rawValue));
     settings.updateSection("gesture_cursor", { blend });
+  }
+
+  // Adaptive gesture calibration is frontend-only (localStorage) - reading a
+  // fresh GestureCalibrationStore here is fine, it just re-reads the same
+  // storage key GestureControl.svelte's instance writes to.
+  let gestureCalibrationSnapshot = $state(new GestureCalibrationStore().getSnapshot());
+
+  function toggleGestureCalibration() {
+    settings.updateSection("adaptive_calibration", {
+      gesture_enabled: !$settings.adaptive_calibration?.gesture_enabled,
+    });
+  }
+
+  function resetGestureCalibration() {
+    const store = new GestureCalibrationStore();
+    store.reset();
+    gestureCalibrationSnapshot = store.getSnapshot();
+  }
+
+  let voiceVariants = $state<{ text: string; confirmed_count: number }[]>([]);
+  let voicePromotionThreshold = $state(5);
+
+  function loadVoiceVariants() {
+    call("list_wake_variants").then((res: any) => {
+      if (res && res.variants) {
+        voiceVariants = res.variants;
+        voicePromotionThreshold = res.promotion_threshold ?? 5;
+      }
+    }).catch(() => {});
+  }
+
+  $effect(() => {
+    loadVoiceVariants();
+  });
+
+  function toggleVoiceCalibration() {
+    settings.updateSection("adaptive_calibration", {
+      voice_wake_word_enabled: !$settings.adaptive_calibration?.voice_wake_word_enabled,
+    });
+  }
+
+  async function resetVoiceCalibration() {
+    try {
+      await call("reset_wake_calibration");
+    } catch {
+      // best-effort - the on-device store falls back to a fresh
+      // VoiceCalibrationStore() even if no listener is running
+    }
+    voiceVariants = [];
   }
 
   function updateOllamaModel(e: Event) {
@@ -527,6 +577,78 @@
         />
       </div>
     {/if}
+  </section>
+
+  <section class="settings-group">
+    <h3>{$_('settings.gesture_calibration')}</h3>
+    <p class="gesture-cursor-warning">{$_('settings.gesture_calibration_desc')}</p>
+
+    <div class="setting-row">
+      <div class="setting-info">
+        <span class="setting-label">{$_('settings.gesture_calibration_enabled')}</span>
+        <span class="setting-desc">{$_('settings.gesture_calibration_enabled_desc')}</span>
+      </div>
+      <button
+        class="toggle"
+        class:active={$settings.adaptive_calibration?.gesture_enabled}
+        onclick={toggleGestureCalibration}
+        aria-label="Toggle Adaptive Gesture Calibration"
+        title="Toggle Adaptive Gesture Calibration"
+      >
+        <span class="toggle-knob"></span>
+      </button>
+    </div>
+
+    <div class="setting-row">
+      <div class="setting-info">
+        <span class="setting-label">{$_('settings.gesture_calibration_learned')}</span>
+        <span class="setting-desc">
+          {#if gestureCalibrationSnapshot.pinchSampleCount === 0 && gestureCalibrationSnapshot.thumbSampleCount === 0}
+            {$_('settings.gesture_calibration_no_data')}
+          {:else}
+            {$_('settings.gesture_calibration_pinch_samples')}: {gestureCalibrationSnapshot.pinchSampleCount} · {$_('settings.gesture_calibration_thumb_samples')}: {gestureCalibrationSnapshot.thumbSampleCount}
+          {/if}
+        </span>
+      </div>
+      <button class="btn-save" onclick={resetGestureCalibration}>{$_('settings.gesture_calibration_reset')}</button>
+    </div>
+  </section>
+
+  <section class="settings-group">
+    <h3>{$_('settings.voice_calibration')}</h3>
+    <p class="gesture-cursor-warning">{$_('settings.voice_calibration_desc')}</p>
+
+    <div class="setting-row">
+      <div class="setting-info">
+        <span class="setting-label">{$_('settings.voice_calibration_enabled')}</span>
+        <span class="setting-desc">{$_('settings.voice_calibration_enabled_desc')}</span>
+      </div>
+      <button
+        class="toggle"
+        class:active={$settings.adaptive_calibration?.voice_wake_word_enabled}
+        onclick={toggleVoiceCalibration}
+        aria-label="Toggle Adaptive Wake-Word Matching"
+        title="Toggle Adaptive Wake-Word Matching"
+      >
+        <span class="toggle-knob"></span>
+      </button>
+    </div>
+
+    <div class="setting-row">
+      <div class="setting-info">
+        <span class="setting-label">{$_('settings.voice_calibration_learned')}</span>
+        <span class="setting-desc">
+          {#if voiceVariants.length === 0}
+            {$_('settings.voice_calibration_no_data')}
+          {:else}
+            {#each voiceVariants as variant}
+              "{variant.text}" ({variant.confirmed_count}/{voicePromotionThreshold}){#if variant !== voiceVariants[voiceVariants.length - 1]}, {/if}
+            {/each}
+          {/if}
+        </span>
+      </div>
+      <button class="btn-save" onclick={resetVoiceCalibration}>{$_('settings.voice_calibration_reset')}</button>
+    </div>
   </section>
 
   <section class="settings-group">

@@ -199,3 +199,12 @@ class WakeWordCalibrator:
         """All learned variants (confirmed or still pending promotion) — for
         the Settings transparency view."""
         return list(self._variants.values())
+
+    def reset(self) -> None:
+        """Clears all learned variants and pending candidates, and deletes
+        the on-device store — the "reset learned wake words" Settings
+        action. Safe to call on a calibrator backing a currently-running
+        listener; takes effect immediately."""
+        self._variants = {}
+        self._pending = {}
+        self._store.reset()
