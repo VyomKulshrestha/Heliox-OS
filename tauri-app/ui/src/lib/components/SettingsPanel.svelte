@@ -7,6 +7,8 @@
   import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
   import ConfirmPrompt from "./ConfirmPrompt.svelte";
   import PermissionAuditLog from "./PermissionAuditLog.svelte";
+  import GatewayPolicyEditor from "./GatewayPolicyEditor.svelte";
+  import GatewayAuditLog from "./GatewayAuditLog.svelte";
   import { GestureCalibrationStore } from "../gesture/calibration";
 
   let pendingConfirm = $state<{ message: string; danger: boolean; onConfirm: () => void } | null>(null);
@@ -800,6 +802,14 @@
 
   <section class="settings-group audit-log-section">
     <PermissionAuditLog />
+  </section>
+
+  <section class="settings-group audit-log-section">
+    <GatewayPolicyEditor />
+  </section>
+
+  <section class="settings-group audit-log-section">
+    <GatewayAuditLog />
   </section>
 
   <section class="settings-group">
