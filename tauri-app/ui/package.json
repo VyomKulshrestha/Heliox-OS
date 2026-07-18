@@ -31,7 +31,7 @@
   "dependencies": {
     "@mediapipe/hands": "0.4.1675469240",
     "@mediapipe/tasks-vision": "^0.10.35",
-    "@tauri-apps/api": "^2.11.0",
+    "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-clipboard-manager": "^2.0.0",
     "@tauri-apps/plugin-notification": "^2.0.0",
     "chart.js": "^4.5.1",
