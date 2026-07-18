@@ -319,6 +319,10 @@
   // instead of firing its normal action. null when no such workflow exists.
   let pendingWorkflowId: string | null = null;
   let workflowNotificationHandler: ((method: string, params: unknown) => void) | null = null;
+  // gesture_name -> goal_template, enabled bindings only (see
+  // GestureWorkflowConfig in config.py) -- refreshed once per engine start,
+  // not re-polled every frame.
+  let gestureWorkflowBindings: Record<string, string> = {};
 
   async function subscribeToWorkflowState() {
     const { onNotification, call } = await import("../api/daemon");
@@ -346,6 +350,19 @@
       // Daemon not ready yet -- fine, future voice_gesture_workflow_state
       // notifications will still populate pendingWorkflowId.
     }
+
+    try {
+      const policy = (await call("gesture_workflow_bindings_get")) as {
+        enabled: boolean;
+        bindings: Array<{ gesture_name: string; goal_template: string; enabled: boolean }>;
+      };
+      gestureWorkflowBindings =
+        policy.enabled && policy.bindings
+          ? Object.fromEntries(policy.bindings.filter((b) => b.enabled && b.goal_template).map((b) => [b.gesture_name, b.goal_template]))
+          : {};
+    } catch {
+      gestureWorkflowBindings = {};
+    }
   }
 
   async function unsubscribeFromWorkflowState() {
@@ -355,6 +372,7 @@
       workflowNotificationHandler = null;
     }
     pendingWorkflowId = null;
+    gestureWorkflowBindings = {};
   }
 
   async function dispatchWorkflowControl(intent: "continue" | "cancel", workflowId: string) {
@@ -365,6 +383,16 @@
     } catch {
       // best-effort -- if the RPC fails the workflow simply stays paused,
       // no worse than before the gesture fired
+    }
+  }
+
+  async function startBoundWorkflow(goalTemplate: string) {
+    const { call } = await import("../api/daemon");
+    try {
+      await call("voice_gesture_workflow_submit", { goal: goalTemplate, invocation_source: "gesture" });
+    } catch {
+      // best-effort -- if submission fails, nothing was started; the user
+      // can retry the gesture
     }
   }
 
@@ -527,9 +555,16 @@
             // continue/cancel gestures instead of them firing their normal
             // action — see subscribeToWorkflowState()/workflowControl.ts.
             const controlIntent = pendingWorkflowId ? classifyControlGesture(gesture.name) : "unknown";
+            const boundGoal = !pendingWorkflowId ? gestureWorkflowBindings[gesture.name] : undefined;
             if (controlIntent !== "unknown" && pendingWorkflowId) {
               void dispatchWorkflowControl(controlIntent, pendingWorkflowId);
               pendingWorkflowId = null;
+            } else if (boundGoal) {
+              // A user-bound gesture starts a workflow instead of its
+              // normal default action — see GestureWorkflowConfig in
+              // config.py and the Settings gesture-workflow bindings editor.
+              void startBoundWorkflow(boundGoal);
+              gestureHistory = [...gestureHistory.slice(-4), gesture.name];
             } else {
               executeGestureAction(gesture.name);
               gestureHistory = [...gestureHistory.slice(-4), gesture.name];

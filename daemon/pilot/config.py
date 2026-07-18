@@ -188,6 +188,33 @@ class GatewayConfig:
 
 
 @dataclass
+class GestureWorkflowBinding:
+    """One user-authored gesture -> multi-step-goal binding (see
+    pilot.agents.voice_gesture_workflow.VoiceGestureWorkflowEngine). Users
+    define these themselves in Settings — there is no built-in fixed set,
+    since a gesture is just a fixed pose/motion name and can't carry
+    open-ended goal text the way a voice command can."""
+
+    gesture_name: str = ""
+    goal_template: str = ""
+    enabled: bool = True
+
+
+@dataclass
+class GestureWorkflowConfig:
+    """Binds specific gestures to multi-step workflow goals. Off by default:
+    unlike the Agent Gateway (which only restricts), binding a gesture to an
+    open-ended goal is a NEW capability — the gesture now drives an
+    autonomous multi-step plan instead of a single fixed action, so it needs
+    an explicit opt-in the same way gesture_cursor does."""
+
+    enabled: bool = False
+    bindings: list[GestureWorkflowBinding] = field(default_factory=list)
+    pending_trigger_window_seconds: float = 90.0
+    paused_window_seconds: float = 1800.0
+
+
+@dataclass
 class ProxyConfig:
     http: str | None = None
     https: str | None = None
@@ -297,6 +324,7 @@ class PilotConfig:
     gesture_cursor: GestureCursorConfig = field(default_factory=GestureCursorConfig)
     adaptive_calibration: AdaptiveCalibrationConfig = field(default_factory=AdaptiveCalibrationConfig)
     gateway: GatewayConfig = field(default_factory=GatewayConfig)
+    gesture_workflows: GestureWorkflowConfig = field(default_factory=GestureWorkflowConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     rss: RSSConfig = field(default_factory=RSSConfig)
     calendar: CalendarConfig = field(default_factory=CalendarConfig)
@@ -423,6 +451,12 @@ def _validate_config_types(raw: dict) -> None:
         "gateway": {
             "enabled": bool,
             "source_profiles": dict,
+        },
+        "gesture_workflows": {
+            "enabled": bool,
+            "bindings": list,
+            "pending_trigger_window_seconds": (int, float),
+            "paused_window_seconds": (int, float),
         },
         "memory": {
             "checkpoint_interval_seconds": int,
@@ -580,6 +614,29 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
                     allow_root=bool(profile_raw.get("allow_root", default.allow_root)),
                 )
             config.gateway.source_profiles = parsed_profiles
+
+    if "gesture_workflows" in raw and isinstance(raw["gesture_workflows"], dict):
+        gw_raw = raw["gesture_workflows"]
+        config.gesture_workflows.enabled = bool(gw_raw.get("enabled", config.gesture_workflows.enabled))
+        if "pending_trigger_window_seconds" in gw_raw:
+            config.gesture_workflows.pending_trigger_window_seconds = float(gw_raw["pending_trigger_window_seconds"])
+        if "paused_window_seconds" in gw_raw:
+            config.gesture_workflows.paused_window_seconds = float(gw_raw["paused_window_seconds"])
+
+        bindings_raw = gw_raw.get("bindings", [])
+        if isinstance(bindings_raw, list):
+            parsed_bindings: list[GestureWorkflowBinding] = []
+            for item in bindings_raw:
+                if not isinstance(item, dict):
+                    continue
+                parsed_bindings.append(
+                    GestureWorkflowBinding(
+                        gesture_name=str(item.get("gesture_name", "")),
+                        goal_template=str(item.get("goal_template", "")),
+                        enabled=bool(item.get("enabled", True)),
+                    )
+                )
+            config.gesture_workflows.bindings = parsed_bindings
 
     if "memory" in raw:
         for k, v in raw["memory"].items():

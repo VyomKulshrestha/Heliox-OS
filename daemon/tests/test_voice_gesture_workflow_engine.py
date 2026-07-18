@@ -239,6 +239,11 @@ class TestExpiry:
     async def test_expire_if_stale_transitions_past_deadline_paused_workflow(self, tmp_path):
         engine = _engine(tmp_path)
         workflow = await engine.start("do one thing", InvocationSource.VOICE)
+        # Let the background _drive task settle (this single-step goal runs
+        # to SUCCESS) before directly overwriting state below -- otherwise
+        # the still-running task's own writes race with this test's write
+        # and can clobber it, since both target the same row.
+        await _wait_until_terminal(engine, workflow.workflow_id)
         past_deadline = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
         await engine._workflow_store.set_state(
             workflow.workflow_id, WorkflowState.PAUSED, trigger_deadline=past_deadline
@@ -253,6 +258,7 @@ class TestExpiry:
     async def test_expire_if_stale_leaves_workflow_within_window_alone(self, tmp_path):
         engine = _engine(tmp_path)
         workflow = await engine.start("do one thing", InvocationSource.VOICE)
+        await _wait_until_terminal(engine, workflow.workflow_id)  # see race note above
         future_deadline = (datetime.now(UTC) + timedelta(seconds=60)).isoformat()
         await engine._workflow_store.set_state(
             workflow.workflow_id, WorkflowState.PAUSED, trigger_deadline=future_deadline
@@ -275,6 +281,7 @@ class TestExpiry:
     async def test_expired_workflow_no_longer_matches_find_pending_for_source(self, tmp_path):
         engine = _engine(tmp_path)
         workflow = await engine.start("do one thing", InvocationSource.VOICE)
+        await _wait_until_terminal(engine, workflow.workflow_id)  # see race note above
         past_deadline = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
         await engine._workflow_store.set_state(
             workflow.workflow_id, WorkflowState.PAUSED, trigger_deadline=past_deadline
@@ -342,6 +349,7 @@ class TestControlPhrase:
     async def test_stale_workflow_expires_and_falls_through(self, tmp_path):
         engine = _engine(tmp_path)
         workflow = await engine.start("do one thing", InvocationSource.VOICE)
+        await _wait_until_terminal(engine, workflow.workflow_id)  # see race note in TestExpiry
         past_deadline = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
         await engine._workflow_store.set_state(
             workflow.workflow_id, WorkflowState.PAUSED, trigger_deadline=past_deadline
