@@ -342,6 +342,8 @@ class PilotServer:
         self._verifier: Any = None
         self._destructive_critic: Any = None
         self._permission_checker: Any = None
+        self._agent_gateway: Any = None
+        self._gateway_audit: Any = None
         self._reflector: Any = None
         self._multi_agent: Any = None
         self._background: Any = None
@@ -702,6 +704,10 @@ class PilotServer:
             "rollback_plan": self._handle_rollback_plan,
             "list_permission_events": self._handle_list_permission_events,
             "verify_permission_audit": self._handle_verify_permission_audit,
+            "list_gateway_events": self._handle_list_gateway_events,
+            "verify_gateway_audit": self._handle_verify_gateway_audit,
+            "gateway_policy_get": self._handle_gateway_policy_get,
+            "gateway_policy_update": self._handle_gateway_policy_update,
             # ── Cancel Token (Issue #92) ──
             "abort": self._handle_abort,
             "get_config": self._handle_get_config,
@@ -2086,6 +2092,112 @@ class PilotServer:
             "checked_entries": result.checked_entries,
             "error": result.error,
         }
+
+    async def _handle_list_gateway_events(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """List recent Agent Gateway audit events for the Settings transparency view.
+
+        Args:
+            params: JSON-RPC parameters, optionally {limit, plan_id,
+                source_profile, action_family, decision}.
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with status and the list of events.
+        """
+        if not self._gateway_audit:
+            return {"status": "error", "message": "Agent gateway audit store is not initialized.", "events": []}
+
+        events = await self._gateway_audit.list_events(
+            limit=int(params.get("limit", 50)),
+            plan_id=params.get("plan_id") or None,
+            source_profile=params.get("source_profile") or None,
+            action_family=params.get("action_family") or None,
+            decision=params.get("decision") or None,
+        )
+        return {"status": "ok", "events": events}
+
+    async def _handle_verify_gateway_audit(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """Verify the tamper-evident HMAC chain of the Agent Gateway audit log.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with status and the ChainVerificationResult fields.
+        """
+        if not self._gateway_audit:
+            return {"status": "error", "message": "Agent gateway audit store is not initialized."}
+
+        result = await self._gateway_audit.verify_chain()
+        return {
+            "status": "ok",
+            "valid": result.valid,
+            "checked_entries": result.checked_entries,
+            "error": result.error,
+        }
+
+    async def _handle_gateway_policy_get(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """Return the current Agent Gateway source-profile floors for the Settings editor.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with status, whether the gateway is enabled, and each
+            source profile's enforced floor (max_tier/deny_action_types/allow_root).
+        """
+        from dataclasses import asdict
+
+        profiles = {name: asdict(profile) for name, profile in self.config.gateway.source_profiles.items()}
+        return {"status": "ok", "enabled": self.config.gateway.enabled, "profiles": profiles}
+
+    async def _handle_gateway_policy_update(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """Update one source profile's enforced floor.
+
+        This edits only the source-profile floor persisted in config —
+        per-task overrides (e.g. autonomous_submit's scope_override) are
+        never settable from Settings, only supplied per-submission by the
+        caller, and can only narrow this floor further, never widen it.
+
+        Args:
+            params: JSON-RPC parameters: {profile, max_tier?, deny_action_types?, allow_root?}.
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with status and the updated policy, or an error if the
+            profile name is unknown.
+        """
+        from dataclasses import asdict
+
+        from pilot.security.gateway import SourceProfile
+
+        profile_name = params.get("profile", "")
+        current = self.config.gateway.source_profiles.get(profile_name)
+        if current is None:
+            return {"status": "error", "message": f"Unknown source profile: {profile_name}"}
+
+        raw_max_tier = params.get("max_tier")
+        raw_deny = params.get("deny_action_types")
+        raw_allow_root = params.get("allow_root")
+
+        # Merge onto the existing floor rather than replacing it wholesale —
+        # a caller updating only "shell" shouldn't silently reset every
+        # other family back to unset/zero.
+        merged_max_tier = dict(current.max_tier)
+        if raw_max_tier is not None:
+            merged_max_tier.update({str(k): int(v) for k, v in raw_max_tier.items()})
+
+        updated = SourceProfile(
+            max_tier=merged_max_tier,
+            deny_action_types=[str(a) for a in raw_deny] if raw_deny is not None else list(current.deny_action_types),
+            allow_root=bool(raw_allow_root) if raw_allow_root is not None else current.allow_root,
+        )
+        self.config.gateway.source_profiles[profile_name] = updated
+        self.config.save()
+
+        return {"status": "ok", "profile": profile_name, "policy": asdict(updated)}
 
     async def _handle_abort(self, params: dict[str, Any], ws: ServerConnection) -> dict:
         """Signal the current execution to stop gracefully (Issue #92).
