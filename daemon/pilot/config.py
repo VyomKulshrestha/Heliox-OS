@@ -20,6 +20,8 @@ else:
 
 import tomli_w
 
+from pilot.security.gateway import DEFAULT_SOURCE_PROFILES, SourceProfile
+
 
 def _xdg(env_var: str, fallback: str) -> Path:
     return Path(os.environ.get(env_var, Path.home() / fallback))
@@ -171,6 +173,19 @@ class AdaptiveCalibrationConfig:
 
 
 @dataclass
+class GatewayConfig:
+    """Agent Gateway (see pilot.security.gateway) — source-scoped permission
+    floors for shell/browsing/system-control actions, layered alongside the
+    existing tier-based PermissionChecker. Enabled by default: unlike
+    gesture_cursor, this only ever *restricts* what a plan may do relative
+    to today's tier system, never grants anything new, so there's no
+    opt-in-only reason to default it off."""
+
+    enabled: bool = True
+    source_profiles: dict[str, SourceProfile] = field(default_factory=lambda: dict(DEFAULT_SOURCE_PROFILES))
+
+
+@dataclass
 class ProxyConfig:
     http: str | None = None
     https: str | None = None
@@ -279,6 +294,7 @@ class PilotConfig:
     vision: VisionConfig = field(default_factory=VisionConfig)
     gesture_cursor: GestureCursorConfig = field(default_factory=GestureCursorConfig)
     adaptive_calibration: AdaptiveCalibrationConfig = field(default_factory=AdaptiveCalibrationConfig)
+    gateway: GatewayConfig = field(default_factory=GatewayConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     rss: RSSConfig = field(default_factory=RSSConfig)
     calendar: CalendarConfig = field(default_factory=CalendarConfig)
@@ -401,6 +417,10 @@ def _validate_config_types(raw: dict) -> None:
         "adaptive_calibration": {
             "gesture_enabled": bool,
             "voice_wake_word_enabled": bool,
+        },
+        "gateway": {
+            "enabled": bool,
+            "source_profiles": dict,
         },
         "memory": {
             "checkpoint_interval_seconds": int,
@@ -540,6 +560,24 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
         for k, v in raw["adaptive_calibration"].items():
             if hasattr(config.adaptive_calibration, k):
                 setattr(config.adaptive_calibration, k, bool(v))
+
+    if "gateway" in raw and isinstance(raw["gateway"], dict):
+        gateway_raw = raw["gateway"]
+        config.gateway.enabled = bool(gateway_raw.get("enabled", config.gateway.enabled))
+
+        profiles_raw = gateway_raw.get("source_profiles", {})
+        if isinstance(profiles_raw, dict):
+            parsed_profiles: dict[str, SourceProfile] = dict(config.gateway.source_profiles)
+            for name, profile_raw in profiles_raw.items():
+                if not isinstance(profile_raw, dict):
+                    continue
+                default = parsed_profiles.get(name, SourceProfile())
+                parsed_profiles[name] = SourceProfile(
+                    max_tier={str(k): int(v) for k, v in profile_raw.get("max_tier", default.max_tier).items()},
+                    deny_action_types=[str(a) for a in profile_raw.get("deny_action_types", default.deny_action_types)],
+                    allow_root=bool(profile_raw.get("allow_root", default.allow_root)),
+                )
+            config.gateway.source_profiles = parsed_profiles
 
     if "memory" in raw:
         for k, v in raw["memory"].items():
