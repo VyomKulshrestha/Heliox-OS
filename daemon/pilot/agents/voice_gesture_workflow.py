@@ -48,9 +48,12 @@ if TYPE_CHECKING:
 logger = logging.getLogger("pilot.agents.voice_gesture_workflow")
 
 # How long a step boundary stays WAITING_FOR_TRIGGER (ambiguous planning
-# outcome) versus explicitly PAUSED (user request) before find_pending_for_source
-# stops matching it — see VoiceGestureWorkflowStore.find_pending_for_source.
+# outcome, short — the user is expected to respond almost immediately) versus
+# explicitly PAUSED (user request, long — they may come back much later)
+# before expire_if_stale() transitions it to EXPIRED and it stops
+# intercepting new voice/gesture input.
 WAITING_FOR_TRIGGER_SECONDS = 90.0
+PAUSED_WINDOW_SECONDS = 1800.0
 
 
 class VoiceGestureWorkflowEngine:
@@ -106,7 +109,31 @@ class VoiceGestureWorkflowEngine:
         if workflow_id in self._active_tasks:
             self._pause_requested[workflow_id] = True
         else:
-            await self._workflow_store.set_state(workflow_id, WorkflowState.PAUSED)
+            await self._workflow_store.set_state(
+                workflow_id, WorkflowState.PAUSED, trigger_deadline=self._deadline_iso(PAUSED_WINDOW_SECONDS)
+            )
+        return True
+
+    async def expire_if_stale(self, workflow_id: str) -> bool:
+        """Proactively transitions a PAUSED/WAITING_FOR_TRIGGER workflow past
+        its trigger_deadline to EXPIRED, so it stops intercepting new voice/
+        gesture input. Intended to be called from the control-signal dispatch
+        path (Part A4) right before treating a workflow as resumable —
+        VoiceGestureWorkflowStore.find_pending_for_source's own window check
+        is a defensive fallback, this is the primary mechanism. Returns True
+        if it expired the workflow."""
+        workflow = await self._workflow_store.get(workflow_id)
+        if workflow is None or workflow.state not in (
+            WorkflowState.PAUSED.value,
+            WorkflowState.WAITING_FOR_TRIGGER.value,
+        ):
+            return False
+        if not workflow.trigger_deadline:
+            return False
+        if datetime.now(UTC) < datetime.fromisoformat(workflow.trigger_deadline):
+            return False
+        await self._workflow_store.set_state(workflow_id, WorkflowState.EXPIRED)
+        await self._notify(workflow_id)
         return True
 
     async def resume(self, workflow_id: str) -> VoiceGestureWorkflow | None:
@@ -156,7 +183,9 @@ class VoiceGestureWorkflowEngine:
 
             while True:
                 if self._pause_requested.pop(workflow_id, False):
-                    await self._workflow_store.set_state(workflow_id, WorkflowState.PAUSED)
+                    await self._workflow_store.set_state(
+                        workflow_id, WorkflowState.PAUSED, trigger_deadline=self._deadline_iso(PAUSED_WINDOW_SECONDS)
+                    )
                     await self._notify(workflow_id)
                     return
 

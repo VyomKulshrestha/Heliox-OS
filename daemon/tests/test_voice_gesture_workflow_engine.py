@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -221,3 +222,64 @@ class TestGatewayScoping:
 
         assert len(executor.calls) == 1
         assert executor.calls[0]["invocation_source"] == InvocationSource.GESTURE
+
+
+class TestExpiry:
+    @pytest.mark.asyncio
+    async def test_paused_workflow_gets_a_trigger_deadline(self, tmp_path):
+        engine = _engine(tmp_path, decomposer=_StubDecomposer(subtasks=["a", "b"]))
+        workflow = await engine.start("multi step", InvocationSource.VOICE)
+        await engine.pause(workflow.workflow_id)
+        settled = await _wait_until_terminal(engine, workflow.workflow_id)
+        if settled.state != WorkflowState.PAUSED.value:
+            return  # race: finished before the pause flag was checked
+        assert settled.trigger_deadline is not None
+
+    @pytest.mark.asyncio
+    async def test_expire_if_stale_transitions_past_deadline_paused_workflow(self, tmp_path):
+        engine = _engine(tmp_path)
+        workflow = await engine.start("do one thing", InvocationSource.VOICE)
+        past_deadline = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
+        await engine._workflow_store.set_state(
+            workflow.workflow_id, WorkflowState.PAUSED, trigger_deadline=past_deadline
+        )
+
+        expired = await engine.expire_if_stale(workflow.workflow_id)
+        assert expired is True
+        final = await engine._workflow_store.get(workflow.workflow_id)
+        assert final.state == WorkflowState.EXPIRED.value
+
+    @pytest.mark.asyncio
+    async def test_expire_if_stale_leaves_workflow_within_window_alone(self, tmp_path):
+        engine = _engine(tmp_path)
+        workflow = await engine.start("do one thing", InvocationSource.VOICE)
+        future_deadline = (datetime.now(UTC) + timedelta(seconds=60)).isoformat()
+        await engine._workflow_store.set_state(
+            workflow.workflow_id, WorkflowState.PAUSED, trigger_deadline=future_deadline
+        )
+
+        expired = await engine.expire_if_stale(workflow.workflow_id)
+        assert expired is False
+        final = await engine._workflow_store.get(workflow.workflow_id)
+        assert final.state == WorkflowState.PAUSED.value
+
+    @pytest.mark.asyncio
+    async def test_expire_if_stale_no_op_on_running_workflow(self, tmp_path):
+        engine = _engine(tmp_path, decomposer=_StubDecomposer(subtasks=["a", "b", "c"]))
+        workflow = await engine.start("multi step", InvocationSource.VOICE)
+        expired = await engine.expire_if_stale(workflow.workflow_id)
+        assert expired is False
+        await _wait_until_terminal(engine, workflow.workflow_id)
+
+    @pytest.mark.asyncio
+    async def test_expired_workflow_no_longer_matches_find_pending_for_source(self, tmp_path):
+        engine = _engine(tmp_path)
+        workflow = await engine.start("do one thing", InvocationSource.VOICE)
+        past_deadline = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
+        await engine._workflow_store.set_state(
+            workflow.workflow_id, WorkflowState.PAUSED, trigger_deadline=past_deadline
+        )
+        await engine.expire_if_stale(workflow.workflow_id)
+
+        found = await engine._workflow_store.find_pending_for_source("voice", within_seconds=3600)
+        assert found is None
