@@ -43,6 +43,7 @@
   import { settings } from "../stores/settings";
   import { tick } from "svelte";
   import { Hands, type Results } from "@mediapipe/hands";
+  import { FilesetResolver, HandLandmarker } from "@mediapipe/tasks-vision";
   import {
     LandmarkFilterBank,
     computeHandQuality,
@@ -74,6 +75,15 @@
   let trailCanvas: HTMLCanvasElement | undefined = $state();
   let stream: MediaStream | null = null;
   let hands: Hands | null = null;
+  let handLandmarker: HandLandmarker | null = null;
+  // Frozen at startGestures() time from $settings.vision.mediapipe_backend —
+  // changing the setting mid-session requires stopping/restarting the
+  // engine, not a hot-swap (see VisionConfig.mediapipe_backend in config.py).
+  let activeBackend: "legacy" | "tasks" = "legacy";
+  // Most recent worldLandmarks from the "tasks" backend, in case a future
+  // per-frame consumer (worldModel.ts) needs the latest reading — the
+  // "legacy" backend never populates this (no metric-scale 3D available).
+  let lastWorldLandmarks: Landmark[] | null = null;
   let animFrameId: number = 0;
   let lastGestureTime = 0;
   let candidateGesture = "";
@@ -273,10 +283,11 @@
     two_finger_swipe_left: "⏪", two_finger_swipe_right: "⏩",
   };
 
-  // ── MediaPipe Hands Loading ──
+  // ── MediaPipe Hands Loading (legacy backend) ──
   let mpLoaded = $state(false);
   let mpLoading = $state(false);
   const MEDIAPIPE_HANDS_ASSET_BASE = "/mediapipe/hands";
+  const MEDIAPIPE_TASKS_VISION_ASSET_BASE = "/mediapipe/tasks-vision";
 
   async function loadMediaPipe() {
     if (mpLoaded && hands) return true;
@@ -302,6 +313,38 @@
     } catch (e) {
       cameraError = "Failed to load gesture detection assets.";
       console.error("MediaPipe load error:", e);
+      return false;
+    } finally {
+      mpLoading = false;
+    }
+  }
+
+  // ── MediaPipe Tasks-Vision HandLandmarker Loading ("tasks" backend) ──
+  //
+  // Real-metric-scale worldLandmarks (see GESTURES.md's "3D World-Model
+  // Layer" section) require this newer Tasks API — the legacy `Hands`
+  // callback API above never exposes metric 3D. CPU delegate is used
+  // unconditionally: GPU delegate support inside Tauri's embedded webview
+  // (WebView2/WebKitGTK/WKWebView) hasn't been verified cross-platform.
+  async function loadHandLandmarker() {
+    if (mpLoaded && handLandmarker) return true;
+    mpLoading = true;
+
+    try {
+      const vision = await FilesetResolver.forVisionTasks(MEDIAPIPE_TASKS_VISION_ASSET_BASE);
+      handLandmarker = await HandLandmarker.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath: `${MEDIAPIPE_TASKS_VISION_ASSET_BASE}/hand_landmarker.task`,
+          delegate: "CPU",
+        },
+        runningMode: "VIDEO",
+        numHands: 1,
+      });
+      mpLoaded = true;
+      return true;
+    } catch (e) {
+      cameraError = "Failed to load gesture detection assets.";
+      console.error("MediaPipe Tasks-Vision load error:", e);
       return false;
     } finally {
       mpLoading = false;
@@ -398,7 +441,8 @@
 
   async function startGestures() {
     cameraError = "";
-    const loaded = await loadMediaPipe();
+    activeBackend = $settings.vision?.mediapipe_backend === "tasks" ? "tasks" : "legacy";
+    const loaded = activeBackend === "tasks" ? await loadHandLandmarker() : await loadMediaPipe();
     if (!loaded) return;
 
     await subscribeToWorkflowState();
@@ -442,11 +486,17 @@
     isActive = false;
     if (animFrameId) { cancelAnimationFrame(animFrameId); animFrameId = 0; }
 
-    // 2. Close MediaPipe Hands to release the video element reference
+    // 2. Close MediaPipe (whichever backend was active) to release the
+    // video element reference
     if (hands) {
       try { hands.close(); } catch { /* ignore */ }
       hands = null;
     }
+    if (handLandmarker) {
+      try { handLandmarker.close(); } catch { /* ignore */ }
+      handLandmarker = null;
+    }
+    lastWorldLandmarks = null;
 
     // 3. Stop camera tracks AFTER MediaPipe is closed
     if (stream) {
@@ -478,15 +528,48 @@
   }
 
   async function detectFrame() {
-    if (!isActive || !videoEl || !hands || stopping) return;
-    try { await hands.send({ image: videoEl }); } catch { /* ignore */ }
+    if (!isActive || !videoEl || stopping) return;
+
+    if (activeBackend === "tasks") {
+      if (handLandmarker) {
+        try {
+          const result = handLandmarker.detectForVideo(videoEl, performance.now());
+          const landmarks = (result.landmarks?.[0] as Landmark[] | undefined) ?? null;
+          const worldLandmarks = (result.worldLandmarks?.[0] as Landmark[] | undefined) ?? null;
+          const handednessScore = result.handednesses?.[0]?.[0]?.score;
+          handleFrameResult(landmarks, worldLandmarks, handednessScore);
+        } catch { /* ignore */ }
+      }
+    } else if (hands) {
+      try { await hands.send({ image: videoEl }); } catch { /* ignore */ }
+    } else {
+      return;
+    }
+
     if (isActive && !stopping) {
       animFrameId = requestAnimationFrame(detectFrame);
     }
   }
 
   function onHandResults(results: Results) {
-    if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+    const landmarks = (results.multiHandLandmarks?.[0] as Landmark[] | undefined) ?? null;
+    handleFrameResult(landmarks, null, results.multiHandedness?.[0]?.score);
+  }
+
+  /** Backend-agnostic per-frame entry point — both the legacy `Hands`
+   * callback path and the "tasks" `HandLandmarker` polling path funnel into
+   * this. `worldLandmarks` is only ever non-null from the "tasks" backend;
+   * everything below still classifies off the normalized `landmarks` array
+   * exactly as before (see spatialModel.ts's docstring on why the ~20
+   * empirically-tuned thresholds aren't being re-expressed in 3D here). */
+  function handleFrameResult(
+    landmarks: Landmark[] | null,
+    worldLandmarks: Landmark[] | null,
+    handednessScore: number | undefined,
+  ) {
+    lastWorldLandmarks = worldLandmarks;
+
+    if (!landmarks || landmarks.length === 0) {
       currentGesture = "";
       confidence = 0;
       prevIndexPos = null;
@@ -495,8 +578,6 @@
       landmarkFilter.reset(); // avoid smearing stale filter state into the next detected hand
       return;
     }
-
-    const landmarks = results.multiHandLandmarks[0];
 
     // Update motion buffers — deliberately built from RAW (unfiltered) landmarks.
     // Swipe/circular/push-pull thresholds are already tuned against raw jitter;
@@ -516,7 +597,7 @@
 
     // Scale confidence by detection/geometric quality instead of letting a
     // degenerate (occluded/edge-on) hand pose misfire at full confidence.
-    const quality = computeHandQuality(landmarks, results.multiHandedness?.[0]?.score);
+    const quality = computeHandQuality(landmarks, handednessScore);
     gesture.confidence *= quality;
     if (gesture.name && gesture.confidence < QUALITY_CONFIDENCE_FLOOR) {
       gesture.name = "";

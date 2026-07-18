@@ -35,6 +35,9 @@ export interface PilotSettings {
   screen_vision: {
     capture_interval_seconds: number;
   };
+  vision: {
+    mediapipe_backend: "legacy" | "tasks";
+  };
   gesture_cursor: {
     enabled: boolean;
     sensitivity: number;
@@ -85,6 +88,9 @@ const defaultSettings: PilotSettings = {
   },
   screen_vision: {
     capture_interval_seconds: 3,
+  },
+  vision: {
+    mediapipe_backend: "legacy",
   },
   gesture_cursor: {
     enabled: false,

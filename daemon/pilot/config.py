@@ -138,6 +138,13 @@ class ScreenVisionConfig:
 @dataclass
 class VisionConfig:
     camera_index: int = 0
+    # "legacy" keeps the existing @mediapipe/hands normalized-2D pipeline;
+    # "tasks" switches to @mediapipe/tasks-vision's HandLandmarker, which
+    # additionally exposes real-metric-scale worldLandmarks (see
+    # GESTURES.md's "3D World-Model Layer" section and worldModel.ts).
+    # Defaults to "legacy" — flipping this restarts the gesture engine
+    # rather than hot-swapping mid-session.
+    mediapipe_backend: str = "legacy"
 
 
 @dataclass
@@ -437,6 +444,7 @@ def _validate_config_types(raw: dict) -> None:
         },
         "vision": {
             "camera_index": int,
+            "mediapipe_backend": str,
         },
         "gesture_cursor": {
             "enabled": bool,
