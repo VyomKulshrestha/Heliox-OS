@@ -55,6 +55,14 @@ logger = logging.getLogger("pilot.agents.voice_gesture_workflow")
 WAITING_FOR_TRIGGER_SECONDS = 90.0
 PAUSED_WINDOW_SECONDS = 1800.0
 
+# Exact-match control phrases recognized at the voice dispatch point (see
+# handle_control_phrase()) when a PAUSED/WAITING_FOR_TRIGGER workflow exists
+# for the "voice" source — deliberately not fuzzy-matched (unlike wake-word
+# near-miss calibration) so an unrelated normal command can't accidentally
+# be swallowed as workflow control.
+CONTINUE_PHRASES = frozenset({"continue", "resume", "keep going"})
+CANCEL_PHRASES = frozenset({"cancel", "stop", "never mind", "nevermind"})
+
 
 class VoiceGestureWorkflowEngine:
     """Drives VoiceGestureWorkflow rows to completion, one step at a time,
@@ -162,6 +170,32 @@ class VoiceGestureWorkflowEngine:
     async def list_workflows(self, include_terminal: bool = False) -> list[dict[str, Any]]:
         workflows = await self._workflow_store.list(include_terminal=include_terminal)
         return [w.to_dict() for w in workflows]
+
+    async def handle_control_phrase(self, invocation_source: str, command_text: str) -> bool:
+        """Checks whether a PAUSED/WAITING_FOR_TRIGGER workflow exists for
+        this source and, if `command_text` exactly matches a recognized
+        continue/cancel phrase, resumes/cancels it. Returns True if the
+        phrase was consumed as workflow control — the caller (voice's
+        _listen_loop, or a gesture dispatch site) should skip normal command
+        dispatch for this input. Returns False for everything else (no
+        pending workflow, a stale/expired one, or unrecognized text), in
+        which case normal dispatch proceeds completely unaffected."""
+        workflow = await self._workflow_store.find_pending_for_source(
+            invocation_source, within_seconds=PAUSED_WINDOW_SECONDS
+        )
+        if workflow is None:
+            return False
+        if await self.expire_if_stale(workflow.workflow_id):
+            return False
+
+        phrase = command_text.strip().lower()
+        if phrase in CONTINUE_PHRASES:
+            await self.resume(workflow.workflow_id)
+            return True
+        if phrase in CANCEL_PHRASES:
+            await self.cancel(workflow.workflow_id)
+            return True
+        return False
 
     async def _notify(self, workflow_id: str) -> None:
         if not self._broadcast:

@@ -342,6 +342,7 @@ class ContinuousVoiceListener:
         wake_words: list[str] | None = None,
         on_command: Any | None = None,
         on_status: Any | None = None,
+        workflow_control: Any | None = None,
     ) -> None:
         self.wake_words = wake_words or [
             "hey heliox",
@@ -351,6 +352,11 @@ class ContinuousVoiceListener:
 
         self._on_command = on_command
         self._on_status = on_status
+        # Optional async callable(command_text) -> bool, checked before normal
+        # command dispatch — lets a paused/waiting VoiceGestureWorkflow claim
+        # a "continue"/"cancel" utterance instead of it being planned as a
+        # brand-new command. See VoiceGestureWorkflowEngine.handle_control_phrase.
+        self._workflow_control = workflow_control
         self._running = False
         self._task: asyncio.Task[None] | None = None
         self._listening_for_command = False
@@ -480,6 +486,15 @@ class ContinuousVoiceListener:
                             except Exception:
                                 pass
 
+                        continue
+
+                if self._workflow_control:
+                    try:
+                        consumed = await self._workflow_control(command_text)
+                    except Exception:
+                        logger.warning("Workflow control-phrase check failed (non-fatal)", exc_info=True)
+                        consumed = False
+                    if consumed:
                         continue
 
                 logger.info(

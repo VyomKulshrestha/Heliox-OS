@@ -56,6 +56,7 @@
   } from "../gesture/spatialModel";
   import { isTauriRuntime } from "../utils/runtime";
   import { GestureCalibrationStore, classifyOutcome, REVERSAL_WINDOW_MS, type GestureEvent } from "../gesture/calibration";
+  import { classifyControlGesture } from "../gesture/workflowControl";
 
   // ── Props ──
   let { onGesture = (name: string) => {} }: { onGesture?: (name: string) => void } = $props();
@@ -312,10 +313,67 @@
     else await startGestures();
   }
 
+  // Tracks a PAUSED/WAITING_FOR_TRIGGER VoiceGestureWorkflow sourced from
+  // "gesture" (see daemon/pilot/agents/voice_gesture_workflow.py) so a
+  // recognized control gesture (classifyControlGesture) can resume/cancel it
+  // instead of firing its normal action. null when no such workflow exists.
+  let pendingWorkflowId: string | null = null;
+  let workflowNotificationHandler: ((method: string, params: unknown) => void) | null = null;
+
+  async function subscribeToWorkflowState() {
+    const { onNotification, call } = await import("../api/daemon");
+    workflowNotificationHandler = (method, params) => {
+      if (method !== "voice_gesture_workflow_state") return;
+      const wf = params as { workflow_id: string; invocation_source: string; state: string };
+      if (wf.invocation_source !== "gesture") return;
+      if (wf.state === "paused" || wf.state === "waiting_for_trigger") {
+        pendingWorkflowId = wf.workflow_id;
+      } else if (wf.workflow_id === pendingWorkflowId) {
+        pendingWorkflowId = null;
+      }
+    };
+    onNotification(workflowNotificationHandler);
+
+    try {
+      const result = (await call("voice_gesture_workflow_list")) as {
+        workflows: Array<{ workflow_id: string; invocation_source: string; state: string }>;
+      };
+      const existing = result.workflows?.find(
+        (w) => w.invocation_source === "gesture" && (w.state === "paused" || w.state === "waiting_for_trigger")
+      );
+      if (existing) pendingWorkflowId = existing.workflow_id;
+    } catch {
+      // Daemon not ready yet -- fine, future voice_gesture_workflow_state
+      // notifications will still populate pendingWorkflowId.
+    }
+  }
+
+  async function unsubscribeFromWorkflowState() {
+    if (workflowNotificationHandler) {
+      const { offNotification } = await import("../api/daemon");
+      offNotification(workflowNotificationHandler);
+      workflowNotificationHandler = null;
+    }
+    pendingWorkflowId = null;
+  }
+
+  async function dispatchWorkflowControl(intent: "continue" | "cancel", workflowId: string) {
+    const { call } = await import("../api/daemon");
+    const method = intent === "continue" ? "voice_gesture_workflow_resume" : "voice_gesture_workflow_cancel";
+    try {
+      await call(method, { workflow_id: workflowId });
+    } catch {
+      // best-effort -- if the RPC fails the workflow simply stays paused,
+      // no worse than before the gesture fired
+    }
+  }
+
   async function startGestures() {
     cameraError = "";
     const loaded = await loadMediaPipe();
     if (!loaded) return;
+
+    await subscribeToWorkflowState();
 
     try {
       stream = await navigator.mediaDevices.getUserMedia({
@@ -386,6 +444,7 @@
     landmarkFilter.reset();
     exitCursorMode(); // safety hatch: never leave cursor mode active with the engine stopped
     cancelPendingCalibration();
+    void unsubscribeFromWorkflowState();
 
     stopping = false;
   }
@@ -464,10 +523,19 @@
           const now = Date.now();
           if (now - lastGestureTime > GESTURE_COOLDOWN_MS) {
             lastGestureTime = now;
-            executeGestureAction(gesture.name);
-            gestureHistory = [...gestureHistory.slice(-4), gesture.name];
-            onGesture(gesture.name);
-            trackGestureForCalibration(gesture.name, gesture.metricValue ?? 0);
+            // A gesture-sourced workflow currently paused/waiting claims
+            // continue/cancel gestures instead of them firing their normal
+            // action — see subscribeToWorkflowState()/workflowControl.ts.
+            const controlIntent = pendingWorkflowId ? classifyControlGesture(gesture.name) : "unknown";
+            if (controlIntent !== "unknown" && pendingWorkflowId) {
+              void dispatchWorkflowControl(controlIntent, pendingWorkflowId);
+              pendingWorkflowId = null;
+            } else {
+              executeGestureAction(gesture.name);
+              gestureHistory = [...gestureHistory.slice(-4), gesture.name];
+              onGesture(gesture.name);
+              trackGestureForCalibration(gesture.name, gesture.metricValue ?? 0);
+            }
           }
         }
       } else {

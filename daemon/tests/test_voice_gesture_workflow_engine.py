@@ -283,3 +283,71 @@ class TestExpiry:
 
         found = await engine._workflow_store.find_pending_for_source("voice", within_seconds=3600)
         assert found is None
+
+
+class TestControlPhrase:
+    @pytest.mark.asyncio
+    async def test_continue_phrase_resumes_paused_workflow(self, tmp_path):
+        engine = _engine(tmp_path)
+        workflow = await engine.start("do one thing", InvocationSource.VOICE)
+        await engine.pause(workflow.workflow_id)
+        await _wait_until_terminal(engine, workflow.workflow_id)
+
+        consumed = await engine.handle_control_phrase("voice", "continue")
+        assert consumed is True
+        final = await _wait_until_terminal(engine, workflow.workflow_id)
+        assert final.state == WorkflowState.SUCCESS.value
+
+    @pytest.mark.asyncio
+    async def test_cancel_phrase_cancels_paused_workflow(self, tmp_path):
+        engine = _engine(tmp_path)
+        workflow = await engine.start("do one thing", InvocationSource.VOICE)
+        await engine.pause(workflow.workflow_id)
+        await _wait_until_terminal(engine, workflow.workflow_id)
+
+        consumed = await engine.handle_control_phrase("voice", "cancel")
+        assert consumed is True
+        final = await engine._workflow_store.get(workflow.workflow_id)
+        assert final.state == WorkflowState.CANCELLED.value
+
+    @pytest.mark.asyncio
+    async def test_unrecognized_phrase_falls_through(self, tmp_path):
+        engine = _engine(tmp_path)
+        workflow = await engine.start("do one thing", InvocationSource.VOICE)
+        await engine.pause(workflow.workflow_id)
+        await _wait_until_terminal(engine, workflow.workflow_id)
+
+        consumed = await engine.handle_control_phrase("voice", "turn on the lights")
+        assert consumed is False
+        final = await engine._workflow_store.get(workflow.workflow_id)
+        assert final.state == WorkflowState.PAUSED.value  # untouched
+
+    @pytest.mark.asyncio
+    async def test_no_pending_workflow_falls_through(self, tmp_path):
+        engine = _engine(tmp_path)
+        consumed = await engine.handle_control_phrase("voice", "continue")
+        assert consumed is False
+
+    @pytest.mark.asyncio
+    async def test_wrong_source_does_not_match(self, tmp_path):
+        engine = _engine(tmp_path)
+        workflow = await engine.start("do one thing", InvocationSource.GESTURE)
+        await engine.pause(workflow.workflow_id)
+        await _wait_until_terminal(engine, workflow.workflow_id)
+
+        consumed = await engine.handle_control_phrase("voice", "continue")
+        assert consumed is False
+
+    @pytest.mark.asyncio
+    async def test_stale_workflow_expires_and_falls_through(self, tmp_path):
+        engine = _engine(tmp_path)
+        workflow = await engine.start("do one thing", InvocationSource.VOICE)
+        past_deadline = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
+        await engine._workflow_store.set_state(
+            workflow.workflow_id, WorkflowState.PAUSED, trigger_deadline=past_deadline
+        )
+
+        consumed = await engine.handle_control_phrase("voice", "continue")
+        assert consumed is False
+        final = await engine._workflow_store.get(workflow.workflow_id)
+        assert final.state == WorkflowState.EXPIRED.value
