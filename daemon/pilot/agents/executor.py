@@ -407,6 +407,7 @@ class Executor:
                 invocation_source,
                 scope_override=scope_override,
                 critic_already_reviewed=critic_already_reviewed,
+                plan_id=plan_id,
             )
             if not gateway_decision.allowed:
                 return [

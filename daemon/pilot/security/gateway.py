@@ -39,7 +39,12 @@ if TYPE_CHECKING:
     from pilot.actions import ActionPlan
     from pilot.agents.destructive_critic import DestructiveCriticAgent
     from pilot.config import PilotConfig
+    from pilot.security.gateway_audit import AgentGatewayAuditStore
     from pilot.security.permissions import PermissionChecker
+
+# Sentinel action_index for a plan-level (not per-action) audit row, e.g. the
+# critic verdict, which evaluates the whole plan rather than one action.
+PLAN_LEVEL_AUDIT_INDEX = -1
 
 logger = logging.getLogger("pilot.security.gateway")
 
@@ -248,10 +253,12 @@ class AgentGateway:
         config: PilotConfig,
         permissions: PermissionChecker,
         destructive_critic: DestructiveCriticAgent | None = None,
+        audit_store: AgentGatewayAuditStore | None = None,
     ) -> None:
         self._config = config
         self._permissions = permissions
         self._destructive_critic = destructive_critic
+        self._audit_store = audit_store
 
     def _profile_for(self, source: InvocationSource) -> SourceProfile:
         profiles = self._config.gateway.source_profiles
@@ -264,47 +271,118 @@ class AgentGateway:
         source: InvocationSource,
         scope_override: TaskScopeOverride | None = None,
         critic_already_reviewed: bool = False,
+        plan_id: str = "",
     ) -> GatewayDecision:
         if not self._config.gateway.enabled:
             return GatewayDecision(allowed=True)
 
         profile = resolve_effective_profile(self._profile_for(source), scope_override)
+        policy_snapshot = {
+            "max_tier": profile.max_tier,
+            "deny_action_types": profile.deny_action_types,
+            "allow_root": profile.allow_root,
+        }
+        override_applied = scope_override is not None
+        override_restricted = override_applied and profile != self._profile_for(source)
 
         reasons: list[str] = []
-        for action in plan.actions:
+        for index, action in enumerate(plan.actions):
             family = action_family(action.action_type)
             tier = int(action.permission_tier)
             ceiling = profile.max_tier.get(family.value, int(PermissionTier.ROOT_CRITICAL))
 
+            action_reason = ""
             if action.action_type.value in profile.deny_action_types:
-                reasons.append(f"{action.action_type.value} is denied for source '{source.value}' by gateway policy.")
-                continue
-
-            if tier > ceiling:
-                reasons.append(
+                action_reason = f"{action.action_type.value} is denied for source '{source.value}' by gateway policy."
+            elif tier > ceiling:
+                action_reason = (
                     f"{action.action_type.value} (tier={PermissionTier(tier).name}, family={family.value}) "
                     f"exceeds the '{source.value}' source's allowed ceiling "
                     f"({PermissionTier(ceiling).name})."
                 )
-                continue
-
-            if action.permission_tier == PermissionTier.ROOT_CRITICAL and not profile.allow_root:
-                reasons.append(
+            elif action.permission_tier == PermissionTier.ROOT_CRITICAL and not profile.allow_root:
+                action_reason = (
                     f"{action.action_type.value} requires root, which is denied for source '{source.value}'."
                 )
+
+            if action_reason:
+                reasons.append(action_reason)
+
+            await self._record_decision(
+                plan_id=plan_id,
+                action_index=index,
+                action_type=action.action_type.value,
+                action_family=family.value,
+                target=action.target,
+                source=source,
+                permission_tier=PermissionTier(tier).name,
+                override_applied=override_applied,
+                override_restricted=override_restricted,
+                decision="denied" if action_reason else "allowed",
+                denial_reason=action_reason,
+                policy_snapshot=policy_snapshot,
+            )
 
         if reasons:
             return GatewayDecision(allowed=False, reasons=reasons)
 
         critic_verdict = await self._maybe_run_critic(plan, critic_already_reviewed)
         if critic_verdict is not None and critic_verdict.get("verdict") == "BLOCK":
-            return GatewayDecision(
-                allowed=False,
-                reasons=[f"Blocked by safety critic: {critic_verdict.get('recommendation', '')}"],
-                critic_verdict=critic_verdict,
+            reason = f"Blocked by safety critic: {critic_verdict.get('recommendation', '')}"
+            await self._record_decision(
+                plan_id=plan_id,
+                action_index=PLAN_LEVEL_AUDIT_INDEX,
+                action_type="__critic_review__",
+                action_family=ActionFamily.OTHER.value,
+                target="",
+                source=source,
+                permission_tier="",
+                override_applied=override_applied,
+                override_restricted=override_restricted,
+                decision="denied",
+                denial_reason=reason,
+                policy_snapshot=policy_snapshot,
             )
+            return GatewayDecision(allowed=False, reasons=[reason], critic_verdict=critic_verdict)
 
         return GatewayDecision(allowed=True, critic_verdict=critic_verdict)
+
+    async def _record_decision(
+        self,
+        *,
+        plan_id: str,
+        action_index: int,
+        action_type: str,
+        action_family: str,
+        target: str,
+        source: InvocationSource,
+        permission_tier: str,
+        override_applied: bool,
+        override_restricted: bool,
+        decision: str,
+        denial_reason: str,
+        policy_snapshot: dict[str, Any],
+    ) -> None:
+        if self._audit_store is None:
+            return
+        try:
+            await self._audit_store.record_event(
+                plan_id=plan_id,
+                action_index=action_index,
+                action_type=action_type,
+                action_family=action_family,
+                target=target,
+                source_profile=source.value,
+                permission_tier=permission_tier,
+                override_applied=override_applied,
+                override_restricted=override_restricted,
+                decision=decision,
+                denial_reason=denial_reason,
+                dry_run=self._config.security.dry_run,
+                policy_snapshot=policy_snapshot,
+            )
+        except Exception:
+            logger.warning("Failed to record agent gateway audit event (non-fatal)", exc_info=True)
 
     async def _maybe_run_critic(self, plan: ActionPlan, critic_already_reviewed: bool) -> dict[str, Any] | None:
         """Re-implements server.py's interactive critic-trigger predicate so

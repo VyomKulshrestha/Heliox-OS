@@ -475,8 +475,11 @@ class PilotServer:
         # PermissionChecker inside Executor.execute(). Built after the
         # critic since it needs one for non-interactive plan review.
         from pilot.security.gateway import AgentGateway
+        from pilot.security.gateway_audit import AgentGatewayAuditStore
 
-        self._agent_gateway = AgentGateway(self.config, permissions, self._destructive_critic)
+        self._gateway_audit = AgentGatewayAuditStore()
+        await self._gateway_audit.initialize()
+        self._agent_gateway = AgentGateway(self.config, permissions, self._destructive_critic, self._gateway_audit)
         self._executor.set_gateway(self._agent_gateway)
 
         # Advanced agent components

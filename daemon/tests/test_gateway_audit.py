@@ -3,7 +3,11 @@ from __future__ import annotations
 import aiosqlite
 import pytest
 
+from pilot.actions import Action, ActionPlan, ActionType, EmptyParams
+from pilot.config import PilotConfig
+from pilot.security.gateway import AgentGateway, InvocationSource
 from pilot.security.gateway_audit import AgentGatewayAuditStore
+from pilot.security.permissions import PermissionChecker
 
 
 async def _store(tmp_path):
@@ -150,3 +154,30 @@ async def test_gateway_audit_key_persists_across_instances(tmp_path):
     verification = await store2.verify_chain()
     assert verification.valid is True
     assert verification.checked_entries == 1
+
+
+@pytest.mark.asyncio
+async def test_agent_gateway_authorize_writes_audit_events(tmp_path):
+    """AgentGateway.authorize() itself must actually populate the audit
+    store when one is attached — not just be a store that nothing writes to."""
+    config = PilotConfig()
+    permissions = PermissionChecker(config)
+    audit_store = await _store(tmp_path)
+    gateway = AgentGateway(config, permissions, audit_store=audit_store)
+
+    plan = ActionPlan(
+        actions=[Action(action_type=ActionType.BROWSER_EXECUTE_JS, target="page", parameters=EmptyParams())],
+        raw_input="test",
+    )
+
+    decision = await gateway.authorize(plan, InvocationSource.AUTONOMOUS, plan_id="plan-xyz")
+    assert decision.allowed is False
+
+    events = await audit_store.list_events(plan_id="plan-xyz")
+    assert len(events) == 1
+    assert events[0]["decision"] == "denied"
+    assert events[0]["action_type"] == "browser_execute_js"
+    assert events[0]["source_profile"] == "autonomous"
+
+    verification = await audit_store.verify_chain()
+    assert verification.valid is True
