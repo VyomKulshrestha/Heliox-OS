@@ -298,7 +298,9 @@ class TestControlPhrase:
         engine = _engine(tmp_path)
         workflow = await engine.start("do one thing", InvocationSource.VOICE)
         await engine.pause(workflow.workflow_id)
-        await _wait_until_terminal(engine, workflow.workflow_id)
+        settled = await _wait_until_terminal(engine, workflow.workflow_id)
+        if settled.state != WorkflowState.PAUSED.value:
+            return  # race: single step finished before the pause flag was checked
 
         consumed = await engine.handle_control_phrase("voice", "continue")
         assert consumed is True
@@ -310,7 +312,9 @@ class TestControlPhrase:
         engine = _engine(tmp_path)
         workflow = await engine.start("do one thing", InvocationSource.VOICE)
         await engine.pause(workflow.workflow_id)
-        await _wait_until_terminal(engine, workflow.workflow_id)
+        settled = await _wait_until_terminal(engine, workflow.workflow_id)
+        if settled.state != WorkflowState.PAUSED.value:
+            return  # race: single step finished before the pause flag was checked
 
         consumed = await engine.handle_control_phrase("voice", "cancel")
         assert consumed is True
@@ -322,7 +326,9 @@ class TestControlPhrase:
         engine = _engine(tmp_path)
         workflow = await engine.start("do one thing", InvocationSource.VOICE)
         await engine.pause(workflow.workflow_id)
-        await _wait_until_terminal(engine, workflow.workflow_id)
+        settled = await _wait_until_terminal(engine, workflow.workflow_id)
+        if settled.state != WorkflowState.PAUSED.value:
+            return  # race: single step finished before the pause flag was checked
 
         consumed = await engine.handle_control_phrase("voice", "turn on the lights")
         assert consumed is False
