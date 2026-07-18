@@ -89,36 +89,73 @@ class SimulationReport:
 
 
 # ── Risk classification rules ──
+#
+# These are plain-string-keyed sets local to the sandbox's own risk model —
+# distinct from actions.py's enum-keyed DESTRUCTIVE_ACTIONS/etc. (which drive
+# PermissionChecker's tier system). Prefixed SANDBOX_ to avoid the name
+# collision/import-confusion risk between the two.
+#
+# Values below are checked against `action.action_type.value` (see
+# simulate()) and must match real ActionType values exactly — several
+# entries here (power_action, disk_manage, package_uninstall, registry_delete,
+# wifi_control) previously didn't correspond to any real ActionType and were
+# silently unreachable dead code; fixed while adding browser/system-control
+# coverage below so the new coverage isn't built on the same broken pattern.
 
-DESTRUCTIVE_ACTIONS = {
+SANDBOX_DESTRUCTIVE_ACTIONS = {
     "file_delete",
     "shell_command",
     "shell_script",
     "process_kill",
     "service_stop",
     "service_restart",
-    "power_action",
+    "power_shutdown",
+    "power_restart",
     "registry_write",
-    "registry_delete",
-    "disk_manage",
-    "package_uninstall",
+    "disk_unmount",
+    "package_remove",
+    # Arbitrary script execution in page context — same bar as a shell command.
+    "browser_execute_js",
 }
 
-HIGH_RISK_ACTIONS = {
+SANDBOX_HIGH_RISK_ACTIONS = {
     "code_execute",
     "shell_command",
     "shell_script",
     "registry_write",
-    "registry_delete",
-    "power_action",
-    "disk_manage",
+    "power_shutdown",
+    "power_restart",
+    "disk_mount",
+    "disk_unmount",
+    "browser_execute_js",
+    # Mouse/keyboard control — blind UI interaction with no visual
+    # confirmation available in a dry-run.
+    "mouse_click",
+    "mouse_double_click",
+    "mouse_right_click",
+    "mouse_drag",
+    "keyboard_type",
+    "keyboard_hotkey",
+}
+
+# State-changing browser actions that interact with visible page elements —
+# a step below HIGH_RISK (no arbitrary code execution), but no longer LOW
+# either now that they're not blanket-safe (see actions.py's retiering).
+SANDBOX_MEDIUM_RISK_ACTIONS = {
+    "browser_navigate",
+    "browser_click",
+    "browser_click_text",
+    "browser_type",
+    "browser_select",
+    "browser_fill_form",
 }
 
 NETWORK_ACTIONS = {
     "api_request",
     "download_file",
     "browser_navigate",
-    "wifi_control",
+    "wifi_connect",
+    "wifi_disconnect",
 }
 
 ROOT_ACTIONS = {
@@ -126,11 +163,12 @@ ROOT_ACTIONS = {
     "service_stop",
     "service_restart",
     "registry_write",
-    "registry_delete",
-    "disk_manage",
+    "disk_mount",
+    "disk_unmount",
     "package_install",
-    "package_uninstall",
-    "power_action",
+    "package_remove",
+    "power_shutdown",
+    "power_restart",
 }
 
 # Patterns in shell commands that indicate high risk
@@ -188,11 +226,13 @@ class SimulationSandbox:
             # Skip TRIBE loading in dry-run mode (synchronous, blocking)
             # Cognitive cost is estimated mathematically instead
             stimulus = f"Execute action {action_type} on {target}"
-            impact.cognitive_cost = min(1.0, len(stimulus) / 80.0 + (0.4 if action_type in HIGH_RISK_ACTIONS else 0.1))
+            impact.cognitive_cost = min(
+                1.0, len(stimulus) / 80.0 + (0.4 if action_type in SANDBOX_HIGH_RISK_ACTIONS else 0.1)
+            )
             report.total_cognitive_cost += impact.cognitive_cost
 
             # Classify risk
-            if action_type in DESTRUCTIVE_ACTIONS:
+            if action_type in SANDBOX_DESTRUCTIVE_ACTIONS:
                 report.has_destructive = True
                 impact.reversible = False
 
@@ -230,7 +270,7 @@ class SimulationSandbox:
 
     def _assess_action_risk(self, action_type: str, target: str, action: Any) -> str:
         """Assess the risk level of a single action."""
-        if action_type in HIGH_RISK_ACTIONS:
+        if action_type in SANDBOX_HIGH_RISK_ACTIONS:
             # Check for especially dangerous shell patterns
             if action_type in ("shell_command", "shell_script"):
                 params = getattr(action, "parameters", getattr(action, "params", None))
@@ -247,7 +287,7 @@ class SimulationSandbox:
                     return RiskLevel.CRITICAL
             return RiskLevel.HIGH
 
-        if action_type in DESTRUCTIVE_ACTIONS:
+        if action_type in SANDBOX_DESTRUCTIVE_ACTIONS or action_type in SANDBOX_MEDIUM_RISK_ACTIONS:
             return RiskLevel.MEDIUM
 
         if action_type.startswith("file_") and "delete" in action_type:
@@ -262,20 +302,34 @@ class SimulationSandbox:
             "file_write": f"Write/modify file: {target}",
             "file_create": f"Create new file: {target}",
             "file_move": f"Move/rename: {target}",
-            "shell_command": f"Execute shell command on system",
-            "shell_script": f"Run multi-line script",
-            "code_execute": f"Execute code in sandbox",
+            "shell_command": "Execute shell command on system",
+            "shell_script": "Run multi-line script",
+            "code_execute": "Execute code in sandbox",
             "process_kill": f"Terminate process: {target}",
             "service_stop": f"Stop system service: {target}",
             "service_restart": f"Restart system service: {target}",
             "package_install": f"Install package: {target}",
-            "package_uninstall": f"Remove package: {target}",
-            "power_action": f"System power action: {target}",
+            "package_remove": f"Remove package: {target}",
+            "power_shutdown": "Shut down the system",
+            "power_restart": "Restart the system",
             "registry_write": f"Modify Windows registry: {target}",
-            "registry_delete": f"Delete registry key: {target}",
-            "disk_manage": f"Disk management operation: {target}",
+            "disk_mount": f"Mount disk/volume: {target}",
+            "disk_unmount": f"Unmount disk/volume: {target}",
             "api_request": f"Make HTTP request to: {target}",
             "download_file": f"Download file from: {target}",
+            "browser_navigate": f"Navigate the browser to: {target}",
+            "browser_execute_js": f"Execute arbitrary JavaScript in the page: {target[:80]}",
+            "browser_click": f"Click a page element: {target}",
+            "browser_click_text": f"Click page text matching: {target}",
+            "browser_type": f"Type into a page field: {target}",
+            "browser_select": f"Select a dropdown option: {target}",
+            "browser_fill_form": f"Fill and submit a form: {target}",
+            "mouse_click": f"Click at screen position: {target}",
+            "mouse_double_click": f"Double-click at screen position: {target}",
+            "mouse_right_click": f"Right-click at screen position: {target}",
+            "mouse_drag": f"Drag the mouse: {target}",
+            "keyboard_type": "Type text via keyboard",
+            "keyboard_hotkey": f"Send a keyboard hotkey: {target}",
         }
         return descriptions.get(action_type, f"Execute {action_type}: {target}")
 
@@ -289,10 +343,25 @@ class SimulationSandbox:
             return "system-wide"
         if action_type in ("service_stop", "service_restart"):
             return "1 service + dependents"
-        if action_type in ("power_action",):
+        if action_type in ("power_shutdown", "power_restart"):
             return "entire system"
-        if action_type in ("package_install", "package_uninstall"):
+        if action_type in ("package_install", "package_remove"):
             return "1 package + dependencies"
+        if action_type in ("disk_mount", "disk_unmount"):
+            return "1 volume"
+        if action_type == "browser_execute_js":
+            return "current page (script-defined, unbounded)"
+        if action_type in SANDBOX_MEDIUM_RISK_ACTIONS:
+            return "current page"
+        if action_type in (
+            "mouse_click",
+            "mouse_double_click",
+            "mouse_right_click",
+            "mouse_drag",
+            "keyboard_type",
+            "keyboard_hotkey",
+        ):
+            return "current UI focus (blind interaction)"
         return "targeted"
 
     def _generate_warnings(self, report: SimulationReport) -> list[str]:
