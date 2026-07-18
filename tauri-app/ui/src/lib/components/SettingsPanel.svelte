@@ -9,6 +9,8 @@
   import PermissionAuditLog from "./PermissionAuditLog.svelte";
   import GatewayPolicyEditor from "./GatewayPolicyEditor.svelte";
   import GatewayAuditLog from "./GatewayAuditLog.svelte";
+  import GestureWorkflowBindings from "./GestureWorkflowBindings.svelte";
+  import VoiceGestureWorkflowStatus from "./VoiceGestureWorkflowStatus.svelte";
   import { GestureCalibrationStore } from "../gesture/calibration";
 
   let pendingConfirm = $state<{ message: string; danger: boolean; onConfirm: () => void } | null>(null);
@@ -810,6 +812,14 @@
 
   <section class="settings-group audit-log-section">
     <GatewayAuditLog />
+  </section>
+
+  <section class="settings-group audit-log-section">
+    <GestureWorkflowBindings />
+  </section>
+
+  <section class="settings-group audit-log-section">
+    <VoiceGestureWorkflowStatus />
   </section>
 
   <section class="settings-group">
