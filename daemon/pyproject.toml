@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pilot-daemon"
-version = "0.7.1"
+version = "0.8.1"
 description = "AI-powered autonomous computer agent — full system control"
 readme = "README.md"
 requires-python = ">=3.11"
