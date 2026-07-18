@@ -136,6 +136,56 @@ Verify the HMAC hash-chain integrity of the permission audit log — detects whe
 
 ---
 
+### Agent Gateway (source-scoped permissions, dry-run, audit)
+
+Source-scoped permission floors for shell/browsing/system-control actions, layered alongside the tier-based `PermissionChecker` (see SECURITY.md's "Agent Gateway" section for the full threat model and design). `pilot.security.gateway.AgentGateway.authorize()` is checked inside `Executor.execute()` before dispatch; these RPCs are read-only observability plus a policy editor, not the enforcement point itself.
+
+#### `list_gateway_events`
+List recent tamper-evident Agent Gateway audit events.
+
+**Params:** `{ "limit": 50, "plan_id": null, "source_profile": null, "action_family": null, "decision": null }` (all optional filters)
+
+**Result:** `{ "status": "ok", "events": [ <GatewayAuditEvent>, ... ] }` — see the `GatewayAuditEvent` schema below.
+
+#### `verify_gateway_audit`
+Verify the HMAC hash-chain integrity of the Agent Gateway audit log — a separate chain from `verify_permission_audit`'s (different database/key file), so a compromise of one doesn't help forge the other.
+
+**Params:** `{}`
+
+**Result:**
+```json
+{ "status": "ok", "valid": true, "checked_entries": 17, "error": "" }
+```
+
+#### `gateway_policy_get`
+Return the current per-`InvocationSource` enforced floors (`interactive`, `autonomous`, `web_agent`, `voice`, `gesture`).
+
+**Params:** `{}`
+
+**Result:**
+```json
+{
+  "status": "ok",
+  "enabled": true,
+  "profiles": {
+    "autonomous": {
+      "max_tier": { "shell": 2, "browsing": 2, "system_control": 1, "other": 2 },
+      "deny_action_types": ["browser_execute_js", "power_shutdown", "power_restart", "registry_write"],
+      "allow_root": false
+    }
+  }
+}
+```
+
+#### `gateway_policy_update`
+Update one source profile's enforced floor. Only edits the persisted floor — per-task overrides (e.g. `autonomous_submit`'s `scope_override`) are never settable here, only supplied per-submission by the caller, and can only narrow this floor further, never widen it.
+
+**Params:** `{ "profile": "autonomous", "max_tier": { "shell": 0 }, "deny_action_types": [...], "allow_root": false }` (`max_tier` is merged onto the existing floor — only the families you include are changed; `deny_action_types`/`allow_root` are optional and replace their prior value when present)
+
+**Result:** `{ "status": "ok", "profile": "autonomous", "policy": { "max_tier": {...}, "deny_action_types": [...], "allow_root": false } }`, or `{ "status": "error", "message": "Unknown source profile: ..." }`.
+
+---
+
 ### Configuration
 
 #### `get_config`
@@ -1123,6 +1173,34 @@ Returned by `list_permission_events`. Defined in `daemon/pilot/security/permissi
 
 ---
 
+### GatewayAuditEvent object
+Returned by `list_gateway_events`. Defined in `daemon/pilot/security/gateway_audit.py` (`AgentGatewayAuditStore`) — a separate HMAC chain from `PermissionAuditEvent` above.
+
+```json
+{
+  "id": 17,
+  "timestamp": "2026-07-18T12:00:00+00:00",
+  "plan_id": "a3b2c1f5",
+  "action_index": 0,
+  "action_type": "browser_execute_js",
+  "action_family": "browsing",
+  "target": "document.cookie",
+  "source_profile": "autonomous",
+  "permission_tier": "DESTRUCTIVE",
+  "override_applied": false,
+  "override_restricted": false,
+  "decision": "denied",
+  "denial_reason": "browser_execute_js is denied for source 'autonomous' by gateway policy.",
+  "dry_run": false,
+  "execution_success": null,
+  "execution_error": "",
+  "policy_snapshot": { "max_tier": {...}, "deny_action_types": [...], "allow_root": false }
+}
+```
+`action_index` is `-1` for a plan-level row (currently only the `DestructiveCriticAgent` BLOCK verdict, tagged `action_type: "__critic_review__"`) rather than a specific action. `decision` is `"allowed"` or `"denied"`. `override_restricted` is `true` only when a per-task `scope_override` actually narrowed the source's floor for this action (not merely present). Every row commits to the previous row's HMAC — `verify_gateway_audit` detects tampering the same way `verify_permission_audit` does for its own chain.
+
+---
+
 ### ActionResult object
 
 ```json
@@ -1255,6 +1333,8 @@ If verification fails, the daemon re-plans and the cycle repeats (up to 2 retrie
 | `daemon/pilot/agents/destructive_critic.py` | `DestructiveCriticAgent`, `heuristic_risk()` (Tier-3 LLM-review skip heuristic) |
 | `daemon/pilot/system/snapshots.py` | `SnapshotManager` — create/rollback/list snapshots |
 | `daemon/pilot/security/permission_audit.py` | `PermissionEscalationAuditStore` — tamper-evident HMAC-chained audit log |
+| `daemon/pilot/security/gateway.py` | `AgentGateway`, `InvocationSource`, `SourceProfile`, `resolve_effective_profile()` — source-scoped permission floors |
+| `daemon/pilot/security/gateway_audit.py` | `AgentGatewayAuditStore` — separate tamper-evident HMAC-chained audit log for gateway decisions |
 | `daemon/pilot/reasoning/events.py` | `ReasoningEvent` schema and event name constants |
 | `tauri-app/ui/src/lib/api/daemon.ts` | WebSocket client (`connect`, `call`, `onNotification`) |
 | `tauri-app/ui/src/lib/stores/session.ts` | Notification handlers for the core pipeline, confirm/rollback state |
@@ -1262,6 +1342,8 @@ If verification fails, the daemon re-plans and the cycle repeats (up to 2 retrie
 | `tauri-app/ui/src/lib/components/ConfirmDialog.svelte` | Per-action approve/deny confirmation UI |
 | `tauri-app/ui/src/lib/components/RollbackDialog.svelte` | Undo confirmation UI |
 | `tauri-app/ui/src/lib/components/PermissionAuditLog.svelte` | Audit log viewer + integrity verification UI |
+| `tauri-app/ui/src/lib/components/GatewayPolicyEditor.svelte` | Agent Gateway source-profile floor editor |
+| `tauri-app/ui/src/lib/components/GatewayAuditLog.svelte` | Agent Gateway audit log viewer + integrity verification UI |
 | `schemas/action_plan.schema.json` | JSON Schema for the `ActionPlan` object |
 | `schemas/responses/execution_result.json` | JSON Schema for `ExecutionResult` |
 | `schemas/actions/*.json` | Per-action-type parameter schemas |

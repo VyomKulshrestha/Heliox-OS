@@ -824,6 +824,7 @@ npm run dev
 - Dangerous shell argument patterns (recursive+force deletes, wildcard/root path targets) are flagged even on already-whitelisted commands
 - **Snapshot-based rollback via Btrfs or Timeshift (Linux)** — snapshots taken before destructive plans can actually be reverted afterward via an in-app "Undo" action (filesystem-wide, not per-action — the UI spells this out before you confirm)
 - **Tamper-evident, HMAC-chained audit log** for every elevated permission decision, viewable and independently verifiable (integrity check) from the Settings panel
+- **Agent Gateway**: source-scoped permission floors for shell/browsing/system-control actions (interactive/autonomous/web-agent/voice/gesture each get their own enforced ceiling, tightenable but never independently widenable by a per-task override), a second tamper-evident audit chain for gateway decisions, and dry-run impact modeling extended to browser and system-control actions — see [SECURITY.md](SECURITY.md) for the full threat model this closes
 - **Gesture cursor control is off by default** — the continuous gesture-to-cursor bridge drives the real OS mouse cursor and is the one feature in this app that acts without a per-action confirmation gate, so it requires an explicit opt-in in Settings and always exits instantly on an open palm, the panel's stop button, or disabling the toggle
 - Command whitelist with optional unrestricted mode
 - **Encrypted API key storage** via platform keyring (GNOME Keyring / Windows Credential Manager)

@@ -25,6 +25,7 @@ This policy covers the following Helix OS components:
 - **🌐 WebSocket IPC** — the communication bridge between the Tauri UI and Python Daemon
 - **🤖 Python Daemon** — the core backend driving agent orchestration, planning, and verification
 - **🖱️ Gesture Cursor Control** — the continuous gesture-to-cursor bridge (off by default, opt-in only) that drives the real OS mouse cursor; the one capability in Heliox OS that acts without a per-action confirmation gate, so its escape hatches (open palm, stop button, disabling the setting) and screen-bounds clamping are treated as security-relevant, not just UX
+- **🚪 Agent Gateway** — source-scoped permission floors, tamper-evident audit logging, and dry-run/simulation coverage for shell, browsing, and system-control actions, layered alongside the tier-based `PermissionChecker` (see the dedicated section below)
 
 **Out of scope:**
 - Third-party plugins not maintained by the Helix OS team
@@ -107,6 +108,30 @@ python -m pilot.system.linux_syscall_guard --block unlink,unlinkat -- \
 ```
 
 The command should fail with `PermissionError` and leave the file in place.
+
+---
+
+## 🚪 Agent Gateway: Scoped Permissions & Audit
+
+**Threat model.** Before this feature, permission policy was entirely global: `PermissionChecker`'s five-tier system applied identically no matter whether an action came from an interactive, user-confirmed request or an unattended autonomous background job (`autonomous_submit`). Two concrete gaps made this exploitable:
+
+1. **All 22 `BROWSER_*` action types were hardcoded into `actions.py`'s `ALWAYS_SAFE` set**, forcing them to Tier 1 (`USER_WRITE`) regardless of what they actually did. `browser_execute_js` (arbitrary JavaScript execution in page context — cookie/token exfiltration, CSP bypass), `browser_fill_form`, `browser_navigate`, and `browser_click`/`type`/`select` all ran with **zero confirmation, zero snapshot, and zero audit trail** — identical treatment to a harmless `browser_screenshot`.
+2. **`DestructiveCriticAgent` only ran inside `server.py`'s interactive `execute` RPC handler**, before `Executor.execute()` was ever called. Any caller reaching `Executor.execute()` a different way — most importantly autonomous background jobs — never passed through the critic at all.
+
+Combined, an autonomous or web-agent-sourced plan could drive the browser (navigate anywhere, execute arbitrary JS, extract and exfiltrate page data) with no confirmation gate, no independent safety review, and no centralized, tamper-evident record of what happened.
+
+**The fix — `pilot.security.gateway.AgentGateway`** — is a second gate checked *alongside* (never replacing) `PermissionChecker` inside `Executor.execute()`:
+
+- **Source-scoped floors.** Every plan is tagged with an `InvocationSource` (`interactive`, `autonomous`, `web_agent`, `voice`, `gesture`). Each source has an enforced ceiling per action family (`shell`, `browsing`, `system_control`, `other`) and an explicit deny list — e.g. the `autonomous` profile denies `browser_execute_js`, `power_shutdown`/`power_restart`, and `registry_write` outright, and cannot reach root/Tier-4 actions at all. The `interactive` floor is a strict no-op, since interactive traffic already goes through the full tier/confirmation/critic pipeline.
+- **Per-task overrides can only narrow, never widen.** A caller (e.g. `autonomous_submit`'s optional `scope_override` parameter) may further restrict a source's floor for one specific task, but `resolve_effective_profile()` combines the floor and the override via `min()` on tiers and set-union on deny lists — an override attempting to claim a *wider* tier or re-enable root access is silently clamped back to the floor, never honored. This matters because the override itself is untrusted input from an RPC call.
+- **Critic-bypass closed.** `AgentGateway.authorize()` re-implements the same heuristic-risk trigger predicate `server.py` uses for interactive requests, so a Tier 3/4 or irreversible plan arriving without `critic_already_reviewed=True` (i.e. any non-interactive path) still gets an independent `DestructiveCriticAgent` review before it can proceed.
+- **Browser actions retiered by actual risk**, not blanket-safe: read-only extraction (`extract`/`screenshot`/`list_tabs`/`page_info`/`wait`) stays untouched; state-changing actions (`navigate`/`click`/`type`/`select`/`fill_form`) now require confirmation like any Tier 2 action; `execute_js` moved to `DESTRUCTIVE` + `IRREVERSIBLE` given its exfiltration potential. **This is an intentional breaking change** for existing interactive users — some browser actions that ran silently before will now prompt. There is deliberately no legacy "go back to silent" toggle: one would simply reopen the gap this feature closes.
+- **Tamper-evident audit trail.** `pilot.security.gateway_audit.AgentGatewayAuditStore` is a separate HMAC-SHA256 hash-chained SQLite log (same chain-of-custody design as the existing `PermissionEscalationAuditStore`, but its own database/key file) recording every gateway decision — source profile, action family, tier, whether an override was applied/whether it actually narrowed anything, allow/deny outcome, and a full policy snapshot. `verify_gateway_audit` walks the chain and detects any row that was deleted, reordered, or modified after the fact. Kept as an independent chain so a compromise of one audit key doesn't help forge the other.
+- **Dry-run/simulation extended.** `SimulationSandbox` previously modeled shell/file impacts only; it now produces meaningful risk assessments for browser (navigation targets, script previews) and system-control (mouse/keyboard, process, registry) actions too, so a dry-run plan touching these surfaces gets real impact analysis instead of a generic fallback description.
+
+**Known scope limit.** Only the three call sites named above (`server.py`'s interactive handler, `AutonomousExecutor`, `WebAgent`) are explicitly tagged with their real `InvocationSource` in this pass. Roughly twenty other sub-agent call sites that invoke `Executor.execute()` directly (`chain_planner.py`, `code_agent.py`, `comm_agent.py`, `forensics_agent.py`, `system_agent.py`, `network/mesh.py`, `swarm_router_agent.py`, `self_heal.py`, etc.) still default to the unrestricted `interactive`-equivalent floor — fail-open, not fail-closed, so nothing existing breaks. This is tracked as a follow-up, not hidden: any untagged call executing a Tier ≥ `SYSTEM_MODIFY` action still gets recorded in the ordinary (non-chained) `AuditLogger`, so the gap is observable even where it isn't yet restricted.
+
+Settings → Agent Gateway Policy shows the enforced floor per source and lets you tighten it (never loosen it beyond the shipped defaults' intent); Settings → Agent Gateway Audit Log shows every recorded decision with a one-click integrity check.
 
 ---
 
