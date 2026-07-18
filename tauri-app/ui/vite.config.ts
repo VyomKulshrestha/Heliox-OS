@@ -21,6 +21,17 @@ const MEDIAPIPE_HANDS_ASSET_DIR = "mediapipe/hands";
 const CONFIG_DIR = dirname(fileURLToPath(import.meta.url));
 const MEDIAPIPE_HANDS_DIR = join(CONFIG_DIR, "node_modules", "@mediapipe", "hands");
 
+const MEDIAPIPE_TASKS_VISION_ROUTE = "/mediapipe/tasks-vision";
+const MEDIAPIPE_TASKS_VISION_ASSET_DIR = "mediapipe/tasks-vision";
+const MEDIAPIPE_TASKS_VISION_WASM_DIR = join(
+  CONFIG_DIR,
+  "node_modules",
+  "@mediapipe",
+  "tasks-vision",
+  "wasm",
+);
+const MEDIAPIPE_TASKS_VISION_MODEL_DIR = join(CONFIG_DIR, "vendor", "mediapipe");
+
 function contentType(file: string) {
   if (file.endsWith(".js")) return "text/javascript";
   if (file.endsWith(".wasm")) return "application/wasm";
@@ -68,6 +79,58 @@ function mediapipeHandsAssets(): Plugin {
       mkdirSync(targetDir, { recursive: true });
       for (const file of assetFiles()) {
         copyFileSync(join(MEDIAPIPE_HANDS_DIR, file), join(targetDir, file));
+      }
+    },
+  };
+}
+
+function mediapipeTasksVisionAssets(): Plugin {
+  let config: ResolvedConfig;
+
+  const sourceDirs = [MEDIAPIPE_TASKS_VISION_WASM_DIR, MEDIAPIPE_TASKS_VISION_MODEL_DIR];
+
+  const assetFiles = () =>
+    sourceDirs.flatMap((dir) =>
+      readdirSync(dir)
+        .filter((file) => /\.(js|wasm|task)$/.test(file))
+        .map((file) => ({ dir, file })),
+    );
+
+  return {
+    name: "mediapipe-tasks-vision-assets",
+    configResolved(resolvedConfig) {
+      config = resolvedConfig;
+    },
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        const pathname = new URL(req.url ?? "", "http://localhost").pathname;
+        if (!pathname.startsWith(`${MEDIAPIPE_TASKS_VISION_ROUTE}/`)) {
+          next();
+          return;
+        }
+
+        const file = basename(
+          decodeURIComponent(pathname.slice(MEDIAPIPE_TASKS_VISION_ROUTE.length + 1)),
+        );
+        const source = sourceDirs
+          .map((dir) => join(dir, file))
+          .find((candidate) => existsSync(candidate));
+        if (!source) {
+          next();
+          return;
+        }
+
+        res.setHeader("Content-Type", contentType(file));
+        res.setHeader("Access-Control-Allow-Origin", "*");
+        res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+        createReadStream(source).pipe(res);
+      });
+    },
+    writeBundle() {
+      const targetDir = join(config.build.outDir, MEDIAPIPE_TASKS_VISION_ASSET_DIR);
+      mkdirSync(targetDir, { recursive: true });
+      for (const { dir, file } of assetFiles()) {
+        copyFileSync(join(dir, file), join(targetDir, file));
       }
     },
   };
@@ -408,7 +471,7 @@ function daemonTokenDevPlugin(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [svelte(), mediapipeHandsAssets(), daemonTokenDevPlugin()],
+  plugins: [svelte(), mediapipeHandsAssets(), mediapipeTasksVisionAssets(), daemonTokenDevPlugin()],
   clearScreen: false,
   server: {
     port: 1420,
