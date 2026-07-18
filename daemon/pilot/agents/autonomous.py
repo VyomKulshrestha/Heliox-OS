@@ -22,6 +22,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Callable, Coroutine
 
+from pilot.security.gateway import InvocationSource, TaskScopeOverride
+
 if TYPE_CHECKING:
     from pilot.agents.decomposer import TaskDecomposer
     from pilot.agents.executor import Executor
@@ -86,7 +88,8 @@ class AutonomousJob:
     started_at: float = 0.0
     completed_at: float = 0.0
     result_summary: str = ""
-    source: str = "text"  # "text" or "voice"
+    source: str = "text"  # "text" or "voice" -- input modality, unrelated to gateway InvocationSource
+    scope_override: TaskScopeOverride | None = None  # optional caller-supplied restriction (see AgentGateway)
 
     @property
     def duration_seconds(self) -> float:
@@ -139,9 +142,11 @@ class AutonomousExecutor:
         """Set the WebSocket broadcast function."""
         self._broadcast = fn
 
-    async def submit(self, goal: str, source: str = "text") -> AutonomousJob:
+    async def submit(
+        self, goal: str, source: str = "text", scope_override: TaskScopeOverride | None = None
+    ) -> AutonomousJob:
         """Submit a new autonomous job. Returns immediately with a job handle."""
-        job = AutonomousJob(goal=goal, source=source)
+        job = AutonomousJob(goal=goal, source=source, scope_override=scope_override)
         self._jobs[job.job_id] = job
 
         # Launch in background — non-blocking
@@ -271,7 +276,11 @@ class AutonomousExecutor:
                 return
 
             # Execute
-            results = await self._executor.execute(plan)
+            results = await self._executor.execute(
+                plan,
+                invocation_source=InvocationSource.AUTONOMOUS,
+                scope_override=job.scope_override,
+            )
 
             # Collect output
             outputs = [r.output for r in results if r.output]
@@ -330,7 +339,11 @@ class AutonomousExecutor:
                         continue
 
                     # Execute
-                    results = await self._executor.execute(plan)
+                    results = await self._executor.execute(
+                        plan,
+                        invocation_source=InvocationSource.AUTONOMOUS,
+                        scope_override=job.scope_override,
+                    )
 
                     # Collect
                     outputs = [r.output for r in results if r.output]

@@ -61,6 +61,7 @@ from pilot.actions import (
 )
 from pilot.agents.sandbox import SimulationSandbox
 from pilot.security.audit import AuditLogger
+from pilot.security.gateway import AgentGateway, InvocationSource, TaskScopeOverride
 from pilot.security.permissions import PermissionChecker
 from pilot.security.validator import ActionValidator
 from pilot.system.snapshots import SnapshotManager
@@ -82,12 +83,14 @@ class Executor:
         permissions: PermissionChecker,
         audit: AuditLogger,
         skill_registry: SkillRegistry | None = None,
+        gateway: AgentGateway | None = None,
     ) -> None:
         self._config = config
         self._validator = validator
         self._permissions = permissions
         self._audit = audit
         self._skill_registry = skill_registry
+        self._gateway = gateway
         self._snapshot_mgr = SnapshotManager(config)
         self._plugin_registry = None
         self._simulation_sandbox = SimulationSandbox(allowed_commands=config.restrictions.sandbox_allowed_commands)
@@ -269,6 +272,14 @@ class Executor:
     def set_plugin_registry(self, plugin_registry) -> None:
         self._plugin_registry = plugin_registry
 
+    def set_gateway(self, gateway: AgentGateway) -> None:
+        """Wire in the AgentGateway after construction — server.py builds
+        DestructiveCriticAgent (which the gateway needs for non-interactive
+        critic review) after Executor already exists, so this mirrors the
+        set_plugin_registry/set_broadcast-style post-construction wiring
+        pattern used elsewhere rather than reordering construction."""
+        self._gateway = gateway
+
     def _analyze_dependencies(self, actions: list[Action]) -> list[list[Action]]:
         """Analyze action dependencies and return batches that can run in parallel.
 
@@ -380,12 +391,37 @@ class Executor:
         plan_id: str | None = None,
         initial_last_output: str = "",
         orchestrator: Any = None,
+        invocation_source: InvocationSource = InvocationSource.INTERACTIVE,
+        scope_override: TaskScopeOverride | None = None,
+        critic_already_reviewed: bool = False,
     ) -> list[ActionResult]:
         """Execute all actions in a plan sequentially, with output chaining."""
         plan_id = plan_id or str(uuid.uuid4())[:8]
         results: list[ActionResult] = []
         self._last_output = initial_last_output
         self._largest_output = initial_last_output
+
+        if self._gateway is not None:
+            gateway_decision = await self._gateway.authorize(
+                plan,
+                invocation_source,
+                scope_override=scope_override,
+                critic_already_reviewed=critic_already_reviewed,
+            )
+            if not gateway_decision.allowed:
+                return [
+                    ActionResult(
+                        action=plan.actions[0]
+                        if plan.actions
+                        else Action(
+                            action_type=ActionType.FILE_READ,
+                            target="",
+                            parameters=FileParams(path="/"),
+                        ),
+                        success=False,
+                        error=f"Gateway denied: {'; '.join(gateway_decision.reasons)}",
+                    )
+                ]
 
         allowed, reasons = self._permissions.plan_allowed(plan)
         if not allowed:

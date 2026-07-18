@@ -470,6 +470,15 @@ class PilotServer:
 
         self._destructive_critic = DestructiveCriticAgent(model_router)
 
+        # Agent Gateway — source-scoped permission floor (interactive/
+        # autonomous/web_agent/voice/gesture), checked alongside
+        # PermissionChecker inside Executor.execute(). Built after the
+        # critic since it needs one for non-interactive plan review.
+        from pilot.security.gateway import AgentGateway
+
+        self._agent_gateway = AgentGateway(self.config, permissions, self._destructive_critic)
+        self._executor.set_gateway(self._agent_gateway)
+
         # Advanced agent components
         self._reflector = Reflector(model_router)
         await self._reflector.initialize()
@@ -1453,6 +1462,11 @@ class PilotServer:
                     on_action_complete=_on_action_complete,
                     cancel_event=cancel_event,  # ── Cancel Token (Issue #92) ──
                     plan_id=plan_id,
+                    # Interactive is the default invocation_source, but the
+                    # critic already ran above (or was deliberately skipped
+                    # as low-risk) — don't have the gateway pay for a
+                    # redundant LLM round-trip.
+                    critic_already_reviewed=True,
                 )
             all_results = results
             if not dry_run:
@@ -4078,7 +4092,11 @@ def handle_tool(tool_name, params):
         """Submit a task for autonomous background execution.
 
         Args:
-            params: JSON-RPC parameters with goal and source.
+            params: JSON-RPC parameters with goal, source, and an optional
+                scope_override restricting the AgentGateway's "autonomous"
+                floor further for this job only (see pilot.security.gateway
+                — an override can only narrow the floor, never widen it,
+                regardless of what's supplied here).
             ws: The WebSocket connection.
 
         Returns:
@@ -4092,7 +4110,20 @@ def handle_tool(tool_name, params):
             return {"error": "Empty goal"}
 
         source = params.get("source", "text")
-        job = await self._autonomous.submit(goal, source=source)
+
+        scope_override = None
+        raw_override = params.get("scope_override")
+        if raw_override is not None:
+            from pydantic import ValidationError
+
+            from pilot.security.gateway import TaskScopeOverride
+
+            try:
+                scope_override = TaskScopeOverride.model_validate(raw_override)
+            except ValidationError as e:
+                return {"error": f"Invalid scope_override: {e}"}
+
+        job = await self._autonomous.submit(goal, source=source, scope_override=scope_override)
         return {"status": "submitted", "job": job.to_dict()}
 
     async def _handle_autonomous_cancel(self, params: dict, ws: ServerConnection) -> dict:

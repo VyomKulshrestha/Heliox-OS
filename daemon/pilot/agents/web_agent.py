@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from pilot.actions import ActionPlan, ActionResult, ActionType
 from pilot.agents.base_agent import AgentCapability, AgentRole, AgentStatus, BaseAgent
+from pilot.security.gateway import InvocationSource
 
 if TYPE_CHECKING:
     from pilot.agents.executor import Executor
@@ -125,7 +126,7 @@ class WebAgent(BaseAgent):
             raw_input=user_input,
         )
 
-        results = await self._executor.execute(sub_plan)
+        results = await self._executor.execute(sub_plan, invocation_source=InvocationSource.WEB_AGENT)
         duration_ms = int((time.time() - start) * 1000)
         self._record_task(duration_ms, all(r.success for r in results))
         self.status = AgentStatus.IDLE
