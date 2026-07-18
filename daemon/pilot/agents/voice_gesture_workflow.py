@@ -171,6 +171,10 @@ class VoiceGestureWorkflowEngine:
         workflows = await self._workflow_store.list(include_terminal=include_terminal)
         return [w.to_dict() for w in workflows]
 
+    async def get_workflow(self, workflow_id: str) -> dict[str, Any] | None:
+        workflow = await self._workflow_store.get(workflow_id)
+        return workflow.to_dict() if workflow is not None else None
+
     async def handle_control_phrase(self, invocation_source: str, command_text: str) -> bool:
         """Checks whether a PAUSED/WAITING_FOR_TRIGGER workflow exists for
         this source and, if `command_text` exactly matches a recognized

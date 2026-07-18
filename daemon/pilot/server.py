@@ -344,6 +344,7 @@ class PilotServer:
         self._permission_checker: Any = None
         self._agent_gateway: Any = None
         self._gateway_audit: Any = None
+        self._voice_gesture_workflows: Any = None
         self._reflector: Any = None
         self._multi_agent: Any = None
         self._background: Any = None
@@ -685,6 +686,26 @@ class PilotServer:
         except Exception:
             logger.warning("AutonomousExecutor init failed (non-critical)", exc_info=True)
 
+        # ── Voice/Gesture Workflow Engine (durable, pausable/resumable
+        # multi-step goals spanning multiple voice/gesture inputs) ──
+        try:
+            from pilot.agents.voice_gesture_workflow import VoiceGestureWorkflowEngine
+            from pilot.workflows.voice_gesture_workflows import VoiceGestureWorkflowStore
+
+            voice_gesture_workflow_store = VoiceGestureWorkflowStore()
+            await voice_gesture_workflow_store.initialize()
+            self._voice_gesture_workflows = VoiceGestureWorkflowEngine(
+                planner=self._planner,
+                executor=self._executor,
+                decomposer=self._decomposer,
+                workflow_store=voice_gesture_workflow_store,
+                checkpoint_store=self._checkpoint_store,
+            )
+            self._voice_gesture_workflows.set_broadcast(self._broadcast_notification)
+            logger.info("VoiceGestureWorkflowEngine initialized")
+        except Exception:
+            logger.warning("VoiceGestureWorkflowEngine init failed (non-critical)", exc_info=True)
+
         # ── Proactive Suggestion Engine (JARVIS anticipation) ──
         try:
             from pilot.agents.proactive import ProactiveSuggestionEngine
@@ -781,6 +802,14 @@ class PilotServer:
             "autonomous_cancel": self._handle_autonomous_cancel,
             "autonomous_jobs": self._handle_autonomous_jobs,
             "autonomous_job": self._handle_autonomous_job,
+            "voice_gesture_workflow_submit": self._handle_voice_gesture_workflow_submit,
+            "voice_gesture_workflow_list": self._handle_voice_gesture_workflow_list,
+            "voice_gesture_workflow_get": self._handle_voice_gesture_workflow_get,
+            "voice_gesture_workflow_pause": self._handle_voice_gesture_workflow_pause,
+            "voice_gesture_workflow_resume": self._handle_voice_gesture_workflow_resume,
+            "voice_gesture_workflow_cancel": self._handle_voice_gesture_workflow_cancel,
+            "gesture_workflow_bindings_get": self._handle_gesture_workflow_bindings_get,
+            "gesture_workflow_bindings_update": self._handle_gesture_workflow_bindings_update,
             "proactive_start": self._handle_proactive_start,
             "proactive_stop": self._handle_proactive_stop,
             "proactive_stats": self._handle_proactive_stats,
@@ -3981,6 +4010,23 @@ def handle_tool(tool_name, params):
 
     # ── Voice Listener (JARVIS Mode) Handlers ──
 
+    async def _voice_workflow_control_dispatch(self, command_text: str) -> bool:
+        """Called by ContinuousVoiceListener right before normal command
+        dispatch — lets a PAUSED/WAITING_FOR_TRIGGER voice-sourced
+        VoiceGestureWorkflow claim a "continue"/"cancel" utterance instead
+        of it being planned as a brand-new command. Returns True if the
+        utterance was consumed as workflow control.
+
+        Args:
+            command_text: The recognized voice command text.
+
+        Returns:
+            True if a pending workflow claimed this utterance.
+        """
+        if not self._voice_gesture_workflows:
+            return False
+        return await self._voice_gesture_workflows.handle_control_phrase("voice", command_text)
+
     async def _voice_command_dispatch(self, command_text: str) -> None:
         """Called by ContinuousVoiceListener when a voice command is recognized.
 
@@ -4121,6 +4167,7 @@ def handle_tool(tool_name, params):
             wake_words=wake_words,
             on_command=self._voice_command_dispatch,
             on_status=self._voice_status_broadcast,
+            workflow_control=self._voice_workflow_control_dispatch,
         )
         result = await self._voice_listener.start()
         return {"status": "started", "message": result, "wake_words": wake_words}
@@ -4290,6 +4337,200 @@ def handle_tool(tool_name, params):
         if not job:
             return {"error": f"Job not found: {job_id}"}
         return job.to_dict()
+
+    # ── Voice/Gesture Workflow Handlers ──
+    # Durable, pausable/resumable multi-step goals spanning multiple voice
+    # commands or gesture inputs over time — see
+    # pilot.agents.voice_gesture_workflow.VoiceGestureWorkflowEngine. A
+    # separate concept from AutonomousExecutor above (fire-and-forget,
+    # in-memory, no pause/resume) — neither RPC surface touches the other.
+
+    async def _handle_voice_gesture_workflow_submit(self, params: dict, ws: ServerConnection) -> dict:
+        """Submit a durable, pausable/resumable multi-step voice/gesture workflow.
+
+        Args:
+            params: JSON-RPC parameters with goal, invocation_source
+                ("voice" or "gesture"), and an optional scope_override
+                restricting the AgentGateway's floor further for this
+                workflow only (see pilot.security.gateway).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with status and the created workflow, or an error.
+        """
+        from pydantic import ValidationError
+
+        from pilot.security.gateway import InvocationSource, TaskScopeOverride
+
+        if not self._voice_gesture_workflows:
+            return {"status": "error", "message": "Voice/gesture workflow engine not initialized"}
+
+        goal = params.get("goal", "")
+        if not goal.strip():
+            return {"status": "error", "message": "Empty goal"}
+
+        source_raw = params.get("invocation_source", "voice")
+        try:
+            invocation_source = InvocationSource(source_raw)
+        except ValueError:
+            return {"status": "error", "message": f"Invalid invocation_source: {source_raw}"}
+        if invocation_source not in (InvocationSource.VOICE, InvocationSource.GESTURE):
+            return {"status": "error", "message": "invocation_source must be 'voice' or 'gesture'"}
+
+        scope_override = None
+        raw_override = params.get("scope_override")
+        if raw_override is not None:
+            try:
+                scope_override = TaskScopeOverride.model_validate(raw_override)
+            except ValidationError as e:
+                return {"status": "error", "message": f"Invalid scope_override: {e}"}
+
+        workflow = await self._voice_gesture_workflows.start(goal, invocation_source, scope_override)
+        return {"status": "submitted", "workflow": workflow.to_dict()}
+
+    async def _handle_voice_gesture_workflow_list(self, params: dict, ws: ServerConnection) -> dict:
+        """List voice/gesture workflows.
+
+        Args:
+            params: JSON-RPC parameters, optionally {include_terminal}.
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with the list of workflows.
+        """
+        if not self._voice_gesture_workflows:
+            return {"workflows": []}
+        include_terminal = bool(params.get("include_terminal", False))
+        return {"workflows": await self._voice_gesture_workflows.list_workflows(include_terminal=include_terminal)}
+
+    async def _handle_voice_gesture_workflow_get(self, params: dict, ws: ServerConnection) -> dict:
+        """Get a specific voice/gesture workflow by ID.
+
+        Args:
+            params: JSON-RPC parameters with workflow_id.
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with the workflow, or an error if not found.
+        """
+        if not self._voice_gesture_workflows:
+            return {"status": "error", "message": "Voice/gesture workflow engine not initialized"}
+        workflow_id = params.get("workflow_id", "")
+        workflow = await self._voice_gesture_workflows.get_workflow(workflow_id)
+        if workflow is None:
+            return {"status": "error", "message": f"Workflow not found: {workflow_id}"}
+        return {"status": "ok", "workflow": workflow}
+
+    async def _handle_voice_gesture_workflow_pause(self, params: dict, ws: ServerConnection) -> dict:
+        """Pause a running voice/gesture workflow at the next step boundary.
+
+        Args:
+            params: JSON-RPC parameters with workflow_id.
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with paused status and workflow_id.
+        """
+        if not self._voice_gesture_workflows:
+            return {"status": "error", "message": "Voice/gesture workflow engine not initialized"}
+        workflow_id = params.get("workflow_id", "")
+        paused = await self._voice_gesture_workflows.pause(workflow_id)
+        return {"paused": paused, "workflow_id": workflow_id}
+
+    async def _handle_voice_gesture_workflow_resume(self, params: dict, ws: ServerConnection) -> dict:
+        """Resume a paused/waiting-for-trigger voice/gesture workflow.
+
+        Args:
+            params: JSON-RPC parameters with workflow_id.
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with resumed status, workflow_id, and the workflow if successful.
+        """
+        if not self._voice_gesture_workflows:
+            return {"status": "error", "message": "Voice/gesture workflow engine not initialized"}
+        workflow_id = params.get("workflow_id", "")
+        workflow = await self._voice_gesture_workflows.resume(workflow_id)
+        return {
+            "resumed": workflow is not None,
+            "workflow_id": workflow_id,
+            "workflow": workflow.to_dict() if workflow else None,
+        }
+
+    async def _handle_voice_gesture_workflow_cancel(self, params: dict, ws: ServerConnection) -> dict:
+        """Cancel a voice/gesture workflow.
+
+        Args:
+            params: JSON-RPC parameters with workflow_id.
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with cancelled status and workflow_id.
+        """
+        if not self._voice_gesture_workflows:
+            return {"status": "error", "message": "Voice/gesture workflow engine not initialized"}
+        workflow_id = params.get("workflow_id", "")
+        cancelled = await self._voice_gesture_workflows.cancel(workflow_id)
+        return {"cancelled": cancelled, "workflow_id": workflow_id}
+
+    async def _handle_gesture_workflow_bindings_get(self, params: dict, ws: ServerConnection) -> dict:
+        """Return the current gesture-to-goal workflow bindings for the Settings editor.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with enabled flag and the list of bindings.
+        """
+        from dataclasses import asdict
+
+        return {
+            "enabled": self.config.gesture_workflows.enabled,
+            "bindings": [asdict(b) for b in self.config.gesture_workflows.bindings],
+        }
+
+    async def _handle_gesture_workflow_bindings_update(self, params: dict, ws: ServerConnection) -> dict:
+        """Update the gesture-to-goal workflow bindings.
+
+        Args:
+            params: JSON-RPC parameters, optionally {enabled, bindings}
+                where each binding is {gesture_name, goal_template, enabled}.
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with status and the updated config.
+        """
+        from dataclasses import asdict
+
+        from pilot.config import GestureWorkflowBinding
+
+        if "enabled" in params:
+            self.config.gesture_workflows.enabled = bool(params["enabled"])
+
+        if "bindings" in params:
+            raw_bindings = params["bindings"]
+            if not isinstance(raw_bindings, list):
+                return {"status": "error", "message": "bindings must be a list"}
+            parsed = []
+            for item in raw_bindings:
+                if not isinstance(item, dict):
+                    continue
+                parsed.append(
+                    GestureWorkflowBinding(
+                        gesture_name=str(item.get("gesture_name", "")),
+                        goal_template=str(item.get("goal_template", "")),
+                        enabled=bool(item.get("enabled", True)),
+                    )
+                )
+            self.config.gesture_workflows.bindings = parsed
+
+        self.config.save()
+        return {
+            "status": "ok",
+            "enabled": self.config.gesture_workflows.enabled,
+            "bindings": [asdict(b) for b in self.config.gesture_workflows.bindings],
+        }
 
     # ── Proactive Suggestions Handlers ──
 
