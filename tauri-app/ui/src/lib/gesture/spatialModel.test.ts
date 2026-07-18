@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   handSize,
   isThumbExtended,
+  thumbExtensionRatio,
   geometricQuality,
   computeHandQuality,
   LandmarkFilterBank,
@@ -55,6 +56,29 @@ function openPalmLeftHand(): Landmark[] {
   return right.map((lm) => ({ ...lm, x: wristX - (lm.x - wristX) }));
 }
 
+// Same pose as openPalmRightHand(), but with non-zero, non-uniform z
+// (depth) values. Every existing fixture in this file before this addition
+// used z=0 everywhere, so dist3d()'s z term (used by handSize(),
+// thumbExtensionRatio(), geometricQuality()) had zero real 3D regression
+// coverage — a bug that silently dropped the z term would never have been
+// caught. This fixture exercises it directly.
+function openPalmRightHandWithDepth(): Landmark[] {
+  const lm = openPalmRightHand();
+  lm[0] = { ...lm[0], z: 0.02 }; // wrist
+  lm[9] = { ...lm[9], z: 0.08 }; // middle MCP — used by handSize()
+  lm[5] = { ...lm[5], z: 0.03 }; // index MCP — used by thumbExtensionRatio()
+  lm[4] = { ...lm[4], z: -0.04 }; // thumb tip
+  for (const [mcp, tip] of [
+    [5, 8],
+    [9, 12],
+    [13, 16],
+    [17, 20],
+  ] as const) {
+    lm[tip] = { ...lm[tip], z: lm[mcp].z! + 0.05 };
+  }
+  return lm;
+}
+
 function fistHand(): Landmark[] {
   const lm = openPalmRightHand();
   // Curl every fingertip below its pip (tip.y > pip.y) and tuck the thumb
@@ -71,6 +95,13 @@ describe("handSize", () => {
   it("is positive for a normal hand pose", () => {
     expect(handSize(openPalmRightHand())).toBeGreaterThan(0);
   });
+
+  it("incorporates the z (depth) term, not just x/y", () => {
+    // wrist z=0.02, middle-MCP z=0.08 -> dz=0.06 on top of the existing
+    // dy=0.15; a z=0-blind implementation would return 0.15 here instead.
+    const expected = Math.sqrt(0.15 * 0.15 + 0.06 * 0.06);
+    expect(handSize(openPalmRightHandWithDepth())).toBeCloseTo(expected, 10);
+  });
 });
 
 describe("isThumbExtended", () => {
@@ -86,11 +117,19 @@ describe("isThumbExtended", () => {
   it("reports not-extended for a tucked thumb (fist)", () => {
     expect(isThumbExtended(fistHand())).toBe(false);
   });
+
+  it("still reports extended once a non-zero z offset is folded in", () => {
+    expect(isThumbExtended(openPalmRightHandWithDepth())).toBe(true);
+  });
 });
 
 describe("geometricQuality / computeHandQuality", () => {
   it("scores a normal hand pose highly", () => {
     expect(geometricQuality(openPalmRightHand())).toBeGreaterThan(0.5);
+  });
+
+  it("stays plausible once a non-zero z offset is folded into finger ratios", () => {
+    expect(geometricQuality(openPalmRightHandWithDepth())).toBe(1);
   });
 
   it("penalizes a degenerate pose with implausible finger ratios", () => {
@@ -237,6 +276,25 @@ describe("predictCursorTarget", () => {
     const b = { x: 1, y: 1, z: 0 };
     expect(predictCursorTarget(a, b, -5).x).toBeCloseTo(0);
     expect(predictCursorTarget(a, b, 5).x).toBeCloseTo(1);
+  });
+});
+
+// Pins exact numeric output for the untouched 2D static-pose path (handSize,
+// thumbExtensionRatio, isThumbExtended, geometricQuality, computeHandQuality)
+// against the fixed openPalmRightHand() fixture. The B1-B4 MediaPipe Tasks
+// migration adds an entirely separate "tasks" backend/worldModel.ts path
+// (see worldModel.test.ts) without touching any of these functions or their
+// callers in classifyGesture() — this test exists to catch any accidental
+// drift in that guarantee. Values captured from the current implementation;
+// update deliberately (not silently) if a real behavior change is intended.
+describe("numeric pinning — 2D static-pose path stays bit-identical", () => {
+  it("pins handSize/thumbExtensionRatio/isThumbExtended/geometricQuality/computeHandQuality", () => {
+    const lm = openPalmRightHand();
+    expect(handSize(lm)).toBeCloseTo(0.15, 10);
+    expect(thumbExtensionRatio(lm)).toBeCloseTo(1.245436112817961, 12);
+    expect(isThumbExtended(lm)).toBe(true);
+    expect(geometricQuality(lm)).toBe(1);
+    expect(computeHandQuality(lm, 0.8)).toBeCloseTo(0.8, 12);
   });
 });
 
