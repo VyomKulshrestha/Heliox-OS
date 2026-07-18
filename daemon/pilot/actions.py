@@ -297,6 +297,7 @@ READ_ONLY_ACTIONS = {
     ActionType.BROWSER_SCREENSHOT,
     ActionType.BROWSER_LIST_TABS,
     ActionType.BROWSER_PAGE_INFO,
+    ActionType.BROWSER_WAIT,
     ActionType.TRIGGER_LIST,
     # Tier 2 read-only
     ActionType.FILE_PARSE,
@@ -325,6 +326,10 @@ DESTRUCTIVE_ACTIONS = {
     ActionType.DISK_UNMOUNT,
     ActionType.WINDOW_CLOSE,
     ActionType.CALENDAR_DELETE_EVENT,
+    # Arbitrary script execution in page context can exfiltrate cookies/
+    # tokens or bypass CSP — a higher bar than the other browser actions
+    # below, which only interact with visible page elements.
+    ActionType.BROWSER_EXECUTE_JS,
 }
 
 SYSTEM_MODIFY_ACTIONS = {
@@ -357,6 +362,17 @@ SYSTEM_MODIFY_ACTIONS = {
     ActionType.SHELL_COMMAND,
     ActionType.CALENDAR_SYNC,
     ActionType.CALENDAR_CREATE_EVENT,
+    # State-changing browser actions — previously hardcoded to ALWAYS_SAFE
+    # regardless of what they actually did (see the ALWAYS_SAFE set below).
+    # Navigating, clicking, typing, selecting, and submitting forms can
+    # trigger purchases, account changes, or arbitrary site-defined side
+    # effects, so they now require confirmation like any other Tier 2 action.
+    ActionType.BROWSER_NAVIGATE,
+    ActionType.BROWSER_CLICK,
+    ActionType.BROWSER_CLICK_TEXT,
+    ActionType.BROWSER_TYPE,
+    ActionType.BROWSER_SELECT,
+    ActionType.BROWSER_FILL_FORM,
 }
 
 # Actions that cannot be undone by the local snapshot/rollback mechanism
@@ -379,6 +395,9 @@ IRREVERSIBLE_ACTIONS = {
     ActionType.POWER_LOGOUT,
     # Package removal can lose config/data a simple reinstall won't restore
     ActionType.PACKAGE_REMOVE,
+    # Arbitrary script execution can exfiltrate data before a snapshot
+    # rollback would ever have a chance to matter.
+    ActionType.BROWSER_EXECUTE_JS,
 }
 
 
@@ -885,6 +904,15 @@ class Action(BaseModel):
     @property
     def permission_tier(self) -> PermissionTier:
         # These actions are ALWAYS safe ΓÇö never require confirmation
+        #
+        # NOTE: browser actions used to all be listed here regardless of
+        # what they actually did (see the Agent Gateway feature / SECURITY.md
+        # for the full writeup) — they're now individually classified via
+        # READ_ONLY_ACTIONS (extraction/inspection), left at the default
+        # USER_WRITE tier below (passive/local: hover, scroll, tab/nav
+        # housekeeping), SYSTEM_MODIFY_ACTIONS (state-changing: navigate,
+        # click, type, select, fill_form), or DESTRUCTIVE_ACTIONS
+        # (BROWSER_EXECUTE_JS — arbitrary script execution).
         ALWAYS_SAFE = {
             ActionType.FILE_READ,
             ActionType.FILE_WRITE,
@@ -894,29 +922,6 @@ class Action(BaseModel):
             ActionType.FILE_COPY,
             ActionType.CODE_GENERATE_AND_RUN,
             ActionType.SKILL_RUN,
-            ActionType.BROWSER_NAVIGATE,
-            ActionType.BROWSER_EXTRACT,
-            ActionType.BROWSER_EXTRACT_TABLE,
-            ActionType.BROWSER_EXTRACT_LINKS,
-            ActionType.BROWSER_CLICK,
-            ActionType.BROWSER_CLICK_TEXT,
-            ActionType.BROWSER_TYPE,
-            ActionType.BROWSER_SELECT,
-            ActionType.BROWSER_HOVER,
-            ActionType.BROWSER_SCROLL,
-            ActionType.BROWSER_EXECUTE_JS,
-            ActionType.BROWSER_SCREENSHOT,
-            ActionType.BROWSER_FILL_FORM,
-            ActionType.BROWSER_NEW_TAB,
-            ActionType.BROWSER_CLOSE_TAB,
-            ActionType.BROWSER_LIST_TABS,
-            ActionType.BROWSER_SWITCH_TAB,
-            ActionType.BROWSER_BACK,
-            ActionType.BROWSER_FORWARD,
-            ActionType.BROWSER_REFRESH,
-            ActionType.BROWSER_WAIT,
-            ActionType.BROWSER_CLOSE,
-            ActionType.BROWSER_PAGE_INFO,
             ActionType.OPEN_URL,
             ActionType.OPEN_APPLICATION,
             ActionType.NOTIFY,
