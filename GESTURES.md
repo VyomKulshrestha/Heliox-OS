@@ -115,34 +115,48 @@ hot-swap mid-session) — see `VisionConfig.mediapipe_backend` in
 `daemon/pilot/config.py`.
 
 **What the `"tasks"` backend adds** (`lib/gesture/worldModel.ts`, additive
-and separate from `spatialModel.ts`):
+and separate from `spatialModel.ts`) — and how `GestureControl.svelte`'s
+`handleFrameResult()` actually calls each one, live, per frame:
 
-- `toWristRelative3D()` — re-anchors `worldLandmarks` (hand-center-relative
-  by default) to the wrist, matching the wrist-relative convention
-  `handSize()`/`thumbExtensionRatio()` already use.
-- `handSize3D()` / `pinchDistance3D()` — metric (meters) analogs of the
-  existing normalized-space hand size / pinch-distance checks. Real,
-  camera-distance-invariant measurements — **new capabilities**, not
-  replacements for the tuned 2D thresholds.
-- `detectPushPull3D()` — a metric-threshold push/pull detector, replacing
-  the ad hoc `±0.06` normalized-z check with a real depth-in-meters
-  threshold. Active only under the `"tasks"` backend.
+- `toWristRelative3D()` / `handSize3D()` / `pinchDistance3D()` — re-anchors
+  `worldLandmarks` (hand-center-relative by default) to the wrist, then
+  measures a metric (meters), camera-distance-invariant hand size and
+  thumb-to-index-tip distance. Used as a **confirmation signal**: when the
+  2D classifier reports `"ok"` or `"pinch"`, the metric pinch-to-hand-size
+  ratio is checked against a wide tolerance band, and confidence is only
+  ever *reduced* (never raised) if the metric reading strongly disagrees —
+  catching 2D-projection false positives where the thumb and index tip
+  merely overlap in the camera's view without truly being close in real
+  depth. The tuned 2D `PINCH_DISTANCE_THRESHOLD` check itself is untouched.
+- `detectPushPull3D()` — a metric-threshold push/pull detector over a raw
+  (unfiltered) world-space wrist-position buffer, gated on the same
+  all-fingers-extended pose check the 2D version uses. Under the `"tasks"`
+  backend this **replaces** the ad hoc `±0.06` normalized-z check entirely
+  (the 2D `detectPushPull()` is not called at all in that case) — under
+  `"legacy"` the 2D check runs exactly as before, since `worldLandmarks` is
+  always `null` there.
 - `WorldModelFilterBank` — like `LandmarkFilterBank`, but **coupled** across
   x/y/z: one shared 3D velocity vector per landmark (a single adaptive
   cutoff derived from combined 3D speed), instead of three independently
-  extrapolated axes. `predictAhead()` therefore tracks the true 3D motion
-  direction instead of each axis drifting at its own smoothed rate.
+  extrapolated axes. Currently used to temporally smooth `worldLandmarks`
+  before the metric pinch check above (paralleling `landmarkFilter`'s role
+  in 2D classification); `predictAhead()` is unit-tested
+  (`worldModel.test.ts`) but not yet consumed by a live predictive feature
+  the way `LandmarkFilterBank.predictAhead()` feeds the gesture-cursor
+  bridge — a natural next step, not yet wired.
 
 **What stays untouched, on the existing 2D path, regardless of which
-backend is active**: every `classifyGesture()` static-pose threshold, the
-gesture-cursor bridge, and gesture calibration. `GestureControl.svelte`
-funnels both backends through one backend-agnostic
-`handleFrameResult(landmarks, worldLandmarks, handednessScore)` — the
-`"legacy"` path always passes `worldLandmarks: null`, and everything
-downstream of that function still classifies off the normalized `landmarks`
-array exactly as before. None of the ~20 empirically-tuned 2D distance
+backend is active**: every `classifyGesture()` static-pose threshold
+(finger-extension patterns, orientation checks, the tuned pinch/thumb
+distance constants themselves), the gesture-cursor bridge, and gesture
+calibration. `GestureControl.svelte` funnels both backends through one
+backend-agnostic `handleFrameResult(landmarks, worldLandmarks,
+handednessScore)` — the `"legacy"` path always passes `worldLandmarks:
+null`, so none of the above 3D logic ever executes for it, and its behavior
+is bit-for-bit unchanged. None of the ~20 empirically-tuned 2D distance
 constants were re-expressed in 3D (see the caution in the "Spatial/World-
-Model Layer" section above — that still applies here unchanged).
+Model Layer" section above — that still applies here unchanged); the 3D
+layer only ever adds a confirmation/replacement signal alongside them.
 
 **Delegate**: CPU only, unconditionally — GPU delegate support inside
 Tauri's embedded webview (WebView2 on Windows, WebKitGTK on Linux, WKWebView
@@ -183,9 +197,13 @@ confirming the 2D static-pose path stayed bit-identical through this
 migration).
 
 **Not verified in this pass** (no physical webcam in the environment this
-was built in): real-camera `detectPushPull3D()` threshold tuning,
-real-world tracking-quality comparison between backends, and GPU-delegate
-behavior on an actual Windows/macOS/Linux Tauri build.
+was built in): the `PUSH_PULL_DEPTH_METERS`/pinch-ratio-tolerance constants'
+real-camera accuracy, real-world tracking-quality comparison between
+backends, and GPU-delegate behavior on an actual Windows/macOS/Linux Tauri
+build. The wiring itself (which functions get called, when, and with what
+gating) is code-reviewable and unit-tested per the module's own tests, but
+the specific threshold values are approximate until tuned against real
+camera data — same caveat the 2D thresholds carried when first introduced.
 
 ---
 

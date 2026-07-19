@@ -55,6 +55,13 @@
     THUMB_EXTENDED_RATIO,
     type Landmark,
   } from "../gesture/spatialModel";
+  import {
+    toWristRelative3D,
+    handSize3D,
+    pinchDistance3D,
+    detectPushPull3D,
+    WorldModelFilterBank,
+  } from "../gesture/worldModel";
   import { isTauriRuntime } from "../utils/runtime";
   import { GestureCalibrationStore, classifyOutcome, REVERSAL_WINDOW_MS, type GestureEvent } from "../gesture/calibration";
   import { classifyControlGesture } from "../gesture/workflowControl";
@@ -80,9 +87,10 @@
   // changing the setting mid-session requires stopping/restarting the
   // engine, not a hot-swap (see VisionConfig.mediapipe_backend in config.py).
   let activeBackend: "legacy" | "tasks" = "legacy";
-  // Most recent worldLandmarks from the "tasks" backend, in case a future
-  // per-frame consumer (worldModel.ts) needs the latest reading — the
-  // "legacy" backend never populates this (no metric-scale 3D available).
+  // Most recent worldLandmarks from the "tasks" backend — the "legacy"
+  // backend never populates this (no metric-scale 3D available). Consumed
+  // by handleFrameResult()'s 3D push/pull + metric pinch confirmation
+  // checks below (see worldModel.ts).
   let lastWorldLandmarks: Landmark[] | null = null;
   let animFrameId: number = 0;
   let lastGestureTime = 0;
@@ -93,6 +101,17 @@
   // ── Spatial/world-model layer: temporal landmark filtering + quality gating ──
   const landmarkFilter = new LandmarkFilterBank();
   const QUALITY_CONFIDENCE_FLOOR = 0.35;
+
+  // ── 3D world-model layer ("tasks" backend only — see worldModel.ts) ──
+  //
+  // worldModelFilter smooths worldLandmarks the same way landmarkFilter
+  // smooths the 2D landmarks; feeds the metric pinch-distance confirmation
+  // check below. worldWristHistory stays RAW (unfiltered), same rationale
+  // as the existing 2D wristHistory: detectPushPull3D's threshold is tuned
+  // against real motion, which filtering would damp.
+  const worldModelFilter = new WorldModelFilterBank();
+  let worldWristHistory: Landmark[] = [];
+  const WORLD_MOTION_BUFFER_SIZE = 8; // mirrors detectPushPull()'s 8-frame gate
 
   // Shared with classifyGesture()'s OK/pinch checks — single source of truth
   // so the cursor-mode click logic can't silently drift from the discrete
@@ -558,10 +577,13 @@
 
   /** Backend-agnostic per-frame entry point — both the legacy `Hands`
    * callback path and the "tasks" `HandLandmarker` polling path funnel into
-   * this. `worldLandmarks` is only ever non-null from the "tasks" backend;
-   * everything below still classifies off the normalized `landmarks` array
-   * exactly as before (see spatialModel.ts's docstring on why the ~20
-   * empirically-tuned thresholds aren't being re-expressed in 3D here). */
+   * this. `worldLandmarks` is only ever non-null from the "tasks" backend.
+   * Static-pose classification still runs entirely off the normalized
+   * `landmarks` array exactly as before (see spatialModel.ts's docstring on
+   * why the ~20 empirically-tuned thresholds aren't being re-expressed in
+   * 3D here) — the "tasks" backend only adds a real-metric-depth push/pull
+   * check and a metric pinch-distance confirmation signal (see
+   * worldModel.ts and GESTURES.md's "3D World-Model Layer" section). */
   function handleFrameResult(
     landmarks: Landmark[] | null,
     worldLandmarks: Landmark[] | null,
@@ -576,6 +598,8 @@
       candidateGesture = "";
       candidateCount = 0;
       landmarkFilter.reset(); // avoid smearing stale filter state into the next detected hand
+      worldModelFilter.reset();
+      worldWristHistory = [];
       return;
     }
 
@@ -593,7 +617,31 @@
     // Temporally-filtered landmarks feed static-pose classification, where
     // single-frame jitter causes flicker between adjacent gesture readings.
     const filteredLandmarks = landmarkFilter.filter(landmarks, now);
-    const gesture = classifyGesture(filteredLandmarks);
+
+    // ── 3D world-model signals ("tasks" backend only) ──
+    //
+    // worldWristHistory stays RAW, same rationale as wristHistory above.
+    // filteredWorldLandmarks (temporally smoothed) feeds the metric pinch
+    // confirmation check below, paralleling filteredLandmarks's role in
+    // static-pose classification.
+    let use3DPushPull = false;
+    let pushPull3D: "push" | "pull" | null = null;
+    let filteredWorldLandmarks: Landmark[] | null = null;
+    if (worldLandmarks) {
+      use3DPushPull = true;
+      worldWristHistory.push(worldLandmarks[0]);
+      if (worldWristHistory.length > WORLD_MOTION_BUFFER_SIZE) worldWristHistory.shift();
+      if (worldWristHistory.length >= WORLD_MOTION_BUFFER_SIZE) {
+        pushPull3D = detectPushPull3D(worldWristHistory);
+        if (pushPull3D) worldWristHistory = []; // mirrors wristHistory's reset-on-fire in detectPushPull()
+      }
+      filteredWorldLandmarks = worldModelFilter.filter(worldLandmarks, now);
+    } else {
+      worldModelFilter.reset();
+      worldWristHistory = [];
+    }
+
+    const gesture = classifyGesture(filteredLandmarks, use3DPushPull, pushPull3D);
 
     // Scale confidence by detection/geometric quality instead of letting a
     // degenerate (occluded/edge-on) hand pose misfire at full confidence.
@@ -602,6 +650,30 @@
     if (gesture.name && gesture.confidence < QUALITY_CONFIDENCE_FLOOR) {
       gesture.name = "";
       gesture.confidence = 0;
+    }
+
+    // Metric pinch-distance confirmation ("tasks" backend only) — a
+    // camera-distance-invariant depth reading that catches 2D-projection
+    // false positives where the thumb and index tip merely overlap in the
+    // camera's view without truly being close in real depth. Only ever
+    // REDUCES confidence on top of the already-classified 2D result; never
+    // replaces or raises it, and the existing 2D PINCH_DISTANCE_THRESHOLD
+    // check above is untouched.
+    if (filteredWorldLandmarks && (gesture.name === "ok" || gesture.name === "pinch")) {
+      const wristRelative = toWristRelative3D(filteredWorldLandmarks);
+      const metricSize = handSize3D(wristRelative);
+      const metricPinchRatio = pinchDistance3D(wristRelative) / metricSize;
+      // Same ratio-based threshold the 2D check conceptually uses, just
+      // evaluated in metric wrist-relative space; doubled as a wide
+      // tolerance band since this is a confirmation signal, not a
+      // replacement for the tuned 2D threshold.
+      if (metricPinchRatio > (PINCH_DISTANCE_THRESHOLD / handSize(filteredLandmarks)) * 2) {
+        gesture.confidence *= 0.5;
+        if (gesture.confidence < QUALITY_CONFIDENCE_FLOOR) {
+          gesture.name = "";
+          gesture.confidence = 0;
+        }
+      }
     }
 
     if (cursorModeActive) {
@@ -746,7 +818,11 @@
     metricValue?: number;
   }
 
-  function classifyGesture(landmarks: any[]): Gesture {
+  function classifyGesture(
+    landmarks: any[],
+    use3DPushPull: boolean = false,
+    pushPull3D: "push" | "pull" | null = null,
+  ): Gesture {
     const THUMB_TIP = 4, INDEX_TIP = 8, MIDDLE_TIP = 12, RING_TIP = 16, PINKY_TIP = 20;
     const INDEX_PIP = 6, MIDDLE_PIP = 10, RING_PIP = 14, PINKY_PIP = 18;
     const THUMB_MCP = 2, INDEX_MCP = 5;
@@ -797,9 +873,19 @@
     const circularResult = detectCircularMotion();
     if (circularResult) return circularResult;
 
-    // Palm push/pull (Z-axis depth change)
-    const pushPull = detectPushPull(landmarks);
-    if (pushPull) return pushPull;
+    // Palm push/pull (Z-axis depth change). Under the "tasks" backend,
+    // detectPushPull3D's real-metric-depth reading replaces the ad hoc
+    // normalized-z check below entirely (see worldModel.ts and GESTURES.md's
+    // "3D World-Model Layer" section) — same open-palm pose gate either way.
+    const allFingersUpForPushPull = indexUp && middleUp && ringUp && pinkyUp;
+    if (use3DPushPull) {
+      if (pushPull3D && allFingersUpForPushPull) {
+        return { name: pushPull3D === "push" ? "palm_push" : "palm_pull", confidence: 0.72 };
+      }
+    } else {
+      const pushPull = detectPushPull(landmarks);
+      if (pushPull) return pushPull;
+    }
 
     // Predicted near-future landmarks — used below only to scale swipe
     // confidence by whether the trajectory agrees with the classified
