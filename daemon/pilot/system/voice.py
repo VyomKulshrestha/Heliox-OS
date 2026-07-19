@@ -16,6 +16,7 @@ from typing import Any
 
 from pilot.config import PilotConfig
 from pilot.system.platform_detect import CURRENT_PLATFORM, Platform, run_powershell
+from pilot.system.vad import EndpointEvent, UtteranceEndpointer, frame_rms
 from pilot.system.voice_calibration import WakeWordCalibrator
 
 logger = logging.getLogger("pilot.system.voice")
@@ -52,6 +53,47 @@ async def speak(
         return await _tts_macos(text, voice, rate, output_file)
     else:
         return await _tts_linux(text, voice, rate, output_file)
+
+
+async def speak_interruptible(
+    text: str,
+    recorder: _ContinuousRecorder | None = None,
+    **speak_kwargs: Any,
+) -> bool:
+    """Speaks `text` aloud via speak(), but stops immediately if the user
+    starts talking mid-playback instead of finishing the sentence over
+    them — the barge-in half of "listen while speaking." Detection reuses
+    `recorder`'s continuous VAD stream (see pilot.system.vad), so no
+    separate audio capture is needed just to watch for an interruption.
+
+    Returns True if playback was interrupted, False if it completed
+    normally. If `recorder` is None or its input stream isn't active
+    (sounddevice missing, or barge-in disabled by the caller), this is
+    equivalent to plain speak() — always returns False.
+    """
+    if recorder is None or not recorder.is_active:
+        await speak(text, **speak_kwargs)
+        return False
+
+    speak_task = asyncio.create_task(speak(text, **speak_kwargs))
+    watch_task = asyncio.create_task(recorder.wait_for_speech_start(timeout=None))
+
+    done, _pending = await asyncio.wait({speak_task, watch_task}, return_when=asyncio.FIRST_COMPLETED)
+
+    if watch_task in done:
+        speak_task.cancel()
+        try:
+            await speak_task
+        except asyncio.CancelledError:
+            pass
+        return True
+
+    watch_task.cancel()
+    try:
+        await watch_task
+    except asyncio.CancelledError:
+        pass
+    return False
 
 
 async def _tts_windows(
@@ -132,7 +174,13 @@ async def _tts_linux(
         stderr=asyncio.subprocess.PIPE,
     )
 
-    await proc.communicate()
+    try:
+        await proc.communicate()
+    except asyncio.CancelledError:
+        # Barge-in interrupting speak() mid-playback — kill espeak rather
+        # than leaving it running after this await appears cancelled.
+        proc.kill()
+        raise
 
     if output_file:
         return f"Speech saved to {output_file}"
@@ -164,7 +212,13 @@ async def _tts_macos(
         stderr=asyncio.subprocess.PIPE,
     )
 
-    await proc.communicate()
+    try:
+        await proc.communicate()
+    except asyncio.CancelledError:
+        # Barge-in interrupting speak() mid-playback — kill `say` rather
+        # than leaving it running after this await appears cancelled.
+        proc.kill()
+        raise
 
     if output_file:
         return f"Speech saved to {output_file}"
@@ -280,16 +334,32 @@ async def _record_audio(duration: int) -> str:
     raise RuntimeError("Install sounddevice for audio recording: pip install sounddevice")
 
 
+_whisper_model_cache: dict[str, Any] = {}
+
+
+def _get_whisper_model(model_name: str) -> Any:
+    """Loads (and caches) a Whisper model by name. Previously reloaded from
+    disk on every single call — including every ~3s wake-word poll cycle in
+    ContinuousVoiceListener's loop — which is the dominant latency cost in
+    the whole listen/transcribe cycle. Cached in-process for the life of
+    the daemon; different model names (e.g. switching config.voice.
+    whisper_model at runtime) just add another cache entry."""
+    if model_name not in _whisper_model_cache:
+        import whisper
+
+        _whisper_model_cache[model_name] = whisper.load_model(model_name)
+    return _whisper_model_cache[model_name]
+
+
 async def _transcribe_whisper(
     audio_path: str,
     language: str,
     model_name: str,
 ) -> dict:
     """Transcribe audio using OpenAI Whisper (local) with multilingual support."""
-    import whisper
 
     def _do():
-        mdl = whisper.load_model(model_name)
+        mdl = _get_whisper_model(model_name)
 
         kwargs = {}
 
@@ -331,6 +401,201 @@ async def _transcribe_windows(audio_path: str) -> str:
     return out.strip() if code == 0 else f"Transcription failed: {err}"
 
 
+# ── Continuous VAD-based recording ───────────────────────────────────
+#
+# Replaces the old approach of recording a BLIND fixed-duration window
+# (sd.rec(duration) + sd.wait()) per poll cycle: opens one continuous
+# sounddevice.InputStream and endpoints utterances on actual silence (see
+# pilot.system.vad) instead of guessing a duration. This is also the
+# mechanical basis for barge-in: the same per-frame energy check that
+# detects "utterance started" while listening also detects "user started
+# talking" while Heliox is mid-speech (see speak_interruptible() below).
+
+
+class _ContinuousRecorder:
+    """Wraps a single continuous `sounddevice.InputStream` and exposes
+    higher-level async waits for "an utterance happened" or "speech
+    started" (for barge-in), instead of callers managing raw audio
+    themselves. One instance per listener; `start()`/`stop()` open and
+    close the actual audio stream."""
+
+    def __init__(
+        self,
+        sample_rate: int = 16000,
+        frame_ms: int = 50,
+        energy_threshold: float = 0.02,
+        start_frames: int = 2,
+        silence_frames: int = 12,
+        max_utterance_seconds: float = 20.0,
+    ) -> None:
+        self.sample_rate = sample_rate
+        self.frame_size = max(1, int(sample_rate * frame_ms / 1000))
+        self.energy_threshold = energy_threshold
+        self.start_frames = start_frames
+        self.silence_frames = silence_frames
+        self.max_frames = max(1, int(max_utterance_seconds * 1000 / frame_ms))
+
+        self._stream: Any = None
+        self._queue: asyncio.Queue[Any] | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+
+    def _make_endpointer(self) -> UtteranceEndpointer:
+        return UtteranceEndpointer(
+            energy_threshold=self.energy_threshold,
+            start_frames=self.start_frames,
+            silence_frames=self.silence_frames,
+            max_frames=self.max_frames,
+        )
+
+    def start(self) -> bool:
+        """Opens the continuous input stream. Returns False (rather than
+        raising) if sounddevice isn't installed or the stream can't open —
+        callers fall back to the legacy fixed-duration recording path."""
+        if self._stream is not None:
+            return True
+
+        try:
+            import sounddevice as sd
+        except ImportError:
+            return False
+
+        self._loop = asyncio.get_event_loop()
+        self._queue = asyncio.Queue()
+
+        def _callback(indata, frames, time_info, status):
+            # Runs on PortAudio's own thread, not the asyncio loop -- must
+            # hand off via call_soon_threadsafe rather than touching the
+            # queue directly.
+            block = indata[:, 0].copy()
+            loop = self._loop
+            queue = self._queue
+            if loop is not None and queue is not None:
+                loop.call_soon_threadsafe(queue.put_nowait, block)
+
+        try:
+            self._stream = sd.InputStream(
+                samplerate=self.sample_rate,
+                channels=1,
+                dtype="int16",
+                blocksize=self.frame_size,
+                callback=_callback,
+            )
+            self._stream.start()
+            return True
+        except Exception:
+            logger.warning("Failed to open continuous audio input stream", exc_info=True)
+            self._stream = None
+            return False
+
+    def stop(self) -> None:
+        if self._stream is not None:
+            try:
+                self._stream.stop()
+                self._stream.close()
+            except Exception:
+                pass
+            self._stream = None
+        self._queue = None
+
+    @property
+    def is_active(self) -> bool:
+        return self._stream is not None
+
+    async def _drain_stale_frames(self) -> None:
+        """Discards any frames queued while nobody was waiting, so a fresh
+        wait starts listening from "now" instead of replaying a backlog."""
+        assert self._queue is not None
+        while not self._queue.empty():
+            self._queue.get_nowait()
+
+    async def wait_for_speech_start(self, timeout: float | None = None) -> bool:
+        """Waits until sustained speech is detected (used for barge-in:
+        the caller cares only that the user started talking, not the full
+        utterance). Returns False on timeout or if the stream isn't
+        active."""
+        if self._queue is None:
+            return False
+
+        await self._drain_stale_frames()
+        endpointer = self._make_endpointer()
+        deadline = None if timeout is None else asyncio.get_event_loop().time() + timeout
+
+        while True:
+            remaining = None if deadline is None else deadline - asyncio.get_event_loop().time()
+            if remaining is not None and remaining <= 0:
+                return False
+            try:
+                frame = await asyncio.wait_for(self._queue.get(), timeout=remaining)
+            except asyncio.TimeoutError:
+                return False
+
+            if endpointer.push(frame_rms(frame)) == EndpointEvent.STARTED:
+                return True
+
+    async def record_utterance(self, timeout: float | None = None) -> str | None:
+        """Waits for a full utterance (speech start through endpoint) and
+        returns the path to a WAV file containing it, or None if nothing
+        was captured before `timeout`."""
+        if self._queue is None:
+            return None
+
+        await self._drain_stale_frames()
+        endpointer = self._make_endpointer()
+        deadline = None if timeout is None else asyncio.get_event_loop().time() + timeout
+        # Small pre-roll so the moment speech is CONFIRMED (after
+        # start_frames) doesn't clip the first syllable that triggered it.
+        preroll: list[Any] = []
+        captured: list[Any] = []
+
+        while True:
+            remaining = None if deadline is None else deadline - asyncio.get_event_loop().time()
+            if remaining is not None and remaining <= 0:
+                return None
+            try:
+                frame = await asyncio.wait_for(self._queue.get(), timeout=remaining)
+            except asyncio.TimeoutError:
+                return None
+
+            event = endpointer.push(frame_rms(frame))
+
+            # Check event states before is_speaking: push() already called
+            # reset() internally on ENDED/MAX_DURATION, so is_speaking is
+            # back to False by the time we get here — checking is_speaking
+            # first would misroute the utterance's final frame into the
+            # preroll buffer instead of appending it and returning.
+            if event == EndpointEvent.STARTED:
+                captured = preroll + [frame]
+                preroll = []
+                continue
+
+            if event in (EndpointEvent.ENDED, EndpointEvent.MAX_DURATION):
+                captured.append(frame)
+                return _write_wav(captured, self.sample_rate)
+
+            if not endpointer.is_speaking:
+                preroll.append(frame)
+                if len(preroll) > self.start_frames + 1:
+                    preroll.pop(0)
+                continue
+
+            captured.append(frame)
+
+
+def _write_wav(frames: list[Any], sample_rate: int) -> str:
+    import numpy as np
+
+    output_path = os.path.join(tempfile.gettempdir(), f"pilot_utterance_{os.getpid()}_{id(frames)}.wav")
+    audio = np.concatenate(frames) if frames else np.zeros(0, dtype=np.int16)
+
+    with wave.open(output_path, "w") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sample_rate)
+        wf.writeframes(audio.tobytes())
+
+    return output_path
+
+
 # ── Continuous Voice Listener (JARVIS Mode) ──────────────────────────
 
 
@@ -361,7 +626,6 @@ class ContinuousVoiceListener:
         self._task: asyncio.Task[None] | None = None
         self._listening_for_command = False
         self._sample_rate = 16000
-        self._vad_enabled = False
 
         self.config = PilotConfig.load()
         self.last_detected_language = "en"
@@ -369,6 +633,18 @@ class ContinuousVoiceListener:
         # voice_calibration.py. Only ever a fallback tried after the fixed
         # exact-match loop below misses; the common case is untouched.
         self._wake_calibrator = WakeWordCalibrator(self.wake_words)
+
+        # Continuous VAD-based recorder (see pilot.system.vad) — replaces
+        # blind fixed-duration recording windows with natural start/stop
+        # endpointing. Falls back to the legacy _record_and_transcribe()
+        # fixed-duration path if sounddevice isn't installed or the input
+        # stream fails to open (see start()).
+        self._recorder = _ContinuousRecorder(
+            sample_rate=self._sample_rate,
+            energy_threshold=self.config.voice.vad_energy_threshold,
+            silence_frames=max(1, int(self.config.voice.vad_silence_ms / 50)),
+            max_utterance_seconds=self.config.voice.vad_max_utterance_seconds,
+        )
 
     @property
     def is_running(self) -> bool:
@@ -379,17 +655,20 @@ class ContinuousVoiceListener:
             return "Voice listener is already running."
 
         self._running = True
+        recorder_active = self._recorder.start()
         self._task = asyncio.create_task(self._listen_loop())
 
         logger.info(
-            "Continuous voice listener started (wake words: %s)",
+            "Continuous voice listener started (wake words: %s, vad_recorder=%s)",
             self.wake_words,
+            recorder_active,
         )
 
         return f"Voice listener started. Say '{self.wake_words[0]}' to activate."
 
     async def stop(self) -> str:
         self._running = False
+        self._recorder.stop()
 
         if self._task:
             self._task.cancel()
@@ -406,7 +685,10 @@ class ContinuousVoiceListener:
     async def _listen_loop(self) -> None:
         while self._running:
             try:
-                transcript = await self._record_and_transcribe(duration=3)
+                # Ambient wake-word listening: no timeout on the VAD path —
+                # it waits for the next actual utterance instead of polling
+                # a blind fixed window every cycle.
+                transcript = await self._record_and_transcribe(duration=3, timeout=None)
 
                 if not transcript or transcript.strip() == "No speech detected":
                     await asyncio.sleep(0.2)
@@ -474,7 +756,7 @@ class ContinuousVoiceListener:
                         except Exception:
                             pass
 
-                    command_text = await self._record_and_transcribe(duration=8)
+                    command_text = await self._record_and_transcribe(duration=8, timeout=8.0)
 
                     if not command_text or command_text.strip() == "No speech detected":
                         if self._on_status:
@@ -521,32 +803,52 @@ class ContinuousVoiceListener:
                 )
                 await asyncio.sleep(1.0)
 
+    async def _transcribe_path(self, audio_path: str) -> str:
+        """Transcribes an already-recorded WAV file with multilingual support."""
+        try:
+            result = await _transcribe_whisper(
+                audio_path,
+                self.config.voice.language,
+                self.config.voice.whisper_model,
+            )
+
+            self.last_detected_language = result["language"]
+
+            return result["text"]
+
+        except ImportError:
+            pass
+
+        if CURRENT_PLATFORM == Platform.WINDOWS:
+            return await _transcribe_windows(audio_path)
+
+        return ""
+
     async def _record_and_transcribe(
         self,
         duration: int = 3,
+        timeout: float | None = None,
     ) -> str:
-        """Record audio and transcribe it with multilingual support."""
+        """Records one utterance and transcribes it with multilingual support.
+
+        Prefers the continuous VAD-based recorder (natural start/stop
+        endpointing on actual silence — see pilot.system.vad) when its
+        input stream is active; falls back to the legacy fixed-`duration`
+        recording window otherwise (e.g. sounddevice missing or the stream
+        failed to open). `timeout` only applies to the VAD path — `None`
+        waits indefinitely for the next utterance (the ambient
+        wake-word-listening case); a finite value bounds how long to wait
+        for the command that follows a detected wake word.
+        """
         try:
-            audio_path = await _record_audio(duration)
+            if self._recorder.is_active:
+                audio_path = await self._recorder.record_utterance(timeout=timeout)
+                if not audio_path:
+                    return ""
+            else:
+                audio_path = await _record_audio(duration)
 
-            try:
-                result = await _transcribe_whisper(
-                    audio_path,
-                    self.config.voice.language,
-                    self.config.voice.whisper_model,
-                )
-
-                self.last_detected_language = result["language"]
-
-                return result["text"]
-
-            except ImportError:
-                pass
-
-            if CURRENT_PLATFORM == Platform.WINDOWS:
-                return await _transcribe_windows(audio_path)
-
-            return ""
+            return await self._transcribe_path(audio_path)
 
         except Exception as e:
             logger.debug(
@@ -564,6 +866,7 @@ class ContinuousVoiceListener:
             "language": self.last_detected_language,
             "configured_language": self.config.voice.language,
             "whisper_model": self.config.voice.whisper_model,
+            "vad_recorder_active": self._recorder.is_active,
         }
 
 

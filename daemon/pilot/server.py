@@ -4027,6 +4027,28 @@ def handle_tool(tool_name, params):
             return False
         return await self._voice_gesture_workflows.handle_control_phrase("voice", command_text)
 
+    async def _speak_voice_response(self, text: str) -> bool:
+        """Speaks a voice-pipeline response, interruptible via barge-in
+        when the continuous voice listener's VAD recorder is active and
+        `config.voice.barge_in_enabled` is on (see speak_interruptible in
+        pilot.system.voice). Falls back to plain, non-interruptible speak()
+        otherwise. Returns True if the user started talking mid-playback
+        and cut it off early.
+        """
+        from pilot.system.voice import speak, speak_interruptible
+
+        recorder = getattr(self._voice_listener, "_recorder", None)
+        if self.config.voice.barge_in_enabled and recorder is not None:
+            interrupted = await speak_interruptible(text, recorder=recorder)
+        else:
+            await speak(text)
+            interrupted = False
+
+        if interrupted:
+            await self._broadcast_notification("voice_status", {"status": "interrupted"})
+
+        return interrupted
+
     async def _voice_command_dispatch(self, command_text: str) -> None:
         """Called by ContinuousVoiceListener when a voice command is recognized.
 
@@ -4075,9 +4097,7 @@ def handle_tool(tool_name, params):
                         "language": language,
                     },
                 )
-                from pilot.system.voice import speak
-
-                await speak(f"Sorry, I couldn't process that. {plan.error[:100]}")
+                await self._speak_voice_response(f"Sorry, I couldn't process that. {plan.error[:100]}")
                 return
 
             await self._broadcast_notification(
@@ -4142,10 +4162,8 @@ def handle_tool(tool_name, params):
                 },
             )
 
-            from pilot.system.voice import speak
-
             spoken = result_text[:300] if len(result_text) < 300 else result_text[:297] + "..."
-            await speak(spoken)
+            await self._speak_voice_response(spoken)
 
         except Exception as e:
             logger.error("Voice command execution failed: %s", e)
@@ -4161,9 +4179,7 @@ def handle_tool(tool_name, params):
             )
 
             try:
-                from pilot.system.voice import speak
-
-                await speak("Sorry, something went wrong while executing your request.")
+                await self._speak_voice_response("Sorry, something went wrong while executing your request.")
             except Exception:
                 pass
 

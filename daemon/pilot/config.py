@@ -125,6 +125,18 @@ class ServerConfig:
 class VoiceConfig:
     language: str = "auto"  # auto detect or manual language code
     whisper_model: str = "base"
+    # Continuous VAD-based endpointing (see pilot.system.vad) — replaces
+    # blind fixed-duration recording windows with natural start/stop
+    # boundaries. Approximate defaults, not tuned against real microphone
+    # hardware; revisit if real usage shows false starts/premature cutoffs.
+    vad_energy_threshold: float = 0.02
+    vad_silence_ms: float = 700.0
+    vad_max_utterance_seconds: float = 20.0
+    # Interrupt Heliox's own TTS playback the instant the user starts
+    # talking, instead of waiting for it to finish. A pure responsiveness/
+    # UX improvement (doesn't expand what the system can do, unlike e.g.
+    # gesture_cursor), so on by default like adaptive_calibration.
+    barge_in_enabled: bool = True
 
 
 @dataclass
@@ -435,6 +447,10 @@ def _validate_config_types(raw: dict) -> None:
         "voice": {
             "language": str,
             "whisper_model": str,
+            "vad_energy_threshold": (int, float),
+            "vad_silence_ms": (int, float),
+            "vad_max_utterance_seconds": (int, float),
+            "barge_in_enabled": bool,
         },
         "screen_vision": {
             "capture_interval_seconds": (int, float),

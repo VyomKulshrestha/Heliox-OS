@@ -64,6 +64,7 @@ async def run_command(
     if root and CURRENT_PLATFORM == Platform.LINUX:
         args = ["pkexec"] + args
 
+    proc = None
     try:
         proc = await asyncio.create_subprocess_exec(
             *args,
@@ -84,6 +85,14 @@ async def run_command(
         return (-1, "", "Command timed out")
     except FileNotFoundError:
         return (-1, "", f"Command not found: {args[0]}")
+    except asyncio.CancelledError:
+        # If the coroutine awaiting this command is cancelled (e.g. TTS
+        # barge-in interrupting a speak() call built on run_powershell()),
+        # kill the subprocess rather than leaving it running in the
+        # background after Python's own await appears to have stopped.
+        if proc:
+            proc.kill()
+        raise
     except Exception as e:
         return (-1, "", f"Command error: {e}")
 
