@@ -1058,10 +1058,14 @@ Emitted when the JARVIS voice listener recognizes a command and begins executing
 Voice listener lifecycle updates.
 
 ```json
-{ "status": "listening" }
+{ "status": "wake_detected", "transcript": "hey heliox open the terminal" }
 ```
 
-`status` is one of `"listening"`, `"processing"`, `"stopped"`, or `"error"`.
+`status` is one of:
+- `"wake_detected"` — a wake word was heard; `transcript` is the full utterance it came from.
+- `"listening"` — no command followed the wake word in the same utterance; waiting for a follow-up (`message` is a user-facing prompt).
+- `"timeout"` — no follow-up command was heard within the wait window (`message` is a user-facing note).
+- `"interrupted"` — the user started talking while Heliox was still speaking its response, so playback was cut off (barge-in — see `pilot.system.voice.speak_interruptible`). Only fires when `config.voice.barge_in_enabled` is on and the continuous VAD recorder is active.
 
 ---
 
