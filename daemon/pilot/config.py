@@ -204,6 +204,18 @@ class GatewayConfig:
 
     enabled: bool = True
     source_profiles: dict[str, SourceProfile] = field(default_factory=lambda: dict(DEFAULT_SOURCE_PROFILES))
+    # Learned Risk Gate (see pilot.security.risk_gate) — a small MLP
+    # trained on real sandboxed telemetry that predicts concrete outcome
+    # fields (disk usage, process-count delta) for a proposed action,
+    # scored by hardcoded rules (risk_safety.py) that can only ADD
+    # caution on top of the existing heuristic_risk() signal (see
+    # destructive_critic.py's risk_score()), never remove it. Off by
+    # default: unlike gateway.enabled, this is a genuinely new detection
+    # capability (protected-path/predicted-resource-exhaustion checks
+    # heuristic_risk() has no visibility into at all), not yet validated
+    # against real-world usage, so it needs an explicit opt-in the same
+    # way gesture_cursor does.
+    risk_gate_enabled: bool = False
 
 
 @dataclass
@@ -475,6 +487,7 @@ def _validate_config_types(raw: dict) -> None:
         "gateway": {
             "enabled": bool,
             "source_profiles": dict,
+            "risk_gate_enabled": bool,
         },
         "gesture_workflows": {
             "enabled": bool,
@@ -624,6 +637,7 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
     if "gateway" in raw and isinstance(raw["gateway"], dict):
         gateway_raw = raw["gateway"]
         config.gateway.enabled = bool(gateway_raw.get("enabled", config.gateway.enabled))
+        config.gateway.risk_gate_enabled = bool(gateway_raw.get("risk_gate_enabled", config.gateway.risk_gate_enabled))
 
         profiles_raw = gateway_raw.get("source_profiles", {})
         if isinstance(profiles_raw, dict):

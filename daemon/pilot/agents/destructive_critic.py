@@ -23,6 +23,7 @@ from pilot.actions import PermissionTier
 
 if TYPE_CHECKING:
     from pilot.actions import ActionPlan
+    from pilot.config import PilotConfig
     from pilot.models.router import ModelRouter
 
 logger = logging.getLogger("pilot.agents.destructive_critic")
@@ -66,6 +67,45 @@ def heuristic_risk(plan: ActionPlan) -> float:
         score += 0.1
 
     return min(1.0, score)
+
+
+def risk_score(plan: ActionPlan, config: PilotConfig | None = None) -> float:
+    """Decides whether a Tier-3-only/irreversible-only plan is worth the
+    LLM critic round-trip — combines the cheap rule-based heuristic_risk()
+    above with the Learned Risk Gate (pilot.security.risk_gate), when
+    enabled, via max().
+
+    max() rather than a blend/average is deliberate: the Learned Risk
+    Gate's checks (predicted disk-usage exhaustion, fork-bomb-like
+    process-count deltas, protected-path/package collisions) are things
+    heuristic_risk() has NO visibility into at all — it only looks at
+    plan length, distinct targets, dangerous_flags, and tier mixing. So
+    for the common case (neither signal finds anything), max() just
+    returns heuristic_risk() unchanged; the gate only ever adds a reason
+    to escalate to critic review that heuristic_risk() alone would have
+    missed, never removes one. This never affects Tier-4 plans, which
+    always get critic review regardless of any risk score — see the
+    `needs_review` predicate at both of this function's call sites
+    (server.py, gateway.py's _maybe_run_critic).
+
+    Falls back to heuristic_risk() unchanged if config is None, the gate
+    is disabled, or no learned weights are staged — see RiskGate's own
+    graceful-degradation philosophy.
+    """
+    base = heuristic_risk(plan)
+    if config is None or not config.gateway.risk_gate_enabled:
+        return base
+
+    try:
+        from pilot.security.risk_gate import get_risk_gate
+
+        gate = get_risk_gate()
+        learned_risk, _reasons = gate.evaluate_plan(plan, config)
+    except Exception:
+        logger.warning("Learned Risk Gate evaluation failed (non-fatal), using heuristic_risk() alone", exc_info=True)
+        return base
+
+    return max(base, learned_risk)
 
 
 # ---------------------------------------------------------------------------

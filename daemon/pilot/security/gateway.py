@@ -393,7 +393,8 @@ class AgentGateway:
         if critic_already_reviewed or self._destructive_critic is None:
             return None
 
-        from pilot.agents.destructive_critic import HEURISTIC_RISK_THRESHOLD, heuristic_risk
+        from pilot.agents.destructive_critic import HEURISTIC_RISK_THRESHOLD
+        from pilot.agents.destructive_critic import risk_score as compute_risk_score
 
         plan_has_tier4 = any(a.permission_tier == PermissionTier.ROOT_CRITICAL for a in plan.actions)
         plan_has_tier3 = any(a.permission_tier == PermissionTier.DESTRUCTIVE for a in plan.actions)
@@ -403,7 +404,7 @@ class AgentGateway:
         if not needs_review:
             return None
 
-        risk_score = heuristic_risk(plan) if (plan_has_tier3 or plan_has_irreversible) else 0.0
+        risk_score = compute_risk_score(plan, self._config) if (plan_has_tier3 or plan_has_irreversible) else 0.0
         if not (plan_has_tier4 or risk_score >= HEURISTIC_RISK_THRESHOLD):
             return None
 

@@ -1256,13 +1256,14 @@ class PilotServer:
             )
 
             from pilot.actions import PermissionTier
-            from pilot.agents.destructive_critic import HEURISTIC_RISK_THRESHOLD, heuristic_risk
+            from pilot.agents.destructive_critic import HEURISTIC_RISK_THRESHOLD
+            from pilot.agents.destructive_critic import risk_score as compute_risk_score
 
             critic_verdict_payload: dict[str, Any] | None = None
             plan_has_tier4 = any(a.permission_tier == PermissionTier.ROOT_CRITICAL for a in plan.actions)
             plan_has_tier3 = any(a.permission_tier == PermissionTier.DESTRUCTIVE for a in plan.actions)
             plan_has_irreversible = any(getattr(a, "is_irreversible", False) for a in plan.actions)
-            risk_score = heuristic_risk(plan) if (plan_has_tier3 or plan_has_irreversible) else 0.0
+            risk_score = compute_risk_score(plan, self.config) if (plan_has_tier3 or plan_has_irreversible) else 0.0
             # Tier 4 always gets the LLM critic. Tier 3 / irreversible-only plans
             # only pay for the LLM round-trip when the cheap heuristic flags them
             # as ambiguous/high-risk — trivial single-file deletes skip straight
