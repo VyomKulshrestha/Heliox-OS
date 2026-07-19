@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from pilot.agents.executor import Executor
     from pilot.agents.threat_containment import ThreatContainmentBridge
     from pilot.models.router import ModelRouter
+    from pilot.security.gateway import TaskScopeOverride
 
 logger = logging.getLogger("pilot.agents.forensics_agent")
 
@@ -86,6 +87,7 @@ class ForensicsAgent(BaseAgent):
         user_input: str,
         plan: ActionPlan,
         context: dict[str, Any] | None = None,
+        scope_override: TaskScopeOverride | None = None,
     ) -> list[ActionResult]:
         """Execute forensics-related log analysis tasks."""
         start = time.time()
@@ -104,7 +106,7 @@ class ForensicsAgent(BaseAgent):
             raw_input=user_input,
         )
 
-        results = await self._executor.execute(sub_plan)
+        results = await self._executor.execute(sub_plan, scope_override=scope_override)
         duration_ms = int((time.time() - start) * 1000)
         self._record_task(duration_ms, all(r.success for r in results))
         self.status = AgentStatus.IDLE

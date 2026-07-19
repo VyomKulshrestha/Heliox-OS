@@ -15,6 +15,7 @@ from pilot.memory.workspace_index import WorkspaceIndex
 if TYPE_CHECKING:
     from pilot.config import PilotConfig
     from pilot.models.router import ModelRouter
+    from pilot.security.gateway import TaskScopeOverride
     from pilot.security.vault import Vault
 
 logger = logging.getLogger("pilot.agents.semantic_search_agent")
@@ -73,7 +74,12 @@ class SemanticSearchAgent(BaseAgent):
         user_input: str,
         plan: ActionPlan,
         context: dict[str, Any] | None = None,
+        scope_override: TaskScopeOverride | None = None,
     ) -> list[ActionResult]:
+        # This agent talks to the local workspace index directly, not
+        # through the shared Executor, so scope_override has nothing to
+        # apply to here — accepted only for interface consistency with
+        # BaseAgent.handle_task.
         results = []
         for action in plan.actions:
             if not self.can_handle(action.action_type):

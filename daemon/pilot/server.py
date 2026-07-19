@@ -4091,7 +4091,37 @@ def handle_tool(tool_name, params):
                 },
             )
 
-            results = await self._executor.execute_plan(plan)
+            from pilot.security.gateway import DEFAULT_SOURCE_PROFILES, InvocationSource, TaskScopeOverride
+
+            if self._orchestrator:
+                # Route through the specialist-agent orchestrator (same one
+                # interactive text commands use) instead of a monolithic
+                # executor call. Individual specialists set their own
+                # invocation_source (e.g. WebAgent hardcodes WEB_AGENT); this
+                # scope_override narrows whichever one applies down to at
+                # most the "voice" profile's ceiling, so a voice-originated
+                # plan can never end up wider than voice's restrictions just
+                # because it got routed to a specialist with a more
+                # permissive default. See TaskScopeOverride/
+                # resolve_effective_profile in pilot.security.gateway.
+                voice_profile = self.config.gateway.source_profiles.get("voice", DEFAULT_SOURCE_PROFILES["voice"])
+                voice_scope_override = TaskScopeOverride(
+                    max_tier=voice_profile.max_tier,
+                    deny_action_types=voice_profile.deny_action_types,
+                    allow_root=voice_profile.allow_root,
+                )
+                results = await self._orchestrator.execute_plan(
+                    command_text,
+                    plan,
+                    plan_id="voice",
+                    scope_override=voice_scope_override,
+                )
+            else:
+                results = await self._executor.execute(
+                    plan,
+                    plan_id="voice",
+                    invocation_source=InvocationSource.VOICE,
+                )
             verification = await self._verifier.verify(plan, results)
 
             output_parts = []

@@ -16,6 +16,7 @@ from pilot.agents.base_agent import AgentCapability, AgentRole, AgentStatus, Bas
 if TYPE_CHECKING:
     from pilot.agents.executor import Executor
     from pilot.models.router import ModelRouter
+    from pilot.security.gateway import TaskScopeOverride
 
 logger = logging.getLogger("pilot.agents.code_agent")
 
@@ -84,6 +85,7 @@ class CodeAgent(BaseAgent):
         user_input: str,
         plan: ActionPlan,
         context: dict[str, Any] | None = None,
+        scope_override: TaskScopeOverride | None = None,
     ) -> list[ActionResult]:
         """Execute code-related actions."""
         import time
@@ -102,7 +104,7 @@ class CodeAgent(BaseAgent):
             raw_input=user_input,
         )
 
-        results = await self._executor.execute(sub_plan)
+        results = await self._executor.execute(sub_plan, scope_override=scope_override)
 
         # Auto-debug: if any code execution failed, try to fix and re-run
         failed = [r for r in results if not r.success and r.action.action_type == ActionType.CODE_EXECUTE]

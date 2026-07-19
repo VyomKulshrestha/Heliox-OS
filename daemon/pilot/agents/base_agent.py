@@ -26,6 +26,7 @@ from pilot.actions import ActionPlan, ActionResult, ActionType
 if TYPE_CHECKING:
     from pilot.agents.orchestrator import AgentOrchestrator
     from pilot.models.router import ModelRouter
+    from pilot.security.gateway import TaskScopeOverride
 
 logger = logging.getLogger("pilot.agents.base")
 
@@ -152,8 +153,18 @@ class BaseAgent(ABC):
         user_input: str,
         plan: ActionPlan,
         context: dict[str, Any] | None = None,
+        scope_override: TaskScopeOverride | None = None,
     ) -> list[ActionResult]:
-        """Execute actions that fall within this agent's domain."""
+        """Execute actions that fall within this agent's domain.
+
+        scope_override: an optional gateway narrowing constraint from the
+        orchestrator's caller (see pilot.security.gateway) — e.g. a
+        voice-originated plan's ceiling. Agents that call the shared
+        Executor forward this straight through to execute()'s own
+        scope_override param, which can only narrow (never widen) whatever
+        invocation_source that agent already uses. Agents that don't route
+        through Executor (most read-only specialists) simply ignore it —
+        they aren't gateway-scoped today regardless of caller."""
         ...
 
     @abstractmethod

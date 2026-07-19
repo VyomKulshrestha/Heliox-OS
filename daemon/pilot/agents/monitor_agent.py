@@ -22,6 +22,7 @@ from pilot.agents.base_agent import (
 if TYPE_CHECKING:
     from pilot.agents.background import BackgroundTaskManager
     from pilot.models.router import ModelRouter
+    from pilot.security.gateway import TaskScopeOverride
 
 logger = logging.getLogger("pilot.agents.monitor_agent")
 
@@ -92,8 +93,14 @@ class MonitorAgent(BaseAgent):
         user_input: str,
         plan: ActionPlan,
         context: dict[str, Any] | None = None,
+        scope_override: TaskScopeOverride | None = None,
     ) -> list[ActionResult]:
-        """Handle monitoring-related tasks by delegating to BackgroundTaskManager."""
+        """Handle monitoring-related tasks by delegating to BackgroundTaskManager.
+
+        Note: BackgroundTaskManager is driven directly, not through the
+        shared Executor, so scope_override has nothing to apply to here —
+        accepted only for interface consistency with BaseAgent.handle_task.
+        """
         import time
 
         start = time.time()

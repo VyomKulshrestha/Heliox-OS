@@ -16,6 +16,7 @@ from pilot.agents.registry import auto_register
 if TYPE_CHECKING:
     from pilot.config import PilotConfig
     from pilot.models.router import ModelRouter
+    from pilot.security.gateway import TaskScopeOverride
     from pilot.security.vault import Vault
 
 logger = logging.getLogger("pilot.agents.calendar_agent")
@@ -80,7 +81,12 @@ class CalendarAgent(BaseAgent):
         user_input: str,
         plan: ActionPlan,
         context: dict[str, Any] | None = None,
+        scope_override: TaskScopeOverride | None = None,
     ) -> list[ActionResult]:
+        # Note: this agent talks to caldav/icalendar directly rather than
+        # through the shared Executor, so it isn't gateway-scoped today —
+        # scope_override is accepted for interface consistency with
+        # BaseAgent.handle_task but has nothing to apply it to here.
         results = []
         for action in plan.actions:
             if not self.can_handle(action.action_type):

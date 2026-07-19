@@ -15,6 +15,7 @@ from pilot.agents.base_agent import AgentCapability, AgentRole, AgentStatus, Bas
 if TYPE_CHECKING:
     from pilot.agents.executor import Executor
     from pilot.models.router import ModelRouter
+    from pilot.security.gateway import TaskScopeOverride
 
 logger = logging.getLogger("pilot.agents.comm_agent")
 
@@ -80,6 +81,7 @@ class CommunicationAgent(BaseAgent):
         user_input: str,
         plan: ActionPlan,
         context: dict[str, Any] | None = None,
+        scope_override: TaskScopeOverride | None = None,
     ) -> list[ActionResult]:
         """Execute communication-related actions."""
         import time
@@ -98,7 +100,7 @@ class CommunicationAgent(BaseAgent):
             raw_input=user_input,
         )
 
-        results = await self._executor.execute(sub_plan)
+        results = await self._executor.execute(sub_plan, scope_override=scope_override)
         duration_ms = int((time.time() - start) * 1000)
         self._record_task(duration_ms, all(r.success for r in results))
         self.status = AgentStatus.IDLE

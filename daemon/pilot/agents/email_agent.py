@@ -37,6 +37,7 @@ from pilot.agents.base_agent import AgentCapability, AgentRole, AgentStatus, Bas
 
 if TYPE_CHECKING:
     from pilot.models.router import ModelRouter
+    from pilot.security.gateway import TaskScopeOverride
 
 logger = logging.getLogger("pilot.agents.email_agent")
 
@@ -119,8 +120,14 @@ class EmailAgent(BaseAgent):
         user_input: str,
         plan: ActionPlan,
         context: dict[str, Any] | None = None,
+        scope_override: TaskScopeOverride | None = None,
     ) -> list[ActionResult]:
-        """Dispatch each email action to the appropriate handler."""
+        """Dispatch each email action to the appropriate handler.
+
+        Note: this agent talks to IMAP/SMTP directly, not through the
+        shared Executor, so scope_override has nothing to apply to here —
+        accepted only for interface consistency with BaseAgent.handle_task.
+        """
         start = time.time()
         self.status = AgentStatus.BUSY
 

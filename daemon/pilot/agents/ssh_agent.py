@@ -23,6 +23,7 @@ from pilot.agents.base_agent import AgentCapability, AgentRole, AgentStatus, Bas
 
 if TYPE_CHECKING:
     from pilot.models.router import ModelRouter
+    from pilot.security.gateway import TaskScopeOverride
 
 logger = logging.getLogger("pilot.agents.ssh_agent")
 
@@ -95,7 +96,11 @@ class SshAgent(BaseAgent):
         user_input: str,
         plan: ActionPlan,
         context: dict[str, Any] | None = None,
+        scope_override: TaskScopeOverride | None = None,
     ) -> list[ActionResult]:
+        # This agent connects via paramiko directly, not through the shared
+        # Executor, so scope_override has nothing to apply to here —
+        # accepted only for interface consistency with BaseAgent.handle_task.
         import time
 
         start = time.time()

@@ -55,6 +55,7 @@ class PrioritizedTask:
 if TYPE_CHECKING:
     from pilot.models.budget_tracker import BudgetTracker
     from pilot.models.router import ModelRouter
+    from pilot.security.gateway import TaskScopeOverride
 
 logger = logging.getLogger("pilot.agents.orchestrator")
 
@@ -279,6 +280,7 @@ class AgentOrchestrator:
         on_action_complete: Callable | None = None,
         cancel_event: asyncio.Event | None = None,
         plan_id: str | None = None,
+        scope_override: TaskScopeOverride | None = None,
     ) -> list[ActionResult]:
         """Execute a plan by routing actions to specialist agents.
 
@@ -291,6 +293,13 @@ class AgentOrchestrator:
         the id through via the current_task_id ContextVar so downstream model
         calls and record_usage attribute their tokens to this task. The task
         is cleaned up in a finally block regardless of how execution ends.
+
+        scope_override: an optional gateway narrowing constraint (see
+        pilot.security.gateway) applied uniformly across every specialist
+        this plan gets routed to — e.g. a voice-originated plan should never
+        exceed voice's ceiling, regardless of which agent (or that agent's
+        own hardcoded invocation_source) ends up handling a given action.
+        None (the default) preserves today's behavior for existing callers.
         """
         task_id = plan_id or str(uuid.uuid4())
         ctx_token = current_task_id.set(task_id)
@@ -305,6 +314,7 @@ class AgentOrchestrator:
                 on_action_start=on_action_start,
                 on_action_complete=on_action_complete,
                 cancel_event=cancel_event,
+                scope_override=scope_override,
             )
         finally:
             if self._budget_tracker:
@@ -321,6 +331,7 @@ class AgentOrchestrator:
         on_action_start: Callable | None,
         on_action_complete: Callable | None,
         cancel_event: asyncio.Event | None,
+        scope_override: TaskScopeOverride | None = None,
     ) -> list[ActionResult]:
         """Inner execution loop — extracted so the task lifecycle wrapper
         in execute_plan() stays small and the try/finally is obvious."""
@@ -403,7 +414,7 @@ class AgentOrchestrator:
             # the agent's LLM calls, we halt the plan cleanly instead of
             # letting the exception escape and leave the task in limbo.
             try:
-                results = await agent.handle_task(user_input, sub_plan)
+                results = await agent.handle_task(user_input, sub_plan, scope_override=scope_override)
             except (
                 ActionBudgetExceededError,
                 TaskBudgetExceededError,
