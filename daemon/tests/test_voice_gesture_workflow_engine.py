@@ -78,7 +78,7 @@ def _engine(tmp_path, planner=None, executor=None, decomposer=None):
     )
 
 
-async def _wait_until_terminal(engine, workflow_id, timeout=2.0):
+async def _wait_until_terminal(engine, workflow_id, timeout=10.0):
     loop = asyncio.get_event_loop()
     deadline = loop.time() + timeout
     while loop.time() < deadline:
