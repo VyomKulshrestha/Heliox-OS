@@ -11,6 +11,7 @@
   import GatewayAuditLog from "./GatewayAuditLog.svelte";
   import GestureWorkflowBindings from "./GestureWorkflowBindings.svelte";
   import VoiceGestureWorkflowStatus from "./VoiceGestureWorkflowStatus.svelte";
+  import SelfHealingPanel from "./SelfHealingPanel.svelte";
   import { GestureCalibrationStore } from "../gesture/calibration";
 
   let pendingConfirm = $state<{ message: string; danger: boolean; onConfirm: () => void } | null>(null);
@@ -150,6 +151,12 @@
   function toggleGestureCursor() {
     settings.updateSection("gesture_cursor", {
       enabled: !$settings.gesture_cursor?.enabled,
+    });
+  }
+
+  function toggleGazeTracking() {
+    settings.updateSection("vision", {
+      gaze_tracking_enabled: !$settings.vision?.gaze_tracking_enabled,
     });
   }
 
@@ -528,6 +535,27 @@
   </section>
 
   <section class="settings-group">
+    <h3>{$_('settings.gaze_tracking')}</h3>
+    <p class="gesture-cursor-warning">{$_('settings.gaze_tracking_desc')}</p>
+
+    <div class="setting-row">
+      <div class="setting-info">
+        <span class="setting-label">{$_('settings.gaze_tracking_enabled')}</span>
+        <span class="setting-desc">{$_('settings.gaze_tracking_enabled_desc')}</span>
+      </div>
+      <button
+        class="toggle"
+        class:active={$settings.vision?.gaze_tracking_enabled}
+        onclick={toggleGazeTracking}
+        aria-label="Toggle Gaze Tracking"
+        title="Toggle Gaze Tracking"
+      >
+        <span class="toggle-knob"></span>
+      </button>
+    </div>
+  </section>
+
+  <section class="settings-group">
     <h3>{$_('settings.gesture_cursor')}</h3>
 
     <p class="gesture-cursor-warning">{$_('settings.gesture_cursor_warning')}</p>
@@ -820,6 +848,10 @@
 
   <section class="settings-group audit-log-section">
     <VoiceGestureWorkflowStatus />
+  </section>
+
+  <section class="settings-group audit-log-section">
+    <SelfHealingPanel />
   </section>
 
   <section class="settings-group">
