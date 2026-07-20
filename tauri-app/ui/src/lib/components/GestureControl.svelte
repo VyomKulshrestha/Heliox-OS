@@ -43,7 +43,7 @@
   import { settings } from "../stores/settings";
   import { tick } from "svelte";
   import { Hands, type Results } from "@mediapipe/hands";
-  import { FilesetResolver, HandLandmarker } from "@mediapipe/tasks-vision";
+  import { FilesetResolver, HandLandmarker, FaceLandmarker } from "@mediapipe/tasks-vision";
   import {
     LandmarkFilterBank,
     computeHandQuality,
@@ -62,6 +62,7 @@
     detectPushPull3D,
     WorldModelFilterBank,
   } from "../gesture/worldModel";
+  import { estimateGazeRegion, type GazeRegion } from "../gesture/gazeTracking";
   import { isTauriRuntime } from "../utils/runtime";
   import { GestureCalibrationStore, classifyOutcome, REVERSAL_WINDOW_MS, type GestureEvent } from "../gesture/calibration";
   import { classifyControlGesture } from "../gesture/workflowControl";
@@ -92,6 +93,24 @@
   // by handleFrameResult()'s 3D push/pull + metric pinch confirmation
   // checks below (see worldModel.ts).
   let lastWorldLandmarks: Landmark[] | null = null;
+
+  // ── Gaze tracking (third input modality, see gazeTracking.ts) ──
+  //
+  // A SEPARATE model from the hand backend — runs (or doesn't) independent
+  // of activeBackend's legacy/tasks choice, gated only on
+  // $settings.vision.gaze_tracking_enabled. Only ever sends a coarse
+  // region label + confidence to the backend, never raw face landmarks or
+  // video — see gazeTracking.ts's module docstring.
+  let faceLandmarker: FaceLandmarker | null = null;
+  let gazeTrackingActive = false;
+  let lastGazeRegion: GazeRegion | null = null;
+  let gazeFrameCounter = 0;
+  // Face detection runs far less often than hand detection -- a coarse
+  // "which rough direction" signal doesn't need 30fps, and running two
+  // ML inference passes every single frame on a CPU delegate is a real
+  // cost this keeps in check.
+  const GAZE_FRAME_INTERVAL = 6;
+
   let animFrameId: number = 0;
   let lastGestureTime = 0;
   let candidateGesture = "";
@@ -370,6 +389,32 @@
     }
   }
 
+  // ── MediaPipe Tasks-Vision FaceLandmarker Loading (gaze tracking) ──
+  //
+  // A separate model from the hand backend, loaded independently and only
+  // when $settings.vision.gaze_tracking_enabled is on (see gazeTracking.ts).
+  // Same CPU-delegate rationale as loadHandLandmarker() above.
+  async function loadFaceLandmarker() {
+    if (faceLandmarker) return true;
+
+    try {
+      const vision = await FilesetResolver.forVisionTasks(MEDIAPIPE_TASKS_VISION_ASSET_BASE);
+      faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath: `${MEDIAPIPE_TASKS_VISION_ASSET_BASE}/face_landmarker.task`,
+          delegate: "CPU",
+        },
+        runningMode: "VIDEO",
+        numFaces: 1,
+      });
+      return true;
+    } catch (e) {
+      console.error("MediaPipe FaceLandmarker load error (gaze tracking disabled for this session):", e);
+      faceLandmarker = null;
+      return false;
+    }
+  }
+
   async function toggleGestures() {
     if (isActive) stopGestures();
     else await startGestures();
@@ -466,6 +511,15 @@
 
     await subscribeToWorkflowState();
 
+    // Gaze tracking is independent of the hand backend choice and never
+    // blocks gesture engine startup if it fails to load — it's an
+    // additive, opt-in third modality, not a required dependency.
+    if ($settings.vision?.gaze_tracking_enabled) {
+      gazeTrackingActive = await loadFaceLandmarker();
+    } else {
+      gazeTrackingActive = false;
+    }
+
     try {
       stream = await navigator.mediaDevices.getUserMedia({
         video: { width: 320, height: 240, facingMode: "user" },
@@ -515,6 +569,13 @@
       try { handLandmarker.close(); } catch { /* ignore */ }
       handLandmarker = null;
     }
+    if (faceLandmarker) {
+      try { faceLandmarker.close(); } catch { /* ignore */ }
+      faceLandmarker = null;
+    }
+    gazeTrackingActive = false;
+    lastGazeRegion = null;
+    gazeFrameCounter = 0;
     lastWorldLandmarks = null;
 
     // 3. Stop camera tracks AFTER MediaPipe is closed
@@ -565,8 +626,41 @@
       return;
     }
 
+    if (gazeTrackingActive && faceLandmarker) {
+      gazeFrameCounter++;
+      if (gazeFrameCounter >= GAZE_FRAME_INTERVAL) {
+        gazeFrameCounter = 0;
+        try {
+          const faceResult = faceLandmarker.detectForVideo(videoEl, performance.now());
+          const faceLandmarks = faceResult.faceLandmarks?.[0] as { x: number; y: number; z?: number }[] | undefined;
+          const estimate = estimateGazeRegion(faceLandmarks ?? null);
+          // Only send on CHANGE, not every sampled frame -- a steady gaze
+          // shouldn't spam the backend, and the fusion engine only needs
+          // "where is the user looking now", not a continuous stream.
+          if (estimate && estimate.region !== lastGazeRegion) {
+            lastGazeRegion = estimate.region;
+            void sendGazeEvent(estimate.region, estimate.confidence);
+          }
+        } catch { /* ignore */ }
+      }
+    }
+
     if (isActive && !stopping) {
       animFrameId = requestAnimationFrame(detectFrame);
+    }
+  }
+
+  /** Sends only the coarse region label + confidence to the backend --
+   * never raw face landmarks or video frames (see gazeTracking.ts's
+   * module docstring on the privacy rationale). Best-effort: a failed
+   * send just means this one gaze update didn't reach the fusion engine,
+   * not a reason to disrupt the gesture/camera pipeline. */
+  async function sendGazeEvent(region: GazeRegion, confidence: number): Promise<void> {
+    try {
+      const { call } = await import("../api/daemon");
+      await call("gaze_event", { region, confidence });
+    } catch {
+      // best-effort -- see doc comment above
     }
   }
 

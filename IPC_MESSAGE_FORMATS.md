@@ -394,6 +394,26 @@ Feed a gesture event to the fusion engine.
 ```
 **Result:** same shape as `voice_event`.
 
+#### `gaze_event`
+Feed a coarse gaze-region reading to the fusion engine (see GESTURES.md's
+"Gaze Tracking" section). Only ever a region label + confidence — never
+raw face landmarks or video.
+
+**Params:**
+```json
+{ "region": "left", "confidence": 0.72 }
+```
+`region` is one of `"center"`, `"left"`, `"right"`, `"up"`, `"down"`.
+
+**Result:**
+```json
+{ "status": "ingested" }
+```
+`status` is `"ingested"` (the reading was buffered — gaze never itself
+produces a fused intent, only voice/gesture do, using gaze as
+disambiguating context), `"ignored"` when `config.vision.gaze_tracking_enabled`
+is off, or `"error"` when the fusion engine isn't initialized.
+
 #### `multimodal_stats`
 Return fusion engine statistics.
 

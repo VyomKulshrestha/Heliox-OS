@@ -207,6 +207,76 @@ camera data — same caveat the 2D thresholds carried when first introduced.
 
 ---
 
+## Gaze Tracking (third input modality)
+
+An **opt-in**, `vision.gaze_tracking_enabled` (default off), third input
+modality alongside voice + gesture — coarse, on-device gaze-region
+estimation, fused into the multimodal fusion engine as a passive
+disambiguating signal, never a standalone command trigger on its own.
+
+**Accuracy expectations, stated plainly**: a consumer webcam has no IR
+eye-tracker hardware, so this is deliberately **not** pixel-precise
+pointing — that would need a real per-user calibration routine this
+feature doesn't attempt. Instead, `lib/gesture/gazeTracking.ts`'s
+`estimateGazeRegion()` reports one of five coarse regions
+(`center`/`left`/`right`/`up`/`down`) from where the iris sits within each
+eye socket (MediaPipe's 478-point face mesh with iris refinement,
+indices 468/473), averaged across both eyes for robustness against a
+turned head foreshortening one eye's landmarks more than the other. A
+dead zone around the geometric center absorbs normal jitter so "center"
+doesn't flicker to a side reading on every frame. Pure geometry, no
+learned component, fully unit-tested (`gazeTracking.test.ts`) against
+synthetic fixtures — but like every other empirically-tuned threshold in
+this pipeline, the deadzone/discretization constants haven't been
+validated against a real camera in this environment.
+
+**On-device processing, privacy-first**: `GestureControl.svelte` loads
+`@mediapipe/tasks-vision`'s `FaceLandmarker` as a completely separate
+model from the hand-tracking backend (independent of the
+`legacy`/`tasks` hand-backend choice), running on the same webcam stream
+at a reduced sampling rate (every 6th frame — a coarse "which rough
+direction" signal doesn't need 30fps, and running two ML inference
+passes every single frame on the CPU delegate is a real cost worth
+avoiding). **Only the coarse region label + a confidence float are ever
+sent to the backend** — never raw face landmarks or video frames, the
+same minimal-data-sent principle the existing gesture pipeline already
+follows (gesture events send just a gesture name, not landmark
+coordinates).
+
+**Fusion**: `pilot.multimodal.fusion.MultimodalFusionEngine` gained a
+third `ModalityType.GAZE` and its own buffer (`on_gaze_event()`), but
+gaze is architecturally different from voice/gesture — it only ever
+*ingests* into the buffer for lookup by the other two modalities; it
+never independently produces or emits a `FusedIntent` (there's no
+`GESTURE_STANDALONE_COMMANDS`-style table for gaze, because "looking
+somewhere" isn't a command on its own the way a gesture can be). When a
+recent gaze reading exists within the fusion time window, it's attached
+as `metadata["gaze_region"]`/`metadata["gaze_confidence"]` on whatever
+intent voice/gesture produce, and gives a small, capped confidence bonus
+specifically when the resolved gesture modifier is `target` or `select`
+(the cases where "where is the user looking" is actually relevant
+context) — it never lowers a confidence voice/gesture already
+established, and it never rewrites the command text itself via string
+matching (deliberately: the well-tested `MULTIMODAL_TEMPLATES` design
+stays untouched; gaze is passed through as structured metadata for a
+downstream consumer to use, not spliced into natural language here).
+
+**Model provenance**: `vendor/mediapipe/face_landmarker.task` (~3.76MB),
+same source/verification/license-ambiguity note as
+`hand_landmarker.task` above — downloaded from Google's official public
+MediaPipe model distribution URL, MD5 verified against the source's
+`x-goog-hash` header before committing. The existing
+`mediapipeTasksVisionAssets()` Vite plugin already serves any file placed
+in the vendor directory, so no build-tooling changes were needed to add
+this second model.
+
+**Not verified in this pass**: real-camera accuracy of the coarse
+region estimation, and whether the confidence-bonus/deadzone constants
+hold up against actual users — same caveat as the 3D world-model layer
+above.
+
+---
+
 ## Gesture Cursor Control (continuous cursor bridge)
 
 A separate, **off-by-default** mode that continuously drives the real OS
@@ -434,15 +504,19 @@ To add a new gesture:
 | `tauri-app/ui/src/lib/gesture/worldModel.ts` | Real-metric-scale 3D world-model layer (wrist-relative worldLandmarks, metric hand-size/pinch, push-pull, coupled 3D temporal filtering) — "tasks" backend only |
 | `tauri-app/ui/src/lib/gesture/worldModel.test.ts` | Unit tests for the 3D world-model layer |
 | `tauri-app/ui/vendor/mediapipe/hand_landmarker.task` | Vendored HandLandmarker model (float16) — see provenance/license note above |
-| `tauri-app/ui/vite.config.ts` | `mediapipeTasksVisionAssets()` plugin — self-hosts the Tasks-vision WASM loader + vendored model at `/mediapipe/tasks-vision/*` |
+| `tauri-app/ui/vendor/mediapipe/face_landmarker.task` | Vendored FaceLandmarker model (float16, iris refinement) — see gaze tracking provenance note above |
+| `tauri-app/ui/vite.config.ts` | `mediapipeTasksVisionAssets()` plugin — self-hosts the Tasks-vision WASM loader + vendored models (hand + face) at `/mediapipe/tasks-vision/*` |
+| `tauri-app/ui/src/lib/gesture/gazeTracking.ts` | Pure coarse gaze-region estimation from iris/eye-socket landmarks — third fusion modality, no calibration |
+| `tauri-app/ui/src/lib/gesture/gazeTracking.test.ts` | Unit tests for gaze-region discretization against synthetic face-mesh fixtures |
 | `tauri-app/ui/src/lib/gesture/calibration.ts` | On-device gesture calibration — EMA, reversal detection, localStorage store |
 | `tauri-app/ui/src/lib/gesture/calibration.test.ts` | Unit tests for calibration EMA/clamping/reversal-pairing logic |
 | `tauri-app/ui/src/lib/utils/runtime.ts` | `isTauriRuntime()` — used to pick the native vs. daemon-RPC cursor path |
-| `tauri-app/ui/src/lib/stores/settings.ts` | `gesture_cursor`, `adaptive_calibration`, `vision.mediapipe_backend` settings sections |
+| `tauri-app/ui/src/lib/stores/settings.ts` | `gesture_cursor`, `adaptive_calibration`, `vision.mediapipe_backend`, `vision.gaze_tracking_enabled` settings sections |
 | `tauri-app/ui/src/lib/components/SettingsPanel.svelte` | Gesture Cursor Control + Gesture/Voice Calibration settings UI |
 | `tauri-app/src-tauri/src/commands.rs` | `move_gesture_cursor`/`click_gesture_cursor` Tauri commands (enigo) |
-| `daemon/pilot/server.py` | `cursor_move`/`cursor_click`, `reset_wake_calibration`/`list_wake_variants` RPC handlers |
-| `daemon/pilot/config.py` | `GestureCursorConfig`, `AdaptiveCalibrationConfig`, `VisionConfig.mediapipe_backend` |
+| `daemon/pilot/server.py` | `cursor_move`/`cursor_click`, `reset_wake_calibration`/`list_wake_variants`, `gaze_event` RPC handlers |
+| `daemon/pilot/config.py` | `GestureCursorConfig`, `AdaptiveCalibrationConfig`, `VisionConfig.mediapipe_backend`/`gaze_tracking_enabled` |
+| `daemon/pilot/multimodal/fusion.py` | `MultimodalFusionEngine` — voice+gesture fusion, plus gaze as a passive third modality (buffer-only, confidence-bonus metadata) |
 | `daemon/pilot/system/voice_calibration.py` | On-device wake-word calibration — Levenshtein near-miss detection, promotion, JSON store |
 | `tauri-app/ui/src/App.svelte` | Gesture to UI navigation handler |
 | `tauri-app/src-tauri/tauri.conf.json` | CSP allowing MediaPipe CDN |

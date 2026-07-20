@@ -758,6 +758,7 @@ class PilotServer:
             "agent_spawn": self._handle_agent_spawn,
             "voice_event": self._handle_voice_event,
             "gesture_event": self._handle_gesture_event,
+            "gaze_event": self._handle_gaze_event,
             "cursor_move": self._handle_cursor_move,
             "cursor_click": self._handle_cursor_click,
             "multimodal_stats": self._handle_multimodal_stats,
@@ -2967,6 +2968,37 @@ class PilotServer:
         if intent:
             return {"status": "fused", "intent": intent.to_dict()}
         return {"status": "buffered"}
+
+    async def _handle_gaze_event(self, params: dict, ws: ServerConnection) -> dict:
+        """Receive a coarse gaze-region reading from the frontend and feed
+        it to the fusion engine as a passive disambiguating signal.
+
+        Args:
+            params: JSON-RPC parameters with region, confidence. Never raw
+                face landmarks — see gazeTracking.ts's privacy rationale.
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with status — gaze never itself produces a fused
+            intent (see MultimodalFusionEngine.on_gaze_event's docstring),
+            only "ingested" or "ignored" (below the confidence floor) or
+            "error" (fusion engine not initialized).
+        """
+        if not self._fusion:
+            return {"status": "error", "message": "Fusion engine not initialized"}
+
+        if not self.config.vision.gaze_tracking_enabled:
+            return {"status": "ignored", "reason": "gaze_tracking_disabled"}
+
+        from pilot.multimodal.fusion import InputEvent, ModalityType
+
+        event = InputEvent(
+            modality=ModalityType.GAZE,
+            gaze_region=params.get("region", ""),
+            gaze_confidence=params.get("confidence", 0.0),
+        )
+        await self._fusion.on_gaze_event(event)
+        return {"status": "ingested"}
 
     async def _handle_multimodal_stats(self, params: dict, ws: ServerConnection) -> dict:
         """Return multimodal fusion engine statistics.

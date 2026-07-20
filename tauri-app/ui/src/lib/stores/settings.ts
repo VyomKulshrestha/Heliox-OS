@@ -37,6 +37,7 @@ export interface PilotSettings {
   };
   vision: {
     mediapipe_backend: "legacy" | "tasks";
+    gaze_tracking_enabled: boolean;
   };
   gesture_cursor: {
     enabled: boolean;
@@ -91,6 +92,7 @@ const defaultSettings: PilotSettings = {
   },
   vision: {
     mediapipe_backend: "legacy",
+    gaze_tracking_enabled: false,
   },
   gesture_cursor: {
     enabled: false,

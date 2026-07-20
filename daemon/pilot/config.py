@@ -157,6 +157,15 @@ class VisionConfig:
     # Defaults to "legacy" — flipping this restarts the gesture engine
     # rather than hot-swapping mid-session.
     mediapipe_backend: str = "legacy"
+    # Coarse, on-device gaze-region estimation (see GESTURES.md's gaze
+    # section and tauri-app/ui/src/lib/gesture/gazeTracking.ts) — a THIRD
+    # input modality alongside voice/gesture, fed into the multimodal
+    # fusion engine (pilot.multimodal.fusion) as a passive disambiguating
+    # signal, never a standalone command trigger on its own. Off by
+    # default: a new capability (another camera-derived signal sent to the
+    # backend, however coarse), same opt-in-first treatment as
+    # gesture_cursor.
+    gaze_tracking_enabled: bool = False
 
 
 @dataclass
@@ -473,6 +482,7 @@ def _validate_config_types(raw: dict) -> None:
         "vision": {
             "camera_index": int,
             "mediapipe_backend": str,
+            "gaze_tracking_enabled": bool,
         },
         "gesture_cursor": {
             "enabled": bool,

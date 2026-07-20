@@ -34,6 +34,7 @@ logger = logging.getLogger("pilot.multimodal.fusion")
 class ModalityType(StrEnum):
     VOICE = "voice"
     GESTURE = "gesture"
+    GAZE = "gaze"
 
 
 class GestureModifier(StrEnum):
@@ -109,7 +110,7 @@ GESTURE_STANDALONE_COMMANDS: dict[str, str] = {
 
 @dataclass
 class InputEvent:
-    """A single input event from either voice or gesture."""
+    """A single input event from voice, gesture, or gaze."""
 
     modality: ModalityType
     timestamp: float = field(default_factory=time.time)
@@ -121,6 +122,12 @@ class InputEvent:
     gesture_name: str = ""
     gesture_confidence: float = 0.0
     gesture_data: dict[str, Any] = field(default_factory=dict)
+    # Gaze fields — a coarse screen-region label ("center"/"left"/"right"/
+    # "up"/"down", see tauri-app/ui/src/lib/gesture/gazeTracking.ts), never
+    # raw face landmarks. Gaze is a passive disambiguating signal, not an
+    # independent command trigger — see on_gaze_event()'s docstring.
+    gaze_region: str = ""
+    gaze_confidence: float = 0.0
 
 
 @dataclass
@@ -209,15 +216,22 @@ class MultimodalFusionEngine:
         time_window_ms: float = 1500,
         min_gesture_confidence: float = 0.6,
         min_voice_confidence: float = 0.4,
+        min_gaze_confidence: float = 0.3,
         gesture_hold_frames: int = 3,
     ) -> None:
         self.time_window_s = time_window_ms / 1000.0
         self.min_gesture_confidence = min_gesture_confidence
         self.min_voice_confidence = min_voice_confidence
+        # Lower bar than voice/gesture — gaze is a supplementary
+        # disambiguating signal here (see on_gaze_event()'s docstring),
+        # never an independent trigger, so it doesn't need the same
+        # confidence floor a command-initiating modality does.
+        self.min_gaze_confidence = min_gaze_confidence
         self.gesture_hold_frames = gesture_hold_frames
 
         self._voice_buffer: list[InputEvent] = []
         self._gesture_buffer: list[InputEvent] = []
+        self._gaze_buffer: list[InputEvent] = []
         self._recent_intents: list[FusedIntent] = []
         self._on_intent: Callable[[FusedIntent], Coroutine] | None = None
         self._broadcast_fn: Callable[..., Coroutine] | None = None
@@ -251,13 +265,14 @@ class MultimodalFusionEngine:
             if event.voice_confidence < self.min_voice_confidence:
                 return None
 
-            # Check for recent gestures within the time window
+            # Check for recent gestures/gaze within the time window
             recent_gesture = self._find_recent_gesture(event.timestamp)
+            recent_gaze = self._find_recent_gaze(event.timestamp)
 
             if recent_gesture:
-                intent = self._fuse_voice_gesture(event, recent_gesture)
+                intent = self._fuse_voice_gesture(event, recent_gesture, recent_gaze)
             else:
-                intent = self._voice_only_intent(event)
+                intent = self._voice_only_intent(event, recent_gaze)
 
             intent = await self._apply_cognitive_intent(intent, voice=event, gesture=recent_gesture)
             return await self._emit_intent(intent)
@@ -282,20 +297,35 @@ class MultimodalFusionEngine:
             self._gesture_buffer.append(event)
             self._prune_buffers()
 
-            # Check for recent voice within the time window
+            # Check for recent voice/gaze within the time window
             recent_voice = self._find_recent_voice(event.timestamp)
+            recent_gaze = self._find_recent_gaze(event.timestamp)
 
             if recent_voice:
-                intent = self._fuse_voice_gesture(recent_voice, event)
+                intent = self._fuse_voice_gesture(recent_voice, event, recent_gaze)
             else:
-                intent = self._gesture_only_intent(event)
+                intent = self._gesture_only_intent(event, recent_gaze)
 
             intent = await self._apply_cognitive_intent(intent, voice=recent_voice, gesture=event)
             return await self._emit_intent(intent)
 
+    async def on_gaze_event(self, event: InputEvent) -> None:
+        """Ingests a gaze reading into the buffer for other modalities to
+        look up — gaze is a passive disambiguating signal (see
+        InputEvent.gaze_region's docstring), never an independent command
+        trigger on its own, so unlike on_voice_event/on_gesture_event this
+        never produces or emits a FusedIntent by itself."""
+        if event.gaze_confidence < self.min_gaze_confidence:
+            return
+        async with self._lock:
+            self._gaze_buffer.append(event)
+            self._prune_buffers()
+
     # ── Fusion logic ──
 
-    def _fuse_voice_gesture(self, voice: InputEvent, gesture: InputEvent) -> FusedIntent:
+    def _fuse_voice_gesture(
+        self, voice: InputEvent, gesture: InputEvent, gaze: InputEvent | None = None
+    ) -> FusedIntent:
         """Combine a voice command with a gesture modifier."""
         modifier = GESTURE_MODIFIERS.get(gesture.gesture_name, "")
         modifier_str = modifier.value if isinstance(modifier, GestureModifier) else str(modifier)
@@ -309,6 +339,13 @@ class MultimodalFusionEngine:
         # Combined confidence: weighted average (voice 60%, gesture 40%)
         combined_confidence = voice.voice_confidence * 0.6 + gesture.gesture_confidence * 0.4
 
+        metadata: dict[str, Any] = {
+            "voice_timestamp": voice.timestamp,
+            "gesture_timestamp": gesture.timestamp,
+            "time_delta_ms": abs(voice.timestamp - gesture.timestamp) * 1000,
+        }
+        combined_confidence = self._apply_gaze(metadata, gaze, modifier_str, combined_confidence)
+
         return FusedIntent(
             command=command,
             voice_component=voice.transcript,
@@ -316,32 +353,68 @@ class MultimodalFusionEngine:
             gesture_modifier=modifier_str,
             fusion_type="voice_gesture",
             confidence=combined_confidence,
-            metadata={
-                "voice_timestamp": voice.timestamp,
-                "gesture_timestamp": gesture.timestamp,
-                "time_delta_ms": abs(voice.timestamp - gesture.timestamp) * 1000,
-            },
+            metadata=metadata,
         )
 
-    def _voice_only_intent(self, voice: InputEvent) -> FusedIntent:
+    def _voice_only_intent(self, voice: InputEvent, gaze: InputEvent | None = None) -> FusedIntent:
         """Create an intent from voice only."""
+        metadata: dict[str, Any] = {}
+        confidence = self._apply_gaze(metadata, gaze, "", voice.voice_confidence)
         return FusedIntent(
             command=voice.transcript,
             voice_component=voice.transcript,
             fusion_type="voice_only",
-            confidence=voice.voice_confidence,
+            confidence=confidence,
+            metadata=metadata,
         )
 
-    def _gesture_only_intent(self, gesture: InputEvent) -> FusedIntent:
+    def _gesture_only_intent(self, gesture: InputEvent, gaze: InputEvent | None = None) -> FusedIntent:
         """Create an intent from gesture only (standalone command)."""
         command = GESTURE_STANDALONE_COMMANDS.get(gesture.gesture_name, gesture.gesture_name)
+        modifier = GESTURE_MODIFIERS.get(gesture.gesture_name, "")
+        modifier_str = modifier.value if isinstance(modifier, GestureModifier) else str(modifier)
+        metadata: dict[str, Any] = {}
+        confidence = self._apply_gaze(metadata, gaze, modifier_str, gesture.gesture_confidence)
         return FusedIntent(
             command=command,
             gesture_component=gesture.gesture_name,
-            gesture_modifier=GESTURE_MODIFIERS.get(gesture.gesture_name, ""),
+            gesture_modifier=modifier_str,
             fusion_type="gesture_only",
-            confidence=gesture.gesture_confidence,
+            confidence=confidence,
+            metadata=metadata,
         )
+
+    # Gaze corroboration only ever nudges confidence UP by a small, capped
+    # amount — it never lowers confidence a voice/gesture reading already
+    # established, and it never changes the command text itself (see the
+    # module docstring: gaze is a structured disambiguating signal passed
+    # through in metadata, not something that rewrites natural language via
+    # string matching). Only applied when the modifier is TARGET/SELECT-
+    # like — the cases where "where is the user looking" is actually
+    # relevant context, not an arbitrary blanket bonus.
+    _GAZE_RELEVANT_MODIFIERS = frozenset({GestureModifier.TARGET.value, GestureModifier.SELECT.value})
+    _GAZE_CONFIDENCE_BONUS = 0.05
+
+    def _apply_gaze(
+        self,
+        metadata: dict[str, Any],
+        gaze: InputEvent | None,
+        modifier: str,
+        confidence: float,
+    ) -> float:
+        """Attaches gaze_region/gaze_confidence to `metadata` in place (for
+        any downstream consumer — e.g. a future "target the item I'm
+        looking at" resolution step) when a recent gaze reading exists, and
+        returns a possibly-nudged-up confidence value."""
+        if gaze is None:
+            return confidence
+
+        metadata["gaze_region"] = gaze.gaze_region
+        metadata["gaze_confidence"] = gaze.gaze_confidence
+
+        if modifier in self._GAZE_RELEVANT_MODIFIERS and gaze.gaze_region != "center":
+            return min(1.0, confidence + self._GAZE_CONFIDENCE_BONUS)
+        return confidence
 
     def _resolve_template(self, transcript: str, modifier: str) -> str | None:
         """Try to match a multimodal template."""
@@ -401,11 +474,22 @@ class MultimodalFusionEngine:
         ]
         return candidates[0] if candidates else None
 
+    def _find_recent_gaze(self, reference_time: float) -> InputEvent | None:
+        """Find the most recent gaze reading within the time window."""
+        cutoff = reference_time - self.time_window_s
+        candidates = [
+            e
+            for e in reversed(self._gaze_buffer)
+            if e.timestamp >= cutoff and e.gaze_confidence >= self.min_gaze_confidence
+        ]
+        return candidates[0] if candidates else None
+
     def _prune_buffers(self) -> None:
         """Remove events older than 2x the time window."""
         cutoff = time.time() - (self.time_window_s * 2)
         self._voice_buffer = [e for e in self._voice_buffer if e.timestamp > cutoff]
         self._gesture_buffer = [e for e in self._gesture_buffer if e.timestamp > cutoff]
+        self._gaze_buffer = [e for e in self._gaze_buffer if e.timestamp > cutoff]
 
     # ── Intent emission ──
 
@@ -487,6 +571,7 @@ class MultimodalFusionEngine:
             "total_intents": len(self._recent_intents),
             "voice_buffer_size": len(self._voice_buffer),
             "gesture_buffer_size": len(self._gesture_buffer),
+            "gaze_buffer_size": len(self._gaze_buffer),
             "time_window_ms": self.time_window_s * 1000,
             "intent_types": type_counts,
             "last_intent": (self._recent_intents[-1].to_dict() if self._recent_intents else None),
