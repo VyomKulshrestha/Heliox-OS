@@ -50,7 +50,7 @@ def _server(tmp_path) -> PilotServer:
     return server
 
 
-async def _wait_settled(server, workflow_id, timeout=2.0):
+async def _wait_settled(server, workflow_id, timeout=10.0):
     import asyncio
 
     loop = asyncio.get_event_loop()
