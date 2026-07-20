@@ -59,6 +59,7 @@ class InvocationSource(StrEnum):
     WEB_AGENT = "web_agent"
     VOICE = "voice"
     GESTURE = "gesture"
+    SELF_HEALING = "self_healing"
     UNKNOWN = "unknown"  # fail-open bucket for call sites not yet tagged
 
 
@@ -184,6 +185,30 @@ DEFAULT_SOURCE_PROFILES: dict[str, SourceProfile] = {
             ActionFamily.SYSTEM_CONTROL.value: int(PermissionTier.SYSTEM_MODIFY),
             ActionFamily.OTHER.value: int(PermissionTier.USER_WRITE),
         },
+        allow_root=False,
+    ),
+    # AutonomousHealingEngine's own tiered check (see agents/autonomous_healing.py)
+    # already restricts auto-exec-without-confirmation to low-tier/reversible
+    # plans -- this ceiling is the second, independent gate that also covers
+    # its propose-and-wait-for-confirmation branch, so it must stay wide
+    # enough to reach genuinely useful remediation actions (kill a runaway
+    # process, restart a stuck service, clear temp files) once a human has
+    # approved them, while still permanently denying the handful of action
+    # types that could never be a legitimate health remediation.
+    "self_healing": SourceProfile(
+        max_tier={
+            ActionFamily.SHELL.value: int(PermissionTier.SYSTEM_MODIFY),
+            ActionFamily.BROWSING.value: int(PermissionTier.READ_ONLY),
+            ActionFamily.SYSTEM_CONTROL.value: int(PermissionTier.DESTRUCTIVE),
+            ActionFamily.OTHER.value: int(PermissionTier.SYSTEM_MODIFY),
+        },
+        deny_action_types=[
+            "power_shutdown",
+            "power_restart",
+            "power_logout",
+            "registry_write",
+            "browser_execute_js",
+        ],
         allow_root=False,
     ),
 }

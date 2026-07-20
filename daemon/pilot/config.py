@@ -255,6 +255,32 @@ class GestureWorkflowConfig:
 
 
 @dataclass
+class SelfHealingConfig:
+    """Autonomous Healing Engine (see pilot.agents.autonomous_healing) —
+    passive system-health monitoring (CPU/memory/disk, via the existing
+    BackgroundTaskManager) that plans a remediation goal when a threshold
+    is crossed. Off by default: unlike the Agent Gateway, generating and
+    potentially auto-executing a remediation plan without being asked is a
+    NEW autonomous capability, not a restriction, so it needs the same
+    explicit opt-in as gesture_cursor/gesture_workflows.
+
+    Autonomy is tiered even once enabled: `auto_execute_max_tier` bounds
+    only the plans that may run WITHOUT a confirmation prompt (an
+    int(PermissionTier) value — default 1 = USER_WRITE); anything above
+    that, or containing an irreversible action, is proposed and held
+    pending explicit user confirmation instead of auto-executed. This
+    mirrors risk_gate_enabled's own reasoning: an unproven autonomous
+    capability defaults to the more conservative of its two behaviors."""
+
+    enabled: bool = False
+    auto_execute_max_tier: int = 1  # PermissionTier.USER_WRITE
+    cooldown_seconds: float = 600.0
+    confirm_timeout_seconds: float = 300.0
+    watched_metrics: list[str] = field(default_factory=lambda: ["cpu", "memory", "disk"])
+    goal_templates: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
 class ProxyConfig:
     http: str | None = None
     https: str | None = None
@@ -365,6 +391,7 @@ class PilotConfig:
     adaptive_calibration: AdaptiveCalibrationConfig = field(default_factory=AdaptiveCalibrationConfig)
     gateway: GatewayConfig = field(default_factory=GatewayConfig)
     gesture_workflows: GestureWorkflowConfig = field(default_factory=GestureWorkflowConfig)
+    self_healing: SelfHealingConfig = field(default_factory=SelfHealingConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     rss: RSSConfig = field(default_factory=RSSConfig)
     calendar: CalendarConfig = field(default_factory=CalendarConfig)
@@ -504,6 +531,14 @@ def _validate_config_types(raw: dict) -> None:
             "bindings": list,
             "pending_trigger_window_seconds": (int, float),
             "paused_window_seconds": (int, float),
+        },
+        "self_healing": {
+            "enabled": bool,
+            "auto_execute_max_tier": int,
+            "cooldown_seconds": (int, float),
+            "confirm_timeout_seconds": (int, float),
+            "watched_metrics": list,
+            "goal_templates": dict,
         },
         "memory": {
             "checkpoint_interval_seconds": int,
@@ -685,6 +720,20 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
                     )
                 )
             config.gesture_workflows.bindings = parsed_bindings
+
+    if "self_healing" in raw and isinstance(raw["self_healing"], dict):
+        sh_raw = raw["self_healing"]
+        config.self_healing.enabled = bool(sh_raw.get("enabled", config.self_healing.enabled))
+        if "auto_execute_max_tier" in sh_raw:
+            config.self_healing.auto_execute_max_tier = int(sh_raw["auto_execute_max_tier"])
+        if "cooldown_seconds" in sh_raw:
+            config.self_healing.cooldown_seconds = float(sh_raw["cooldown_seconds"])
+        if "confirm_timeout_seconds" in sh_raw:
+            config.self_healing.confirm_timeout_seconds = float(sh_raw["confirm_timeout_seconds"])
+        if "watched_metrics" in sh_raw and isinstance(sh_raw["watched_metrics"], list):
+            config.self_healing.watched_metrics = [str(m) for m in sh_raw["watched_metrics"]]
+        if "goal_templates" in sh_raw and isinstance(sh_raw["goal_templates"], dict):
+            config.self_healing.goal_templates = {str(k): str(v) for k, v in sh_raw["goal_templates"].items()}
 
     if "memory" in raw:
         for k, v in raw["memory"].items():

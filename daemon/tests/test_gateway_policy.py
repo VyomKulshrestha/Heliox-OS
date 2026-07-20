@@ -95,6 +95,18 @@ class TestDefaultSourceProfiles:
     def test_autonomous_profile_disallows_root(self):
         assert DEFAULT_SOURCE_PROFILES["autonomous"].allow_root is False
 
+    def test_self_healing_profile_disallows_root(self):
+        assert DEFAULT_SOURCE_PROFILES["self_healing"].allow_root is False
+
+    def test_self_healing_profile_denies_power_and_registry_and_execute_js(self):
+        deny = DEFAULT_SOURCE_PROFILES["self_healing"].deny_action_types
+        for action_type in ("power_shutdown", "power_restart", "power_logout", "registry_write", "browser_execute_js"):
+            assert action_type in deny
+
+    def test_self_healing_profile_never_reaches_root_critical(self):
+        self_healing = DEFAULT_SOURCE_PROFILES["self_healing"]
+        assert all(tier < int(PermissionTier.ROOT_CRITICAL) for tier in self_healing.max_tier.values())
+
 
 @pytest.fixture
 def gateway():

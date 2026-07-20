@@ -686,6 +686,33 @@ class PilotServer:
         except Exception:
             logger.warning("AutonomousExecutor init failed (non-critical)", exc_info=True)
 
+        # ── Autonomous Healing Engine (passive system-health monitoring +
+        # tiered auto-remediation, see pilot.agents.autonomous_healing) ──
+        # Wired to the CPU/memory/disk monitors' on_trigger hook, which no
+        # other consumer currently uses — the built-in monitors otherwise
+        # only ever reach a UI toast via self._background's broadcast.
+        try:
+            from pilot.agents.autonomous_healing import AutonomousHealingEngine
+
+            self._self_healing = AutonomousHealingEngine(
+                planner=self._planner,
+                executor=self._executor,
+                config=self.config,
+                pending_confirms=self._pending_confirms,
+                broadcast_fn=self._broadcast_notification,
+            )
+            for task_id, handler in (
+                ("monitor_cpu", self._self_healing.on_cpu_alert),
+                ("monitor_memory", self._self_healing.on_memory_alert),
+                ("monitor_disk", self._self_healing.on_disk_alert),
+            ):
+                task = self._background._tasks.get(task_id)
+                if task is not None:
+                    task.on_trigger = handler
+            logger.info("AutonomousHealingEngine initialized")
+        except Exception:
+            logger.warning("AutonomousHealingEngine init failed (non-critical)", exc_info=True)
+
         # ── Voice/Gesture Workflow Engine (durable, pausable/resumable
         # multi-step goals spanning multiple voice/gesture inputs) ──
         try:
@@ -803,6 +830,8 @@ class PilotServer:
             "autonomous_cancel": self._handle_autonomous_cancel,
             "autonomous_jobs": self._handle_autonomous_jobs,
             "autonomous_job": self._handle_autonomous_job,
+            "self_healing_status": self._handle_self_healing_status,
+            "self_healing_config_update": self._handle_self_healing_config_update,
             "voice_gesture_workflow_submit": self._handle_voice_gesture_workflow_submit,
             "voice_gesture_workflow_list": self._handle_voice_gesture_workflow_list,
             "voice_gesture_workflow_get": self._handle_voice_gesture_workflow_get,
@@ -2842,6 +2871,66 @@ class PilotServer:
         task_id = params.get("task_id", "")
         ok = self._background.stop(task_id)
         return {"status": "stopped" if ok else "error", "task_id": task_id}
+
+    async def _handle_self_healing_status(self, params: dict, ws: ServerConnection) -> dict:
+        """Report self-healing config plus recent remediation attempts.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with the current config and up to 50 recent attempts
+            (auto-executed, proposed/pending, confirmed, denied, timed out).
+        """
+        engine = getattr(self, "_self_healing", None)
+        return {
+            "enabled": self.config.self_healing.enabled,
+            "auto_execute_max_tier": self.config.self_healing.auto_execute_max_tier,
+            "watched_metrics": self.config.self_healing.watched_metrics,
+            "attempts": engine.list_attempts() if engine else [],
+        }
+
+    async def _handle_self_healing_config_update(self, params: dict, ws: ServerConnection) -> dict:
+        """Update self-healing config (enabled, tiering, watched metrics).
+
+        Confirming or denying a specific proposed remediation plan reuses
+        the existing generic ``confirm`` RPC (same plan_id/PendingConfirmation
+        mechanism as ThreatContainmentBridge) rather than a dedicated
+        approve/reject RPC.
+
+        Args:
+            params: JSON-RPC parameters, any of {enabled, auto_execute_max_tier,
+                cooldown_seconds, confirm_timeout_seconds, watched_metrics}.
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with status and the updated config.
+        """
+        cfg = self.config.self_healing
+        if "enabled" in params:
+            cfg.enabled = bool(params["enabled"])
+        if "auto_execute_max_tier" in params:
+            cfg.auto_execute_max_tier = int(params["auto_execute_max_tier"])
+        if "cooldown_seconds" in params:
+            cfg.cooldown_seconds = float(params["cooldown_seconds"])
+        if "confirm_timeout_seconds" in params:
+            cfg.confirm_timeout_seconds = float(params["confirm_timeout_seconds"])
+        if "watched_metrics" in params:
+            raw_metrics = params["watched_metrics"]
+            if not isinstance(raw_metrics, list):
+                return {"status": "error", "message": "watched_metrics must be a list"}
+            cfg.watched_metrics = [str(m) for m in raw_metrics]
+
+        self.config.save()
+        return {
+            "status": "ok",
+            "enabled": cfg.enabled,
+            "auto_execute_max_tier": cfg.auto_execute_max_tier,
+            "cooldown_seconds": cfg.cooldown_seconds,
+            "confirm_timeout_seconds": cfg.confirm_timeout_seconds,
+            "watched_metrics": cfg.watched_metrics,
+        }
 
     async def _handle_agent_routing(self, params: dict, ws: ServerConnection) -> dict:
         """Analyze which specialist agent(s) would handle a given input.

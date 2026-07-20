@@ -154,6 +154,24 @@ Settings → Agent Gateway Policy shows the enforced floor per source and lets y
 
 ---
 
+## 🩺 Autonomous Healing Engine (opt-in)
+
+**What this is, and the pattern it borrows.** `pilot.agents.autonomous_healing.AutonomousHealingEngine` gives the daemon a passive, always-watching mode — modeled on IBM Power Autonomous Operations' self-healing pattern — instead of acting only when asked. It listens to the CPU/memory/disk checks `BackgroundTaskManager` already runs on a timer, and when one crosses its threshold, generates a remediation goal and plans it through the exact same `Planner`/`Executor` pipeline every voice/text/gesture command already uses. **It introduces no new safety primitive** — the tiering decision below composes `PermissionChecker`, `AgentGateway`, and (for Tier 3/4 or irreversible plans) the Learned Risk Gate/critic exactly as `Executor.execute()` already enforces for every other caller.
+
+**Tiered autonomy — the confirmed design.**
+
+- If the resulting plan is entirely low-tier (`plan.max_tier <= config.self_healing.auto_execute_max_tier`, default `1` = `USER_WRITE`) **and** contains no irreversible action (`plan.needs_confirmation_unconditional`), it runs immediately, no prompt.
+- Otherwise the plan is **proposed, not executed** — broadcast as a `self_healing_confirmation_required` notification and held in the same `PendingConfirmation`/`_pending_confirms` mechanism `ThreatContainmentBridge` already established for background-initiated (non-request-driven) confirm-then-execute flows. It resolves via the existing generic `confirm` RPC (no dedicated approve/reject RPC was added — one plan_id, one existing code path). A denial, or a timeout after `config.self_healing.confirm_timeout_seconds` (default 300s), means nothing executes.
+- A per-metric cooldown (`config.self_healing.cooldown_seconds`, default 600s) prevents a single sustained alert (e.g. CPU pegged for ten minutes) from re-triggering planning/execution on every poll interval.
+
+**A second, independent gate — not just the engine's own pre-check.** A new `InvocationSource.SELF_HEALING` was added to the Agent Gateway (`pilot.security.gateway`) with its own `SourceProfile` ceiling, deliberately wide enough to still reach genuinely useful remediation actions (kill a runaway process, restart a stuck service, clear temp files — all `SYSTEM_CONTROL`-family, capped at `DESTRUCTIVE`) once a human has approved them via the propose-and-wait branch above, while permanently denying `power_shutdown`/`power_restart`/`power_logout`/`registry_write`/`browser_execute_js` and never reaching root/Tier-4 — regardless of what the engine's own tiering check would otherwise allow. This mirrors why the Agent Gateway exists at all: a plan's originating trigger should never be trusted to police itself.
+
+**Off by default.** `config.self_healing.enabled` defaults to `False` — generating (and potentially auto-executing) a remediation plan without being asked is a new autonomous capability, not a restriction, so it gets the same opt-in-first treatment as `gesture_cursor`/`gesture_workflows`/`risk_gate_enabled`.
+
+**Known scope limits, stated plainly.** Remediation goals are currently three fixed, generic templates (`config.self_healing.goal_templates` can override them per metric) fed to the same LLM planner every other command uses — there is no dedicated "diagnose root cause" reasoning step, so the quality of the generated plan depends entirely on the planner's ordinary judgment for that prompt. The network-activity monitor (`monitor_network`) is intentionally left unwired: a generic "network usage is high" alert has no obvious safe remediation action, so wiring it would either do nothing useful or invite an overly broad goal template. Not verified against a real sustained-load scenario in this pass — the on-trigger wiring and tiering logic are covered by unit tests with a fake planner/executor, not a live high-CPU/low-disk machine.
+
+---
+
 ## 📬 Contact
 
 - **Maintainer**: [@VyomKulshrestha](https://github.com/VyomKulshrestha)

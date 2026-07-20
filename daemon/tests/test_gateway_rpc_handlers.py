@@ -97,7 +97,14 @@ class TestGatewayPolicyGetAndUpdate:
         result = await server._handle_gateway_policy_get({}, ws=None)
         assert result["status"] == "ok"
         assert result["enabled"] is True
-        assert set(result["profiles"].keys()) == {"interactive", "autonomous", "web_agent", "voice", "gesture"}
+        assert set(result["profiles"].keys()) == {
+            "interactive",
+            "autonomous",
+            "web_agent",
+            "voice",
+            "gesture",
+            "self_healing",
+        }
 
     @pytest.mark.asyncio
     async def test_update_unknown_profile_errors(self):

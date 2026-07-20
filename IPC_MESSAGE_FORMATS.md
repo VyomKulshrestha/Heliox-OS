@@ -788,6 +788,52 @@ Return self-improvement reflection statistics.
 
 ---
 
+### Autonomous Healing Engine
+
+Passive system-health monitoring (see `pilot.agents.autonomous_healing`) that plans a remediation goal when a `monitor_cpu`/`monitor_memory`/`monitor_disk` background task above triggers. Off by default (`self_healing.enabled`). Low-tier/reversible plans auto-execute; anything else is broadcast as a `self_healing_confirmation_required` notification and resolved via the existing `confirm` RPC (same `plan_id`/`PendingConfirmation` mechanism threat containment uses) — there is no dedicated approve/reject RPC.
+
+#### `self_healing_status`
+Report current config plus recent remediation attempts.
+
+**Params:** `{}`
+**Result:**
+```json
+{
+  "enabled": false,
+  "auto_execute_max_tier": 1,
+  "watched_metrics": ["cpu", "memory", "disk"],
+  "attempts": [
+    {
+      "attempt_id": "heal_a1b2c3d4",
+      "metric": "disk",
+      "trigger": { "disk_percent": 92.1, "triggered": true, "message": "Disk usage at 92.1%!" },
+      "goal": "The system is running low on disk space ...",
+      "plan_id": "heal_a1b2c3d4",
+      "outcome": "auto_executed",
+      "max_tier": 0,
+      "irreversible": false,
+      "explanation": "...",
+      "created_at": 1731000000.0,
+      "resolved_at": 1731000001.2
+    }
+  ]
+}
+```
+`outcome` is one of `auto_executed`, `proposed`, `confirmed`, `denied`, `timed_out`, `no_action`, `plan_error`.
+
+#### `self_healing_config_update`
+Update self-healing config. Persists via `config.save()`.
+
+**Params:** any of `{ "enabled": true, "auto_execute_max_tier": 1, "cooldown_seconds": 600.0, "confirm_timeout_seconds": 300.0, "watched_metrics": ["cpu", "memory", "disk"] }`
+**Result:** `{ "status": "ok", "enabled": true, "auto_execute_max_tier": 1, "cooldown_seconds": 600.0, "confirm_timeout_seconds": 300.0, "watched_metrics": [...] }`
+
+#### Notifications
+- `self_healing_auto_executing` / `self_healing_complete` — broadcast around the auto-exec path, attempt dict payload.
+- `self_healing_confirmation_required` — attempt dict plus `actions` (full action list) and `timeout_seconds`; resolve via `confirm` with the attempt's `plan_id`.
+- `self_healing_denied` / `self_healing_timeout` — the propose-and-wait branch ended without executing.
+
+---
+
 ### Interactive Git Conflict Resolver
 
 #### `resolve_git_conflict`
