@@ -12,6 +12,7 @@
 
   import { session } from "../stores/session";
   import AudioVisualizer from "./AudioVisualizer.svelte";
+  import { speakText as ttsSpeak } from "../utils/tts";
 
   // ── State ──
   let isListening = $state(false);
@@ -191,31 +192,11 @@
 
   // ── Text-to-Speech ──
   function speakText(text: string) {
-    if (!window.speechSynthesis) return;
-    
-    // Cancel any ongoing speech
-    window.speechSynthesis.cancel();
-    
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate = 1.1;
-    utterance.pitch = 0.9;
-    utterance.volume = 0.9;
-    
-    // Try to find a good voice
-    const voices = window.speechSynthesis.getVoices();
-    const preferred = voices.find(v => 
-      v.name.includes("Microsoft Mark") || 
-      v.name.includes("Google UK English Male") ||
-      v.name.includes("Daniel") ||
-      v.name.includes("Alex")
-    );
-    if (preferred) utterance.voice = preferred;
-
-    utterance.onstart = () => { isSpeaking = true; };
-    utterance.onend = () => { isSpeaking = false; };
-    utterance.onerror = () => { isSpeaking = false; };
-
-    window.speechSynthesis.speak(utterance);
+    ttsSpeak(text, {
+      onStart: () => { isSpeaking = true; },
+      onEnd: () => { isSpeaking = false; },
+      onError: () => { isSpeaking = false; },
+    });
   }
 
   function stopSpeaking() {

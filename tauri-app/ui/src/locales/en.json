@@ -50,6 +50,12 @@
     "deny": "Deny",
     "approve": "Approve & Execute"
   },
+  "interrupt": {
+    "title": "Heliox paused",
+    "body": "This was flagged as risky before running. Continue or stop?",
+    "continue": "Continue",
+    "stop": "Stop"
+  },
   "rollback": {
     "title": "Undo Last Action?",
     "body": "This will revert your entire disk state to the snapshot taken just before the last action ran — including any other changes made since then, not just what the action did. This cannot be undone.",

@@ -7,6 +7,7 @@
   import ConfirmDialog from "./lib/components/ConfirmDialog.svelte";
   import RollbackDialog from "./lib/components/RollbackDialog.svelte";
   import BudgetExceededDialog from "./lib/components/BudgetExceededDialog.svelte";
+  import InterruptDialog from "./lib/components/InterruptDialog.svelte";
   import ActivityLog from "./lib/components/ActivityLog.svelte";
   import SettingsPanel from "./lib/components/SettingsPanel.svelte";
   import SetupWizard from "./lib/components/SetupWizard.svelte";
@@ -230,6 +231,7 @@
           {/if}
 
           <BudgetExceededDialog />
+          <InterruptDialog />
 
           <div class="results">
             {#if $session.messages.length === 0 && !$session.loading}
