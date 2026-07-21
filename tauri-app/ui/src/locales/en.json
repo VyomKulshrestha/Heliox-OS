@@ -56,6 +56,12 @@
     "continue": "Continue",
     "stop": "Stop"
   },
+  "supervision_alert": {
+    "risk_title": "Heads up",
+    "coaching_title": "Quick check-in",
+    "body": "Something worth noting came up.",
+    "dismiss": "Dismiss"
+  },
   "rollback": {
     "title": "Undo Last Action?",
     "body": "This will revert your entire disk state to the snapshot taken just before the last action ran — including any other changes made since then, not just what the action did. This cannot be undone.",
@@ -142,6 +148,18 @@
     "narration_interrupt_on_risk_desc": "Pause and ask before running a plan or action flagged as risky",
     "narration_timeout": "Interrupt Timeout (seconds)",
     "narration_timeout_desc": "How long to wait for a response before treating an interrupt as denied",
+    "supervision": "User Manual Supervision",
+    "supervision_warning": "Watches your own independent screen activity (window title + an occasional OCR text snippet) to offer cognitive coaching and warn about risky-looking content. Off by default. This is separate from, and does not affect, Heliox's own execution narration.",
+    "supervision_cognitive_coaching": "Cognitive Coaching",
+    "supervision_cognitive_coaching_desc": "Feeds a real screen snippet + window title to TRIBE v2 and offers a gentle check-in on sustained stress/overload",
+    "supervision_risk_detection": "Risk Pattern Detection",
+    "supervision_risk_detection_desc": "Matches the OCR snippet against a small, explicit table of destructive-action patterns (e.g. rm -rf, DROP TABLE)",
+    "supervision_hook_warning": "This installs a system-wide keyboard and mouse hook that observes your typing and clicks outside Heliox, to check for the same risky patterns. Off by default. Nothing you type or click is ever saved to disk or sent anywhere — only the fact that a risk pattern matched. Turning this off instantly removes the hook.",
+    "supervision_hook_understood": "I understand this reads my keystrokes and clicks system-wide to check for risk patterns, and nothing else",
+    "supervision_hook_enabled": "Enable Keyboard/Mouse Hook",
+    "supervision_hook_enabled_desc": "Installs a global input hook for stronger risk detection",
+    "supervision_hook_healthy": "Hook is running normally.",
+    "supervision_hook_unhealthy": "Hook appears to have stopped — risk detection from typing/clicks is not currently active.",
     "pause": "Pause",
     "resume": "Resume",
     "cancel": "Cancel",
