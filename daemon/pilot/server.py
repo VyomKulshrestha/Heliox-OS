@@ -925,6 +925,17 @@ class PilotServer:
             except Exception as e:
                 logger.error("Attention scoring failed: %s", e)
 
+        # This must run unconditionally (not just inside the attention-buffered
+        # flush branch above) -- it was previously misplaced as unreachable code
+        # after a different handler's return statements, so this notification
+        # was silently never delivered outside that one buffered-flush edge case.
+        msg = _notification(method, params)
+        for client in list(self._clients):
+            try:
+                await client.send(msg)
+            except Exception:
+                pass
+
     async def _handle_extract_file_text(self, params: dict[str, Any], ws: ServerConnection) -> dict:
         """Extract text from a file (e.g. PDF) for UI context injection."""
         path = params.get("path")
@@ -944,13 +955,6 @@ class PilotServer:
         except Exception as e:
             logger.error("Error extracting text from %s: %s", path, e)
             return {"status": "error", "message": str(e)}
-
-        msg = _notification(method, params)
-        for client in list(self._clients):
-            try:
-                await client.send(msg)
-            except Exception:
-                pass
 
     async def _handle_connection(self, websocket: ServerConnection) -> None:
         """Handle a WebSocket connection from a client.
