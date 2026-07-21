@@ -66,7 +66,13 @@ def _collect_cpu_info(sample_interval: float | None = 0.5) -> str:
 
     count = psutil.cpu_count()
     count_logical = psutil.cpu_count(logical=True)
-    freq = psutil.cpu_freq()
+    try:
+        # Not implemented on some platforms (e.g. Apple Silicon macOS),
+        # where psutil raises AttributeError/NotImplementedError instead
+        # of returning None -- frequency is optional info either way.
+        freq = psutil.cpu_freq()
+    except (AttributeError, NotImplementedError):
+        freq = None
     percent = psutil.cpu_percent(interval=sample_interval, percpu=True)
     lines = [
         "=== CPU ===",
