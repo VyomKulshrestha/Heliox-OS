@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from pilot.security.gateway import TaskScopeOverride
@@ -145,3 +147,45 @@ class TestFindPendingForSource:
         # any real elapsed time (however small) should fall outside the window.
         found = await store.find_pending_for_source("voice", within_seconds=0)
         assert found is None
+
+
+@pytest.mark.asyncio
+async def test_connect_sets_wal_and_busy_timeout(tmp_path):
+    """Regression test for "database is locked": every connection this
+    store opens must have a nonzero busy_timeout (and WAL journal mode) so
+    two connections writing near-simultaneously wait for the lock instead
+    of immediately raising sqlite3.OperationalError."""
+    store = _store(tmp_path)
+    await store.initialize()
+    async with store._connect() as db:
+        cursor = await db.execute("PRAGMA busy_timeout")
+        (busy_timeout,) = await cursor.fetchone()
+        await cursor.close()
+
+        cursor = await db.execute("PRAGMA journal_mode")
+        (journal_mode,) = await cursor.fetchone()
+        await cursor.close()
+
+    assert busy_timeout > 0
+    assert journal_mode.lower() == "wal"
+
+
+@pytest.mark.asyncio
+async def test_concurrent_writes_to_different_workflows_do_not_lock(tmp_path):
+    """Real concurrency, not a mocked race: many separate workflows on the
+    same store, each doing several overlapping writes via asyncio.gather,
+    must not raise "database is locked" now that every connection sets
+    busy_timeout."""
+    store = _store(tmp_path)
+
+    async def _create_and_advance(i: int) -> None:
+        workflow = await store.create(f"goal {i}", "voice")
+        await store.set_state(workflow.workflow_id, WorkflowState.RUNNING)
+        await store.set_steps(workflow.workflow_id, [WorkflowStepRecord(index=0, title="step", description="step")])
+        await store.set_state(workflow.workflow_id, WorkflowState.SUCCESS)
+
+    await asyncio.gather(*(_create_and_advance(i) for i in range(15)))  # must not raise
+
+    workflows = await store.list(include_terminal=True)
+    assert len(workflows) == 15
+    assert all(w.state == WorkflowState.SUCCESS.value for w in workflows)

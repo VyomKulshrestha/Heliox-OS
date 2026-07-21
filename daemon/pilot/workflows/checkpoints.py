@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -38,32 +41,64 @@ class WorkflowCheckpointStore:
 
     def __init__(self, db_file: str | Path | None = None) -> None:
         self._db_file = Path(db_file) if db_file is not None else pilot_config.DATA_DIR / WORKFLOW_DB_FILENAME
+        self._initialized = False
+        self._init_lock = asyncio.Lock()
+
+    @asynccontextmanager
+    async def _connect(self) -> AsyncIterator[aiosqlite.Connection]:
+        """Every store method opens its own short-lived connection.
+        busy_timeout + synchronous are connection-local settings, cheap and
+        safe to set every time, matching db/sqlite_pool.py's own connection
+        settings and this store's sibling VoiceGestureWorkflowStore -- lets
+        two connections writing near-simultaneously wait for the lock
+        instead of immediately raising "database is locked". journal_mode
+        is deliberately NOT set here -- see initialize()."""
+        await self.initialize()
+        async with aiosqlite.connect(self._db_file) as db:
+            await db.execute("PRAGMA synchronous = NORMAL")
+            await db.execute("PRAGMA busy_timeout = 5000")
+            yield db
 
     async def initialize(self) -> None:
-        self._db_file.parent.mkdir(parents=True, exist_ok=True)
-        async with aiosqlite.connect(self._db_file) as db:
-            await db.execute(
-                """
-                CREATE TABLE IF NOT EXISTS workflow_checkpoints (
-                    plan_id TEXT PRIMARY KEY,
-                    user_input TEXT NOT NULL,
-                    plan_json TEXT NOT NULL,
-                    results_json TEXT NOT NULL,
-                    completed_count INTEGER NOT NULL,
-                    last_output TEXT NOT NULL,
-                    snapshot_ids_json TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
+        """Switches the database file to WAL journal mode exactly once
+        (guarded by _init_lock) -- SQLite requires no OTHER connection be
+        open at the moment journal mode actually changes, a requirement
+        busy_timeout/retries do NOT satisfy, so re-issuing this PRAGMA on
+        every short-lived connection can raise "database is locked" under
+        real concurrency even with busy_timeout set. WAL persists in the
+        file's own header once set, so this only needs to run once."""
+        if self._initialized:
+            return
+        async with self._init_lock:
+            if self._initialized:
+                return
+            self._db_file.parent.mkdir(parents=True, exist_ok=True)
+            async with aiosqlite.connect(self._db_file) as db:
+                await db.execute("PRAGMA journal_mode = WAL")
+                await db.execute("PRAGMA busy_timeout = 5000")
+                await db.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS workflow_checkpoints (
+                        plan_id TEXT PRIMARY KEY,
+                        user_input TEXT NOT NULL,
+                        plan_json TEXT NOT NULL,
+                        results_json TEXT NOT NULL,
+                        completed_count INTEGER NOT NULL,
+                        last_output TEXT NOT NULL,
+                        snapshot_ids_json TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    )
+                    """
                 )
-                """
-            )
-            await db.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_workflow_checkpoints_status
-                ON workflow_checkpoints(status)
-                """
-            )
-            await db.commit()
+                await db.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_workflow_checkpoints_status
+                    ON workflow_checkpoints(status)
+                    """
+                )
+                await db.commit()
+            self._initialized = True
 
     async def start_plan(self, plan_id: str, user_input: str, plan: ActionPlan) -> PlanCheckpoint:
         checkpoint = PlanCheckpoint(
@@ -129,8 +164,7 @@ class WorkflowCheckpointStore:
         return updated
 
     async def get(self, plan_id: str) -> PlanCheckpoint | None:
-        await self.initialize()
-        async with aiosqlite.connect(self._db_file) as db:
+        async with self._connect() as db:
             cursor = await db.execute(
                 """
                 SELECT
@@ -155,8 +189,7 @@ class WorkflowCheckpointStore:
         return self._from_row(row)
 
     async def _upsert(self, checkpoint: PlanCheckpoint) -> None:
-        await self.initialize()
-        async with aiosqlite.connect(self._db_file) as db:
+        async with self._connect() as db:
             await db.execute(
                 """
                 INSERT INTO workflow_checkpoints (

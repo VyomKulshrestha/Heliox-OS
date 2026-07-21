@@ -164,6 +164,14 @@ class VoiceGestureWorkflowEngine:
         task = self._active_tasks.pop(workflow_id, None)
         if task and not task.done():
             task.cancel()
+            # Wait for _drive to actually stop before writing our own state
+            # below -- otherwise its own still-in-flight write (e.g. a step
+            # completing right as we cancel) races this one for the same
+            # SQLite file, which can raise "database is locked".
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
         await self._workflow_store.set_state(workflow_id, WorkflowState.CANCELLED)
         return True
 

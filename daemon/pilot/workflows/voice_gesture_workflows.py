@@ -14,8 +14,11 @@ execution loop that drives this store's state transitions.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -118,34 +121,70 @@ class VoiceGestureWorkflowStore:
 
     def __init__(self, db_file: str | Path | None = None) -> None:
         self._db_file = Path(db_file) if db_file is not None else pilot_config.DATA_DIR / WORKFLOW_DB_FILENAME
+        self._initialized = False
+        self._init_lock = asyncio.Lock()
+
+    @asynccontextmanager
+    async def _connect(self) -> AsyncIterator[aiosqlite.Connection]:
+        """Every store method opens its own short-lived connection (no
+        persistent connection to keep alive across daemon restarts).
+        busy_timeout + synchronous are connection-local settings, cheap and
+        safe to set every time, matching db/sqlite_pool.py's own connection
+        settings -- so two connections writing near-simultaneously (e.g. a
+        workflow's own background _drive task and an explicit cancel/pause
+        call racing each other) wait for the lock instead of immediately
+        raising "database is locked". journal_mode is deliberately NOT set
+        here -- see initialize()."""
+        await self.initialize()
+        async with aiosqlite.connect(self._db_file) as db:
+            await db.execute("PRAGMA synchronous = NORMAL")
+            await db.execute("PRAGMA busy_timeout = 5000")
+            yield db
 
     async def initialize(self) -> None:
-        self._db_file.parent.mkdir(parents=True, exist_ok=True)
-        async with aiosqlite.connect(self._db_file) as db:
-            await db.execute(
-                """
-                CREATE TABLE IF NOT EXISTS voice_gesture_workflows (
-                    workflow_id TEXT PRIMARY KEY,
-                    goal TEXT NOT NULL,
-                    invocation_source TEXT NOT NULL,
-                    scope_override_json TEXT NOT NULL,
-                    steps_json TEXT NOT NULL,
-                    current_step INTEGER NOT NULL,
-                    state TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    paused_at TEXT,
-                    trigger_deadline TEXT
+        """Switches the database file to WAL journal mode exactly once
+        (guarded by _init_lock) rather than on every _connect() call.
+        SQLite requires no OTHER connection be open at the moment journal
+        mode actually changes -- unlike a normal write, that requirement
+        is NOT satisfied by busy_timeout/retries, so re-issuing this PRAGMA
+        on every short-lived connection raised "database is locked" under
+        real concurrency (many workflows' connections overlapping) even
+        though busy_timeout was set. Once WAL is on, it's persisted in the
+        file's own header, so this only needs to run the first time."""
+        if self._initialized:
+            return
+        async with self._init_lock:
+            if self._initialized:
+                return
+            self._db_file.parent.mkdir(parents=True, exist_ok=True)
+            async with aiosqlite.connect(self._db_file) as db:
+                await db.execute("PRAGMA journal_mode = WAL")
+                await db.execute("PRAGMA busy_timeout = 5000")
+                await db.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS voice_gesture_workflows (
+                        workflow_id TEXT PRIMARY KEY,
+                        goal TEXT NOT NULL,
+                        invocation_source TEXT NOT NULL,
+                        scope_override_json TEXT NOT NULL,
+                        steps_json TEXT NOT NULL,
+                        current_step INTEGER NOT NULL,
+                        state TEXT NOT NULL,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL,
+                        paused_at TEXT,
+                        trigger_deadline TEXT
+                    )
+                    """
                 )
-                """
-            )
-            await db.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_voice_gesture_workflows_source_state
-                ON voice_gesture_workflows(invocation_source, state)
-                """
-            )
-            await db.commit()
+                await db.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_voice_gesture_workflows_source_state
+                    ON voice_gesture_workflows(invocation_source, state)
+                    """
+                )
+                await db.commit()
+            self._initialized = True
 
     async def create(
         self,
@@ -221,8 +260,7 @@ class VoiceGestureWorkflowStore:
         return updated
 
     async def get(self, workflow_id: str) -> VoiceGestureWorkflow | None:
-        await self.initialize()
-        async with aiosqlite.connect(self._db_file) as db:
+        async with self._connect() as db:
             cursor = await db.execute(
                 """
                 SELECT workflow_id, goal, invocation_source, scope_override_json, steps_json,
@@ -236,12 +274,11 @@ class VoiceGestureWorkflowStore:
         return self._from_row(row) if row else None
 
     async def list(self, include_terminal: bool = False) -> list[VoiceGestureWorkflow]:
-        await self.initialize()
         query = "SELECT workflow_id, goal, invocation_source, scope_override_json, steps_json, current_step, state, created_at, updated_at, paused_at, trigger_deadline FROM voice_gesture_workflows"
         if not include_terminal:
             query += " WHERE state IN ('pending','decomposing','running','paused','waiting_for_trigger')"
         query += " ORDER BY updated_at DESC"
-        async with aiosqlite.connect(self._db_file) as db:
+        async with self._connect() as db:
             cursor = await db.execute(query)
             rows = await cursor.fetchall()
             await cursor.close()
@@ -255,8 +292,7 @@ class VoiceGestureWorkflowStore:
         last update is older than `within_seconds` (a defensive fallback —
         the engine is expected to proactively transition stale rows to
         EXPIRED via its own trigger_deadline check, see VoiceGestureWorkflowEngine)."""
-        await self.initialize()
-        async with aiosqlite.connect(self._db_file) as db:
+        async with self._connect() as db:
             cursor = await db.execute(
                 """
                 SELECT workflow_id, goal, invocation_source, scope_override_json, steps_json,
@@ -303,8 +339,7 @@ class VoiceGestureWorkflowStore:
         return VoiceGestureWorkflow(**data)
 
     async def _upsert(self, workflow: VoiceGestureWorkflow) -> None:
-        await self.initialize()
-        async with aiosqlite.connect(self._db_file) as db:
+        async with self._connect() as db:
             await db.execute(
                 """
                 INSERT INTO voice_gesture_workflows (

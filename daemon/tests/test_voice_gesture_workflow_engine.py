@@ -203,6 +203,34 @@ class TestPauseResumeCancel:
         assert final.state == WorkflowState.CANCELLED.value
 
     @pytest.mark.asyncio
+    async def test_cancel_while_drive_task_is_mid_write_does_not_lock_the_db(self, tmp_path):
+        """Regression test: cancel() used to fire task.cancel() without
+        awaiting it, so the background _drive task's own still-in-flight
+        workflow_store write could race cancel()'s own write to the same
+        SQLite file and raise "database is locked". Delaying the stub
+        executor guarantees _drive is genuinely mid-step (not yet
+        terminal) when cancel() is called."""
+        step_started = asyncio.Event()
+
+        class _SlowExecutor(_StubExecutor):
+            async def execute(self, plan, *, plan_id=None, invocation_source=None, scope_override=None, **kwargs):
+                step_started.set()
+                await asyncio.sleep(0.05)
+                return await super().execute(
+                    plan, plan_id=plan_id, invocation_source=invocation_source, scope_override=scope_override
+                )
+
+        engine = _engine(tmp_path, executor=_SlowExecutor())
+        workflow = await engine.start("do one thing", InvocationSource.VOICE)
+        await step_started.wait()
+
+        cancelled = await engine.cancel(workflow.workflow_id)  # must not raise "database is locked"
+
+        assert cancelled is True
+        final = await engine._workflow_store.get(workflow.workflow_id)
+        assert final.state == WorkflowState.CANCELLED.value
+
+    @pytest.mark.asyncio
     async def test_pause_unknown_workflow_returns_false(self, tmp_path):
         engine = _engine(tmp_path)
         assert await engine.pause("does-not-exist") is False
