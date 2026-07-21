@@ -12,6 +12,7 @@
   import GestureWorkflowBindings from "./GestureWorkflowBindings.svelte";
   import VoiceGestureWorkflowStatus from "./VoiceGestureWorkflowStatus.svelte";
   import SelfHealingPanel from "./SelfHealingPanel.svelte";
+  import NarrationPanel from "./NarrationPanel.svelte";
   import { GestureCalibrationStore } from "../gesture/calibration";
 
   let pendingConfirm = $state<{ message: string; danger: boolean; onConfirm: () => void } | null>(null);
@@ -854,6 +855,10 @@
 
   <section class="settings-group audit-log-section">
     <SelfHealingPanel />
+  </section>
+
+  <section class="settings-group audit-log-section">
+    <NarrationPanel />
   </section>
 
   <section class="settings-group">
