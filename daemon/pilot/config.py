@@ -301,6 +301,35 @@ class NarrationConfig:
 
 
 @dataclass
+class SupervisionConfig:
+    """User Manual Supervision (see pilot.agents.user_supervision) — watches
+    the user's OWN independent screen/keyboard/mouse activity, never anything
+    Heliox itself executes. The single biggest privacy surface in this
+    codebase; off by default, with `keyboard_mouse_hook_enabled` as a
+    SEPARATE, starker opt-in from `enabled` (screen/OCR-only supervision) —
+    a user can turn on cognitive coaching + OCR-based risk warnings without
+    installing the global keyboard/mouse hook at all.
+
+    Advisory only — see user_supervision.on_risk_pattern_detected's
+    docstring for why this never blocks, unlike ExecutionNarrator: Heliox
+    has no way to intercept or block the user's own OS-level input, it only
+    observes a copy via the hook."""
+
+    enabled: bool = False
+    keyboard_mouse_hook_enabled: bool = False
+    cognitive_coaching_enabled: bool = True
+    risk_pattern_detection_enabled: bool = True
+    tick_interval_seconds: float = 1.5
+    ocr_interval_seconds: float = 8.0
+    stress_coaching_threshold: float = 0.75
+    cognitive_load_coaching_threshold: float = 0.8
+    coaching_cooldown_seconds: float = 900.0
+    risk_cooldown_seconds: float = 30.0
+    keystroke_buffer_max_chars: int = 256
+    ocr_snippet_max_chars: int = 400
+
+
+@dataclass
 class ProxyConfig:
     http: str | None = None
     https: str | None = None
@@ -413,6 +442,7 @@ class PilotConfig:
     gesture_workflows: GestureWorkflowConfig = field(default_factory=GestureWorkflowConfig)
     self_healing: SelfHealingConfig = field(default_factory=SelfHealingConfig)
     narration: NarrationConfig = field(default_factory=NarrationConfig)
+    supervision: SupervisionConfig = field(default_factory=SupervisionConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     rss: RSSConfig = field(default_factory=RSSConfig)
     calendar: CalendarConfig = field(default_factory=CalendarConfig)
@@ -566,6 +596,20 @@ def _validate_config_types(raw: dict) -> None:
             "narrate_steps": bool,
             "interrupt_on_risk": bool,
             "confirm_timeout_seconds": (int, float),
+        },
+        "supervision": {
+            "enabled": bool,
+            "keyboard_mouse_hook_enabled": bool,
+            "cognitive_coaching_enabled": bool,
+            "risk_pattern_detection_enabled": bool,
+            "tick_interval_seconds": (int, float),
+            "ocr_interval_seconds": (int, float),
+            "stress_coaching_threshold": (int, float),
+            "cognitive_load_coaching_threshold": (int, float),
+            "coaching_cooldown_seconds": (int, float),
+            "risk_cooldown_seconds": (int, float),
+            "keystroke_buffer_max_chars": int,
+            "ocr_snippet_max_chars": int,
         },
         "memory": {
             "checkpoint_interval_seconds": int,
@@ -771,6 +815,32 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
             config.narration.interrupt_on_risk = bool(n_raw["interrupt_on_risk"])
         if "confirm_timeout_seconds" in n_raw:
             config.narration.confirm_timeout_seconds = float(n_raw["confirm_timeout_seconds"])
+
+    if "supervision" in raw and isinstance(raw["supervision"], dict):
+        s_raw = raw["supervision"]
+        config.supervision.enabled = bool(s_raw.get("enabled", config.supervision.enabled))
+        if "keyboard_mouse_hook_enabled" in s_raw:
+            config.supervision.keyboard_mouse_hook_enabled = bool(s_raw["keyboard_mouse_hook_enabled"])
+        if "cognitive_coaching_enabled" in s_raw:
+            config.supervision.cognitive_coaching_enabled = bool(s_raw["cognitive_coaching_enabled"])
+        if "risk_pattern_detection_enabled" in s_raw:
+            config.supervision.risk_pattern_detection_enabled = bool(s_raw["risk_pattern_detection_enabled"])
+        if "tick_interval_seconds" in s_raw:
+            config.supervision.tick_interval_seconds = float(s_raw["tick_interval_seconds"])
+        if "ocr_interval_seconds" in s_raw:
+            config.supervision.ocr_interval_seconds = float(s_raw["ocr_interval_seconds"])
+        if "stress_coaching_threshold" in s_raw:
+            config.supervision.stress_coaching_threshold = float(s_raw["stress_coaching_threshold"])
+        if "cognitive_load_coaching_threshold" in s_raw:
+            config.supervision.cognitive_load_coaching_threshold = float(s_raw["cognitive_load_coaching_threshold"])
+        if "coaching_cooldown_seconds" in s_raw:
+            config.supervision.coaching_cooldown_seconds = float(s_raw["coaching_cooldown_seconds"])
+        if "risk_cooldown_seconds" in s_raw:
+            config.supervision.risk_cooldown_seconds = float(s_raw["risk_cooldown_seconds"])
+        if "keystroke_buffer_max_chars" in s_raw:
+            config.supervision.keystroke_buffer_max_chars = int(s_raw["keystroke_buffer_max_chars"])
+        if "ocr_snippet_max_chars" in s_raw:
+            config.supervision.ocr_snippet_max_chars = int(s_raw["ocr_snippet_max_chars"])
 
     if "memory" in raw:
         for k, v in raw["memory"].items():
