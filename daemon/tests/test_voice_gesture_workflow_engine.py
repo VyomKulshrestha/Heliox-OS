@@ -78,19 +78,40 @@ def _engine(tmp_path, planner=None, executor=None, decomposer=None):
     )
 
 
+_TERMINAL_STATES = (
+    WorkflowState.SUCCESS.value,
+    WorkflowState.PARTIAL.value,
+    WorkflowState.FAILED.value,
+    WorkflowState.CANCELLED.value,
+    WorkflowState.PAUSED.value,
+    WorkflowState.WAITING_FOR_TRIGGER.value,
+)
+
+
 async def _wait_until_terminal(engine, workflow_id, timeout=10.0):
+    """Waits for the workflow to reach a stable state.
+
+    Awaits the engine's own tracked background `_drive` task directly
+    (engine._active_tasks[workflow_id]) when one exists, rather than polling
+    the DB against a fixed wall-clock deadline -- polling raced actual
+    scheduling delays under loaded/slow CI runners and could time out even
+    though the stub planner/executor do no real I/O and finish almost
+    instantly once actually scheduled. Falls back to a short poll for the
+    (rarer) case where no task is tracked -- e.g. cancel() already popped
+    it and set the terminal state synchronously.
+    """
+    task = engine._active_tasks.get(workflow_id)
+    if task is not None:
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
+        except TimeoutError:
+            raise TimeoutError(f"workflow {workflow_id} never reached a stable state") from None
+
     loop = asyncio.get_event_loop()
     deadline = loop.time() + timeout
     while loop.time() < deadline:
         workflow = await engine._workflow_store.get(workflow_id)
-        if workflow.state in (
-            WorkflowState.SUCCESS.value,
-            WorkflowState.PARTIAL.value,
-            WorkflowState.FAILED.value,
-            WorkflowState.CANCELLED.value,
-            WorkflowState.PAUSED.value,
-            WorkflowState.WAITING_FOR_TRIGGER.value,
-        ):
+        if workflow.state in _TERMINAL_STATES:
             return workflow
         await asyncio.sleep(0.01)
     raise TimeoutError(f"workflow {workflow_id} never reached a stable state")
