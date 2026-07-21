@@ -21,6 +21,11 @@ COST_PER_1K_TOKENS: dict[str, tuple[float, float]] = {
     "openai": (0.005, 0.015),
     "claude": (0.003, 0.015),
     "gemini": (0.000075, 0.0003),
+    # Meta Model API public-preview pricing ($1.25/$4.25 per million
+    # tokens) as of July 2026 -- reverify once Muse Spark leaves preview;
+    # an unlisted provider key here silently costs $0.00 and never trips
+    # the budget gate, so this must stay in sync with actual pricing.
+    "meta": (0.00125, 0.00425),
     "ollama": (0.0, 0.0),
     "local": (0.0, 0.0),
 }

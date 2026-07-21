@@ -127,7 +127,7 @@ class KeyVault:
             keyring.delete_password(VAULT_SERVICE, provider)
 
     def _list_keyring_providers(self) -> list[str]:
-        known = ["openai", "claude", "gemini"]
+        known = ["openai", "claude", "gemini", "meta"]
         import keyring
 
         return [p for p in known if keyring.get_password(VAULT_SERVICE, p)]

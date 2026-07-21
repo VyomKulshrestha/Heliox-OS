@@ -44,7 +44,8 @@
   const cloudModels: Record<string, string[]> = {
     gemini: ["gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash"],
     openai: ["gpt-4o", "gpt-4o-mini", "o1", "o3-mini"],
-    claude: ["claude-3-7-sonnet-latest", "claude-3-5-haiku-latest", "claude-3-opus-latest"]
+    claude: ["claude-3-7-sonnet-latest", "claude-3-5-haiku-latest", "claude-3-opus-latest"],
+    meta: ["muse-spark-1.1"]
   };
 
   let availableOllamaModels = $state<string[]>([]);
@@ -762,6 +763,7 @@
         <button class:active={$settings.model.cloud_provider === "gemini"} onclick={() => setCloudProvider("gemini")}>Gemini</button>
         <button class:active={$settings.model.cloud_provider === "openai"} onclick={() => setCloudProvider("openai")}>OpenAI</button>
         <button class:active={$settings.model.cloud_provider === "claude"} onclick={() => setCloudProvider("claude")}>Claude</button>
+        <button class:active={$settings.model.cloud_provider === "meta"} onclick={() => setCloudProvider("meta")}>Meta</button>
       </div>
     </div>
 

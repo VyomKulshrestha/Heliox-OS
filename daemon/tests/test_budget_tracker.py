@@ -59,6 +59,18 @@ async def test_record_usage_accumulates(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_record_usage_accumulates_meta_provider_cost(tmp_path):
+    """meta (Muse Spark 1.1) has its own pricing entry, not the $0.00
+    fallback an unregistered provider would silently get."""
+    tracker = await make_tracker(tmp_path)
+    await tracker.record_usage("meta", "muse-spark-1.1", 1000, 500)
+    stats = await tracker.get_stats()
+    # (1000×0.00125 + 500×0.00425) / 1000 = (1.25 + 2.125) / 1000 = 0.003375
+    assert abs(stats["cost_usd"] - 0.003375) < 1e-9
+    await tracker.close()
+
+
+@pytest.mark.asyncio
 async def test_check_budget_raises_when_exceeded(tmp_path):
     """check_budget() raises BudgetExceededError once the limit is hit."""
     tracker = await make_tracker(tmp_path, budget_monthly_limit_usd=0.001)

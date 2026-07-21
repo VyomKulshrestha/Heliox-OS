@@ -1,4 +1,9 @@
-"""Cloud API client supporting OpenAI-compatible endpoints and native Gemini."""
+"""Cloud API client supporting OpenAI-compatible endpoints and native Gemini.
+
+OpenAI and Meta's Muse Spark both speak the OpenAI chat-completions
+format, so they share `_call_openai_compat`; Gemini and Claude each need
+their own native request/response shape.
+"""
 
 from __future__ import annotations
 
@@ -18,12 +23,20 @@ PROVIDER_ENDPOINTS = {
     "openai": "https://api.openai.com/v1/chat/completions",
     "gemini": "https://generativelanguage.googleapis.com/v1beta",
     "claude": "https://api.anthropic.com/v1/messages",
+    # Meta Model API (public preview as of July 2026) -- drop-in OpenAI
+    # chat-completions compatible, so it needs no dispatch branch of its
+    # own below; it falls through to _call_openai_compat like any other
+    # OpenAI-format provider. Base URL/model id per Meta's own docs
+    # (ai.developer.meta.com/docs/features/chat-completion); reverify
+    # if Meta changes this during the public preview.
+    "meta": "https://api.meta.ai/v1/chat/completions",
 }
 
 DEFAULT_MODELS = {
     "openai": "gpt-4o",
     "gemini": "gemini-2.5-flash",
     "claude": "claude-sonnet-4-20250514",
+    "meta": "muse-spark-1.1",
 }
 
 MAX_RETRIES = 3

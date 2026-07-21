@@ -372,7 +372,7 @@ graph TD
         Planner --> PromptImprover["Prompt Improver"]
         PromptImprover --> |"reuse strategies"| Planner
         Planner --> Router{"Model Router"}
-        Router --> Ext_LLM("Gemini / OpenAI / Claude")
+        Router --> Ext_LLM("Gemini / OpenAI / Claude / Meta")
         Router --> Int_LLM("Ollama")
         Planner --> Sandbox["Simulation Sandbox"]
         Sandbox --> |"risk report"| Security["Security Gate"]
@@ -544,7 +544,7 @@ The easiest way to get started is to download the pre-compiled installer for you
    - **macOS (Intel)**: `Heliox OS_x86_64.dmg`
    - **Linux**: `.AppImage` or `.deb`
 3. Install the app.
-4. Open Heliox OS and enter your API Key (e.g., Gemini, OpenAI, Claude) in the Settings tab.
+4. Open Heliox OS and enter your API Key (e.g., Gemini, OpenAI, Claude, Meta) in the Settings tab.
 
 *Note: The Python backend requires Python 3.11+ installed on your system. You must start the 
 local daemon manually for now.*
@@ -778,7 +778,7 @@ pip install -e ".[full,dev]"
 
 **2. Choose your LLM:**
 *   Local (Ollama): `ollama pull llama3.1:8b` -> `ollama serve`
-*   Cloud (Gemini/OpenAI/Claude): Add your API key in the app GUI.
+*   Cloud (Gemini/OpenAI/Claude/Meta): Add your API key in the app GUI.
 
 **3. Run the daemon:**
 ```bash
@@ -851,7 +851,7 @@ Config file: `~/.config/heliox-os/config.toml`
 [model]
 provider = "ollama"           # "ollama" | "cloud"
 ollama_model = "llama3.1:8b"
-cloud_provider = "gemini"     # "gemini" | "openai" | "claude"
+cloud_provider = "gemini"     # "gemini" | "openai" | "claude" | "meta"
 
 [security]
 root_enabled = false
@@ -882,7 +882,7 @@ camera_index = 0
 **A:** Heliox OS stores API keys securely in your system keyring (GNOME Keyring/libsecret on Linux, Credential Manager on Windows) or an encrypted `vault.enc` file. It does **not** use `.env` files. Ensure you've added the key via the Settings tab in the UI. If the issue persists, check if `libsecret-1-dev` is installed (on Linux).
 
 #### Q3: How do I switch from Ollama to a cloud LLM?
-**A:** You can change your model provider in the `~/.config/heliox-os/config.toml` file. Under the `[model]` section, set `provider = "cloud"` and specify your `cloud_provider` (e.g., `"gemini"`, `"openai"`, or `"claude"`).
+**A:** You can change your model provider in the `~/.config/heliox-os/config.toml` file. Under the `[model]` section, set `provider = "cloud"` and specify your `cloud_provider` (e.g., `"gemini"`, `"openai"`, `"claude"`, or `"meta"`). `"meta"` talks to Meta's Muse Spark 1.1 via the Meta Model API (public preview as of July 2026) — it's OpenAI-chat-completions-compatible, so it shares the same request path as `"openai"`.
 
 ```toml
 [model]
