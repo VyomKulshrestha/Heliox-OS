@@ -189,6 +189,25 @@ Settings → Agent Gateway Policy shows the enforced floor per source and lets y
 
 ---
 
+## 🗣️ Live Execution Narrator (opt-in)
+
+**What this is.** `pilot.agents.narrator.ExecutionNarrator` narrates plan execution as it happens (voice, via the frontend's browser `speechSynthesis`) and can pre-emptively pause a plan or a single browser action that gets flagged as risky *before* it runs — pairing the spoken interjection with a visual confirmation modal, always together, never one without the other. This is the "interrupts you, corrects you, talks to you while executing" capability, built on infrastructure this codebase already had rather than a new heavy model — see below for why.
+
+**Why not a real-time interaction/interruption model.** The natural comparison is Thinking Machines Lab's "Interaction Models" (`TML-Interaction-Small`) — a model that treats audio/video/text as continuous streams and decides speaking/listening/interrupting at the token level. It's genuinely the right shape for this, and it's genuinely inaccessible: no open weights, no public API, invite-only research preview only, as of this writing. Ferrum-OS's own world model — already reused for this codebase's Learned Risk Gate — was checked directly and found to be the wrong substrate too: its "screen" signal is a single collapsed hash of OCR'd text with zero structure, and its own transition-model rule table explicitly excludes `mouse_click`/`keyboard_type` from having any modeled effect at all. Kyutai's Moshi is the one genuinely open, self-hostable full-duplex speech model in this space and is flagged as a credible future backbone — deferred to a later phase, not part of this pass.
+
+**What this does instead — composition, not a new safety primitive.** Two independent trigger sources, both wired automatically the moment `Executor.set_narrator()` is called (no changes needed in `AutonomousExecutor`, the Voice/Gesture Workflow Engine, or the interactive path):
+
+- **Ambient narration** (`on_action_start`/`on_action_complete`) — always non-blocking, speaks a short description of each action as it starts/finishes.
+- **Risk-triggered interrupt** (`on_plan_risk`/`on_target_assessment`) — gates a plan or a single browser action using signals that already existed: the Agent Gateway's own critic verdict (a `WARN` on an otherwise-allowed plan was previously computed and then silently discarded by `Executor.execute()` — now captured and surfaced) and this session's `dom_diff.assess_target()` pre-execution check (previously dry-run-only, now also reachable at real-execution time). The interrupt-and-wait itself reuses the exact `PendingConfirmation`/`confirm` RPC mechanism `ThreatContainmentBridge` and the Autonomous Healing Engine already established — no new blocking primitive, no new RPC for approval/denial.
+
+**Pre-emptive only, never mid-flight.** Both interrupt paths gate a plan/action *before* it runs — `on_plan_risk` fires right after `AgentGateway.authorize()`, before any batch executes; `on_target_assessment` fires right before that one action's real dispatch. Neither attempts to cancel something already executing (e.g. a shell command mid-run) — that's a fundamentally different, harder problem this pass doesn't touch.
+
+**Off by default.** `config.narration.enabled` defaults to `False` — spoken interruptions and pausing execution on a risk signal are new user-facing behavior, not a pure restriction, so this gets the same opt-in-first treatment as `gesture_cursor`/`gesture_workflows`/`self_healing`/`risk_gate_enabled`.
+
+**Known scope limits, stated plainly.** Voice output goes through the frontend's browser `speechSynthesis`, not the daemon-side `pilot.system.voice.speak()` used elsewhere in this codebase (e.g. `AutonomousExecutor`'s end-of-job announcement) — those two voice paths are independent and can, in principle, both be speaking at once if both fire; this pass didn't unify them. Not verified against a live daemon executing a real risky plan in this pass — the on-trigger wiring is covered by unit/integration tests with fakes (mirroring `test_autonomous_healing.py`'s pattern), and the frontend pieces were verified live in-browser (the TTS utility genuinely invokes `speechSynthesis`, the store loads with the correct default state, the dialog renders/hides correctly), but the full backend-push-to-modal-and-voice round trip needs a real execution to trigger and wasn't exercised end-to-end here.
+
+---
+
 ## 📬 Contact
 
 - **Maintainer**: [@VyomKulshrestha](https://github.com/VyomKulshrestha)

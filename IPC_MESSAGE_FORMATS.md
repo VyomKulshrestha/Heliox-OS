@@ -834,6 +834,37 @@ Update self-healing config. Persists via `config.save()`.
 
 ---
 
+### Live Execution Narrator
+
+Narrates plan execution as it happens and can pre-emptively pause a plan or a single browser action flagged as risky, right before it runs (see `pilot.agents.narrator`). Off by default (`narration.enabled`). Ambient narration (`execution_narration`) is always non-blocking; risk-triggered interrupts reuse the existing `confirm` RPC / `PendingConfirmation` mechanism, same as Autonomous Healing above — there is no dedicated approve/reject RPC for this either.
+
+#### `narration_status`
+Report current narration config.
+
+**Params:** `{}`
+**Result:**
+```json
+{
+  "enabled": false,
+  "narrate_steps": true,
+  "interrupt_on_risk": true,
+  "confirm_timeout_seconds": 120.0
+}
+```
+
+#### `narration_config_update`
+Update narration config. Persists via `config.save()`.
+
+**Params:** any of `{ "enabled": true, "narrate_steps": true, "interrupt_on_risk": true, "confirm_timeout_seconds": 120.0 }`
+**Result:** `{ "status": "ok", "enabled": true, "narrate_steps": true, "interrupt_on_risk": true, "confirm_timeout_seconds": 120.0 }`
+
+#### Notifications
+- `execution_narration` — non-blocking, fired around each action's start/completion. Payload: `{ "text": "...", "plan_id": "..." }`.
+- `execution_interrupt` — a plan (via the Agent Gateway's critic verdict) or a single browser action (via the pre-execution target assessment) was flagged risky before running. Payload: `{ "plan_id": "interrupt_xxxxxxxx", "reason": "...", "severity": "...", "timeout_seconds": 120.0 }`; resolve via `confirm` with the same `plan_id`.
+- `execution_interrupt_timeout` / `execution_interrupt_denied` — the interrupt-and-wait ended without confirmation (timed out, or the user chose Stop); `plan_id` matches the originating `execution_interrupt`.
+
+---
+
 ### Interactive Git Conflict Resolver
 
 #### `resolve_git_conflict`
