@@ -3171,7 +3171,7 @@ class PilotServer:
         plan_id = params.get("plan_id", "")
         pending = self._pending_confirms.get(plan_id)
         if pending and pending.plan:
-            report = self._sandbox.simulate(pending.plan)
+            report = await self._sandbox.simulate(pending.plan)
             return report.to_dict()
 
         return {"error": "No plan found to simulate"}

@@ -561,7 +561,7 @@ class Executor:
     ) -> list[ActionResult]:
         """Simulate a plan without performing any side effects."""
         results: list[ActionResult] = []
-        report = self._simulation_sandbox.simulate(plan)
+        report = await self._simulation_sandbox.simulate(plan)
 
         for index, action in enumerate(plan.actions):
             await self._audit.log_action_start(action, plan_id, dry_run=True)

@@ -14,6 +14,13 @@ Key concepts
                           should be attempted
 - ``snapshot_dom()``  — async function that captures a snapshot from the live page
 - ``diff_dom()``      — pure function that computes a DomDiff from two snapshots
+- ``assess_target()`` — pure function that checks whether a click/type/select
+                        target (CSS selector or text) resolves against an
+                        *already-captured* snapshot, before the action runs —
+                        a lightweight, structural stand-in for a full
+                        generative "predict the outcome" world model (see
+                        SECURITY.md's Pre-Execution Target Assessment section
+                        for why a generative visual world model wasn't used).
 
 Design goals
 ------------
@@ -28,6 +35,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -365,3 +373,151 @@ def assert_dom_changed(
     if result.change_score < min_score:
         raise DomUnchangedError(diff=result, action_desc=action_desc)
     return result
+
+
+# ---------------------------------------------------------------------------
+# Pre-execution target assessment
+# ---------------------------------------------------------------------------
+
+# Matches only the simple, statically-resolvable CSS selector forms this
+# module can honestly evaluate against a flat node list: an optional bare
+# tag, an optional #id, and zero or more chained .class tokens — e.g.
+# "button", "#submit-btn", ".btn.primary", "button#submit.btn.primary".
+# Combinators (descendant/child/sibling), attribute selectors, and
+# pseudo-classes (":has-text(...)", ":nth-child", etc.) all fail this
+# pattern and are deliberately reported as "not matchable" rather than
+# guessed at — see TargetAssessment.matchable.
+_SIMPLE_SELECTOR_RE = re.compile(
+    r"^(?P<tag>[a-zA-Z][a-zA-Z0-9-]*)?"
+    r"(?:#(?P<id>[a-zA-Z_-][\w-]*))?"
+    r"(?P<classes>(?:\.[a-zA-Z_-][\w-]*)*)$"
+)
+
+
+@dataclass
+class TargetAssessment:
+    """Result of checking a click/type/select target against a DOM snapshot
+    captured immediately before the action would run.
+
+    ``matchable`` is False when the selector uses syntax this module can't
+    honestly evaluate from a flat node list (combinators, attribute
+    selectors, pseudo-classes) or no selector/text was given at all —
+    callers must not treat that as "target is fine", only as "no opinion".
+    """
+
+    matchable: bool
+    found: bool = False
+    visible: bool = False
+    ambiguous: bool = False
+    match_count: int = 0
+    reason: str = ""
+
+
+def _parse_simple_selector(selector: str) -> tuple[str | None, str | None, list[str]] | None:
+    """Parse a bare-tag/#id/.class(es) selector, or None if unsupported."""
+    selector = selector.strip()
+    if not selector:
+        return None
+    m = _SIMPLE_SELECTOR_RE.match(selector)
+    if not m:
+        return None
+    tag = m.group("tag").lower() if m.group("tag") else None
+    node_id = m.group("id")
+    classes_raw = m.group("classes") or ""
+    classes = [c for c in classes_raw.split(".") if c]
+    if tag is None and node_id is None and not classes:
+        return None
+    return tag, node_id, classes
+
+
+def _summarize_matches(matches: list[DomNode], desc: str) -> TargetAssessment:
+    if not matches:
+        return TargetAssessment(
+            matchable=True,
+            found=False,
+            match_count=0,
+            reason=f"{desc} not found in current page — action would likely fail",
+        )
+
+    visible_matches = [n for n in matches if n.visible]
+    if not visible_matches:
+        return TargetAssessment(
+            matchable=True,
+            found=True,
+            visible=False,
+            match_count=len(matches),
+            reason=f"{desc} found but not visible ({len(matches)} match(es)) — action would likely fail or need scrolling",
+        )
+
+    ambiguous = len(visible_matches) > 1
+    reason = (
+        f"{desc} matches {len(visible_matches)} visible elements — click may hit the wrong one"
+        if ambiguous
+        else f"{desc} found and visible"
+    )
+    return TargetAssessment(
+        matchable=True,
+        found=True,
+        visible=True,
+        ambiguous=ambiguous,
+        match_count=len(visible_matches),
+        reason=reason,
+    )
+
+
+def assess_target(snapshot: DomSnapshot, *, selector: str = "", text: str = "") -> TargetAssessment:
+    """Check whether a click/type/select target resolves against `snapshot`.
+
+    This is a structural, deterministic stand-in for "predict the outcome
+    before executing" — not a generative model. It answers "does this
+    target exist, is it visible, is it ambiguous right now", using the
+    *current* live DOM (already captured, no extra page evaluation), not a
+    simulated future state. See module docstring.
+
+    Parameters
+    ----------
+    snapshot:
+        A DomSnapshot captured immediately before the action would run.
+    selector:
+        A CSS selector (as used by ``browser_click``/``browser_type``/etc).
+        Only simple tag/#id/.class forms can be evaluated — see
+        `_parse_simple_selector`.
+    text:
+        Visible-text substring (as used by ``browser_click_text``).
+        Always matchable since it's a plain substring search.
+
+    Returns
+    -------
+    TargetAssessment
+        `matchable=False` if neither argument was usable — callers should
+        treat that as "no prediction available", not as a clean bill of
+        health.
+    """
+    if text:
+        needle = text.strip().lower()
+        if not needle:
+            return TargetAssessment(matchable=False, reason="empty text target")
+        matches = [n for n in snapshot.nodes if needle in n.text.lower()]
+        return _summarize_matches(matches, f"text '{text}'")
+
+    if selector:
+        parsed = _parse_simple_selector(selector)
+        if parsed is None:
+            return TargetAssessment(
+                matchable=False,
+                reason=(
+                    f"selector '{selector}' too complex to statically assess "
+                    "(combinators/attributes/pseudo-classes not supported)"
+                ),
+            )
+        tag, node_id, classes = parsed
+        matches = [
+            n
+            for n in snapshot.nodes
+            if (tag is None or n.tag == tag)
+            and (node_id is None or n.id == node_id)
+            and all(c in n.cls.split() for c in classes)
+        ]
+        return _summarize_matches(matches, f"selector '{selector}'")
+
+    return TargetAssessment(matchable=False, reason="no selector or text given")

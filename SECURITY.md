@@ -172,6 +172,23 @@ Settings → Agent Gateway Policy shows the enforced floor per source and lets y
 
 ---
 
+## 🎯 Pre-Execution Target Assessment (browser actions)
+
+**What problem this solves.** Before this, `SimulationSandbox`'s dry-run impact modeling for `browser_click`/`browser_click_text`/`browser_type`/`browser_select`/`browser_fill_form` was purely templated text (`f"Click a page element: {target}"`) — it had no way to say whether the target actually existed on the current page. A plan proposing to click `#submit-btn` on a page with no such element would get exactly the same dry-run description as one that would work fine.
+
+**Why not a generative visual world model.** The natural-sounding fix — predict the future screen state from an action, the way World Labs' RTFM or NVIDIA Cosmos do for 3D scenes — was evaluated and rejected for this codebase: every self-hostable option in that space needs dedicated GPU hardware (RTFM: a single H100; Cosmos: H100/H200) and is built for photorealistic video generation, not "will this CSS selector resolve." The GUI-agent-specific research that *is* the right shape (Code2World's renderable-code prediction, CUWM's post-action UI-state reasoning) is unreleased academic work with no available model or weights. Ferrum-OS's own world model — the design this repo's Learned Risk Gate is already based on — was also checked directly: it folds a screen-text OCR read into its state embedding, but only as a single collapsed hash with its own authors explicitly excluding `mouse_click`/`keyboard_type` from having any modeled effect at all.
+
+**What this does instead — structural, not generative.** `pilot.system.dom_diff.assess_target()` checks a click/type/select/fill_form target against the DOM snapshot already captured immediately before the action would run (the same `DomSnapshot` infrastructure `dom_diff.py` already used for *after*-the-fact self-correction, now also used *before*). It reports whether the target exists, is visible, and is unambiguous — using the live current page state, not a simulated future one:
+
+- Simple selector forms (`#id`, `.class`, `tag`, and combinations) are resolved directly against the snapshot's flat node list.
+- Combinators, attribute selectors, and pseudo-classes (`form > button`, `input[type=submit]`, `:has-text(...)`) are **not** guessed at — `TargetAssessment.matchable=False` is returned honestly rather than a wrong answer.
+- If no browser session is open yet, the check is a complete no-op (`SimulationSandbox.simulate()` — now async — never launches a browser itself; a dry-run must stay a genuine no-op).
+- When a target is missing, hidden, or resolves to multiple visible elements, the plan's risk for that action is raised to `HIGH` and a `predicted_issue` is attached to the impact item, surfaced in the dry-run report the user sees before confirming.
+
+**Known scope limits, stated plainly.** This only ever inspects the *current* page — it cannot predict the DOM after a prior action in the same plan would run (e.g. action 2's target existing only after action 1 navigates), so multi-step plans only get an accurate assessment for their first browser action against the page open right now. `browser_fill_form` checks each field selector plus the submit selector independently, not whether the form as a whole is submittable. Not a replacement for the existing DOM-diff self-correction in `system/browser.py` — that still runs at execution time regardless of what this predicts.
+
+---
+
 ## 📬 Contact
 
 - **Maintainer**: [@VyomKulshrestha](https://github.com/VyomKulshrestha)

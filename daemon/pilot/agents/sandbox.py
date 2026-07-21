@@ -42,6 +42,14 @@ class ImpactItem:
     reversible: bool = True
     estimated_scope: str = ""  # e.g., "154 files", "1 service"
     cognitive_cost: float = 0.0
+    # Pre-execution target assessment (browser click/type/select/fill_form
+    # only, and only when a browser session is already open) — set from
+    # pilot.system.dom_diff.assess_target() against the CURRENT live DOM,
+    # before the action would run. Empty string means "no prediction
+    # available" (no active session, or the selector was too complex to
+    # statically resolve), never "target confirmed fine".
+    predicted_issue: str = ""
+    predicted_issue_is_problem: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -52,6 +60,7 @@ class ImpactItem:
             "reversible": self.reversible,
             "estimated_scope": self.estimated_scope,
             "cognitive_cost": self.cognitive_cost,
+            "predicted_issue": self.predicted_issue,
         }
 
 
@@ -208,7 +217,7 @@ class SimulationSandbox:
             "find",
         ]
 
-    def simulate(self, plan: Any) -> SimulationReport:
+    async def simulate(self, plan: Any) -> SimulationReport:
         """Analyze a plan and produce an impact report without executing anything."""
         report = SimulationReport(plan_id=getattr(plan, "plan_id", "unknown"))
         max_risk = RiskLevel.LOW
@@ -248,6 +257,23 @@ class SimulationSandbox:
             impact.description = self._describe_impact(action_type, target)
             impact.estimated_scope = self._estimate_scope(action_type, target)
 
+            # Pre-execution target assessment — checks the CURRENT live DOM
+            # (if a browser session is already open) for whether this
+            # click/type/select/fill_form target actually resolves, before
+            # the action would run. No-op (predicted_issue stays "") when
+            # there's no active session or the selector can't be statically
+            # resolved — see dom_diff.assess_target().
+            assessment = await self._assess_browser_target(action_type, action)
+            if assessment is not None and assessment.matchable:
+                impact.predicted_issue = assessment.reason
+                if not assessment.found or not assessment.visible or assessment.ambiguous:
+                    impact.predicted_issue_is_problem = True
+                    impact.description += f" — {assessment.reason}"
+                    risk_order_local = [RiskLevel.LOW, RiskLevel.MEDIUM, RiskLevel.HIGH, RiskLevel.CRITICAL]
+                    if risk_order_local.index(RiskLevel(impact.risk)) < risk_order_local.index(RiskLevel.HIGH):
+                        impact.risk = RiskLevel.HIGH
+                        risk = RiskLevel.HIGH
+
             # Track max risk
             risk_order = [RiskLevel.LOW, RiskLevel.MEDIUM, RiskLevel.HIGH, RiskLevel.CRITICAL]
             if risk_order.index(RiskLevel(risk)) > risk_order.index(RiskLevel(max_risk)):
@@ -267,6 +293,65 @@ class SimulationSandbox:
         report.recommendation = self._generate_recommendation(report)
 
         return report
+
+    async def _assess_browser_target(self, action_type: str, action: Any) -> Any | None:
+        """Run dom_diff.assess_target() against the current live page for
+        browser interaction actions, if (and only if) a browser session is
+        already open. Returns None (not a TargetAssessment) when nothing
+        can be assessed — this method must never launch a browser itself,
+        since a dry-run has to remain a genuine no-op."""
+        if action_type not in (
+            "browser_click",
+            "browser_click_text",
+            "browser_type",
+            "browser_select",
+            "browser_fill_form",
+        ):
+            return None
+
+        from pilot.system.browser import has_active_session, peek_current_dom_snapshot
+
+        if not has_active_session():
+            return None
+
+        try:
+            snapshot = await peek_current_dom_snapshot()
+        except Exception:
+            logger.debug("Pre-execution target assessment failed to snapshot DOM", exc_info=True)
+            return None
+        if snapshot is None:
+            return None
+
+        from pilot.system.dom_diff import TargetAssessment, assess_target
+
+        params = getattr(action, "parameters", None) or getattr(action, "params", None)
+
+        if action_type == "browser_fill_form":
+            # Multiple targets (one per field, plus an optional submit
+            # button) rather than one selector -- assess each and surface
+            # the first problem found, or a summary if all resolve.
+            fields = dict(getattr(params, "fields", {}) or {}) if params else {}
+            submit_selector = getattr(params, "submit_selector", "") if params else ""
+            selectors = list(fields.keys()) + ([submit_selector] if submit_selector else [])
+            if not selectors:
+                return None
+            problems = []
+            for sel in selectors:
+                result = assess_target(snapshot, selector=sel)
+                if result.matchable and (not result.found or not result.visible or result.ambiguous):
+                    problems.append(result.reason)
+            if problems:
+                return TargetAssessment(matchable=True, found=False, reason="; ".join(problems))
+            return TargetAssessment(
+                matchable=True,
+                found=True,
+                visible=True,
+                reason=f"all {len(selectors)} form target(s) found and visible",
+            )
+
+        selector = getattr(params, "selector", "") if params else ""
+        text = getattr(params, "text", "") if action_type == "browser_click_text" and params else ""
+        return assess_target(snapshot, selector=selector, text=text)
 
     def _assess_action_risk(self, action_type: str, target: str, action: Any) -> str:
         """Assess the risk level of a single action."""
@@ -381,6 +466,13 @@ class SimulationSandbox:
         irreversible = [i for i in report.impacts if not i.reversible]
         if irreversible:
             warnings.append(f"♻️ {len(irreversible)} action(s) are NOT reversible")
+
+        predicted_problems = [i for i in report.impacts if i.predicted_issue_is_problem]
+        if predicted_problems:
+            warnings.append(
+                f"🎯 {len(predicted_problems)} browser action(s) predicted to fail or misfire "
+                "against the current page — see each action's description"
+            )
 
         if report.total_cognitive_cost > 2.0:
             warnings.append(

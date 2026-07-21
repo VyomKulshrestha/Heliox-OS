@@ -22,7 +22,9 @@ from pilot.system.dom_diff import (
     DomNode,
     DomSnapshot,
     DomUnchangedError,
+    TargetAssessment,
     assert_dom_changed,
+    assess_target,
     diff_dom,
 )
 
@@ -520,3 +522,131 @@ class TestDomDiffToDict:
         d = diff.to_dict()
         assert d["added_count"] == len(diff.added)
         assert d["removed_count"] == len(diff.removed)
+
+
+# ---------------------------------------------------------------------------
+# assess_target — pre-execution target assessment
+# ---------------------------------------------------------------------------
+
+
+class TestAssessTargetNoInput:
+    def test_no_selector_or_text_is_unmatchable(self):
+        result = assess_target(_snap([]))
+        assert isinstance(result, TargetAssessment)
+        assert result.matchable is False
+
+    def test_empty_text_is_unmatchable(self):
+        result = assess_target(_snap([_node("button")]), text="   ")
+        assert result.matchable is False
+
+
+class TestAssessTargetBySelector:
+    def test_id_selector_found_and_visible(self):
+        snapshot = _snap([_node("button", id="submit-btn")])
+        result = assess_target(snapshot, selector="#submit-btn")
+        assert result.matchable is True
+        assert result.found is True
+        assert result.visible is True
+        assert result.ambiguous is False
+
+    def test_id_selector_not_found(self):
+        snapshot = _snap([_node("button", id="other-btn")])
+        result = assess_target(snapshot, selector="#submit-btn")
+        assert result.matchable is True
+        assert result.found is False
+        assert "not found" in result.reason
+
+    def test_class_selector_matches_class_token(self):
+        snapshot = _snap([_node("div", cls="btn primary")])
+        result = assess_target(snapshot, selector=".primary")
+        assert result.found is True
+
+    def test_class_selector_does_not_match_substring_of_another_class(self):
+        # "prim" must not match a node whose only class is "primary".
+        snapshot = _snap([_node("div", cls="primary")])
+        result = assess_target(snapshot, selector=".prim")
+        assert result.found is False
+
+    def test_tag_and_id_combined_selector(self):
+        snapshot = _snap([_node("button", id="submit-btn"), _node("a", id="submit-btn")])
+        result = assess_target(snapshot, selector="button#submit-btn")
+        assert result.found is True
+        assert result.match_count == 1
+
+    def test_bare_tag_selector(self):
+        snapshot = _snap([_node("button"), _node("div")])
+        result = assess_target(snapshot, selector="button")
+        assert result.found is True
+        assert result.match_count == 1
+
+    def test_not_visible_match_reported_as_found_but_not_visible(self):
+        snapshot = _snap([_node("button", id="submit-btn", visible=False)])
+        result = assess_target(snapshot, selector="#submit-btn")
+        assert result.matchable is True
+        assert result.found is True
+        assert result.visible is False
+        assert "not visible" in result.reason
+
+    def test_multiple_visible_matches_are_ambiguous(self):
+        snapshot = _snap([_node("button", cls="btn"), _node("button", cls="btn")])
+        result = assess_target(snapshot, selector=".btn")
+        assert result.matchable is True
+        assert result.found is True
+        assert result.ambiguous is True
+        assert result.match_count == 2
+
+    def test_single_match_is_not_ambiguous(self):
+        snapshot = _snap([_node("button", cls="btn")])
+        result = assess_target(snapshot, selector=".btn")
+        assert result.ambiguous is False
+
+
+class TestAssessTargetUnmatchableSelectors:
+    """Combinators, attribute selectors, and pseudo-classes can't be
+    honestly evaluated from a flat node list — must report matchable=False
+    rather than silently guessing."""
+
+    def test_descendant_combinator_is_unmatchable(self):
+        result = assess_target(_snap([_node("button")]), selector="form button")
+        assert result.matchable is False
+
+    def test_child_combinator_is_unmatchable(self):
+        result = assess_target(_snap([_node("button")]), selector="form > button")
+        assert result.matchable is False
+
+    def test_attribute_selector_is_unmatchable(self):
+        result = assess_target(_snap([_node("input")]), selector="input[type='submit']")
+        assert result.matchable is False
+
+    def test_pseudo_class_selector_is_unmatchable(self):
+        result = assess_target(_snap([_node("button")]), selector="button:has-text('Login')")
+        assert result.matchable is False
+
+    def test_empty_selector_is_unmatchable(self):
+        result = assess_target(_snap([_node("button")]), selector="")
+        assert result.matchable is False
+
+
+class TestAssessTargetByText:
+    def test_visible_text_substring_found(self):
+        snapshot = _snap([_node("button", text="Sign In")])
+        result = assess_target(snapshot, text="Sign In")
+        assert result.matchable is True
+        assert result.found is True
+
+    def test_text_match_is_case_insensitive(self):
+        snapshot = _snap([_node("button", text="Sign In")])
+        result = assess_target(snapshot, text="sign in")
+        assert result.found is True
+
+    def test_text_not_found(self):
+        snapshot = _snap([_node("button", text="Cancel")])
+        result = assess_target(snapshot, text="Sign In")
+        assert result.matchable is True
+        assert result.found is False
+
+    def test_invisible_text_node_not_counted_as_visible_match(self):
+        snapshot = _snap([_node("button", text="Sign In", visible=False)])
+        result = assess_target(snapshot, text="Sign In")
+        assert result.found is True
+        assert result.visible is False

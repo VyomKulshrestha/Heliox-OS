@@ -101,6 +101,30 @@ async def _snap(page: Any):
     return await snapshot_dom(page)
 
 
+def has_active_session() -> bool:
+    """True if a browser context is already open.
+
+    Used by the dry-run sandbox to decide whether it can peek at the
+    current page for pre-execution target assessment — it must never
+    launch a browser itself (a dry-run simulation has to stay a genuine
+    no-op when nothing is already running).
+    """
+    return _browser_context is not None
+
+
+async def peek_current_dom_snapshot() -> Any | None:
+    """Snapshot the current page's DOM without side effects.
+
+    Returns None if no browser session is open yet, or if DOM_DIFF_ENABLED
+    is False — callers must treat None as "no assessment possible", not
+    as "page is empty".
+    """
+    if not has_active_session():
+        return None
+    page = await _get_page()
+    return await _snap(page)
+
+
 def _append_diff(base_output: str, before: Any, after: Any, action_desc: str) -> str:
     """Compute diff and append a JSON summary to the action output string."""
     if before is None or after is None:
