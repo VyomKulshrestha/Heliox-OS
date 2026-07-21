@@ -865,6 +865,37 @@ Update narration config. Persists via `config.save()`.
 
 ---
 
+### User Manual Supervision
+
+Watches the user's OWN independent screen/keyboard/mouse activity — never anything Heliox itself executes, see `pilot.agents.user_supervision`. Off by default (`supervision.enabled`), with `supervision.keyboard_mouse_hook_enabled` as a separate, starker opt-in for the global keyboard/mouse hook. Advisory only — unlike the Narrator's `execution_interrupt`, there is no blocking gate here and no dedicated approve/reject RPC, since Heliox cannot intercept the user's own OS-level input.
+
+#### `supervision_status`
+Report current supervision config plus whether the keyboard/mouse hook (if enabled) is actually still alive.
+
+**Params:** `{}`
+**Result:**
+```json
+{
+  "enabled": false,
+  "keyboard_mouse_hook_enabled": false,
+  "cognitive_coaching_enabled": true,
+  "risk_pattern_detection_enabled": true,
+  "hook_healthy": false
+}
+```
+
+#### `supervision_config_update`
+Update supervision config. Unlike `narration_config_update`/`self_healing_config_update`, this handler actually starts/stops the background task and the keyboard/mouse hook on an `enabled`/`keyboard_mouse_hook_enabled` transition, not just a config-field flip — the thing being gated has real cost and privacy weight even when idle.
+
+**Params:** any of `{ "enabled": true, "keyboard_mouse_hook_enabled": true, "cognitive_coaching_enabled": true, "risk_pattern_detection_enabled": true, "tick_interval_seconds": 1.5, "ocr_interval_seconds": 8.0, "stress_coaching_threshold": 0.75, "cognitive_load_coaching_threshold": 0.8, "coaching_cooldown_seconds": 900.0, "risk_cooldown_seconds": 30.0, "keystroke_buffer_max_chars": 256, "ocr_snippet_max_chars": 400 }`
+**Result:** `{ "status": "ok", "enabled": true, "keyboard_mouse_hook_enabled": true, "cognitive_coaching_enabled": true, "risk_pattern_detection_enabled": true, "hook_healthy": true }`
+
+#### Notifications
+- `supervision_cognitive_checkin` — a sustained stress/cognitive-load threshold crossing from a real OCR snippet + window-title stimulus fed to `TribeEngine.predict_cognitive_state()`. Payload: `{ "message": "...", "attention_score": 0.4, "stress_level": 0.9, "cognitive_load": 0.5 }`.
+- `supervision_risk_warning` — the OCR snippet or the keystroke hook's buffer matched a known destructive-action pattern. Payload: `{ "pattern": "destructive_shell_command", "source": "ocr"|"keystroke", "message": "..." }` — deliberately never includes the matched text itself, only the pattern's name.
+
+---
+
 ### Interactive Git Conflict Resolver
 
 #### `resolve_git_conflict`

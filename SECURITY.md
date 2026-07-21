@@ -208,6 +208,37 @@ Settings → Agent Gateway Policy shows the enforced floor per source and lets y
 
 ---
 
+## 👁️ User Manual Supervision (opt-in)
+
+**What this is.** `pilot.agents.user_supervision.UserSupervisionEngine` watches the user's OWN independent screen/keyboard/mouse activity — never anything Heliox itself executes, that's the Live Execution Narrator's job above — and can offer a spoken cognitive check-in or a risk warning. This is the single biggest privacy surface in this codebase, built and gated with that weight in mind rather than as a routine feature toggle.
+
+**Two independent, advisory-only trigger sources**, evaluated on one periodic tick (`BackgroundTaskManager`, the same precedent the Autonomous Healing Engine uses):
+
+- **Cognitive coaching** — `pilot.cognitive.tribe_engine.TribeEngine.predict_cognitive_state()` is fed a *real* stimulus for the first time here (an OCR screen snippet plus the active window title), instead of the synthetic activity labels every other call site in this codebase uses (window titles alone, notification metadata, static action-type strings, or the frontend's own client-side mouse-activity labels). A sustained stress/cognitive-load threshold crossing triggers a gentle check-in.
+- **Risk-pattern detection** — the OCR snippet and a transient keystroke buffer (see below) are matched against `pilot.security.risk_patterns`' small, explicit, hardcoded regex table — the same "auditable rules, never a learned model" philosophy the Learned Risk Gate's `risk_safety.py` already established. A match triggers a direct warning.
+
+**Advisory only, never a gate.** Unlike the Live Execution Narrator, which pauses a Heliox-issued plan/action *before it runs* via a real blocking confirmation, Heliox has no way to intercept or block the user's own OS-level input — it only observes a copy via the hook described below. Both trigger methods return `None`, not a bool; there is nothing to approve or deny, so the frontend pairs a spoken interjection with a dismiss-only modal, not an approve/deny one.
+
+**Why pattern-matching over an LLM call on raw content.** Correlating raw screen/keystroke content through an LLM — even a local one — would be a strictly bigger leak surface than matching it against a small, explicit, human-readable pattern table entirely in-process. The pattern table lives in `pilot/security/risk_patterns.py`, is short enough to read end to end, and is the only thing standing between "something risky-looking happened" and a warning being shown.
+
+**The privacy contract, stated as code, not just as a design note.** `pilot.system.input_hook.InputSupervisionHook` is the actual boundary:
+
+- Raw keystrokes are buffered *only* in a small, bounded, in-memory deque — purely to be joined into a short-lived local string, pattern-matched, and then immediately discarded, regardless of whether anything matched. That joined string never gets logged, returned, or persisted anywhere — only the matched pattern's *name* (e.g. `"destructive_shell_command"`), or `None`, ever leaves `snapshot()`.
+- Mouse clicks are counted, never located — click coordinates are never read, buffered, or stored anywhere in this codebase; only a click-rate number exists.
+- The OCR snippet used for both triggers is processed in-memory per tick and never persisted verbatim — only the derived cognitive snapshot and matched-pattern name ever reach a notification or log.
+
+**A tiered opt-in, not one switch.** `config.supervision.enabled` (screen/OCR-based cognitive coaching + risk warnings) and `config.supervision.keyboard_mouse_hook_enabled` (the global keyboard/mouse hook) are deliberately separate flags — a user can turn on the milder capability without ever installing the hook. Both default to `False`. The Settings UI gates the hook toggle further, behind a one-time "I understand" checkbox, since it exceeds every other privacy warning already in this app (including the gesture-cursor-control warning).
+
+**Known scope limits, stated plainly.**
+- **UAC/elevation boundary**: a non-elevated hook cannot observe keystrokes delivered to an elevated (Administrator) window — a real blind spot for exactly the kind of destructive command (e.g. an elevated shell) the risk trigger is meant to catch.
+- **Antivirus/EDR risk**: a global keyboard hook is a textbook keylogger signature; running this feature carries a real risk of the daemon being flagged or quarantined by antivirus or anti-cheat software on the user's machine.
+- **Silent hook death**: Windows silently removes a low-level keyboard/mouse hook whose callback takes too long, with no in-process exception raised. `hook_healthy` (surfaced via the `supervision_status` RPC and the Settings panel) is a best-effort liveness signal, not a guarantee — it can only detect that the listener thread itself died, not that the OS quietly unhooked it.
+- **Windows-only verified.** macOS requires an explicit Accessibility/Input Monitoring permission grant outside this codebase's control; Linux/Wayland is likely broken since `pynput`'s hook backend relies on X11/Xlib. Neither was exercised in this pass.
+- No per-application context for keystroke or OCR matches — this is flat, content-only pattern matching, false positives included.
+- Not verified against a live daemon with the real OS-level hook installed in this pass — the engine's trigger/cooldown logic and the hook's buffer/privacy-boundary behavior are covered by unit tests with fakes (mirroring `test_narrator.py`'s pattern), and the frontend pieces were verified live in-browser (the panel's toggles, the "I understand" gate, and the dismiss-only dialog all render and behave correctly), but the actual `pynput` listener installation and a real risky-keystroke round trip need a real Windows session and weren't exercised end-to-end here.
+
+---
+
 ## 📬 Contact
 
 - **Maintainer**: [@VyomKulshrestha](https://github.com/VyomKulshrestha)
