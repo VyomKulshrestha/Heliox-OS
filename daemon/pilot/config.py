@@ -561,6 +561,12 @@ def _validate_config_types(raw: dict) -> None:
             "watched_metrics": list,
             "goal_templates": dict,
         },
+        "narration": {
+            "enabled": bool,
+            "narrate_steps": bool,
+            "interrupt_on_risk": bool,
+            "confirm_timeout_seconds": (int, float),
+        },
         "memory": {
             "checkpoint_interval_seconds": int,
             "pruning_interval_seconds": int,
@@ -755,6 +761,16 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
             config.self_healing.watched_metrics = [str(m) for m in sh_raw["watched_metrics"]]
         if "goal_templates" in sh_raw and isinstance(sh_raw["goal_templates"], dict):
             config.self_healing.goal_templates = {str(k): str(v) for k, v in sh_raw["goal_templates"].items()}
+
+    if "narration" in raw and isinstance(raw["narration"], dict):
+        n_raw = raw["narration"]
+        config.narration.enabled = bool(n_raw.get("enabled", config.narration.enabled))
+        if "narrate_steps" in n_raw:
+            config.narration.narrate_steps = bool(n_raw["narrate_steps"])
+        if "interrupt_on_risk" in n_raw:
+            config.narration.interrupt_on_risk = bool(n_raw["interrupt_on_risk"])
+        if "confirm_timeout_seconds" in n_raw:
+            config.narration.confirm_timeout_seconds = float(n_raw["confirm_timeout_seconds"])
 
     if "memory" in raw:
         for k, v in raw["memory"].items():

@@ -521,3 +521,73 @@ def assess_target(snapshot: DomSnapshot, *, selector: str = "", text: str = "") 
         return _summarize_matches(matches, f"selector '{selector}'")
 
     return TargetAssessment(matchable=False, reason="no selector or text given")
+
+
+# Action types this module knows how to pre-execution-assess -- the 5
+# browser interaction actions whose params carry a resolvable selector/text
+# target. Shared by SimulationSandbox (dry-run) and Executor (real
+# execution) so both react to the exact same signal.
+BROWSER_TARGET_ACTION_TYPES = frozenset(
+    {"browser_click", "browser_click_text", "browser_type", "browser_select", "browser_fill_form"}
+)
+
+
+async def assess_browser_action_target(action_type: str, action: Any) -> TargetAssessment | None:
+    """Run `assess_target()` against the CURRENT live page for one browser
+    interaction action, if (and only if) a browser session is already open.
+
+    Returns None -- not a `TargetAssessment` -- when nothing can be
+    assessed at all (wrong action type, no active session, snapshot
+    failure). Callers must never launch a browser themselves just to run
+    this check: a dry-run has to remain a genuine no-op, and real
+    execution shouldn't open a browser purely to pre-check a target for an
+    action that isn't going to touch the browser anyway.
+
+    Shared by `pilot.agents.sandbox.SimulationSandbox.simulate()` (dry-run)
+    and `pilot.agents.executor.Executor.execute()` (real execution) so
+    both react to the identical signal.
+    """
+    if action_type not in BROWSER_TARGET_ACTION_TYPES:
+        return None
+
+    from pilot.system.browser import has_active_session, peek_current_dom_snapshot
+
+    if not has_active_session():
+        return None
+
+    try:
+        snapshot = await peek_current_dom_snapshot()
+    except Exception:
+        logger.debug("Pre-execution target assessment failed to snapshot DOM", exc_info=True)
+        return None
+    if snapshot is None:
+        return None
+
+    params = getattr(action, "parameters", None) or getattr(action, "params", None)
+
+    if action_type == "browser_fill_form":
+        # Multiple targets (one per field, plus an optional submit button)
+        # rather than one selector -- assess each and surface the first
+        # problem found, or a summary if all resolve.
+        fields = dict(getattr(params, "fields", {}) or {}) if params else {}
+        submit_selector = getattr(params, "submit_selector", "") if params else ""
+        selectors = list(fields.keys()) + ([submit_selector] if submit_selector else [])
+        if not selectors:
+            return None
+        problems = []
+        for sel in selectors:
+            result = assess_target(snapshot, selector=sel)
+            if result.matchable and (not result.found or not result.visible or result.ambiguous):
+                problems.append(result.reason)
+        if problems:
+            return TargetAssessment(matchable=True, found=False, reason="; ".join(problems))
+        return TargetAssessment(
+            matchable=True,
+            found=True,
+            visible=True,
+            reason=f"all {len(selectors)} form target(s) found and visible",
+        )
+
+    selector = getattr(params, "selector", "") if params else ""
+    text = getattr(params, "text", "") if action_type == "browser_click_text" and params else ""
+    return assess_target(snapshot, selector=selector, text=text)

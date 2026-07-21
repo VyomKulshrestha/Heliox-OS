@@ -94,6 +94,7 @@ class Executor:
         self._snapshot_mgr = SnapshotManager(config)
         self._plugin_registry = None
         self._simulation_sandbox = SimulationSandbox(allowed_commands=config.restrictions.sandbox_allowed_commands)
+        self._narrator: Any = None
         self._last_output = ""  # For output chaining between steps
         self._largest_output = ""  # Largest output from any step in the pipeline
 
@@ -280,6 +281,14 @@ class Executor:
         pattern used elsewhere rather than reordering construction."""
         self._gateway = gateway
 
+    def set_narrator(self, narrator: Any) -> None:
+        """Wire in the ExecutionNarrator (see pilot.agents.narrator) after
+        construction, same post-construction pattern as set_gateway. Once
+        set, execute() automatically narrates/interrupts every plan it
+        runs -- callers (AutonomousExecutor, VoiceGestureWorkflowEngine,
+        the interactive path) need no changes of their own."""
+        self._narrator = narrator
+
     def _analyze_dependencies(self, actions: list[Action]) -> list[list[Action]]:
         """Analyze action dependencies and return batches that can run in parallel.
 
@@ -424,6 +433,28 @@ class Executor:
                     )
                 ]
 
+            # The gateway's own critic verdict is computed above regardless
+            # of whether it BLOCKed anything -- a WARN on an otherwise
+            # allowed plan was previously just discarded here. If a
+            # narrator is configured, surface it and let the user stop the
+            # plan before anything runs.
+            if self._narrator is not None and gateway_decision.critic_verdict is not None:
+                proceed = await self._narrator.on_plan_risk(plan, gateway_decision.critic_verdict)
+                if not proceed:
+                    return [
+                        ActionResult(
+                            action=plan.actions[0]
+                            if plan.actions
+                            else Action(
+                                action_type=ActionType.FILE_READ,
+                                target="",
+                                parameters=FileParams(path="/"),
+                            ),
+                            success=False,
+                            error="Stopped by user after risk interrupt",
+                        )
+                    ]
+
         allowed, reasons = self._permissions.plan_allowed(plan)
         if not allowed:
             return [
@@ -528,11 +559,44 @@ class Executor:
                 await self._audit.log_action_start(action, plan_id)
                 if on_action_start:
                     await on_action_start(action)
+                elif self._narrator is not None:
+                    await self._narrator.on_action_start(action)
                 action = self._inject_previous_output(action)
+
+                # Pre-execution target assessment for browser interaction
+                # actions -- the same check SimulationSandbox.simulate()
+                # already runs for dry-run plans, now also reachable at
+                # real-execution time when a narrator is configured.
+                if self._narrator is not None:
+                    action_type_value = (
+                        action.action_type.value if hasattr(action.action_type, "value") else str(action.action_type)
+                    )
+                    from pilot.system.dom_diff import assess_browser_action_target
+
+                    assessment = await assess_browser_action_target(action_type_value, action)
+                    if assessment is not None and assessment.matchable:
+                        is_problem = not assessment.found or not assessment.visible or assessment.ambiguous
+                        if is_problem:
+                            proceed = await self._narrator.on_target_assessment(action, assessment)
+                            if not proceed:
+                                result = ActionResult(
+                                    action=action,
+                                    success=False,
+                                    error=f"Skipped after interrupt: {assessment.reason}",
+                                )
+                                await self._audit.log_action_result(result, plan_id)
+                                if on_action_complete:
+                                    await on_action_complete(result)
+                                else:
+                                    await self._narrator.on_action_complete(result)
+                                return idx, result
+
                 result = await self._execute_single(action, snapshot_id)
                 await self._audit.log_action_result(result, plan_id)
                 if on_action_complete:
                     await on_action_complete(result)
+                elif self._narrator is not None:
+                    await self._narrator.on_action_complete(result)
                 return idx, result
 
             batch_results = await asyncio.gather(
