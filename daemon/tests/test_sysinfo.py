@@ -14,7 +14,11 @@ def test_cpu_freq_attribute_error_does_not_raise(monkeypatch):
     def _raise(*args, **kwargs):
         raise AttributeError("module 'psutil' has no attribute 'cpu_freq'")
 
-    monkeypatch.setattr(psutil, "cpu_freq", _raise)
+    # raising=False: psutil.cpu_freq may not exist as an attribute at all on
+    # this platform (confirmed on some macOS runners), not just fail when
+    # called -- monkeypatch.setattr would otherwise raise AttributeError
+    # itself before the test ever exercises the fix.
+    monkeypatch.setattr(psutil, "cpu_freq", _raise, raising=False)
 
     result = _collect_cpu_info(sample_interval=0.01)
 
@@ -26,7 +30,7 @@ def test_cpu_freq_not_implemented_error_does_not_raise(monkeypatch):
     def _raise(*args, **kwargs):
         raise NotImplementedError("cpu_freq not implemented on this platform")
 
-    monkeypatch.setattr(psutil, "cpu_freq", _raise)
+    monkeypatch.setattr(psutil, "cpu_freq", _raise, raising=False)
 
     result = _collect_cpu_info(sample_interval=0.01)
 
