@@ -732,6 +732,47 @@ class PilotServer:
         except Exception:
             logger.warning("ExecutionNarrator init failed (non-critical)", exc_info=True)
 
+        # ── User Manual Supervision (watches the user's OWN independent
+        # screen/keyboard/mouse activity, see pilot.agents.user_supervision) ──
+        # Unlike self-healing/narration, the thing being gated here
+        # (installing a global input hook, running periodic OCR) has real
+        # cost and privacy weight even when idle -- so the BackgroundTask
+        # and the hook are only actually started when the user has opted
+        # in, and _handle_supervision_config_update (below) starts/stops
+        # both on a config transition, not just flips a bool.
+        try:
+            from pilot.agents.background import BackgroundTask
+            from pilot.agents.user_supervision import UserSupervisionEngine
+            from pilot.system.input_hook import InputSupervisionHook
+
+            self._supervision_hook = InputSupervisionHook(
+                keystroke_buffer_max_chars=self.config.supervision.keystroke_buffer_max_chars
+            )
+            self._supervision = UserSupervisionEngine(
+                config=self.config,
+                tribe_engine=self._tribe_engine,
+                screen_vision=self._screen_vision,
+                hook=self._supervision_hook,
+                broadcast_fn=self._broadcast_notification,
+            )
+            self._background.register(
+                BackgroundTask(
+                    task_id="user_supervision",
+                    name="User Manual Supervision",
+                    description="Watches the user's own independent screen/keyboard/mouse activity",
+                    interval_seconds=self.config.supervision.tick_interval_seconds,
+                    action_fn=self._supervision.tick,
+                    on_trigger=self._supervision.on_trigger,
+                )
+            )
+            if self.config.supervision.enabled:
+                if self.config.supervision.keyboard_mouse_hook_enabled:
+                    self._supervision_hook.start()
+                self._background.start("user_supervision")
+            logger.info("UserSupervisionEngine initialized (enabled=%s)", self.config.supervision.enabled)
+        except Exception:
+            logger.warning("UserSupervisionEngine init failed (non-critical)", exc_info=True)
+
         # ── Voice/Gesture Workflow Engine (durable, pausable/resumable
         # multi-step goals spanning multiple voice/gesture inputs) ──
         try:
@@ -853,6 +894,8 @@ class PilotServer:
             "self_healing_config_update": self._handle_self_healing_config_update,
             "narration_status": self._handle_narration_status,
             "narration_config_update": self._handle_narration_config_update,
+            "supervision_status": self._handle_supervision_status,
+            "supervision_config_update": self._handle_supervision_config_update,
             "voice_gesture_workflow_submit": self._handle_voice_gesture_workflow_submit,
             "voice_gesture_workflow_list": self._handle_voice_gesture_workflow_list,
             "voice_gesture_workflow_get": self._handle_voice_gesture_workflow_get,
@@ -3008,6 +3051,102 @@ class PilotServer:
             "narrate_steps": cfg.narrate_steps,
             "interrupt_on_risk": cfg.interrupt_on_risk,
             "confirm_timeout_seconds": cfg.confirm_timeout_seconds,
+        }
+
+    async def _handle_supervision_status(self, params: dict, ws: ServerConnection) -> dict:
+        """Report User Manual Supervision's current config plus whether the
+        keyboard/mouse hook (if enabled) is actually still alive.
+
+        Args:
+            params: JSON-RPC parameters (unused).
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with the current supervision config and hook_healthy.
+        """
+        cfg = self.config.supervision
+        hook_healthy = getattr(self, "_supervision_hook", None)
+        return {
+            "enabled": cfg.enabled,
+            "keyboard_mouse_hook_enabled": cfg.keyboard_mouse_hook_enabled,
+            "cognitive_coaching_enabled": cfg.cognitive_coaching_enabled,
+            "risk_pattern_detection_enabled": cfg.risk_pattern_detection_enabled,
+            "hook_healthy": hook_healthy.is_running() if hook_healthy else False,
+        }
+
+    async def _handle_supervision_config_update(self, params: dict, ws: ServerConnection) -> dict:
+        """Update User Manual Supervision config.
+
+        Unlike `_handle_narration_config_update`/`_handle_self_healing_config_update`,
+        this handler must actually start/stop the background task and the
+        keyboard/mouse hook on an `enabled`/`keyboard_mouse_hook_enabled`
+        transition -- the thing being gated has real cost and privacy
+        weight even when idle, so a config flip alone isn't enough.
+
+        Args:
+            params: JSON-RPC parameters, any of {enabled,
+                keyboard_mouse_hook_enabled, cognitive_coaching_enabled,
+                risk_pattern_detection_enabled, tick_interval_seconds,
+                ocr_interval_seconds, stress_coaching_threshold,
+                cognitive_load_coaching_threshold, coaching_cooldown_seconds,
+                risk_cooldown_seconds, keystroke_buffer_max_chars,
+                ocr_snippet_max_chars}.
+            ws: The WebSocket connection.
+
+        Returns:
+            A dict with status and the updated config.
+        """
+        cfg = self.config.supervision
+        was_enabled = cfg.enabled
+        was_hook_enabled = cfg.keyboard_mouse_hook_enabled
+
+        if "enabled" in params:
+            cfg.enabled = bool(params["enabled"])
+        if "keyboard_mouse_hook_enabled" in params:
+            cfg.keyboard_mouse_hook_enabled = bool(params["keyboard_mouse_hook_enabled"])
+        if "cognitive_coaching_enabled" in params:
+            cfg.cognitive_coaching_enabled = bool(params["cognitive_coaching_enabled"])
+        if "risk_pattern_detection_enabled" in params:
+            cfg.risk_pattern_detection_enabled = bool(params["risk_pattern_detection_enabled"])
+        if "tick_interval_seconds" in params:
+            cfg.tick_interval_seconds = float(params["tick_interval_seconds"])
+        if "ocr_interval_seconds" in params:
+            cfg.ocr_interval_seconds = float(params["ocr_interval_seconds"])
+        if "stress_coaching_threshold" in params:
+            cfg.stress_coaching_threshold = float(params["stress_coaching_threshold"])
+        if "cognitive_load_coaching_threshold" in params:
+            cfg.cognitive_load_coaching_threshold = float(params["cognitive_load_coaching_threshold"])
+        if "coaching_cooldown_seconds" in params:
+            cfg.coaching_cooldown_seconds = float(params["coaching_cooldown_seconds"])
+        if "risk_cooldown_seconds" in params:
+            cfg.risk_cooldown_seconds = float(params["risk_cooldown_seconds"])
+        if "keystroke_buffer_max_chars" in params:
+            cfg.keystroke_buffer_max_chars = int(params["keystroke_buffer_max_chars"])
+        if "ocr_snippet_max_chars" in params:
+            cfg.ocr_snippet_max_chars = int(params["ocr_snippet_max_chars"])
+
+        supervision_hook = getattr(self, "_supervision_hook", None)
+        if supervision_hook is not None:
+            if cfg.enabled and cfg.keyboard_mouse_hook_enabled and not (was_enabled and was_hook_enabled):
+                supervision_hook.start()
+            elif not (cfg.enabled and cfg.keyboard_mouse_hook_enabled) and was_enabled and was_hook_enabled:
+                supervision_hook.stop()
+
+        background = getattr(self, "_background", None)
+        if background is not None:
+            if cfg.enabled and not was_enabled:
+                background.start("user_supervision")
+            elif not cfg.enabled and was_enabled:
+                background.stop("user_supervision")
+
+        self.config.save()
+        return {
+            "status": "ok",
+            "enabled": cfg.enabled,
+            "keyboard_mouse_hook_enabled": cfg.keyboard_mouse_hook_enabled,
+            "cognitive_coaching_enabled": cfg.cognitive_coaching_enabled,
+            "risk_pattern_detection_enabled": cfg.risk_pattern_detection_enabled,
+            "hook_healthy": supervision_hook.is_running() if supervision_hook else False,
         }
 
     async def _handle_agent_routing(self, params: dict, ws: ServerConnection) -> dict:
