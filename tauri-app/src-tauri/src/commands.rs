@@ -100,7 +100,11 @@ pub async fn get_daemon_status(window: tauri::Window) -> Result<DaemonStatus, St
 
 // 3. Command triggered by UI input prompts
 #[tauri::command]
-pub async fn send_to_daemon(window: tauri::Window, method: String, params: serde_json::Value) -> Result<(), String> {
+pub async fn send_to_daemon(
+    window: tauri::Window,
+    method: String,
+    params: serde_json::Value,
+) -> Result<(), String> {
     let request = serde_json::json!({
         "jsonrpc": "2.0",
         "method": method,
@@ -114,7 +118,11 @@ pub async fn send_to_daemon(window: tauri::Window, method: String, params: serde
 
 // 4. Command to confirm user specific milestones or plans
 #[tauri::command]
-pub async fn confirm_action(window: tauri::Window, plan_id: String, confirmed: bool) -> Result<(), String> {
+pub async fn confirm_action(
+    window: tauri::Window,
+    plan_id: String,
+    confirmed: bool,
+) -> Result<(), String> {
     let request = serde_json::json!({
         "jsonrpc": "2.0",
         "method": "confirm",
@@ -139,16 +147,18 @@ async fn try_ping_daemon(_window: tauri::Window) -> Result<String, String> {
 
     // Temporary mock response parsing since ping won't stream chunks
     let url = "ws://127.0.0.1:8785";
-    use tokio_tungstenite::connect_async;
     use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::connect_async;
 
     let (mut ws, _) = connect_async(url).await.map_err(|e| e.to_string())?;
     let msg = serde_json::to_string(&request).map_err(|e| e.to_string())?;
-    ws.send(tokio_tungstenite::tungstenite::Message::Text(msg.into())).await.map_err(|e| e.to_string())?;
+    ws.send(tokio_tungstenite::tungstenite::Message::Text(msg.into()))
+        .await
+        .map_err(|e| e.to_string())?;
 
     if let Some(Ok(response)) = ws.next().await {
         let text = response.to_text().map_err(|e| e.to_string())?;
-        let parsed: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+        let parsed: serde_json::Value = serde_json::from_str(text).map_err(|e| e.to_string())?;
         let version = parsed
             .get("result")
             .and_then(|r| r.get("version"))
@@ -162,8 +172,8 @@ async fn try_ping_daemon(_window: tauri::Window) -> Result<String, String> {
 
 // Main streaming loop broadcasting raw frames back to Svelte context
 async fn send_rpc(window: tauri::Window, request: serde_json::Value) -> Result<(), String> {
-    use tokio_tungstenite::connect_async;
     use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::connect_async;
 
     let url = "ws://127.0.0.1:8785";
     let (mut ws, _) = connect_async(url)
@@ -178,12 +188,16 @@ async fn send_rpc(window: tauri::Window, request: serde_json::Value) -> Result<(
     // Actively loop over streaming messages instead of breaking instantly
     while let Some(Ok(response)) = ws.next().await {
         let text = response.to_text().map_err(|e| e.to_string())?;
-        let parsed: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
-        
-        window.emit("llm-chunk", &parsed).map_err(|e| e.to_string())?;
+        let parsed: serde_json::Value = serde_json::from_str(text).map_err(|e| e.to_string())?;
+
+        window
+            .emit("llm-chunk", &parsed)
+            .map_err(|e| e.to_string())?;
     }
 
-    window.emit("llm-complete", "DONE").map_err(|e| e.to_string())?;
+    window
+        .emit("llm-complete", "DONE")
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 #[tauri::command]
@@ -275,10 +289,7 @@ pub fn get_dashboard_status() -> serde_json::Value {
 
 #[tauri::command]
 pub fn open_logs_folder(app: tauri::AppHandle) -> Result<(), String> {
-    let log_dir = app
-        .path()
-        .app_log_dir()
-        .map_err(|e| e.to_string())?;
+    let log_dir = app.path().app_log_dir().map_err(|e| e.to_string())?;
 
     if !log_dir.exists() {
         std::fs::create_dir_all(&log_dir).map_err(|e| e.to_string())?;
@@ -307,21 +318,27 @@ pub async fn apply_git_conflict_resolution(
     });
 
     let url = "ws://127.0.0.1:8785";
-    use tokio_tungstenite::connect_async;
     use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::connect_async;
 
     let (mut ws, _) = connect_async(url).await.map_err(|e| e.to_string())?;
     let msg = serde_json::to_string(&request).map_err(|e| e.to_string())?;
-    ws.send(tokio_tungstenite::tungstenite::Message::Text(msg.into())).await.map_err(|e| e.to_string())?;
+    ws.send(tokio_tungstenite::tungstenite::Message::Text(msg.into()))
+        .await
+        .map_err(|e| e.to_string())?;
 
     if let Some(Ok(response)) = ws.next().await {
         let text = response.to_text().map_err(|e| e.to_string())?;
-        let parsed: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+        let parsed: serde_json::Value = serde_json::from_str(text).map_err(|e| e.to_string())?;
         if let Some(result) = parsed.get("result") {
             return Ok(result.clone());
         }
         if let Some(error) = parsed.get("error") {
-            return Err(error.get("message").and_then(|m| m.as_str()).unwrap_or("Daemon error").to_string());
+            return Err(error
+                .get("message")
+                .and_then(|m| m.as_str())
+                .unwrap_or("Daemon error")
+                .to_string());
         }
         return Ok(parsed);
     }
@@ -351,11 +368,22 @@ pub fn set_hotkey(app: AppHandle, shortcut: String) -> Result<(), String> {
 pub fn get_auth_token() -> String {
     let local_app_data = std::env::var("LOCALAPPDATA")
         .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| dirs::home_dir().unwrap_or_default().join("AppData").join("Local"));
+        .unwrap_or_else(|_| {
+            dirs::home_dir()
+                .unwrap_or_default()
+                .join("AppData")
+                .join("Local")
+        });
 
     let candidates = vec![
-        local_app_data.join("heliox-os").join("runtime").join("auth_token"),
-        local_app_data.join("pilot").join("runtime").join("auth_token"),
+        local_app_data
+            .join("heliox-os")
+            .join("runtime")
+            .join("auth_token"),
+        local_app_data
+            .join("pilot")
+            .join("runtime")
+            .join("auth_token"),
         local_app_data.join("heliox-os").join("auth_token"),
         local_app_data.join("pilot").join("auth_token"),
         std::path::PathBuf::from("/run/user/1000/heliox-os/auth_token"),
@@ -376,8 +404,7 @@ pub fn get_auth_token() -> String {
 #[tauri::command]
 pub async fn extract_file_text(app: AppHandle, path: String) -> Result<String, String> {
     // 1. Canonicalize ΓÇö resolves "..", symlinks, etc.
-    let canonical = std::fs::canonicalize(&path)
-        .map_err(|e| format!("Invalid path: {}", e))?;
+    let canonical = std::fs::canonicalize(&path).map_err(|e| format!("Invalid path: {}", e))?;
 
     // 2. Check the user-consent allowlist
     let allowed = app.state::<crate::file_access::AllowedPaths>();
@@ -387,8 +414,7 @@ pub async fn extract_file_text(app: AppHandle, path: String) -> Result<String, S
 
     // 3. Enforce a 50 MB size cap to prevent memory exhaustion
     const MAX_FILE_BYTES: u64 = 50 * 1024 * 1024;
-    let metadata = std::fs::metadata(&canonical)
-        .map_err(|e| format!("Cannot stat file: {}", e))?;
+    let metadata = std::fs::metadata(&canonical).map_err(|e| format!("Cannot stat file: {}", e))?;
     if metadata.len() > MAX_FILE_BYTES {
         return Err("File too large (>50 MB)".into());
     }
@@ -415,11 +441,14 @@ fn extract_text_from_path(path: &str) -> Result<String, String> {
     } else if extension == "docx" {
         let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
         let mut archive = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
-        
-        let mut document_xml = archive.by_name("word/document.xml").map_err(|e| e.to_string())?;
+
+        let mut document_xml = archive
+            .by_name("word/document.xml")
+            .map_err(|e| e.to_string())?;
         let mut xml_content = String::new();
-        std::io::Read::read_to_string(&mut document_xml, &mut xml_content).map_err(|e| e.to_string())?;
-        
+        std::io::Read::read_to_string(&mut document_xml, &mut xml_content)
+            .map_err(|e| e.to_string())?;
+
         let mut text = String::new();
         let mut in_tag = false;
         let mut tag_name = String::new();

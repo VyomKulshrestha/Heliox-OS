@@ -1,19 +1,19 @@
 use tauri::{
-    App, Manager,
     menu::{IsMenuItem, Menu, MenuItem},
     tray::TrayIconBuilder,
+    App, Manager,
 };
 
 pub fn setup_tray(app: &App) -> Result<(), Box<dyn std::error::Error>> {
     let show = MenuItem::with_id(app, "show", "Show Pilot", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    
+
     // FIX 1: Rust requires explicit coercion to trait objects (`&dyn IsMenuItem<_>`)
     // for the slice elements passed to `with_items`.
-    let menu = Menu::with_items(app, &[
-        &show as &dyn IsMenuItem<_>,
-        &quit as &dyn IsMenuItem<_>
-    ])?;
+    let menu = Menu::with_items(
+        app,
+        &[&show as &dyn IsMenuItem<_>, &quit as &dyn IsMenuItem<_>],
+    )?;
 
     let mut tray_builder = TrayIconBuilder::new()
         .menu(&menu)

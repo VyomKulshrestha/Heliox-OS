@@ -1,6 +1,6 @@
+use std::fs;
 use tauri::{App, AppHandle, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
-use std::fs;
 
 fn get_shortcut_path(_app: &AppHandle) -> std::path::PathBuf {
     let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
@@ -33,7 +33,10 @@ pub fn register_hotkey(app: &App) -> Result<(), Box<dyn std::error::Error>> {
     let app_handle = app.handle().clone();
     let shortcut = load_saved_shortcut(&app_handle);
     if let Err(e) = do_register(&app_handle, &shortcut) {
-        eprintln!("[Heliox OS] Warning: Failed to register hotkey {}: {}", shortcut, e);
+        eprintln!(
+            "[Heliox OS] Warning: Failed to register hotkey {}: {}",
+            shortcut, e
+        );
     }
     Ok(())
 }
@@ -43,27 +46,27 @@ pub fn do_register(app: &AppHandle, shortcut: &str) -> Result<(), Box<dyn std::e
 
     let app_handle = app.clone();
 
-    app.global_shortcut().on_shortcut(shortcut, move |_app, _shortcut, event| {
-        
-        if event.state != ShortcutState::Pressed {
-            return;
-        }
-
-        if let Some(window) = app_handle.get_webview_window("main") {
-            let is_visible = window.is_visible().unwrap_or(false);
-            let is_minimized = window.is_minimized().unwrap_or(false);
-            let is_focused = window.is_focused().unwrap_or(false);
-            if is_visible && !is_minimized && is_focused {
-                // Window is fully visible and focused , hide it completely
-                let _ = window.hide();
-            } else {
-                // Window is hidden or minimized , bring it up properly
-                let _ = window.unminimize();
-                let _ = window.show();
-                let _ = window.set_focus();
+    app.global_shortcut()
+        .on_shortcut(shortcut, move |_app, _shortcut, event| {
+            if event.state != ShortcutState::Pressed {
+                return;
             }
-        }
-    })?;
+
+            if let Some(window) = app_handle.get_webview_window("main") {
+                let is_visible = window.is_visible().unwrap_or(false);
+                let is_minimized = window.is_minimized().unwrap_or(false);
+                let is_focused = window.is_focused().unwrap_or(false);
+                if is_visible && !is_minimized && is_focused {
+                    // Window is fully visible and focused , hide it completely
+                    let _ = window.hide();
+                } else {
+                    // Window is hidden or minimized , bring it up properly
+                    let _ = window.unminimize();
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }
+        })?;
 
     Ok(())
 }

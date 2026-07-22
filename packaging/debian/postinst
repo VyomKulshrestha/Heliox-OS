@@ -12,7 +12,13 @@ case "$1" in
         fi
 
         "$PILOT_VENV/bin/pip" install --quiet --upgrade pip
-        "$PILOT_VENV/bin/pip" install --quiet "$PILOT_DAEMON"
+        # [all] ships every optional feature by default (voice, vision,
+        # browser automation, gesture cursor, self-healing, supervision,
+        # gateway/risk-gate, documents, cognitive, ssh, network, wasm) --
+        # installing the package is not the same as enabling a feature;
+        # privacy/safety-sensitive ones still default to off and require
+        # explicit opt-in in Settings.
+        "$PILOT_VENV/bin/pip" install --quiet "$PILOT_DAEMON[all]"
 
         # Create symlink for the daemon binary
         ln -sf "$PILOT_VENV/bin/pilot-daemon" /usr/local/bin/pilot-daemon

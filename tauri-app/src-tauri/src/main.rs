@@ -5,16 +5,16 @@ mod commands;
 mod file_access;
 mod hotkey;
 mod tray;
+use battery::Manager as BatteryManager;
 use std::net::TcpStream;
-use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::path::PathBuf;
+use std::process::{Child, Command};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
-use tauri::Manager;
-use sysinfo::System;
 use sysinfo::Disks;
 use sysinfo::Networks;
-use battery::Manager as BatteryManager;
+use sysinfo::System;
+use tauri::Manager;
 /// Global handle to the Python daemon process so we can kill it on exit.
 struct DaemonProcess(Mutex<Option<Child>>);
 
@@ -79,7 +79,9 @@ fn setup_venv_in_background() {
         let data_dir = get_app_data_dir();
         let _ = std::fs::create_dir_all(&data_dir);
         let venv_dir = data_dir.join("env");
-        println!("[Heliox OS] First run detected — setting up virtual environment in background...");
+        println!(
+            "[Heliox OS] First run detected — setting up virtual environment in background..."
+        );
         // 1. Create venv
         #[cfg(target_os = "windows")]
         let sys_python = "python";
@@ -113,14 +115,28 @@ fn setup_venv_in_background() {
             pip_cmd.creation_flags(0x08000000);
         }
 
+        // [all] pulls in every optional feature this project ships (voice,
+        // vision, browser automation, gesture cursor, self-healing,
+        // supervision, gateway/risk-gate, documents, cognitive, ssh,
+        // network, wasm) so real users get every shipped feature out of
+        // the box, not a partial install requiring separate manual pip
+        // steps per feature. Every one of these still defaults to off/
+        // config-gated behavior where the feature is privacy- or
+        // safety-sensitive (e.g. supervision's global keyboard/mouse hook
+        // stays behind its own explicit one-time "I understand" consent
+        // checkbox in Settings regardless of whether pynput is installed)
+        // -- installing the package is not the same as enabling the
+        // feature.
         let ok = pip_cmd
-            .args(["install", "pilot-daemon"])
+            .args(["install", "pilot-daemon[all]"])
             .status()
             .map(|s| s.success())
             .unwrap_or(false);
 
         if ok {
-            println!("[Heliox OS] Background setup complete — restart the app to activate AI backend.");
+            println!(
+                "[Heliox OS] Background setup complete — restart the app to activate AI backend."
+            );
         } else {
             eprintln!("[Heliox OS] Background setup: pip install failed.");
         }
@@ -137,43 +153,33 @@ fn get_system_stats() -> serde_json::Value {
         .first()
         .map(|c| c.brand().to_string())
         .unwrap_or_default();
-    let total_ram_gb =
-    system.total_memory() / 1024 / 1024;
-    let disks_info =
-    Disks::new_with_refreshed_list();
+    let total_ram_gb = system.total_memory() / 1024 / 1024;
+    let disks_info = Disks::new_with_refreshed_list();
     let mut disk_size = 0;
     for disk in &disks_info {
-    disk_size +=
-        disk.total_space()
-        / 1024
-        / 1024
-        / 1024;
-}
+        disk_size += disk.total_space() / 1024 / 1024 / 1024;
+    }
     // RAM
     let total_memory = system.total_memory();
     let used_memory = system.used_memory();
-    let ram =
-        (used_memory as f64 / total_memory as f64) * 100.0;
+    let ram = (used_memory as f64 / total_memory as f64) * 100.0;
     // DISKS
     let disks = Disks::new_with_refreshed_list();
     let mut total_disk = 0;
     let mut used_disk = 0;
     for disk in &disks {
         total_disk += disk.total_space();
-        used_disk +=
-            disk.total_space() - disk.available_space();
+        used_disk += disk.total_space() - disk.available_space();
     }
-    let disk =
-        (used_disk as f64 / total_disk as f64) * 100.0;
+    let disk = (used_disk as f64 / total_disk as f64) * 100.0;
     // NETWORKS
-    let mut networks =
-    Networks::new_with_refreshed_list();
-   networks.refresh(false);
-   let mut upload = 0;
+    let mut networks = Networks::new_with_refreshed_list();
+    networks.refresh(false);
+    let mut upload = 0;
     let mut download = 0;
-   for (_name, data) in &networks {
-    upload += data.total_transmitted();
-    download += data.total_received();
+    for (_name, data) in &networks {
+        upload += data.total_transmitted();
+        download += data.total_received();
     }
     serde_json::json!({
     "cpu": cpu,
@@ -189,106 +195,53 @@ fn get_system_stats() -> serde_json::Value {
 }
 #[tauri::command]
 fn get_terminal_logs() -> Vec<String> {
-    let stats =
-        get_system_stats();
-    let cpu =
-        stats["cpu"]
-        .as_f64()
-        .unwrap_or(0.0);
-    let ram =
-        stats["ram"]
-        .as_f64()
-        .unwrap_or(0.0);
-    let disk =
-        stats["disk"]
-        .as_f64()
-        .unwrap_or(0.0);
-    let upload =
-        stats["network_up"]
-        .as_f64()
-        .unwrap_or(0.0);
-    let download =
-        stats["network_down"]
-        .as_f64()
-        .unwrap_or(0.0);
+    let stats = get_system_stats();
+    let cpu = stats["cpu"].as_f64().unwrap_or(0.0);
+    let ram = stats["ram"].as_f64().unwrap_or(0.0);
+    let disk = stats["disk"].as_f64().unwrap_or(0.0);
+    let upload = stats["network_up"].as_f64().unwrap_or(0.0);
+    let download = stats["network_down"].as_f64().unwrap_or(0.0);
     let mut logs = vec![
-        format!(
-            "[INFO] CPU Usage: {:.1}%",
-            cpu
-        ),
-        format!(
-            "[INFO] RAM Usage: {:.1}%",
-            ram
-        ),
-        format!(
-            "[INFO] Disk Usage: {:.1}%",
-            disk
-        ),
-        format!(
-            "[INFO] Network ↑ {:.2} MB/s ↓ {:.2} MB/s",
-            upload,
-            download
-        ),
-        "[INFO] JSON-RPC connected"
-            .to_string(),
-        "[SUCCESS] System monitoring active"
-            .to_string(),
-        "[INFO] Background agents online"
-            .to_string(),
+        format!("[INFO] CPU Usage: {:.1}%", cpu),
+        format!("[INFO] RAM Usage: {:.1}%", ram),
+        format!("[INFO] Disk Usage: {:.1}%", disk),
+        format!("[INFO] Network ↑ {:.2} MB/s ↓ {:.2} MB/s", upload, download),
+        "[INFO] JSON-RPC connected".to_string(),
+        "[SUCCESS] System monitoring active".to_string(),
+        "[INFO] Background agents online".to_string(),
     ];
     if cpu > 80.0 {
-        logs.push(
-            "[WARN] High CPU usage detected"
-                .to_string()
-        );
+        logs.push("[WARN] High CPU usage detected".to_string());
     }
     if ram > 75.0 {
-        logs.push(
-            "[WARN] High memory usage detected"
-                .to_string()
-        );
+        logs.push("[WARN] High memory usage detected".to_string());
     }
     if disk > 85.0 {
-        logs.push(
-            "[WARN] Disk storage running low"
-                .to_string()
-        );
+        logs.push("[WARN] Disk storage running low".to_string());
     }
     if upload > 5.0 || download > 5.0 {
-        logs.push(
-            "[INFO] High network activity"
-                .to_string()
-        );
+        logs.push("[INFO] High network activity".to_string());
     }
-    logs.push(
-        "[SUCCESS] Agent heartbeat OK"
-            .to_string()
-    );
-  logs.push(
-    "[INFO] Monitoring active agents"
-        .to_string()
-    );
-  logs.push(
-    "[INFO] System telemetry synced"
-        .to_string()
-   ); 
-  logs.push(
-    "[SUCCESS] Daemon heartbeat stable"
-        .to_string()
-   );
+    logs.push("[SUCCESS] Agent heartbeat OK".to_string());
+    logs.push("[INFO] Monitoring active agents".to_string());
+    logs.push("[INFO] System telemetry synced".to_string());
+    logs.push("[SUCCESS] Daemon heartbeat stable".to_string());
     logs
 }
 #[tauri::command]
 fn get_rss_feed() -> Vec<serde_json::Value> {
-    let mut feed = vec![
-        serde_json::json!({
-            "title": "Heliox OS v0.7.1 Active Release (JARVIS Core Engine)",
-            "url": "https://github.com/VyomKulshrestha/Heliox-OS/releases",
-            "source": "Current Build"
-        })
-    ];
+    let mut feed = vec![serde_json::json!({
+        "title": "Heliox OS v0.7.1 Active Release (JARVIS Core Engine)",
+        "url": "https://github.com/VyomKulshrestha/Heliox-OS/releases",
+        "source": "Current Build"
+    })];
     if let Ok(output) = std::process::Command::new("git")
-        .args(["tag", "-l", "--sort=-creatordate", "--format=%(refname:short)|%(creatordate:short)|%(subject)"])
+        .args([
+            "tag",
+            "-l",
+            "--sort=-creatordate",
+            "--format=%(refname:short)|%(creatordate:short)|%(subject)",
+        ])
         .output()
     {
         if let Ok(text) = String::from_utf8(output.stdout) {
@@ -315,24 +268,11 @@ fn get_rss_feed() -> Vec<serde_json::Value> {
 }
 #[tauri::command]
 fn get_agent_activity() -> Vec<serde_json::Value> {
-    let stats =
-        get_system_stats();
-    let cpu =
-        stats["cpu"]
-        .as_f64()
-        .unwrap_or(0.0);
-    let ram =
-        stats["ram"]
-        .as_f64()
-        .unwrap_or(0.0);
-     let upload =
-       stats["network_up"]
-       .as_f64()
-       .unwrap_or(0.0);
-    let download =
-       stats["network_down"]
-       .as_f64()
-       .unwrap_or(0.0);   
+    let stats = get_system_stats();
+    let cpu = stats["cpu"].as_f64().unwrap_or(0.0);
+    let ram = stats["ram"].as_f64().unwrap_or(0.0);
+    let upload = stats["network_up"].as_f64().unwrap_or(0.0);
+    let download = stats["network_down"].as_f64().unwrap_or(0.0);
     vec![
         serde_json::json!({
             "name":
@@ -379,103 +319,79 @@ fn get_agent_activity() -> Vec<serde_json::Value> {
                 "Waiting..."
         }),
         serde_json::json!({
-        "name":
-            "Network Agent",
-        "status":
-            if upload > 5.0 || download > 5.0 {
-                "Active"
-            } else {
-                "Idle"
-            },
-        "message":
-            "Monitoring network traffic..."
-    }),
-    serde_json::json!({
-        "name":
-            "Security Agent",
-        "status":
-            "Active",
-        "message":
-            "Scanning system threats..."
-    }),
-    serde_json::json!({
-        "name":
-            "Thermal Agent",
-        "status":
-            if cpu > 75.0 {
-                "Warning"
-            } else {
-                "Active"
-            },
-        "message":
-            "Monitoring system temperatures..."
-    }),
-    serde_json::json!({
-        "name":
-            "JSON-RPC Agent",
-        "status":
-            "Active",
-        "message":
-            "Syncing real-time events..."
-    }),
+            "name":
+                "Network Agent",
+            "status":
+                if upload > 5.0 || download > 5.0 {
+                    "Active"
+                } else {
+                    "Idle"
+                },
+            "message":
+                "Monitoring network traffic..."
+        }),
+        serde_json::json!({
+            "name":
+                "Security Agent",
+            "status":
+                "Active",
+            "message":
+                "Scanning system threats..."
+        }),
+        serde_json::json!({
+            "name":
+                "Thermal Agent",
+            "status":
+                if cpu > 75.0 {
+                    "Warning"
+                } else {
+                    "Active"
+                },
+            "message":
+                "Monitoring system temperatures..."
+        }),
+        serde_json::json!({
+            "name":
+                "JSON-RPC Agent",
+            "status":
+                "Active",
+            "message":
+                "Syncing real-time events..."
+        }),
     ]
 }
 #[tauri::command]
 fn get_temperature_stats() -> serde_json::Value {
-    let stats =
-        get_system_stats();
-    let cpu_usage =
-        stats["cpu"]
-        .as_f64()
-        .unwrap_or(0.0);
-    let ram_usage =
-        stats["ram"]
-        .as_f64()
-        .unwrap_or(0.0);
-    let cpu_temp =
-        35.0 + (cpu_usage * 0.6);
-    let gpu_temp =
-        32.0 + (cpu_usage * 0.4);
-    let motherboard_temp =
-        28.0 + (ram_usage * 0.2);
-    let ssd_temp =
-        30.0 + (cpu_usage * 0.2);
-    let vrm_temp =
-    30.0 + (cpu_usage * 0.3);
-  let battery_temp =
-    29.0 + (ram_usage * 0.2);
-   let power_draw =
-    45.0 + (cpu_usage * 1.5);
-   let mut sys = System::new_all();
-   sys.refresh_all();
-// REAL CPU NAME
-let cpu_name = sys
-    .cpus()
-    .first()
-    .map(|c| c.brand().to_string())
-    .unwrap_or_default();
-// REAL CPU THREADS
-let cpu_threads =
-    sys.cpus().len();
-// REAL BATTERY %
-let manager =
-    BatteryManager::new().ok();
-let mut battery_percent = 0;
-if let Some(manager) = manager {
-    if let Ok(mut batteries) =
-        manager.batteries()
-    {
-        if let Some(Ok(battery)) =
-            batteries.next()
-        {
-            battery_percent =
-                (battery
-                    .state_of_charge()
-                    .value
-                    * 100.0) as i32;
+    let stats = get_system_stats();
+    let cpu_usage = stats["cpu"].as_f64().unwrap_or(0.0);
+    let ram_usage = stats["ram"].as_f64().unwrap_or(0.0);
+    let cpu_temp = 35.0 + (cpu_usage * 0.6);
+    let gpu_temp = 32.0 + (cpu_usage * 0.4);
+    let motherboard_temp = 28.0 + (ram_usage * 0.2);
+    let ssd_temp = 30.0 + (cpu_usage * 0.2);
+    let vrm_temp = 30.0 + (cpu_usage * 0.3);
+    let battery_temp = 29.0 + (ram_usage * 0.2);
+    let power_draw = 45.0 + (cpu_usage * 1.5);
+    let mut sys = System::new_all();
+    sys.refresh_all();
+    // REAL CPU NAME
+    let cpu_name = sys
+        .cpus()
+        .first()
+        .map(|c| c.brand().to_string())
+        .unwrap_or_default();
+    // REAL CPU THREADS
+    let cpu_threads = sys.cpus().len();
+    // REAL BATTERY %
+    let manager = BatteryManager::new().ok();
+    let mut battery_percent = 0;
+    if let Some(manager) = manager {
+        if let Ok(mut batteries) = manager.batteries() {
+            if let Some(Ok(battery)) = batteries.next() {
+                battery_percent = (battery.state_of_charge().value * 100.0) as i32;
+            }
         }
     }
-}   
     serde_json::json!({
         "cpu":
             cpu_temp,
@@ -629,7 +545,7 @@ fn main() {
         .manage(commands::GestureCursor::init())
         .setup(|app| {
             let window = app.get_webview_window("main").unwrap();
-            
+
             // Show the window when the user starts the app, rather than hiding it
             window.show().unwrap();
             window.set_focus().unwrap();
@@ -648,7 +564,6 @@ fn main() {
             commands::get_daemon_status,
             commands::send_to_daemon,
             commands::confirm_action,
-
             commands::open_terminal,
             commands::clear_logs,
             commands::restart_agents,
@@ -657,6 +572,7 @@ fn main() {
             commands::take_screenshot,
             commands::get_dashboard_status,
             get_system_stats,
+            get_temperature_stats,
             get_terminal_logs,
             get_rss_feed,
             get_agent_activity,

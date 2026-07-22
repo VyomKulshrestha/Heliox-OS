@@ -15,10 +15,7 @@ impl AllowedPaths {
 
     /// Check whether a canonicalized path is in the allowlist.
     pub fn contains(&self, path: &PathBuf) -> bool {
-        self.0
-            .lock()
-            .map(|set| set.contains(path))
-            .unwrap_or(false)
+        self.0.lock().map(|set| set.contains(path)).unwrap_or(false)
     }
 
     /// Add a canonicalized path to the allowlist.
@@ -45,8 +42,8 @@ impl AllowedPaths {
 pub fn register_allowed_path(app: tauri::AppHandle, path: String) -> Result<(), String> {
     use tauri::Manager;
 
-    let canonical = std::fs::canonicalize(&path)
-        .map_err(|e| format!("Cannot resolve path: {}", e))?;
+    let canonical =
+        std::fs::canonicalize(&path).map_err(|e| format!("Cannot resolve path: {}", e))?;
 
     let state = app.state::<AllowedPaths>();
     state.insert(canonical);
