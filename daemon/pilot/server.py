@@ -365,8 +365,8 @@ class PilotServer:
         # ── Plan History Audit Log ──
         self._plan_history: PlanHistoryStore | None = None
         self._plan_history_tasks: set[asyncio.Task[None]] = set()
-        # Cognitive intelligence (TRIBE v2)
-        self._tribe_engine: Any = None
+        # Cognitive intelligence (lightweight heuristic engine)
+        self._cognitive_engine: Any = None
         self._attention_ui: Any = None
         self._stress_gate: Any = None
         self._intent_predictor: Any = None
@@ -610,13 +610,13 @@ class PilotServer:
         except Exception:
             logger.warning("SubconsciousAgent init failed (non-critical)", exc_info=True)
 
-        # Cognitive Hub — unified TRIBE v2 cognitive features
+        # Cognitive Hub — unified cognitive intelligence features
         try:
             from pilot.changelog import announce_new_features, mark_version_seen
             from pilot.cognitive.hub import CognitiveHub
 
             self._cognitive_hub = CognitiveHub()
-            logger.info("CognitiveHub initialized with TRIBE v2")
+            logger.info("CognitiveHub initialized")
 
             announcement = announce_new_features()
             if announcement:
@@ -645,34 +645,31 @@ class PilotServer:
         except Exception:
             logger.warning("ScreenVisionAgent init failed (non-critical)", exc_info=True)
 
-        # ── Cognitive Intelligence (TRIBE v2) ──
+        # ── Cognitive Intelligence (lightweight heuristic engine) ──
         try:
             if not self.config.cognitive.enabled:
-                logger.info("Cognitive intelligence disabled in config.toml (tribe v2 skipped)")
+                logger.info("Cognitive intelligence disabled in config.toml")
             else:
                 from pilot.cognitive.attention_scorer import AttentionAwareUI
+                from pilot.cognitive.cognitive_engine import CognitiveEngine
                 from pilot.cognitive.intent_predictor import IntentPredictor
                 from pilot.cognitive.stress_gate import StressGate
-                from pilot.cognitive.tribe_engine import TribeEngine
 
-                self._tribe_engine = TribeEngine.get_instance()
-            self._attention_ui = AttentionAwareUI(self._tribe_engine)
-            self._attention_ui.set_broadcast(self._broadcast_notification)
-            self._stress_gate = StressGate(self._tribe_engine)
-            self._intent_predictor = IntentPredictor(self._tribe_engine)
+                self._cognitive_engine = CognitiveEngine.get_instance()
+                self._attention_ui = AttentionAwareUI(self._cognitive_engine)
+                self._attention_ui.set_broadcast(self._broadcast_notification)
+                self._stress_gate = StressGate(self._cognitive_engine)
+                self._intent_predictor = IntentPredictor(self._cognitive_engine)
 
-            if self._executor:
-                self._executor._stress_gate = self._stress_gate
-            if self._fusion:
-                self._fusion._intent_predictor = self._intent_predictor
-            if getattr(self, "_screen_vision", None):
-                self._screen_vision._tribe_engine = self._tribe_engine
+                if self._executor:
+                    self._executor._stress_gate = self._stress_gate
+                if self._fusion:
+                    self._fusion._intent_predictor = self._intent_predictor
+                if getattr(self, "_screen_vision", None):
+                    self._screen_vision._cognitive_engine = self._cognitive_engine
 
-            asyncio.create_task(self._tribe_engine.load_model())
-            logger.info(
-                "Cognitive intelligence initialized (TRIBE v2 %s)",
-                "loading" if self._tribe_engine.is_available else "fallback mode",
-            )
+                asyncio.create_task(self._cognitive_engine.load_model())
+                logger.info("Cognitive intelligence initialized")
         except Exception:
             logger.warning("Cognitive intelligence init failed (non-critical)", exc_info=True)
 
@@ -758,7 +755,7 @@ class PilotServer:
             )
             self._supervision = UserSupervisionEngine(
                 config=self.config,
-                tribe_engine=self._tribe_engine,
+                cognitive_engine=self._cognitive_engine,
                 screen_vision=self._screen_vision,
                 hook=self._supervision_hook,
                 broadcast_fn=self._broadcast_notification,
@@ -888,7 +885,7 @@ class PilotServer:
             "attention_toggle": self._handle_attention_toggle,
             "stress_gate_toggle": self._handle_stress_gate_toggle,
             "intent_predictor_toggle": self._handle_intent_predictor_toggle,
-            "tribe_model_toggle": self._handle_tribe_model_toggle,
+            "cognitive_model_toggle": self._handle_cognitive_model_toggle,
             "voice_listener_start": self._handle_voice_listener_start,
             "voice_listener_stop": self._handle_voice_listener_stop,
             "voice_listener_stats": self._handle_voice_listener_stats,
@@ -4226,8 +4223,8 @@ def handle_tool(tool_name, params):
             await asyncio.gather(*self._plan_history_tasks, return_exceptions=True)
         if self._plan_history:
             await self._plan_history.close()
-        if self._tribe_engine and self._tribe_engine.is_loaded:
-            self._tribe_engine.unload_model()
+        if self._cognitive_engine and self._cognitive_engine.is_loaded:
+            self._cognitive_engine.unload_model()
         from pilot.system.pty_session import PtySessionManager
 
         PtySessionManager.close_all()
@@ -4318,7 +4315,7 @@ def handle_tool(tool_name, params):
             "port": self.config.network.port,
         }
 
-    # ── Cognitive Intelligence (TRIBE v2) Handlers ──
+    # ── Cognitive Intelligence Handlers ──
 
     async def _handle_cognitive_stats(self, params: dict, ws: ServerConnection) -> dict:
         """Get stats for all cognitive subsystems.
@@ -4328,10 +4325,10 @@ def handle_tool(tool_name, params):
             ws: The WebSocket connection.
 
         Returns:
-            A dict with stats for tribe_engine, attention_ui, stress_gate, intent_predictor.
+            A dict with stats for cognitive_engine, attention_ui, stress_gate, intent_predictor.
         """
         return {
-            "tribe_engine": self._tribe_engine.get_stats() if self._tribe_engine else None,
+            "cognitive_engine": self._cognitive_engine.get_stats() if self._cognitive_engine else None,
             "attention_ui": self._attention_ui.get_stats() if self._attention_ui else None,
             "stress_gate": self._stress_gate.get_stats() if self._stress_gate else None,
             "intent_predictor": (self._intent_predictor.get_stats() if self._intent_predictor else None),
@@ -4347,9 +4344,9 @@ def handle_tool(tool_name, params):
         Returns:
             A dict with current cognitive state or error.
         """
-        if not self._tribe_engine:
+        if not self._cognitive_engine:
             return {"error": "Cognitive engine not initialized"}
-        state = await self._tribe_engine.predict_cognitive_state(
+        state = await self._cognitive_engine.predict_cognitive_state(
             stimulus_description=params.get("stimulus", ""),
         )
         return state.to_dict()
@@ -4399,8 +4396,8 @@ def handle_tool(tool_name, params):
         enabled = self._intent_predictor.toggle(params.get("enabled"))
         return {"enabled": enabled}
 
-    async def _handle_tribe_model_toggle(self, params: dict, ws: ServerConnection) -> dict:
-        """Load or unload the TRIBE v2 model.
+    async def _handle_cognitive_model_toggle(self, params: dict, ws: ServerConnection) -> dict:
+        """Load or unload the cognitive engine.
 
         Args:
             params: JSON-RPC parameters with action (load/unload/status).
@@ -4409,19 +4406,19 @@ def handle_tool(tool_name, params):
         Returns:
             A dict with loaded state, fallback, and availability status.
         """
-        if not self._tribe_engine:
-            return {"error": "TRIBE engine not initialized"}
+        if not self._cognitive_engine:
+            return {"error": "Cognitive engine not initialized"}
         action = params.get("action", "status")
         if action == "load":
-            success = await self._tribe_engine.load_model()
-            return {"loaded": success, "fallback": self._tribe_engine.is_fallback}
+            success = await self._cognitive_engine.load_model()
+            return {"loaded": success, "fallback": self._cognitive_engine.is_fallback}
         elif action == "unload":
-            self._tribe_engine.unload_model()
+            self._cognitive_engine.unload_model()
             return {"loaded": False}
         return {
-            "loaded": self._tribe_engine.is_loaded,
-            "fallback": self._tribe_engine.is_fallback,
-            "available": self._tribe_engine.is_available,
+            "loaded": self._cognitive_engine.is_loaded,
+            "fallback": self._cognitive_engine.is_fallback,
+            "available": self._cognitive_engine.is_available,
         }
 
     # ── Voice Listener (JARVIS Mode) Handlers ──

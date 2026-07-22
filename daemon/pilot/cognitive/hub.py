@@ -43,7 +43,7 @@ logger = logging.getLogger("pilot.cognitive.hub")
 class UnifiedCognitiveState:
     """Unified state from all cognitive sources."""
 
-    # Core metrics (from TRIBE or pipeline)
+    # Core metrics (from the cognitive pipeline)
     attention: float = 0.5
     stress: float = 0.3
     load: float = 0.4

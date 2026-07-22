@@ -274,14 +274,14 @@ class ScreenVisionAgent:
         if self._enable_llm_describe and changed and self._model:
             state.description = await self._describe_screen(state)
 
-        # ── Feature 1 & 7: Neural Cognitive Load + Saliency Overlay ──
-        tribe_engine = getattr(self, "_tribe_engine", None)
-        if tribe_engine and tribe_engine.is_loaded:
+        # ── Cognitive Load + Saliency Overlay ──
+        cognitive_engine = getattr(self, "_cognitive_engine", None)
+        if cognitive_engine and cognitive_engine.is_loaded:
             stimulus = f"Visual focus on {app}: {title}"
             if state.description:
                 stimulus += f" - {state.description}"
             # Fetch load and saliency map
-            cog_state = await tribe_engine.predict_cognitive_state(stimulus)
+            cog_state = await cognitive_engine.predict_cognitive_state(stimulus)
             state.brain_load = cog_state.cognitive_load
             # Generate a 2D uniform saliency heatmap representing ventral stream activation
             # (Mocked to a simple distribution for UI arc reactor integration)

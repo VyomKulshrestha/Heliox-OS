@@ -1,15 +1,16 @@
-"""Intent Predictor — JARVIS mode boost via neural command disambiguation.
+"""Intent Predictor — JARVIS mode boost via heuristic command disambiguation.
 
-Feature 3 of the TRIBE v2 integration. Uses brain-response predictions to
-improve voice/gesture → command mapping accuracy. Reduces false positives
-by scoring each candidate intent against predicted neural patterns.
+Uses lightweight heuristic affinity scoring (see
+pilot.cognitive.cognitive_engine) to improve voice/gesture → command
+mapping accuracy. Reduces false positives by scoring each candidate
+intent against word-overlap/cross-modal-match heuristics.
 
 How it works:
   1. When MultimodalFusionEngine produces multiple candidate intents,
-     this module scores each candidate by predicted neural affinity.
-  2. TRIBE v2 predicts which stimulus (command description) would elicit
-     the strongest neural response — i.e., which command the user
-     most likely "meant" given their cognitive context.
+     this module scores each candidate by predicted affinity.
+  2. The cognitive engine estimates which candidate command best matches
+     the voice transcript and gesture — i.e., which command the user
+     most likely "meant".
   3. The highest-affinity candidate is boosted; low-affinity candidates
      are suppressed.
 
@@ -23,7 +24,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from pilot.cognitive.tribe_engine import TribeEngine
+from pilot.cognitive.cognitive_engine import CognitiveEngine
 
 logger = logging.getLogger("pilot.cognitive.intent_predictor")
 
@@ -102,7 +103,7 @@ class IntentPrediction:
 
 
 class IntentPredictor:
-    """Disambiguates voice/gesture intents using TRIBE v2 predictions.
+    """Disambiguates voice/gesture intents using heuristic affinity scoring.
 
     Integrated into the MultimodalFusionEngine to boost JARVIS-mode
     accuracy. When multiple interpretations of a voice+gesture combo
@@ -110,8 +111,8 @@ class IntentPredictor:
     most likely intended command.
     """
 
-    def __init__(self, tribe_engine: TribeEngine | None = None) -> None:
-        self._tribe = tribe_engine or TribeEngine.get_instance()
+    def __init__(self, cognitive_engine: CognitiveEngine | None = None) -> None:
+        self._engine = cognitive_engine or CognitiveEngine.get_instance()
         self._enabled = True
 
         # Stats
@@ -198,8 +199,8 @@ class IntentPredictor:
                 candidates=candidates,
             )
 
-        # Score with TRIBE v2 neural affinity
-        tribe_candidates = [
+        # Score with heuristic neural-affinity approximation
+        engine_candidates = [
             {
                 "command": c.command,
                 "description": c.command,
@@ -208,8 +209,8 @@ class IntentPredictor:
             for c in candidates
         ]
 
-        scored = await self._tribe.predict_intent_affinity(
-            candidates=tribe_candidates,
+        scored = await self._engine.predict_intent_affinity(
+            candidates=engine_candidates,
             voice_transcript=voice_transcript,
             gesture_name=gesture_name,
         )

@@ -9,7 +9,6 @@ from pilot.config import PilotConfig
 
 # Optional safe mocks to prevent heavy dependencies from breaking CI tests
 sys.modules["torch"] = None
-sys.modules["tribev2"] = None
 
 
 def pytest_sessionfinish(session, exitstatus):

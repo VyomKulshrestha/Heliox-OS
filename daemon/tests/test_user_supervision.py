@@ -1,7 +1,7 @@
 """Tests for pilot.agents.user_supervision.UserSupervisionEngine.
 
 Covers the two independent, advisory-only trigger sources (cognitive
-coaching via a fake TribeEngine, risk-pattern detection via the keystroke
+coaching via a fake cognitive engine, risk-pattern detection via the keystroke
 hook and OCR snippet) and on_trigger's fan-out, mirroring test_narrator.py's
 fake-broadcast/fake-config fixture shape.
 """
@@ -12,7 +12,7 @@ import pytest
 
 import pilot.agents.user_supervision as user_supervision_module
 from pilot.agents.user_supervision import UserSupervisionEngine
-from pilot.cognitive.tribe_engine import CognitiveSnapshot
+from pilot.cognitive.cognitive_engine import CognitiveSnapshot
 from pilot.config import PilotConfig
 from pilot.system.input_hook import InputActivitySnapshot
 
@@ -25,7 +25,7 @@ class _Broadcast:
         self.calls.append((method, params))
 
 
-class _FakeTribe:
+class _FakeCognitiveEngine:
     def __init__(self, snapshot: CognitiveSnapshot | None = None):
         self.snapshot = snapshot or CognitiveSnapshot()
         self.calls: list[tuple[str, str]] = []
@@ -74,17 +74,17 @@ def _config(**overrides) -> PilotConfig:
 
 def _engine(
     *,
-    tribe: _FakeTribe | None = None,
+    cognitive: _FakeCognitiveEngine | None = None,
     screen_vision: _FakeScreenVision | None = None,
     hook: _FakeHook | None = None,
     ocr_text: str = "",
     **cfg_overrides,
-) -> tuple[UserSupervisionEngine, _Broadcast, _FakeTribe]:
-    tribe = tribe or _FakeTribe()
+) -> tuple[UserSupervisionEngine, _Broadcast, _FakeCognitiveEngine]:
+    cognitive = cognitive or _FakeCognitiveEngine()
     broadcast = _Broadcast()
     engine = UserSupervisionEngine(
         config=_config(**cfg_overrides),
-        tribe_engine=tribe,
+        cognitive_engine=cognitive,
         screen_vision=screen_vision or _FakeScreenVision(),
         hook=hook or _FakeHook(),
         broadcast_fn=broadcast,
@@ -94,7 +94,7 @@ def _engine(
         return ocr_text
 
     user_supervision_module.screen_ocr = _fake_screen_ocr
-    return engine, broadcast, tribe
+    return engine, broadcast, cognitive
 
 
 class TestTickHookSignals:
@@ -176,9 +176,9 @@ class TestTickOcrSignals:
 
     @pytest.mark.asyncio
     async def test_cognitive_coaching_above_threshold_produces_signal(self):
-        tribe = _FakeTribe(CognitiveSnapshot(stress_level=0.9, cognitive_load=0.5, attention_score=0.4))
+        cognitive = _FakeCognitiveEngine(CognitiveSnapshot(stress_level=0.9, cognitive_load=0.5, attention_score=0.4))
         engine, _, _ = _engine(
-            tribe=tribe,
+            cognitive=cognitive,
             keyboard_mouse_hook_enabled=False,
             cognitive_coaching_enabled=True,
             stress_coaching_threshold=0.75,
@@ -191,16 +191,16 @@ class TestTickOcrSignals:
 
     @pytest.mark.asyncio
     async def test_cognitive_coaching_below_threshold_no_signal(self):
-        tribe = _FakeTribe(CognitiveSnapshot(stress_level=0.1, cognitive_load=0.1))
-        engine, _, _ = _engine(tribe=tribe, keyboard_mouse_hook_enabled=False, cognitive_coaching_enabled=True)
+        cognitive = _FakeCognitiveEngine(CognitiveSnapshot(stress_level=0.1, cognitive_load=0.1))
+        engine, _, _ = _engine(cognitive=cognitive, keyboard_mouse_hook_enabled=False, cognitive_coaching_enabled=True)
         result = await engine.tick()
         assert result["signals"] == []
 
     @pytest.mark.asyncio
     async def test_coaching_cooldown_suppresses_repeat(self):
-        tribe = _FakeTribe(CognitiveSnapshot(stress_level=0.9))
+        cognitive = _FakeCognitiveEngine(CognitiveSnapshot(stress_level=0.9))
         engine, _, _ = _engine(
-            tribe=tribe,
+            cognitive=cognitive,
             keyboard_mouse_hook_enabled=False,
             cognitive_coaching_enabled=True,
             ocr_interval_seconds=0.0,
@@ -212,19 +212,19 @@ class TestTickOcrSignals:
         assert second["triggered"] is False
 
     @pytest.mark.asyncio
-    async def test_tribe_receives_real_ocr_and_window_title_stimulus(self):
-        tribe = _FakeTribe(CognitiveSnapshot(stress_level=0.9))
+    async def test_cognitive_engine_receives_real_ocr_and_window_title_stimulus(self):
+        cognitive = _FakeCognitiveEngine(CognitiveSnapshot(stress_level=0.9))
         screen_vision = _FakeScreenVision(active_window_title="Terminal")
         engine, _, _ = _engine(
-            tribe=tribe,
+            cognitive=cognitive,
             screen_vision=screen_vision,
             keyboard_mouse_hook_enabled=False,
             cognitive_coaching_enabled=True,
             ocr_text="drop table users",
         )
         await engine.tick()
-        assert len(tribe.calls) == 1
-        stimulus, region = tribe.calls[0]
+        assert len(cognitive.calls) == 1
+        stimulus, region = cognitive.calls[0]
         assert "drop table users" in stimulus
         assert "Terminal" in stimulus
         assert region == "user_supervision"
@@ -293,7 +293,7 @@ class TestAdvisoryBroadcastsNeverLeakRawContent:
     async def test_no_broadcast_fn_is_a_safe_noop(self):
         engine = UserSupervisionEngine(
             config=_config(),
-            tribe_engine=_FakeTribe(),
+            cognitive_engine=_FakeCognitiveEngine(),
             screen_vision=_FakeScreenVision(),
             hook=_FakeHook(),
             broadcast_fn=None,

@@ -18,7 +18,7 @@ from typing import Any
 logger = logging.getLogger("pilot.system.pocket_tts")
 
 # Module-level caches -- mirrors voice._get_whisper_model's plain dict-cache
-# pattern rather than TribeEngine's singleton/loading-state-machine, since
+# pattern rather than CognitiveEngine's singleton/loading-state-machine, since
 # Pocket TTS has no async loading phases or cognitive-state API to
 # coordinate; a synchronous load-once-and-cache is all that's needed.
 _model_cache: dict[str, Any] = {}

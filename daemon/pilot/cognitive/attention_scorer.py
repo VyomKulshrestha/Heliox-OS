@@ -1,7 +1,8 @@
 """Attention-Aware UI — Scores UI events by predicted visual attention capture.
 
-Feature 1 of the TRIBE v2 integration. Uses neural attention predictions
-to reduce cognitive overload by:
+Uses lightweight heuristic attention predictions (see
+pilot.cognitive.cognitive_engine.CognitiveEngine) to reduce cognitive
+overload by:
   1. Scoring every UI notification/event by its predicted attention demand
   2. Suppressing low-priority notifications when cognitive load is high
   3. Batching non-urgent updates during focus periods
@@ -18,7 +19,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Coroutine
 
-from pilot.cognitive.tribe_engine import CognitiveSnapshot, TribeEngine
+from pilot.cognitive.cognitive_engine import CognitiveEngine, CognitiveSnapshot
 
 logger = logging.getLogger("pilot.cognitive.attention_scorer")
 
@@ -100,8 +101,8 @@ class AttentionAwareUI:
     broadcast to intelligently manage what the user sees and when.
     """
 
-    def __init__(self, tribe_engine: TribeEngine | None = None) -> None:
-        self._tribe = tribe_engine or TribeEngine.get_instance()
+    def __init__(self, cognitive_engine: CognitiveEngine | None = None) -> None:
+        self._engine = cognitive_engine or CognitiveEngine.get_instance()
         self._enabled = True
         self._last_state: CognitiveSnapshot | None = None
         self._state_refresh_interval_s = 5.0
@@ -214,7 +215,7 @@ class AttentionAwareUI:
         )
 
         # Track interaction for future predictions
-        self._tribe.record_interaction(
+        self._engine.record_interaction(
             event_type=event_type,
             modality="visual",
             intensity=attention_score,
@@ -228,7 +229,7 @@ class AttentionAwareUI:
         content: dict[str, Any],
     ) -> float:
         """Compute how much attention this event will demand."""
-        # Build a list of UI elements for TRIBE v2 scoring
+        # Build a list of UI elements for attention scoring
         elements = [
             {
                 "type": event_type,
@@ -238,7 +239,7 @@ class AttentionAwareUI:
             }
         ]
 
-        scored = await self._tribe.predict_attention_map(elements)
+        scored = await self._engine.predict_attention_map(elements)
         if scored:
             return scored[0].get("attention_score", 0.5)
         return 0.5
@@ -247,7 +248,7 @@ class AttentionAwareUI:
         """Get or refresh the current cognitive state."""
         now = time.time()
         if self._last_state is None or now - self._last_state_time > self._state_refresh_interval_s:
-            self._last_state = await self._tribe.predict_cognitive_state()
+            self._last_state = await self._engine.predict_cognitive_state()
             self._last_state_time = now
         return self._last_state
 

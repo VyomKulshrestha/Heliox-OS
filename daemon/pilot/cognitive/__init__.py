@@ -1,1 +1,1 @@
-"""Cognitive intelligence powered by Meta TRIBE v2."""
+"""Lightweight, dependency-free cognitive intelligence heuristics."""

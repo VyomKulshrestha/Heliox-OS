@@ -72,7 +72,7 @@ async def daemon_server(server_port, tmp_path, monkeypatch):
         patch("pilot.models.cache.LLMCache.initialize", new_callable=AsyncMock),
         patch("pilot.memory.store.MemoryStore.initialize", new_callable=AsyncMock),
         patch("pilot.agents.screen_vision.ScreenVisionAgent.start", new_callable=AsyncMock),
-        patch("pilot.cognitive.tribe_engine.TribeEngine.load_model", new_callable=AsyncMock),
+        patch("pilot.cognitive.cognitive_engine.CognitiveEngine.load_model", new_callable=AsyncMock),
         patch("pilot.models.budget_tracker.BudgetTracker.initialize", new_callable=AsyncMock),
         patch("pilot.agents.prompt_improver.PromptImprover.initialize", new_callable=AsyncMock),
         patch("pilot.agents.subconscious.SubconsciousAgent.initialize", new_callable=AsyncMock),

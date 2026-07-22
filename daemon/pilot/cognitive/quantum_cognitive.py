@@ -1,14 +1,12 @@
 """Quantum-Ready Cognitive Architecture — model-agnostic cognitive API layer.
 
-This module implements the seventh revolutionary feature:
 - Model-agnostic cognitive pipeline
-- Standard cognitive APIs for any neural model
-- Easy swap between TRIBE and future models
+- Standard cognitive APIs for any model adapter
 - Plugin architecture for new models
 - Standard interface for developers
 
 Architecture:
-  Model Adapter (TRIE, GPT, etc.) → Cognitive Pipeline → Standard API → Plugins
+  Model Adapter → Cognitive Pipeline → Standard API → Plugins
 """
 
 from __future__ import annotations
@@ -26,7 +24,6 @@ logger = logging.getLogger("pilot.cognitive.quantum_ready")
 
 
 class ModelType(StrEnum):
-    TRIBE_V2 = "tribe_v2"
     GPT_NEURO = "gpt_neuro"
     CLAUDE_NEURO = "claude_neuro"
     GEMINI_NEURO = "gemini_neuro"
@@ -128,75 +125,6 @@ class CognitiveModelAdapter(ABC):
         pass
 
 
-# ── TRIBE Adapter ──
-
-
-class TribeAdapter(CognitiveModelAdapter):
-    """Adapter for Meta TRIBE v2."""
-
-    def __init__(self):
-        self._loaded = False
-        self._total_predictions = 0
-        self._total_latency = 0.0
-
-    @property
-    def model_type(self) -> str:
-        return ModelType.TRIBE_V2
-
-    @property
-    def name(self) -> str:
-        return "Meta TRIBE v2"
-
-    def is_available(self) -> bool:
-        try:
-            from tribev2 import TribeModel
-
-            return True
-        except ImportError:
-            return False
-
-    async def predict(self, input_data: CognitiveInput) -> CognitiveOutput:
-        from pilot.cognitive.tribe_engine import TribeEngine
-
-        t0 = time.time()
-
-        # Use TRIBE Engine
-        engine = TribeEngine.get_instance()
-        state = await engine.predict_cognitive_state(input_data.stimulus)
-
-        latency = (time.time() - t0) * 1000
-        self._total_predictions += 1
-        self._total_latency += latency
-
-        return CognitiveOutput(
-            attention_score=state.attention_score,
-            stress_level=state.stress_level,
-            cognitive_load=state.cognitive_load,
-            confidence=state.confidence,
-            raw_output=state.raw_activations,
-            latency_ms=latency,
-            model_used=self.model_type,
-        )
-
-    def get_info(self) -> ModelInfo:
-        return ModelInfo(
-            model_type=self.model_type,
-            name=self.name,
-            version="2.0",
-            capabilities=[
-                CognitiveCapability.ATTENTION_PREDICTION,
-                CognitiveCapability.STRESS_DETECTION,
-                CognitiveCapability.LOAD_ESTIMATION,
-            ],
-            is_available=self.is_available(),
-            avg_latency_ms=self._total_latency / max(1, self._total_predictions),
-        )
-
-    async def load_model(self) -> bool:
-        engine = TribeEngine.get_instance()
-        return await engine.load_model()
-
-
 # ── Fallback Adapter ──
 
 
@@ -287,7 +215,7 @@ class QuantumCognitivePipeline:
         self._preprocessors: list[Callable[[CognitiveInput], CognitiveInput]] = []
         self._postprocessors: list[Callable[[CognitiveOutput], CognitiveOutput]] = []
 
-        # Initialize with TRIBE if available
+        # Initialize with the heuristic fallback as the default adapter
         self._initialize_adapters()
 
         # Stats
@@ -296,16 +224,9 @@ class QuantumCognitivePipeline:
 
     def _initialize_adapters(self) -> None:
         """Initialize available model adapters."""
-        # Try TRIBE first
-        tribe = TribeAdapter()
-        if tribe.is_available():
-            self._adapters[tribe.model_type] = tribe
-            self._active_adapter = tribe
-            logger.info("TRIBE v2 adapter loaded")
-        else:
-            # Use fallback
-            self._active_adapter = self._fallback
-            logger.info("Using fallback heuristic adapter")
+        self._adapters[self._fallback.model_type] = self._fallback
+        self._active_adapter = self._fallback
+        logger.info("Using fallback heuristic adapter")
 
     # ── Adapter Management ──
 

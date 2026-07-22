@@ -1,11 +1,11 @@
 """Stress-Aware Task Gating — Pauses destructive actions under cognitive stress.
 
-Feature 2 of the TRIBE v2 integration. Prevents catastrophic mistakes by
-detecting when the user is in a high-stress cognitive state and gating
-destructive (Tier 2+) actions.
+Prevents catastrophic mistakes by detecting when the user is in a
+high-stress cognitive state (see pilot.cognitive.cognitive_engine) and
+gating destructive (Tier 2+) actions.
 
 Behavior:
-  - If TRIBE v2 predicts stress > STRESS_GATE_THRESHOLD ──→ PAUSE the action
+  - If the cognitive engine predicts stress > STRESS_GATE_THRESHOLD ──→ PAUSE the action
   - Notify the user with a calming confirmation dialog
   - Allow override with explicit confirmation
   - Never gates read-only or information-gathering actions
@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from pilot.actions import ActionType
-from pilot.cognitive.tribe_engine import CognitiveSnapshot, TribeEngine
+from pilot.cognitive.cognitive_engine import CognitiveEngine
 
 logger = logging.getLogger("pilot.cognitive.stress_gate")
 
@@ -129,8 +129,8 @@ class StressGate:
     and returns a GateDecision indicating whether to proceed or pause.
     """
 
-    def __init__(self, tribe_engine: TribeEngine | None = None) -> None:
-        self._tribe = tribe_engine or TribeEngine.get_instance()
+    def __init__(self, cognitive_engine: CognitiveEngine | None = None) -> None:
+        self._engine = cognitive_engine or CognitiveEngine.get_instance()
         self._enabled = True
         self._gate_cooldowns: dict[str, float] = {}  # action_type → last gate time
 
@@ -186,7 +186,7 @@ class StressGate:
             )
 
         # Get cognitive state
-        state = await self._tribe.predict_cognitive_state(stimulus_description=f"executing {action_type.value}")
+        state = await self._engine.predict_cognitive_state(stimulus_description=f"executing {action_type.value}")
 
         # Determine threshold based on action risk
         is_high_risk = action_type in HIGH_RISK_ACTIONS
@@ -227,7 +227,7 @@ class StressGate:
             self._gate_history = self._gate_history[-50:]
 
         # Record this interaction for future predictions
-        self._tribe.record_interaction(
+        self._engine.record_interaction(
             event_type="action_gate_check",
             modality="cognitive",
             intensity=state.stress_level,

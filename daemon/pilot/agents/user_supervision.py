@@ -4,7 +4,7 @@ job, see agents/narrator.py).
 
 Two independent, advisory-only trigger sources evaluated on one internal tick:
 
-- **Cognitive coaching** — TRIBE v2 (`pilot.cognitive.tribe_engine.TribeEngine`)
+- **Cognitive coaching** — the cognitive engine (`pilot.cognitive.cognitive_engine.CognitiveEngine`)
   is fed a REAL stimulus for the first time (an OCR screen snippet + the
   active window title), instead of the synthetic labels every existing call
   site uses. A stress/cognitive-load threshold crossing triggers a gentle
@@ -33,7 +33,7 @@ from pilot.system.vision import screen_ocr
 
 if TYPE_CHECKING:
     from pilot.agents.screen_vision import ScreenVisionAgent
-    from pilot.cognitive.tribe_engine import CognitiveSnapshot, TribeEngine
+    from pilot.cognitive.cognitive_engine import CognitiveEngine, CognitiveSnapshot
     from pilot.config import PilotConfig, SupervisionConfig
     from pilot.system.input_hook import InputSupervisionHook
 
@@ -43,19 +43,19 @@ logger = logging.getLogger("pilot.agents.user_supervision")
 class UserSupervisionEngine:
     """`BackgroundTask.action_fn`/`on_trigger` pair (see agents/background.py)
     for the User Manual Supervision feature. Registered as a single
-    background task; the costlier OCR+TRIBE sub-work is internally
+    background task; the costlier OCR+cognitive sub-work is internally
     rate-limited to its own slower cadence within each tick."""
 
     def __init__(
         self,
         config: PilotConfig,
-        tribe_engine: TribeEngine,
+        cognitive_engine: CognitiveEngine,
         screen_vision: ScreenVisionAgent,
         hook: InputSupervisionHook,
         broadcast_fn: Callable[[str, Any], Coroutine[Any, Any, None]] | None = None,
     ) -> None:
         self._config = config
-        self._tribe = tribe_engine
+        self._engine = cognitive_engine
         self._screen_vision = screen_vision
         self._hook = hook
         self._broadcast_fn = broadcast_fn
@@ -132,7 +132,7 @@ class UserSupervisionEngine:
 
         if cfg.cognitive_coaching_enabled:
             stimulus = f"{snippet} — window: {window_title}".strip(" —")
-            snap = await self._tribe.predict_cognitive_state(
+            snap = await self._engine.predict_cognitive_state(
                 stimulus_description=stimulus, screen_region="user_supervision"
             )
             if self._crosses_coaching_threshold(snap) and not self._in_cooldown("coaching"):

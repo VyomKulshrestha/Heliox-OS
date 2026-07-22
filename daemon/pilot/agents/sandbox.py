@@ -231,9 +231,8 @@ class SimulationSandbox:
                 target=target,
             )
 
-            # ── Feature 6: ReAct Pipeline Neural Cost Estimator ──
-            # Skip TRIBE loading in dry-run mode (synchronous, blocking)
-            # Cognitive cost is estimated mathematically instead
+            # ── ReAct Pipeline Cognitive Cost Estimator ──
+            # Cognitive cost is estimated mathematically (no model, dry-run safe)
             stimulus = f"Execute action {action_type} on {target}"
             impact.cognitive_cost = min(
                 1.0, len(stimulus) / 80.0 + (0.4 if action_type in SANDBOX_HIGH_RISK_ACTIONS else 0.1)

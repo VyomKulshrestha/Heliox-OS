@@ -93,11 +93,11 @@ async def _speak_impl(
     cancelling a task that's awaiting another task cancels that inner task
     too, so nothing about the existing barge-in kill path changes."""
     try:
-        from pilot.cognitive.tribe_engine import TribeEngine
+        from pilot.cognitive.cognitive_engine import CognitiveEngine
 
-        tribe = TribeEngine.get_instance()
-        if tribe.is_loaded and hasattr(tribe, "_last_cognitive_load"):
-            cog_load = tribe._last_cognitive_load
+        engine = CognitiveEngine.get_instance()
+        if engine.is_loaded:
+            cog_load = (await engine.predict_cognitive_state()).cognitive_load
             if cog_load > 0.6:
                 reduction = int((cog_load - 0.5) * 80)
                 rate = max(100, rate - reduction)
