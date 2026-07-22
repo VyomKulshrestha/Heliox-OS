@@ -380,6 +380,13 @@ class PilotServer:
         self._plan_snapshots: dict[str, str] = {}
         # ── Cancel Token (Issue #92) ──
         self._cancel_event: asyncio.Event | None = None
+        # ── Mid-flight cancellation: the currently in-flight interactive
+        # execution, if any -- lets _handle_abort actually cancel the
+        # running task (killing e.g. a mid-flight shell subprocess), not
+        # just signal cancel_event for the next action boundary. Single
+        # slot, mirroring _cancel_event's own "one primary interactive
+        # session" scope rather than a dict keyed by plan_id. ──
+        self._active_execution_task: asyncio.Task[list[Any]] | None = None
         self._rss_agent: Any = None
         # ── LAN Mesh Network ──
         self._mesh: Any = None
@@ -1138,6 +1145,29 @@ class PilotServer:
 
     MAX_RETRIES = 2
 
+    async def _execute_tracked(self, plan: ActionPlan, **kwargs: Any) -> list[Any]:
+        """Wraps self._executor.execute() in a real asyncio.Task, tracked in
+        self._active_execution_task, so _handle_abort can cancel the
+        CURRENTLY in-flight execution -- not just signal cancel_event for
+        the next action boundary. Cancelling the returned task propagates
+        all the way down to run_command's existing proc.kill() (see
+        platform_detect.py), the same mechanism AutonomousExecutor.cancel()
+        already proves works for killing a mid-flight shell subprocess.
+
+        Only wraps the two interactive-session call sites in
+        _handle_execute (fresh plan + resume-from-checkpoint) -- the other
+        execute() call sites (voice command dispatch, the generic
+        action-command handler, git-conflict-resolution) are single quick
+        actions outside the "Stop button" scope and are left untouched.
+        """
+        task = asyncio.ensure_future(self._executor.execute(plan, **kwargs))
+        self._active_execution_task = task
+        try:
+            return await task
+        finally:
+            if self._active_execution_task is task:
+                self._active_execution_task = None
+
     async def _handle_execute(self, params: dict[str, Any], ws: ServerConnection) -> dict:
         """Agentic pipeline: plan -> execute -> verify -> [retry on failure].
 
@@ -1576,36 +1606,50 @@ class PilotServer:
                         parent_id=_exec_phase,
                     )
 
-            if self._orchestrator:
-                orch_routing = self._orchestrator.get_routing_summary(plan)
-                await ws.send(_notification("orchestrator_routing", orch_routing))
-                if emit:
-                    await emit.data_event("orchestration", ORCHESTRATOR_ROUTING, orch_routing, parent_id=exec_phase)
-                    for agent_info in orch_routing.get("assigned_agents", []):
-                        role_name = agent_info["role"] if isinstance(agent_info, dict) else str(agent_info)
-                        await emit.thought("orchestration", f"Delegating to {role_name} agent...", parent_id=exec_phase)
+            try:
+                if self._orchestrator:
+                    orch_routing = self._orchestrator.get_routing_summary(plan)
+                    await ws.send(_notification("orchestrator_routing", orch_routing))
+                    if emit:
+                        await emit.data_event("orchestration", ORCHESTRATOR_ROUTING, orch_routing, parent_id=exec_phase)
+                        for agent_info in orch_routing.get("assigned_agents", []):
+                            role_name = agent_info["role"] if isinstance(agent_info, dict) else str(agent_info)
+                            await emit.thought(
+                                "orchestration", f"Delegating to {role_name} agent...", parent_id=exec_phase
+                            )
 
-                results = await self._orchestrator.execute_plan(
-                    user_input,
-                    plan,
-                    on_action_start=_on_action_start,
-                    on_action_complete=_on_action_complete,
-                    cancel_event=cancel_event,  # ── Cancel Token (Issue #92) ──
-                    plan_id=plan_id,
-                )
-            else:
-                results = await self._executor.execute(
-                    plan,
-                    on_action_start=_on_action_start,
-                    on_action_complete=_on_action_complete,
-                    cancel_event=cancel_event,  # ── Cancel Token (Issue #92) ──
-                    plan_id=plan_id,
-                    # Interactive is the default invocation_source, but the
-                    # critic already ran above (or was deliberately skipped
-                    # as low-risk) — don't have the gateway pay for a
-                    # redundant LLM round-trip.
-                    critic_already_reviewed=True,
-                )
+                    results = await self._orchestrator.execute_plan(
+                        user_input,
+                        plan,
+                        on_action_start=_on_action_start,
+                        on_action_complete=_on_action_complete,
+                        cancel_event=cancel_event,  # ── Cancel Token (Issue #92) ──
+                        plan_id=plan_id,
+                    )
+                else:
+                    results = await self._execute_tracked(
+                        plan,
+                        on_action_start=_on_action_start,
+                        on_action_complete=_on_action_complete,
+                        cancel_event=cancel_event,  # ── Cancel Token (Issue #92) ──
+                        plan_id=plan_id,
+                        # Interactive is the default invocation_source, but the
+                        # critic already ran above (or was deliberately skipped
+                        # as low-risk) — don't have the gateway pay for a
+                        # redundant LLM round-trip.
+                        critic_already_reviewed=True,
+                    )
+            except asyncio.CancelledError:
+                # ── Mid-flight cancellation: _handle_abort (Part 3) sets
+                # cancel_event *then* cancels _active_execution_task, so by
+                # the time this CancelledError (a BaseException) reaches us,
+                # cancel_event.is_set() is already True -- fall through to
+                # the existing "Cancel Token" handling below with whatever
+                # results the task produced before it was killed (none, since
+                # the cancelled await never returns a value). This must be
+                # caught here rather than left to propagate, or it would
+                # escape this RPC handler as an unhandled BaseException. ──
+                results = []
             all_results = results
             if not dry_run:
                 _snapshot_id = next((r.snapshot_id for r in results if getattr(r, "snapshot_id", None)), None)
@@ -1958,14 +2002,22 @@ class PilotServer:
                 await self._checkpoint_store.record_result(plan_id, result)
 
         await self._checkpoint_store.mark_status(plan_id, "resuming")
-        results = await self._executor.execute(
-            remaining_plan,
-            on_action_start=_on_action_start,
-            on_action_complete=_on_action_complete,
-            cancel_event=cancel_event,
-            plan_id=plan_id,
-            initial_last_output=checkpoint.last_output,
-        )
+        try:
+            results = await self._execute_tracked(
+                remaining_plan,
+                on_action_start=_on_action_start,
+                on_action_complete=_on_action_complete,
+                cancel_event=cancel_event,
+                plan_id=plan_id,
+                initial_last_output=checkpoint.last_output,
+            )
+        except asyncio.CancelledError:
+            # ── Mid-flight cancellation (Part 3): cancel_event is already
+            # set by _handle_abort before it cancels the tracked task, so
+            # the cancel_event.is_set() branch below handles the response --
+            # this must be caught here or it escapes as an unhandled
+            # BaseException instead of a clean RPC response. ──
+            results = []
 
         updated = await self._checkpoint_store.get(plan_id)
         combined_results = [
