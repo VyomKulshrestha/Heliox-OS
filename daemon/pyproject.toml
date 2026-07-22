@@ -94,6 +94,15 @@ supervision = [
     "pynput>=1.7",
 ]
 
+# Kyutai Pocket TTS (CPU-only, cross-platform local TTS, see
+# pilot.system.pocket_tts) -- kept as its own extras group since it's a
+# ~236MB first-use model download, a meaningfully bigger resource
+# commitment than this project's other extras. voice.py falls back to the
+# existing OS-native TTS automatically if this isn't installed.
+voice = [
+    "pocket-tts>=1.0",
+]
+
 # Everything
 all = [
     "pilot-daemon[full,automation,vision,browser,documents,cognitive,ssh,network,wasm,supervision]",
