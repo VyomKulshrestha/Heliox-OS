@@ -5,6 +5,11 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      publish_only:
+        description: "Skip the 4-platform Tauri builds -- only run the PyPI publish job (for iterating on publish failures cheaply)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -44,9 +49,10 @@ jobs:
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
-        run: twine upload dist/*
+        run: twine upload --verbose dist/*
 
   build-tauri:
+    if: github.event_name != 'workflow_dispatch' || inputs.publish_only != true
     strategy:
       fail-fast: false
       matrix:
