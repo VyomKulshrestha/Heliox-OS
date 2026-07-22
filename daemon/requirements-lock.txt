@@ -769,7 +769,7 @@ websockets==16.1
     #   uvicorn
 wrapt==2.2.2
     # via smart-open
-x-transformers==1.27.20
+x-transformers==2.23.5
     # via tribev2
 x-wr-timezone==2.0.1
     # via recurring-ical-events
