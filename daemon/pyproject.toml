@@ -98,9 +98,15 @@ supervision = [
 # pilot.system.pocket_tts) -- kept as its own extras group since it's a
 # ~236MB first-use model download, a meaningfully bigger resource
 # commitment than this project's other extras. voice.py falls back to the
-# existing OS-native TTS automatically if this isn't installed.
+# existing OS-native TTS automatically if this isn't installed. sounddevice
+# is not a dependency of the pocket-tts package itself (its own examples
+# just save a WAV file) -- it's required here because pocket_tts.py's
+# play() uses it for actual audio output, so it must be installed alongside
+# pocket-tts or playback would always fail and silently fall back to
+# OS-native TTS on every call.
 voice = [
     "pocket-tts>=1.0",
+    "sounddevice>=0.4",
 ]
 
 # Everything
