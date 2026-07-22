@@ -2381,11 +2381,21 @@ class PilotServer:
         return {"status": "ok", "profile": profile_name, "policy": asdict(updated)}
 
     async def _handle_abort(self, params: dict[str, Any], ws: ServerConnection) -> dict:
-        """Signal the current execution to stop gracefully (Issue #92).
+        """Stop the current execution -- both cooperatively and, where
+        possible, by really killing whatever is in flight right now (Issue
+        #92, extended for real mid-flight cancellation).
 
-        Sets the per-session cancel_event so the Orchestrator and Executor
-        halt at the next action boundary. Returns immediately — cancellation
-        propagates asynchronously.
+        Sets the per-session cancel_event (as before, so the Orchestrator
+        and Executor halt at the next action boundary) AND cancels the
+        currently tracked interactive execution task, which cascades all
+        the way down to run_command's proc.kill() for a mid-flight shell
+        subprocess -- the same mechanism AutonomousExecutor.cancel() already
+        proves works. Also interrupts every live PTY session (pty_exec
+        can't be stopped by Task.cancel() alone; see PtySession.interrupt).
+
+        Returns immediately — cancellation propagates asynchronously; the
+        in-flight _execute_tracked()/_handle_execute call observes it and
+        shapes its own clean RPC response.
 
         Args:
             params: JSON-RPC parameters (unused).
@@ -2394,9 +2404,23 @@ class PilotServer:
         Returns:
             A dict with status indicating whether an active execution was aborted.
         """
+        aborted_something = False
+
         if self._cancel_event and not self._cancel_event.is_set():
             self._cancel_event.set()
-            logger.info("Abort signal received — cancel_event set, propagating to agents")
+            aborted_something = True
+
+        task = self._active_execution_task
+        if task is not None and not task.done():
+            task.cancel()
+            aborted_something = True
+
+        from pilot.system.pty_session import PtySessionManager
+
+        PtySessionManager.interrupt_all()
+
+        if aborted_something:
+            logger.info("Abort signal received — cancel_event set and in-flight execution task cancelled")
             return {"status": "aborted"}
         return {"status": "no_active_execution"}
 
