@@ -137,6 +137,15 @@ class VoiceConfig:
     # UX improvement (doesn't expand what the system can do, unlike e.g.
     # gesture_cursor), so on by default like adaptive_calibration.
     barge_in_enabled: bool = True
+    # Kyutai Pocket TTS (CPU-only, cross-platform local model) vs. the
+    # existing OS-native TTS (Windows SAPI/macOS say/Linux espeak). Defaults
+    # to "pocket_tts", but this is a safe default even when the optional
+    # `pocket-tts` package isn't installed: voice.py's _speak_impl falls
+    # back to os_native automatically on ImportError or any other failure,
+    # so no network call or extra cost is incurred unless a user has
+    # actually opted into the `pilot-daemon[voice]` extra.
+    tts_engine: str = "pocket_tts"  # "pocket_tts" | "os_native"
+    tts_voice: str = "alba"  # built-in Pocket TTS voice preset; ignored when tts_engine == "os_native"
 
 
 @dataclass
@@ -550,6 +559,8 @@ def _validate_config_types(raw: dict) -> None:
             "vad_silence_ms": (int, float),
             "vad_max_utterance_seconds": (int, float),
             "barge_in_enabled": bool,
+            "tts_engine": str,
+            "tts_voice": str,
         },
         "screen_vision": {
             "capture_interval_seconds": (int, float),

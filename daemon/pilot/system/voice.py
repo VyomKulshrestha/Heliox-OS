@@ -105,6 +105,27 @@ async def _speak_impl(
     except Exception as e:
         logger.debug(f"Failed to modulate TTS rate by cognitive load: {e}")
 
+    config = PilotConfig.load()
+    if config.voice.tts_engine == "pocket_tts":
+        try:
+            from pilot.system.pocket_tts import synthesize_and_play, synthesize_to_file
+
+            # Pocket TTS has no SAPI-style integer rate/volume knob to carry
+            # the cognitive-load rate modulation above onto -- out of scope
+            # for this pass, see SECURITY.md.
+            if output_file:
+                await synthesize_to_file(text, config.voice.tts_voice, output_file)
+                return f"Speech saved to {output_file}"
+            await synthesize_and_play(text, config.voice.tts_voice)
+            return f"Spoken: {text[:80]}..."
+        except asyncio.CancelledError:
+            # Barge-in -- propagate exactly like the OS-native paths do,
+            # do not fall back to them mid-interruption.
+            raise
+        except Exception as e:
+            logger.warning("Pocket TTS failed (%s), falling back to OS-native TTS", e, exc_info=True)
+            # falls through to the platform dispatch below
+
     if CURRENT_PLATFORM == Platform.WINDOWS:
         return await _tts_windows(text, voice, rate, volume, output_file)
     elif CURRENT_PLATFORM == Platform.MACOS:

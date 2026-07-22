@@ -7,6 +7,8 @@ def test_defaults():
     assert config.voice.vad_silence_ms == 700.0
     assert config.voice.vad_max_utterance_seconds == 20.0
     assert config.voice.barge_in_enabled is True
+    assert config.voice.tts_engine == "pocket_tts"
+    assert config.voice.tts_voice == "alba"
 
 
 def test_voice_section_merges_vad_and_barge_in_settings():
@@ -32,3 +34,13 @@ def test_voice_missing_section_leaves_defaults():
     config = PilotConfig()
     merged = _merge_config(config, {})
     assert merged.voice.barge_in_enabled is True
+
+
+def test_voice_section_merges_tts_engine_and_voice():
+    config = PilotConfig()
+    raw = {"voice": {"tts_engine": "os_native", "tts_voice": "giovanni"}}
+
+    merged = _merge_config(config, raw)
+
+    assert merged.voice.tts_engine == "os_native"
+    assert merged.voice.tts_voice == "giovanni"
