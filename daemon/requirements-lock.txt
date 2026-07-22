@@ -116,7 +116,7 @@ einops==0.8.2
     #   x-transformers
 et-xmlfile==2.0.0
     # via openpyxl
-exca==0.5.20
+exca==0.5.28
     # via
     #   neuralset
     #   tribev2
