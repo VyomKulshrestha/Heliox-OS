@@ -132,6 +132,18 @@
     settings.updateSection("model", { cloud_model: val });
   }
 
+  const pocketTtsVoices = ["alba", "giovanni", "lola"];
+
+  function updateTtsEngine(e: Event) {
+    const val = (e.target as HTMLInputElement).value;
+    settings.updateSection("voice", { tts_engine: val });
+  }
+
+  function updateTtsVoice(e: Event) {
+    const val = (e.target as HTMLInputElement).value;
+    settings.updateSection("voice", { tts_voice: val });
+  }
+
   function updateGpuLimit(e: Event) {
     const val = parseInt((e.target as HTMLInputElement).value) || 0;
     settings.updateSection("model", { gpu_memory_limit_mb: val });
@@ -683,6 +695,39 @@
         </span>
       </div>
       <button class="btn-save" onclick={resetVoiceCalibration}>{$_('settings.voice_calibration_reset')}</button>
+    </div>
+  </section>
+
+  <section class="settings-group">
+    <h3>{$_('settings.voice_speech')}</h3>
+    <p class="gesture-cursor-warning">{$_('settings.voice_speech_desc')}</p>
+
+    <div class="setting-row">
+      <div class="setting-info">
+        <span class="setting-label">{$_('settings.tts_engine')}</span>
+        <span class="setting-desc">{$_('settings.tts_engine_desc')}</span>
+      </div>
+      <select class="input-md" value={$settings.voice?.tts_engine ?? "pocket_tts"} onchange={updateTtsEngine}>
+        <option value="pocket_tts">Pocket TTS</option>
+        <option value="os_native">OS Voice</option>
+      </select>
+    </div>
+
+    <div class="setting-row">
+      <div class="setting-info">
+        <span class="setting-label">{$_('settings.tts_voice')}</span>
+        <span class="setting-desc">{$_('settings.tts_voice_desc')}</span>
+      </div>
+      <select
+        class="input-md"
+        value={$settings.voice?.tts_voice ?? "alba"}
+        onchange={updateTtsVoice}
+        disabled={$settings.voice?.tts_engine === "os_native"}
+      >
+        {#each pocketTtsVoices as voiceOption}
+          <option value={voiceOption}>{voiceOption}</option>
+        {/each}
+      </select>
     </div>
   </section>
 
