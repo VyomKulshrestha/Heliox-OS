@@ -13,12 +13,15 @@ aiosignal==1.4.0
 aiosqlite==0.22.1
     # via pilot-daemon (pyproject.toml)
 annotated-doc==0.0.4
-    # via typer
+    # via
+    #   fastapi
+    #   typer
 annotated-types==0.7.0
     # via pydantic
 anyio==4.14.1
     # via
     #   httpx
+    #   starlette
     #   watchfiles
 attrs==26.1.0
     # via
@@ -31,19 +34,14 @@ bcrypt==5.0.0
     # via
     #   chromadb
     #   paramiko
+beartype==0.22.9
+    # via pocket-tts
 beautifulsoup4==4.15.0
     # via pilot-daemon (pyproject.toml)
-blis==1.3.3
-    # via thinc
 build==1.5.1
     # via chromadb
 caldav==3.2.1
     # via pilot-daemon (pyproject.toml)
-catalogue==2.0.10
-    # via
-    #   spacy
-    #   srsly
-    #   thinc
 certifi==2026.6.17
     # via
     #   httpcore
@@ -56,7 +54,6 @@ cffi==2.1.0
     #   cryptography
     #   pynacl
     #   sounddevice
-    #   soundfile
 charset-normalizer==3.4.9
     # via
     #   niquests
@@ -65,13 +62,8 @@ chromadb==1.5.9
     # via pilot-daemon (pyproject.toml)
 click==8.1.8
     # via
-    #   gtts
     #   uvicorn
     #   x-wr-timezone
-cloudpathlib==0.24.0
-    # via weasel
-cloudpickle==3.1.2
-    # via submitit
 colorama==0.4.6
     # via
     #   build
@@ -79,12 +71,6 @@ colorama==0.4.6
     #   pytest
     #   tqdm
     #   typer
-    #   wasabi
-confection==1.3.3
-    # via
-    #   spacy
-    #   thinc
-    #   weasel
 contourpy==1.3.3
     # via matplotlib
 cryptography==49.0.0
@@ -93,15 +79,6 @@ cryptography==49.0.0
     #   paramiko
 cycler==0.12.1
     # via matplotlib
-cymem==2.0.13
-    # via
-    #   preshed
-    #   spacy
-    #   thinc
-decorator==5.3.1
-    # via
-    #   mne
-    #   moviepy
 diskcache==5.6.3
     # via llama-cpp-python
 dnspython==2.8.0
@@ -111,17 +88,13 @@ durationpy==0.10
 easyocr==1.7.2
     # via pilot-daemon (pyproject.toml)
 einops==0.8.2
-    # via
-    #   tribev2
-    #   x-transformers
+    # via pocket-tts
 et-xmlfile==2.0.0
     # via openpyxl
-exca==0.5.20
-    # via
-    #   neuralset
-    #   tribev2
 faiss-cpu==1.14.3
     # via pilot-daemon (pyproject.toml)
+fastapi==0.139.2
+    # via pocket-tts
 filelock==3.29.7
     # via
     #   huggingface-hub
@@ -148,8 +121,6 @@ grpcio==1.82.1
     # via
     #   chromadb
     #   opentelemetry-exporter-otlp-proto-grpc
-gtts==2.5.4
-    # via tribev2
 h11==0.16.0
     # via
     #   httpcore
@@ -166,13 +137,12 @@ httpx==0.28.1
     #   pilot-daemon (pyproject.toml)
     #   chromadb
     #   huggingface-hub
-    #   weasel
 huggingface-hub==1.16.1
     # via
+    #   pocket-tts
     #   sentence-transformers
     #   tokenizers
     #   transformers
-    #   tribev2
 icalendar==7.2.0
     # via
     #   pilot-daemon (pyproject.toml)
@@ -191,17 +161,11 @@ idna==3.18
 ifaddr==0.2.0
     # via zeroconf
 imageio==2.37.3
-    # via
-    #   moviepy
-    #   scikit-image
-imageio-ffmpeg==0.6.0
-    # via moviepy
+    # via scikit-image
 importlib-metadata==9.0.0
     # via keyring
 importlib-resources==7.1.0
-    # via
-    #   chromadb
-    #   nibabel
+    # via chromadb
 iniconfig==2.3.0
     # via pytest
 invoke==3.0.3
@@ -217,8 +181,6 @@ jh2==5.0.13
 jinja2==3.1.6
     # via
     #   llama-cpp-python
-    #   mne
-    #   spacy
     #   torch
 joblib==1.5.3
     # via scikit-learn
@@ -226,26 +188,18 @@ jsonschema==4.26.0
     # via chromadb
 jsonschema-specifications==2025.9.1
     # via jsonschema
-julius==0.2.8
-    # via tribev2
 keyring==25.7.0
     # via pilot-daemon (pyproject.toml)
 kiwisolver==1.5.0
     # via matplotlib
 kubernetes==36.0.2
     # via chromadb
-langdetect==1.0.9
-    # via tribev2
 lazy-loader==0.5
-    # via
-    #   mne
-    #   scikit-image
-levenshtein==0.27.3
-    # via tribev2
-lightning-utilities==0.15.3
-    # via torchmetrics
+    # via scikit-image
 llama-cpp-python==0.3.34
     # via pilot-daemon (pyproject.toml)
+llvmlite==0.48.0
+    # via numba
 lxml==6.1.1
     # via
     #   caldav
@@ -255,101 +209,72 @@ markdown-it-py==4.2.0
 markupsafe==3.0.3
     # via jinja2
 matplotlib==3.11.0
-    # via
-    #   mediapipe
-    #   mne
+    # via mediapipe
 mdurl==0.1.2
     # via markdown-it-py
 mediapipe==0.10.35
     # via pilot-daemon (pyproject.toml)
 mmh3==5.2.1
     # via chromadb
-mne==1.12.1
-    # via
-    #   mne-bids
-    #   neuralset
-    #   pyprep
-mne-bids==0.19.0
-    # via neuralset
 more-itertools==11.1.0
     # via
     #   jaraco-classes
     #   jaraco-functools
+    #   openai-whisper
 mouseinfo==0.1.3
     # via pyautogui
-moviepy==2.2.1
-    # via tribev2
 mpmath==1.3.0
     # via sympy
 multidict==6.7.1
     # via
     #   aiohttp
     #   yarl
-murmurhash==1.0.15
-    # via
-    #   preshed
-    #   spacy
-    #   thinc
 narwhals==2.23.0
     # via scikit-learn
 networkx==3.6.1
     # via
     #   scikit-image
     #   torch
-neuralset==0.0.2
-    # via tribev2
-neuraltrain==0.0.2
-    # via tribev2
-nibabel==5.4.2
-    # via neuralset
 ninja==1.13.0
     # via easyocr
 niquests==3.20.1
     # via caldav
+numba==0.66.0
+    # via openai-whisper
 numpy==2.2.6
     # via
     #   pilot-daemon (pyproject.toml)
-    #   blis
     #   chromadb
     #   contourpy
     #   easyocr
-    #   exca
     #   faiss-cpu
     #   imageio
     #   llama-cpp-python
     #   matplotlib
     #   mediapipe
-    #   mne
-    #   mne-bids
-    #   moviepy
-    #   neuralset
-    #   neuraltrain
-    #   nibabel
+    #   numba
     #   onnxruntime
+    #   openai-whisper
     #   opencv-contrib-python
     #   opencv-python
     #   opencv-python-headless
-    #   pandas
-    #   pyprep
+    #   pocket-tts
     #   scikit-image
     #   scikit-learn
     #   scipy
     #   sentence-transformers
     #   shapely
-    #   soundfile
-    #   spacy
-    #   thinc
     #   tifffile
-    #   torchmetrics
     #   torchvision
     #   transformers
-    #   tribev2
 nvidia-ml-py==13.610.43
     # via pynvml
 oauthlib==3.3.1
     # via requests-oauthlib
 onnxruntime==1.27.0
     # via chromadb
+openai-whisper==20250625
+    # via pilot-daemon (pyproject.toml)
 opencv-contrib-python==5.0.0.93
     # via mediapipe
 opencv-python==5.0.0.93
@@ -379,9 +304,7 @@ opentelemetry-sdk==1.43.0
 opentelemetry-semantic-conventions==0.64b0
     # via opentelemetry-sdk
 orjson==3.11.9
-    # via
-    #   chromadb
-    #   exca
+    # via chromadb
 overrides==7.7.0
     # via chromadb
 packaging==26.2
@@ -390,25 +313,11 @@ packaging==26.2
     #   faiss-cpu
     #   huggingface-hub
     #   lazy-loader
-    #   lightning-utilities
     #   matplotlib
-    #   mne
-    #   neuralset
-    #   neuraltrain
-    #   nibabel
     #   onnxruntime
-    #   pooch
     #   pytest
     #   scikit-image
-    #   spacy
-    #   thinc
-    #   torchmetrics
     #   transformers
-    #   weasel
-pandas==3.0.3
-    # via
-    #   neuralset
-    #   neuraltrain
 paramiko==5.0.0
     # via pilot-daemon (pyproject.toml)
 pillow==11.3.0
@@ -417,30 +326,15 @@ pillow==11.3.0
     #   easyocr
     #   imageio
     #   matplotlib
-    #   moviepy
     #   pyscreeze
     #   scikit-image
     #   torchvision
-pip==26.1.2
-    # via tribev2
-platformdirs==4.10.0
-    # via pooch
 playwright==1.61.0
     # via pilot-daemon (pyproject.toml)
 pluggy==1.6.0
     # via pytest
-polars==1.42.1
-    # via neuralset
-polars-runtime-32==1.42.1
-    # via polars
-pooch==1.9.0
-    # via mne
-preshed==3.0.13
-    # via
-    #   spacy
-    #   thinc
-proglog==0.1.12
-    # via moviepy
+pocket-tts==2.1.0
+    # via pilot-daemon (pyproject.toml)
 propcache==0.5.2
     # via
     #   aiohttp
@@ -451,11 +345,7 @@ protobuf==7.35.1
     #   onnxruntime
     #   opentelemetry-proto
 psutil==7.2.2
-    # via
-    #   pilot-daemon (pyproject.toml)
-    #   pyprep
-pyarrow==25.0.0
-    # via neuralset
+    # via pilot-daemon (pyproject.toml)
 pyautogui==0.9.54
     # via pilot-daemon (pyproject.toml)
 pybase64==1.4.3
@@ -468,12 +358,9 @@ pydantic==2.13.4
     # via
     #   pilot-daemon (pyproject.toml)
     #   chromadb
-    #   exca
-    #   neuraltrain
+    #   fastapi
+    #   pocket-tts
     #   pydantic-settings
-    #   spacy
-    #   thinc
-    #   weasel
 pydantic-core==2.46.4
     # via pydantic
 pydantic-settings==2.14.2
@@ -490,6 +377,8 @@ pymsgbox==2.0.1
     # via pyautogui
 pynacl==1.6.2
     # via paramiko
+pynput==1.8.2
+    # via pilot-daemon (pyproject.toml)
 pynvml==13.0.1
     # via pilot-daemon (pyproject.toml)
 pyparsing==3.3.2
@@ -502,8 +391,6 @@ pyperclip==1.11.0
     #   mouseinfo
 pypika==0.51.1
     # via chromadb
-pyprep==0.7.1
-    # via neuralset
 pyproject-hooks==1.2.0
     # via build
 pyrect==0.2.0
@@ -524,15 +411,15 @@ python-dateutil==2.9.0.post0
     #   icalendar
     #   kubernetes
     #   matplotlib
-    #   pandas
     #   recurring-ical-events
 python-docx==1.2.0
     # via pilot-daemon (pyproject.toml)
 python-dotenv==1.2.2
     # via
-    #   moviepy
     #   pydantic-settings
     #   uvicorn
+python-multipart==0.0.32
+    # via pocket-tts
 pytweening==1.2.0
     # via pyautogui
 pywin32-ctypes==0.2.3
@@ -542,16 +429,12 @@ pyyaml==6.0.3
     #   caldav
     #   chromadb
     #   easyocr
-    #   exca
     #   huggingface-hub
     #   kubernetes
     #   transformers
-    #   tribev2
     #   uvicorn
 qh3==1.9.3
     # via urllib3-future
-rapidfuzz==3.14.5
-    # via levenshtein
 recurring-ical-events==3.8.2
     # via
     #   caldav
@@ -566,11 +449,9 @@ regex==2026.7.10
     #   transformers
 requests==2.34.2
     # via
-    #   gtts
     #   kubernetes
-    #   pooch
+    #   pocket-tts
     #   requests-oauthlib
-    #   spacy
     #   tiktoken
 requests-oauthlib==2.0.0
     # via kubernetes
@@ -585,30 +466,26 @@ rpds-py==2026.6.3
 ruff==0.15.21
     # via pilot-daemon (pyproject.toml)
 safetensors==0.8.0
-    # via transformers
+    # via
+    #   pocket-tts
+    #   transformers
 scikit-image==0.26.0
     # via easyocr
 scikit-learn==1.9.0
     # via
     #   pilot-daemon (pyproject.toml)
-    #   neuralset
-    #   neuraltrain
     #   sentence-transformers
 scipy==1.17.1
     # via
     #   easyocr
-    #   mne
-    #   mne-bids
-    #   pyprep
+    #   pocket-tts
     #   scikit-image
     #   scikit-learn
     #   sentence-transformers
 sentence-transformers==5.6.0
     # via pilot-daemon (pyproject.toml)
-setuptools==83.0.0
-    # via
-    #   spacy
-    #   thinc
+sentencepiece==0.2.2
+    # via pocket-tts
 shapely==2.1.2
     # via easyocr
 shellingham==1.5.4
@@ -616,41 +493,28 @@ shellingham==1.5.4
 six==1.17.0
     # via
     #   kubernetes
-    #   langdetect
+    #   pynput
     #   python-dateutil
-smart-open==8.0.0
-    # via weasel
 sounddevice==0.5.5
-    # via mediapipe
-soundfile==0.14.0
-    # via tribev2
+    # via
+    #   pilot-daemon (pyproject.toml)
+    #   mediapipe
 soupsieve==2.8.4
     # via beautifulsoup4
-spacy==3.8.14
-    # via tribev2
-spacy-legacy==3.0.12
-    # via spacy
-spacy-loggers==1.0.5
-    # via spacy
-srsly==2.5.3
-    # via
-    #   spacy
-    #   thinc
-    #   weasel
-submitit==1.5.4
-    # via exca
+starlette==1.3.1
+    # via fastapi
 sympy==1.13.1
     # via torch
 tenacity==9.1.4
     # via chromadb
-thinc==8.3.13
-    # via spacy
 threadpoolctl==3.6.0
     # via scikit-learn
 tifffile==2026.3.3
     # via scikit-image
 tiktoken==0.13.0
-    # via pilot-daemon (pyproject.toml)
+    # via
+    #   pilot-daemon (pyproject.toml)
+    #   openai-whisper
 tokenizers==0.22.2
     # via
     #   chromadb
@@ -662,44 +526,27 @@ tomli-w==1.2.0
 torch==2.6.0
     # via
     #   easyocr
-    #   julius
-    #   neuralset
-    #   neuraltrain
+    #   openai-whisper
+    #   pocket-tts
     #   sentence-transformers
-    #   torchmetrics
     #   torchvision
-    #   tribev2
-    #   x-transformers
-torchmetrics==1.9.0
-    # via neuraltrain
 torchvision==0.21.0
-    # via
-    #   easyocr
-    #   neuraltrain
-    #   tribev2
+    # via easyocr
 tqdm==4.68.4
     # via
     #   chromadb
     #   huggingface-hub
-    #   mne
-    #   neuralset
-    #   proglog
+    #   openai-whisper
     #   sentence-transformers
-    #   spacy
     #   transformers
 transformers==5.13.1
-    # via
-    #   sentence-transformers
-    #   tribev2
-tribev2 @ git+https://github.com/facebookresearch/tribev2.git@af58661791a351a448a489042a28f6c37e1c14b7
-    # via pilot-daemon (pyproject.toml)
+    # via sentence-transformers
 typer==0.26.8
     # via
     #   chromadb
     #   huggingface-hub
-    #   spacy
+    #   pocket-tts
     #   transformers
-    #   weasel
 typing-extensions==4.16.0
     # via
     #   aiohttp
@@ -707,16 +554,16 @@ typing-extensions==4.16.0
     #   anyio
     #   beautifulsoup4
     #   chromadb
+    #   fastapi
     #   grpcio
     #   huggingface-hub
     #   icalendar
-    #   lightning-utilities
     #   llama-cpp-python
-    #   nibabel
     #   opentelemetry-api
     #   opentelemetry-exporter-otlp-proto-grpc
     #   opentelemetry-sdk
     #   opentelemetry-semantic-conventions
+    #   pocket-tts
     #   pydantic
     #   pydantic-core
     #   pyee
@@ -724,22 +571,19 @@ typing-extensions==4.16.0
     #   python-docx
     #   referencing
     #   sentence-transformers
-    #   soundfile
-    #   submitit
+    #   starlette
     #   torch
     #   typing-inspection
 typing-inspection==0.4.2
     # via
+    #   fastapi
     #   pydantic
     #   pydantic-settings
 tzdata==2026.3
     # via
     #   icalendar
-    #   pandas
     #   recurring-ical-events
     #   x-wr-timezone
-ujson==5.13.0
-    # via neuralset
 urllib3==2.7.0
     # via
     #   kubernetes
@@ -747,30 +591,21 @@ urllib3==2.7.0
 urllib3-future==2.22.901
     # via niquests
 uvicorn==0.51.0
-    # via chromadb
-wasabi==1.1.3
     # via
-    #   spacy
-    #   thinc
-    #   weasel
+    #   chromadb
+    #   pocket-tts
 wasmtime==46.0.1
     # via pilot-daemon (pyproject.toml)
 wassima==2.1.2
     # via niquests
 watchfiles==1.2.0
     # via uvicorn
-weasel==1.0.0
-    # via spacy
 websocket-client==1.9.0
     # via kubernetes
 websockets==16.1
     # via
     #   pilot-daemon (pyproject.toml)
     #   uvicorn
-wrapt==2.2.2
-    # via smart-open
-x-transformers==1.27.20
-    # via tribev2
 x-wr-timezone==2.0.1
     # via recurring-ical-events
 yarl==1.24.2

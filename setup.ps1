@@ -24,7 +24,7 @@ $ErrorActionPreference = "Stop"
 
 $REQUIRED_PYTHON_MAJOR = 3
 $REQUIRED_PYTHON_MINOR = 11
-$REQUIRED_PYTHON_MAX_MINOR = 12  # tribev2/torch wheels are not yet available for 3.13+
+$REQUIRED_PYTHON_MAX_MINOR = 12  # torch wheels are not yet available for 3.13+
 $script:PYTHON_VERSION = "$REQUIRED_PYTHON_MAJOR.$REQUIRED_PYTHON_MAX_MINOR"
 $REQUIRED_NODE_MAJOR = 20
 
@@ -160,7 +160,7 @@ function Initialize-Python {
     }
 
     Write-Warn "No compatible Python version found. Required: $pyRange."
-    Write-Warn "Python 3.13+ is not supported; torch/tribev2 wheels are unavailable for it."
+    Write-Warn "Python 3.13+ is not supported; torch wheels are unavailable for it."
 
     Write-Info "Installing Python via Chocolatey..."
     choco install "python$REQUIRED_PYTHON_MAJOR$REQUIRED_PYTHON_MAX_MINOR" -y

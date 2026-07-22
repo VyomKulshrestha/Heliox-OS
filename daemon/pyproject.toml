@@ -81,11 +81,6 @@ documents = [
     "beautifulsoup4>=4.12",
 ]
 
-# Cognitive intelligence (TRIBE v2)
-cognitive = [
-    "tribev2 @ git+https://github.com/facebookresearch/tribev2.git",
-]
-
 # User Manual Supervision (opt-in global keyboard/mouse hook, see
 # pilot.system.input_hook) -- kept as its own extras group since it's a much
 # bigger privacy surface than anything else in `all`.
@@ -112,9 +107,9 @@ voice = [
     "openai-whisper>=20231117",
 ]
 
-# Everything
+# Everything installable from PyPI.
 all = [
-    "pilot-daemon[full,automation,vision,browser,documents,cognitive,ssh,network,wasm,supervision,voice]",
+    "pilot-daemon[full,automation,vision,browser,documents,ssh,network,wasm,supervision,voice]",
 ]
 
 dev = [
