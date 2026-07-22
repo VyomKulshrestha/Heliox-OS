@@ -105,6 +105,10 @@ class UserSupervisionEngine:
 
         if cfg.keyboard_mouse_hook_enabled:
             hook_snap = await asyncio.to_thread(self._hook.snapshot)
+            # Real keystroke/click cadence -- an independent, objective signal
+            # for CognitiveEngine's cognitive-load estimate, distinct from the
+            # risk-pattern matching below (which never touches CognitiveEngine).
+            self._engine.record_input_dynamics(hook_snap.keystroke_rate_per_min, hook_snap.click_rate_per_min)
             if hook_snap.matched_pattern and not self._in_cooldown("risk", hook_snap.matched_pattern):
                 signals.append({"kind": "risk", "pattern": hook_snap.matched_pattern, "source": "keystroke"})
 

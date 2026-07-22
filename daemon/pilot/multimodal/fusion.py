@@ -321,6 +321,13 @@ class MultimodalFusionEngine:
             self._gaze_buffer.append(event)
             self._prune_buffers()
 
+        # Also feed CognitiveEngine's attention estimate -- an off-center
+        # gaze region is a mild, independent distraction signal that was
+        # previously computed here and never used beyond intent disambiguation.
+        from pilot.cognitive.cognitive_engine import CognitiveEngine
+
+        CognitiveEngine.get_instance().record_gaze(event.gaze_region, event.gaze_confidence)
+
     # ── Fusion logic ──
 
     def _fuse_voice_gesture(

@@ -226,11 +226,15 @@ class StressGate:
         if len(self._gate_history) > 50:
             self._gate_history = self._gate_history[-50:]
 
-        # Record this interaction for future predictions
+        # Record this interaction for future predictions. `intensity` is the
+        # action's own objective risk tier (is_high_risk), NOT state.stress_level
+        # -- feeding the engine's own just-computed output back into its own
+        # history would be a circular feedback loop that self-reinforces
+        # instead of reflecting an independent signal.
         self._engine.record_interaction(
             event_type="action_gate_check",
             modality="cognitive",
-            intensity=state.stress_level,
+            intensity=0.75 if is_high_risk else 0.35,
             metadata={"action_type": action_type.value, "gated": should_gate},
         )
 

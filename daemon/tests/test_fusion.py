@@ -224,6 +224,24 @@ class TestGaze:
         assert intent is not None
         assert "gaze_region" not in intent.metadata
 
+    @pytest.mark.asyncio
+    async def test_gaze_event_also_reaches_cognitive_engine(self):
+        """Regression: gaze region/confidence used to be siloed inside
+        fusion's own gaze buffer (only used for an intent-confidence bonus)
+        and never reached CognitiveEngine's attention estimate at all."""
+        from pilot.cognitive.cognitive_engine import CognitiveEngine
+
+        CognitiveEngine._instance = None
+        try:
+            engine = MultimodalFusionEngine()
+            await engine.on_gaze_event(_gaze("left", confidence=0.9))
+
+            cognitive = CognitiveEngine.get_instance()
+            assert len(cognitive._gaze_history) == 1
+            assert cognitive._gaze_history[-1]["distraction"] == pytest.approx(0.9)
+        finally:
+            CognitiveEngine._instance = None
+
 
 class TestStats:
     @pytest.mark.asyncio

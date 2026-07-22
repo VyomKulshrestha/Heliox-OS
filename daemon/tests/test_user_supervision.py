@@ -29,10 +29,14 @@ class _FakeCognitiveEngine:
     def __init__(self, snapshot: CognitiveSnapshot | None = None):
         self.snapshot = snapshot or CognitiveSnapshot()
         self.calls: list[tuple[str, str]] = []
+        self.dynamics_calls: list[tuple[float, float]] = []
 
     async def predict_cognitive_state(self, stimulus_description: str = "", screen_region: str = "full"):
         self.calls.append((stimulus_description, screen_region))
         return self.snapshot
+
+    def record_input_dynamics(self, keystroke_rate_per_min: float, click_rate_per_min: float) -> None:
+        self.dynamics_calls.append((keystroke_rate_per_min, click_rate_per_min))
 
 
 class _FakeScreenState:
@@ -138,6 +142,27 @@ class TestTickHookSignals:
         second = await engine.tick()
         assert first["triggered"] is True
         assert second["triggered"] is False
+
+    @pytest.mark.asyncio
+    async def test_real_keystroke_click_rate_reaches_cognitive_engine(self):
+        """Regression: keystroke_rate_per_min/click_rate_per_min used to be
+        computed by the hook and then completely discarded -- never reaching
+        CognitiveEngine in any form."""
+        hook = _FakeHook(InputActivitySnapshot(42.0, 7.0, None, True))
+        engine, _, cognitive = _engine(
+            hook=hook, keyboard_mouse_hook_enabled=True, cognitive_coaching_enabled=False, ocr_interval_seconds=999
+        )
+        await engine.tick()
+        assert cognitive.dynamics_calls == [(42.0, 7.0)]
+
+    @pytest.mark.asyncio
+    async def test_disabled_hook_never_feeds_cognitive_engine(self):
+        hook = _FakeHook(InputActivitySnapshot(42.0, 7.0, None, True))
+        engine, _, cognitive = _engine(
+            hook=hook, keyboard_mouse_hook_enabled=False, cognitive_coaching_enabled=False, ocr_interval_seconds=999
+        )
+        await engine.tick()
+        assert cognitive.dynamics_calls == []
 
 
 class TestTickOcrSignals:
