@@ -14,7 +14,7 @@ VERSION = "0.6.0"
 
 CHANGELOG = {
     "0.6.0": {
-        "title": "Revolutionary TRIBE v2 Cognitive Features",
+        "title": "Revolutionary Cognitive Intelligence Features",
         "date": "2026-04-08",
         "features": [
             {
@@ -49,14 +49,14 @@ CHANGELOG = {
             },
             {
                 "name": "Quantum-Ready Architecture",
-                "description": "Model-agnostic. Swap TRIBE for future neural models.",
+                "description": "Model-agnostic. Swap in future models without touching call sites.",
                 "jarvis_announce": "I'm built for the future of AI.",
             },
         ],
-        "summary": "7 biologically-inspired AI features powered by TRIBE v2",
+        "summary": "7 biologically-inspired AI features powered by a lightweight cognitive engine",
     },
     "0.5.1": {
-        "title": "TRIBE v2 Cognitive Engine Integrations",
+        "title": "Cognitive Engine Integrations",
         "date": "2026-04-01",
         "features": [
             "Neural Cognitive HUD",
@@ -67,7 +67,7 @@ CHANGELOG = {
             "ReAct Neural Cost Estimator",
             "JARVIS Intent Classifier",
         ],
-        "summary": "Core TRIBE v2 neural integrations",
+        "summary": "Core cognitive engine integrations",
     },
 }
 
@@ -193,5 +193,5 @@ def get_cognitive_status() -> dict[str, Any]:
         "new_features_available": len(new_features) > 0,
         "new_feature_count": len(new_features),
         "version": VERSION,
-        "tribe_available": True,
+        "cognitive_engine_available": True,
     }

@@ -222,6 +222,18 @@ Settings → Agent Gateway Policy shows the enforced floor per source and lets y
 
 ---
 
+## 🧠 Cognitive Engine (attention/stress/intent heuristics)
+
+**What this is.** `pilot.cognitive.cognitive_engine.CognitiveEngine` estimates attention/stress/cognitive-load from local interaction-history heuristics (event frequency, intensity, and diversity) and backs the Attention-Aware UI, Stress-Aware Task Gating, JARVIS intent disambiguation, and User Manual Supervision's cognitive coaching. It replaced an earlier integration with Meta's TRIBE v2 (`tribev2`, weights from Hugging Face's `facebook/tribev2`).
+
+**Why TRIBE v2 was removed.** Both the `tribev2` code (GitHub) and its `facebook/tribev2` model weights (Hugging Face) are licensed CC-BY-NC-4.0 (non-commercial), which is incompatible with a commercial product — confirmed directly against both the GitHub repo's license file and the Hugging Face model card's license tag, not assumed. There is no comparable open, permissively-licensed model in the "predict brain responses to stimuli" niche — that space is exclusively research-only releases — so a heuristic estimator is the practical lightweight/open/free alternative here, not a stopgap pending a better model.
+
+**No functional regression for real installs.** `TribeEngine` already treated the real model as optional (imported in a try/except with a documented heuristic fallback), and every real end-user install path (`main.rs`'s `setup_venv_in_background()`, `packaging/debian/postinst`, this repo's own CI) never had a way to install `tribev2` in the first place — it required a separate manual `pip install git+https://github.com/facebookresearch/tribev2.git` that no shipped install path ever ran. So every real install was already running in heuristic-fallback mode; `CognitiveEngine` simply makes that the sole, permanent, and honestly-named implementation instead of a fallback for a model nobody's install ever actually loaded.
+
+**Known scope limits, stated plainly.** These are word-overlap/frequency/threshold heuristics, not a neural cognitive-state model — confidence scores on every prediction reflect this (fixed at 0.3-0.4, well below what a real model would report). If a genuinely open, permissively-licensed model in this space becomes available, swapping it in only requires reimplementing `CognitiveEngine`'s method surface (`predict_cognitive_state`/`predict_attention_map`/`predict_intent_affinity`) — every consumer (`AttentionAwareUI`, `StressGate`, `IntentPredictor`, `UserSupervisionEngine`, `screen_vision.py`, `subconscious.py`, `fusion.py`) already treats it as a duck-typed dependency injected at construction time, not tribev2/TRIBE-specific.
+
+---
+
 ## 🛑 Mid-flight Cancellation
 
 **What problem this solves.** Both the Live Execution Narrator (above) and the Learned Risk Gate explicitly deferred the same gap: every existing cancellation path — `_handle_abort`'s `cancel_event`, the narrator's pre-emptive interrupt — only ever gates *before* a risky plan/action starts or checks at the next action boundary. None of them could stop something already running (e.g. a shell command mid-execution). This closes that gap for the interactive command path specifically.
@@ -247,7 +259,7 @@ Settings → Agent Gateway Policy shows the enforced floor per source and lets y
 
 **Two independent, advisory-only trigger sources**, evaluated on one periodic tick (`BackgroundTaskManager`, the same precedent the Autonomous Healing Engine uses):
 
-- **Cognitive coaching** — `pilot.cognitive.tribe_engine.TribeEngine.predict_cognitive_state()` is fed a *real* stimulus for the first time here (an OCR screen snippet plus the active window title), instead of the synthetic activity labels every other call site in this codebase uses (window titles alone, notification metadata, static action-type strings, or the frontend's own client-side mouse-activity labels). A sustained stress/cognitive-load threshold crossing triggers a gentle check-in.
+- **Cognitive coaching** — `pilot.cognitive.cognitive_engine.CognitiveEngine.predict_cognitive_state()` is fed a *real* stimulus for the first time here (an OCR screen snippet plus the active window title), instead of the synthetic activity labels every other call site in this codebase uses (window titles alone, notification metadata, static action-type strings, or the frontend's own client-side mouse-activity labels). A sustained stress/cognitive-load threshold crossing triggers a gentle check-in.
 - **Risk-pattern detection** — the OCR snippet and a transient keystroke buffer (see below) are matched against `pilot.security.risk_patterns`' small, explicit, hardcoded regex table — the same "auditable rules, never a learned model" philosophy the Learned Risk Gate's `risk_safety.py` already established. A match triggers a direct warning.
 
 **Advisory only, never a gate.** Unlike the Live Execution Narrator, which pauses a Heliox-issued plan/action *before it runs* via a real blocking confirmation, Heliox has no way to intercept or block the user's own OS-level input — it only observes a copy via the hook described below. Both trigger methods return `None`, not a bool; there is nothing to approve or deny, so the frontend pairs a spoken interjection with a dismiss-only modal, not an approve/deny one.

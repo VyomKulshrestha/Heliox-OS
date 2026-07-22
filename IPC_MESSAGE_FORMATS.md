@@ -604,7 +604,7 @@ Start or stop the screen vision agent.
 
 ---
 
-### Cognitive Intelligence (TRIBE v2)
+### Cognitive Intelligence
 
 #### `cognitive_stats`
 Return statistics for all cognitive subsystems.
@@ -613,7 +613,7 @@ Return statistics for all cognitive subsystems.
 **Result:**
 ```json
 {
-  "tribe_engine": { ... },
+  "cognitive_engine": { ... },
   "attention_ui": { ... },
   "stress_gate": { ... },
   "intent_predictor": { ... }
@@ -644,8 +644,8 @@ Enable or disable JARVIS-mode intent prediction.
 **Params:** `{ "enabled": true }`
 **Result:** `{ "enabled": true }`
 
-#### `tribe_model_toggle`
-Load, unload, or query the TRIBE v2 local model.
+#### `cognitive_model_toggle`
+Load, unload, or query the cognitive engine.
 
 **Params:** `{ "action": "load" }` — `action` is `"load"`, `"unload"`, or `"status"` (default)
 **Result:**
@@ -914,7 +914,7 @@ Update supervision config. Unlike `narration_config_update`/`self_healing_config
 **Result:** `{ "status": "ok", "enabled": true, "keyboard_mouse_hook_enabled": true, "cognitive_coaching_enabled": true, "risk_pattern_detection_enabled": true, "hook_healthy": true }`
 
 #### Notifications
-- `supervision_cognitive_checkin` — a sustained stress/cognitive-load threshold crossing from a real OCR snippet + window-title stimulus fed to `TribeEngine.predict_cognitive_state()`. Payload: `{ "message": "...", "attention_score": 0.4, "stress_level": 0.9, "cognitive_load": 0.5 }`.
+- `supervision_cognitive_checkin` — a sustained stress/cognitive-load threshold crossing from a real OCR snippet + window-title stimulus fed to `CognitiveEngine.predict_cognitive_state()`. Payload: `{ "message": "...", "attention_score": 0.4, "stress_level": 0.9, "cognitive_load": 0.5 }`.
 - `supervision_risk_warning` — the OCR snippet or the keystroke hook's buffer matched a known destructive-action pattern. Payload: `{ "pattern": "destructive_shell_command", "source": "ocr"|"keystroke", "message": "..." }` — deliberately never includes the matched text itself, only the pattern's name.
 
 ---
@@ -1255,7 +1255,7 @@ A fused voice + gesture intent from the fusion engine.
 Emitted once on startup when a new daemon version introduces new capabilities.
 
 ```json
-{ "message": "New: TRIBE v2 cognitive intelligence is now available!", "version": "0.6.0" }
+{ "message": "New: cognitive intelligence features are now available!", "version": "0.6.0" }
 ```
 
 ---

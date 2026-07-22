@@ -91,24 +91,24 @@ Heliox OS has achieved true proactive autonomy, transitioning from a reactive as
 - 🎯 **Adaptive Voice & Gesture Calibration** *(on by default)*: A lightweight on-device continual-learning loop personalizes pinch/thumb thresholds and wake-word matching from implicit usage signals — no retraining, no new prompts, bounded and resettable in Settings.
 - 🌀 **Arc Reactor UI & Ambient HUD**: Animated, immersive Tauri overlays responding contextually to system actions.
 
-## 🧠 TRIBE v2 Cognitive Engine Integrations (v0.7.1)
+## 🧠 Cognitive Engine Integrations
 
-Heliox OS is now fully neuro-adaptive, integrating Meta's **TRIBE v2 Cognitive Engine** directly into the operating logic:
+Heliox OS integrates a lightweight, dependency-free **Cognitive Engine** (`pilot.cognitive.cognitive_engine`) directly into the operating logic — attention/stress/cognitive-load estimated from local interaction-history heuristics, with zero external model, no network download, and no license restrictions:
 
-1. **Neural Cognitive HUD:** Tracks real-time *Saliency* and *Brain Load* via screen vision buffer, mapped onto the Svelte UI.
+1. **Cognitive HUD:** Tracks real-time attention/stress/load estimates, mapped onto the Svelte UI.
 2. **Dynamic TTS Stress-Pacing:** JARVIS automatically slows down voice generation if you are engaged in high cognitive-load tasks.
-3. **Neuro-Safe Destructive Gate:** High-risk actions (e.g., recursive deletes) evaluate cognitive stress first. If you are distracted, a strict 10-second auditory confirmation gate holds the process.
-4. **Subconscious Persona Fingerprint:** The Subconscious background loop learns your neural visual plasticity constraints and encodes them to `persona.md` to align UIs to your brain.
-5. **Attention-Optimized Notifications:** The notification pipeline dynamically buffers trivial background alerts until the system detects a "cortical transition" (a low-load resting state).
-6. **ReAct Neural Cost Estimator:** Tasks predict aggregate cognitive demand proactively logic. If executing a plan risks exceeding mental bandwidth, JARVIS pauses.
+3. **Stress-Aware Destructive Gate:** High-risk actions (e.g., recursive deletes) evaluate cognitive stress first. If you are distracted, a strict 10-second auditory confirmation gate holds the process.
+4. **Subconscious Persona Fingerprint:** The Subconscious background loop learns your cognitive engagement patterns and encodes them to `persona.md` to align UIs to your habits.
+5. **Attention-Optimized Notifications:** The notification pipeline dynamically buffers trivial background alerts until the system detects a low-load resting state.
+6. **ReAct Cognitive Cost Estimator:** Tasks predict aggregate cognitive demand proactively. If executing a plan risks exceeding mental bandwidth, JARVIS pauses.
 7. **JARVIS Intent Classifier:** Fully integrated native intent fusion classifying spoken commands against current workload intensity.
 
-## 🚀 Revolutionary TRIBE v2 Cognitive Features (v0.6.0)
+## 🚀 Cognitive Intelligence Features
 
-Heliox OS now pushes the boundaries with **7 revolutionary biologically-inspired AI features** powered by Meta's **TRIBE v2** neural model:
+Heliox OS ships **7 biologically-inspired cognitive intelligence features**, all backed by the lightweight, dependency-free Cognitive Engine (see above) rather than a heavyweight model:
 
 ### 1. Adaptive Biometric Learning Loop
-Track user's physiological patterns over weeks (time-of-day productivity, stress cycles). Create personalized "cognitive fingerprints" that predict optimal interaction times. Implements a closed-loop feedback system where user responses refine the TRIBE predictions.
+Track user's physiological patterns over weeks (time-of-day productivity, stress cycles). Create personalized "cognitive fingerprints" that predict optimal interaction times. Implements a closed-loop feedback system where user responses refine the cognitive-load predictions.
 
 ```python
 from pilot.cognitive.biometric_loop import BiometricLearningLoop
@@ -168,7 +168,7 @@ print(persona.get_ui_config())  # Adapts UI based on state
 ```
 
 ### 6. Cross-Device Cognitive Handoff
-If TRIBE detects high load on desktop, suggest continuing on mobile with context transfer. Build a "cognitive state cloud" that follows the user across devices.
+If the cognitive engine detects high load on desktop, suggest continuing on mobile with context transfer. Build a "cognitive state cloud" that follows the user across devices.
 
 ```python
 from pilot.cognitive.cognitive_handoff import CognitiveHandoffEngine
@@ -180,7 +180,7 @@ suggestion = handoff.get_handoff_suggestion(load=0.85, stress=0.3)
 ```
 
 ### 7. Quantum-Ready Architecture
-Design the cognitive pipeline to be model-agnostic — swap TRIBE for future neural models. Create standard cognitive APIs that other developers can build on.
+Design the cognitive pipeline to be model-agnostic — swap in future models without touching call sites. Create standard cognitive APIs that other developers can build on.
 
 ```python
 from pilot.cognitive.quantum_cognitive import create_pipeline, QuantumCognitivePipeline
@@ -211,19 +211,19 @@ print(hub.get_greeting())  # Adaptive greeting
 print(hub.get_offload_surface())  # Memory anchors
 ```
 
-### TRIBE-Powered
+### Model-Agnostic by Design
 
-The **QuantumCognitivePipeline** automatically uses TRIBE v2 when available:
+The **QuantumCognitivePipeline** ships with a heuristic adapter by default and supports registering additional model adapters at runtime:
 
 ```
 Available Models:
-  - Meta TRIBE v2 (tribe_v2)
+  - Heuristic Fallback (fallback)
     Available: True
-    Capabilities: ATTENTION_PREDICTION, STRESS_DETECTION, LOAD_ESTIMATION
-    Avg Latency: ~50ms
+    Capabilities: LOAD_ESTIMATION
+    Avg Latency: ~1ms
 ```
 
-When TRIBE is unavailable, it gracefully falls back to heuristic models.
+Additional adapters can be registered via `pipeline.register_adapter(...)` and switched with `pipeline.set_active_model(...)` without changing any call site.
 
 ---
 
@@ -618,48 +618,6 @@ pip install torch --index-url https://download.pytorch.org/whl/cu121
 ```
 
 ---
-### TRIBE v2 Engine Installation
-
-**Requirements:**
-- Python 3.11+
-- CUDA 11.8 or 12.1
-- PyTorch installed first
-- Visual C++ 2019 or newer
-
-**Error Messages:**
-TRIBE v2 requires CUDA version 11.8 or higher
-ImportError: cannot import name 'TribeModel' from 'tribev2'
-
-**Installation Steps:**
-
-1. Install PyTorch first:
-```bash
-pip install torch --index-url https://download.pytorch.org/whl/cu121
-```
-
-2. Clone and install tribev2 from facebookresearch:
-```bash
-git clone https://github.com/facebookresearch/tribev2.git
-cd tribev2
-pip install -e .
-```
-
-3. Verify installation:
-```bash
-python -c "from tribev2 import TribeModel; print('TRIBE v2 loaded successfully')"
-```
-
-4. Load a pretrained model:
-```python
-from tribev2 import TribeModel
-
-model = TribeModel.from_pretrained("facebook/tribev2", cache_folder="./cache")
-```
-
-
-
-
----
 
 ### PATH Environment Variable Issues
 
@@ -927,8 +885,8 @@ npm run dev
 
 Ensure all frontend dependencies are installed successfully before starting the app.
 
-#### Q8: PyTorch or TRIBE v2 installation issues on Windows (Missing DLLs / CUDA).
-**A:** Many Windows users encounter missing DLLs or CUDA version mismatches when installing the cognitive engine. Follow these steps:
+#### Q8: PyTorch installation issues on Windows (Missing DLLs / CUDA).
+**A:** Many Windows users encounter missing DLLs or CUDA version mismatches when installing PyTorch (used by Pocket TTS and other optional features). Follow these steps:
 
 1.  **Missing DLLs (`msvcp140.dll`, `vcruntime140_1.dll`):** Install the [Microsoft Visual C++ Redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe). This is required for PyTorch's C++ extensions.
 2.  **CUDA Mismatch:** Ensure your PyTorch installation matches your system's CUDA version. Run `nvidia-smi` to check your driver's CUDA version, then reinstall PyTorch if necessary:
