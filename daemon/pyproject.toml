@@ -94,24 +94,28 @@ supervision = [
     "pynput>=1.7",
 ]
 
-# Kyutai Pocket TTS (CPU-only, cross-platform local TTS, see
-# pilot.system.pocket_tts) -- kept as its own extras group since it's a
-# ~236MB first-use model download, a meaningfully bigger resource
-# commitment than this project's other extras. voice.py falls back to the
-# existing OS-native TTS automatically if this isn't installed. sounddevice
-# is not a dependency of the pocket-tts package itself (its own examples
-# just save a WAV file) -- it's required here because pocket_tts.py's
-# play() uses it for actual audio output, so it must be installed alongside
-# pocket-tts or playback would always fail and silently fall back to
-# OS-native TTS on every call.
+# Voice: local speech-to-text (openai-whisper) and text-to-speech (Kyutai
+# Pocket TTS, see pilot.system.pocket_tts), both CPU-only and free. Ships
+# by default for real end users (see main.rs's setup_venv_in_background,
+# which installs "pilot-daemon[voice]") -- config.voice.tts_engine still
+# lets the user choose Pocket TTS vs. their OS's built-in voice in
+# Settings, but the underlying package is present either way so that
+# choice actually works out of the box, not just as a config default that
+# silently no-ops without a separate manual pip install. sounddevice is
+# not a dependency of the pocket-tts package itself (its own examples just
+# save a WAV file) -- it's required here because pocket_tts.py's play()
+# uses it for actual audio output. voice.py's fallback to OS-native TTS
+# (and to Windows Speech Recognition for STT) still applies on any
+# platform where these fail to install or load.
 voice = [
     "pocket-tts>=1.0",
     "sounddevice>=0.4",
+    "openai-whisper>=20231117",
 ]
 
 # Everything
 all = [
-    "pilot-daemon[full,automation,vision,browser,documents,cognitive,ssh,network,wasm,supervision]",
+    "pilot-daemon[full,automation,vision,browser,documents,cognitive,ssh,network,wasm,supervision,voice]",
 ]
 
 dev = [
