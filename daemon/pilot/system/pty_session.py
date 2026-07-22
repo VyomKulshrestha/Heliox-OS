@@ -10,6 +10,7 @@ import logging
 import os
 import select
 import sys
+import threading
 import time
 from typing import ClassVar
 
@@ -43,6 +44,7 @@ class PtySession:
         self._proc: object = None  # ptyprocess.PtyProcess
         self._lock = asyncio.Lock()
         self._alive = False
+        self._interrupt_event = threading.Event()
 
     # ------------------------------------------------------------------
     # Blocking helpers — run in a thread via run_in_executor
@@ -62,6 +64,13 @@ class PtySession:
         fd = self._proc.fd  # type: ignore[attr-defined]
 
         while time.monotonic() < deadline:
+            if self._interrupt_event.is_set():
+                # Real mid-flight cancellation (see interrupt()) -- return
+                # early exactly as if we'd timed out, so _run_command's
+                # existing not-found branch sends Ctrl+C and recovers,
+                # without any duplicated interrupt-sending logic here.
+                self._interrupt_event.clear()
+                break
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 break
@@ -166,6 +175,19 @@ class PtySession:
             self._alive and self._proc is not None and self._proc.isalive()  # type: ignore[attr-defined]
         )
 
+    def interrupt(self) -> None:
+        """Requests the current blocking read (see _read_until) to return
+        early -- within ~100ms, not the full per-command timeout -- real
+        mid-flight cancellation of an in-progress exec() call. Thread-safe
+        (threading.Event); the actual read loop runs in a different thread
+        via run_in_executor.
+
+        If no command is currently running, this is a narrow no-op that
+        gets consumed (cleared) by whichever _read_until call happens next
+        -- callers should only invoke this while a command is genuinely
+        known to be in flight."""
+        self._interrupt_event.set()
+
 
 class PtySessionManager:
     """Singleton registry of named PTY sessions."""
@@ -180,6 +202,26 @@ class PtySessionManager:
             logger.info("Creating new PTY session: %s", session_id)
             cls._sessions[session_id] = PtySession()
         return cls._sessions[session_id]
+
+    @classmethod
+    def interrupt_session(cls, session_id: str) -> bool:
+        """Requests real mid-flight cancellation of whatever command is
+        currently running in the named session (see PtySession.interrupt).
+        Returns False if no such session exists -- nothing to interrupt."""
+        session = cls._sessions.get(session_id)
+        if session is None:
+            return False
+        session.interrupt()
+        return True
+
+    @classmethod
+    def interrupt_all(cls) -> None:
+        """Interrupts every currently-tracked session -- used by the
+        interactive abort path, which is session-scoped/singular ("stop
+        the current execution") rather than needing to correlate a
+        specific PTY session_id with the specific in-flight action."""
+        for session in cls._sessions.values():
+            session.interrupt()
 
     @classmethod
     def close_session(cls, session_id: str) -> None:
