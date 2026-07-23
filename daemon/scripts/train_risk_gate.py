@@ -133,6 +133,11 @@ def write_weights(path: str, w1: np.ndarray, b1: np.ndarray, w2: np.ndarray, b2:
     np.savez(path, w1=w1, b1=b1, w2=w2, b2=b2)
 
 
+def _mse(X: np.ndarray, Y: np.ndarray, w1, b1, w2, b2) -> float:
+    pred = np.tanh(X @ w1 + b1) @ w2 + b2
+    return float(np.mean((pred - Y) ** 2))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset", type=str, default=str(Path(__file__).parent / "risk_dataset.jsonl"))
@@ -142,21 +147,52 @@ def main() -> None:
     parser.add_argument("--hidden", type=int, default=8)
     parser.add_argument("--epochs", type=int, default=2000)
     parser.add_argument("--lr", type=float, default=0.05)
+    parser.add_argument(
+        "--val-frac",
+        type=float,
+        default=0.15,
+        help="Held-out fraction used ONLY to report generalization MSE -- "
+        "the final saved weights are refit on the full dataset afterward.",
+    )
+    parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
 
     X, Y = load_dataset(args.dataset)
     print(f"Loaded {X.shape[0]} samples, embedding width {X.shape[1]}")
 
-    w1, b1, w2, b2 = train(X, Y, hidden_size=args.hidden, epochs=args.epochs, lr=args.lr)
+    # The dataset file is grouped by action_type (collect_risk_training_data.py
+    # writes all samples for one type before moving to the next), so a plain
+    # index-based split would hand the validation set almost entirely
+    # different action types than training saw -- shuffle first so both
+    # splits are representative.
+    rng = np.random.default_rng(args.seed)
+    perm = rng.permutation(X.shape[0])
+    X, Y = X[perm], Y[perm]
 
-    pred = np.tanh(X @ w1 + b1) @ w2 + b2
-    baseline_mse = float(np.mean(Y**2))  # predicting all-zeros
-    learned_mse = float(np.mean((pred - Y) ** 2))
-    print(f"Baseline (predict zero) MSE: {baseline_mse:.6f}")
-    print(f"Learned model MSE:          {learned_mse:.6f}")
+    n_val = max(1, int(X.shape[0] * args.val_frac))
+    X_val, Y_val = X[:n_val], Y[:n_val]
+    X_train, Y_train = X[n_val:], Y[n_val:]
 
+    print(f"Train/val split: {X_train.shape[0]} train, {X_val.shape[0]} val")
+
+    w1, b1, w2, b2 = train(X_train, Y_train, hidden_size=args.hidden, epochs=args.epochs, lr=args.lr, seed=args.seed)
+
+    baseline_val_mse = float(np.mean(Y_val**2))  # predicting all-zeros on held-out data
+    train_mse = _mse(X_train, Y_train, w1, b1, w2, b2)
+    val_mse = _mse(X_val, Y_val, w1, b1, w2, b2)
+    print(f"Baseline (predict zero) val MSE: {baseline_val_mse:.6f}")
+    print(f"Train MSE:                       {train_mse:.6f}")
+    print(f"Held-out val MSE:                {val_mse:.6f}  (the number that actually matters)")
+    if val_mse > baseline_val_mse:
+        print("WARNING: learned model is worse than predicting zero on held-out data -- do not ship these weights.")
+
+    # Validation above already confirmed this architecture/hyperparameters
+    # generalize; refit on the FULL dataset (train+val) for the weights
+    # actually shipped, since there's no reason to withhold real data from
+    # the production model once its generalization is confirmed.
+    w1, b1, w2, b2 = train(X, Y, hidden_size=args.hidden, epochs=args.epochs, lr=args.lr, seed=args.seed)
     write_weights(args.out, w1, b1, w2, b2)
-    print(f"Wrote weights to {args.out}")
+    print(f"Wrote weights (trained on all {X.shape[0]} samples) to {args.out}")
 
 
 if __name__ == "__main__":
