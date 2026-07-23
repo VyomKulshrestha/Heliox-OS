@@ -116,10 +116,18 @@ _STARTS_ACTION_TYPES = (
 
 
 async def _spawn_trivial_process() -> asyncio.subprocess.Process:
+    # 0.15s -- comfortably longer than the 0.05s registration wait below (so
+    # a "stop"-type sample's terminate() always hits a still-alive process,
+    # never a race against the child exiting on its own) but far shorter
+    # than the original 0.4s, which was pure collection-time overhead: the
+    # "start"-type branch's `after` snapshot is taken immediately post-spawn,
+    # before the trailing `await proc.wait()` -- that wait only reaps the
+    # child, it was never gating what gets measured. Cutting it roughly
+    # triples collection throughput for the exact same recorded signal.
     proc = await asyncio.create_subprocess_exec(
         sys.executable,
         "-c",
-        "import time; time.sleep(0.4)",
+        "import time; time.sleep(0.15)",
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.DEVNULL,
     )
