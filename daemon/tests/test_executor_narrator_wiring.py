@@ -45,13 +45,20 @@ class _FakeGateway:
 
 
 class _FakeNarrator:
-    def __init__(self, plan_risk_proceed: bool = True, target_assessment_proceed: bool = True):
+    def __init__(
+        self,
+        plan_risk_proceed: bool = True,
+        target_assessment_proceed: bool = True,
+        action_preview_proceed: bool = True,
+    ):
         self.plan_risk_calls: list[dict] = []
         self.action_start_calls: list = []
         self.action_complete_calls: list = []
         self.target_assessment_calls: list = []
+        self.action_preview_calls: list = []
         self._plan_risk_proceed = plan_risk_proceed
         self._target_assessment_proceed = target_assessment_proceed
+        self._action_preview_proceed = action_preview_proceed
 
     async def on_plan_risk(self, plan, critic_verdict) -> bool:
         self.plan_risk_calls.append(critic_verdict)
@@ -67,9 +74,14 @@ class _FakeNarrator:
         self.target_assessment_calls.append((action, assessment))
         return self._target_assessment_proceed
 
+    async def on_action_preview(self, action, preview) -> bool:
+        self.action_preview_calls.append((action, preview))
+        return self._action_preview_proceed
 
-def _executor(tmp_path, gateway=None) -> Executor:
+
+def _executor(tmp_path, gateway=None, preview_enabled: bool = False) -> Executor:
     config = PilotConfig()
+    config.preview.enabled = preview_enabled
     validator = ActionValidator(config)
     permissions = PermissionChecker(config)
     audit = AuditLogger(audit_file=tmp_path / "audit.jsonl")
@@ -247,3 +259,81 @@ class TestBrowserTargetAssessmentWiring:
         # on its own merits since no real browser exists here) rather than
         # being force-skipped by the interrupt.
         assert "Skipped after interrupt" not in (results[0].error or "")
+
+
+class TestActionPreviewWiring:
+    @pytest.mark.asyncio
+    async def test_disabled_never_generates_a_preview(self, tmp_path, monkeypatch):
+        fake_generate = AsyncMock()
+        monkeypatch.setattr("pilot.system.action_preview.generate_action_preview", fake_generate)
+        narrator = _FakeNarrator()
+        ex = _executor(tmp_path, gateway=None, preview_enabled=False)
+        ex.set_narrator(narrator)
+
+        await ex.execute(_plan(), invocation_source=InvocationSource.AUTONOMOUS)
+
+        fake_generate.assert_not_awaited()
+        assert narrator.action_preview_calls == []
+
+    @pytest.mark.asyncio
+    async def test_interactive_invocation_never_generates_a_preview(self, tmp_path, monkeypatch):
+        """Preview is autonomous-only -- interactive/voice/gesture commands
+        already have the user watching in real time."""
+        fake_generate = AsyncMock()
+        monkeypatch.setattr("pilot.system.action_preview.generate_action_preview", fake_generate)
+        narrator = _FakeNarrator()
+        ex = _executor(tmp_path, gateway=None, preview_enabled=True)
+        ex.set_narrator(narrator)
+
+        await ex.execute(_plan(), invocation_source=InvocationSource.INTERACTIVE)
+
+        fake_generate.assert_not_awaited()
+        assert narrator.action_preview_calls == []
+
+    @pytest.mark.asyncio
+    async def test_enabled_autonomous_generates_and_shows_preview(self, tmp_path, monkeypatch):
+        from pilot.system.action_preview import ActionPreview
+
+        fake_preview = ActionPreview(screenshot_base64="abc", bbox=None, target_label=None, caption="About to do x")
+        fake_generate = AsyncMock(return_value=fake_preview)
+        monkeypatch.setattr("pilot.system.action_preview.generate_action_preview", fake_generate)
+        narrator = _FakeNarrator(action_preview_proceed=True)
+        ex = _executor(tmp_path, gateway=None, preview_enabled=True)
+        ex.set_narrator(narrator)
+
+        results = await ex.execute(_plan(), invocation_source=InvocationSource.AUTONOMOUS)
+
+        fake_generate.assert_awaited_once()
+        assert len(narrator.action_preview_calls) == 1
+        assert narrator.action_preview_calls[0][1] is fake_preview
+        assert results[0].success is True
+
+    @pytest.mark.asyncio
+    async def test_denied_preview_skips_the_action(self, tmp_path, monkeypatch):
+        from pilot.system.action_preview import ActionPreview
+
+        fake_preview = ActionPreview(screenshot_base64="abc", bbox=None, target_label=None, caption="About to do x")
+        monkeypatch.setattr("pilot.system.action_preview.generate_action_preview", AsyncMock(return_value=fake_preview))
+        narrator = _FakeNarrator(action_preview_proceed=False)
+        ex = _executor(tmp_path, gateway=None, preview_enabled=True)
+        ex.set_narrator(narrator)
+
+        results = await ex.execute(_plan(), invocation_source=InvocationSource.AUTONOMOUS)
+
+        assert results[0].success is False
+        assert "Skipped after preview interrupt" in results[0].error
+
+    @pytest.mark.asyncio
+    async def test_preview_generation_failure_never_blocks_execution(self, tmp_path, monkeypatch):
+        """generate_action_preview() returning None (its own contract for
+        "couldn't generate a preview") must fall straight through to real
+        dispatch, not be treated as a denial."""
+        monkeypatch.setattr("pilot.system.action_preview.generate_action_preview", AsyncMock(return_value=None))
+        narrator = _FakeNarrator()
+        ex = _executor(tmp_path, gateway=None, preview_enabled=True)
+        ex.set_narrator(narrator)
+
+        results = await ex.execute(_plan(), invocation_source=InvocationSource.AUTONOMOUS)
+
+        assert narrator.action_preview_calls == []  # never called with a None preview
+        assert results[0].success is True

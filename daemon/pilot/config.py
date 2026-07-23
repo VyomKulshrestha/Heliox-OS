@@ -310,6 +310,27 @@ class NarrationConfig:
 
 
 @dataclass
+class PreviewConfig:
+    """ "Simulate before executing" preview (see pilot.system.action_preview
+    and pilot.agents.narrator.ExecutionNarrator.on_action_preview) — before
+    the JARVIS Autonomy orchestrator (AutonomousExecutor) commits to an
+    action, pauses and shows a real screenshot with the target UI element
+    highlighted (plus, for browser actions, a real measured DOM diff from an
+    isolated dry run) and waits for confirm/deny. Off by default: this adds
+    real latency (a screenshot + VLM call, and for browser actions a real
+    dry-run browser tab) before every gated action, the same opt-in-first
+    treatment as gesture_cursor/gesture_workflows/self_healing/narration.
+
+    Only ever applies to autonomous/unattended invocations — interactive
+    voice/text/gesture commands already have the user watching in real
+    time, so this would only add friction there without the corresponding
+    benefit (catching a mistake nobody was there to see)."""
+
+    enabled: bool = False
+    confirm_timeout_seconds: float = 120.0
+
+
+@dataclass
 class SupervisionConfig:
     """User Manual Supervision (see pilot.agents.user_supervision) — watches
     the user's OWN independent screen/keyboard/mouse activity, never anything
@@ -451,6 +472,7 @@ class PilotConfig:
     gesture_workflows: GestureWorkflowConfig = field(default_factory=GestureWorkflowConfig)
     self_healing: SelfHealingConfig = field(default_factory=SelfHealingConfig)
     narration: NarrationConfig = field(default_factory=NarrationConfig)
+    preview: PreviewConfig = field(default_factory=PreviewConfig)
     supervision: SupervisionConfig = field(default_factory=SupervisionConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     rss: RSSConfig = field(default_factory=RSSConfig)
@@ -826,6 +848,12 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
             config.narration.interrupt_on_risk = bool(n_raw["interrupt_on_risk"])
         if "confirm_timeout_seconds" in n_raw:
             config.narration.confirm_timeout_seconds = float(n_raw["confirm_timeout_seconds"])
+
+    if "preview" in raw and isinstance(raw["preview"], dict):
+        pv_raw = raw["preview"]
+        config.preview.enabled = bool(pv_raw.get("enabled", config.preview.enabled))
+        if "confirm_timeout_seconds" in pv_raw:
+            config.preview.confirm_timeout_seconds = float(pv_raw["confirm_timeout_seconds"])
 
     if "supervision" in raw and isinstance(raw["supervision"], dict):
         s_raw = raw["supervision"]

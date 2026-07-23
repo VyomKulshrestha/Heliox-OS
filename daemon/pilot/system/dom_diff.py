@@ -591,3 +591,94 @@ async def assess_browser_action_target(action_type: str, action: Any) -> TargetA
     selector = getattr(params, "selector", "") if params else ""
     text = getattr(params, "text", "") if action_type == "browser_click_text" and params else ""
     return assess_target(snapshot, selector=selector, text=text)
+
+
+async def _attempt_action_on_clone(action_type: str, page: Any, params: Any) -> str | None:
+    """Best-effort, real attempt at the action against a scratch clone page
+    — deliberately NOT the production `pilot.system.browser` action
+    functions (those include a self-correction retry loop meant for the
+    real, once-only execution; a dry run only needs one honest attempt and
+    must never raise). Returns an error string on failure, None on
+    apparent success."""
+    try:
+        if action_type == "browser_fill_form":
+            fields = dict(getattr(params, "fields", {}) or {}) if params else {}
+            for selector, value in fields.items():
+                await page.fill(selector, str(value), timeout=3000)
+            submit_selector = getattr(params, "submit_selector", "") if params else ""
+            if submit_selector:
+                await page.click(submit_selector, timeout=3000)
+        elif action_type == "browser_click":
+            selector = getattr(params, "selector", "") if params else ""
+            await page.click(selector, timeout=3000)
+        elif action_type == "browser_click_text":
+            text = getattr(params, "text", "") if params else ""
+            await page.get_by_text(text).first.click(timeout=3000)
+        elif action_type == "browser_type":
+            selector = getattr(params, "selector", "") if params else ""
+            text = getattr(params, "text", "") if params else ""
+            await page.fill(selector, text, timeout=3000)
+        elif action_type == "browser_select":
+            selector = getattr(params, "selector", "") if params else ""
+            value = getattr(params, "value", "") if params else ""
+            await page.select_option(selector, value, timeout=3000)
+        else:
+            return f"unsupported action type for dry run: {action_type}"
+        return None
+    except Exception as exc:
+        return str(exc)[:200]
+
+
+async def dry_run_action(action_type: str, action: Any) -> DomDiff | None:
+    """Actually run a browser action against an isolated CLONE of the real
+    page, and return the REAL, measured before/after DOM diff — not a
+    prediction. The clone is a new tab in the same `BrowserContext` as the
+    real page (`context.new_page()`), so it shares cookies/session state
+    (see `pilot.system.browser`'s single-shared-context design), but it is
+    a fully separate `Page`/DOM/JS realm: nothing done to the clone is ever
+    visible on the user's real tab, and the clone is always closed before
+    this function returns.
+
+    Returns None (not a `DomDiff`) whenever nothing could be measured at
+    all — wrong action type, no active session, clone/navigation failure —
+    same "no prediction available" contract as `assess_browser_action_target()`.
+    This function must NEVER raise and must NEVER launch a browser session
+    that wasn't already open.
+    """
+    if action_type not in BROWSER_TARGET_ACTION_TYPES:
+        return None
+
+    from pilot.system.browser import get_real_page_for_clone, has_active_session
+
+    if not has_active_session():
+        return None
+
+    real_page = await get_real_page_for_clone()
+    if real_page is None:
+        return None
+
+    clone = None
+    try:
+        clone = await real_page.context.new_page()
+        await clone.goto(real_page.url, wait_until="domcontentloaded", timeout=5000)
+
+        before = await snapshot_dom(clone)
+        params = getattr(action, "parameters", None) or getattr(action, "params", None)
+        # The attempt's own error string (if any) is intentionally not
+        # surfaced separately -- a failed attempt (e.g. selector not found
+        # on the clone) naturally produces change_score=0.0 in the diff
+        # below, which is itself the honest, useful signal: "this action
+        # would produce no measurable effect."
+        await _attempt_action_on_clone(action_type, clone, params)
+        after = await snapshot_dom(clone)
+
+        return diff_dom(before, after)
+    except Exception:
+        logger.debug("Dry-run diff failed for %s", action_type, exc_info=True)
+        return None
+    finally:
+        if clone is not None:
+            try:
+                await clone.close()
+            except Exception:
+                pass

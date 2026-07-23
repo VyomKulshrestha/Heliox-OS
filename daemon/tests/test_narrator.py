@@ -16,6 +16,7 @@ import pytest
 from pilot.actions import Action, ActionPlan, ActionResult, ActionType, EmptyParams
 from pilot.agents.narrator import ExecutionNarrator
 from pilot.config import PilotConfig
+from pilot.system.action_preview import ActionPreview
 from pilot.system.dom_diff import TargetAssessment
 
 
@@ -219,3 +220,82 @@ class TestTargetAssessmentInterrupt:
         result = await narrator.on_target_assessment(_action(ActionType.BROWSER_CLICK), assessment)
         assert result is True
         assert broadcast.calls == []
+
+
+def _preview_narrator(**preview_overrides) -> tuple[ExecutionNarrator, dict, _Broadcast]:
+    """Same shape as `_narrator()` but configures PreviewConfig (a separate
+    section from NarrationConfig) since on_action_preview() is gated by
+    config.preview, not config.narration."""
+    pending_confirms: dict = {}
+    broadcast = _Broadcast()
+    config = PilotConfig()
+    config.preview.enabled = True
+    for k, v in preview_overrides.items():
+        setattr(config.preview, k, v)
+    narrator = ExecutionNarrator(config=config, pending_confirms=pending_confirms, broadcast_fn=broadcast)
+    return narrator, pending_confirms, broadcast
+
+
+def _preview(caption: str = "About to click: Save") -> ActionPreview:
+    return ActionPreview(screenshot_base64="abc", bbox=None, target_label=None, caption=caption)
+
+
+class TestActionPreviewInterrupt:
+    @pytest.mark.asyncio
+    async def test_disabled_proceeds_without_broadcasting(self):
+        narrator, _, broadcast = _preview_narrator()
+        narrator._config.preview.enabled = False
+        result = await narrator.on_action_preview(_action(ActionType.BROWSER_CLICK), _preview())
+        assert result is True
+        assert broadcast.calls == []
+
+    @pytest.mark.asyncio
+    async def test_enabled_always_interrupts_and_waits(self):
+        """Unlike on_target_assessment (only interrupts on a PROBLEM),
+        on_action_preview interrupts for every autonomous action when
+        enabled -- the whole point is showing the preview before every
+        gated commit, not just risky ones."""
+        narrator, pending_confirms, broadcast = _preview_narrator(confirm_timeout_seconds=5.0)
+        task = asyncio.create_task(narrator.on_action_preview(_action(ActionType.BROWSER_CLICK), _preview()))
+        await asyncio.sleep(0.05)
+        assert len(pending_confirms) == 1
+        plan_id = next(iter(pending_confirms.keys()))
+        pending_confirms[plan_id].confirmed = True
+        pending_confirms[plan_id].event.set()
+        result = await task
+        assert result is True
+
+        assert broadcast.calls[0][0] == "execution_interrupt"
+        payload = broadcast.calls[0][1]
+        assert payload["kind"] == "action_preview"
+        assert payload["preview"]["caption"] == "About to click: Save"
+
+    @pytest.mark.asyncio
+    async def test_denied_returns_false(self):
+        narrator, pending_confirms, broadcast = _preview_narrator(confirm_timeout_seconds=5.0)
+        task = asyncio.create_task(narrator.on_action_preview(_action(ActionType.BROWSER_CLICK), _preview()))
+        await asyncio.sleep(0.05)
+        plan_id = next(iter(pending_confirms.keys()))
+        pending_confirms[plan_id].confirmed = False
+        pending_confirms[plan_id].event.set()
+        result = await task
+        assert result is False
+        assert broadcast.calls[-1][0] == "execution_interrupt_denied"
+
+    @pytest.mark.asyncio
+    async def test_timeout_with_no_responder_returns_false(self):
+        narrator, _, broadcast = _preview_narrator(confirm_timeout_seconds=0.05)
+        result = await narrator.on_action_preview(_action(ActionType.BROWSER_CLICK), _preview())
+        assert result is False
+        assert broadcast.calls[-1][0] == "execution_interrupt_timeout"
+
+    @pytest.mark.asyncio
+    async def test_uses_preview_timeout_not_narration_timeout(self):
+        """PreviewConfig.confirm_timeout_seconds must actually be the value
+        used -- not silently falling back to NarrationConfig's (different)
+        default, which would be a config-wiring bug."""
+        narrator, _, broadcast = _preview_narrator(confirm_timeout_seconds=0.05)
+        narrator._config.narration.confirm_timeout_seconds = 999.0  # would hang the test if used by mistake
+        result = await narrator.on_action_preview(_action(ActionType.BROWSER_CLICK), _preview())
+        assert result is False
+        assert broadcast.calls[0][1]["timeout_seconds"] == 0.05

@@ -15,6 +15,8 @@ Covers:
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
 
 from pilot.system.dom_diff import (
@@ -26,6 +28,7 @@ from pilot.system.dom_diff import (
     assert_dom_changed,
     assess_target,
     diff_dom,
+    dry_run_action,
 )
 
 # ---------------------------------------------------------------------------
@@ -650,3 +653,175 @@ class TestAssessTargetByText:
         result = assess_target(snapshot, text="Sign In")
         assert result.found is True
         assert result.visible is False
+
+
+class _FakeLocator:
+    def __init__(self, page: _FakeClonePage, text: str) -> None:
+        self._page = page
+        self._text = text
+
+    @property
+    def first(self) -> _FakeLocator:
+        return self
+
+    async def click(self, timeout: int | None = None) -> None:
+        self._page.clicked.append(f"text:{self._text}")
+
+
+class _FakeClonePage:
+    def __init__(self) -> None:
+        self.closed = False
+        self.filled: list[tuple[str, str]] = []
+        self.clicked: list[str] = []
+        self.goto_calls: list[str] = []
+
+    async def goto(self, url: str, wait_until: str | None = None, timeout: int | None = None) -> None:
+        self.goto_calls.append(url)
+
+    async def fill(self, selector: str, value: str, timeout: int | None = None) -> None:
+        self.filled.append((selector, value))
+
+    async def click(self, selector: str, timeout: int | None = None) -> None:
+        if not selector:
+            raise RuntimeError("empty selector")
+        self.clicked.append(selector)
+
+    async def select_option(self, selector: str, value: str, timeout: int | None = None) -> None:
+        self.filled.append((selector, value))
+
+    def get_by_text(self, text: str) -> _FakeLocator:
+        return _FakeLocator(self, text)
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+class _FakeContext:
+    def __init__(self, clone: _FakeClonePage) -> None:
+        self._clone = clone
+
+    async def new_page(self) -> _FakeClonePage:
+        return self._clone
+
+
+class _FakeRealPage:
+    def __init__(self, clone: _FakeClonePage, url: str = "https://example.com") -> None:
+        self.url = url
+        self.context = _FakeContext(clone)
+
+
+def _fake_snapshot(node_count: int) -> DomSnapshot:
+    return DomSnapshot(
+        nodes=[_node("div", id=f"n{i}") for i in range(node_count)],
+        url="https://example.com",
+        title="Test",
+    )
+
+
+class TestDryRunAction:
+    @pytest.mark.asyncio
+    async def test_non_browser_action_type_returns_none(self):
+        result = await dry_run_action("file_write", object())
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_no_active_session_returns_none(self):
+        with patch("pilot.system.browser.has_active_session", return_value=False):
+            result = await dry_run_action("browser_click", object())
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_real_click_produces_a_real_diff_and_closes_the_clone(self):
+        from pilot.actions import Action, ActionType, BrowserParams
+
+        clone = _FakeClonePage()
+        real_page = _FakeRealPage(clone)
+        action = Action(action_type=ActionType.BROWSER_CLICK, target="#btn", parameters=BrowserParams(selector="#btn"))
+
+        with (
+            patch("pilot.system.browser.has_active_session", return_value=True),
+            patch("pilot.system.browser.get_real_page_for_clone", new=AsyncMock(return_value=real_page)),
+            patch(
+                "pilot.system.dom_diff.snapshot_dom",
+                new=AsyncMock(side_effect=[_fake_snapshot(2), _fake_snapshot(3)]),
+            ),
+        ):
+            result = await dry_run_action("browser_click", action)
+
+        assert isinstance(result, DomDiff)
+        assert result.change_score > 0.0  # 2 nodes -> 3 nodes is a real, measured change
+        assert clone.clicked == ["#btn"]
+        assert clone.closed is True  # the scratch tab is always cleaned up
+
+    @pytest.mark.asyncio
+    async def test_clone_is_closed_even_if_the_attempt_fails(self):
+        from pilot.actions import Action, ActionType, BrowserParams
+
+        clone = _FakeClonePage()
+        real_page = _FakeRealPage(clone)
+        # Empty selector -> _FakeClonePage.click() raises, caught internally
+        # by _attempt_action_on_clone (never propagates).
+        action = Action(action_type=ActionType.BROWSER_CLICK, target="", parameters=BrowserParams(selector=""))
+
+        with (
+            patch("pilot.system.browser.has_active_session", return_value=True),
+            patch("pilot.system.browser.get_real_page_for_clone", new=AsyncMock(return_value=real_page)),
+            patch(
+                "pilot.system.dom_diff.snapshot_dom",
+                new=AsyncMock(side_effect=[_fake_snapshot(2), _fake_snapshot(2)]),
+            ),
+        ):
+            result = await dry_run_action("browser_click", action)
+
+        assert isinstance(result, DomDiff)
+        assert result.change_score == 0.0  # nothing happened -- an honest signal, not an error
+        assert clone.closed is True
+
+    @pytest.mark.asyncio
+    async def test_never_touches_the_real_page(self):
+        """The real page object must never receive fill/click/goto calls --
+        only the clone does."""
+        from pilot.actions import Action, ActionType, BrowserParams
+
+        clone = _FakeClonePage()
+        real_page = _FakeRealPage(clone)
+        action = Action(
+            action_type=ActionType.BROWSER_TYPE, target="#input", parameters=BrowserParams(selector="#input", text="hi")
+        )
+
+        with (
+            patch("pilot.system.browser.has_active_session", return_value=True),
+            patch("pilot.system.browser.get_real_page_for_clone", new=AsyncMock(return_value=real_page)),
+            patch(
+                "pilot.system.dom_diff.snapshot_dom",
+                new=AsyncMock(side_effect=[_fake_snapshot(2), _fake_snapshot(2)]),
+            ),
+        ):
+            await dry_run_action("browser_type", action)
+
+        # real_page itself has no fill/click methods at all -- if dry_run_action
+        # ever called them on the real page instead of the clone, this test
+        # would raise AttributeError rather than silently passing.
+        assert not hasattr(real_page, "fill")
+        assert clone.filled == [("#input", "hi")]
+
+    @pytest.mark.asyncio
+    async def test_navigation_failure_returns_none_gracefully(self):
+        from pilot.actions import Action, ActionType, BrowserParams
+
+        class _BrokenClonePage(_FakeClonePage):
+            async def goto(self, url, wait_until=None, timeout=None):
+                raise RuntimeError("navigation timed out")
+
+        clone = _BrokenClonePage()
+        real_page = _FakeRealPage(clone)
+        action = Action(action_type=ActionType.BROWSER_CLICK, target="#btn", parameters=BrowserParams(selector="#btn"))
+
+        with (
+            patch("pilot.system.browser.has_active_session", return_value=True),
+            patch("pilot.system.browser.get_real_page_for_clone", new=AsyncMock(return_value=real_page)),
+        ):
+            result = await dry_run_action("browser_click", action)
+
+        assert result is None
+        assert clone.closed is True  # still cleaned up despite the failure

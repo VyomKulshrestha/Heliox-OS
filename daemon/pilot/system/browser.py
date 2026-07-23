@@ -125,6 +125,18 @@ async def peek_current_dom_snapshot() -> Any | None:
     return await _snap(page)
 
 
+async def get_real_page_for_clone() -> Any | None:
+    """Return the real, live page — the ONLY sanctioned use is cloning it
+    into a scratch tab for a dry-run (see `pilot.system.dom_diff.dry_run_action`),
+    never for reading/mutating it directly. Returns None if no session is
+    open yet, same "no assessment possible" contract as
+    `peek_current_dom_snapshot()`.
+    """
+    if not has_active_session():
+        return None
+    return await _get_page()
+
+
 def _append_diff(base_output: str, before: Any, after: Any, action_desc: str) -> str:
     """Compute diff and append a JSON summary to the action output string."""
     if before is None or after is None:

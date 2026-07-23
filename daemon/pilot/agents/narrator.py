@@ -31,7 +31,8 @@ from typing import TYPE_CHECKING, Any, Callable, Coroutine
 
 if TYPE_CHECKING:
     from pilot.actions import Action, ActionPlan, ActionResult
-    from pilot.config import NarrationConfig, PilotConfig
+    from pilot.config import NarrationConfig, PilotConfig, PreviewConfig
+    from pilot.system.action_preview import ActionPreview
     from pilot.system.dom_diff import TargetAssessment
 
 logger = logging.getLogger("pilot.agents.narrator")
@@ -60,6 +61,9 @@ class ExecutionNarrator:
 
     def _cfg(self) -> NarrationConfig:
         return self._config.narration
+
+    def _preview_cfg(self) -> PreviewConfig:
+        return self._config.preview
 
     # ── Ambient narration (never blocks) ──
 
@@ -145,7 +149,32 @@ class ExecutionNarrator:
             },
         )
 
-    async def _interrupt_and_wait(self, *, reason: str, context: dict[str, Any]) -> bool:
+    async def on_action_preview(self, action: Action, preview: ActionPreview) -> bool:
+        """ "Simulate before executing" gate for autonomous background tasks
+        (see `pilot.system.action_preview`) — pauses and shows a real
+        screenshot with the action's target highlighted (plus, for browser
+        actions, a real dry-run DOM diff), waiting for confirm/deny. Only
+        ever called by `Executor.execute()` for `InvocationSource.AUTONOMOUS`
+        plans — interactive/voice/gesture invocations already have the user
+        watching in real time and skip this entirely."""
+        cfg = self._preview_cfg()
+        if not cfg.enabled:
+            return True
+
+        return await self._interrupt_and_wait(
+            reason=preview.caption,
+            context={
+                "kind": "action_preview",
+                "action_type": action.action_type.value,
+                "target": getattr(action, "target", "") or "",
+                "preview": preview.to_dict(),
+            },
+            timeout_seconds=cfg.confirm_timeout_seconds,
+        )
+
+    async def _interrupt_and_wait(
+        self, *, reason: str, context: dict[str, Any], timeout_seconds: float | None = None
+    ) -> bool:
         if not self._broadcast_fn:
             return True
 
@@ -155,19 +184,19 @@ class ExecutionNarrator:
         pending = PendingConfirmation(plan_id=plan_id, event=asyncio.Event())
         self._pending_confirms[plan_id] = pending
 
-        cfg = self._cfg()
+        effective_timeout = timeout_seconds if timeout_seconds is not None else self._cfg().confirm_timeout_seconds
         await self._broadcast_fn(
             "execution_interrupt",
             {
                 "plan_id": plan_id,
                 "reason": reason,
-                "timeout_seconds": cfg.confirm_timeout_seconds,
+                "timeout_seconds": effective_timeout,
                 **context,
             },
         )
 
         try:
-            await asyncio.wait_for(pending.event.wait(), timeout=cfg.confirm_timeout_seconds)
+            await asyncio.wait_for(pending.event.wait(), timeout=effective_timeout)
         except TimeoutError:
             logger.warning("Execution interrupt timed out (plan_id=%s)", plan_id)
             await self._broadcast_fn("execution_interrupt_timeout", {"plan_id": plan_id})
