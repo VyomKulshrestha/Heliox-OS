@@ -883,7 +883,7 @@ Update narration config. Persists via `config.save()`.
 
 #### Notifications
 - `execution_narration` — non-blocking, fired around each action's start/completion. Payload: `{ "text": "...", "plan_id": "..." }`.
-- `execution_interrupt` — a plan (via the Agent Gateway's critic verdict) or a single browser action (via the pre-execution target assessment) was flagged risky before running. Payload: `{ "plan_id": "interrupt_xxxxxxxx", "reason": "...", "severity": "...", "timeout_seconds": 120.0 }`; resolve via `confirm` with the same `plan_id`.
+- `execution_interrupt` — a plan (via the Agent Gateway's critic verdict), a single browser action (via the pre-execution target assessment), or an autonomous action's "simulate before executing" preview was flagged/surfaced before running. Payload: `{ "plan_id": "interrupt_xxxxxxxx", "reason": "...", "kind": "plan_risk"|"target_assessment"|"action_preview", "timeout_seconds": 120.0 }`; resolve via `confirm` with the same `plan_id`. When `kind == "action_preview"` (see **Simulate Before Executing** in SECURITY.md), the payload also carries a `preview` object: `{ "screenshot_base64": "...", "bbox": { "x": 10, "y": 20, "w": 80, "h": 30 } | null, "target_label": "Submit button" | null, "caption": "About to click: Save", "dom_diff": { "change_score": 0.42, "summary": "...", ... } | null }` — `bbox` is in pixel coordinates relative to the screenshot image; `dom_diff` is only present for the 5 browser action types and only when a browser session was already open.
 - `execution_interrupt_timeout` / `execution_interrupt_denied` — the interrupt-and-wait ended without confirmation (timed out, or the user chose Stop); `plan_id` matches the originating `execution_interrupt`.
 
 ---

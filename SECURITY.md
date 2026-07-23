@@ -212,6 +212,26 @@ Settings → Agent Gateway Policy shows the enforced floor per source and lets y
 
 ---
 
+## 🖼️ Simulate Before Executing (autonomous background tasks, opt-in)
+
+**What problem this solves.** JARVIS Autonomy's `AutonomousExecutor` runs unattended — nobody is necessarily watching the screen when it commits to an action. Every other pre-execution check in this codebase (Pre-Execution Target Assessment, the Learned Risk Gate) reasons about an action structurally; none of them show the user *what it would actually look like on screen* before it happens.
+
+**Why not a real Genie-style generative preview.** The obvious-sounding fix — synthesize a preview frame of the screen after the action, the way Google DeepMind's Genie or a world model like it would — was not pursued, for the same reason this codebase already rejected a generative approach for Pre-Execution Target Assessment (see that section above) and removed the Meta TRIBE v2 integration entirely: there is no self-hostable, license-clean option in that space. Every real generative-video-prediction model needs dedicated GPU hardware and targets photorealistic video generation, not "will this click hit the button I expect." Building or calling one would reintroduce exactly the dependency/licensing risk this project has repeatedly chosen not to take on.
+
+**What this does instead — a real screenshot, a real element detection, a real dry run.** `pilot.system.action_preview.generate_action_preview()` composes three things this codebase already has, none of them new:
+
+- A real screenshot of the current screen (`pilot.system.vision`'s existing capture primitive).
+- The target UI element highlighted via `screen_detect_elements()` — the same VLM-based bounding-box detection already used elsewhere in this codebase (cloud Gemini/OpenAI/Claude, or fully local/offline Ollama LLaVA — no new provider integration).
+- For the five browser interaction action types (`browser_click`/`browser_click_text`/`browser_type`/`browser_select`/`browser_fill_form`), a genuine dry run: `pilot.system.dom_diff.dry_run_action()` clones the real page into a scratch tab in the same `BrowserContext` (so it shares session/cookies, but is a fully separate `Page`/DOM/JS realm), attempts the actual action against the clone, measures a real before/after DOM diff via the existing `snapshot_dom()`/`diff_dom()` machinery, and closes the clone — never touching the user's real tab. This is a real measurement, not a prediction.
+
+**No new safety primitive.** `pilot.agents.narrator.ExecutionNarrator.on_action_preview()` reuses the exact same `PendingConfirmation`/`confirm` interrupt-and-wait mechanism `on_plan_risk`/`on_target_assessment` already established — same broadcast event (`execution_interrupt`, distinguished by `kind: "action_preview"`), same frontend dialog (`InterruptDialog.svelte`, extended to render the screenshot/highlight/diff when that kind is present), same timeout-denies-by-default behavior.
+
+**Autonomous-only, and off by default.** `config.preview.enabled` defaults to `False` — this adds real latency (a screenshot + VLM call, and for browser actions a real dry-run browser tab) before every gated action, the same opt-in-first treatment as `gesture_cursor`/`risk_gate_enabled`/`narration`. It only ever gates `InvocationSource.AUTONOMOUS` plans — interactive voice/text/gesture commands already have the user watching in real time, so this would only add friction there without the corresponding benefit (catching a mistake nobody was there to see).
+
+**Known scope limits, stated plainly.** Element detection depends on the same VLM chain `screen_detect_elements()` always has — if no vision provider is configured (no cloud API key, no local Ollama with a vision model pulled), the preview still shows the real screenshot but without a highlighted target. The dry-run diff is real DOM structure, not a semantic judgment of whether the action's *effect* is correct (a diff showing 3 nodes changed doesn't say whether they're the right 3 nodes) — it's a signal for the human confirming, not an automated pass/fail gate. A failed dry-run attempt (e.g. a selector that doesn't resolve on the clone) surfaces as `change_score: 0.0` — an honest "nothing happened" signal, not a distinguishable error, matching this codebase's existing preference for a clear default over a guess.
+
+---
+
 ## 🔊 Kyutai Pocket TTS (default daemon-side voice)
 
 **What this is.** `pilot.system.pocket_tts` is now the default engine behind `pilot.system.voice.speak()` (`config.voice.tts_engine`, default `"pocket_tts"`), replacing the previous default of platform-native TTS (Windows SAPI via PowerShell, macOS `say`, Linux `espeak`) as the primary daemon-side voice. It came out of the same research that flagged Kyutai's Moshi above: Moshi itself has since been superseded for production use by a cascaded stack (Unmute, Kyutai STT/TTS, Pocket TTS), and — critically — every piece of that stack *except* Pocket TTS requires a 16GB+ VRAM GPU on Linux/WSL, a poor fit for a general Windows/Mac/Linux desktop app. Pocket TTS (100M params) is the one piece that's genuinely CPU-only and cross-platform, reported by Kyutai at ~6x real-time generation using 2 CPU cores.
