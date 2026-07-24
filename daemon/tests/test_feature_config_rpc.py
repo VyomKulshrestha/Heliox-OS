@@ -128,6 +128,7 @@ async def test_voice_calibration_update_requires_boolean():
     [
         ({"tts_engine": "cloud"}, "tts_engine must be pocket_tts or os_native"),
         ({"tts_voice": "unknown"}, "tts_voice must be alba, giovanni, or lola"),
+        ({"input_device": ""}, "input_device must be a valid microphone identifier"),
     ],
 )
 async def test_voice_output_update_rejects_unknown_options(values, message):

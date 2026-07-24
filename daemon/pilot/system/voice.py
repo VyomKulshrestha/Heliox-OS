@@ -372,6 +372,7 @@ def _resolve_input_device(
     sample_rate: int,
     channels: int,
     dtype: str,
+    preferred_device: str = "auto",
 ) -> int:
     """Return a usable PortAudio input device for the requested format.
 
@@ -396,6 +397,37 @@ def _resolve_input_device(
         except Exception:
             return False
 
+    devices = list(sd.query_devices())
+
+    def _hostapi_name(info: Any) -> str:
+        try:
+            return str(sd.query_hostapis(int(info.get("hostapi", -1))).get("name", "Unknown"))
+        except Exception:
+            return "Unknown"
+
+    def _device_id(info: Any) -> str:
+        return f"{_hostapi_name(info)}::{str(info.get('name', '')).strip()}"
+
+    preferred = preferred_device.strip()
+    if preferred and preferred.casefold() != "auto":
+        matching = [
+            index
+            for index, info in enumerate(devices)
+            if _device_id(info).casefold() == preferred.casefold()
+        ]
+        for index in matching:
+            if _usable(index):
+                return index
+        if matching:
+            raise RuntimeError(
+                f"Configured microphone '{preferred}' does not support "
+                f"{sample_rate} Hz, {channels} channel, {dtype}"
+            )
+        raise RuntimeError(
+            f"Configured microphone '{preferred}' is no longer available. "
+            "Choose another input in Settings."
+        )
+
     try:
         default_device = sd.default.device
         try:
@@ -409,8 +441,6 @@ def _resolve_input_device(
 
     if default_input >= 0 and _usable(default_input):
         return default_input
-
-    devices = list(sd.query_devices())
 
     def _priority(item: tuple[int, Any]) -> tuple[int, int, int]:
         index, info = item
@@ -441,6 +471,55 @@ def _resolve_input_device(
     raise RuntimeError(
         f"No usable microphone supports {sample_rate} Hz, {channels} channel, {dtype}"
     )
+
+
+def list_audio_input_devices(
+    sd: Any,
+    *,
+    sample_rate: int = 16000,
+    channels: int = 1,
+    dtype: str = "int16",
+) -> list[dict[str, Any]]:
+    """Return usable input devices with stable, user-visible identifiers."""
+    devices: list[dict[str, Any]] = []
+    try:
+        default_device = sd.default.device
+        try:
+            default_input = int(default_device[0])
+        except (IndexError, TypeError):
+            default_input = int(default_device)
+    except (AttributeError, IndexError, TypeError, ValueError):
+        default_input = -1
+
+    for index, info in enumerate(list(sd.query_devices())):
+        if int(info.get("max_input_channels", 0)) < channels:
+            continue
+        try:
+            sd.check_input_settings(
+                device=index,
+                channels=channels,
+                dtype=dtype,
+                samplerate=sample_rate,
+            )
+        except Exception:
+            continue
+        try:
+            hostapi = str(
+                sd.query_hostapis(int(info.get("hostapi", -1))).get("name", "Unknown")
+            )
+        except Exception:
+            hostapi = "Unknown"
+        name = str(info.get("name", index)).strip()
+        devices.append(
+            {
+                "id": f"{hostapi}::{name}",
+                "name": name,
+                "hostapi": hostapi,
+                "index": index,
+                "is_default": index == default_input,
+            }
+        )
+    return devices
 
 
 async def _record_audio(duration: int) -> str:
@@ -596,6 +675,7 @@ class _ContinuousRecorder:
         start_frames: int = 2,
         silence_frames: int = 12,
         max_utterance_seconds: float = 20.0,
+        preferred_device: str = "auto",
     ) -> None:
         self.sample_rate = sample_rate
         self.frame_size = max(1, int(sample_rate * frame_ms / 1000))
@@ -603,6 +683,7 @@ class _ContinuousRecorder:
         self.start_frames = start_frames
         self.silence_frames = silence_frames
         self.max_frames = max(1, int(max_utterance_seconds * 1000 / frame_ms))
+        self.preferred_device = preferred_device
 
         self._stream: Any = None
         self._queue: asyncio.Queue[Any] | None = None
@@ -650,6 +731,7 @@ class _ContinuousRecorder:
                 sample_rate=self.sample_rate,
                 channels=1,
                 dtype="int16",
+                preferred_device=self.preferred_device,
             )
             device_info = sd.query_devices(self.input_device)
             self.input_device_name = str(device_info.get("name", self.input_device))
@@ -830,6 +912,7 @@ class ContinuousVoiceListener:
             energy_threshold=self.config.voice.vad_energy_threshold,
             silence_frames=max(1, int(self.config.voice.vad_silence_ms / 50)),
             max_utterance_seconds=self.config.voice.vad_max_utterance_seconds,
+            preferred_device=self.config.voice.input_device,
         )
 
     @property

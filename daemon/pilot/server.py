@@ -903,6 +903,7 @@ class PilotServer:
             "voice_listener_start": self._handle_voice_listener_start,
             "voice_listener_stop": self._handle_voice_listener_stop,
             "voice_listener_stats": self._handle_voice_listener_stats,
+            "list_audio_input_devices": self._handle_list_audio_input_devices,
             "speak_text": self._handle_speak_text,
             "stop_speech": self._handle_stop_speech,
             "reset_wake_calibration": self._handle_reset_wake_calibration,
@@ -2617,6 +2618,13 @@ class PilotServer:
                             "status": "error",
                             "message": "voice.tts_voice must be alba, giovanni, or lola",
                         }
+                if section == "voice" and k == "input_device":
+                    if not isinstance(v, str) or not v.strip() or len(v) > 500:
+                        return {
+                            "status": "error",
+                            "message": "voice.input_device must be a valid microphone identifier",
+                        }
+                    v = v.strip()
                 if section == "screen_vision" and k == "capture_interval_seconds":
                     v = float(v)
                 setattr(target, k, v)
@@ -4829,6 +4837,37 @@ def handle_tool(tool_name, params):
         if not self._voice_listener:
             return {"running": False, "message": "Voice listener not initialized"}
         return self._voice_listener.get_stats()
+
+    async def _handle_list_audio_input_devices(
+        self,
+        params: dict,
+        ws: ServerConnection,
+    ) -> dict:
+        """List microphone inputs that support Heliox's recording format."""
+        try:
+            import sounddevice as sd
+
+            from pilot.system.voice import list_audio_input_devices
+
+            devices = await asyncio.to_thread(list_audio_input_devices, sd)
+        except ImportError:
+            return {
+                "devices": [],
+                "selected": self.config.voice.input_device,
+                "message": "Python sounddevice is not installed.",
+            }
+        except Exception as error:
+            logger.warning("Could not enumerate audio input devices: %s", error)
+            return {
+                "devices": [],
+                "selected": self.config.voice.input_device,
+                "message": str(error),
+            }
+        return {
+            "devices": devices,
+            "selected": self.config.voice.input_device,
+            "message": "" if devices else "No compatible microphone inputs were found.",
+        }
 
     async def _handle_speak_text(self, params: dict, ws: ServerConnection) -> dict:
         """Speak UI text through the configured daemon TTS engine."""

@@ -5,7 +5,11 @@ import pytest
 
 from pilot.config import PilotConfig
 from pilot.server import PilotServer
-from pilot.system.voice import ContinuousVoiceListener, _resolve_input_device
+from pilot.system.voice import (
+    ContinuousVoiceListener,
+    _resolve_input_device,
+    list_audio_input_devices,
+)
 
 
 class _FakeSoundDevice:
@@ -20,6 +24,9 @@ class _FakeSoundDevice:
     def check_input_settings(self, *, device, **_kwargs):
         if device not in self._usable:
             raise RuntimeError("unsupported format")
+
+    def query_hostapis(self, index):
+        return {"name": {0: "MME", 1: "Windows WASAPI"}.get(index, "Unknown")}
 
 
 def test_input_device_uses_valid_default_first():
@@ -63,6 +70,50 @@ def test_input_device_recovers_from_missing_windows_default():
         )
         == 2
     )
+
+
+def test_input_device_honors_stable_hostapi_and_name_selection():
+    sounddevice = _FakeSoundDevice(
+        [
+            {"name": "Headset", "max_input_channels": 1, "hostapi": 0},
+            {"name": "Headset", "max_input_channels": 1, "hostapi": 1},
+        ],
+        default_input=0,
+        usable={0, 1},
+    )
+
+    assert (
+        _resolve_input_device(
+            sounddevice,
+            sample_rate=16000,
+            channels=1,
+            dtype="int16",
+            preferred_device="Windows WASAPI::Headset",
+        )
+        == 1
+    )
+
+
+def test_list_audio_input_devices_excludes_incompatible_inputs():
+    sounddevice = _FakeSoundDevice(
+        [
+            {"name": "Legacy Mic", "max_input_channels": 1, "hostapi": 0},
+            {"name": "Working Mic", "max_input_channels": 1, "hostapi": 1},
+            {"name": "Speakers", "max_input_channels": 0, "hostapi": 1},
+        ],
+        default_input=1,
+        usable={1},
+    )
+
+    assert list_audio_input_devices(sounddevice) == [
+        {
+            "id": "Windows WASAPI::Working Mic",
+            "name": "Working Mic",
+            "hostapi": "Windows WASAPI",
+            "index": 1,
+            "is_default": True,
+        }
+    ]
 
 
 def test_input_device_reports_when_no_format_is_usable():

@@ -79,6 +79,13 @@
   let speechToast = $state("");
   let speechSaving = $state(false);
   let speechTesting = $state(false);
+  let audioInputDevices = $state<Array<{
+    id: string;
+    name: string;
+    hostapi: string;
+    is_default: boolean;
+  }>>([]);
+  let audioInputMessage = $state("");
 
   $effect(() => {
     if ($locale) {
@@ -351,6 +358,46 @@
   }
 
   const pocketTtsVoices = ["alba", "giovanni", "lola"];
+
+  async function refreshAudioInputDevices() {
+    try {
+      const result = await call<{
+        devices: Array<{
+          id: string;
+          name: string;
+          hostapi: string;
+          is_default: boolean;
+        }>;
+        message?: string;
+      }>("list_audio_input_devices");
+      audioInputDevices = result.devices ?? [];
+      audioInputMessage = result.message ?? "";
+    } catch (err) {
+      audioInputDevices = [];
+      audioInputMessage = err instanceof Error
+        ? err.message
+        : "Could not enumerate microphone inputs.";
+    }
+  }
+
+  $effect(() => {
+    refreshAudioInputDevices();
+  });
+
+  async function updateAudioInput(e: Event) {
+    const val = (e.target as HTMLInputElement).value;
+    speechSaving = true;
+    const synced = await settings.updateSection(
+      "voice",
+      { input_device: val },
+      { requireDaemon: true },
+    );
+    speechSaving = false;
+    speechToast = synced
+      ? "Microphone input saved. Restart Heliox Active to use it."
+      : "Microphone input was not changed because the daemon could not confirm it.";
+    setTimeout(() => (speechToast = ""), 5000);
+  }
 
   async function updateTtsEngine(e: Event) {
     const val = (e.target as HTMLInputElement).value;
@@ -1263,6 +1310,29 @@
         {speechToast}
       </div>
     {/if}
+
+    <div class="setting-row">
+      <div class="setting-info">
+        <span class="setting-label">Microphone Input</span>
+        <span class="setting-desc">Audio device used by Heliox Active and local wake-word recognition.</span>
+        {#if audioInputMessage}
+          <span class="security-setting-status">{audioInputMessage}</span>
+        {/if}
+      </div>
+      <select
+        class="input-md"
+        value={$settings.voice?.input_device ?? "auto"}
+        onchange={updateAudioInput}
+        disabled={speechSaving}
+      >
+        <option value="auto">Automatic (system default)</option>
+        {#each audioInputDevices as device}
+          <option value={device.id}>
+            {device.name} — {device.hostapi}{device.is_default ? " (system default)" : ""}
+          </option>
+        {/each}
+      </select>
+    </div>
 
     <div class="setting-row">
       <div class="setting-info">

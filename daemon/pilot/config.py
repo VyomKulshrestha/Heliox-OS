@@ -125,6 +125,9 @@ class ServerConfig:
 class VoiceConfig:
     language: str = "auto"  # auto detect or manual language code
     whisper_model: str = "base"
+    # Stable "host API::device name" identifier returned by
+    # list_audio_input_devices. "auto" preserves automatic selection.
+    input_device: str = "auto"
     # Continuous VAD-based endpointing (see pilot.system.vad) — replaces
     # blind fixed-duration recording windows with natural start/stop
     # boundaries. Approximate defaults, not tuned against real microphone
@@ -577,6 +580,7 @@ def _validate_config_types(raw: dict) -> None:
         "voice": {
             "language": str,
             "whisper_model": str,
+            "input_device": str,
             "vad_energy_threshold": (int, float),
             "vad_silence_ms": (int, float),
             "vad_max_utterance_seconds": (int, float),

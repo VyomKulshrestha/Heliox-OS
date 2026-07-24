@@ -53,6 +53,7 @@ export interface PilotSettings {
     enabled: boolean;
   };
   voice: {
+    input_device: string;
     tts_engine: string;
     tts_voice: string;
   };
@@ -115,6 +116,7 @@ const defaultSettings: PilotSettings = {
     enabled: false,
   },
   voice: {
+    input_device: "auto",
     tts_engine: "pocket_tts",
     tts_voice: "alba",
   },
