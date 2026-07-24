@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { estimateGazeRegion, type FaceLandmark } from "./gazeTracking";
+import {
+  GAZE_HEARTBEAT_MS,
+  estimateGazeRegion,
+  shouldSendGazeUpdate,
+  type FaceLandmark,
+} from "./gazeTracking";
 
 // Self-consistent synthetic 478-point face mesh: only the landmark indices
 // estimateGazeRegion() actually reads are populated meaningfully (the rest
@@ -91,5 +96,19 @@ describe("estimateGazeRegion", () => {
     const result = estimateGazeRegion(landmarks)!;
     const fullyShifted = estimateGazeRegion(shiftIris(baseFaceMesh(), 0.4, 0))!;
     expect(result.confidence).toBeLessThan(fullyShifted.confidence);
+  });
+});
+
+describe("shouldSendGazeUpdate", () => {
+  it("sends immediately when the coarse region changes", () => {
+    expect(shouldSendGazeUpdate("left", "center", 100, 90)).toBe(true);
+  });
+
+  it("does not spam an unchanged region before the heartbeat", () => {
+    expect(shouldSendGazeUpdate("center", "center", GAZE_HEARTBEAT_MS - 1, 0)).toBe(false);
+  });
+
+  it("refreshes an unchanged region before fusion context expires", () => {
+    expect(shouldSendGazeUpdate("center", "center", GAZE_HEARTBEAT_MS, 0)).toBe(true);
   });
 });

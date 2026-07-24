@@ -15,6 +15,16 @@
   import NarrationPanel from "./NarrationPanel.svelte";
   import SupervisionPanel from "./SupervisionPanel.svelte";
   import { GestureCalibrationStore } from "../gesture/calibration";
+  import {
+    gazeRuntime,
+    resetGazeRuntime,
+  } from "../stores/gazeRuntime";
+
+  let {
+    onOpenCommand = () => {},
+  }: {
+    onOpenCommand?: () => void;
+  } = $props();
 
   let pendingConfirm = $state<{ message: string; danger: boolean; onConfirm: () => void } | null>(null);
 
@@ -169,10 +179,12 @@
     });
   }
 
-  function toggleGazeTracking() {
-    settings.updateSection("vision", {
-      gaze_tracking_enabled: !$settings.vision?.gaze_tracking_enabled,
+  async function toggleGazeTracking() {
+    const turningOn = !$settings.vision?.gaze_tracking_enabled;
+    await settings.updateSection("vision", {
+      gaze_tracking_enabled: turningOn,
     });
+    if (!turningOn) resetGazeRuntime();
   }
 
   // "Simulate before executing" preview adds real latency (a screenshot +
@@ -576,6 +588,46 @@
       >
         <span class="toggle-knob"></span>
       </button>
+    </div>
+
+    <div
+      class="gaze-status-row"
+      class:active={$settings.vision?.gaze_tracking_enabled && $gazeRuntime.phase === "active"}
+      class:error={$settings.vision?.gaze_tracking_enabled && ($gazeRuntime.phase === "error" || $gazeRuntime.daemonStatus === "error")}
+    >
+      <span class="gaze-status-dot"></span>
+      <div class="gaze-status-copy">
+        <strong>
+          {#if !$settings.vision?.gaze_tracking_enabled}
+            {$_('settings.gaze_status_off')}
+          {:else if $gazeRuntime.phase === "loading"}
+            {$_('settings.gaze_status_loading')}
+          {:else if $gazeRuntime.phase === "scanning"}
+            {$_('settings.gaze_status_scanning')}
+          {:else if $gazeRuntime.phase === "active" && $gazeRuntime.region}
+            {$_('settings.gaze_status_active')}: {$gazeRuntime.region}
+            ({Math.round(($gazeRuntime.confidence ?? 0) * 100)}%)
+          {:else if $gazeRuntime.phase === "error"}
+            {$_('settings.gaze_status_error')}
+          {:else}
+            {$_('settings.gaze_status_ready')}
+          {/if}
+        </strong>
+        <span>
+          {#if $settings.vision?.gaze_tracking_enabled && $gazeRuntime.message}
+            {$gazeRuntime.message}
+          {:else if $settings.vision?.gaze_tracking_enabled}
+            {$_('settings.gaze_status_ready_desc')}
+          {:else}
+            {$_('settings.gaze_status_off_desc')}
+          {/if}
+        </span>
+      </div>
+      {#if $settings.vision?.gaze_tracking_enabled && !$gazeRuntime.cameraActive}
+        <button class="gaze-open-command" onclick={onOpenCommand}>
+          {$_('settings.gaze_open_command')}
+        </button>
+      {/if}
     </div>
   </section>
 
@@ -1356,6 +1408,76 @@
     color: var(--warning, #f59e0b);
     background: rgba(245, 158, 11, 0.08);
     border-bottom: 1px solid var(--border);
+  }
+
+  .gaze-status-row {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 10px 14px;
+    background: rgba(245, 158, 11, 0.06);
+  }
+
+  .gaze-status-row.active {
+    background: rgba(16, 185, 129, 0.08);
+  }
+
+  .gaze-status-row.error {
+    background: rgba(239, 68, 68, 0.08);
+  }
+
+  .gaze-status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: #f59e0b;
+    box-shadow: 0 0 8px rgba(245, 158, 11, 0.55);
+  }
+
+  .gaze-status-row.active .gaze-status-dot {
+    background: #10b981;
+    box-shadow: 0 0 8px rgba(16, 185, 129, 0.6);
+  }
+
+  .gaze-status-row.error .gaze-status-dot {
+    background: #ef4444;
+    box-shadow: 0 0 8px rgba(239, 68, 68, 0.6);
+  }
+
+  .gaze-status-copy {
+    min-width: 0;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .gaze-status-copy strong {
+    font-size: 11px;
+    text-transform: capitalize;
+  }
+
+  .gaze-status-copy span {
+    color: var(--text-muted);
+    font-size: 10px;
+    line-height: 1.35;
+  }
+
+  .gaze-open-command {
+    flex-shrink: 0;
+    padding: 6px 10px;
+    border: 1px solid rgba(180, 120, 255, 0.45);
+    border-radius: 6px;
+    background: rgba(180, 120, 255, 0.1);
+    color: var(--text-primary);
+    font-size: 10px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .gaze-open-command:hover {
+    background: rgba(180, 120, 255, 0.18);
   }
 
   .root-status-banner {

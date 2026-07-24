@@ -192,7 +192,7 @@ function createSettings() {
       localStorage.setItem("heliox_settings", JSON.stringify(stored));
     } catch { /* ignore */ }
 
-    call("update_config", { section, values }).catch((err) => {
+    await call("update_config", { section, values }).catch((err) => {
       console.warn("Daemon unreachable, settings saved locally:", err);
     });
   }

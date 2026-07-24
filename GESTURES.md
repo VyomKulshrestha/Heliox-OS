@@ -237,11 +237,23 @@ model from the hand-tracking backend (independent of the
 at a reduced sampling rate (every 6th frame — a coarse "which rough
 direction" signal doesn't need 30fps, and running two ML inference
 passes every single frame on the CPU delegate is a real cost worth
-avoiding). **Only the coarse region label + a confidence float are ever
-sent to the backend** — never raw face landmarks or video frames, the
+avoiding). Region changes are sent immediately and an unchanged reading is
+refreshed every 750ms so it remains inside the fusion engine's 1.5-second
+correlation window without producing per-frame RPC traffic. **Only the
+coarse region label + a confidence float are ever sent to the backend** —
+never raw face landmarks or video frames, the
 same minimal-data-sent principle the existing gesture pipeline already
 follows (gesture events send just a gesture name, not landmark
 coordinates).
+
+**How to activate and verify it**: turn on Settings → Gaze Tracking, then
+use **Open Command** and click the visible **Gaze ready → start camera**
+control. Camera access remains a separate, explicit user action. The Command
+control and camera preview show model loading, face scanning, the live coarse
+region/confidence, and local/daemon errors; the Settings section distinguishes
+an enabled preference from a genuinely active camera/model session. Changing
+the preference while an existing camera session is running hot-enables or
+hot-disables FaceLandmarker without restarting hand tracking.
 
 **Fusion**: `pilot.multimodal.fusion.MultimodalFusionEngine` gained a
 third `ModalityType.GAZE` and its own buffer (`on_gaze_event()`), but

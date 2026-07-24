@@ -3403,12 +3403,22 @@ class PilotServer:
         if not self.config.vision.gaze_tracking_enabled:
             return {"status": "ignored", "reason": "gaze_tracking_disabled"}
 
+        region = params.get("region", "")
+        if region not in {"center", "left", "right", "up", "down"}:
+            return {"status": "ignored", "reason": "invalid_region"}
+
+        confidence = params.get("confidence", 0.0)
+        if not isinstance(confidence, (int, float)) or not 0.0 <= confidence <= 1.0:
+            return {"status": "ignored", "reason": "invalid_confidence"}
+        if confidence < self._fusion.min_gaze_confidence:
+            return {"status": "ignored", "reason": "confidence_below_threshold"}
+
         from pilot.multimodal.fusion import InputEvent, ModalityType
 
         event = InputEvent(
             modality=ModalityType.GAZE,
-            gaze_region=params.get("region", ""),
-            gaze_confidence=params.get("confidence", 0.0),
+            gaze_region=region,
+            gaze_confidence=confidence,
         )
         await self._fusion.on_gaze_event(event)
         return {"status": "ingested"}

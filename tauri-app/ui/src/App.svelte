@@ -312,7 +312,7 @@
       {:else if activeTab === "plugins"}
         <PluginsTab />
       {:else}
-        <SettingsPanel />
+        <SettingsPanel onOpenCommand={() => activeTab = "chat"} />
       {/if}
       {#snippet failed(error, reset)}
         <div class="empty-state">

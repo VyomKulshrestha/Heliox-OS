@@ -40,12 +40,25 @@ async def test_ingests_a_valid_gaze_event():
 
 
 @pytest.mark.asyncio
-async def test_low_confidence_event_is_ingested_call_but_not_buffered():
-    """The handler still reports "ingested" (the call succeeded), but the
-    fusion engine itself silently drops sub-threshold readings -- gaze
-    never independently rejects/errors on low confidence, it's simply not
-    useful signal yet."""
+async def test_low_confidence_event_reports_ignored_and_is_not_buffered():
     server = _server(gaze_enabled=True)
     result = await server._handle_gaze_event({"region": "left", "confidence": 0.01}, ws=None)
-    assert result["status"] == "ingested"
+    assert result == {"status": "ignored", "reason": "confidence_below_threshold"}
+    assert server._fusion.get_stats()["gaze_buffer_size"] == 0
+
+
+@pytest.mark.asyncio
+async def test_invalid_region_reports_ignored_and_is_not_buffered():
+    server = _server(gaze_enabled=True)
+    result = await server._handle_gaze_event({"region": "upper-left", "confidence": 0.8}, ws=None)
+    assert result == {"status": "ignored", "reason": "invalid_region"}
+    assert server._fusion.get_stats()["gaze_buffer_size"] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("confidence", [-0.1, 1.1, "high", None])
+async def test_invalid_confidence_reports_ignored(confidence):
+    server = _server(gaze_enabled=True)
+    result = await server._handle_gaze_event({"region": "left", "confidence": confidence}, ws=None)
+    assert result == {"status": "ignored", "reason": "invalid_confidence"}
     assert server._fusion.get_stats()["gaze_buffer_size"] == 0

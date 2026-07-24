@@ -35,6 +35,20 @@ export interface GazeEstimate {
   confidence: number;
 }
 
+// Fusion only considers readings inside its short correlation window. A
+// steady gaze therefore needs a heartbeat as well as change-based updates;
+// otherwise an unchanged region silently expires after the first event.
+export const GAZE_HEARTBEAT_MS = 750;
+
+export function shouldSendGazeUpdate(
+  region: GazeRegion,
+  previousRegion: GazeRegion | null,
+  nowMs: number,
+  previousSentAtMs: number,
+): boolean {
+  return region !== previousRegion || nowMs - previousSentAtMs >= GAZE_HEARTBEAT_MS;
+}
+
 // MediaPipe's 478-point face mesh topology (iris refinement enabled) —
 // fixed indices, not derived at runtime.
 const LEFT_EYE = { iris: 468, outer: 33, inner: 133, top: 159, bottom: 145 };

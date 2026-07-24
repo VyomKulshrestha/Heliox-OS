@@ -62,7 +62,16 @@
     detectPushPull3D,
     WorldModelFilterBank,
   } from "../gesture/worldModel";
-  import { estimateGazeRegion, type GazeRegion } from "../gesture/gazeTracking";
+  import {
+    estimateGazeRegion,
+    shouldSendGazeUpdate,
+    type GazeRegion,
+  } from "../gesture/gazeTracking";
+  import {
+    gazeRuntime,
+    resetGazeRuntime,
+    updateGazeRuntime,
+  } from "../stores/gazeRuntime";
   import { isTauriRuntime } from "../utils/runtime";
   import { GestureCalibrationStore, classifyOutcome, REVERSAL_WINDOW_MS, type GestureEvent } from "../gesture/calibration";
   import { classifyControlGesture } from "../gesture/workflowControl";
@@ -104,6 +113,7 @@
   let faceLandmarker: FaceLandmarker | null = null;
   let gazeTrackingActive = false;
   let lastGazeRegion: GazeRegion | null = null;
+  let lastGazeSentAt = 0;
   let gazeFrameCounter = 0;
   // Face detection runs far less often than hand detection -- a coarse
   // "which rough direction" signal doesn't need 30fps, and running two
@@ -397,6 +407,14 @@
   async function loadFaceLandmarker() {
     if (faceLandmarker) return true;
 
+    updateGazeRuntime({
+      phase: "loading",
+      cameraActive: isActive,
+      region: null,
+      confidence: null,
+      daemonStatus: "idle",
+      message: "Loading the on-device FaceLandmarker model…",
+    });
     try {
       const vision = await FilesetResolver.forVisionTasks(MEDIAPIPE_TASKS_VISION_ASSET_BASE);
       faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
@@ -411,8 +429,48 @@
     } catch (e) {
       console.error("MediaPipe FaceLandmarker load error (gaze tracking disabled for this session):", e);
       faceLandmarker = null;
+      updateGazeRuntime({
+        phase: "error",
+        cameraActive: isActive,
+        message: "Gaze model failed to load. Gesture control can still run.",
+      });
       return false;
     }
+  }
+
+  async function activateGazeTracking(): Promise<void> {
+    if (!isActive || gazeTrackingActive || !$settings.vision?.gaze_tracking_enabled) return;
+    const loaded = await loadFaceLandmarker();
+    if (!isActive || !$settings.vision?.gaze_tracking_enabled) {
+      if (faceLandmarker) {
+        try { faceLandmarker.close(); } catch { /* ignore */ }
+        faceLandmarker = null;
+      }
+      return;
+    }
+    gazeTrackingActive = loaded;
+    if (loaded) {
+      updateGazeRuntime({
+        phase: "scanning",
+        cameraActive: true,
+        region: null,
+        confidence: null,
+        daemonStatus: "idle",
+        message: "Camera and gaze model are on. Looking for your face…",
+      });
+    }
+  }
+
+  function deactivateGazeTracking(): void {
+    if (faceLandmarker) {
+      try { faceLandmarker.close(); } catch { /* ignore */ }
+      faceLandmarker = null;
+    }
+    gazeTrackingActive = false;
+    lastGazeRegion = null;
+    lastGazeSentAt = 0;
+    gazeFrameCounter = 0;
+    resetGazeRuntime();
   }
 
   async function toggleGestures() {
@@ -505,20 +563,26 @@
 
   async function startGestures() {
     cameraError = "";
+    resetGazeRuntime();
+    if ($settings.vision?.gaze_tracking_enabled) {
+      updateGazeRuntime({
+        phase: "loading",
+        message: "Preparing camera controls and on-device models…",
+      });
+    }
     activeBackend = $settings.vision?.mediapipe_backend === "tasks" ? "tasks" : "legacy";
     const loaded = activeBackend === "tasks" ? await loadHandLandmarker() : await loadMediaPipe();
-    if (!loaded) return;
+    if (!loaded) {
+      if ($settings.vision?.gaze_tracking_enabled) {
+        updateGazeRuntime({
+          phase: "error",
+          message: cameraError || "Camera controls failed to load.",
+        });
+      }
+      return;
+    }
 
     await subscribeToWorkflowState();
-
-    // Gaze tracking is independent of the hand backend choice and never
-    // blocks gesture engine startup if it fails to load — it's an
-    // additive, opt-in third modality, not a required dependency.
-    if ($settings.vision?.gaze_tracking_enabled) {
-      gazeTrackingActive = await loadFaceLandmarker();
-    } else {
-      gazeTrackingActive = false;
-    }
 
     try {
       stream = await navigator.mediaDevices.getUserMedia({
@@ -527,6 +591,14 @@
     } catch (e: any) {
       cameraError = `Camera error: ${e.name || e.message || 'Access denied or no device found'}`;
       console.error("Camera error:", e);
+      if ($settings.vision?.gaze_tracking_enabled) {
+        updateGazeRuntime({
+          phase: "error",
+          cameraActive: false,
+          message: cameraError,
+        });
+      }
+      void unsubscribeFromWorkflowState();
       return;
     }
 
@@ -569,13 +641,7 @@
       try { handLandmarker.close(); } catch { /* ignore */ }
       handLandmarker = null;
     }
-    if (faceLandmarker) {
-      try { faceLandmarker.close(); } catch { /* ignore */ }
-      faceLandmarker = null;
-    }
-    gazeTrackingActive = false;
-    lastGazeRegion = null;
-    gazeFrameCounter = 0;
+    deactivateGazeTracking();
     lastWorldLandmarks = null;
 
     // 3. Stop camera tracks AFTER MediaPipe is closed
@@ -634,12 +700,30 @@
           const faceResult = faceLandmarker.detectForVideo(videoEl, performance.now());
           const faceLandmarks = faceResult.faceLandmarks?.[0] as { x: number; y: number; z?: number }[] | undefined;
           const estimate = estimateGazeRegion(faceLandmarks ?? null);
-          // Only send on CHANGE, not every sampled frame -- a steady gaze
-          // shouldn't spam the backend, and the fusion engine only needs
-          // "where is the user looking now", not a continuous stream.
-          if (estimate && estimate.region !== lastGazeRegion) {
-            lastGazeRegion = estimate.region;
-            void sendGazeEvent(estimate.region, estimate.confidence);
+          if (estimate) {
+            const now = performance.now();
+            updateGazeRuntime({
+              phase: "active",
+              cameraActive: true,
+              region: estimate.region,
+              confidence: estimate.confidence,
+              message: "",
+            });
+            // Refresh a steady reading before the backend's short fusion
+            // window expires, while still avoiding per-frame RPC traffic.
+            if (shouldSendGazeUpdate(estimate.region, lastGazeRegion, now, lastGazeSentAt)) {
+              lastGazeRegion = estimate.region;
+              lastGazeSentAt = now;
+              void sendGazeEvent(estimate.region, estimate.confidence);
+            }
+          } else {
+            updateGazeRuntime({
+              phase: "scanning",
+              cameraActive: true,
+              region: null,
+              confidence: null,
+              message: "Gaze is on, but no face is visible to the camera.",
+            });
           }
         } catch { /* ignore */ }
       }
@@ -656,11 +740,30 @@
    * send just means this one gaze update didn't reach the fusion engine,
    * not a reason to disrupt the gesture/camera pipeline. */
   async function sendGazeEvent(region: GazeRegion, confidence: number): Promise<void> {
+    updateGazeRuntime({ daemonStatus: "sending" });
     try {
       const { call } = await import("../api/daemon");
-      await call("gaze_event", { region, confidence });
+      const response = (await call("gaze_event", { region, confidence })) as {
+        status?: "ingested" | "ignored" | "error";
+        reason?: string;
+        message?: string;
+      };
+      if (response.status === "ingested") {
+        updateGazeRuntime({ daemonStatus: "ingested", message: "" });
+      } else {
+        updateGazeRuntime({
+          daemonStatus: response.status === "ignored" ? "ignored" : "error",
+          message:
+            response.reason === "confidence_below_threshold"
+              ? "Gaze detected locally; confidence is too low for fusion."
+              : response.message || "Gaze detected locally, but the daemon did not ingest it.",
+        });
+      }
     } catch {
-      // best-effort -- see doc comment above
+      updateGazeRuntime({
+        daemonStatus: "error",
+        message: "Gaze detected locally, but the daemon connection is unavailable.",
+      });
     }
   }
 
@@ -1377,6 +1480,17 @@
   }
 
   $effect(() => {
+    const enabled = $settings.vision?.gaze_tracking_enabled ?? false;
+    if (!enabled) {
+      if (gazeTrackingActive || faceLandmarker) deactivateGazeTracking();
+    } else if (isActive && !gazeTrackingActive) {
+      // This also makes the preference reactive if it is changed while the
+      // camera session is already running.
+      void activateGazeTracking();
+    }
+  });
+
+  $effect(() => {
     return () => stopGestures();
   });
 </script>
@@ -1387,7 +1501,12 @@
     class:active={isActive}
     class:loading={mpLoading}
     onclick={toggleGestures}
-    title={isActive ? "Stop gesture control" : "Start gesture control (30+ gestures!)"}
+    aria-label={isActive ? "Stop camera controls" : "Start camera controls"}
+    title={isActive
+      ? "Stop camera, gesture, and gaze control"
+      : $settings.vision?.gaze_tracking_enabled
+        ? "Start camera, hand gestures, and gaze tracking"
+        : "Start gesture control (30+ gestures!)"}
   >
     <svg class="hand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
       <path d="M18 11V6a2 2 0 0 0-4 0v1" />
@@ -1399,6 +1518,30 @@
       <span class="loading-dot"></span>
     {/if}
   </button>
+
+  {#if $settings.vision?.gaze_tracking_enabled}
+    <button
+      class="gaze-runtime-chip"
+      class:active={$gazeRuntime.phase === "active"}
+      class:error={$gazeRuntime.phase === "error" || $gazeRuntime.daemonStatus === "error"}
+      class:scanning={$gazeRuntime.phase === "loading" || $gazeRuntime.phase === "scanning"}
+      onclick={() => { if (!isActive) void startGestures(); }}
+      title={$gazeRuntime.message || (isActive ? "Live coarse gaze region" : "Start the camera to activate gaze tracking")}
+    >
+      <span class="gaze-runtime-dot"></span>
+      {#if $gazeRuntime.phase === "active" && $gazeRuntime.region}
+        Gaze: {$gazeRuntime.region} {Math.round(($gazeRuntime.confidence ?? 0) * 100)}%
+      {:else if $gazeRuntime.phase === "loading"}
+        Loading gaze…
+      {:else if $gazeRuntime.phase === "scanning"}
+        Gaze on · find face
+      {:else if $gazeRuntime.phase === "error"}
+        Gaze error
+      {:else}
+        Gaze ready · start camera
+      {/if}
+    </button>
+  {/if}
 
   {#if isActive && $settings.gesture_cursor?.enabled}
     <button
@@ -1443,6 +1586,24 @@
       {/if}
       <!-- Gesture count badge -->
       <div class="pip-badge">30+ gestures</div>
+      {#if $settings.vision?.gaze_tracking_enabled}
+        <div
+          class="pip-gaze-badge"
+          class:active={$gazeRuntime.phase === "active"}
+          class:error={$gazeRuntime.phase === "error" || $gazeRuntime.daemonStatus === "error"}
+          title={$gazeRuntime.message}
+        >
+          {#if $gazeRuntime.phase === "active" && $gazeRuntime.region}
+            Gaze {$gazeRuntime.region} · {Math.round(($gazeRuntime.confidence ?? 0) * 100)}%
+          {:else if $gazeRuntime.phase === "loading"}
+            Gaze loading
+          {:else if $gazeRuntime.phase === "scanning"}
+            Gaze scanning
+          {:else}
+            Gaze unavailable
+          {/if}
+        </div>
+      {/if}
     </div>
   {/if}
 
@@ -1531,6 +1692,45 @@
 
   @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.2; } }
 
+  .gaze-runtime-chip {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 9px;
+    border-radius: 12px;
+    border: 1px solid rgba(180, 120, 255, 0.35);
+    background: rgba(180, 120, 255, 0.08);
+    color: rgba(220, 200, 255, 0.9);
+    font-size: 10px;
+    font-weight: 600;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+
+  .gaze-runtime-chip.active {
+    border-color: rgba(0, 255, 136, 0.5);
+    background: rgba(0, 255, 136, 0.1);
+    color: rgba(130, 255, 195, 0.95);
+  }
+
+  .gaze-runtime-chip.scanning {
+    border-color: rgba(245, 158, 11, 0.5);
+    color: rgba(255, 205, 110, 0.95);
+  }
+
+  .gaze-runtime-chip.error {
+    border-color: rgba(255, 80, 80, 0.55);
+    color: rgba(255, 135, 135, 0.95);
+  }
+
+  .gaze-runtime-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    box-shadow: 0 0 7px currentColor;
+  }
+
   .gesture-label {
     display: flex; align-items: center; gap: 4px;
     padding: 3px 10px; border-radius: 12px;
@@ -1618,6 +1818,28 @@
     color: rgba(255,255,255,0.7); font-size: 8px;
     font-family: "Inter", sans-serif; letter-spacing: 0.5px;
     z-index: 2;
+  }
+
+  .pip-gaze-badge {
+    position: absolute;
+    top: 25px;
+    left: 4px;
+    padding: 2px 6px;
+    border-radius: 6px;
+    background: rgba(245, 158, 11, 0.75);
+    color: white;
+    font-size: 9px;
+    font-family: "Inter", sans-serif;
+    text-transform: capitalize;
+    z-index: 2;
+  }
+
+  .pip-gaze-badge.active {
+    background: rgba(0, 130, 80, 0.82);
+  }
+
+  .pip-gaze-badge.error {
+    background: rgba(180, 35, 45, 0.85);
   }
 
   .gesture-error {
