@@ -64,3 +64,6 @@ async def test_transcribe_whisper_uses_cached_model():
     assert result2["text"] == "hello world"
     load_model.assert_called_once_with("base")
     assert fake_model.transcribe.call_count == 2
+    kwargs = fake_model.transcribe.call_args.kwargs
+    assert kwargs["initial_prompt"] == voice._VOICE_TRANSCRIPTION_PROMPT
+    assert "Names may include" not in kwargs["initial_prompt"]

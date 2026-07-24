@@ -24,10 +24,8 @@ from pilot.system.voice_calibration import WakeWordCalibrator
 logger = logging.getLogger("pilot.system.voice")
 
 _VOICE_TRANSCRIPTION_PROMPT = (
-    "Heliox computer commands. Wake phrase: Hey Heliox. "
-    "Common verbs: open, close, launch, search, switch, type, scroll, click. "
-    "Names may include GitHub, Google, YouTube, Gmail, Spotify, Notepad, "
-    "Calculator, browser, application, file."
+    "Hey Heliox. Computer command vocabulary: open, close, search, launch. "
+    "Proper names: GitHub, Google, YouTube, Gmail, Spotify."
 )
 
 # The currently in-flight speak() call, if any -- module-level so that ANY
