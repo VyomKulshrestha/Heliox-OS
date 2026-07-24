@@ -234,6 +234,31 @@ export function predictCursorTarget(filtered: Landmark, predicted: Landmark, ble
   };
 }
 
+/** Map a normalized, unmirrored MediaPipe target to an absolute screen point.
+ *
+ * Sensitivity is a gain around screen centre: 1 preserves the original
+ * full-screen mapping, values below 1 reduce travel, and values above 1
+ * expand travel until it clamps at the screen edge.
+ */
+export function mapCursorTargetToScreen(
+  target: Landmark,
+  screenWidth: number,
+  screenHeight: number,
+  sensitivity: number
+): { x: number; y: number } {
+  const width = Math.max(1, Math.floor(screenWidth));
+  const height = Math.max(1, Math.floor(screenHeight));
+  const gain = Math.max(0.1, Math.min(3, sensitivity));
+  const mirroredX = 1 - target.x;
+  const normalizedX = 0.5 + (mirroredX - 0.5) * gain;
+  const normalizedY = 0.5 + (target.y - 0.5) * gain;
+
+  return {
+    x: Math.round(Math.max(0, Math.min(width - 1, normalizedX * width))),
+    y: Math.round(Math.max(0, Math.min(height - 1, normalizedY * height))),
+  };
+}
+
 /**
  * Scores how much a predicted next position agrees with an observed
  * per-axis motion direction (e.g. a swipe's dx, or a circular gesture's

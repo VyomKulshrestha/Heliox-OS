@@ -36,3 +36,49 @@ async def test_preview_enabled_update_is_applied_and_saved():
     assert result["status"] == "ok"
     assert config.preview.enabled is True
     config.save.assert_called_once_with()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("values", "message"),
+    [
+        ({"enabled": 1}, "enabled must be a boolean"),
+        ({"sensitivity": 0}, "sensitivity must be from 0.1 to 3"),
+        ({"prediction_ms": 251}, "prediction_ms must be from 0 to 250"),
+        ({"blend": 1.1}, "blend must be from 0 to 1"),
+    ],
+)
+async def test_gesture_cursor_update_rejects_invalid_values(values, message):
+    config = PilotConfig()
+    config.save = MagicMock()
+    server = PilotServer(config)
+
+    result = await server._handle_update_config(
+        {"section": "gesture_cursor", "values": values},
+        MagicMock(),
+    )
+
+    assert result["status"] == "error"
+    assert message in result["message"]
+    config.save.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_gesture_cursor_update_applies_runtime_tuning():
+    config = PilotConfig()
+    config.save = MagicMock()
+    server = PilotServer(config)
+
+    result = await server._handle_update_config(
+        {
+            "section": "gesture_cursor",
+            "values": {"enabled": True, "sensitivity": 1.7, "blend": 0.45},
+        },
+        MagicMock(),
+    )
+
+    assert result["status"] == "ok"
+    assert config.gesture_cursor.enabled is True
+    assert config.gesture_cursor.sensitivity == 1.7
+    assert config.gesture_cursor.blend == 0.45
+    config.save.assert_called_once_with()

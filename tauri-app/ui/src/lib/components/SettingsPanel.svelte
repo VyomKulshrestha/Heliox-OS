@@ -72,6 +72,7 @@
   let dryRunToast = $state("");
   let previewSaving = $state(false);
   let previewToast = $state("");
+  let gestureCursorToast = $state("");
 
   $effect(() => {
     if ($locale) {
@@ -385,10 +386,19 @@
 
   // Gesture cursor control drives the real OS mouse cursor - default off,
   // must be an explicit opt-in via this toggle (never silently enabled).
-  function toggleGestureCursor() {
-    settings.updateSection("gesture_cursor", {
-      enabled: !$settings.gesture_cursor?.enabled,
+  async function toggleGestureCursor() {
+    const turningOn = !$settings.gesture_cursor?.enabled;
+    const synced = await settings.updateSection("gesture_cursor", {
+      enabled: turningOn,
     });
+    gestureCursorToast = synced
+      ? (turningOn
+        ? "Gesture Cursor enabled. Start the camera and explicitly enter Cursor Mode to control the pointer."
+        : "Gesture Cursor disabled. Any active Cursor Mode was stopped.")
+      : (turningOn
+        ? "Enabled for this UI session, but daemon persistence could not be confirmed."
+        : "Disabled locally; daemon persistence could not be confirmed.");
+    setTimeout(() => (gestureCursorToast = ""), 5000);
   }
 
   async function toggleGazeTracking() {
@@ -420,18 +430,28 @@
     setTimeout(() => (previewToast = ""), 5000);
   }
 
-  function updateGestureCursorSensitivity(e: Event) {
+  async function updateGestureCursorSensitivity(e: Event) {
     const rawValue = Number((e.target as HTMLInputElement).value);
     if (!Number.isFinite(rawValue)) return;
     const sensitivity = Math.min(3, Math.max(0.1, rawValue));
-    settings.updateSection("gesture_cursor", { sensitivity });
+    (e.target as HTMLInputElement).value = String(sensitivity);
+    const synced = await settings.updateSection("gesture_cursor", { sensitivity });
+    gestureCursorToast = synced
+      ? `Cursor sensitivity saved at ${sensitivity}.`
+      : "Sensitivity changed locally, but daemon persistence could not be confirmed.";
+    setTimeout(() => (gestureCursorToast = ""), 5000);
   }
 
-  function updateGestureCursorBlend(e: Event) {
+  async function updateGestureCursorBlend(e: Event) {
     const rawValue = Number((e.target as HTMLInputElement).value);
     if (!Number.isFinite(rawValue)) return;
     const blend = Math.min(1, Math.max(0, rawValue));
-    settings.updateSection("gesture_cursor", { blend });
+    (e.target as HTMLInputElement).value = String(blend);
+    const synced = await settings.updateSection("gesture_cursor", { blend });
+    gestureCursorToast = synced
+      ? `Prediction blend saved at ${blend}.`
+      : "Prediction blend changed locally, but daemon persistence could not be confirmed.";
+    setTimeout(() => (gestureCursorToast = ""), 5000);
   }
 
   // Adaptive gesture calibration is frontend-only (localStorage) - reading a
@@ -1005,10 +1025,19 @@
 
     <p class="gesture-cursor-warning">{$_('settings.gesture_cursor_warning')}</p>
 
+    {#if gestureCursorToast}
+      <div class="root-toast root-toast-warning">{gestureCursorToast}</div>
+    {/if}
+
     <div class="setting-row">
       <div class="setting-info">
         <span class="setting-label">{$_('settings.gesture_cursor_enabled')}</span>
         <span class="setting-desc">{$_('settings.gesture_cursor_enabled_desc')}</span>
+        <span class="security-setting-status">
+          {$settings.gesture_cursor?.enabled
+            ? "Enabled · cursor movement still requires the visible Cursor Mode button"
+            : "Disabled · camera gestures cannot move or click the OS cursor"}
+        </span>
       </div>
       <button
         class="toggle"

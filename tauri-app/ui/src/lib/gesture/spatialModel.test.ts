@@ -6,6 +6,7 @@ import {
   geometricQuality,
   computeHandQuality,
   LandmarkFilterBank,
+  mapCursorTargetToScreen,
   predictCursorTarget,
   trajectoryAgreement,
   type Landmark,
@@ -276,6 +277,35 @@ describe("predictCursorTarget", () => {
     const b = { x: 1, y: 1, z: 0 };
     expect(predictCursorTarget(a, b, -5).x).toBeCloseTo(0);
     expect(predictCursorTarget(a, b, 5).x).toBeCloseTo(1);
+  });
+});
+
+describe("mapCursorTargetToScreen", () => {
+  it("preserves the original mirrored full-screen mapping at sensitivity 1", () => {
+    expect(mapCursorTargetToScreen({ x: 0.25, y: 0.4 }, 1000, 500, 1)).toEqual({
+      x: 750,
+      y: 200,
+    });
+  });
+
+  it("reduces cursor travel around screen centre below sensitivity 1", () => {
+    expect(mapCursorTargetToScreen({ x: 0, y: 0 }, 1000, 500, 0.5)).toEqual({
+      x: 750,
+      y: 125,
+    });
+  });
+
+  it("expands travel and clamps to screen bounds above sensitivity 1", () => {
+    expect(mapCursorTargetToScreen({ x: 0, y: 1 }, 1000, 500, 3)).toEqual({
+      x: 999,
+      y: 499,
+    });
+  });
+
+  it("clamps sensitivity to the supported range", () => {
+    expect(mapCursorTargetToScreen({ x: 0, y: 0 }, 1000, 500, 99)).toEqual(
+      mapCursorTargetToScreen({ x: 0, y: 0 }, 1000, 500, 3)
+    );
   });
 });
 

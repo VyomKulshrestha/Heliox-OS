@@ -50,6 +50,7 @@
     isThumbExtended,
     thumbExtensionRatio,
     handSize,
+    mapCursorTargetToScreen,
     predictCursorTarget,
     trajectoryAgreement,
     THUMB_EXTENDED_RATIO,
@@ -261,6 +262,12 @@
     pinchClickFired = false;
   }
 
+  $effect(() => {
+    if (!$settings.gesture_cursor?.enabled && cursorModeActive) {
+      exitCursorMode();
+    }
+  });
+
   function toggleCursorMode() {
     if (!$settings.gesture_cursor?.enabled) return;
     if (cursorModeActive) {
@@ -285,10 +292,13 @@
     // selfie-view display, but MediaPipe processes the raw, unmirrored
     // frame — flip x so cursor motion matches what the user sees (moving
     // their hand right visually moves the cursor right).
-    const screenX = Math.round(
-      Math.max(0, Math.min(window.screen.width - 1, (1 - target.x) * window.screen.width))
+    const sensitivity = $settings.gesture_cursor?.sensitivity ?? 1;
+    const { x: screenX, y: screenY } = mapCursorTargetToScreen(
+      target,
+      window.screen.width,
+      window.screen.height,
+      sensitivity
     );
-    const screenY = Math.round(Math.max(0, Math.min(window.screen.height - 1, target.y * window.screen.height)));
     lastCursorX = screenX;
     lastCursorY = screenY;
     void moveGestureCursor(screenX, screenY);

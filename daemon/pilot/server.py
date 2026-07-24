@@ -2569,6 +2569,26 @@ class PilotServer:
                             "status": "error",
                             "message": "preview.confirm_timeout_seconds must be from 10 to 600",
                         }
+                if section == "gesture_cursor" and k == "enabled" and not isinstance(v, bool):
+                    return {"status": "error", "message": "gesture_cursor.enabled must be a boolean"}
+                if section == "gesture_cursor" and k == "sensitivity":
+                    if not isinstance(v, (int, float)) or isinstance(v, bool) or not 0.1 <= v <= 3:
+                        return {
+                            "status": "error",
+                            "message": "gesture_cursor.sensitivity must be from 0.1 to 3",
+                        }
+                if section == "gesture_cursor" and k == "prediction_ms":
+                    if not isinstance(v, (int, float)) or isinstance(v, bool) or not 0 <= v <= 250:
+                        return {
+                            "status": "error",
+                            "message": "gesture_cursor.prediction_ms must be from 0 to 250",
+                        }
+                if section == "gesture_cursor" and k == "blend":
+                    if not isinstance(v, (int, float)) or isinstance(v, bool) or not 0 <= v <= 1:
+                        return {
+                            "status": "error",
+                            "message": "gesture_cursor.blend must be from 0 to 1",
+                        }
                 if section == "screen_vision" and k == "capture_interval_seconds":
                     v = float(v)
                 setattr(target, k, v)
