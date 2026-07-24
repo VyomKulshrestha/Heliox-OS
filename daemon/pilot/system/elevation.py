@@ -53,27 +53,20 @@ def request_elevated_restart(
         raise ElevationError("Cannot restart an invalid daemon process.")
 
     python_executable = str(Path(executable or sys.executable).resolve())
-    daemon_directory = str(
-        Path(working_directory or Path(__file__).resolve().parents[2]).resolve()
-    )
-    parameters = subprocess.list2cmdline(
-        ["-m", "pilot.server", "--replace-pid", str(target_pid)]
-    )
+    daemon_directory = str(Path(working_directory or Path(__file__).resolve().parents[2]).resolve())
+    parameters = subprocess.list2cmdline(["-m", "pilot.server", "--replace-pid", str(target_pid)])
     launch = launcher or _shell_execute_runas
     result = launch(python_executable, parameters, daemon_directory)
 
     if result <= 32:
         if result == 5:
-            raise ElevationError(
-                "Windows did not grant Administrator access. Approve the UAC prompt to continue."
-            )
+            raise ElevationError("Windows did not grant Administrator access. Approve the UAC prompt to continue.")
         raise ElevationError(f"Windows could not start the elevated daemon (ShellExecute {result}).")
 
     return {
         "status": "prompted",
         "message": (
-            "Administrator restart accepted. Heliox will reconnect automatically "
-            "when the elevated daemon is ready."
+            "Administrator restart accepted. Heliox will reconnect automatically when the elevated daemon is ready."
         ),
     }
 
@@ -106,9 +99,7 @@ def replace_existing_daemon(
         raise ElevationError(f"Could not inspect the existing daemon: {error}") from error
 
     is_pilot_daemon = any(
-        part == "pilot.server"
-        or part.endswith("\\pilot\\server.py")
-        or part.endswith("/pilot/server.py")
+        part == "pilot.server" or part.endswith("\\pilot\\server.py") or part.endswith("/pilot/server.py")
         for part in command_line
     )
     if not is_pilot_daemon:

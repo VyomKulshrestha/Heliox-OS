@@ -309,10 +309,7 @@ class SnapshotManager:
         sequence = snapshot_id.removeprefix("windows-restore:")
         if not sequence.isdigit():
             raise ValueError("Invalid Windows restore point ID")
-        script = (
-            "$ErrorActionPreference='Stop'; "
-            f"Restore-Computer -RestorePoint {sequence} -Confirm:$false"
-        )
+        script = f"$ErrorActionPreference='Stop'; Restore-Computer -RestorePoint {sequence} -Confirm:$false"
         code, out, err = await _run(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
             root=True,

@@ -548,8 +548,7 @@ class Executor:
                         action=plan.actions[0],
                         success=False,
                         error=(
-                            "Safety stop: Auto-Snapshot is enabled, but no snapshot backend is ready. "
-                            "No actions ran."
+                            "Safety stop: Auto-Snapshot is enabled, but no snapshot backend is ready. No actions ran."
                         ),
                     )
                 ]

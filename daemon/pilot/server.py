@@ -2602,9 +2602,7 @@ class PilotServer:
                     if not isinstance(v, bool):
                         return {
                             "status": "error",
-                            "message": (
-                                "adaptive_calibration.voice_wake_word_enabled must be a boolean"
-                            ),
+                            "message": ("adaptive_calibration.voice_wake_word_enabled must be a boolean"),
                         }
                 if section == "voice" and k == "tts_engine":
                     if v not in {"pocket_tts", "os_native"}:
