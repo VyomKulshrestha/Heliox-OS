@@ -101,3 +101,22 @@ async def test_gesture_calibration_update_requires_boolean():
     assert result["status"] == "error"
     assert config.adaptive_calibration.gesture_enabled is True
     config.save.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_voice_calibration_update_requires_boolean():
+    config = PilotConfig()
+    config.save = MagicMock()
+    server = PilotServer(config)
+
+    result = await server._handle_update_config(
+        {
+            "section": "adaptive_calibration",
+            "values": {"voice_wake_word_enabled": 1},
+        },
+        MagicMock(),
+    )
+
+    assert result["status"] == "error"
+    assert config.adaptive_calibration.voice_wake_word_enabled is True
+    config.save.assert_not_called()

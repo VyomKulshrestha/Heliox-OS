@@ -2595,6 +2595,14 @@ class PilotServer:
                             "status": "error",
                             "message": "adaptive_calibration.gesture_enabled must be a boolean",
                         }
+                if section == "adaptive_calibration" and k == "voice_wake_word_enabled":
+                    if not isinstance(v, bool):
+                        return {
+                            "status": "error",
+                            "message": (
+                                "adaptive_calibration.voice_wake_word_enabled must be a boolean"
+                            ),
+                        }
                 if section == "screen_vision" and k == "capture_interval_seconds":
                     v = float(v)
                 setattr(target, k, v)
@@ -4770,6 +4778,7 @@ def handle_tool(tool_name, params):
             on_command=self._voice_command_dispatch,
             on_status=self._voice_status_broadcast,
             workflow_control=self._voice_workflow_control_dispatch,
+            config=self.config,
         )
         result = await self._voice_listener.start()
         return {"status": "started", "message": result, "wake_words": wake_words}

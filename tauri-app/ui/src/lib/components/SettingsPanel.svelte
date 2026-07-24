@@ -74,6 +74,7 @@
   let previewToast = $state("");
   let gestureCursorToast = $state("");
   let gestureCalibrationToast = $state("");
+  let voiceCalibrationToast = $state("");
 
   $effect(() => {
     if ($locale) {
@@ -485,34 +486,50 @@
 
   let voiceVariants = $state<{ text: string; confirmed_count: number }[]>([]);
   let voicePromotionThreshold = $state(5);
+  let voiceVariantsAvailable = $state(true);
 
-  function loadVoiceVariants() {
-    call("list_wake_variants").then((res: any) => {
+  async function loadVoiceVariants() {
+    try {
+      const res: any = await call("list_wake_variants");
       if (res && res.variants) {
         voiceVariants = res.variants;
         voicePromotionThreshold = res.promotion_threshold ?? 5;
+        voiceVariantsAvailable = true;
       }
-    }).catch(() => {});
+    } catch {
+      voiceVariantsAvailable = false;
+    }
   }
 
   $effect(() => {
     loadVoiceVariants();
+    const refresh = setInterval(loadVoiceVariants, 5000);
+    return () => clearInterval(refresh);
   });
 
-  function toggleVoiceCalibration() {
-    settings.updateSection("adaptive_calibration", {
-      voice_wake_word_enabled: !$settings.adaptive_calibration?.voice_wake_word_enabled,
-    });
+  async function toggleVoiceCalibration() {
+    const turningOn = !$settings.adaptive_calibration?.voice_wake_word_enabled;
+    const synced = await settings.updateSection(
+      "adaptive_calibration",
+      { voice_wake_word_enabled: turningOn },
+      { requireDaemon: true },
+    );
+    voiceCalibrationToast = synced
+      ? (turningOn ? "Adaptive wake-word matching enabled." : "Adaptive wake-word matching disabled.")
+      : "Wake-word calibration was not changed because the daemon could not confirm it.";
+    setTimeout(() => (voiceCalibrationToast = ""), 5000);
   }
 
   async function resetVoiceCalibration() {
     try {
-      await call("reset_wake_calibration");
+      const result = await call<{ status: string }>("reset_wake_calibration");
+      if (result.status !== "ok") throw new Error("Daemon rejected reset");
+      voiceVariants = [];
+      voiceCalibrationToast = "Learned wake-word variants cleared from the live listener and disk.";
     } catch {
-      // best-effort - the on-device store falls back to a fresh
-      // VoiceCalibrationStore() even if no listener is running
+      voiceCalibrationToast = "Wake-word variants were not cleared because the daemon could not confirm it.";
     }
-    voiceVariants = [];
+    setTimeout(() => (voiceCalibrationToast = ""), 5000);
   }
 
   function updateOllamaModel(e: Event) {
@@ -1145,10 +1162,19 @@
     <h3>{$_('settings.voice_calibration')}</h3>
     <p class="gesture-cursor-warning">{$_('settings.voice_calibration_desc')}</p>
 
+    {#if voiceCalibrationToast}
+      <div class="root-toast root-toast-success">{voiceCalibrationToast}</div>
+    {/if}
+
     <div class="setting-row">
       <div class="setting-info">
         <span class="setting-label">{$_('settings.voice_calibration_enabled')}</span>
         <span class="setting-desc">{$_('settings.voice_calibration_enabled_desc')}</span>
+        <span class="security-setting-status">
+          {$settings.adaptive_calibration?.voice_wake_word_enabled
+            ? "Active · the daemon's Hey Heliox listener can use promoted variants"
+            : "Inactive · only exact built-in wake words are accepted"}
+        </span>
       </div>
       <button
         class="toggle"
@@ -1165,7 +1191,9 @@
       <div class="setting-info">
         <span class="setting-label">{$_('settings.voice_calibration_learned')}</span>
         <span class="setting-desc">
-          {#if voiceVariants.length === 0}
+          {#if !voiceVariantsAvailable}
+            Calibration status unavailable
+          {:else if voiceVariants.length === 0}
             {$_('settings.voice_calibration_no_data')}
           {:else}
             {#each voiceVariants as variant}

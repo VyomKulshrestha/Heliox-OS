@@ -4,6 +4,12 @@ Covers the pure edit-distance function, the near-miss/promotion logic, and
 JSON round-tripping via tmp_path — no real audio/mic involved anywhere.
 """
 
+from unittest.mock import MagicMock
+
+import pytest
+
+from pilot.config import PilotConfig
+from pilot.server import PilotServer
 from pilot.system.voice_calibration import (
     VoiceCalibrationStore,
     WakeWordCalibrator,
@@ -146,3 +152,32 @@ class TestWakeWordCalibrator:
         # The on-device store itself was cleared too, not just in-memory state.
         fresh_calibrator = self._calibrator(tmp_path)
         assert fresh_calibrator.get_variants() == []
+
+
+@pytest.mark.asyncio
+async def test_visible_listener_start_uses_live_server_config(monkeypatch):
+    captured = {}
+
+    class _FakeListener:
+        is_running = False
+
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+            self.wake_words = kwargs["wake_words"]
+            self.config = kwargs["config"]
+
+        async def start(self):
+            self.is_running = True
+            return "started"
+
+    config = PilotConfig()
+    server = PilotServer(config)
+    monkeypatch.setattr("pilot.system.voice.ContinuousVoiceListener", _FakeListener)
+
+    result = await server._handle_voice_listener_start({}, MagicMock())
+
+    assert result["status"] == "started"
+    assert captured["config"] is config
+
+    config.adaptive_calibration.voice_wake_word_enabled = False
+    assert server._voice_listener.config.adaptive_calibration.voice_wake_word_enabled is False

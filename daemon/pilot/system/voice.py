@@ -687,6 +687,7 @@ class ContinuousVoiceListener:
         on_command: Any | None = None,
         on_status: Any | None = None,
         workflow_control: Any | None = None,
+        config: PilotConfig | None = None,
     ) -> None:
         self.wake_words = wake_words or [
             "hey heliox",
@@ -706,7 +707,9 @@ class ContinuousVoiceListener:
         self._listening_for_command = False
         self._sample_rate = 16000
 
-        self.config = PilotConfig.load()
+        # The daemon passes its live config instance so Settings changes take
+        # effect immediately. Standalone callers retain the disk-load fallback.
+        self.config = config or PilotConfig.load()
         self.last_detected_language = "en"
         # On-device wake-word calibration (continual-learning loop) — see
         # voice_calibration.py. Only ever a fallback tried after the fixed

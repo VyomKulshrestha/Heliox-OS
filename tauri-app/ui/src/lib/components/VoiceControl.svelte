@@ -13,6 +13,8 @@
   import { session } from "../stores/session";
   import AudioVisualizer from "./AudioVisualizer.svelte";
   import { speakText as ttsSpeak } from "../utils/tts";
+  import { call, offNotification, onNotification } from "../api/daemon";
+  import { onDestroy } from "svelte";
 
   // ── State ──
   let isListening = $state(false);
@@ -22,7 +24,8 @@
   let wakeWordActive = $state(false);
   let pulseIntensity = $state(0);
   let error = $state("");
-  let voiceEnabled = $state(true);
+  let pushToTalkEnabled = $state(true);
+  let wakeWordBusy = $state(false);
 
   // ── Speech Recognition ──
   let recognition: any = null;
@@ -90,19 +93,14 @@
       error = `Mic error: ${event.error}`;
       // On permission or fatal errors, stop retrying completely
       if (event.error === "not-allowed" || event.error === "service-not-allowed") {
-        wakeWordActive = false;
-        voiceEnabled = false;
+        pushToTalkEnabled = false;
       }
       isListening = false;
     };
 
     rec.onend = () => {
       // Only restart if in wake word mode AND no error occurred AND voice is enabled
-      if (wakeWordActive && voiceEnabled && !error) {
-        try { rec.start(); } catch { /* ignore */ }
-      } else {
-        isListening = false;
-      }
+      isListening = false;
       pulseIntensity = 0;
     };
 
@@ -152,13 +150,52 @@
     pulseIntensity = 0;
   }
 
-  function toggleWakeWord() {
-    if (wakeWordActive) {
-      stopListening();
-    } else {
-      startListening(true);
+  async function toggleWakeWord() {
+    if (wakeWordBusy) return;
+    wakeWordBusy = true;
+    error = "";
+    try {
+      if (wakeWordActive) {
+        const result = await call<{ status: string }>("voice_listener_stop");
+        if (result.status !== "stopped" && result.status !== "not_running") {
+          throw new Error("Daemon rejected wake-word stop");
+        }
+        wakeWordActive = false;
+        isListening = false;
+      } else {
+        const result = await call<{ status: string }>("voice_listener_start", {
+          wake_words: ["hey heliox", "heliox", "hey pilot"],
+        });
+        if (result.status !== "started" && result.status !== "already_running") {
+          throw new Error("Daemon rejected wake-word start");
+        }
+        wakeWordActive = true;
+        isListening = true;
+      }
+    } catch (err) {
+      error = err instanceof Error ? err.message : "Wake-word listener unavailable";
+    } finally {
+      wakeWordBusy = false;
     }
   }
+
+  const voiceStatusHandler = (method: string, params: unknown) => {
+    if (method !== "voice_status") return;
+    const payload = (params ?? {}) as Record<string, unknown>;
+    const status = String(payload.status ?? "");
+    if (status === "wake_detected") {
+      transcript = String(payload.transcript ?? "");
+      pulseIntensity = 1;
+    } else if (status === "timeout") {
+      error = String(payload.message ?? "Voice command timed out.");
+      pulseIntensity = 0;
+    } else if (status === "listening") {
+      pulseIntensity = 0.4;
+    }
+  };
+
+  onNotification(voiceStatusHandler);
+  onDestroy(() => offNotification(voiceStatusHandler));
 
   async function submitVoiceCommand(text: string) {
     // Stop listening temporarily in push-to-talk mode
@@ -170,7 +207,7 @@
     await session.sendCommand(text);
     
     // Speak the response if voice is enabled
-    if (voiceEnabled) {
+    if (pushToTalkEnabled) {
       // Wait for response, then speak it
       const unsub = session.subscribe((s: any) => {
         if (!s.loading && s.messages.length > 0) {
@@ -207,11 +244,17 @@
   // Check support on mount
   $effect(() => {
     if (!SpeechRecognition) {
-      error = "Speech recognition not supported. Use Chrome or Edge.";
-      voiceEnabled = false;
+      pushToTalkEnabled = false;
     }
     // Preload voices
     window.speechSynthesis?.getVoices();
+
+    call<{ running: boolean }>("voice_listener_stats")
+      .then((stats) => {
+        wakeWordActive = Boolean(stats.running);
+        if (stats.running) isListening = true;
+      })
+      .catch(() => {});
   });
 </script>
 
@@ -220,8 +263,9 @@
   <button
     class="voice-btn"
     class:listening={isListening && !wakeWordActive}
-    class:disabled={!voiceEnabled}
+    class:disabled={!pushToTalkEnabled || wakeWordActive}
     onclick={toggleListening}
+    disabled={!pushToTalkEnabled || wakeWordActive}
     title={isListening ? "Stop listening" : "Push to talk"}
   >
     <div class="pulse-ring" style="--intensity: {pulseIntensity}"></div>
@@ -246,8 +290,9 @@
   <button
     class="wake-btn"
     class:active={wakeWordActive}
-    class:disabled={!voiceEnabled}
+    class:disabled={wakeWordBusy}
     onclick={toggleWakeWord}
+    disabled={wakeWordBusy}
     title={wakeWordActive ? 'Disable "Hey Heliox"' : 'Enable "Hey Heliox" wake word'}
   >
     <svg class="wave-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
