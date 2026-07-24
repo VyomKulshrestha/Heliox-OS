@@ -47,6 +47,13 @@
   let apiKeySaving = $state(false);
   let rootToast = $state("");
   let rootToastType = $state<"success" | "warning">("success");
+  let rootSaving = $state(false);
+  let rootRuntime = $state<{
+    root_policy_enabled: boolean;
+    process_elevated: boolean;
+    platform: string;
+    detail: string;
+  } | null>(null);
 
   $effect(() => {
     if ($locale) {
@@ -109,19 +116,53 @@
     }
   }
 
-  function applyRootToggle(turningOn: boolean) {
+  async function refreshRootRuntime() {
+    try {
+      rootRuntime = await call("get_security_status");
+    } catch {
+      rootRuntime = null;
+    }
+  }
+
+  $effect(() => {
+    refreshRootRuntime();
+    const retry = setInterval(() => {
+      if (!rootRuntime) refreshRootRuntime();
+    }, 2000);
+    return () => clearInterval(retry);
+  });
+
+  async function applyRootToggle(turningOn: boolean) {
+    rootSaving = true;
+    const synced = await settings.updateSection(
+      "security",
+      { root_enabled: turningOn },
+      { requireDaemon: true },
+    );
+    rootSaving = false;
+
+    if (!synced) {
+      rootToast = "Root policy was not changed because the Heliox daemon could not confirm it.";
+      rootToastType = "warning";
+      setTimeout(() => (rootToast = ""), 5000);
+      return;
+    }
+
+    await refreshRootRuntime();
     if (turningOn) {
-      rootToast = "🔓 Root access ENABLED — Heliox now has full system privileges";
+      rootToast = rootRuntime?.process_elevated
+        ? "Root policy enabled. Administrator/root privileges are detected."
+        : "Root policy enabled. OS elevation is not detected; protected operations may still be denied.";
       rootToastType = "warning";
     } else {
-      rootToast = "🔒 Root access DISABLED — elevated actions will be blocked";
+      rootToast = "Root policy disabled. Root-tier actions are blocked by Heliox.";
       rootToastType = "success";
     }
-    settings.updateSection("security", { root_enabled: turningOn });
     setTimeout(() => (rootToast = ""), 5000);
   }
 
   function toggleRoot() {
+    if (rootSaving) return;
     const turningOn = !$settings.security.root_enabled;
     if (turningOn) {
       askConfirm(
@@ -131,7 +172,8 @@
         "• System service management\n" +
         "• Protected file modifications\n" +
         "• Registry & disk-level operations\n\n" +
-        "Actions requiring elevated privileges will no longer be blocked.\n" +
+        "Actions requiring elevated privileges will no longer be blocked by Heliox policy.\n" +
+        "The operating system may still deny them unless the daemon is elevated.\n" +
         "Only enable this if you trust the AI agent with system-level access.",
         () => applyRootToggle(true),
         true
@@ -478,6 +520,15 @@
       <div class="setting-info">
         <span class="setting-label">{$_('settings.root_access')}</span>
         <span class="setting-desc">{$_('settings.root_access_desc')}</span>
+        <span class="security-setting-status">
+          {$settings.security.root_enabled
+            ? (rootRuntime
+              ? (rootRuntime.process_elevated
+                ? "Policy enabled · Administrator/root detected"
+                : "Policy enabled · OS elevation not detected")
+              : "Policy enabled · privilege status unavailable")
+            : "Policy disabled · root-tier actions blocked"}
+        </span>
       </div>
       <button
         class="toggle"
@@ -485,6 +536,8 @@
         onclick={toggleRoot}
         aria-label="Toggle Root Access"
         title="Toggle Root Access"
+        aria-pressed={$settings.security.root_enabled}
+        disabled={rootSaving}
       >
         <span class="toggle-knob"></span>
       </button>
@@ -494,8 +547,17 @@
       <div class="root-status-banner">
         <span class="root-icon">⚡</span>
         <div class="root-status-info">
-          <span class="root-status-title">Root Mode Active</span>
-          <span class="root-status-desc">Admin commands, service control, registry writes and protected file access are now unlocked.</span>
+          <span class="root-status-title">
+            {rootRuntime
+              ? (rootRuntime.process_elevated
+                ? "Root policy active · OS elevated"
+                : "Root policy active · OS elevation not detected")
+              : "Root policy active · privilege status unavailable"}
+          </span>
+          <span class="root-status-desc">
+            {rootRuntime?.detail ||
+              "Root-tier actions are allowed by Heliox policy; checking the daemon's OS privileges."}
+          </span>
         </div>
       </div>
     {/if}
@@ -1547,5 +1609,11 @@
     font-size: 11px;
     color: var(--text-muted);
     line-height: 1.3;
+  }
+
+  .security-setting-status {
+    margin-top: 3px;
+    font-size: 11px;
+    color: var(--text-muted);
   }
 </style>

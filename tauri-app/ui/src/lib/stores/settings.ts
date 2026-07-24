@@ -172,7 +172,23 @@ function createSettings() {
       .catch(() => {});
   }
 
-  async function updateSection(section: string, values: Record<string, unknown>) {
+  async function updateSection(
+    section: string,
+    values: Record<string, unknown>,
+    options: { requireDaemon?: boolean } = {},
+  ): Promise<boolean> {
+    if (options.requireDaemon) {
+      try {
+        const result = await call<{ status?: string; message?: string }>("update_config", { section, values });
+        if (result?.status !== "ok") {
+          throw new Error(result?.message || "Daemon rejected the setting");
+        }
+      } catch (err) {
+        console.warn("Daemon rejected required settings update:", err);
+        return false;
+      }
+    }
+
     if (section === "") {
       update((s) => ({ ...s, ...values }));
     } else {
@@ -192,9 +208,19 @@ function createSettings() {
       localStorage.setItem("heliox_settings", JSON.stringify(stored));
     } catch { /* ignore */ }
 
-    await call("update_config", { section, values }).catch((err) => {
-      console.warn("Daemon unreachable, settings saved locally:", err);
-    });
+    if (!options.requireDaemon) {
+      try {
+        const result = await call<{ status?: string; message?: string }>("update_config", { section, values });
+        if (result?.status !== "ok") {
+          throw new Error(result?.message || "Daemon rejected the setting");
+        }
+      } catch (err) {
+        console.warn("Daemon unreachable, settings saved locally:", err);
+        return false;
+      }
+    }
+
+    return true;
   }
 
   load();
