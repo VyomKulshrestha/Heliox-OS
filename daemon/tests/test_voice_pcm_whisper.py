@@ -2,7 +2,7 @@ import wave
 
 import numpy as np
 
-from pilot.system.voice import _load_pcm_wav_for_whisper
+from pilot.system.voice import _load_pcm_wav_for_whisper, _normalize_voice_audio
 
 
 def test_load_pcm_wav_for_whisper_without_ffmpeg(tmp_path):
@@ -42,3 +42,20 @@ def test_load_pcm_wav_for_whisper_downmixes_and_resamples(tmp_path):
     assert loaded is not None
     assert loaded.shape == (16000,)
     np.testing.assert_allclose(loaded, 0.25, rtol=0, atol=1e-5)
+
+
+def test_normalize_voice_audio_raises_quiet_signal_with_bounded_gain():
+    audio = np.array([-0.08, 0.0, 0.08], dtype=np.float32)
+
+    normalized = _normalize_voice_audio(audio)
+
+    assert normalized.dtype == np.float32
+    np.testing.assert_allclose(normalized, [-0.5, 0.0, 0.5], atol=1e-6)
+
+
+def test_normalize_voice_audio_does_not_amplify_near_silence():
+    audio = np.array([-0.001, 0.0, 0.001], dtype=np.float32)
+
+    normalized = _normalize_voice_audio(audio)
+
+    np.testing.assert_array_equal(normalized, audio)

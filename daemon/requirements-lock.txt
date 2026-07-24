@@ -53,6 +53,7 @@ cffi==2.1.0
     # via
     #   cryptography
     #   pynacl
+    #   soundcard
     #   sounddevice
 charset-normalizer==3.4.9
     # via
@@ -264,6 +265,7 @@ numpy==2.2.6
     #   scipy
     #   sentence-transformers
     #   shapely
+    #   soundcard
     #   tifffile
     #   torchvision
     #   transformers
@@ -495,6 +497,8 @@ six==1.17.0
     #   kubernetes
     #   pynput
     #   python-dateutil
+soundcard==0.4.6
+    # via pilot-daemon (pyproject.toml)
 sounddevice==0.5.5
     # via
     #   pilot-daemon (pyproject.toml)

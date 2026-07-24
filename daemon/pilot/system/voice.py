@@ -10,6 +10,7 @@ import asyncio
 import logging
 import os
 import tempfile
+import threading
 import time
 import wave
 from pathlib import Path
@@ -21,6 +22,13 @@ from pilot.system.vad import EndpointEvent, UtteranceEndpointer, frame_rms
 from pilot.system.voice_calibration import WakeWordCalibrator
 
 logger = logging.getLogger("pilot.system.voice")
+
+_VOICE_TRANSCRIPTION_PROMPT = (
+    "Heliox computer commands. Wake phrase: Hey Heliox. "
+    "Common verbs: open, close, launch, search, switch, type, scroll, click. "
+    "Names may include GitHub, Google, YouTube, Gmail, Spotify, Notepad, "
+    "Calculator, browser, application, file."
+)
 
 # The currently in-flight speak() call, if any -- module-level so that ANY
 # two callers anywhere in the daemon (executor.py's cognitive-stress-gate
@@ -635,6 +643,25 @@ def _load_pcm_wav_for_whisper(audio_path: str) -> Any | None:
     return samples.astype(np.float32, copy=False)
 
 
+def _normalize_voice_audio(samples: Any) -> Any:
+    """Raise quiet microphone speech to a stable level before Whisper.
+
+    Bluetooth hands-free capture on Windows can be valid but extremely quiet.
+    VAD has already isolated an utterance by the time this runs, so bounded
+    peak normalization improves recognition without changing stored audio.
+    """
+    import numpy as np
+
+    audio = np.asarray(samples, dtype=np.float32)
+    if not audio.size:
+        return audio
+    peak = float(np.max(np.abs(audio)))
+    if peak < 0.002 or peak >= 0.5:
+        return audio
+    gain = min(12.0, 0.5 / peak)
+    return np.clip(audio * gain, -1.0, 1.0).astype(np.float32, copy=False)
+
+
 def _get_whisper_model(model_name: str) -> Any:
     """Loads (and caches) a Whisper model by name. Previously reloaded from
     disk on every single call — including every ~3s wake-word poll cycle in
@@ -663,8 +690,13 @@ async def _transcribe_whisper(
 
         if language != "auto":
             kwargs["language"] = language
+        kwargs["temperature"] = 0
+        kwargs["condition_on_previous_text"] = False
+        kwargs["initial_prompt"] = _VOICE_TRANSCRIPTION_PROMPT
 
         local_audio = _load_pcm_wav_for_whisper(audio_path)
+        if local_audio is not None:
+            local_audio = _normalize_voice_audio(local_audio)
         result = mdl.transcribe(local_audio if local_audio is not None else audio_path, **kwargs)
 
         return {
@@ -737,6 +769,9 @@ class _ContinuousRecorder:
         self.preferred_device = preferred_device
 
         self._stream: Any = None
+        self._soundcard_recorder: Any = None
+        self._soundcard_thread: threading.Thread | None = None
+        self._soundcard_stop: threading.Event | None = None
         self._queue: asyncio.Queue[Any] | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self.input_device: int | None = None
@@ -747,6 +782,7 @@ class _ContinuousRecorder:
         self.peak_frame_rms = 0.0
         self.last_above_threshold_at = 0.0
         self.utterances_captured = 0
+        self.capture_backend = ""
 
     def _make_endpointer(self) -> UtteranceEndpointer:
         return UtteranceEndpointer(
@@ -763,29 +799,30 @@ class _ContinuousRecorder:
         if self._stream is not None:
             return True
 
+        self._loop = asyncio.get_event_loop()
+        self._queue = asyncio.Queue()
+
+        if CURRENT_PLATFORM == Platform.WINDOWS:
+            try:
+                if self._start_windows_wasapi():
+                    return True
+            except Exception:
+                logger.warning(
+                    "Native Windows microphone capture failed; falling back to PortAudio",
+                    exc_info=True,
+                )
+
         try:
             import sounddevice as sd
         except ImportError:
             return False
-
-        self._loop = asyncio.get_event_loop()
-        self._queue = asyncio.Queue()
 
         def _callback(indata, frames, time_info, status):
             # Runs on PortAudio's own thread, not the asyncio loop -- must
             # hand off via call_soon_threadsafe rather than touching the
             # queue directly.
             block = indata[:, 0].copy()
-            signal_rms = frame_rms(block)
-            self.frames_received += 1
-            self.last_frame_rms = signal_rms
-            self.peak_frame_rms = max(self.peak_frame_rms, signal_rms)
-            if signal_rms >= self.energy_threshold:
-                self.last_above_threshold_at = time.time()
-            loop = self._loop
-            queue = self._queue
-            if loop is not None and queue is not None:
-                loop.call_soon_threadsafe(queue.put_nowait, block)
+            self._publish_audio_block(block)
 
         try:
             self.input_device = _resolve_input_device(
@@ -806,6 +843,7 @@ class _ContinuousRecorder:
                 device=self.input_device,
             )
             self._stream.start()
+            self.capture_backend = "portaudio"
             self.last_error = ""
             return True
         except Exception as exc:
@@ -814,7 +852,87 @@ class _ContinuousRecorder:
             self._stream = None
             return False
 
+    def _publish_audio_block(self, block: Any) -> None:
+        signal_rms = frame_rms(block)
+        self.frames_received += 1
+        self.last_frame_rms = signal_rms
+        self.peak_frame_rms = max(self.peak_frame_rms, signal_rms)
+        if signal_rms >= self.energy_threshold:
+            self.last_above_threshold_at = time.time()
+        loop = self._loop
+        queue = self._queue
+        if loop is not None and queue is not None:
+            loop.call_soon_threadsafe(queue.put_nowait, block)
+
+    def _start_windows_wasapi(self) -> bool:
+        """Capture through Windows Audio Session API instead of PortAudio."""
+        import numpy as np
+        import soundcard as sc
+
+        preferred_name = ""
+        if self.preferred_device.strip().casefold() != "auto":
+            preferred_name = self.preferred_device.rsplit("::", 1)[-1].strip()
+
+        microphones = list(sc.all_microphones(include_loopback=False))
+        microphone = next(
+            (
+                mic
+                for mic in microphones
+                if preferred_name and mic.name.strip().casefold() == preferred_name.casefold()
+            ),
+            None,
+        )
+        if microphone is None and not preferred_name:
+            microphone = sc.default_microphone()
+        if microphone is None:
+            return False
+
+        recorder_context = microphone.recorder(
+            samplerate=self.sample_rate,
+            channels=1,
+            blocksize=self.frame_size,
+        )
+        recorder = recorder_context.__enter__()
+        stop_event = threading.Event()
+
+        def _pump() -> None:
+            try:
+                while not stop_event.is_set():
+                    data = recorder.record(numframes=self.frame_size)
+                    mono = np.asarray(data[:, 0], dtype=np.float32)
+                    block = (np.clip(mono, -1.0, 1.0) * 32767.0).astype(np.int16)
+                    self._publish_audio_block(block)
+            except Exception as error:
+                self.last_error = str(error)
+                logger.warning("Native Windows microphone stream failed", exc_info=True)
+
+        self._soundcard_recorder = recorder_context
+        self._soundcard_stop = stop_event
+        self._soundcard_thread = threading.Thread(
+            target=_pump,
+            name="heliox-wasapi-microphone",
+            daemon=True,
+        )
+        self._soundcard_thread.start()
+        self.input_device = None
+        self.input_device_name = microphone.name
+        self.capture_backend = "windows_wasapi"
+        self.last_error = ""
+        return True
+
     def stop(self) -> None:
+        if self._soundcard_stop is not None:
+            self._soundcard_stop.set()
+        if self._soundcard_thread is not None:
+            self._soundcard_thread.join(timeout=2.0)
+        if self._soundcard_recorder is not None:
+            try:
+                self._soundcard_recorder.__exit__(None, None, None)
+            except Exception:
+                pass
+        self._soundcard_recorder = None
+        self._soundcard_stop = None
+        self._soundcard_thread = None
         if self._stream is not None:
             try:
                 self._stream.stop()
@@ -826,7 +944,7 @@ class _ContinuousRecorder:
 
     @property
     def is_active(self) -> bool:
-        return self._stream is not None
+        return self._stream is not None or self._soundcard_recorder is not None
 
     async def _drain_stale_frames(self) -> None:
         """Discards any frames queued while nobody was waiting, so a fresh
@@ -1231,6 +1349,7 @@ class ContinuousVoiceListener:
             "input_device": self._recorder.input_device,
             "input_device_name": self._recorder.input_device_name,
             "input_error": self._recorder.last_error,
+            "capture_backend": self._recorder.capture_backend,
             "energy_threshold": self._recorder.energy_threshold,
             "frames_received": self._recorder.frames_received,
             "last_frame_rms": self._recorder.last_frame_rms,
