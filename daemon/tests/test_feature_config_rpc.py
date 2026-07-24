@@ -82,3 +82,22 @@ async def test_gesture_cursor_update_applies_runtime_tuning():
     assert config.gesture_cursor.sensitivity == 1.7
     assert config.gesture_cursor.blend == 0.45
     config.save.assert_called_once_with()
+
+
+@pytest.mark.asyncio
+async def test_gesture_calibration_update_requires_boolean():
+    config = PilotConfig()
+    config.save = MagicMock()
+    server = PilotServer(config)
+
+    result = await server._handle_update_config(
+        {
+            "section": "adaptive_calibration",
+            "values": {"gesture_enabled": "enabled"},
+        },
+        MagicMock(),
+    )
+
+    assert result["status"] == "error"
+    assert config.adaptive_calibration.gesture_enabled is True
+    config.save.assert_not_called()

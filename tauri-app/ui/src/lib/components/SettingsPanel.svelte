@@ -14,7 +14,7 @@
   import SelfHealingPanel from "./SelfHealingPanel.svelte";
   import NarrationPanel from "./NarrationPanel.svelte";
   import SupervisionPanel from "./SupervisionPanel.svelte";
-  import { GestureCalibrationStore } from "../gesture/calibration";
+  import { getSharedGestureCalibrationStore } from "../gesture/calibration";
   import {
     gazeRuntime,
     resetGazeRuntime,
@@ -73,6 +73,7 @@
   let previewSaving = $state(false);
   let previewToast = $state("");
   let gestureCursorToast = $state("");
+  let gestureCalibrationToast = $state("");
 
   $effect(() => {
     if ($locale) {
@@ -454,21 +455,32 @@
     setTimeout(() => (gestureCursorToast = ""), 5000);
   }
 
-  // Adaptive gesture calibration is frontend-only (localStorage) - reading a
-  // fresh GestureCalibrationStore here is fine, it just re-reads the same
-  // storage key GestureControl.svelte's instance writes to.
-  let gestureCalibrationSnapshot = $state(new GestureCalibrationStore().getSnapshot());
+  // Shared with GestureControl so Reset changes the thresholds used by an
+  // active camera immediately, and learned sample counts update live.
+  const gestureCalibration = getSharedGestureCalibrationStore();
+  let gestureCalibrationSnapshot = $state(gestureCalibration.getSnapshot());
 
-  function toggleGestureCalibration() {
-    settings.updateSection("adaptive_calibration", {
-      gesture_enabled: !$settings.adaptive_calibration?.gesture_enabled,
+  $effect(() => {
+    return gestureCalibration.subscribe((snapshot) => {
+      gestureCalibrationSnapshot = snapshot;
     });
+  });
+
+  async function toggleGestureCalibration() {
+    const turningOn = !$settings.adaptive_calibration?.gesture_enabled;
+    const synced = await settings.updateSection("adaptive_calibration", {
+      gesture_enabled: turningOn,
+    });
+    gestureCalibrationToast = synced
+      ? (turningOn ? "Adaptive gesture calibration enabled." : "Adaptive gesture calibration paused.")
+      : "Calibration changed locally, but daemon persistence could not be confirmed.";
+    setTimeout(() => (gestureCalibrationToast = ""), 5000);
   }
 
   function resetGestureCalibration() {
-    const store = new GestureCalibrationStore();
-    store.reset();
-    gestureCalibrationSnapshot = store.getSnapshot();
+    gestureCalibration.reset();
+    gestureCalibrationToast = "Learned gesture calibration cleared. Shipped thresholds are active.";
+    setTimeout(() => (gestureCalibrationToast = ""), 5000);
   }
 
   let voiceVariants = $state<{ text: string; confirmed_count: number }[]>([]);
@@ -1089,10 +1101,19 @@
     <h3>{$_('settings.gesture_calibration')}</h3>
     <p class="gesture-cursor-warning">{$_('settings.gesture_calibration_desc')}</p>
 
+    {#if gestureCalibrationToast}
+      <div class="root-toast root-toast-success">{gestureCalibrationToast}</div>
+    {/if}
+
     <div class="setting-row">
       <div class="setting-info">
         <span class="setting-label">{$_('settings.gesture_calibration_enabled')}</span>
         <span class="setting-desc">{$_('settings.gesture_calibration_enabled_desc')}</span>
+        <span class="security-setting-status">
+          {$settings.adaptive_calibration?.gesture_enabled
+            ? "Learning active · bounded thresholds update after confirmed samples"
+            : "Paused · shipped thresholds are used without learning"}
+        </span>
       </div>
       <button
         class="toggle"

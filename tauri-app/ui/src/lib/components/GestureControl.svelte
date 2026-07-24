@@ -75,7 +75,12 @@
     updateGazeRuntime,
   } from "../stores/gazeRuntime";
   import { isTauriRuntime } from "../utils/runtime";
-  import { GestureCalibrationStore, classifyOutcome, REVERSAL_WINDOW_MS, type GestureEvent } from "../gesture/calibration";
+  import {
+    classifyOutcome,
+    getSharedGestureCalibrationStore,
+    REVERSAL_WINDOW_MS,
+    type GestureEvent,
+  } from "../gesture/calibration";
   import { classifyControlGesture } from "../gesture/workflowControl";
 
   // ── Props ──
@@ -171,7 +176,7 @@
   // $settings.adaptive_calibration.gesture_enabled (default on); the store
   // itself is always constructed (cheap, a no-op localStorage read) so
   // toggling the setting mid-session doesn't require re-mounting anything.
-  const gestureCalibration = new GestureCalibrationStore();
+  const gestureCalibration = getSharedGestureCalibrationStore();
   let pendingCalibrationEvent: GestureEvent | null = null;
   let pendingCalibrationTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -196,6 +201,12 @@
     }
     pendingCalibrationEvent = null;
   }
+
+  $effect(() => {
+    if (!$settings.adaptive_calibration?.gesture_enabled) {
+      cancelPendingCalibration();
+    }
+  });
 
   /** Called right after a gesture fires (executeGestureAction/onGesture) —
    * resolves whatever calibration-relevant gesture was pending (this new

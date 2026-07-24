@@ -2589,6 +2589,12 @@ class PilotServer:
                             "status": "error",
                             "message": "gesture_cursor.blend must be from 0 to 1",
                         }
+                if section == "adaptive_calibration" and k == "gesture_enabled":
+                    if not isinstance(v, bool):
+                        return {
+                            "status": "error",
+                            "message": "adaptive_calibration.gesture_enabled must be a boolean",
+                        }
                 if section == "screen_vision" and k == "capture_interval_seconds":
                     v = float(v)
                 setattr(target, k, v)

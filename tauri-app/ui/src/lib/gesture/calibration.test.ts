@@ -114,6 +114,21 @@ describe("GestureCalibrationStore", () => {
     expect(reloaded.getSnapshot().pinchSampleCount).toBe(0);
   });
 
+  it("notifies subscribers after learning and reset", () => {
+    const store = new GestureCalibrationStore();
+    const sampleCounts: number[] = [];
+    const unsubscribe = store.subscribe((snapshot) => {
+      sampleCounts.push(snapshot.pinchSampleCount);
+    });
+
+    store.recordOutcome(ev("pinch", 1, 0.03), "positive");
+    store.reset();
+    unsubscribe();
+    store.recordOutcome(ev("pinch", 2, 0.03), "positive");
+
+    expect(sampleCounts).toEqual([0, 1, 0]);
+  });
+
   it("ignores corrupted localStorage content and falls back to defaults", () => {
     localStorage.setItem("heliox_gesture_calibration", "{not valid json");
     const store = new GestureCalibrationStore();

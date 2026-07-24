@@ -118,6 +118,7 @@ function clamp(value: number, min: number, max: number): number {
  * construction loads any existing data, every update persists immediately. */
 export class GestureCalibrationStore {
   private data: GestureCalibrationData;
+  private listeners = new Set<(snapshot: Readonly<GestureCalibrationData>) => void>();
 
   constructor() {
     this.data = this.readFromStorage();
@@ -146,6 +147,17 @@ export class GestureCalibrationStore {
     }
   }
 
+  private notify(): void {
+    const snapshot = this.getSnapshot();
+    for (const listener of this.listeners) listener(snapshot);
+  }
+
+  subscribe(listener: (snapshot: Readonly<GestureCalibrationData>) => void): () => void {
+    this.listeners.add(listener);
+    listener(this.getSnapshot());
+    return () => this.listeners.delete(listener);
+  }
+
   /** Clears all learned calibration, reverting to shipped defaults. */
   reset(): void {
     this.data = defaultData();
@@ -156,6 +168,7 @@ export class GestureCalibrationStore {
         // ignore
       }
     }
+    this.notify();
   }
 
   /** Feed a gesture's implicit outcome into calibration. Only "positive"
@@ -171,11 +184,13 @@ export class GestureCalibrationStore {
       this.data.pinchSampleCount++;
       this.data.lastUpdated = event.timestamp;
       this.persist();
+      this.notify();
     } else if (event.name === "thumbs_up" || event.name === "thumbs_down") {
       this.data.thumbRatioEma = ema(this.data.thumbRatioEma, event.metricValue);
       this.data.thumbSampleCount++;
       this.data.lastUpdated = event.timestamp;
       this.persist();
+      this.notify();
     }
   }
 
@@ -201,4 +216,17 @@ export class GestureCalibrationStore {
   getSnapshot(): Readonly<GestureCalibrationData> {
     return { ...this.data };
   }
+}
+
+let sharedStore: GestureCalibrationStore | null = null;
+
+/** One live store shared by camera recognition and Settings.
+ *
+ * Keeping a single in-memory instance makes Reset immediately affect the
+ * thresholds currently used by an active camera session, while subscribe()
+ * keeps the learned sample counts live in Settings.
+ */
+export function getSharedGestureCalibrationStore(): GestureCalibrationStore {
+  sharedStore ??= new GestureCalibrationStore();
+  return sharedStore;
 }
