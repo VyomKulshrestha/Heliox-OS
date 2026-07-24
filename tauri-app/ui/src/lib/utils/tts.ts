@@ -1,7 +1,9 @@
+import { call } from "../api/daemon";
+
 /**
- * Shared browser text-to-speech helper (Web Speech API), extracted from
- * VoiceControl.svelte so the Live Execution Narrator's narration/interrupt
- * store can speak too, without duplicating the voice-selection logic.
+ * Shared text-to-speech helper. The daemon is authoritative so the engine
+ * and voice selected in Settings apply to voice replies, narration, and
+ * supervision. Browser speech remains an availability fallback.
  */
 
 export interface SpeakOptions {
@@ -14,14 +16,17 @@ export interface SpeakOptions {
 }
 
 const PREFERRED_VOICE_NAMES = ["Microsoft Mark", "Google UK English Male", "Daniel", "Alex"];
+let speechGeneration = 0;
 
-/** Speaks `text` aloud via the browser's speechSynthesis, cancelling any
- * currently-speaking utterance first -- calling this again immediately
- * supersedes whatever was being said, which is how a higher-priority
- * narration/interrupt naturally pre-empts an in-progress one. */
-export function speakText(text: string, options: SpeakOptions = {}): void {
-  if (!window.speechSynthesis) return;
-
+function speakWithBrowser(
+  text: string,
+  options: SpeakOptions,
+  generation: number,
+): void {
+  if (!window.speechSynthesis) {
+    if (generation === speechGeneration) options.onError?.();
+    return;
+  }
   window.speechSynthesis.cancel();
 
   const utterance = new SpeechSynthesisUtterance(text);
@@ -33,9 +38,42 @@ export function speakText(text: string, options: SpeakOptions = {}): void {
   const preferred = voices.find((v) => PREFERRED_VOICE_NAMES.some((name) => v.name.includes(name)));
   if (preferred) utterance.voice = preferred;
 
-  utterance.onstart = () => options.onStart?.();
-  utterance.onend = () => options.onEnd?.();
-  utterance.onerror = () => options.onError?.();
+  utterance.onend = () => {
+    if (generation === speechGeneration) options.onEnd?.();
+  };
+  utterance.onerror = () => {
+    if (generation === speechGeneration) options.onError?.();
+  };
 
   window.speechSynthesis.speak(utterance);
+}
+
+/** Speak through the configured local daemon engine, falling back to the
+ * browser only when the daemon is unavailable. A newer call supersedes any
+ * older one, including stale completion callbacks. */
+export function speakText(text: string, options: SpeakOptions = {}): void {
+  const trimmed = text.trim();
+  if (!trimmed) return;
+
+  const generation = ++speechGeneration;
+  window.speechSynthesis?.cancel();
+  options.onStart?.();
+
+  void call<{ status: string }>("speak_text", { text: trimmed })
+    .then((result) => {
+      if (generation !== speechGeneration) return;
+      if (result.status !== "spoken") throw new Error("Daemon rejected speech");
+      options.onEnd?.();
+    })
+    .catch(() => {
+      if (generation !== speechGeneration) return;
+      speakWithBrowser(trimmed, options, generation);
+    });
+}
+
+/** Stop both possible playback paths. */
+export function stopSpeech(): void {
+  speechGeneration += 1;
+  window.speechSynthesis?.cancel();
+  void call("stop_speech").catch(() => {});
 }

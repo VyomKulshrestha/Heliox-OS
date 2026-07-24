@@ -120,3 +120,26 @@ async def test_voice_calibration_update_requires_boolean():
     assert result["status"] == "error"
     assert config.adaptive_calibration.voice_wake_word_enabled is True
     config.save.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("values", "message"),
+    [
+        ({"tts_engine": "cloud"}, "tts_engine must be pocket_tts or os_native"),
+        ({"tts_voice": "unknown"}, "tts_voice must be alba, giovanni, or lola"),
+    ],
+)
+async def test_voice_output_update_rejects_unknown_options(values, message):
+    config = PilotConfig()
+    config.save = MagicMock()
+    server = PilotServer(config)
+
+    result = await server._handle_update_config(
+        {"section": "voice", "values": values},
+        MagicMock(),
+    )
+
+    assert result["status"] == "error"
+    assert message in result["message"]
+    config.save.assert_not_called()

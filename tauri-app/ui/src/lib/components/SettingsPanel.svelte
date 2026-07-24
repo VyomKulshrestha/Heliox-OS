@@ -24,6 +24,7 @@
     isNativeTauriRuntime,
     normalizeHotkeyValue,
   } from "../hotkey";
+  import { speakText, stopSpeech } from "../utils/tts";
 
   let {
     onOpenCommand = () => {},
@@ -75,6 +76,9 @@
   let gestureCursorToast = $state("");
   let gestureCalibrationToast = $state("");
   let voiceCalibrationToast = $state("");
+  let speechToast = $state("");
+  let speechSaving = $state(false);
+  let speechTesting = $state(false);
 
   $effect(() => {
     if ($locale) {
@@ -348,14 +352,58 @@
 
   const pocketTtsVoices = ["alba", "giovanni", "lola"];
 
-  function updateTtsEngine(e: Event) {
+  async function updateTtsEngine(e: Event) {
     const val = (e.target as HTMLInputElement).value;
-    settings.updateSection("voice", { tts_engine: val });
+    speechSaving = true;
+    const synced = await settings.updateSection(
+      "voice",
+      { tts_engine: val },
+      { requireDaemon: true },
+    );
+    speechSaving = false;
+    speechToast = synced
+      ? `Speech engine changed to ${val === "pocket_tts" ? "Pocket TTS" : "OS Voice"}.`
+      : "Speech engine was not changed because the daemon could not confirm it.";
+    setTimeout(() => (speechToast = ""), 5000);
   }
 
-  function updateTtsVoice(e: Event) {
+  async function updateTtsVoice(e: Event) {
     const val = (e.target as HTMLInputElement).value;
-    settings.updateSection("voice", { tts_voice: val });
+    speechSaving = true;
+    const synced = await settings.updateSection(
+      "voice",
+      { tts_voice: val },
+      { requireDaemon: true },
+    );
+    speechSaving = false;
+    speechToast = synced
+      ? `Pocket TTS voice changed to ${val}.`
+      : "Speech voice was not changed because the daemon could not confirm it.";
+    setTimeout(() => (speechToast = ""), 5000);
+  }
+
+  function testConfiguredVoice() {
+    speechTesting = true;
+    speechToast = "Testing the configured daemon voice…";
+    speakText("Heliox voice is ready.", {
+      onEnd: () => {
+        speechTesting = false;
+        speechToast = "Voice test completed.";
+        setTimeout(() => (speechToast = ""), 5000);
+      },
+      onError: () => {
+        speechTesting = false;
+        speechToast = "Voice test failed in both the daemon and browser fallback.";
+        setTimeout(() => (speechToast = ""), 5000);
+      },
+    });
+  }
+
+  function stopConfiguredVoice() {
+    stopSpeech();
+    speechTesting = false;
+    speechToast = "Voice test stopped.";
+    setTimeout(() => (speechToast = ""), 5000);
   }
 
   function updateGpuLimit(e: Event) {
@@ -1210,12 +1258,19 @@
     <h3>{$_('settings.voice_speech')}</h3>
     <p class="gesture-cursor-warning">{$_('settings.voice_speech_desc')}</p>
 
+    {#if speechToast}
+      <div class="root-toast" class:root-toast-success={!speechToast.includes("not changed") && !speechToast.includes("failed")} class:root-toast-warning={speechToast.includes("not changed") || speechToast.includes("failed")}>
+        {speechToast}
+      </div>
+    {/if}
+
     <div class="setting-row">
       <div class="setting-info">
         <span class="setting-label">{$_('settings.tts_engine')}</span>
         <span class="setting-desc">{$_('settings.tts_engine_desc')}</span>
+        <span class="security-setting-status">Used by voice replies, live narration, supervision, and this test.</span>
       </div>
-      <select class="input-md" value={$settings.voice?.tts_engine ?? "pocket_tts"} onchange={updateTtsEngine}>
+      <select class="input-md" value={$settings.voice?.tts_engine ?? "pocket_tts"} onchange={updateTtsEngine} disabled={speechSaving || speechTesting}>
         <option value="pocket_tts">Pocket TTS</option>
         <option value="os_native">OS Voice</option>
       </select>
@@ -1230,12 +1285,24 @@
         class="input-md"
         value={$settings.voice?.tts_voice ?? "alba"}
         onchange={updateTtsVoice}
-        disabled={$settings.voice?.tts_engine === "os_native"}
+        disabled={$settings.voice?.tts_engine === "os_native" || speechSaving || speechTesting}
       >
         {#each pocketTtsVoices as voiceOption}
           <option value={voiceOption}>{voiceOption}</option>
         {/each}
       </select>
+    </div>
+
+    <div class="setting-row">
+      <div class="setting-info">
+        <span class="setting-label">Test configured voice</span>
+        <span class="setting-desc">Speaks one short sentence through the selected engine and voice.</span>
+      </div>
+      {#if speechTesting}
+        <button class="btn-save" onclick={stopConfiguredVoice}>Stop test</button>
+      {:else}
+        <button class="btn-save" onclick={testConfiguredVoice} disabled={speechSaving}>Test voice</button>
+      {/if}
     </div>
   </section>
 

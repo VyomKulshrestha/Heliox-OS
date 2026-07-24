@@ -12,7 +12,7 @@
 
   import { session } from "../stores/session";
   import AudioVisualizer from "./AudioVisualizer.svelte";
-  import { speakText as ttsSpeak } from "../utils/tts";
+  import { speakText as ttsSpeak, stopSpeech } from "../utils/tts";
   import { call, offNotification, onNotification } from "../api/daemon";
   import { onDestroy } from "svelte";
 
@@ -207,21 +207,19 @@
     await session.sendCommand(text);
     
     // Speak the response if voice is enabled
-    if (pushToTalkEnabled) {
-      // Wait for response, then speak it
-      const unsub = session.subscribe((s: any) => {
-        if (!s.loading && s.messages.length > 0) {
-          const lastMsg = s.messages[s.messages.length - 1];
-          if (lastMsg.type === "result" || lastMsg.type === "system") {
-            speakText(lastMsg.text || "Done.");
-            unsub();
-          } else if (lastMsg.type === "error") {
-            speakText("Error: " + (lastMsg.text || "Something went wrong."));
-            unsub();
-          }
+    // Wait for the response, then use the configured daemon TTS engine.
+    const unsub = session.subscribe((s: any) => {
+      if (!s.loading && s.messages.length > 0) {
+        const lastMsg = s.messages[s.messages.length - 1];
+        if (lastMsg.type === "result" || lastMsg.type === "system") {
+          speakText(lastMsg.text || "Done.");
+          unsub();
+        } else if (lastMsg.type === "error") {
+          speakText("Error: " + (lastMsg.text || "Something went wrong."));
+          unsub();
         }
-      });
-    }
+      }
+    });
 
     transcript = "";
     interimTranscript = "";
@@ -237,7 +235,7 @@
   }
 
   function stopSpeaking() {
-    window.speechSynthesis?.cancel();
+    stopSpeech();
     isSpeaking = false;
   }
 

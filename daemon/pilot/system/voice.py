@@ -52,6 +52,12 @@ async def _supersede_current_speech() -> None:
     _current_speech_task = None
 
 
+async def stop_speaking() -> str:
+    """Stop any daemon-side speech that is currently playing."""
+    await _supersede_current_speech()
+    return "Speech stopped"
+
+
 async def speak(
     text: str,
     voice: str | None = None,

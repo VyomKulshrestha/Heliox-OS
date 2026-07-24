@@ -36,10 +36,10 @@ def _resolve_dry_run(configured: bool, requested: object = False) -> bool:
 
 CONFIRM_TIMEOUT_SECONDS = 300
 # These control-plane RPCs must be dispatchable while a normal request is
-# paused. In particular, ``execute`` waits for ``confirm`` on the same
-# WebSocket connection, and ``abort`` must interrupt an in-flight execution.
-# All other RPCs remain sequential per connection.
-OUT_OF_BAND_RPC_METHODS = frozenset({"confirm", "abort"})
+# paused. ``execute`` waits for ``confirm`` on the same WebSocket connection,
+# ``abort`` interrupts execution, and speech replacement/stop must interrupt
+# an in-flight utterance. All other RPCs remain sequential per connection.
+OUT_OF_BAND_RPC_METHODS = frozenset({"confirm", "abort", "speak_text", "stop_speech"})
 
 # ── Plan History DB path (sibling of the main DB) ──
 PLAN_HISTORY_DB_FILE = DATA_DIR / "plan_history.db"
@@ -903,6 +903,8 @@ class PilotServer:
             "voice_listener_start": self._handle_voice_listener_start,
             "voice_listener_stop": self._handle_voice_listener_stop,
             "voice_listener_stats": self._handle_voice_listener_stats,
+            "speak_text": self._handle_speak_text,
+            "stop_speech": self._handle_stop_speech,
             "reset_wake_calibration": self._handle_reset_wake_calibration,
             "list_wake_variants": self._handle_list_wake_variants,
             "autonomous_submit": self._handle_autonomous_submit,
@@ -2602,6 +2604,18 @@ class PilotServer:
                             "message": (
                                 "adaptive_calibration.voice_wake_word_enabled must be a boolean"
                             ),
+                        }
+                if section == "voice" and k == "tts_engine":
+                    if v not in {"pocket_tts", "os_native"}:
+                        return {
+                            "status": "error",
+                            "message": "voice.tts_engine must be pocket_tts or os_native",
+                        }
+                if section == "voice" and k == "tts_voice":
+                    if v not in {"alba", "giovanni", "lola"}:
+                        return {
+                            "status": "error",
+                            "message": "voice.tts_voice must be alba, giovanni, or lola",
                         }
                 if section == "screen_vision" and k == "capture_interval_seconds":
                     v = float(v)
@@ -4812,6 +4826,31 @@ def handle_tool(tool_name, params):
         if not self._voice_listener:
             return {"running": False, "message": "Voice listener not initialized"}
         return self._voice_listener.get_stats()
+
+    async def _handle_speak_text(self, params: dict, ws: ServerConnection) -> dict:
+        """Speak UI text through the configured daemon TTS engine."""
+        text = params.get("text")
+        if not isinstance(text, str) or not text.strip():
+            return {"status": "error", "message": "text must be a non-empty string"}
+        if len(text) > 4000:
+            return {"status": "error", "message": "text must be 4000 characters or fewer"}
+
+        from pilot.system.voice import speak
+
+        try:
+            message = await speak(text.strip())
+        except asyncio.CancelledError:
+            # A newer utterance or stop_speech intentionally superseded this
+            # request. Still answer its JSON-RPC caller so no promise lingers.
+            return {"status": "cancelled", "message": "Speech superseded"}
+        return {"status": "spoken", "message": message}
+
+    async def _handle_stop_speech(self, params: dict, ws: ServerConnection) -> dict:
+        """Immediately stop daemon-side TTS playback."""
+        from pilot.system.voice import stop_speaking
+
+        message = await stop_speaking()
+        return {"status": "stopped", "message": message}
 
     async def _handle_reset_wake_calibration(self, params: dict, ws: ServerConnection) -> dict:
         """Clear all learned wake-word calibration data.
