@@ -417,22 +417,16 @@ def _resolve_input_device(
 
     preferred = preferred_device.strip()
     if preferred and preferred.casefold() != "auto":
-        matching = [
-            index
-            for index, info in enumerate(devices)
-            if _device_id(info).casefold() == preferred.casefold()
-        ]
+        matching = [index for index, info in enumerate(devices) if _device_id(info).casefold() == preferred.casefold()]
         for index in matching:
             if _usable(index):
                 return index
         if matching:
             raise RuntimeError(
-                f"Configured microphone '{preferred}' does not support "
-                f"{sample_rate} Hz, {channels} channel, {dtype}"
+                f"Configured microphone '{preferred}' does not support {sample_rate} Hz, {channels} channel, {dtype}"
             )
         raise RuntimeError(
-            f"Configured microphone '{preferred}' is no longer available. "
-            "Choose another input in Settings."
+            f"Configured microphone '{preferred}' is no longer available. Choose another input in Settings."
         )
 
     try:
@@ -453,8 +447,7 @@ def _resolve_input_device(
         index, info = item
         name = str(info.get("name", "")).lower()
         loopback_like = any(
-            marker in name
-            for marker in ("stereo mix", "loopback", "what u hear", "pc speaker", "output")
+            marker in name for marker in ("stereo mix", "loopback", "what u hear", "pc speaker", "output")
         )
         if "microphone array" in name:
             kind = 0
@@ -467,17 +460,13 @@ def _resolve_input_device(
         return (1 if loopback_like else 0, kind, index)
 
     candidates = [
-        (index, info)
-        for index, info in enumerate(devices)
-        if int(info.get("max_input_channels", 0)) >= channels
+        (index, info) for index, info in enumerate(devices) if int(info.get("max_input_channels", 0)) >= channels
     ]
     for index, _info in sorted(candidates, key=_priority):
         if _usable(index):
             return index
 
-    raise RuntimeError(
-        f"No usable microphone supports {sample_rate} Hz, {channels} channel, {dtype}"
-    )
+    raise RuntimeError(f"No usable microphone supports {sample_rate} Hz, {channels} channel, {dtype}")
 
 
 def list_audio_input_devices(
@@ -511,9 +500,7 @@ def list_audio_input_devices(
         except Exception:
             continue
         try:
-            hostapi = str(
-                sd.query_hostapis(int(info.get("hostapi", -1))).get("name", "Unknown")
-            )
+            hostapi = str(sd.query_hostapis(int(info.get("hostapi", -1))).get("name", "Unknown"))
         except Exception:
             hostapi = "Unknown"
         name = str(info.get("name", index)).strip()
@@ -660,6 +647,42 @@ def _normalize_voice_audio(samples: Any) -> Any:
     return np.clip(audio * gain, -1.0, 1.0).astype(np.float32, copy=False)
 
 
+def _band_limit_voice_audio(samples: Any, sample_rate: int = 16000) -> Any:
+    """Remove frequencies outside the useful speech band before Whisper.
+
+    Windows Bluetooth microphone capture can contain low-frequency rumble
+    and near-Nyquist noise that browser capture normally suppresses.  A
+    tapered FFT mask keeps the intelligible speech band without adding a
+    SciPy dependency or changing the audio duration.
+    """
+    import numpy as np
+
+    audio = np.asarray(samples, dtype=np.float32)
+    if audio.size < 256 or sample_rate <= 0:
+        return audio
+
+    frequencies = np.fft.rfftfreq(audio.size, d=1.0 / sample_rate)
+    mask = np.ones(frequencies.shape, dtype=np.float64)
+
+    low_stop_hz = 60.0
+    low_pass_hz = 120.0
+    high_pass_hz = min(7200.0, sample_rate * 0.45)
+    high_stop_hz = min(7800.0, sample_rate * 0.49)
+
+    mask[frequencies < low_stop_hz] = 0.0
+    low_transition = (frequencies >= low_stop_hz) & (frequencies < low_pass_hz)
+    mask[low_transition] = (frequencies[low_transition] - low_stop_hz) / (low_pass_hz - low_stop_hz)
+
+    if high_stop_hz > high_pass_hz:
+        high_transition = (frequencies > high_pass_hz) & (frequencies <= high_stop_hz)
+        mask[high_transition] = (high_stop_hz - frequencies[high_transition]) / (high_stop_hz - high_pass_hz)
+    mask[frequencies > high_stop_hz] = 0.0
+
+    spectrum = np.fft.rfft(audio)
+    filtered = np.fft.irfft(spectrum * mask, n=audio.size)
+    return filtered.astype(np.float32, copy=False)
+
+
 def _get_whisper_model(model_name: str) -> Any:
     """Loads (and caches) a Whisper model by name. Previously reloaded from
     disk on every single call — including every ~3s wake-word poll cycle in
@@ -694,6 +717,7 @@ async def _transcribe_whisper(
 
         local_audio = _load_pcm_wav_for_whisper(audio_path)
         if local_audio is not None:
+            local_audio = _band_limit_voice_audio(local_audio)
             local_audio = _normalize_voice_audio(local_audio)
         result = mdl.transcribe(local_audio if local_audio is not None else audio_path, **kwargs)
 
@@ -873,11 +897,7 @@ class _ContinuousRecorder:
 
         microphones = list(sc.all_microphones(include_loopback=False))
         microphone = next(
-            (
-                mic
-                for mic in microphones
-                if preferred_name and mic.name.strip().casefold() == preferred_name.casefold()
-            ),
+            (mic for mic in microphones if preferred_name and mic.name.strip().casefold() == preferred_name.casefold()),
             None,
         )
         if microphone is None and not preferred_name:
@@ -1190,9 +1210,7 @@ class ContinuousVoiceListener:
                             # voice policy/permission gates. A wake-only
                             # near-miss keeps the conservative repeated-
                             # confirmation calibration behavior.
-                            trailing_command = transcript_lower[
-                                len(near_miss) :
-                            ].strip(" \t,.:;-")
+                            trailing_command = transcript_lower[len(near_miss) :].strip(" \t,.:;-")
                             if len(trailing_command) >= 3:
                                 wake_detected = True
                                 command_text = trailing_command
