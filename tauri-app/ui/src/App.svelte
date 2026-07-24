@@ -43,6 +43,7 @@
   let showScrollFAB = $state(false);
   let isAtBottom = $state(true);
   let prefillText = $state("");
+  let cameraControlsActive = $state(false);
   let virtualListEl: VirtualList<Message> | undefined = $state();
   let particleBurst: ParticleBurst | undefined = $state();
   $effect(() => {
@@ -211,8 +212,7 @@
 
   <div class="content">
     <svelte:boundary>
-      {#if activeTab === "chat"}
-        <div class="chat-panel">
+      <div class="chat-panel" class:inactive={activeTab !== "chat"}>
           <NeuralBackground />
 
           <div class="pipeline-container">
@@ -297,21 +297,26 @@
             <CommandHistory onReplay={handleReplay} />
             <VoiceControl />
             <CommandInput prefill={prefillText} />
-            <GestureControl onGesture={onGestureDetected} />
+            <div class="gesture-control-host" class:camera-active={cameraControlsActive}>
+              <GestureControl
+                onGesture={onGestureDetected}
+                onActiveChange={(active) => cameraControlsActive = active}
+              />
+            </div>
             <button class="tab" type="button" onclick={() => session.exportChat("json")}>{$_('app.export_json')}</button>
             <button class="tab" type="button" onclick={() => session.exportChat("csv")}>{$_('app.export_csv')}</button>
             <button class="tab" type="button" onclick={() => session.exportChat("json")}>Export JSON</button>
             <button class="tab" type="button" onclick={() => session.exportChat("csv")}>Export CSV</button>
             <button class="tab" type="button" onclick={exportReActTrace} title="Export ReAct reasoning trace to JSON">Export Trace</button>
           </div>
-        </div>
-      {:else if activeTab === "log"}
+      </div>
+      {#if activeTab === "log"}
         <ActivityLog />
       {:else if activeTab === "dashboard"}
        <Dashboard />
       {:else if activeTab === "plugins"}
         <PluginsTab />
-      {:else}
+      {:else if activeTab === "settings"}
         <SettingsPanel onOpenCommand={() => activeTab = "chat"} />
       {/if}
       {#snippet failed(error, reset)}
@@ -567,6 +572,7 @@
     overflow: hidden;
     display: flex;
     flex-direction: column;
+    position: relative;
   }
 
   .chat-panel {
@@ -575,6 +581,40 @@
     flex-direction: column;
     overflow: hidden;
     position: relative;
+  }
+
+  .chat-panel.inactive {
+    position: absolute;
+    inset: 0;
+    z-index: 1001;
+    pointer-events: none;
+  }
+
+  .chat-panel.inactive > :not(.input-row) {
+    display: none;
+  }
+
+  .chat-panel.inactive .input-row {
+    position: fixed;
+    right: 16px;
+    bottom: 12px;
+    z-index: 1002;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    pointer-events: none;
+  }
+
+  .chat-panel.inactive .input-row > :not(.gesture-control-host) {
+    display: none;
+  }
+
+  .chat-panel.inactive .gesture-control-host:not(.camera-active) {
+    display: none;
+  }
+
+  .chat-panel.inactive .gesture-control-host.camera-active {
+    pointer-events: auto;
   }
 
   .results {

@@ -78,7 +78,13 @@
   import { classifyControlGesture } from "../gesture/workflowControl";
 
   // ── Props ──
-  let { onGesture = (name: string) => {} }: { onGesture?: (name: string) => void } = $props();
+  let {
+    onGesture = (name: string) => {},
+    onActiveChange = (active: boolean) => {},
+  }: {
+    onGesture?: (name: string) => void;
+    onActiveChange?: (active: boolean) => void;
+  } = $props();
 
   // ── State ──
   let isActive = $state(false);
@@ -646,6 +652,7 @@
     }
 
     isActive = true;
+    onActiveChange(true);
     showCamera = true;
     fingerTrail = [];
     
@@ -673,6 +680,7 @@
 
     // 1. Stop the animation frame loop FIRST (prevents new MediaPipe sends)
     isActive = false;
+    onActiveChange(false);
     if (animFrameId) { cancelAnimationFrame(animFrameId); animFrameId = 0; }
 
     // 2. Close MediaPipe (whichever backend was active) to release the
