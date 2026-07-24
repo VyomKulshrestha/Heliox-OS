@@ -533,7 +533,26 @@ class Executor:
                     plan_id, f"Pre-action snapshot for plan {plan_id}"
                 )
             except Exception as e:
-                logger.warning("Snapshot creation failed: %s", e)
+                logger.error("Required snapshot creation failed; blocking plan: %s", e)
+                return [
+                    ActionResult(
+                        action=plan.actions[0],
+                        success=False,
+                        error=f"Safety stop: required pre-action snapshot failed. No actions ran. {e}",
+                    )
+                ]
+            if not snapshot_id:
+                logger.error("Required snapshot backend unavailable; blocking plan")
+                return [
+                    ActionResult(
+                        action=plan.actions[0],
+                        success=False,
+                        error=(
+                            "Safety stop: Auto-Snapshot is enabled, but no snapshot backend is ready. "
+                            "No actions ran."
+                        ),
+                    )
+                ]
 
         for i, action in enumerate(plan.actions):
             if cancel_event and cancel_event.is_set():

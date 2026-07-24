@@ -7,7 +7,9 @@ snapshot mechanism. Falls back gracefully if neither is available.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import sys
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING
@@ -21,16 +23,20 @@ logger = logging.getLogger("pilot.system.snapshots")
 class SnapshotBackend(StrEnum):
     BTRFS = "btrfs"
     TIMESHIFT = "timeshift"
+    WINDOWS_RESTORE_POINT = "windows_restore_point"
     NONE = "none"
 
 
 async def _run(args: list[str], *, root: bool = False) -> tuple[int, str, str]:
-    cmd = ["pkexec"] + args if root else args
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
+    cmd = ["pkexec"] + args if root and sys.platform != "win32" else args
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except FileNotFoundError as error:
+        return 127, "", str(error)
     stdout, stderr = await proc.communicate()
     return (
         proc.returncode or 0,
@@ -56,7 +62,9 @@ class SnapshotManager:
             self._backend = SnapshotBackend(configured)
             return self._backend
 
-        if await self._is_btrfs_root():
+        if sys.platform == "win32" and await self._is_windows_restore_available():
+            self._backend = SnapshotBackend.WINDOWS_RESTORE_POINT
+        elif await self._is_btrfs_root():
             self._backend = SnapshotBackend.BTRFS
         elif await self._is_timeshift_available():
             self._backend = SnapshotBackend.TIMESHIFT
@@ -76,8 +84,10 @@ class SnapshotManager:
             return await self._btrfs_snapshot(tag, description)
         elif backend == SnapshotBackend.TIMESHIFT:
             return await self._timeshift_snapshot(tag, description)
+        elif backend == SnapshotBackend.WINDOWS_RESTORE_POINT:
+            return await self._windows_restore_snapshot(tag, description)
         else:
-            logger.warning("No snapshot backend available — proceeding without snapshot")
+            logger.warning("No snapshot backend available")
             return None
 
     async def rollback(self, snapshot_id: str) -> str:
@@ -88,6 +98,8 @@ class SnapshotManager:
             return await self._btrfs_rollback(snapshot_id)
         elif backend == SnapshotBackend.TIMESHIFT:
             return await self._timeshift_rollback(snapshot_id)
+        elif backend == SnapshotBackend.WINDOWS_RESTORE_POINT:
+            return await self._windows_restore_rollback(snapshot_id)
         else:
             raise RuntimeError("No snapshot backend available for rollback")
 
@@ -99,7 +111,44 @@ class SnapshotManager:
             return await self._btrfs_list()
         elif backend == SnapshotBackend.TIMESHIFT:
             return await self._timeshift_list()
+        elif backend == SnapshotBackend.WINDOWS_RESTORE_POINT:
+            return await self._windows_restore_list()
         return []
+
+    async def status(self) -> dict[str, str | bool]:
+        """Return whether configured snapshot protection can run right now."""
+        backend = await self.detect_backend()
+        enabled = self._config.security.snapshot_on_destructive
+        available = backend != SnapshotBackend.NONE
+        ready = available
+
+        if backend == SnapshotBackend.WINDOWS_RESTORE_POINT:
+            from pilot.security.privileges import has_elevated_privileges
+
+            ready = has_elevated_privileges()
+            detail = (
+                "Windows Restore Point is ready for destructive actions."
+                if ready
+                else (
+                    "Windows Restore Point is installed, but the daemon is not Administrator. "
+                    "Required snapshots will fail closed and destructive actions will not run."
+                )
+            )
+        elif available:
+            detail = f"{backend.value} is available for pre-action snapshots."
+        else:
+            detail = (
+                "No supported snapshot backend is available. When Auto-Snapshot is enabled, "
+                "destructive actions will fail closed instead of running without rollback protection."
+            )
+
+        return {
+            "enabled": enabled,
+            "backend": backend.value,
+            "available": available,
+            "ready": ready,
+            "detail": detail,
+        }
 
     async def cleanup(self) -> int:
         """Remove old snapshots per retention policy. Returns count removed."""
@@ -167,6 +216,82 @@ class SnapshotManager:
     async def _is_timeshift_available(self) -> bool:
         code, _, _ = await _run(["which", "timeshift"])
         return code == 0
+
+    # -- Windows System Restore --
+
+    async def _is_windows_restore_available(self) -> bool:
+        code, out, _ = await _run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "(Get-Command Checkpoint-Computer -ErrorAction SilentlyContinue).Name",
+            ]
+        )
+        return code == 0 and "Checkpoint-Computer" in out
+
+    async def _windows_restore_snapshot(self, tag: str, description: str) -> str:
+        label = (description or tag).replace("'", "''")[:200]
+        script = (
+            "$ErrorActionPreference='Stop'; "
+            f"Checkpoint-Computer -Description '{label}' -RestorePointType MODIFY_SETTINGS; "
+            "(Get-ComputerRestorePoint | Sort-Object SequenceNumber | "
+            "Select-Object -Last 1 -ExpandProperty SequenceNumber)"
+        )
+        code, out, err = await _run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+            root=True,
+        )
+        sequence = out.strip().splitlines()[-1] if out.strip() else ""
+        if code != 0 or not sequence.isdigit():
+            detail = err.strip() or out.strip() or "no restore point ID returned"
+            raise RuntimeError(f"Windows Restore Point failed: {detail}")
+        snapshot_id = f"windows-restore:{sequence}"
+        logger.info("Created Windows Restore Point: %s", snapshot_id)
+        return snapshot_id
+
+    async def _windows_restore_rollback(self, snapshot_id: str) -> str:
+        sequence = snapshot_id.removeprefix("windows-restore:")
+        if not sequence.isdigit():
+            raise ValueError("Invalid Windows restore point ID")
+        script = (
+            "$ErrorActionPreference='Stop'; "
+            f"Restore-Computer -RestorePoint {sequence} -Confirm:$false"
+        )
+        code, out, err = await _run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+            root=True,
+        )
+        if code != 0:
+            raise RuntimeError(f"Windows restore failed: {(err or out).strip()}")
+        return f"Windows restore point {sequence} selected. Restart Windows to apply it."
+
+    async def _windows_restore_list(self) -> list[dict[str, str]]:
+        code, out, _ = await _run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "Get-ComputerRestorePoint | Select-Object SequenceNumber,Description | ConvertTo-Json -Compress",
+            ]
+        )
+        if code != 0 or not out.strip():
+            return []
+        try:
+            parsed = json.loads(out)
+        except json.JSONDecodeError:
+            return []
+        rows = parsed if isinstance(parsed, list) else [parsed]
+        return [
+            {
+                "id": f"windows-restore:{row['SequenceNumber']}",
+                "tag": str(row.get("Description", "")),
+            }
+            for row in rows
+            if isinstance(row, dict) and "SequenceNumber" in row
+        ]
 
     async def _timeshift_snapshot(self, tag: str, description: str) -> str:
         comment = description or f"Pilot pre-action snapshot: {tag}"

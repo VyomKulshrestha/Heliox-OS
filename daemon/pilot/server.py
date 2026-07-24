@@ -830,6 +830,7 @@ class PilotServer:
             "abort": self._handle_abort,
             "get_config": self._handle_get_config,
             "get_security_status": self._handle_get_security_status,
+            "get_snapshot_status": self._handle_get_snapshot_status,
             "update_config": self._handle_update_config,
             "reset_config": self._handle_reset_config,
             "get_history": self._handle_get_history,
@@ -2479,6 +2480,12 @@ class PilotServer:
 
         return security_runtime_status(self.config.security.root_enabled)
 
+    async def _handle_get_snapshot_status(self, params: dict, ws: ServerConnection) -> dict:
+        """Return the configured pre-action snapshot backend and live readiness."""
+        from pilot.system.snapshots import SnapshotManager
+
+        return await SnapshotManager(self.config).status()
+
     async def _handle_update_config(self, params: dict, ws: ServerConnection) -> dict:
         """Update server configuration.
 
@@ -2504,6 +2511,11 @@ class PilotServer:
             if hasattr(target, k):
                 if section == "security" and k == "root_enabled" and not isinstance(v, bool):
                     return {"status": "error", "message": "security.root_enabled must be a boolean"}
+                if section == "security" and k == "snapshot_on_destructive" and not isinstance(v, bool):
+                    return {
+                        "status": "error",
+                        "message": "security.snapshot_on_destructive must be a boolean",
+                    }
                 if section == "screen_vision" and k == "capture_interval_seconds":
                     v = float(v)
                 setattr(target, k, v)

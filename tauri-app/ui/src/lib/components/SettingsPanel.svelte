@@ -54,6 +54,15 @@
     platform: string;
     detail: string;
   } | null>(null);
+  let snapshotSaving = $state(false);
+  let snapshotToast = $state("");
+  let snapshotRuntime = $state<{
+    enabled: boolean;
+    backend: string;
+    available: boolean;
+    ready: boolean;
+    detail: string;
+  } | null>(null);
 
   $effect(() => {
     if ($locale) {
@@ -132,6 +141,22 @@
     return () => clearInterval(retry);
   });
 
+  async function refreshSnapshotRuntime() {
+    try {
+      snapshotRuntime = await call("get_snapshot_status");
+    } catch {
+      snapshotRuntime = null;
+    }
+  }
+
+  $effect(() => {
+    refreshSnapshotRuntime();
+    const retry = setInterval(() => {
+      if (!snapshotRuntime) refreshSnapshotRuntime();
+    }, 2000);
+    return () => clearInterval(retry);
+  });
+
   async function applyRootToggle(turningOn: boolean) {
     rootSaving = true;
     const synced = await settings.updateSection(
@@ -181,6 +206,52 @@
       return;
     }
     applyRootToggle(false);
+  }
+
+  async function applyAutoSnapshotToggle(turningOn: boolean) {
+    snapshotSaving = true;
+    const synced = await settings.updateSection(
+      "security",
+      { snapshot_on_destructive: turningOn },
+      { requireDaemon: true },
+    );
+    snapshotSaving = false;
+
+    if (!synced) {
+      snapshotToast = "Auto-Snapshot was not changed because the daemon could not confirm it.";
+      setTimeout(() => (snapshotToast = ""), 5000);
+      return;
+    }
+
+    await refreshSnapshotRuntime();
+    snapshotToast = turningOn
+      ? (snapshotRuntime?.ready
+        ? "Auto-Snapshot enabled. The snapshot backend is ready."
+        : "Auto-Snapshot enabled, but its backend is not ready. Destructive actions will be blocked.")
+      : "Auto-Snapshot disabled. Confirmed destructive actions can run without a rollback point.";
+    setTimeout(() => (snapshotToast = ""), 5000);
+  }
+
+  function toggleAutoSnapshot() {
+    if (snapshotSaving) return;
+    const turningOn = !$settings.security.snapshot_on_destructive;
+    if (!turningOn) {
+      askConfirm(
+        "DISABLE AUTO-SNAPSHOT?\n\n" +
+        "Destructive actions will be able to run after confirmation without first creating a rollback point.",
+        () => applyAutoSnapshotToggle(false),
+        true,
+      );
+      return;
+    }
+    applyAutoSnapshotToggle(true);
+  }
+
+  function snapshotBackendLabel(backend: string): string {
+    if (backend === "windows_restore_point") return "Windows Restore Point";
+    if (backend === "btrfs") return "Btrfs";
+    if (backend === "timeshift") return "Timeshift";
+    return "No backend";
   }
  
   function toggleDryRun() {
@@ -516,6 +587,12 @@
       </div>
     {/if}
 
+    {#if snapshotToast}
+      <div class="root-toast root-toast-warning">
+        {snapshotToast}
+      </div>
+    {/if}
+
     <div class="setting-row">
       <div class="setting-info">
         <span class="setting-label">{$_('settings.root_access')}</span>
@@ -566,20 +643,38 @@
       <div class="setting-info">
         <span class="setting-label">{$_('settings.auto_snapshot')}</span>
         <span class="setting-desc">{$_('settings.auto_snapshot_desc')}</span>
+        <span class="security-setting-status">
+          {$settings.security.snapshot_on_destructive
+            ? (snapshotRuntime
+              ? (snapshotRuntime.ready
+                ? `Protection ready · ${snapshotBackendLabel(snapshotRuntime.backend)}`
+                : `Enabled but unavailable · ${snapshotBackendLabel(snapshotRuntime.backend)}`)
+              : "Enabled · backend status unavailable")
+            : "Disabled · no automatic rollback point"}
+        </span>
       </div>
       <button
         class="toggle"
         class:active={$settings.security.snapshot_on_destructive}
-        onclick={() =>
-          settings.updateSection("security", {
-            snapshot_on_destructive: !$settings.security.snapshot_on_destructive,
-          })}
+        onclick={toggleAutoSnapshot}
         aria-label="Toggle Auto Snapshot"
         title="Toggle Auto Snapshot"
+        aria-pressed={$settings.security.snapshot_on_destructive}
+        disabled={snapshotSaving}
       >
         <span class="toggle-knob"></span>
       </button>
     </div>
+
+    {#if $settings.security.snapshot_on_destructive && snapshotRuntime && !snapshotRuntime.ready}
+      <div class="snapshot-status-banner">
+        <span class="root-icon">🛡</span>
+        <div class="root-status-info">
+          <span class="snapshot-status-title">Snapshot protection is fail-closed</span>
+          <span class="root-status-desc">{snapshotRuntime.detail}</span>
+        </div>
+      </div>
+    {/if}
 
     <div class="setting-row">
       <div class="setting-info">
@@ -1615,5 +1710,20 @@
     margin-top: 3px;
     font-size: 11px;
     color: var(--text-muted);
+  }
+
+  .snapshot-status-banner {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    background: rgba(239, 68, 68, 0.08);
+    border-bottom: 1px solid rgba(239, 68, 68, 0.22);
+  }
+
+  .snapshot-status-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--danger, #ef4444);
   }
 </style>
