@@ -10,6 +10,7 @@ import asyncio
 import logging
 import os
 import tempfile
+import time
 import wave
 from pathlib import Path
 from typing import Any
@@ -741,6 +742,11 @@ class _ContinuousRecorder:
         self.input_device: int | None = None
         self.input_device_name = ""
         self.last_error = ""
+        self.frames_received = 0
+        self.last_frame_rms = 0.0
+        self.peak_frame_rms = 0.0
+        self.last_above_threshold_at = 0.0
+        self.utterances_captured = 0
 
     def _make_endpointer(self) -> UtteranceEndpointer:
         return UtteranceEndpointer(
@@ -770,6 +776,12 @@ class _ContinuousRecorder:
             # hand off via call_soon_threadsafe rather than touching the
             # queue directly.
             block = indata[:, 0].copy()
+            signal_rms = frame_rms(block)
+            self.frames_received += 1
+            self.last_frame_rms = signal_rms
+            self.peak_frame_rms = max(self.peak_frame_rms, signal_rms)
+            if signal_rms >= self.energy_threshold:
+                self.last_above_threshold_at = time.time()
             loop = self._loop
             queue = self._queue
             if loop is not None and queue is not None:
@@ -885,6 +897,7 @@ class _ContinuousRecorder:
 
             if event in (EndpointEvent.ENDED, EndpointEvent.MAX_DURATION):
                 captured.append(frame)
+                self.utterances_captured += 1
                 return _write_wav(captured, self.sample_rate)
 
             if not endpointer.is_speaking:
@@ -947,6 +960,8 @@ class ContinuousVoiceListener:
         # effect immediately. Standalone callers retain the disk-load fallback.
         self.config = config or PilotConfig.load()
         self.last_detected_language = "en"
+        self.last_transcript = ""
+        self.transcripts_received = 0
         # On-device wake-word calibration (continual-learning loop) — see
         # voice_calibration.py. Only ever a fallback tried after the fixed
         # exact-match loop below misses; the common case is untouched.
@@ -1019,6 +1034,8 @@ class ContinuousVoiceListener:
                     await asyncio.sleep(0.2)
                     continue
 
+                self.last_transcript = transcript.strip()
+                self.transcripts_received += 1
                 transcript_lower = transcript.lower().strip()
 
                 logger.debug("Heard: %s", transcript_lower)
@@ -1214,6 +1231,14 @@ class ContinuousVoiceListener:
             "input_device": self._recorder.input_device,
             "input_device_name": self._recorder.input_device_name,
             "input_error": self._recorder.last_error,
+            "energy_threshold": self._recorder.energy_threshold,
+            "frames_received": self._recorder.frames_received,
+            "last_frame_rms": self._recorder.last_frame_rms,
+            "peak_frame_rms": self._recorder.peak_frame_rms,
+            "last_above_threshold_at": self._recorder.last_above_threshold_at,
+            "utterances_captured": self._recorder.utterances_captured,
+            "transcripts_received": self.transcripts_received,
+            "last_transcript": self.last_transcript,
         }
 
 

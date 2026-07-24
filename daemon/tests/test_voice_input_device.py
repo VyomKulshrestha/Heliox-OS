@@ -164,3 +164,24 @@ async def test_server_surfaces_microphone_start_failure(monkeypatch):
     assert result["status"] == "error"
     assert "no microphone" in result["message"]
     assert server._voice_listener is None
+
+
+def test_listener_stats_expose_transient_signal_and_transcript_diagnostics():
+    listener = ContinuousVoiceListener(config=PilotConfig())
+    listener._recorder.frames_received = 42
+    listener._recorder.last_frame_rms = 0.012
+    listener._recorder.peak_frame_rms = 0.08
+    listener._recorder.last_above_threshold_at = 123.5
+    listener._recorder.utterances_captured = 2
+    listener.transcripts_received = 1
+    listener.last_transcript = "hey heliocs open github"
+
+    stats = listener.get_stats()
+
+    assert stats["frames_received"] == 42
+    assert stats["last_frame_rms"] == 0.012
+    assert stats["peak_frame_rms"] == 0.08
+    assert stats["last_above_threshold_at"] == 123.5
+    assert stats["utterances_captured"] == 2
+    assert stats["transcripts_received"] == 1
+    assert stats["last_transcript"] == "hey heliocs open github"
