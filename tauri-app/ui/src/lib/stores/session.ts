@@ -90,6 +90,8 @@ interface SessionState {
   confirmRequired: boolean;
   confirmPlanId: string;
   confirmActions: PlanAction[];
+  confirmSubmitting: boolean;
+  confirmError: string;
   phase: string;
   liveActions: LiveActionState[];
   totalTokens: number;
@@ -114,6 +116,8 @@ const initialState: SessionState = {
   confirmRequired: false,
   confirmPlanId: "",
   confirmActions: [],
+  confirmSubmitting: false,
+  confirmError: "",
   phase: "",
   liveActions: [],
   totalTokens: 0,
@@ -284,6 +288,8 @@ function createSession() {
           confirmRequired: true,
           confirmPlanId: String(p.plan_id ?? ""),
           confirmActions: (p.actions ?? []) as PlanAction[],
+          confirmSubmitting: false,
+          confirmError: "",
         }));
         break;
 
@@ -480,6 +486,8 @@ function createSession() {
       liveActions: [],
       confirmRequired: false,
       confirmPlanId: "",
+      confirmSubmitting: false,
+      confirmError: "",
       streamingText: "",
       messages: [
         ...s.messages,
@@ -541,6 +549,8 @@ function createSession() {
           phase: "",
           currentPlan: null,
           confirmRequired: false,
+          confirmSubmitting: false,
+          confirmError: "",
           streamingText: "",
           messages: [
             ...s.messages,
@@ -582,6 +592,8 @@ function createSession() {
           phase: "",
           currentPlan: null,
           confirmRequired: false,
+          confirmSubmitting: false,
+          confirmError: "",
           streamingText: "",
 
           totalTokens: s.totalTokens + estimatedTokens,
@@ -604,6 +616,11 @@ function createSession() {
         ...s,
         loading: false,
         phase: "",
+        confirmRequired: false,
+        confirmPlanId: "",
+        confirmActions: [],
+        confirmSubmitting: false,
+        confirmError: "",
         streamingText: "",
         messages: [
           ...s.messages,
@@ -617,7 +634,7 @@ function createSession() {
     }
   }
 
-  function confirm(accepted: boolean, approvedIndices?: number[]) {
+  async function confirm(accepted: boolean, approvedIndices?: number[]) {
     let planId = "";
     let totalRequired = 0;
     const unsub = subscribe((s) => {
@@ -626,36 +643,64 @@ function createSession() {
     });
     unsub();
 
-    update((s) => ({
-      ...s,
-      confirmRequired: false,
-      confirmPlanId: "",
-      confirmActions: [],
-    }));
-
-    if (!accepted) {
+    if (!planId) {
       update((s) => ({
         ...s,
-        messages: [
-          ...s.messages,
-          { type: "system" as MessageType, text: "Action denied.", timestamp: Date.now() },
-        ],
+        confirmError: "This approval request is missing its plan ID. Wait for the plan to refresh and try again.",
       }));
-    } else if (approvedIndices !== undefined && approvedIndices.length < totalRequired) {
-      update((s) => ({
-        ...s,
-        messages: [
-          ...s.messages,
-          { type: "system" as MessageType, text: `Approved ${approvedIndices.length} of ${totalRequired} action(s); the rest were skipped.`, timestamp: Date.now() },
-        ],
-      }));
+      return;
     }
 
     const params: Record<string, unknown> = { plan_id: planId, confirmed: accepted };
     if (approvedIndices !== undefined) {
       params.approved_indices = approvedIndices;
     }
-    call("confirm", params).catch(() => { });
+
+    update((s) => ({ ...s, confirmSubmitting: true, confirmError: "" }));
+
+    try {
+      const result = (await call("confirm", params)) as Record<string, unknown>;
+      if (result.status !== "ok") {
+        throw new Error(String(result.message ?? "The daemon did not accept this decision."));
+      }
+
+      update((s) => {
+        let acknowledgement = "Approval accepted. Execution is continuing.";
+        if (!accepted) {
+          acknowledgement = "Denial accepted. The action will not run.";
+        } else if (approvedIndices !== undefined && approvedIndices.length < totalRequired) {
+          acknowledgement = `Approved ${approvedIndices.length} of ${totalRequired} action(s); the rest will be skipped.`;
+        }
+
+        return {
+          ...s,
+          confirmRequired: false,
+          confirmPlanId: "",
+          confirmActions: [],
+          confirmSubmitting: false,
+          confirmError: "",
+          messages: [
+            ...s.messages,
+            { type: "system" as MessageType, text: acknowledgement, timestamp: Date.now() },
+          ],
+        };
+      });
+    } catch (err) {
+      const message = String(err instanceof Error ? err.message : err);
+      update((s) => ({
+        ...s,
+        confirmSubmitting: false,
+        confirmError: `Decision was not accepted: ${message}`,
+        messages: [
+          ...s.messages,
+          {
+            type: "error" as MessageType,
+            text: `Approval failed: ${message}`,
+            timestamp: Date.now(),
+          },
+        ],
+      }));
+    }
   }
 
   function requestRollback() {

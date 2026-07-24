@@ -6,18 +6,28 @@
     actions: PlanAction[];
     onconfirm: (approvedIndices: number[]) => void;
     ondeny: () => void;
+    submitting?: boolean;
+    error?: string;
   }
 
-  let { actions, onconfirm, ondeny }: Props = $props();
+  let { actions, onconfirm, ondeny, submitting = false, error = "" }: Props = $props();
 
-  let approved = $state<boolean[]>(actions.map(() => true));
+  let approved = $state<boolean[]>([]);
   let anyApproved = $derived(approved.some((v) => v));
 
+  $effect(() => {
+    if (approved.length !== actions.length) {
+      approved = actions.map(() => true);
+    }
+  });
+
   function toggle(i: number) {
+    if (submitting) return;
     approved[i] = !approved[i];
   }
 
   function handleConfirm() {
+    if (submitting) return;
     const approvedIndices = actions
       .map((a, i) => (approved[i] ? (a.index ?? i) : -1))
       .filter((i) => i !== -1);
@@ -40,7 +50,7 @@
       {#each actions as action, i}
         <li>
           <label class="confirm-checkbox">
-            <input type="checkbox" checked={approved[i]} onchange={() => toggle(i)} />
+            <input type="checkbox" checked={approved[i]} disabled={submitting} onchange={() => toggle(i)} />
           </label>
           <strong>{action.action_type}</strong> on
           <code>{action.target}</code>
@@ -57,10 +67,14 @@
       {/each}
     </ul>
 
+    {#if error}
+      <p class="confirm-error" role="alert">{error}</p>
+    {/if}
+
     <div class="confirm-actions">
-      <button class="btn-deny" title={$_('confirm.deny')} onclick={ondeny}>{$_('confirm.deny')}</button>
-      <button class="btn-confirm" title={$_('confirm.approve')} disabled={!anyApproved} onclick={handleConfirm}>
-        {$_('confirm.approve')}
+      <button class="btn-deny" title={$_('confirm.deny')} disabled={submitting} onclick={ondeny}>{$_('confirm.deny')}</button>
+      <button class="btn-confirm" title={$_('confirm.approve')} disabled={!anyApproved || submitting} onclick={handleConfirm}>
+        {submitting ? $_('confirm.submitting') : $_('confirm.approve')}
       </button>
     </div>
   </div>
@@ -177,6 +191,16 @@
     display: flex;
     justify-content: flex-end;
     gap: 10px;
+  }
+
+  .confirm-error {
+    margin: -8px 0 16px;
+    padding: 8px 10px;
+    border-radius: var(--radius-sm);
+    background: var(--danger-bg);
+    color: var(--danger);
+    font-size: 12px;
+    line-height: 1.4;
   }
 
   .btn-deny {

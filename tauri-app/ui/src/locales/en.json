@@ -49,7 +49,8 @@
     "title": "Confirmation Required",
     "body": "The following actions require your approval before execution. Uncheck any you don't want to run — the rest will be skipped.",
     "deny": "Deny",
-    "approve": "Approve & Execute"
+    "approve": "Approve & Execute",
+    "submitting": "Sending decision..."
   },
   "interrupt": {
     "title": "Heliox paused",

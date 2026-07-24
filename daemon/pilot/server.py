@@ -29,6 +29,11 @@ from pilot.logger import ColorFormatter
 logger = logging.getLogger("pilot.server")
 
 CONFIRM_TIMEOUT_SECONDS = 300
+# These control-plane RPCs must be dispatchable while a normal request is
+# paused. In particular, ``execute`` waits for ``confirm`` on the same
+# WebSocket connection, and ``abort`` must interrupt an in-flight execution.
+# All other RPCs remain sequential per connection.
+OUT_OF_BAND_RPC_METHODS = frozenset({"confirm", "abort"})
 
 # ── Plan History DB path (sibling of the main DB) ──
 PLAN_HISTORY_DB_FILE = DATA_DIR / "plan_history.db"
@@ -1094,14 +1099,39 @@ class PilotServer:
         self._authenticated_clients.add(websocket)
         logger.info("Client authenticated: %s", remote)
 
+        # Keep ordinary requests sequential, but allow confirmation and abort
+        # RPCs to bypass a long-running ``execute`` request on the same socket.
+        # Without this split, ``execute`` waits for ``confirm`` while the
+        # connection loop waits for ``execute``: a deterministic timeout.
+        request_lock = asyncio.Lock()
+        request_tasks: set[asyncio.Task[None]] = set()
+
+        async def _process_request(request: JsonRpcRequest) -> None:
+            try:
+                if request.method in OUT_OF_BAND_RPC_METHODS:
+                    response = await self._dispatch(request, websocket)
+                else:
+                    async with request_lock:
+                        response = await self._dispatch(request, websocket)
+                if response and request.id is not None:
+                    await websocket.send(response)
+            except websockets.exceptions.ConnectionClosed:
+                logger.warning("Connection lost during request handling: %s", remote)
+            except Exception as e:
+                logger.exception("Handler error")
+                try:
+                    await websocket.send(_error_response(request.id, -32603, f"Internal error: {e}"))
+                except websockets.exceptions.ConnectionClosed:
+                    logger.warning("Could not send error response because the connection is closed: %s", remote)
+
         # ── Normal message loop ────────────────────────────────────────────
         try:
             async for message in websocket:
                 try:
                     request = JsonRpcRequest.parse(str(message))
-                    response = await self._dispatch(request, websocket)
-                    if response and request.id is not None:
-                        await websocket.send(response)
+                    task = asyncio.create_task(_process_request(request))
+                    request_tasks.add(task)
+                    task.add_done_callback(request_tasks.discard)
                 except json.JSONDecodeError:
                     await websocket.send(_error_response(None, -32700, "Parse error"))
                 except ValueError as e:
@@ -1118,6 +1148,9 @@ class PilotServer:
         except websockets.exceptions.ConnectionClosed:
             logger.info("Connection closed during message loop: %s", remote)
         finally:
+            for task in request_tasks:
+                task.cancel()
+            await asyncio.gather(*request_tasks, return_exceptions=True)
             self._clients.discard(websocket)
             self._authenticated_clients.discard(websocket)
             logger.info("Client disconnected: %s", remote)
@@ -5285,6 +5318,10 @@ def _setup_logging() -> None:
             logging.FileHandler(LOG_FILE, encoding="utf-8"),
         ],
     )
+    # httpx's INFO message includes the complete request URL. Gemini uses an
+    # API-key query parameter, so leaving this enabled writes credentials into
+    # console/file logs and any pasted support transcript.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 def main() -> None:

@@ -212,6 +212,8 @@
           {#if $session.confirmRequired}
             <ConfirmDialog
               actions={$session.confirmActions}
+              submitting={$session.confirmSubmitting}
+              error={$session.confirmError}
               onconfirm={(approvedIndices) => session.confirm(true, approvedIndices)}
               ondeny={() => session.confirm(false)}
             />
