@@ -163,11 +163,11 @@
         wakeWordActive = false;
         isListening = false;
       } else {
-        const result = await call<{ status: string }>("voice_listener_start", {
+        const result = await call<{ status: string; message?: string }>("voice_listener_start", {
           wake_words: ["hey heliox", "heliox", "hey pilot"],
         });
         if (result.status !== "started" && result.status !== "already_running") {
-          throw new Error("Daemon rejected wake-word start");
+          throw new Error(result.message || "Daemon rejected wake-word start");
         }
         wakeWordActive = true;
         isListening = true;

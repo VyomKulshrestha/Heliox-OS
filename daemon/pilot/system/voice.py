@@ -366,6 +366,83 @@ async def listen(
     return "ERROR: Install whisper for speech-to-text: pip install openai-whisper"
 
 
+def _resolve_input_device(
+    sd: Any,
+    *,
+    sample_rate: int,
+    channels: int,
+    dtype: str,
+) -> int:
+    """Return a usable PortAudio input device for the requested format.
+
+    Windows can expose real microphones while leaving PortAudio's default
+    input at ``-1``. Prefer a valid OS default, then a microphone/microphone
+    array, and only then generic capture devices. Loopback/output-like inputs
+    are kept as a last resort.
+    """
+
+    def _usable(index: int) -> bool:
+        try:
+            info = sd.query_devices(index)
+            if int(info.get("max_input_channels", 0)) < channels:
+                return False
+            sd.check_input_settings(
+                device=index,
+                channels=channels,
+                dtype=dtype,
+                samplerate=sample_rate,
+            )
+            return True
+        except Exception:
+            return False
+
+    try:
+        default_device = sd.default.device
+        try:
+            # sounddevice exposes this as _InputOutputPair, which is
+            # indexable but is not a list/tuple.
+            default_input = int(default_device[0])
+        except (IndexError, TypeError):
+            default_input = int(default_device)
+    except (AttributeError, IndexError, TypeError, ValueError):
+        default_input = -1
+
+    if default_input >= 0 and _usable(default_input):
+        return default_input
+
+    devices = list(sd.query_devices())
+
+    def _priority(item: tuple[int, Any]) -> tuple[int, int, int]:
+        index, info = item
+        name = str(info.get("name", "")).lower()
+        loopback_like = any(
+            marker in name
+            for marker in ("stereo mix", "loopback", "what u hear", "pc speaker", "output")
+        )
+        if "microphone array" in name:
+            kind = 0
+        elif "microphone" in name or "mic input" in name:
+            kind = 1
+        elif "input" in name:
+            kind = 2
+        else:
+            kind = 3
+        return (1 if loopback_like else 0, kind, index)
+
+    candidates = [
+        (index, info)
+        for index, info in enumerate(devices)
+        if int(info.get("max_input_channels", 0)) >= channels
+    ]
+    for index, _info in sorted(candidates, key=_priority):
+        if _usable(index):
+            return index
+
+    raise RuntimeError(
+        f"No usable microphone supports {sample_rate} Hz, {channels} channel, {dtype}"
+    )
+
+
 async def _record_audio(duration: int) -> str:
     """Record audio from the microphone."""
     output_path = os.path.join(
@@ -377,12 +454,19 @@ async def _record_audio(duration: int) -> str:
         import sounddevice as sd
 
         sample_rate = 16000
+        input_device = _resolve_input_device(
+            sd,
+            sample_rate=sample_rate,
+            channels=1,
+            dtype="int16",
+        )
 
         data = sd.rec(
             int(duration * sample_rate),
             samplerate=sample_rate,
             channels=1,
             dtype="int16",
+            device=input_device,
         )
 
         sd.wait()
@@ -523,6 +607,9 @@ class _ContinuousRecorder:
         self._stream: Any = None
         self._queue: asyncio.Queue[Any] | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
+        self.input_device: int | None = None
+        self.input_device_name = ""
+        self.last_error = ""
 
     def _make_endpointer(self) -> UtteranceEndpointer:
         return UtteranceEndpointer(
@@ -558,16 +645,27 @@ class _ContinuousRecorder:
                 loop.call_soon_threadsafe(queue.put_nowait, block)
 
         try:
+            self.input_device = _resolve_input_device(
+                sd,
+                sample_rate=self.sample_rate,
+                channels=1,
+                dtype="int16",
+            )
+            device_info = sd.query_devices(self.input_device)
+            self.input_device_name = str(device_info.get("name", self.input_device))
             self._stream = sd.InputStream(
                 samplerate=self.sample_rate,
                 channels=1,
                 dtype="int16",
                 blocksize=self.frame_size,
                 callback=_callback,
+                device=self.input_device,
             )
             self._stream.start()
+            self.last_error = ""
             return True
-        except Exception:
+        except Exception as exc:
+            self.last_error = str(exc)
             logger.warning("Failed to open continuous audio input stream", exc_info=True)
             self._stream = None
             return False
@@ -744,6 +842,12 @@ class ContinuousVoiceListener:
 
         self._running = True
         recorder_active = self._recorder.start()
+        if not recorder_active:
+            self._running = False
+            detail = self._recorder.last_error or "No usable microphone input is available."
+            logger.error("Continuous voice listener could not start: %s", detail)
+            return f"Voice listener could not start: {detail}"
+
         self._task = asyncio.create_task(self._listen_loop())
 
         logger.info(
@@ -955,6 +1059,9 @@ class ContinuousVoiceListener:
             "configured_language": self.config.voice.language,
             "whisper_model": self.config.voice.whisper_model,
             "vad_recorder_active": self._recorder.is_active,
+            "input_device": self._recorder.input_device,
+            "input_device_name": self._recorder.input_device_name,
+            "input_error": self._recorder.last_error,
         }
 
 

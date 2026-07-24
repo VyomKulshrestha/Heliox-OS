@@ -4795,6 +4795,9 @@ def handle_tool(tool_name, params):
             config=self.config,
         )
         result = await self._voice_listener.start()
+        if not self._voice_listener.is_running:
+            self._voice_listener = None
+            return {"status": "error", "message": result}
         return {"status": "started", "message": result, "wake_words": wake_words}
 
     async def _handle_voice_listener_stop(self, params: dict, ws: ServerConnection) -> dict:
