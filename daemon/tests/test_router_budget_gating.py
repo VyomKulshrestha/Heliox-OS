@@ -17,6 +17,10 @@ from pilot.models.budget_tracker import (
 from pilot.models.router import ModelRouter
 
 
+def test_default_action_budget_can_fit_the_planner_prompt():
+    assert ModelConfig().max_tokens_per_action >= 6000
+
+
 @pytest.fixture
 def model_config():
     return ModelConfig(

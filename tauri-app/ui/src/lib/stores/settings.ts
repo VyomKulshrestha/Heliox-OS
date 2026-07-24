@@ -81,7 +81,7 @@ const defaultSettings: PilotSettings = {
     rate_limit_burst: 5,
     budget_enabled: true,
     budget_monthly_limit_usd: 10.0,
-    max_tokens_per_action: 4000,
+    max_tokens_per_action: 6000,
     max_tokens_per_task: 50000,
     max_usd_per_task: 0.10,
     max_consecutive_failures: 3,
