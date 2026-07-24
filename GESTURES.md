@@ -231,9 +231,13 @@ this pipeline, the deadzone/discretization constants haven't been
 validated against a real camera in this environment.
 
 **On-device processing, privacy-first**: `GestureControl.svelte` loads
-`@mediapipe/tasks-vision`'s `FaceLandmarker` as a completely separate
-model from the hand-tracking backend (independent of the
-`legacy`/`tasks` hand-backend choice), running on the same webcam stream
+`@mediapipe/tasks-vision`'s `FaceLandmarker` as a separate model on the
+same webcam stream. A gaze-enabled session also uses Tasks-Vision's
+`HandLandmarker` even when the stored hand preference is `legacy`: the
+legacy `@mediapipe/hands` WASM and Tasks-Vision WASM both install an
+Emscripten `Module` global and cannot safely coexist in one page. Keeping
+both models in the Tasks-Vision runtime prevents that initialization
+collision. Face tracking runs
 at a reduced sampling rate (every 6th frame — a coarse "which rough
 direction" signal doesn't need 30fps, and running two ML inference
 passes every single frame on the CPU delegate is a real cost worth

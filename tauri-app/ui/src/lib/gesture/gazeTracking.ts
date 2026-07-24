@@ -35,6 +35,18 @@ export interface GazeEstimate {
   confidence: number;
 }
 
+export type HandTrackingBackend = "legacy" | "tasks";
+
+/** Legacy Hands and Tasks-Vision cannot safely coexist because both WASM
+ * bundles install an Emscripten `Module` global. A gaze session therefore
+ * keeps both hand and face models on Tasks-Vision. */
+export function resolveHandBackend(
+  configured: HandTrackingBackend | undefined,
+  gazeEnabled: boolean,
+): HandTrackingBackend {
+  return gazeEnabled || configured === "tasks" ? "tasks" : "legacy";
+}
+
 // Fusion only considers readings inside its short correlation window. A
 // steady gaze therefore needs a heartbeat as well as change-based updates;
 // otherwise an unchanged region silently expires after the first event.

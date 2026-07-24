@@ -64,6 +64,7 @@
   } from "../gesture/worldModel";
   import {
     estimateGazeRegion,
+    resolveHandBackend,
     shouldSendGazeUpdate,
     type GazeRegion,
   } from "../gesture/gazeTracking";
@@ -85,6 +86,7 @@
   let confidence = $state(0);
   let cameraError = $state("");
   let showCamera = $state(false);
+  let isStarting = $state(false);
   let gestureHistory: string[] = $state([]);
   
   let videoEl: HTMLVideoElement | undefined = $state();
@@ -93,9 +95,10 @@
   let stream: MediaStream | null = null;
   let hands: Hands | null = null;
   let handLandmarker: HandLandmarker | null = null;
-  // Frozen at startGestures() time from $settings.vision.mediapipe_backend —
-  // changing the setting mid-session requires stopping/restarting the
-  // engine, not a hot-swap (see VisionConfig.mediapipe_backend in config.py).
+  // Frozen at startGestures() time. Gaze always uses the Tasks-Vision hand
+  // backend too: loading legacy @mediapipe/hands and Tasks-Vision in the
+  // same page makes their Emscripten `Module` globals collide and aborts
+  // FaceLandmarker initialization.
   let activeBackend: "legacy" | "tasks" = "legacy";
   // Most recent worldLandmarks from the "tasks" backend — the "legacy"
   // backend never populates this (no metric-scale 3D available). Consumed
@@ -105,12 +108,13 @@
 
   // ── Gaze tracking (third input modality, see gazeTracking.ts) ──
   //
-  // A SEPARATE model from the hand backend — runs (or doesn't) independent
-  // of activeBackend's legacy/tasks choice, gated only on
-  // $settings.vision.gaze_tracking_enabled. Only ever sends a coarse
-  // region label + confidence to the backend, never raw face landmarks or
-  // video — see gazeTracking.ts's module docstring.
+  // A separate Tasks-Vision model gated on
+  // $settings.vision.gaze_tracking_enabled. The hand model is also forced
+  // to Tasks-Vision while gaze is enabled to avoid mixing incompatible
+  // MediaPipe WASM runtimes. Only ever sends a coarse region label +
+  // confidence to the backend, never raw face landmarks or video.
   let faceLandmarker: FaceLandmarker | null = null;
+  let faceLandmarkerLoad: Promise<boolean> | null = null;
   let gazeTrackingActive = false;
   let lastGazeRegion: GazeRegion | null = null;
   let lastGazeSentAt = 0;
@@ -406,6 +410,7 @@
   // Same CPU-delegate rationale as loadHandLandmarker() above.
   async function loadFaceLandmarker() {
     if (faceLandmarker) return true;
+    if (faceLandmarkerLoad) return faceLandmarkerLoad;
 
     updateGazeRuntime({
       phase: "loading",
@@ -415,26 +420,45 @@
       daemonStatus: "idle",
       message: "Loading the on-device FaceLandmarker model…",
     });
-    try {
-      const vision = await FilesetResolver.forVisionTasks(MEDIAPIPE_TASKS_VISION_ASSET_BASE);
-      faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
-        baseOptions: {
-          modelAssetPath: `${MEDIAPIPE_TASKS_VISION_ASSET_BASE}/face_landmarker.task`,
-          delegate: "CPU",
-        },
-        runningMode: "VIDEO",
-        numFaces: 1,
-      });
-      return true;
-    } catch (e) {
-      console.error("MediaPipe FaceLandmarker load error (gaze tracking disabled for this session):", e);
-      faceLandmarker = null;
+    faceLandmarkerLoad = (async () => {
+      let lastError: unknown;
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          const vision = await FilesetResolver.forVisionTasks(MEDIAPIPE_TASKS_VISION_ASSET_BASE);
+          faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
+            baseOptions: {
+              modelAssetPath: `${MEDIAPIPE_TASKS_VISION_ASSET_BASE}/face_landmarker.task`,
+              delegate: "CPU",
+            },
+            runningMode: "VIDEO",
+            numFaces: 1,
+          });
+          return true;
+        } catch (error) {
+          lastError = error;
+          faceLandmarker = null;
+          if (attempt === 1) {
+            console.warn("MediaPipe FaceLandmarker initialization failed; retrying once:", error);
+          }
+        }
+      }
+
+      const detail = lastError instanceof Error
+        ? `${lastError.name}: ${lastError.message}`
+        : String(lastError || "Unknown initialization error");
+      console.error("MediaPipe FaceLandmarker load error (gaze tracking disabled for this session):", lastError);
       updateGazeRuntime({
         phase: "error",
         cameraActive: isActive,
-        message: "Gaze model failed to load. Gesture control can still run.",
+        message: `Gaze model failed to load — ${detail}`,
       });
       return false;
+    })();
+
+    try {
+      return await faceLandmarkerLoad;
+    } finally {
+      faceLandmarkerLoad = null;
     }
   }
 
@@ -473,7 +497,14 @@
     resetGazeRuntime();
   }
 
+  async function retryGazeTracking(): Promise<void> {
+    if (!isActive || !$settings.vision?.gaze_tracking_enabled || faceLandmarkerLoad) return;
+    deactivateGazeTracking();
+    await activateGazeTracking();
+  }
+
   async function toggleGestures() {
+    if (isStarting) return;
     if (isActive) stopGestures();
     else await startGestures();
   }
@@ -562,6 +593,8 @@
   }
 
   async function startGestures() {
+    if (isStarting || isActive) return;
+    isStarting = true;
     cameraError = "";
     resetGazeRuntime();
     if ($settings.vision?.gaze_tracking_enabled) {
@@ -570,7 +603,15 @@
         message: "Preparing camera controls and on-device models…",
       });
     }
-    activeBackend = $settings.vision?.mediapipe_backend === "tasks" ? "tasks" : "legacy";
+    // @mediapipe/hands (legacy) and @mediapipe/tasks-vision both install an
+    // Emscripten `Module` global. Mixing them aborts FaceLandmarker with
+    // "Module.noExitRuntime has been replaced". Keep gaze sessions wholly
+    // on Tasks-Vision; the user's configured backend still applies when
+    // gaze is off.
+    activeBackend = resolveHandBackend(
+      $settings.vision?.mediapipe_backend,
+      $settings.vision?.gaze_tracking_enabled ?? false,
+    );
     const loaded = activeBackend === "tasks" ? await loadHandLandmarker() : await loadMediaPipe();
     if (!loaded) {
       if ($settings.vision?.gaze_tracking_enabled) {
@@ -579,6 +620,7 @@
           message: cameraError || "Camera controls failed to load.",
         });
       }
+      isStarting = false;
       return;
     }
 
@@ -599,6 +641,7 @@
         });
       }
       void unsubscribeFromWorkflowState();
+      isStarting = false;
       return;
     }
 
@@ -619,6 +662,7 @@
     }
 
     detectFrame();
+    isStarting = false;
   }
 
   let stopping = false;
@@ -1499,8 +1543,9 @@
   <button
     class="gesture-btn"
     class:active={isActive}
-    class:loading={mpLoading}
+    class:loading={mpLoading || isStarting}
     onclick={toggleGestures}
+    disabled={isStarting}
     aria-label={isActive ? "Stop camera controls" : "Start camera controls"}
     title={isActive
       ? "Stop camera, gesture, and gaze control"
@@ -1514,7 +1559,7 @@
       <path d="M10 10.5V6a2 2 0 0 0-4 0v8" />
       <path d="M18 8a2 2 0 0 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15" />
     </svg>
-    {#if mpLoading}
+    {#if mpLoading || isStarting}
       <span class="loading-dot"></span>
     {/if}
   </button>
@@ -1525,7 +1570,11 @@
       class:active={$gazeRuntime.phase === "active"}
       class:error={$gazeRuntime.phase === "error" || $gazeRuntime.daemonStatus === "error"}
       class:scanning={$gazeRuntime.phase === "loading" || $gazeRuntime.phase === "scanning"}
-      onclick={() => { if (!isActive) void startGestures(); }}
+      onclick={() => {
+        if (!isActive) void startGestures();
+        else if ($gazeRuntime.phase === "error") void retryGazeTracking();
+      }}
+      disabled={isStarting}
       title={$gazeRuntime.message || (isActive ? "Live coarse gaze region" : "Start the camera to activate gaze tracking")}
     >
       <span class="gaze-runtime-dot"></span>
@@ -1536,7 +1585,7 @@
       {:else if $gazeRuntime.phase === "scanning"}
         Gaze on · find face
       {:else if $gazeRuntime.phase === "error"}
-        Gaze error
+        Gaze error · retry
       {:else}
         Gaze ready · start camera
       {/if}
@@ -1609,6 +1658,9 @@
 
   {#if cameraError}
     <div class="gesture-error">{cameraError}</div>
+  {/if}
+  {#if $gazeRuntime.phase === "error" && $gazeRuntime.message}
+    <div class="gesture-error gaze-error-detail">{$gazeRuntime.message}</div>
   {/if}
 </div>
 
@@ -1705,6 +1757,11 @@
     font-weight: 600;
     white-space: nowrap;
     cursor: pointer;
+  }
+
+  .gesture-btn:disabled,
+  .gaze-runtime-chip:disabled {
+    cursor: wait;
   }
 
   .gaze-runtime-chip.active {
@@ -1844,5 +1901,10 @@
 
   .gesture-error {
     font-size: 10px; color: rgba(255, 80, 80, 0.8); max-width: 160px;
+  }
+
+  .gaze-error-detail {
+    max-width: 260px;
+    line-height: 1.3;
   }
 </style>

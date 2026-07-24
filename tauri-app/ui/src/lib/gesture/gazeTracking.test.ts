@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   GAZE_HEARTBEAT_MS,
   estimateGazeRegion,
+  resolveHandBackend,
   shouldSendGazeUpdate,
   type FaceLandmark,
 } from "./gazeTracking";
@@ -110,5 +111,16 @@ describe("shouldSendGazeUpdate", () => {
 
   it("refreshes an unchanged region before fusion context expires", () => {
     expect(shouldSendGazeUpdate("center", "center", GAZE_HEARTBEAT_MS, 0)).toBe(true);
+  });
+});
+
+describe("resolveHandBackend", () => {
+  it("forces Tasks-Vision when gaze is enabled", () => {
+    expect(resolveHandBackend("legacy", true)).toBe("tasks");
+  });
+
+  it("preserves the configured backend when gaze is disabled", () => {
+    expect(resolveHandBackend("legacy", false)).toBe("legacy");
+    expect(resolveHandBackend("tasks", false)).toBe("tasks");
   });
 });
