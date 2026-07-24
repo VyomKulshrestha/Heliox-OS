@@ -77,3 +77,61 @@ async def test_windows_snapshot_status_requires_administrator(monkeypatch):
     assert status["available"] is True
     assert status["ready"] is False
     assert "not Administrator" in status["detail"]
+    assert status["retention_supported"] is False
+    assert "Windows manages Restore Point retention" in status["retention_detail"]
+
+
+@pytest.mark.asyncio
+async def test_snapshot_creation_enforces_retention_for_supported_backend():
+    config = PilotConfig()
+    manager = SnapshotManager(config)
+    manager._backend = SnapshotBackend.BTRFS
+    manager._btrfs_snapshot = AsyncMock(return_value="/.snapshots/new")
+    manager.cleanup = AsyncMock(return_value=2)
+
+    snapshot_id = await manager.create_snapshot("plan-1", "before changes")
+
+    assert snapshot_id == "/.snapshots/new"
+    manager.cleanup.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+async def test_cleanup_keeps_newest_pilot_snapshots(monkeypatch):
+    config = PilotConfig()
+    config.security.snapshot_retention_count = 2
+    manager = SnapshotManager(config)
+    manager._backend = SnapshotBackend.BTRFS
+    manager.list_snapshots = AsyncMock(
+        return_value=[
+            {"id": "/.snapshots/old", "tag": "pilot-a-20260101-000000"},
+            {"id": "/.snapshots/new", "tag": "pilot-b-20260301-000000"},
+            {"id": "/.snapshots/middle", "tag": "pilot-c-20260201-000000"},
+            {"id": "/.snapshots/user", "tag": "user-created"},
+        ]
+    )
+    run = AsyncMock(return_value=(0, "", ""))
+    monkeypatch.setattr("pilot.system.snapshots._run", run)
+
+    removed = await manager.cleanup()
+
+    assert removed == 1
+    run.assert_awaited_once_with(
+        ["btrfs", "subvolume", "delete", "/.snapshots/old"],
+        root=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_windows_snapshot_label_is_identifiable_as_pilot_owned(monkeypatch):
+    config = PilotConfig()
+    manager = SnapshotManager(config)
+    manager._backend = SnapshotBackend.WINDOWS_RESTORE_POINT
+    run = AsyncMock(return_value=(0, "42\n", ""))
+    monkeypatch.setattr("pilot.system.snapshots._run", run)
+
+    snapshot_id = await manager.create_snapshot("plan-7", "before protected change")
+
+    assert snapshot_id == "windows-restore:42"
+    command = run.await_args.args[0][-1]
+    assert "pilot-plan-7-" in command
+    assert "before protected change" in command

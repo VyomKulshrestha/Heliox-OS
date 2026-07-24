@@ -48,6 +48,8 @@
   let rootToast = $state("");
   let rootToastType = $state<"success" | "warning">("success");
   let rootSaving = $state(false);
+  let elevationRequesting = $state(false);
+  let elevationMessage = $state("");
   let rootRuntime = $state<{
     root_policy_enabled: boolean;
     process_elevated: boolean;
@@ -62,6 +64,9 @@
     available: boolean;
     ready: boolean;
     detail: string;
+    retention_supported: boolean;
+    retention_count: number;
+    retention_detail: string;
   } | null>(null);
   let dryRunSaving = $state(false);
   let dryRunToast = $state("");
@@ -138,7 +143,7 @@
   $effect(() => {
     refreshRootRuntime();
     const retry = setInterval(() => {
-      if (!rootRuntime) refreshRootRuntime();
+      if (!rootRuntime?.process_elevated) refreshRootRuntime();
     }, 2000);
     return () => clearInterval(retry);
   });
@@ -154,10 +159,37 @@
   $effect(() => {
     refreshSnapshotRuntime();
     const retry = setInterval(() => {
-      if (!snapshotRuntime) refreshSnapshotRuntime();
+      if (!snapshotRuntime?.ready) refreshSnapshotRuntime();
     }, 2000);
     return () => clearInterval(retry);
   });
+
+  $effect(() => {
+    if (elevationRequesting && rootRuntime?.process_elevated) {
+      elevationRequesting = false;
+      elevationMessage = "Administrator mode is active. Snapshot protection is refreshing.";
+      refreshSnapshotRuntime();
+    }
+  });
+
+  async function requestAdministratorRestart() {
+    if (elevationRequesting) return;
+    elevationRequesting = true;
+    elevationMessage = "Waiting for the Windows UAC prompt. Choose Yes to continue.";
+
+    try {
+      const result = await call<{ status: string; message: string }>("restart_elevated");
+      elevationMessage = result.message;
+      if (result.status !== "prompted") {
+        elevationRequesting = false;
+      }
+    } catch (err) {
+      elevationRequesting = false;
+      elevationMessage = err instanceof Error
+        ? `Administrator restart failed: ${err.message}`
+        : "Administrator restart failed. The existing daemon is still running.";
+    }
+  }
 
   async function applyRootToggle(turningOn: boolean) {
     rootSaving = true;
@@ -326,9 +358,20 @@
     settings.updateSection("model", { gpu_memory_limit_mb: val });
   }
 
-  function updateRetention(e: Event) {
-    const val = parseInt((e.target as HTMLInputElement).value) || 10;
-    settings.updateSection("security", { snapshot_retention_count: val });
+  async function updateRetention(e: Event) {
+    const input = e.target as HTMLInputElement;
+    const parsed = Number.parseInt(input.value, 10);
+    const val = Number.isFinite(parsed) ? Math.min(100, Math.max(1, parsed)) : 10;
+    input.value = String(val);
+    const synced = await settings.updateSection(
+      "security",
+      { snapshot_retention_count: val },
+      { requireDaemon: true },
+    );
+    snapshotToast = synced
+      ? `Snapshot retention saved at ${val}.`
+      : "Snapshot retention was not changed because the daemon could not confirm it.";
+    setTimeout(() => (snapshotToast = ""), 5000);
   }
 
   function updateScreenVisionInterval(e: Event) {
@@ -679,8 +722,26 @@
             {rootRuntime?.detail ||
               "Root-tier actions are allowed by Heliox policy; checking the daemon's OS privileges."}
           </span>
+          {#if rootRuntime?.platform === "win32" && !rootRuntime.process_elevated}
+            <span class="root-status-desc">
+              Windows will show a UAC prompt. Heliox stays running if you cancel.
+            </span>
+          {/if}
         </div>
+        {#if rootRuntime?.platform === "win32" && !rootRuntime.process_elevated}
+          <button
+            class="elevation-button"
+            onclick={requestAdministratorRestart}
+            disabled={elevationRequesting}
+          >
+            {elevationRequesting ? "Waiting for UAC..." : "Restart as Administrator"}
+          </button>
+        {/if}
       </div>
+    {/if}
+
+    {#if elevationMessage}
+      <div class="elevation-message">{elevationMessage}</div>
     {/if}
 
     <div class="setting-row">
@@ -717,6 +778,15 @@
           <span class="snapshot-status-title">Snapshot protection is fail-closed</span>
           <span class="root-status-desc">{snapshotRuntime.detail}</span>
         </div>
+        {#if rootRuntime?.platform === "win32" && !rootRuntime.process_elevated}
+          <button
+            class="elevation-button elevation-button-danger"
+            onclick={requestAdministratorRestart}
+            disabled={elevationRequesting}
+          >
+            {elevationRequesting ? "Waiting for UAC..." : "Fix: Restart as Administrator"}
+          </button>
+        {/if}
       </div>
     {/if}
 
@@ -759,6 +829,9 @@
       <div class="setting-info">
         <span class="setting-label">{$_('settings.snapshot_retention')}</span>
         <span class="setting-desc">{$_('settings.snapshot_retention_desc')}</span>
+        {#if snapshotRuntime}
+          <span class="security-setting-status">{snapshotRuntime.retention_detail}</span>
+        {/if}
       </div>
       <input
         type="number"
@@ -767,6 +840,8 @@
         onchange={updateRetention}
         min="1"
         max="100"
+        disabled={!snapshotRuntime?.retention_supported}
+        title={snapshotRuntime?.retention_detail || "Checking snapshot backend"}
       />
     </div>
   </section>
@@ -1755,6 +1830,8 @@
     display: flex;
     flex-direction: column;
     gap: 1px;
+    min-width: 0;
+    flex: 1;
   }
 
   .root-status-title {
@@ -1788,6 +1865,41 @@
     font-size: 12px;
     font-weight: 600;
     color: var(--danger, #ef4444);
+  }
+
+  .elevation-button {
+    flex-shrink: 0;
+    padding: 7px 11px;
+    border: 1px solid rgba(245, 158, 11, 0.48);
+    border-radius: 6px;
+    background: rgba(245, 158, 11, 0.12);
+    color: #f59e0b;
+    font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .elevation-button:hover:not(:disabled) {
+    background: rgba(245, 158, 11, 0.2);
+  }
+
+  .elevation-button-danger {
+    border-color: rgba(239, 68, 68, 0.5);
+    background: rgba(239, 68, 68, 0.12);
+    color: var(--danger, #ef4444);
+  }
+
+  .elevation-button:disabled {
+    cursor: wait;
+    opacity: 0.65;
+  }
+
+  .elevation-message {
+    padding: 8px 14px;
+    border-bottom: 1px solid rgba(245, 158, 11, 0.24);
+    background: rgba(245, 158, 11, 0.07);
+    color: var(--text-secondary);
+    font-size: 11px;
   }
 
   .dry-run-status-banner {

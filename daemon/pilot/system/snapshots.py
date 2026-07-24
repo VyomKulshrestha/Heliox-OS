@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import sys
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -25,6 +26,19 @@ class SnapshotBackend(StrEnum):
     TIMESHIFT = "timeshift"
     WINDOWS_RESTORE_POINT = "windows_restore_point"
     NONE = "none"
+
+
+_PILOT_TIMESTAMP = re.compile(r"(\d{8}-\d{6})")
+
+
+def _snapshot_sort_key(snapshot: dict[str, str]) -> tuple[str, int]:
+    """Return a newest-first-compatible key for Pilot-created snapshots."""
+    tag = snapshot.get("tag", "")
+    timestamp_match = _PILOT_TIMESTAMP.search(tag)
+    timestamp = timestamp_match.group(1) if timestamp_match else ""
+    snapshot_id = snapshot.get("id", "")
+    numeric_id = snapshot_id.removeprefix("windows-restore:")
+    return timestamp, int(numeric_id) if numeric_id.isdigit() else 0
 
 
 async def _run(args: list[str], *, root: bool = False) -> tuple[int, str, str]:
@@ -81,14 +95,24 @@ class SnapshotManager:
         tag = f"pilot-{action_id}-{timestamp}"
 
         if backend == SnapshotBackend.BTRFS:
-            return await self._btrfs_snapshot(tag, description)
+            snapshot_id = await self._btrfs_snapshot(tag, description)
         elif backend == SnapshotBackend.TIMESHIFT:
-            return await self._timeshift_snapshot(tag, description)
+            snapshot_id = await self._timeshift_snapshot(tag, description)
         elif backend == SnapshotBackend.WINDOWS_RESTORE_POINT:
-            return await self._windows_restore_snapshot(tag, description)
+            snapshot_id = await self._windows_restore_snapshot(tag, description)
         else:
             logger.warning("No snapshot backend available")
             return None
+
+        if backend in {SnapshotBackend.BTRFS, SnapshotBackend.TIMESHIFT}:
+            try:
+                removed = await self.cleanup()
+                if removed:
+                    logger.info("Snapshot retention removed %d old Pilot snapshot(s)", removed)
+            except Exception:
+                logger.warning("Snapshot retention cleanup failed", exc_info=True)
+
+        return snapshot_id
 
     async def rollback(self, snapshot_id: str) -> str:
         """Rollback to a previous snapshot."""
@@ -115,12 +139,13 @@ class SnapshotManager:
             return await self._windows_restore_list()
         return []
 
-    async def status(self) -> dict[str, str | bool]:
+    async def status(self) -> dict[str, str | bool | int]:
         """Return whether configured snapshot protection can run right now."""
         backend = await self.detect_backend()
         enabled = self._config.security.snapshot_on_destructive
         available = backend != SnapshotBackend.NONE
         ready = available
+        retention_supported = backend in {SnapshotBackend.BTRFS, SnapshotBackend.TIMESHIFT}
 
         if backend == SnapshotBackend.WINDOWS_RESTORE_POINT:
             from pilot.security.privileges import has_elevated_privileges
@@ -148,13 +173,30 @@ class SnapshotManager:
             "available": available,
             "ready": ready,
             "detail": detail,
+            "retention_supported": retention_supported,
+            "retention_count": self._config.security.snapshot_retention_count,
+            "retention_detail": (
+                "Heliox enforces this limit after each Btrfs or Timeshift snapshot."
+                if retention_supported
+                else (
+                    "Windows manages Restore Point retention; its supported APIs do not expose "
+                    "individual restore-point deletion, so Heliox cannot enforce an exact count."
+                    if backend == SnapshotBackend.WINDOWS_RESTORE_POINT
+                    else "A retention limit requires a supported snapshot backend."
+                )
+            ),
         }
 
     async def cleanup(self) -> int:
         """Remove old snapshots per retention policy. Returns count removed."""
-        retention = self._config.security.snapshot_retention_count
+        backend = await self.detect_backend()
+        if backend not in {SnapshotBackend.BTRFS, SnapshotBackend.TIMESHIFT}:
+            return 0
+
+        retention = max(1, self._config.security.snapshot_retention_count)
         snapshots = await self.list_snapshots()
         pilot_snapshots = [s for s in snapshots if s.get("tag", "").startswith("pilot-")]
+        pilot_snapshots.sort(key=_snapshot_sort_key, reverse=True)
 
         if len(pilot_snapshots) <= retention:
             return 0
@@ -165,12 +207,24 @@ class SnapshotManager:
             try:
                 sid = snap.get("id", "")
                 if sid:
-                    backend = await self.detect_backend()
                     if backend == SnapshotBackend.BTRFS:
-                        await _run(["btrfs", "subvolume", "delete", sid], root=True)
+                        code, _, error = await _run(
+                            ["btrfs", "subvolume", "delete", sid],
+                            root=True,
+                        )
                     elif backend == SnapshotBackend.TIMESHIFT:
-                        await _run(["timeshift", "--delete", "--snapshot", sid], root=True)
-                    removed += 1
+                        code, _, error = await _run(
+                            ["timeshift", "--delete", "--snapshot", sid],
+                            root=True,
+                        )
+                    if code == 0:
+                        removed += 1
+                    else:
+                        logger.warning(
+                            "Failed to remove snapshot %s: %s",
+                            sid,
+                            error.strip(),
+                        )
             except Exception:
                 logger.warning("Failed to remove snapshot: %s", snap)
 
@@ -232,7 +286,7 @@ class SnapshotManager:
         return code == 0 and "Checkpoint-Computer" in out
 
     async def _windows_restore_snapshot(self, tag: str, description: str) -> str:
-        label = (description or tag).replace("'", "''")[:200]
+        label = f"{tag}: {description}".rstrip(": ").replace("'", "''")[:200]
         script = (
             "$ErrorActionPreference='Stop'; "
             f"Checkpoint-Computer -Description '{label}' -RestorePointType MODIFY_SETTINGS; "
@@ -274,7 +328,10 @@ class SnapshotManager:
                 "-NoProfile",
                 "-NonInteractive",
                 "-Command",
-                "Get-ComputerRestorePoint | Select-Object SequenceNumber,Description | ConvertTo-Json -Compress",
+                (
+                    "Get-ComputerRestorePoint | Sort-Object SequenceNumber -Descending | "
+                    "Select-Object SequenceNumber,Description | ConvertTo-Json -Compress"
+                ),
             ]
         )
         if code != 0 or not out.strip():
@@ -294,7 +351,7 @@ class SnapshotManager:
         ]
 
     async def _timeshift_snapshot(self, tag: str, description: str) -> str:
-        comment = description or f"Pilot pre-action snapshot: {tag}"
+        comment = f"{tag}: {description}".rstrip(": ")
         code, out, err = await _run(
             ["timeshift", "--create", f"--comments={comment}", "--tags=D"],
             root=True,

@@ -837,6 +837,7 @@ class PilotServer:
             "get_config": self._handle_get_config,
             "get_security_status": self._handle_get_security_status,
             "get_snapshot_status": self._handle_get_snapshot_status,
+            "restart_elevated": self._handle_restart_elevated,
             "update_config": self._handle_update_config,
             "reset_config": self._handle_reset_config,
             "get_history": self._handle_get_history,
@@ -2492,6 +2493,36 @@ class PilotServer:
 
         return await SnapshotManager(self.config).status()
 
+    async def _handle_restart_elevated(self, params: dict, ws: ServerConnection) -> dict:
+        """Request a Windows UAC handoff to an elevated replacement daemon."""
+        from pilot.security.privileges import has_elevated_privileges
+        from pilot.system.elevation import ElevationError, request_elevated_restart
+
+        if sys.platform != "win32":
+            return {
+                "status": "unsupported",
+                "message": "Administrator restart is only available on Windows.",
+            }
+        if not self.config.security.root_enabled:
+            return {
+                "status": "blocked",
+                "message": "Enable Root Access before requesting Administrator privileges.",
+            }
+        if has_elevated_privileges():
+            return {
+                "status": "already_elevated",
+                "message": "The Heliox daemon is already running as Administrator.",
+            }
+
+        try:
+            result = await asyncio.to_thread(request_elevated_restart)
+        except ElevationError as error:
+            logger.warning("Administrator restart was not started: %s", error)
+            return {"status": "error", "message": str(error)}
+
+        logger.info("Windows accepted the Administrator restart request")
+        return result
+
     async def _handle_update_config(self, params: dict, ws: ServerConnection) -> dict:
         """Update server configuration.
 
@@ -2524,6 +2555,12 @@ class PilotServer:
                     }
                 if section == "security" and k == "dry_run" and not isinstance(v, bool):
                     return {"status": "error", "message": "security.dry_run must be a boolean"}
+                if section == "security" and k == "snapshot_retention_count":
+                    if not isinstance(v, int) or isinstance(v, bool) or not 1 <= v <= 100:
+                        return {
+                            "status": "error",
+                            "message": "security.snapshot_retention_count must be from 1 to 100",
+                        }
                 if section == "screen_vision" and k == "capture_interval_seconds":
                     v = float(v)
                 setattr(target, k, v)
@@ -5365,9 +5402,6 @@ def _setup_logging() -> None:
 
 def main() -> None:
     """Entry point for the pilot-daemon command."""
-    ensure_dirs()
-    _setup_logging()
-    config = PilotConfig.load()
     parser = argparse.ArgumentParser(prog="pilot.server")
     parser.add_argument("--dry-run", action="store_true", help="Simulate actions without executing them")
     parser.add_argument(
@@ -5375,7 +5409,16 @@ def main() -> None:
         action="store_true",
         help="Package all logs, config.toml, and audit trails into a zip on the Desktop for bug reporting.",
     )
+    parser.add_argument("--replace-pid", type=int, help=argparse.SUPPRESS)
     args, _ = parser.parse_known_args()
+    if args.replace_pid is not None:
+        from pilot.system.elevation import replace_existing_daemon
+
+        replace_existing_daemon(args.replace_pid)
+
+    ensure_dirs()
+    _setup_logging()
+    config = PilotConfig.load()
     if args.export_logs:
         export_logs()
         return
