@@ -1,0 +1,44 @@
+import wave
+
+import numpy as np
+
+from pilot.system.voice import _load_pcm_wav_for_whisper
+
+
+def test_load_pcm_wav_for_whisper_without_ffmpeg(tmp_path):
+    path = tmp_path / "voice.wav"
+    source = np.array([0, 16384, -16384, 32767], dtype=np.int16)
+    with wave.open(str(path), "wb") as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(16000)
+        wav_file.writeframes(source.tobytes())
+
+    loaded = _load_pcm_wav_for_whisper(str(path))
+
+    assert loaded is not None
+    assert loaded.dtype == np.float32
+    np.testing.assert_allclose(
+        loaded,
+        source.astype(np.float32) / 32768.0,
+        rtol=0,
+        atol=1e-7,
+    )
+
+
+def test_load_pcm_wav_for_whisper_downmixes_and_resamples(tmp_path):
+    path = tmp_path / "stereo.wav"
+    left = np.full(8000, 16384, dtype=np.int16)
+    right = np.zeros(8000, dtype=np.int16)
+    stereo = np.column_stack([left, right]).reshape(-1)
+    with wave.open(str(path), "wb") as wav_file:
+        wav_file.setnchannels(2)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(8000)
+        wav_file.writeframes(stereo.tobytes())
+
+    loaded = _load_pcm_wav_for_whisper(str(path))
+
+    assert loaded is not None
+    assert loaded.shape == (16000,)
+    np.testing.assert_allclose(loaded, 0.25, rtol=0, atol=1e-5)

@@ -585,6 +585,55 @@ async def _record_audio(duration: int) -> str:
 _whisper_model_cache: dict[str, Any] = {}
 
 
+def _load_pcm_wav_for_whisper(audio_path: str) -> Any | None:
+    """Load an uncompressed PCM WAV without requiring the ffmpeg executable.
+
+    Heliox records 16 kHz mono int16 WAV files itself, so routing those files
+    back through Whisper's ffmpeg subprocess adds an avoidable external
+    dependency. Return ``None`` for formats we do not decode locally so
+    Whisper can retain its normal path-based fallback.
+    """
+    if Path(audio_path).suffix.casefold() != ".wav":
+        return None
+
+    import numpy as np
+
+    try:
+        with wave.open(audio_path, "rb") as wav_file:
+            channels = wav_file.getnchannels()
+            sample_width = wav_file.getsampwidth()
+            sample_rate = wav_file.getframerate()
+            compression = wav_file.getcomptype()
+            frames = wav_file.readframes(wav_file.getnframes())
+    except (EOFError, OSError, wave.Error):
+        return None
+
+    if compression != "NONE" or channels < 1 or sample_rate <= 0:
+        return None
+
+    if sample_width == 1:
+        samples = (np.frombuffer(frames, dtype=np.uint8).astype(np.float32) - 128.0) / 128.0
+    elif sample_width == 2:
+        samples = np.frombuffer(frames, dtype="<i2").astype(np.float32) / 32768.0
+    elif sample_width == 4:
+        samples = np.frombuffer(frames, dtype="<i4").astype(np.float32) / 2147483648.0
+    else:
+        return None
+
+    if channels > 1:
+        if samples.size % channels:
+            return None
+        samples = samples.reshape(-1, channels).mean(axis=1)
+
+    if sample_rate != 16000 and samples.size:
+        output_size = max(1, round(samples.size * 16000 / sample_rate))
+        source_positions = np.arange(samples.size, dtype=np.float64)
+        target_positions = np.linspace(0, samples.size - 1, output_size)
+        samples = np.interp(target_positions, source_positions, samples).astype(np.float32)
+
+    return samples.astype(np.float32, copy=False)
+
+
 def _get_whisper_model(model_name: str) -> Any:
     """Loads (and caches) a Whisper model by name. Previously reloaded from
     disk on every single call — including every ~3s wake-word poll cycle in
@@ -614,7 +663,8 @@ async def _transcribe_whisper(
         if language != "auto":
             kwargs["language"] = language
 
-        result = mdl.transcribe(audio_path, **kwargs)
+        local_audio = _load_pcm_wav_for_whisper(audio_path)
+        result = mdl.transcribe(local_audio if local_audio is not None else audio_path, **kwargs)
 
         return {
             "text": result["text"].strip(),
@@ -999,7 +1049,26 @@ class ContinuousVoiceListener:
                     else:
                         near_miss = self._wake_calibrator.check_near_miss(transcript_lower)
                         if near_miss:
-                            self._wake_calibrator.record_pending(near_miss)
+                            # Whisper commonly renders a product wake word
+                            # phonetically (for example "Heliocs"). When a
+                            # close leading phrase is immediately followed by
+                            # a real command, accept it for this utterance.
+                            # The command still passes through the normal
+                            # voice policy/permission gates. A wake-only
+                            # near-miss keeps the conservative repeated-
+                            # confirmation calibration behavior.
+                            trailing_command = transcript_lower[
+                                len(near_miss) :
+                            ].strip(" \t,.:;-")
+                            if len(trailing_command) >= 3:
+                                wake_detected = True
+                                command_text = trailing_command
+                                logger.info(
+                                    "Accepted close wake-word transcription: '%s'",
+                                    near_miss,
+                                )
+                            else:
+                                self._wake_calibrator.record_pending(near_miss)
 
                 self._wake_calibrator.tick()
 

@@ -4,12 +4,14 @@ Covers the pure edit-distance function, the near-miss/promotion logic, and
 JSON round-tripping via tmp_path — no real audio/mic involved anywhere.
 """
 
-from unittest.mock import MagicMock
+import asyncio
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from pilot.config import PilotConfig
 from pilot.server import PilotServer
+from pilot.system.voice import ContinuousVoiceListener
 from pilot.system.voice_calibration import (
     VoiceCalibrationStore,
     WakeWordCalibrator,
@@ -181,3 +183,32 @@ async def test_visible_listener_start_uses_live_server_config(monkeypatch):
 
     config.adaptive_calibration.voice_wake_word_enabled = False
     assert server._voice_listener.config.adaptive_calibration.voice_wake_word_enabled is False
+
+
+@pytest.mark.asyncio
+async def test_close_wake_transcription_with_command_dispatches_immediately():
+    command_received = asyncio.Event()
+    on_command = AsyncMock()
+
+    async def dispatch(command):
+        await on_command(command)
+        listener._running = False
+        command_received.set()
+
+    listener = ContinuousVoiceListener(
+        wake_words=["hey heliox"],
+        on_command=dispatch,
+        config=PilotConfig(),
+    )
+    listener._wake_calibrator = MagicMock()
+    listener._wake_calibrator.match_promoted_variant.return_value = None
+    listener._wake_calibrator.check_near_miss.return_value = "hey heliocs"
+    listener._record_and_transcribe = AsyncMock(return_value="Hey Heliocs, open GitHub.")
+    listener._running = True
+
+    task = asyncio.create_task(listener._listen_loop())
+    await asyncio.wait_for(command_received.wait(), timeout=1)
+    await task
+
+    on_command.assert_awaited_once_with("open github")
+    listener._wake_calibrator.record_pending.assert_not_called()
