@@ -70,6 +70,8 @@
   } | null>(null);
   let dryRunSaving = $state(false);
   let dryRunToast = $state("");
+  let previewSaving = $state(false);
+  let previewToast = $state("");
 
   $effect(() => {
     if ($locale) {
@@ -400,10 +402,22 @@
   // "Simulate before executing" preview adds real latency (a screenshot +
   // VLM call, plus a real dry-run browser tab for browser actions) before
   // every autonomous action - default off, explicit opt-in like gesture_cursor.
-  function togglePreview() {
-    settings.updateSection("preview", {
-      enabled: !$settings.preview?.enabled,
-    });
+  async function togglePreview() {
+    if (previewSaving) return;
+    const turningOn = !$settings.preview?.enabled;
+    previewSaving = true;
+    const synced = await settings.updateSection(
+      "preview",
+      { enabled: turningOn },
+      { requireDaemon: true },
+    );
+    previewSaving = false;
+    previewToast = synced
+      ? (turningOn
+        ? "Preview gate enabled. Autonomous actions now require a real preview and approval."
+        : "Preview gate disabled.")
+      : "Preview was not changed because the daemon could not confirm it.";
+    setTimeout(() => (previewToast = ""), 5000);
   }
 
   function updateGestureCursorSensitivity(e: Event) {
@@ -957,10 +971,21 @@
     <h3>{$_('settings.preview')}</h3>
     <p class="gesture-cursor-warning">{$_('settings.preview_desc')}</p>
 
+    {#if previewToast}
+      <div class="root-toast" class:root-toast-success={$settings.preview?.enabled} class:root-toast-warning={!$settings.preview?.enabled}>
+        {previewToast}
+      </div>
+    {/if}
+
     <div class="setting-row">
       <div class="setting-info">
         <span class="setting-label">{$_('settings.preview_enabled')}</span>
         <span class="setting-desc">{$_('settings.preview_enabled_desc')}</span>
+        <span class="security-setting-status">
+          {$settings.preview?.enabled
+            ? "Active · autonomous actions fail closed if a real preview is unavailable"
+            : "Inactive · no pre-action preview gate"}
+        </span>
       </div>
       <button
         class="toggle"
@@ -968,6 +993,7 @@
         onclick={togglePreview}
         aria-label="Toggle simulate-before-executing preview"
         title="Toggle simulate-before-executing preview"
+        disabled={previewSaving}
       >
         <span class="toggle-knob"></span>
       </button>

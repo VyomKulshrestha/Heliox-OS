@@ -63,8 +63,11 @@ def _describe_target(action_type: str, action: Any) -> str:
 
 
 async def generate_action_preview(action_type: str, action: Action) -> ActionPreview | None:
-    """Best-effort: any failure returns None rather than raising, so a
-    preview problem can never block or break real execution."""
+    """Return a real preview, or ``None`` when screenshot capture fails.
+
+    The autonomous executor treats ``None`` as a fail-closed safety stop
+    whenever Simulate Before Executing is enabled.
+    """
     try:
         img_bytes = await _capture_screenshot_bytes()
         screenshot_b64 = base64.b64encode(img_bytes).decode("utf-8")

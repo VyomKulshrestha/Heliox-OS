@@ -2561,6 +2561,14 @@ class PilotServer:
                             "status": "error",
                             "message": "security.snapshot_retention_count must be from 1 to 100",
                         }
+                if section == "preview" and k == "enabled" and not isinstance(v, bool):
+                    return {"status": "error", "message": "preview.enabled must be a boolean"}
+                if section == "preview" and k == "confirm_timeout_seconds":
+                    if not isinstance(v, (int, float)) or isinstance(v, bool) or not 10 <= v <= 600:
+                        return {
+                            "status": "error",
+                            "message": "preview.confirm_timeout_seconds must be from 10 to 600",
+                        }
                 if section == "screen_vision" and k == "capture_interval_seconds":
                     v = float(v)
                 setattr(target, k, v)

@@ -630,20 +630,35 @@ class Executor:
                         from pilot.system.action_preview import generate_action_preview
 
                         preview = await generate_action_preview(action_type_value, action)
-                        if preview is not None:
-                            proceed = await self._narrator.on_action_preview(action, preview)
-                            if not proceed:
-                                result = ActionResult(
-                                    action=action,
-                                    success=False,
-                                    error="Skipped after preview interrupt",
-                                )
-                                await self._audit.log_action_result(result, plan_id)
-                                if on_action_complete:
-                                    await on_action_complete(result)
-                                else:
-                                    await self._narrator.on_action_complete(result)
-                                return idx, result
+                        if preview is None:
+                            result = ActionResult(
+                                action=action,
+                                success=False,
+                                error=(
+                                    "Safety stop: Simulate Before Executing is enabled, "
+                                    "but a real preview could not be generated. No action ran."
+                                ),
+                            )
+                            await self._audit.log_action_result(result, plan_id)
+                            if on_action_complete:
+                                await on_action_complete(result)
+                            else:
+                                await self._narrator.on_action_complete(result)
+                            return idx, result
+
+                        proceed = await self._narrator.on_action_preview(action, preview)
+                        if not proceed:
+                            result = ActionResult(
+                                action=action,
+                                success=False,
+                                error="Skipped after preview interrupt",
+                            )
+                            await self._audit.log_action_result(result, plan_id)
+                            if on_action_complete:
+                                await on_action_complete(result)
+                            else:
+                                await self._narrator.on_action_complete(result)
+                            return idx, result
 
                 result = await self._execute_single(action, snapshot_id)
                 await self._audit.log_action_result(result, plan_id)

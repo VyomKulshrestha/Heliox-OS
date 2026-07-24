@@ -324,10 +324,9 @@ class TestActionPreviewWiring:
         assert "Skipped after preview interrupt" in results[0].error
 
     @pytest.mark.asyncio
-    async def test_preview_generation_failure_never_blocks_execution(self, tmp_path, monkeypatch):
-        """generate_action_preview() returning None (its own contract for
-        "couldn't generate a preview") must fall straight through to real
-        dispatch, not be treated as a denial."""
+    async def test_preview_generation_failure_blocks_execution(self, tmp_path, monkeypatch):
+        """An enabled preview gate must fail closed when no real screenshot
+        can be produced; otherwise the UI promise to pause is untrue."""
         monkeypatch.setattr("pilot.system.action_preview.generate_action_preview", AsyncMock(return_value=None))
         narrator = _FakeNarrator()
         ex = _executor(tmp_path, gateway=None, preview_enabled=True)
@@ -335,5 +334,6 @@ class TestActionPreviewWiring:
 
         results = await ex.execute(_plan(), invocation_source=InvocationSource.AUTONOMOUS)
 
-        assert narrator.action_preview_calls == []  # never called with a None preview
-        assert results[0].success is True
+        assert narrator.action_preview_calls == []
+        assert results[0].success is False
+        assert "real preview could not be generated" in results[0].error
