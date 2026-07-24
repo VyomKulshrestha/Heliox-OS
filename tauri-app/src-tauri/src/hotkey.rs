@@ -21,12 +21,13 @@ pub fn load_saved_shortcut(app: &AppHandle) -> String {
     trimmed.to_string()
 }
 
-fn save_shortcut(app: &AppHandle, shortcut: &str) {
+fn save_shortcut(app: &AppHandle, shortcut: &str) -> Result<(), String> {
     let path = get_shortcut_path(app);
     if let Some(parent) = path.parent() {
-        let _ = fs::create_dir_all(parent);
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Could not create shortcut settings: {e}"))?;
     }
-    let _ = fs::write(path, shortcut);
+    fs::write(path, shortcut).map_err(|e| format!("Could not save shortcut: {e}"))
 }
 
 pub fn register_hotkey(app: &App) -> Result<(), Box<dyn std::error::Error>> {
@@ -72,7 +73,21 @@ pub fn do_register(app: &AppHandle, shortcut: &str) -> Result<(), Box<dyn std::e
 }
 
 pub fn update_shortcut(app: &AppHandle, new_shortcut: &str) -> Result<(), String> {
-    do_register(app, new_shortcut).map_err(|e| e.to_string())?;
-    save_shortcut(app, new_shortcut);
+    let trimmed = new_shortcut.trim();
+    if trimmed.is_empty() {
+        return Err("Shortcut cannot be empty".to_string());
+    }
+
+    let previous = load_saved_shortcut(app);
+    if let Err(error) = do_register(app, trimmed) {
+        let _ = do_register(app, &previous);
+        return Err(format!("Could not register '{trimmed}': {error}"));
+    }
+
+    if let Err(error) = save_shortcut(app, trimmed) {
+        let _ = do_register(app, &previous);
+        return Err(error);
+    }
+
     Ok(())
 }

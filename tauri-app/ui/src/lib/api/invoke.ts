@@ -10,6 +10,16 @@ export async function invoke<T = any>(command: string, args?: any): Promise<T> {
     }
   }
 
+  // System-wide shortcuts are a native desktop capability. Keep browser
+  // development truthful instead of returning an empty object and pretending
+  // that a shortcut was registered.
+  if (command === "get_hotkey") {
+    return "Ctrl+Space" as unknown as T;
+  }
+  if (command === "set_hotkey") {
+    throw new Error("Global hotkeys are only available in the Heliox desktop app.");
+  }
+
   // Fallback for browser dev mode (npm run dev running in standard Chrome/Edge)
   try {
     const res = await fetch("/api/tauri_invoke", {
@@ -102,9 +112,5 @@ export async function invoke<T = any>(command: string, args?: any): Promise<T> {
     }
     return ((import.meta as any).env?.VITE_DAEMON_TOKEN ?? "") as unknown as T;
   }
-  if (command === "get_hotkey") {
-    return "Ctrl+Space" as unknown as T;
-  }
-
   return {} as unknown as T;
 }

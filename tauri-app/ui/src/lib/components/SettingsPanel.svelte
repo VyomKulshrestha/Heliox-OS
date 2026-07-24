@@ -19,6 +19,11 @@
     gazeRuntime,
     resetGazeRuntime,
   } from "../stores/gazeRuntime";
+  import {
+    defaultHotkey,
+    isNativeTauriRuntime,
+    normalizeHotkeyValue,
+  } from "../hotkey";
 
   let {
     onOpenCommand = () => {},
@@ -52,6 +57,7 @@
   let hotkeyInput = $state("");
   let hotkeySaved = $state(false);
   let hotkeyError = $state("");
+  const hotkeySupported = isNativeTauriRuntime();
 
   const cloudModels: Record<string, string[]> = {
     gemini: ["gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash"],
@@ -72,20 +78,34 @@
 
   // Load the current hotkey when component mounts
   invoke("get_hotkey").then((val) => {
-    hotkeyInput = val as string;
+    hotkeyInput = normalizeHotkeyValue(val);
+  }).catch(() => {
+    hotkeyInput = defaultHotkey();
+    hotkeyError = "Could not read the active system shortcut.";
   });
 
   async function saveHotkey() {
     hotkeyError = "";
+    if (!hotkeySupported) {
+      hotkeyError = "Open Heliox as the desktop app to register a system-wide shortcut.";
+      return;
+    }
     const trimmed = hotkeyInput.trim();
-    if (!trimmed) return;
+    if (!trimmed) {
+      hotkeyError = "Enter a shortcut such as Ctrl+Space or Alt+H.";
+      return;
+    }
     try {
       await invoke("set_hotkey", { shortcut: trimmed });
-      settings.updateSection("", { hotkey: trimmed });
+      await settings.updateSection("", { hotkey: trimmed });
+      hotkeyInput = trimmed;
       hotkeySaved = true;
       setTimeout(() => (hotkeySaved = false), 3000);
     } catch (err) {
-      hotkeyError = "Invalid shortcut. Try: Ctrl+Space or Alt+H";
+      const detail = err instanceof Error ? err.message : String(err);
+      hotkeyError = detail
+        ? `Shortcut was not changed: ${detail}`
+        : "Invalid shortcut. Try Ctrl+Space or Alt+H.";
     }
   }
 
@@ -418,6 +438,11 @@
       <div class="setting-info">
         <span class="setting-label">Global Hotkey</span>
         <span class="setting-desc">Summon Heliox from anywhere (default: Ctrl+Space)</span>
+        <span class="hotkey-status" class:unsupported={!hotkeySupported}>
+          {hotkeySupported
+            ? `Active system shortcut: ${hotkeyInput || defaultHotkey()}`
+            : "Desktop app required — browsers cannot register system-wide shortcuts."}
+        </span>
       </div>
       <div class="api-key-row">
         <input
@@ -425,8 +450,10 @@
           class="input-md"
           bind:value={hotkeyInput}
           placeholder="Ctrl+Space"
+          aria-label="Global hotkey"
+          disabled={!hotkeySupported}
         />
-        <button class="btn-save" onclick={saveHotkey}>
+        <button class="btn-save" onclick={saveHotkey} disabled={!hotkeySupported}>
           {hotkeySaved ? "✓ Saved!" : "Save"}
         </button>
       </div>
@@ -1408,6 +1435,16 @@
     color: var(--warning, #f59e0b);
     background: rgba(245, 158, 11, 0.08);
     border-bottom: 1px solid var(--border);
+  }
+
+  .hotkey-status {
+    margin-top: 3px;
+    font-size: 11px;
+    color: var(--success, #10b981);
+  }
+
+  .hotkey-status.unsupported {
+    color: var(--warning, #f59e0b);
   }
 
   .gaze-status-row {
