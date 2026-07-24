@@ -63,6 +63,8 @@
     ready: boolean;
     detail: string;
   } | null>(null);
+  let dryRunSaving = $state(false);
+  let dryRunToast = $state("");
 
   $effect(() => {
     if ($locale) {
@@ -254,8 +256,40 @@
     return "No backend";
   }
  
+  async function applyDryRunToggle(turningOn: boolean) {
+    dryRunSaving = true;
+    const synced = await settings.updateSection(
+      "security",
+      { dry_run: turningOn },
+      { requireDaemon: true },
+    );
+    dryRunSaving = false;
+
+    if (!synced) {
+      dryRunToast = "Dry Run was not changed because the daemon could not confirm it.";
+      setTimeout(() => (dryRunToast = ""), 5000);
+      return;
+    }
+
+    dryRunToast = turningOn
+      ? "Dry Run enabled. Plans will be simulated and audited without executing actions."
+      : "Dry Run disabled. Future approved plans can change the OS, files, and processes.";
+    setTimeout(() => (dryRunToast = ""), 5000);
+  }
+
   function toggleDryRun() {
-    settings.updateSection("security", { dry_run: !$settings.security.dry_run });
+    if (dryRunSaving) return;
+    const turningOn = !$settings.security.dry_run;
+    if (!turningOn) {
+      askConfirm(
+        "RETURN TO LIVE EXECUTION?\n\n" +
+        "Future approved plans can change the operating system, files, processes, and browser state.",
+        () => applyDryRunToggle(false),
+        true,
+      );
+      return;
+    }
+    applyDryRunToggle(true);
   }
 
   function setMode(mode: string) {
@@ -593,6 +627,16 @@
       </div>
     {/if}
 
+    {#if dryRunToast}
+      <div
+        class="root-toast"
+        class:root-toast-success={$settings.security.dry_run}
+        class:root-toast-warning={!$settings.security.dry_run}
+      >
+        {dryRunToast}
+      </div>
+    {/if}
+
     <div class="setting-row">
       <div class="setting-info">
         <span class="setting-label">{$_('settings.root_access')}</span>
@@ -680,6 +724,11 @@
       <div class="setting-info">
         <span class="setting-label">{$_('settings.dry_run')}</span>
         <span class="setting-desc">{$_('settings.dry_run_desc')}</span>
+        <span class="security-setting-status">
+          {$settings.security.dry_run
+            ? "Active · every planned action is simulation-only"
+            : "Inactive · approved actions execute normally"}
+        </span>
       </div>
       <button
         class="toggle"
@@ -687,10 +736,24 @@
         onclick={toggleDryRun}
         aria-label="Toggle Dry Run Mode"
         title="Toggle Dry Run Mode"
+        aria-pressed={$settings.security.dry_run}
+        disabled={dryRunSaving}
       >
         <span class="toggle-knob"></span>
       </button>
     </div>
+
+    {#if $settings.security.dry_run}
+      <div class="dry-run-status-banner">
+        <span class="root-icon">🧪</span>
+        <div class="root-status-info">
+          <span class="dry-run-status-title">Dry Run is active</span>
+          <span class="root-status-desc">
+            Plans are validated, simulated, and written to the audit trail. Action handlers are not called.
+          </span>
+        </div>
+      </div>
+    {/if}
 
     <div class="setting-row">
       <div class="setting-info">
@@ -1725,5 +1788,20 @@
     font-size: 12px;
     font-weight: 600;
     color: var(--danger, #ef4444);
+  }
+
+  .dry-run-status-banner {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    background: rgba(16, 185, 129, 0.08);
+    border-bottom: 1px solid rgba(16, 185, 129, 0.22);
+  }
+
+  .dry-run-status-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--success, #10b981);
   }
 </style>

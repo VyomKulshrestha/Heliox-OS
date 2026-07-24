@@ -28,6 +28,12 @@ from pilot.logger import ColorFormatter
 
 logger = logging.getLogger("pilot.server")
 
+
+def _resolve_dry_run(configured: bool, requested: object = False) -> bool:
+    """Treat the global Dry Run setting as a safety floor clients cannot disable."""
+    return bool(configured or requested)
+
+
 CONFIRM_TIMEOUT_SECONDS = 300
 # These control-plane RPCs must be dispatchable while a normal request is
 # paused. In particular, ``execute`` waits for ``confirm`` on the same
@@ -1224,7 +1230,7 @@ class PilotServer:
 
         if not user_input.strip():
             return {"status": "error", "message": "Empty input"}
-        dry_run = bool(params.get("dry_run", self.config.security.dry_run))
+        dry_run = _resolve_dry_run(self.config.security.dry_run, params.get("dry_run", False))
 
         # ── Cancel Token (Issue #92): fresh event per execution session ──
         self._cancel_event = asyncio.Event()
@@ -2516,6 +2522,8 @@ class PilotServer:
                         "status": "error",
                         "message": "security.snapshot_on_destructive must be a boolean",
                     }
+                if section == "security" and k == "dry_run" and not isinstance(v, bool):
+                    return {"status": "error", "message": "security.dry_run must be a boolean"}
                 if section == "screen_vision" and k == "capture_interval_seconds":
                     v = float(v)
                 setattr(target, k, v)
