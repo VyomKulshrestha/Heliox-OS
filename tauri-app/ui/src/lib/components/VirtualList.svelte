@@ -17,6 +17,7 @@
 
   import { tick, onDestroy } from "svelte";
   import type { Snippet } from "svelte";
+  import { isNearBottom, movedUpward } from "../utils/scrollPolicy";
 
   // ── Props ──────────────────────────────────────────────────────────────────
 
@@ -64,6 +65,7 @@
   /** True while scrollToBottom() animation is in progress — prevents recalcWindow from flickering atBottom to false mid-scroll. */
   let scrollingToBottom = false;
   let scrollingTimer: ReturnType<typeof setTimeout> | null = null;
+  let lastScrollTop = 0;
 
   /** ResizeObserver watching rendered row heights. */
   let ro: ResizeObserver | null = null;
@@ -135,7 +137,7 @@
     const newCount = items.length;
     if (newCount !== prevItemCount) {
       if (wasAtBottom) {
-        tick().then(() => scrollToBottom());
+        tick().then(() => scrollToBottom("auto"));
       }
       prevItemCount = newCount;
     }
@@ -149,10 +151,24 @@
     const scrollTop = scrollerEl.scrollTop;
     const clientH = scrollerEl.clientHeight;
 
+    // A real upward movement always wins over an in-progress smooth scroll.
+    // This lets wheel, touchpad, keyboard, touch, and scrollbar input stop
+    // following new content immediately.
+    if (scrollingToBottom && movedUpward(lastScrollTop, scrollTop)) {
+      scrollingToBottom = false;
+      if (scrollingTimer) {
+        clearTimeout(scrollingTimer);
+        scrollingTimer = null;
+      }
+    }
+    lastScrollTop = scrollTop;
+
     // Check if we are at (or very near) the bottom before recalculating
-    wasAtBottom =
-      scrollerEl.scrollTop + scrollerEl.clientHeight >=
-      scrollerEl.scrollHeight - 8;
+    wasAtBottom = isNearBottom({
+      scrollTop,
+      clientHeight: scrollerEl.clientHeight,
+      scrollHeight: scrollerEl.scrollHeight,
+    });
     // Only update bindable atBottom when the user is scrolling manually,
     // not during a programmatic smooth-scroll animation
     if (!scrollingToBottom) {
@@ -250,19 +266,25 @@
   // ── Public API ─────────────────────────────────────────────────────────────
 
   /** Scroll the list to the very bottom. */
-  export function scrollToBottom() {
+  export function scrollToBottom(behavior: ScrollBehavior = "smooth") {
     if (scrollerEl) {
       // Immediately mark as at-bottom so the FAB hides at once
-      scrollingToBottom = true;
       wasAtBottom = true;
       atBottom = true;
-      scrollerEl.scrollTo({ top: scrollerEl.scrollHeight, behavior: "smooth" });
-      // Re-enable manual scroll tracking after animation completes (~400ms)
       if (scrollingTimer) clearTimeout(scrollingTimer);
-      scrollingTimer = setTimeout(() => {
+
+      if (behavior === "smooth") {
+        scrollingToBottom = true;
+        scrollingTimer = setTimeout(() => {
+          scrollingToBottom = false;
+          scrollingTimer = null;
+        }, 450);
+      } else {
         scrollingToBottom = false;
         scrollingTimer = null;
-      }, 450);
+      }
+
+      scrollerEl.scrollTo({ top: scrollerEl.scrollHeight, behavior });
     }
   }
 </script>

@@ -29,6 +29,7 @@
   import { tick, onDestroy } from "svelte";
   import { Copy } from "lucide-svelte";
   import ScrollToBottom from "./lib/components/ScrollToBottom.svelte";
+  import { shouldFollowLatest } from "./lib/utils/scrollPolicy";
   import ConnectionBadge from "./lib/components/ConnectionBadge.svelte";
   import HeaderMiniMonitor from "./lib/components/HeaderMiniMonitor.svelte";
   import CommandHistory from "./lib/components/CommandHistory.svelte";
@@ -82,7 +83,15 @@
   $effect(() => {
     $session.messages;
     $session.loading;
-    scrollToBottom();
+    $session.streamingText;
+    $session.phase;
+    if (shouldFollowLatest(isAtBottom)) {
+      tick().then(() => {
+        if (shouldFollowLatest(isAtBottom)) {
+          virtualListEl?.scrollToBottom("auto");
+        }
+      });
+    }
   });
   function formatActionType(t: string): string {
     return t.replace(/_/g, " ");

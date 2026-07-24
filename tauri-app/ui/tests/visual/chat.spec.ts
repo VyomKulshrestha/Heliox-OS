@@ -11,7 +11,7 @@
  */
 
 import { test, expect } from "@playwright/test";
-import { gotoApp, clickTab, freezeAnimations } from "./helpers";
+import { gotoApp, clickTab, emitNotification, freezeAnimations } from "./helpers";
 
 test.describe("Chat Interface", () => {
   test.beforeEach(async ({ page }) => {
@@ -96,6 +96,43 @@ test.describe("Chat Interface", () => {
 
     const chatPanel = page.locator(".chat-panel");
     await expect(chatPanel).toHaveScreenshot("chat-error-message.png");
+  });
+
+  test("keeps the reader's scroll position while new content streams", async ({ page }) => {
+    const history = Array.from({ length: 80 }, (_, index) => ({
+      type: index % 2 === 0 ? "user" : "system",
+      text: `Long conversation message ${index}: ${"context ".repeat(12)}`,
+      timestamp: 1716768000000 + index,
+    }));
+    await page.evaluate((messages) => {
+      localStorage.setItem("heliox_session_history", JSON.stringify(messages));
+    }, history);
+    await page.reload();
+
+    const scroller = page.locator(".vl-scroller");
+    await expect(scroller).toBeVisible();
+    await expect
+      .poll(() =>
+        scroller.evaluate((element) => element.scrollHeight - element.clientHeight),
+      )
+      .toBeGreaterThan(500);
+
+    await scroller.evaluate((element) => {
+      element.scrollTop = Math.floor((element.scrollHeight - element.clientHeight) / 3);
+      element.dispatchEvent(new Event("scroll"));
+    });
+    await page.waitForTimeout(100);
+    const before = await scroller.evaluate((element) => element.scrollTop);
+
+    await page.fill(".command-input input", "Continue with a new task");
+    await page.keyboard.press("Enter");
+    for (const token of ["New", " streamed", " content", " should", " stay below."]) {
+      await emitNotification(page, "token_stream", { token });
+    }
+
+    const after = await scroller.evaluate((element) => element.scrollTop);
+    expect(Math.abs(after - before)).toBeLessThanOrEqual(2);
+    await expect(page.locator(".scroll-fab")).toHaveClass(/visible/);
   });
 
   test("full chat panel layout matches baseline", async ({ page }) => {
