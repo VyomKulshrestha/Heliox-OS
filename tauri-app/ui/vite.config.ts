@@ -101,7 +101,7 @@ function mediapipeTasksVisionAssets(): Plugin {
         }
 
         const file = basename(decodeURIComponent(pathname.slice(MEDIAPIPE_TASKS_VISION_ROUTE.length + 1)));
-        const source = sourceDirs.map((dir) => join(dir, file)).find((candidate) => existsSync(candidate));
+        const source = (sourceDirs ?? []).map((dir) => join(dir, file)).find((candidate) => existsSync(candidate));
         if (!source) {
           next();
           return;
