@@ -534,7 +534,7 @@ torch==2.6.0
     #   pocket-tts
     #   sentence-transformers
     #   torchvision
-torchvision==0.21.0
+torchvision==0.28.0
     # via easyocr
 tqdm==4.68.4
     # via
