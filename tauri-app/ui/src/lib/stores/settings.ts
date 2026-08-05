@@ -175,7 +175,7 @@ function createSettings() {
           /* ignore */
         }
       })
-      .catch(() => {});
+      .catch( => console.error());
   }
 
   async function updateSection(
