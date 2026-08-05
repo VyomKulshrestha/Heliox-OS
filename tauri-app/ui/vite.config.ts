@@ -29,7 +29,7 @@ const MEDIAPIPE_TASKS_VISION_MODEL_DIR = join(CONFIG_DIR, "vendor", "mediapipe")
 
 function productionChunk(id: string): string | undefined {
   const normalized = id.replace(/\\/g, "/");
-  if (!normalized.includes("/node_modules/")) return undefined;
+  if (!normalized.includes("/node_modules/")) return;
   if (normalized.includes("/@mediapipe/")) return "vision-runtime";
   if (normalized.includes("/@tauri-apps/")) return "tauri-runtime";
   if (normalized.includes("/chart.js/") || normalized.includes("/svelte-chartjs/")) return "charts";
