@@ -190,7 +190,7 @@ const PUSH_PULL_DEPTH_METERS = 0.05;
 export function detectPushPull3D(worldWristHistory: Landmark[]): "push" | "pull" | null {
   if (worldWristHistory.length < 2) return null;
   const first = worldWristHistory[0];
-  const last = worldWristHistory[worldWristHistory.length - 1];
+  const last = worldWristHistory.at(-1);
   const dz = (last.z ?? 0) - (first.z ?? 0);
 
   if (dz < -PUSH_PULL_DEPTH_METERS) return "push";

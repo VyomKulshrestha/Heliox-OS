@@ -304,7 +304,7 @@ export function measureRecentMotion(
   minSamples = 5,
 ): LandmarkMotion | null {
   if (history.length < minSamples) return null;
-  const last = history[history.length - 1];
+  const last = history.at(-1);
   if (!Number.isFinite(last.t)) return null;
 
   let firstIndex = history.length - 1;
