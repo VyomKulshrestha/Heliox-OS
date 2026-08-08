@@ -254,7 +254,7 @@ function daemonTokenDevPlugin(): Plugin {
                   { timeout: 1500, encoding: "utf-8" },
                 ).trim();
                 const parsed = parseInt(out, 10);
-                if (!isNaN(parsed) && parsed >= 0 && parsed <= 100) liveBatteryPercent = parsed;
+                if (!Number.isNaN(parsed) && parsed >= 0 && parsed <= 100) liveBatteryPercent = parsed;
               } catch (e) {
                 // ignore
               }
