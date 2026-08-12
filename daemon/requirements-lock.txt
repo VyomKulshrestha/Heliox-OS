@@ -547,7 +547,7 @@ pyyaml==6.0.3
     #   kubernetes
     #   transformers
     #   uvicorn
-qh3==1.9.3
+qh3==1.9.4
     # via urllib3-future
 rdflib==7.6.0
     # via csvw
