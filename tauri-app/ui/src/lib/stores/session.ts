@@ -681,7 +681,7 @@ function createSession() {
     await connect();
     update((s) => ({ ...s, daemonConnected: isConnected() }));
 
-    setInterval(() => {
+    clearInterval(window.__interval); window.__interval = setInterval(() => {
       update((s) => ({ ...s, daemonConnected: isConnected() }));
     }, 500);
   }
