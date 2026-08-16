@@ -588,7 +588,7 @@ rpds-py==2026.6.3
     # via
     #   jsonschema
     #   referencing
-ruff==0.15.21
+ruff==0.16.2
     # via pilot-daemon (pyproject.toml)
 safetensors==0.8.0
     # via
