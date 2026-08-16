@@ -691,7 +691,7 @@ torch==2.6.0
     #   sentence-transformers
     #   spacy-curated-transformers
     #   torchvision
-torchvision==0.21.0
+torchvision==0.28.0
     # via easyocr
 tqdm==4.68.4
     # via
