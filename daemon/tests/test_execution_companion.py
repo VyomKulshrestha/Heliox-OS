@@ -11,12 +11,14 @@ from pilot.actions import (
     ActionType,
     BrowserParams,
     EmptyParams,
+    GitParams,
     OpenApplicationParams,
     SystemInfoParams,
     VerificationResult,
 )
 from pilot.agents.execution_companion import CompanionFollowUp, CompanionReview, ExecutionCompanion
 from pilot.config import PilotConfig
+from pilot.intelligence.scope_decision import ScopeDecision
 
 
 class _Model:
@@ -64,6 +66,25 @@ def _plan() -> ActionPlan:
     )
 
 
+def _push_plan() -> ActionPlan:
+    return ActionPlan(
+        actions=[Action(action_type=ActionType.GIT_PUSH, target="Heliox", parameters=GitParams())],
+        explanation="Push the repository.",
+    )
+
+
+class _ScopeHead:
+    available = True
+
+    def __init__(self, probability: float) -> None:
+        self.probability = probability
+        self.calls: list[tuple[str, str]] = []
+
+    def predict(self, request: str, action: str) -> ScopeDecision:
+        self.calls.append((request, action))
+        return ScopeDecision(self.probability, abs(2 * self.probability - 1))
+
+
 @pytest.mark.asyncio
 async def test_review_returns_structured_revision_with_safe_structural_values():
     model = _Model(
@@ -93,6 +114,61 @@ async def test_review_failure_keeps_existing_safety_pipeline_authoritative():
 
     assert review.decision == "CONTINUE"
     assert review.issues == ["review_unavailable"]
+
+
+@pytest.mark.asyncio
+async def test_local_scope_head_adds_warning_but_cannot_grant_or_block():
+    companion = ExecutionCompanion(_Model('{"decision":"CONTINUE","reason":"Looks aligned."}'))
+    head = _ScopeHead(0.05)
+    companion._local_scope = head
+
+    review = await companion.review("Commit locally; do not push.", _push_plan())
+
+    assert review.decision == "WARN"
+    assert review.issues == ["local_scope_advisory:git_push"]
+    assert "Push changes" in head.calls[0][1]
+
+
+@pytest.mark.asyncio
+async def test_local_scope_head_never_overrides_model_stop():
+    companion = ExecutionCompanion(_Model('{"decision":"STOP","reason":"Outside request."}'))
+    companion._local_scope = _ScopeHead(0.99)
+
+    review = await companion.review("Commit locally; do not push.", _push_plan())
+
+    assert review.decision == "STOP"
+
+
+@pytest.mark.asyncio
+async def test_staged_scope_model_warns_on_unrequested_push_without_blocking():
+    companion = ExecutionCompanion(_Model('{"decision":"CONTINUE","reason":"Looks aligned."}'))
+    assert companion._local_scope.available
+
+    review = await companion.review("Commit the Heliox README locally; do not push.", _push_plan())
+
+    assert review.decision == "WARN"
+    assert review.issues == ["local_scope_advisory:git_push"]
+
+
+@pytest.mark.asyncio
+async def test_staged_scope_model_does_not_warn_on_explicit_push():
+    companion = ExecutionCompanion(_Model('{"decision":"CONTINUE","reason":"Looks aligned."}'))
+    assert companion._local_scope.available
+
+    review = await companion.review("Push the reviewed Heliox release to the remote repository.", _push_plan())
+
+    assert review.decision == "CONTINUE"
+
+
+@pytest.mark.asyncio
+async def test_staged_scope_model_warns_when_full_companion_is_unavailable():
+    companion = ExecutionCompanion(_Model(error=RuntimeError("offline")))
+    assert companion._local_scope.available
+
+    review = await companion.review("Commit the Heliox README locally; do not push.", _push_plan())
+
+    assert review.decision == "WARN"
+    assert review.issues == ["review_unavailable", "local_scope_advisory:git_push"]
 
 
 @pytest.mark.asyncio

@@ -21,6 +21,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from pilot.intelligence.scope_decision import LocalScopeDecisionHead
+
 if TYPE_CHECKING:
     from pilot.actions import ActionPlan
     from pilot.models.router import ModelRouter
@@ -36,6 +38,26 @@ _LOCAL_FOLLOW_UP_ACTIONS = {
     "open_application",
     "open_url",
     "notify",
+}
+
+# Only actions with a describable side effect are scored. The trained student
+# has no evidence for interpreting arbitrary clicks, scripts, or tool payloads.
+_LOCAL_SCOPE_ACTIONS = {
+    "file_write": "Write file",
+    "file_delete": "Delete file",
+    "file_move": "Move file",
+    "git_commit": "Commit changes locally",
+    "git_push": "Push changes to the remote repository",
+    "process_kill": "Kill process",
+    "package_install": "Install package",
+    "package_remove": "Remove package",
+    "service_start": "Start service",
+    "service_stop": "Stop service",
+    "service_restart": "Restart service",
+    "schedule_create": "Create scheduled task",
+    "schedule_delete": "Delete scheduled task",
+    "wifi_connect": "Connect to Wi-Fi network",
+    "wifi_disconnect": "Disconnect Wi-Fi network",
 }
 
 
@@ -145,6 +167,7 @@ class ExecutionCompanion:
     def __init__(self, model_router: ModelRouter, *, timeout_seconds: float = 5.0) -> None:
         self._model = model_router
         self._timeout_seconds = max(1.0, min(30.0, timeout_seconds))
+        self._local_scope = LocalScopeDecisionHead()
 
     async def review(self, user_input: str, plan: ActionPlan) -> CompanionReview:
         prompt = self._format_prompt(user_input, plan)
@@ -154,17 +177,50 @@ class ExecutionCompanion:
                 self._model.generate(prompt, system=_SYSTEM_PROMPT, json_mode=True),
                 timeout=self._timeout_seconds,
             )
-            return self._parse(raw)
+            return self._add_local_scope_advisory(user_input, plan, self._parse(raw))
         except Exception as exc:
             # Existing deterministic permission, risk, confirmation and
             # verification gates remain authoritative. A companion outage must
             # not pretend to have reviewed or silently block harmless work.
             logger.warning("Interactive companion review unavailable: %s", exc)
-            return CompanionReview(
+            fallback = CompanionReview(
                 decision="CONTINUE",
                 reason="Interactive companion review was unavailable; deterministic safety checks remain active.",
                 issues=["review_unavailable"],
             )
+            return self._add_local_scope_advisory(user_input, plan, fallback)
+
+    def _add_local_scope_advisory(self, user_input: str, plan: ActionPlan, review: CompanionReview) -> CompanionReview:
+        """Flag narrow high-risk scope disagreement; never grant or block."""
+        if not self._local_scope.available or review.decision in {"REVISE", "STOP"}:
+            return review
+        for action in plan.actions:
+            action_type = action.action_type.value
+            description = _LOCAL_SCOPE_ACTIONS.get(action_type)
+            if description is None:
+                continue
+            target = str(action.target or "").strip()[:160]
+            candidate = f"{description} {target}".strip()
+            try:
+                decision = self._local_scope.predict(user_input[:500], candidate)
+            except Exception:
+                logger.warning("Local scope advisory unavailable", exc_info=True)
+                return review
+            if decision is not None and decision.in_scope_probability <= 0.12:
+                if review.decision == "WARN":
+                    return CompanionReview(
+                        decision="WARN",
+                        reason=review.reason,
+                        planner_feedback=review.planner_feedback,
+                        issues=[*review.issues, f"local_scope_advisory:{action_type}"],
+                    )
+                return CompanionReview(
+                    decision="WARN",
+                    reason=f"Local scope check flagged {action_type} as possibly outside the request.",
+                    planner_feedback=review.planner_feedback,
+                    issues=[*review.issues, f"local_scope_advisory:{action_type}"],
+                )
+        return review
 
     async def follow_up(
         self,
