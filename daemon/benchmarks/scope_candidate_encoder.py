@@ -69,13 +69,16 @@ class CandidateEncoder:
         self.max_length = max_length
 
     def transform(self, pairs: list[tuple[str, str]], *, batch_size: int = 16) -> np.ndarray:
+        prompts = [prompt for pair in pairs for prompt in candidate_prompts(*pair)]
+        return candidate_differences(self.encode_prompts(prompts, batch_size=batch_size * 2))
+
+    def encode_prompts(self, prompts: list[tuple[str, str]], *, batch_size: int = 32) -> np.ndarray:
+        """Encode arbitrary context/candidate pairs for a shared decision head."""
         if batch_size < 1:
             raise ValueError("batch_size must be positive")
         features: list[np.ndarray] = []
-        for offset in range(0, len(pairs), batch_size):
-            prompts = [prompt for pair in pairs[offset:offset + batch_size]
-                       for prompt in candidate_prompts(*pair)]
-            encoded = [self._tokenizer.encode(*prompt) for prompt in prompts]
+        for offset in range(0, len(prompts), batch_size):
+            encoded = [self._tokenizer.encode(*prompt) for prompt in prompts[offset:offset + batch_size]]
             length = max(len(item.ids) for item in encoded)
             ids = np.full((len(encoded), length), 1, dtype=np.int64)
             mask = np.zeros((len(encoded), length), dtype=np.int64)
@@ -85,5 +88,5 @@ class CandidateEncoder:
             hidden = np.asarray(self._session.run(None, {
                 "input_ids": ids, "attention_mask": mask,
             })[0], dtype=np.float32)
-            features.append(candidate_differences(hidden))
+            features.append(hidden)
         return np.vstack(features) if features else np.empty((0, HIDDEN_SIZE), dtype=np.float32)
