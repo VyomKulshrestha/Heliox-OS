@@ -144,7 +144,8 @@ class SemanticScopeHead:
     def available(self) -> bool:
         return self._weights is not None
 
-    def predict_many(self, pairs: list[tuple[str, str]]) -> np.ndarray | None:
+    def predict_many_with_raw(self, pairs: list[tuple[str, str]]) -> tuple[np.ndarray, np.ndarray] | None:
+        """Return numeric and guarded scores for audit; neither is authority."""
         if self._weights is None:
             return None
         if self._extractor is None:
@@ -153,8 +154,13 @@ class SemanticScopeHead:
         logits = np.asarray(combined_features(pairs, nli) @ self._weights).ravel() + self._intercept
         raw = 1.0 / (1.0 + np.exp(-np.clip(logits, -40.0, 40.0)))
         if self._version == MODEL_VERSION:
-            return guarded_probabilities(pairs, raw)
-        return np.asarray([
+            return raw, guarded_probabilities(pairs, raw)
+        guarded = np.asarray([
             semantic_guard(request, action, float(probability), version=self._version)
             for (request, action), probability in zip(pairs, raw, strict=True)
         ])
+        return raw, guarded
+
+    def predict_many(self, pairs: list[tuple[str, str]]) -> np.ndarray | None:
+        scores = self.predict_many_with_raw(pairs)
+        return None if scores is None else scores[1]
