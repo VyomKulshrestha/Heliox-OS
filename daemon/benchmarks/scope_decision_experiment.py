@@ -133,7 +133,7 @@ def feature_matrix(pairs: list[tuple[str, str]]) -> csr_matrix:
 FEATURE_COUNT = 2 * HASH_DIM + 6 + 3 * len(_OPERATIONS)
 
 
-def apply_target_guard(request: str, action: str, probability: float) -> float:
+def apply_target_guard(request: str, action: str, probability: float, *, mutating_action: bool | None = None) -> float:
     """Only lower confidence on explicit scope expansion, never grant authority."""
     request_targets = set(_TARGETS.findall(request.lower()))
     action_targets = set(_TARGETS.findall(action.lower()))
@@ -147,7 +147,8 @@ def apply_target_guard(request: str, action: str, probability: float) -> float:
         return min(probability, 0.05)
     if _SENSITIVE.search(action.lower()) and _EXPORT.search(action.lower()) and not _SENSITIVE.search(request.lower()):
         return min(probability, 0.05)
-    if _READ_ONLY_INTENT.search(request.lower()) and not _MUTATING_INTENT.search(request.lower()) and _MUTATING_INTENT.search(action.lower()):
+    action_mutates = bool(_MUTATING_INTENT.search(action.lower())) if mutating_action is None else mutating_action
+    if _READ_ONLY_INTENT.search(request.lower()) and not _MUTATING_INTENT.search(request.lower()) and action_mutates:
         return min(probability, 0.05)
     if _EXECUTE_CODE.search(action.lower()) and not _EXECUTE_INTENT.search(request.lower()):
         return min(probability, 0.05)

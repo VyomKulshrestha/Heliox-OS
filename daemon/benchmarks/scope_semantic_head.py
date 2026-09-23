@@ -18,11 +18,18 @@ from benchmarks.scope_decision_experiment import FEATURE_COUNT, apply_target_gua
 from benchmarks.scope_decision_experiment import feature_matrix as lexical_features
 from benchmarks.scope_nli_features import REVISION, NliFeatureExtractor, cached_paths
 
-MODEL_VERSION = "scope-decision-semantic-v2"
+MODEL_VERSION = "scope-decision-semantic-v3"
 _OBSERVE = re.compile(r"\b(read|show|list|check|inspect|find|search|scan|review|report)\b")
 _UNDO = re.compile(r"\b(revert|rollback|roll back|undo|restore)\b")
 _DEVICE = re.compile(r"\b(wi-?fi|bluetooth|camera|microphone|speaker|display|screen)\b")
-_EXACT_TARGET = re.compile(r"\b\d+\.\d+\.\d+\b|\bissue\s+\d+\b|\bcell\s+[a-z]+\d+\b")
+_EXACT_TARGET_V2 = re.compile(r"\b\d+\.\d+\.\d+\b|\bissue\s+\d+\b|\bcell\s+[a-z]+\d+\b")
+_EXACT_TARGET = re.compile(r"\b\d+\.\d+\.\d+\b|\b(?:issue|ticket)\s+\d+\b|\bcell\s+[a-z]+\d+\b")
+_BROADEN = re.compile(r"\b(all|every|entire|whole|everyone|anyone)\b")
+_COLUMN = re.compile(r"\b(?:across|whole|entire)\s+column\b")
+_MUTATING_CLAUSE = re.compile(
+    r"(?:^\s*(?:please\s+)?|\b(?:and|then|also|to)\s+|[,;]\s*)"
+    r"(?:edit|change|update|rewrite|set|create|apply|fix|draw|add|delete|remove|erase|stop|terminate|kill|restart|install|clear|send|publish|push|post|upload|share|move|copy|rename|export|save|download|turn|mute|crop|resize|format|transcribe|record)\b"
+)
 
 
 def combined_features(pairs: list[tuple[str, str]], nli: np.ndarray) -> csr_matrix:
@@ -39,7 +46,7 @@ def guarded_probabilities(pairs: list[tuple[str, str]], values: np.ndarray) -> n
     ])
 
 
-def semantic_guard(request: str, action: str, probability: float) -> float:
+def semantic_guard(request: str, action: str, probability: float, *, version: str = MODEL_VERSION) -> float:
     """Add caution on explicit undo and named device/identifier expansion."""
     request_lower, action_lower = request.lower(), action.lower()
     if _OBSERVE.search(request_lower) and _UNDO.search(action_lower) and not _UNDO.search(request_lower):
@@ -48,10 +55,19 @@ def semantic_guard(request: str, action: str, probability: float) -> float:
     action_devices = {name.replace("-", "") for name in _DEVICE.findall(action_lower)}
     if request_devices and action_devices and not action_devices <= request_devices:
         return min(probability, 0.05)
-    request_targets = set(_EXACT_TARGET.findall(request_lower))
-    action_targets = set(_EXACT_TARGET.findall(action_lower))
+    target_pattern = _EXACT_TARGET if version == MODEL_VERSION else _EXACT_TARGET_V2
+    request_targets = set(target_pattern.findall(request_lower))
+    action_targets = set(target_pattern.findall(action_lower))
     if request_targets and action_targets and not action_targets <= request_targets:
         return min(probability, 0.05)
+    if version == MODEL_VERSION:
+        if request_targets and _BROADEN.search(action_lower) and not _BROADEN.search(request_lower):
+            return min(probability, 0.05)
+        if any(target.startswith("cell ") for target in request_targets) and _COLUMN.search(action_lower) and not action_targets:
+            return min(probability, 0.05)
+        return apply_target_guard(
+            request, action, probability, mutating_action=bool(_MUTATING_CLAUSE.search(action_lower))
+        )
     return apply_target_guard(request, action, probability)
 
 
@@ -60,6 +76,7 @@ class SemanticScopeHead:
         self._weights: np.ndarray | None = None
         self._intercept = 0.0
         self._extractor = extractor
+        self._version = MODEL_VERSION
         try:
             with np.load(weights_path, allow_pickle=False) as data:
                 weights = np.asarray(data["weights"], dtype=np.float64)
@@ -68,9 +85,10 @@ class SemanticScopeHead:
                 backbone_revision = str(data["backbone_revision"])
             if (weights.shape == (FEATURE_COUNT + 6,)
                 and np.all(np.isfinite(weights)) and np.isfinite(intercept)
-                and version == MODEL_VERSION and backbone_revision == REVISION):
+                and version in {"scope-decision-semantic-v2", MODEL_VERSION} and backbone_revision == REVISION):
                 self._weights = weights
                 self._intercept = intercept
+                self._version = version
         except (FileNotFoundError, KeyError, OSError, ValueError, EOFError, BadZipFile):
             pass
 
@@ -86,4 +104,9 @@ class SemanticScopeHead:
         nli = self._extractor.transform(pairs)
         logits = np.asarray(combined_features(pairs, nli) @ self._weights).ravel() + self._intercept
         raw = 1.0 / (1.0 + np.exp(-np.clip(logits, -40.0, 40.0)))
-        return guarded_probabilities(pairs, raw)
+        if self._version == MODEL_VERSION:
+            return guarded_probabilities(pairs, raw)
+        return np.asarray([
+            semantic_guard(request, action, float(probability), version=self._version)
+            for (request, action), probability in zip(pairs, raw, strict=True)
+        ])

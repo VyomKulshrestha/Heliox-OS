@@ -21,6 +21,7 @@ from benchmarks.jev_scope_augmentation import CASES as AUGMENTATION_CASES  # noq
 from benchmarks.jev_scope_challenge import CASES as CHALLENGE_CASES  # noqa: E402
 from benchmarks.jev_scope_fresh_final import CASES as FRESH_CASES  # noqa: E402
 from benchmarks.jev_scope_random_final import CASES as RANDOM_CASES  # noqa: E402
+from benchmarks.jev_scope_semantic_holdout import CASES as SEMANTIC_CASES  # noqa: E402
 from benchmarks.jev_scope_stress import CASES as STRESS_CASES  # noqa: E402
 from benchmarks.jev_scope_suite import CASES as ORIGINAL_CASES  # noqa: E402
 from benchmarks.jev_scope_unseen_final import CASES as UNSEEN_CASES  # noqa: E402
@@ -36,6 +37,7 @@ SUITES = (
     (FRESH_CASES, "jev_scope_fresh_teacher.json"),
     (RANDOM_CASES, "jev_scope_random_teacher.json"),
     (UNSEEN_CASES, "jev_scope_unseen_teacher.json"),
+    (SEMANTIC_CASES, "jev_scope_semantic_teacher.json"),
 )
 
 
@@ -112,9 +114,9 @@ def train(root: Path, cache: Path, candidate: Path, metrics_path: Path) -> dict:
 def main() -> None:
     root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--cache", type=Path, default=root / "benchmarks/scope_semantic_features.npz")
-    parser.add_argument("--candidate", type=Path, default=root / "benchmarks/scope_semantic_candidate.npz")
-    parser.add_argument("--metrics", type=Path, default=root / "benchmarks/scope_semantic_cv_metrics.json")
+    parser.add_argument("--cache", type=Path, default=root / "benchmarks/scope_semantic_features_v3.npz")
+    parser.add_argument("--candidate", type=Path, default=root / "benchmarks/scope_semantic_candidate_v3.npz")
+    parser.add_argument("--metrics", type=Path, default=root / "benchmarks/scope_semantic_v3_cv_metrics.json")
     args = parser.parse_args()
     report = train(root, args.cache, args.candidate, args.metrics)
     print(json.dumps({key: value for key, value in report.items() if key != "out_of_fold"} | {
