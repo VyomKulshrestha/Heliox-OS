@@ -18,7 +18,8 @@ from benchmarks.scope_decision_experiment import FEATURE_COUNT, apply_target_gua
 from benchmarks.scope_decision_experiment import feature_matrix as lexical_features
 from benchmarks.scope_nli_features import REVISION, NliFeatureExtractor, cached_paths
 
-MODEL_VERSION = "scope-decision-semantic-v3"
+V3_VERSION = "scope-decision-semantic-v3"
+MODEL_VERSION = "scope-decision-semantic-v4"
 _OBSERVE = re.compile(r"\b(read|show|list|check|inspect|find|search|scan|review|report)\b")
 _UNDO = re.compile(r"\b(revert|rollback|roll back|undo|restore)\b")
 _DEVICE = re.compile(r"\b(wi-?fi|bluetooth|camera|microphone|speaker|display|screen)\b")
@@ -26,6 +27,20 @@ _EXACT_TARGET_V2 = re.compile(r"\b\d+\.\d+\.\d+\b|\bissue\s+\d+\b|\bcell\s+[a-z]
 _EXACT_TARGET = re.compile(r"\b\d+\.\d+\.\d+\b|\b(?:issue|ticket)\s+\d+\b|\bcell\s+[a-z]+\d+\b")
 _BROADEN = re.compile(r"\b(all|every|entire|whole|everyone|anyone)\b")
 _COLUMN = re.compile(r"\b(?:across|whole|entire)\s+column\b")
+_COLUMN_V4 = re.compile(r"\b(?:across|down|whole|entire)\s+column\b")
+_DIFFERENT = re.compile(r"\b(?:different|another|other)\b")
+_SPECIFIC = re.compile(r"\b(?:selected|this|only|one|named)\b")
+_APP = re.compile(r"\b(?:app|application)\b")
+_OPERATING_SYSTEM = re.compile(r"\b(?:operating system|system-wide|os-wide)\b")
+_CLOSE = re.compile(r"\b(?:close|resolve)\b")
+_EXTERNAL_ACTION = re.compile(r"(?:^\s*|\b(?:and|then|also)\s+)(?:publish|post|upload|share|send|email|forward|deploy|release)\b")
+_EXTERNAL_REQUEST = re.compile(r"\b(?:publish|post|upload|share|send|email|forward|deploy|release)\b")
+_UNSUBSCRIBE = re.compile(r"\bunsubscribe\b")
+_DESTRUCTIVE_ALIAS = (
+    (re.compile(r"\b(?:stop|pause)\b"), re.compile(r"^\s*(?:cancel|stop)\b")),
+    (re.compile(r"\bpause\b"), re.compile(r"^\s*stop\b")),
+    (re.compile(r"\bclear\b"), re.compile(r"^\s*remove\b")),
+)
 _MUTATING_CLAUSE = re.compile(
     r"(?:^\s*(?:please\s+)?|\b(?:and|then|also|to)\s+|[,;]\s*)"
     r"(?:edit|change|update|rewrite|set|create|apply|fix|draw|add|delete|remove|erase|stop|terminate|kill|restart|install|clear|send|publish|push|post|upload|share|move|copy|rename|export|save|download|turn|mute|crop|resize|format|transcribe|record)\b"
@@ -53,21 +68,48 @@ def semantic_guard(request: str, action: str, probability: float, *, version: st
         return min(probability, 0.05)
     request_devices = {name.replace("-", "") for name in _DEVICE.findall(request_lower)}
     action_devices = {name.replace("-", "") for name in _DEVICE.findall(action_lower)}
+    if version == MODEL_VERSION:
+        request_devices = {"display" if name == "screen" else name for name in request_devices}
+        action_devices = {"display" if name == "screen" else name for name in action_devices}
     if request_devices and action_devices and not action_devices <= request_devices:
         return min(probability, 0.05)
-    target_pattern = _EXACT_TARGET if version == MODEL_VERSION else _EXACT_TARGET_V2
+    target_pattern = _EXACT_TARGET if version in {V3_VERSION, MODEL_VERSION} else _EXACT_TARGET_V2
     request_targets = set(target_pattern.findall(request_lower))
     action_targets = set(target_pattern.findall(action_lower))
     if request_targets and action_targets and not action_targets <= request_targets:
         return min(probability, 0.05)
-    if version == MODEL_VERSION:
+    if version in {V3_VERSION, MODEL_VERSION}:
+        if version == MODEL_VERSION:
+            if _BROADEN.search(action_lower) and not _BROADEN.search(request_lower):
+                return min(probability, 0.05)
+            if _SPECIFIC.search(request_lower) and _DIFFERENT.search(action_lower) and not _DIFFERENT.search(request_lower):
+                return min(probability, 0.05)
+            if _APP.search(request_lower) and _OPERATING_SYSTEM.search(action_lower) and not _OPERATING_SYSTEM.search(request_lower):
+                return min(probability, 0.05)
+            if _CLOSE.search(action_lower) and not _CLOSE.search(request_lower):
+                return min(probability, 0.05)
+            if _EXTERNAL_ACTION.search(action_lower) and not _EXTERNAL_REQUEST.search(request_lower):
+                return min(probability, 0.05)
+            if _UNSUBSCRIBE.search(action_lower) and not _UNSUBSCRIBE.search(request_lower):
+                return min(probability, 0.05)
+            if any(target.startswith("cell ") for target in request_targets) and _COLUMN_V4.search(action_lower) and not action_targets:
+                return min(probability, 0.05)
         if request_targets and _BROADEN.search(action_lower) and not _BROADEN.search(request_lower):
             return min(probability, 0.05)
         if any(target.startswith("cell ") for target in request_targets) and _COLUMN.search(action_lower) and not action_targets:
             return min(probability, 0.05)
-        return apply_target_guard(
-            request, action, probability, mutating_action=bool(_MUTATING_CLAUSE.search(action_lower))
-        )
+        destructive_request = None
+        if version == MODEL_VERSION:
+            destructive_request = any(
+                request_verb.search(request_lower) and action_verb.search(action_lower)
+                for request_verb, action_verb in _DESTRUCTIVE_ALIAS
+            )
+            destructive_request = destructive_request or None
+        guard_request = re.sub(r"\bscreen\b", "display", request) if version == MODEL_VERSION else request
+        guard_action = re.sub(r"\bscreen\b", "display", action) if version == MODEL_VERSION else action
+        return apply_target_guard(guard_request, guard_action, probability,
+                                  mutating_action=bool(_MUTATING_CLAUSE.search(action_lower)),
+                                  destructive_request=destructive_request)
     return apply_target_guard(request, action, probability)
 
 
@@ -85,7 +127,7 @@ class SemanticScopeHead:
                 backbone_revision = str(data["backbone_revision"])
             if (weights.shape == (FEATURE_COUNT + 6,)
                 and np.all(np.isfinite(weights)) and np.isfinite(intercept)
-                and version in {"scope-decision-semantic-v2", MODEL_VERSION} and backbone_revision == REVISION):
+                and version in {"scope-decision-semantic-v2", V3_VERSION, MODEL_VERSION} and backbone_revision == REVISION):
                 self._weights = weights
                 self._intercept = intercept
                 self._version = version

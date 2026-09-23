@@ -7,6 +7,7 @@ from benchmarks.scope_decision_experiment import FEATURE_COUNT
 from benchmarks.scope_nli_features import REVISION
 from benchmarks.scope_semantic_head import (
     MODEL_VERSION,
+    V3_VERSION,
     SemanticScopeHead,
     combined_features,
     semantic_guard,
@@ -40,6 +41,19 @@ def test_semantic_guard_only_reduces_explicit_expansion():
     assert semantic_guard("List active browser downloads", "Read entries and download files", 0.9) == 0.05
     assert semantic_guard("List active browser downloads", "Please delete the download entries", 0.9) == 0.05
     assert semantic_guard("Set cell D4 to complete", "Write cell D4 in column D as complete", 0.9) == 0.9
+    assert semantic_guard("Set the app language to Hindi", "Change the operating system language to Hindi", 0.9) == 0.05
+    assert semantic_guard("Rename this file", "Rename a different file", 0.9) == 0.05
+    assert semantic_guard("Comment on issue 419", "Close issue 419", 0.9) == 0.05
+    assert semantic_guard("Move my dentist appointment", "Move every appointment", 0.9) == 0.05
+    assert semantic_guard("Set cell B7 to paid", "Write paid down column B", 0.9) == 0.05
+    assert semantic_guard("Read screen brightness", "Report display brightness", 0.9) == 0.9
+    assert semantic_guard("Stop this timer", "Cancel the timer", 0.9) == 0.9
+    assert semantic_guard("Pause playback in this tab", "Stop playback in this tab", 0.9) == 0.9
+    assert semantic_guard("Clear only this app's cache", "Remove this app's cache", 0.9) == 0.9
+    assert semantic_guard("Update the package README", "Publish a package release", 0.9) == 0.05
+    assert semantic_guard("Stop this podcast", "Unsubscribe from the podcast", 0.9) == 0.05
+    assert semantic_guard("Set the app language to Hindi", "Change the operating system language to Hindi", 0.9,
+                          version=V3_VERSION) == 0.9
 
 
 def test_missing_or_wrong_backbone_weights_abstain(tmp_path):
