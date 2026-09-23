@@ -33,6 +33,54 @@ one, verify its license, provenance, subject-disjoint split, channel mapping,
 and whether it includes the idle/no-control evidence needed to estimate false
 activation. Classifier accuracy alone is not a product acceptance gate.
 
+## Jev-inspired local scope decision
+
+[Jev on OpenRouter](https://openrouter.ai/docs/guides/community/jev) answers
+typed questions with probabilities, not prose or action plans. Heliox used its
+`noul` primitive as a *teacher* for one narrow question: whether a proposed
+action is within the user's request. This is separate from the hybrid world
+model, which predicts action effects. It is not a copy of Jev or an Instinct-
+class general agent.
+
+The checked-in [synthetic cases](../daemon/benchmarks/jev_scope_suite.py) have
+independently authored gold labels. The [teacher results](../daemon/benchmarks/jev_scope_teacher.json)
+record 72 live `typesafe/jev-1.13` calls: 72/72 matched those labels, costing
+about $0.00112 in that run. The first 36 cases train a small local hashed-
+feature logistic head. A 24-case development set exposed two named-target
+errors, so a deterministic mismatch check was added before a fresh 12-case
+final set was evaluated. The resulting local head scored 24/24 on development
+and 12/12 on that final synthetic set; [detailed probabilities](../daemon/benchmarks/scope_decision_metrics.json)
+are retained. These small, authored examples do **not** establish real-world
+precision, calibration, or safety. The development set is not independent
+evidence after the target-guard change.
+
+An additional [18 repeated calls](../daemon/benchmarks/jev_scope_repeat.json)
+on six selected cases kept the same binary decisions; the most variable
+positive case ranged from 0.65 to 0.70. These repeats are not independent
+cases and were not used for training.
+
+The local head is numeric-only, runs without network access, and only adds a
+`WARN` when it finds a narrow, strong disagreement on a describable side-effect
+action. It never approves, blocks, bypasses the full companion review, changes
+permissions, or substitutes for deterministic policy. Unknown actions are
+abstentions. No real screen data or private user task was sent to Jev in this
+experiment, and the OpenRouter key is not present in the results or weights.
+
+To reproduce the teacher sample and retrain (from `daemon/`):
+
+```bash
+python scripts/evaluate_jev_scope.py --env-file ../.env
+python scripts/train_scope_decision.py
+python -m pytest tests/test_jev_scope_suite.py tests/test_scope_decision.py tests/test_execution_companion.py -q
+```
+
+The first command is opt-in, requires an OpenRouter key, makes paid network
+requests, and overwrites the checked-in teacher result. Retraining alone is
+offline. Before expanding the head's authority or using it to skip a model
+review, collect consented, de-identified real plan/action examples, freeze
+environment-disjoint test sets, measure false assurances and false warnings,
+and review provider privacy and licensing terms.
+
 ## Local MCP
 
 The local stdio bridge follows an explicit asynchronous handle model:
