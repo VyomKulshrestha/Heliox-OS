@@ -42,44 +42,59 @@ action is within the user's request. This is separate from the hybrid world
 model, which predicts action effects. It is not a copy of Jev or an Instinct-
 class general agent.
 
-The checked-in [synthetic cases](../daemon/benchmarks/jev_scope_suite.py) have
-independently authored gold labels. The [teacher results](../daemon/benchmarks/jev_scope_teacher.json)
-record 72 live `typesafe/jev-1.13` calls: 72/72 matched those labels, costing
-about $0.00112 in that run. The first 36 cases train a small local hashed-
-feature logistic head. A 24-case development set exposed two named-target
-errors, so a deterministic mismatch check was added before a fresh 12-case
-final set was evaluated. The resulting local head scored 24/24 on development
-and 12/12 on that final synthetic set; [detailed probabilities](../daemon/benchmarks/scope_decision_metrics.json)
-are retained. These small, authored examples do **not** establish real-world
-precision, calibration, or safety. The development set is not independent
-evidence after the target-guard change.
+The original [72-case study](../daemon/benchmarks/jev_scope_teacher.json)
+trained the shipped, numeric-only v1 head. It scored 12/12 on its small final
+synthetic split, but that result did not establish Jev-level generalization.
+Its 18 repeated calls on six selected cases are
+[retained separately](../daemon/benchmarks/jev_scope_repeat.json).
 
-An additional [18 repeated calls](../daemon/benchmarks/jev_scope_repeat.json)
-on six selected cases kept the same binary decisions; the most variable
-positive case ranged from 0.65 to 0.70. These repeats are not independent
-cases and were not used for training.
+The subsequent challenge used **634 successful live Jev calls** in total:
+616 distinct authored request/action pairs plus those 18 repeats. Total
+reported API cost was **$0.009855**. The 616 pairs span the original suite,
+[challenge](../daemon/benchmarks/jev_scope_challenge.py),
+[augmentation](../daemon/benchmarks/jev_scope_augmentation.py),
+[stress](../daemon/benchmarks/jev_scope_stress.py),
+[fresh](../daemon/benchmarks/jev_scope_fresh_final.py),
+[seeded random](../daemon/benchmarks/jev_scope_random_final.py), and
+[third unseen](../daemon/benchmarks/jev_scope_unseen_final.py) suites. Jev
+matched the independently authored binary labels on 615/616 distinct pairs;
+the one disagreement is retained, not silently relabeled.
 
-The local head is numeric-only, runs without network access, and only adds a
-`WARN` when it finds a narrow, strong disagreement on a describable side-effect
-action. It never approves, blocks, bypasses the full companion review, changes
-permissions, or substitutes for deterministic policy. Unknown actions are
-abstentions. No real screen data or private user task was sent to Jev in this
-experiment, and the OpenRouter key is not present in the results or weights.
+| Frozen experimental candidate | New unseen pairs | Agreement with Jev | Too-permissive / false warnings |
+| --- | ---: | ---: | ---: |
+| v5 on [fresh](../daemon/benchmarks/scope_decision_fresh_metrics.json) | 100 | 92/100 | 4 / 4 |
+| v6 on [seeded random](../daemon/benchmarks/scope_decision_random_metrics.json) | 100 | 92/100 | 4 / 4 |
+| v7 on [third unseen](../daemon/benchmarks/scope_decision_unseen_metrics.json) | 100 | 91/100 | 5 / 4 |
 
-To reproduce the teacher sample and retrain (from `daemon/`):
+The v7 [numeric-only candidate](../daemon/benchmarks/scope_decision_candidate.npz)
+(SHA-256 `6c7238fa140b02d77d2eb7b2a809402317ffd2e01014bd18932b9a95c78c9b5c`)
+was trained on 516 already-inspected pairs. Request-grouped five-fold
+development evaluation was 499/516 (96.7%), but the third unseen set fell to
+91%. The candidate therefore **was not promoted**. The shipped v1 weights and
+runtime path are unchanged. More synthetic tuning against inspected failures
+would not make a credible parity claim. This narrow local classifier is not a
+Jev replacement, a general agent, or a safety certification.
+
+The shipped local head only adds an advisory `WARN` on a strong disagreement
+over a describable side-effect action. It never approves, blocks, bypasses
+the full companion review, or changes permissions. Unknown actions abstain.
+No real screen data or private user task was sent to Jev, and the OpenRouter
+key is absent from the results and weights.
+
+To reproduce the frozen candidate and third unseen score (from `daemon/`):
 
 ```bash
-python scripts/evaluate_jev_scope.py --env-file ../.env
-python scripts/train_scope_decision.py
-python -m pytest tests/test_jev_scope_suite.py tests/test_scope_decision.py tests/test_execution_companion.py -q
+python scripts/train_scope_decision_cv.py --include-fresh --include-random
+python scripts/evaluate_scope_candidate.py --suite unseen --teacher benchmarks/jev_scope_unseen_teacher.json --output benchmarks/scope_decision_unseen_metrics.json
+python -m pytest tests/test_jev_scope_suite.py tests/test_scope_decision.py tests/test_scope_decision_experiment.py tests/test_execution_companion.py -q
 ```
 
-The first command is opt-in, requires an OpenRouter key, makes paid network
-requests, and overwrites the checked-in teacher result. Retraining alone is
-offline. Before expanding the head's authority or using it to skip a model
-review, collect consented, de-identified real plan/action examples, freeze
+These commands are offline; repeating live Jev calls is opt-in and paid via
+`scripts/evaluate_jev_scope.py --suite unseen --env-file ../.env`. Before any
+promotion, collect consented, de-identified real plan/action examples, freeze
 environment-disjoint test sets, measure false assurances and false warnings,
-and review provider privacy and licensing terms.
+and review provider privacy and licensing terms. Jev's probability on a
+synthetic authorization question is not itself permission to execute.
 
 ## Local MCP
 
