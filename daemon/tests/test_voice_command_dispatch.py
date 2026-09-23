@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from pilot.config import PilotConfig
+from pilot.intelligence.experience import ExperienceContext
 from pilot.security.gateway import DEFAULT_SOURCE_PROFILES, InvocationSource
 from pilot.server import PendingConfirmation, PilotServer
 from pilot.system.companion_speech import SpeechChannel
@@ -180,7 +181,7 @@ async def test_voice_question_during_task_answers_without_correction():
     await server._voice_command_dispatch("Quick question, what is this plan for?")
 
     server._handle_interject.assert_awaited_once_with(
-        {"input": "Quick question, what is this plan for?", "mode": "ask"}, None
+        {"input": "what is this plan for?", "mode": "ask"}, None
     )
     server._handle_execute.assert_not_awaited()
     server._speak_voice_response.assert_awaited_once()
@@ -188,6 +189,28 @@ async def test_voice_question_during_task_answers_without_correction():
         call.args[1] for call in server._broadcast_notification.await_args_list if call.args[0] == "voice_result"
     )
     assert payload["coordinated_correction"] is False
+
+
+@pytest.mark.asyncio
+async def test_voice_can_queue_next_task_without_correcting_current_one():
+    server = _bare_server()
+    server._interactive_request_active = True
+    server._queue_interactive_request = AsyncMock(
+        return_value={"status": "queued", "task_id": "queued-1", "message": "Task queued."}
+    )
+    server._handle_interject = AsyncMock()
+    server._active_experience_context = ExperienceContext(session_id="current-chat")
+
+    await server._voice_command_dispatch("Next task, summarize the report")
+
+    server._queue_interactive_request.assert_awaited_once_with({
+        "input": "summarize the report",
+        "session_id": "current-chat",
+        "user_id": "local",
+        "source": "voice",
+    })
+    server._handle_interject.assert_not_awaited()
+    server._speak_voice_response.assert_awaited_once()
 
 
 @pytest.mark.asyncio

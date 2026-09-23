@@ -28,7 +28,9 @@ from pilot.actions import (
 from pilot.agents.destructive_critic import CriticVerdict
 from pilot.agents.execution_companion import CompanionReview
 from pilot.config import PilotConfig
+from pilot.security.rpc_identity import RpcClientRole
 from pilot.server import PilotServer
+from pilot.workflows.durable_tasks import DurableTaskStore, TaskStatus
 
 
 class _SlowExecutor:
@@ -903,6 +905,26 @@ async def test_in_task_question_answers_without_cancelling_execution():
 
 
 @pytest.mark.asyncio
+async def test_in_task_answer_uses_personal_context_without_granting_actions():
+    server = _server()
+    server._interactive_request_active = True
+    server._model_router = MagicMock()
+    server._model_router.generate = AsyncMock(return_value="You prefer concise updates.")
+    server._subconscious = MagicMock()
+    server._subconscious.get_persona_context = AsyncMock(return_value="User prefers concise updates")
+    server._cancel_event = asyncio.Event()
+
+    result = await server._handle_interject(
+        {"input": "How should you update me?", "mode": "ask"}, MagicMock()
+    )
+
+    prompt = server._model_router.generate.await_args.args[0]
+    assert "User prefers concise updates" in prompt
+    assert result["status"] == "answered"
+    assert server._cancel_event.is_set() is False
+
+
+@pytest.mark.asyncio
 async def test_in_task_status_question_uses_no_model_or_screen_read():
     server = _server()
     server._interactive_request_active = True
@@ -930,6 +952,149 @@ async def test_in_task_screen_question_reads_ocr_only_on_explicit_request():
     assert "Visible document text" in result["message"]
     ocr.assert_awaited_once()
     server._model_router.generate.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_queued_interactive_tasks_run_in_order_after_current_task(tmp_path):
+    server = _server()
+    store = DurableTaskStore(tmp_path / "tasks.db")
+    await store.initialize()
+    server._durable_tasks = store
+    server._broadcast_notification = AsyncMock()
+    first_started = asyncio.Event()
+    release_first = asyncio.Event()
+    observed: list[str] = []
+
+    async def execute_inner(params, _ws):
+        user_input = params["input"]
+        observed.append(user_input)
+        if user_input == "first":
+            first_started.set()
+            await release_first.wait()
+        return {"status": "success", "message": f"Completed {user_input}"}
+
+    server._handle_execute_inner = AsyncMock(side_effect=execute_inner)
+    ws = _FakeWs()
+    server._client_roles[ws] = RpcClientRole.UI
+    try:
+        active = asyncio.create_task(server._handle_execute({"input": "first", "session_id": "chat-1"}, ws))
+        await first_started.wait()
+        second = await server._handle_queue_execute({"input": "second", "session_id": "chat-1"}, ws)
+        third = await server._handle_queue_execute({"input": "third", "session_id": "chat-1"}, ws)
+
+        assert second["status"] == third["status"] == "queued"
+        assert observed == ["first"]
+        release_first.set()
+        assert (await active)["status"] == "success"
+        worker = server._queued_execute_worker
+        assert worker is not None
+        await asyncio.wait_for(worker, timeout=5)
+
+        assert observed == ["first", "second", "third"]
+        assert (await store.get(second["task_id"])).status == TaskStatus.SUCCEEDED
+        assert (await store.get(third["task_id"])).status == TaskStatus.SUCCEEDED
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_queued_task_can_be_cancelled_without_affecting_current_task(tmp_path):
+    server = _server()
+    store = DurableTaskStore(tmp_path / "tasks.db")
+    await store.initialize()
+    server._durable_tasks = store
+    server._interactive_request_active = True
+    server._broadcast_notification = AsyncMock()
+    ws = _FakeWs()
+    server._client_roles[ws] = RpcClientRole.UI
+    try:
+        queued = await server._handle_queue_execute({"input": "later", "session_id": "chat-1"}, ws)
+        denied = await server._handle_cancel_queued_execute(
+            {"task_id": queued["task_id"], "resume_token": "wrong"}, ws
+        )
+        cancelled = await server._handle_cancel_queued_execute(
+            {"task_id": queued["task_id"], "resume_token": queued["resume_token"]}, ws
+        )
+
+        assert denied["status"] == "error"
+        assert cancelled["status"] == "cancelled"
+        assert server._interactive_request_active is True
+        assert len(server._queued_execute_requests) == 0
+        assert (await store.get(queued["task_id"])).status == TaskStatus.CANCELLED
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_external_execute_cannot_claim_reserved_queued_task_slot():
+    server = _server()
+    worker = asyncio.create_task(asyncio.sleep(10))
+    server._queued_execute_worker = worker
+    server._queued_reserved_task_id = "queued-1"
+    try:
+        result = await server._handle_execute({"task_id": "queued-1", "input": "run"}, _FakeWs())
+        assert result["status"] == "busy"
+        assert server._interactive_request_active is False
+    finally:
+        worker.cancel()
+        await asyncio.gather(worker, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_external_execute_cannot_claim_reserved_mcp_task_slot():
+    server = _server()
+    worker = asyncio.create_task(asyncio.sleep(10))
+    server._mcp_tasks["mcp-1"] = worker
+    server._mcp_reserved_task_id = "mcp-1"
+    try:
+        result = await server._handle_execute({"task_id": "mcp-1", "input": "run"}, _FakeWs())
+        assert result["status"] == "busy"
+        assert server._interactive_request_active is False
+    finally:
+        worker.cancel()
+        await asyncio.gather(worker, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_queue_submissions_obey_ten_task_limit(tmp_path):
+    server = _server()
+    store = DurableTaskStore(tmp_path / "tasks.db")
+    await store.initialize()
+    server._durable_tasks = store
+    server._interactive_request_active = True
+    server._broadcast_notification = AsyncMock()
+    ws = _FakeWs()
+    server._client_roles[ws] = RpcClientRole.UI
+    try:
+        results = await asyncio.gather(*(
+            server._handle_queue_execute({"input": f"task {index}"}, ws) for index in range(11)
+        ))
+        assert sum(result["status"] == "queued" for result in results) == 10
+        assert sum(result["status"] == "error" for result in results) == 1
+        assert len(server._queued_execute_requests) == 10
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_interactive_slot_is_reserved_before_first_setup_await():
+    server = _server()
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def delayed_setup(_params, _ws):
+        started.set()
+        await release.wait()
+        return {"status": "success"}
+
+    server._handle_execute_reserved = AsyncMock(side_effect=delayed_setup)
+    first = asyncio.create_task(server._handle_execute({"input": "first"}, _FakeWs()))
+    await started.wait()
+    second = await server._handle_execute({"input": "second"}, _FakeWs())
+    assert second["status"] == "busy"
+    release.set()
+    assert (await first)["status"] == "success"
+    assert server._interactive_request_active is False
 
 
 @pytest.mark.asyncio
