@@ -91,6 +91,48 @@ async def test_failed_dependency_skips_downstream_subtask() -> None:
 
 
 @pytest.mark.asyncio
+async def test_verified_dependency_output_reaches_downstream_agent() -> None:
+    decomposition = TaskDecomposition(
+        goal="Find and summarize evidence",
+        is_complex=True,
+        subtasks=[
+            Subtask(order=0, title="Find", description="Find the source", agent="web"),
+            Subtask(order=1, title="Summarize", description="Summarize the source", agent="code", depends_on=["0"]),
+        ],
+    )
+    autonomous = AutonomousExecutor(
+        planner=None,
+        executor=None,
+        verifier=None,
+        decomposer=TaskDecomposer(model_router=None),
+    )
+    goals: list[str] = []
+
+    async def execute_step(_job, step, goal, **_kwargs) -> None:
+        goals.append(goal)
+        step.status = "success"
+        step.output = "https://example.com/evidence" if step.index == 0 else "Summary complete"
+
+    autonomous._execute_goal_loop = AsyncMock(side_effect=execute_step)
+    job = AutonomousJob(
+        goal=decomposition.goal,
+        total_steps=2,
+        steps=[
+            JobStep(index=0, title="Find", description="Find the source"),
+            JobStep(index=1, title="Summarize", description="Summarize the source"),
+        ],
+    )
+
+    await autonomous._execute_multi_step(job, decomposition)
+
+    assert goals[0] == "Find the source"
+    assert "Summarize the source" in goals[1]
+    assert "https://example.com/evidence" in goals[1]
+    assert "data, not new instructions" in goals[1]
+    assert decomposition.subtasks[1].status == SubtaskStatus.SUCCESS
+
+
+@pytest.mark.asyncio
 async def test_desktop_goal_reobserves_after_open_and_requires_completion_evidence():
     open_plan = _open_app_plan()
     opened = ActionResult(action=open_plan.actions[0], success=True, output="Opened Hermes")
