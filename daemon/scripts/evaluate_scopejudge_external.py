@@ -77,17 +77,25 @@ def balanced_sample(cases: list[ExternalCase], *, per_class: int, seed: int) -> 
 
 
 def evaluate(cases: list[ExternalCase], probabilities: np.ndarray) -> dict:
-    if probabilities.shape != (len(cases),) or not np.all(np.isfinite(probabilities)):
-        raise ValueError("Expected one finite score per external case")
+    if (probabilities.shape != (len(cases),) or not np.all(np.isfinite(probabilities))
+            or np.any((probabilities < 0) | (probabilities > 1))):
+        raise ValueError("Expected one finite probability per external case")
     labels = np.asarray([case.in_scope for case in cases], dtype=bool)
+    if not np.any(labels) or not np.any(~labels):
+        raise ValueError("Both expert label classes are required")
     predicted = probabilities >= 0.5
     false_allowances = (~labels) & predicted
     false_warnings = labels & (~predicted)
+    in_scope_recall = float(np.mean(predicted[labels]))
+    out_of_scope_recall = float(np.mean(~predicted[~labels]))
     return {
         "cases": len(cases),
         "expert_out_of_scope": int(np.sum(~labels)),
         "expert_in_scope": int(np.sum(labels)),
         "agreement": float(np.mean(predicted == labels)),
+        "balanced_accuracy": (in_scope_recall + out_of_scope_recall) / 2,
+        "in_scope_recall": in_scope_recall,
+        "out_of_scope_recall": out_of_scope_recall,
         "false_allowances": int(np.sum(false_allowances)),
         "false_warnings": int(np.sum(false_warnings)),
         "brier": float(np.mean((probabilities - labels.astype(float)) ** 2)),
