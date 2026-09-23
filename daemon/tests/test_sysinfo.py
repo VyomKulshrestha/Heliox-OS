@@ -6,8 +6,25 @@ covers _collect_cpu_info's defensive handling of that.
 """
 
 import psutil
+import pytest
 
+from pilot.system import sysinfo
 from pilot.system.sysinfo import _collect_cpu_info
+
+
+@pytest.mark.asyncio
+async def test_all_system_info_category_expands_to_real_sections(monkeypatch):
+    async def section(name):
+        return f"=== {name} ==="
+
+    monkeypatch.setattr(sysinfo, "get_platform_info", lambda: {"name": "test"})
+    for category in ("time", "cpu", "memory", "disk", "network", "battery"):
+        monkeypatch.setattr(sysinfo, f"_{category}_info", lambda category=category: section(category))
+
+    result = await sysinfo.system_info(["all"])
+
+    for category in ("Time", "Operating System", "cpu", "memory", "disk", "network", "battery"):
+        assert category.lower() in result.lower()
 
 
 def test_cpu_freq_attribute_error_does_not_raise(monkeypatch):
