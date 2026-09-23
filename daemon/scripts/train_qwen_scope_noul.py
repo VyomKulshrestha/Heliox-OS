@@ -136,7 +136,7 @@ def run(root: Path, output_dir: Path, report_path: Path) -> dict:
     tokenizer = AutoTokenizer.from_pretrained(path, local_files_only=True)
     base = AutoModelForCausalLM.from_pretrained(
         path, local_files_only=True, dtype=torch.bfloat16,
-        device_map={"": 0}, attn_implementation="sdpa",
+        device_map={"": 0}, attn_implementation="eager",
     )
     yes = tokenizer.encode("Yes", add_special_tokens=False)
     no = tokenizer.encode("No", add_special_tokens=False)
@@ -148,8 +148,6 @@ def run(root: Path, output_dir: Path, report_path: Path) -> dict:
     del base
     backbone.requires_grad_(False)
     backbone.config.use_cache = False
-    backbone.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
-    backbone.enable_input_require_grads()
     backbone = get_peft_model(backbone, LoraConfig(
         r=LORA_RANK, lora_alpha=LORA_RANK * 2,
         target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
