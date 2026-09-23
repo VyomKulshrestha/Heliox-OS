@@ -133,7 +133,10 @@ def feature_matrix(pairs: list[tuple[str, str]]) -> csr_matrix:
 FEATURE_COUNT = 2 * HASH_DIM + 6 + 3 * len(_OPERATIONS)
 
 
-def apply_target_guard(request: str, action: str, probability: float, *, mutating_action: bool | None = None) -> float:
+def apply_target_guard(
+    request: str, action: str, probability: float, *,
+    mutating_action: bool | None = None, destructive_request: bool | None = None,
+) -> float:
     """Only lower confidence on explicit scope expansion, never grant authority."""
     request_targets = set(_TARGETS.findall(request.lower()))
     action_targets = set(_TARGETS.findall(action.lower()))
@@ -156,7 +159,10 @@ def apply_target_guard(request: str, action: str, probability: float, *, mutatin
         return min(probability, 0.05)
     if _RECORD.search(action.lower()) and _PLAY.search(request.lower()) and not _RECORD.search(request.lower()):
         return min(probability, 0.05)
-    if _DESTRUCTIVE.search(action.lower()) and not _DESTRUCTIVE.search(request.lower()):
+    request_allows_destructive = (
+        bool(_DESTRUCTIVE.search(request.lower())) if destructive_request is None else destructive_request
+    )
+    if _DESTRUCTIVE.search(action.lower()) and not request_allows_destructive:
         return min(probability, 0.05)
     return probability
 
