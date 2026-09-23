@@ -1041,6 +1041,50 @@ async def test_external_execute_cannot_claim_reserved_queued_task_slot():
 
 
 @pytest.mark.asyncio
+async def test_next_queued_task_stays_reserved_while_previous_result_is_published(tmp_path):
+    server = _server()
+    store = DurableTaskStore(tmp_path / "tasks.db")
+    await store.initialize()
+    server._durable_tasks = store
+    server._interactive_request_active = True
+    first_result = asyncio.Event()
+    release_result = asyncio.Event()
+    observed: list[str] = []
+
+    async def broadcast(method, params):
+        if method == "queued_task_result" and params["task_id"] == first["task_id"]:
+            first_result.set()
+            await release_result.wait()
+
+    async def execute_inner(params, _ws):
+        observed.append(params["input"])
+        return {"status": "success", "message": "Done"}
+
+    server._broadcast_notification = AsyncMock(side_effect=broadcast)
+    server._handle_execute_inner = AsyncMock(side_effect=execute_inner)
+    ws = _FakeWs()
+    server._client_roles[ws] = RpcClientRole.UI
+    try:
+        first = await server._handle_queue_execute({"input": "first"}, ws)
+        second = await server._handle_queue_execute({"input": "second"}, ws)
+        server._interactive_request_active = False
+        server._start_queued_execute_worker()
+        await asyncio.wait_for(first_result.wait(), timeout=5)
+
+        assert server._queued_reserved_task_id == second["task_id"]
+        outsider = await server._handle_execute({"input": "jump ahead"}, ws)
+        assert outsider["status"] == "busy"
+        release_result.set()
+        worker = server._queued_execute_worker
+        assert worker is not None
+        await asyncio.wait_for(worker, timeout=5)
+        assert observed == ["first", "second"]
+    finally:
+        release_result.set()
+        await store.close()
+
+
+@pytest.mark.asyncio
 async def test_external_execute_cannot_claim_reserved_mcp_task_slot():
     server = _server()
     worker = asyncio.create_task(asyncio.sleep(10))
