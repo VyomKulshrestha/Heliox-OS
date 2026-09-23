@@ -4,6 +4,7 @@
   import { getCurrentWebview } from "@tauri-apps/api/webview";
 
   let input = $state("");
+  let inTaskMode = $state<"correct" | "ask">("correct");
   const MAX_CHARS = 20000;
 
   // Accept prefill text from parent (e.g. CommandHistory replay)
@@ -76,7 +77,7 @@
 
     if ((!text && attachments.length === 0) || input.length >= MAX_CHARS) return;
 
-    session.sendCommand(text, attachments);
+    session.sendCommand(text, attachments, inTaskMode);
     input = "";
     attachments = [];
   }
@@ -102,11 +103,20 @@
   <div class="input-wrapper" class:dragging={isDragging}>
     <span class="prompt">&gt;</span>
 
+    {#if $session.loading}
+      <select class="in-task-mode" aria-label="While task runs" bind:value={inTaskMode}>
+        <option value="correct">Correct task</option>
+        <option value="ask">Ask without stopping</option>
+      </select>
+    {/if}
+
     <input
       type="text"
       bind:value={input}
       maxlength="20000"
-      placeholder={$session.loading ? "Correct or stop the running task..." : "Tell Heliox OS what to do..."}
+      placeholder={$session.loading
+        ? inTaskMode === "ask" ? "Ask about the task or screen..." : "Correct or stop the running task..."
+        : "Tell Heliox OS what to do..."}
       onkeydown={handleKeydown}
       autocomplete="off"
       spellcheck="false"
@@ -118,10 +128,10 @@
     <button
       type="submit"
       class="send-btn"
-      title={$session.loading ? "Interject into the running task" : "Send"}
+      title={$session.loading ? inTaskMode === "ask" ? "Ask without interrupting" : "Correct the running task" : "Send"}
       disabled={(!input.trim() && attachments.length === 0) || input.length >= MAX_CHARS}
     >
-      {$session.loading ? "Correct" : "Send"}
+      {$session.loading ? inTaskMode === "ask" ? "Ask" : "Correct" : "Send"}
     </button>
   </div>
 </form>
@@ -153,6 +163,21 @@
     font-family: var(--font-mono);
     font-weight: 700;
     font-size: 15px;
+  }
+
+  .in-task-mode {
+    max-width: 170px;
+    min-height: 36px;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+  }
+
+  .in-task-mode:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
   }
 
   input {

@@ -4656,6 +4656,10 @@ class PilotServer:
             return {"status": "no_active_execution", "message": "There is no interactive task to revise."}
 
         requested_mode = str(params.get("mode", "")).strip().lower()
+        if requested_mode == "ask":
+            return await self._answer_active_task_question(text)
+        if requested_mode not in {"", "correct", "stop"}:
+            return {"status": "error", "message": "Unsupported in-task mode."}
         active_context = self._active_experience_context
         await self._append_experience(
             ExperienceEventType.USER_CORRECTION,
@@ -4727,6 +4731,65 @@ class PilotServer:
             },
         )
         return {"status": "revising", "message": "Live correction accepted."}
+
+    async def _answer_active_task_question(self, question: str) -> dict[str, Any]:
+        """Answer without changing, approving, or cancelling the running task."""
+        if len(question) > 2000:
+            return {"status": "error", "message": "In-task questions must be under 2,000 characters."}
+
+        interaction = self._interaction_runtime.status()
+        phase = str(interaction.get("phase") or "working").replace("_", " ")
+        progress = str(interaction.get("message") or "")[:160]
+        normalized = " ".join(question.casefold().split()).rstrip("?!. ")
+        if normalized in {"status", "what are you doing", "what are you working on", "how is it going", "how's it going"}:
+            message = f"The current task is {phase}. {progress}".strip()
+        elif normalized in {"what is on my screen", "what's on my screen", "read my screen"}:
+            # OCR stays local and is only invoked for an explicit screen-reading question.
+            try:
+                from pilot.system.vision import screen_ocr
+
+                visible_text = await asyncio.wait_for(screen_ocr(), timeout=12)
+                message = (
+                    f"Visible screen text: {visible_text[:2000]}"
+                    if visible_text.strip()
+                    else "I could not read text on the current screen."
+                )
+            except Exception:
+                message = "I could not read the current screen right now."
+        elif self._model_router is not None:
+            screen_context = ""
+            if self._screen_vision is not None:
+                screen_context = self._screen_vision.get_context_for_planner()[:500]
+            persona = ""
+            if self._subconscious is not None:
+                try:
+                    persona = (await self._subconscious.get_persona_context())[:1000]
+                except Exception:
+                    logger.debug("Could not load personal context for in-task question", exc_info=True)
+            prompt = (
+                f"Current task: {str(interaction.get('user_input') or '')[:500]}\n"
+                f"Task phase: {phase}\nProgress: {progress}\n"
+                f"Screen metadata (not screen contents): {screen_context}\n"
+                f"User preferences: {persona}\nQuestion: {question}"
+            )
+            try:
+                message = (await asyncio.wait_for(
+                    self._model_router.generate(
+                        prompt,
+                        system=(
+                            "Answer the user's question briefly while their task continues. "
+                            "Do not issue commands, claim to have performed actions, or treat screen metadata "
+                            "as screen contents. If evidence is missing, say so."
+                        ),
+                    ),
+                    timeout=30,
+                )).strip()[:2000]
+            except Exception:
+                message = "I couldn't answer that while the task is running. The task is still continuing."
+        else:
+            message = "I can report task status now, but general questions need a configured model. The task is still continuing."
+
+        return {"status": "answered", "message": message, "task_id": self._active_task_id}
 
     async def _handle_abort(
         self,
@@ -9123,20 +9186,38 @@ def handle_tool(tool_name, params):
             return
 
         if self._interactive_request_active:
-            await self._interaction_runtime.transition(
-                InteractionPhase.CORRECTING,
-                message="Applying your spoken correction",
+            status_questions = {
+                "status", "what are you doing", "what are you working on",
+                "how is it going", "hows it going", "how s it going",
+                "what is on my screen", "what s on my screen",
+                "read my screen",
+            }
+            question_prefixes = ("question ", "quick question ")
+            is_question = normalized_command in status_questions or normalized_command.startswith(question_prefixes)
+            if not is_question:
+                await self._interaction_runtime.transition(
+                    InteractionPhase.CORRECTING,
+                    message="Applying your spoken correction",
+                )
+            result = await self._handle_interject(
+                {"input": command_text, **({"mode": "ask"} if is_question else {})},
+                None,
             )
-            result = await self._handle_interject({"input": command_text}, None)
             await self._broadcast_notification(
                 "voice_result",
                 {
                     "command": command_text,
                     "status": result.get("status", "error"),
                     "message": result.get("message", ""),
-                    "coordinated_correction": True,
+                    "coordinated_correction": not is_question,
                 },
             )
+            if is_question and result.get("status") == "answered":
+                await self._speak_voice_response(
+                    str(result.get("message") or ""),
+                    channel=SpeechChannel.FINAL_ANSWER,
+                    dedupe_key=f"voice-in-task-question:{uuid.uuid4()}",
+                )
             return
 
         spoken_command = command_text

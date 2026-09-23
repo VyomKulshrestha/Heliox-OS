@@ -170,6 +170,27 @@ async def test_voice_command_becomes_live_correction_during_active_task():
 
 
 @pytest.mark.asyncio
+async def test_voice_question_during_task_answers_without_correction():
+    server = _bare_server()
+    server._interactive_request_active = True
+    server._handle_interject = AsyncMock(
+        return_value={"status": "answered", "message": "The task is still running."},
+    )
+
+    await server._voice_command_dispatch("Quick question, what is this plan for?")
+
+    server._handle_interject.assert_awaited_once_with(
+        {"input": "Quick question, what is this plan for?", "mode": "ask"}, None
+    )
+    server._handle_execute.assert_not_awaited()
+    server._speak_voice_response.assert_awaited_once()
+    payload = next(
+        call.args[1] for call in server._broadcast_notification.await_args_list if call.args[0] == "voice_result"
+    )
+    assert payload["coordinated_correction"] is False
+
+
+@pytest.mark.asyncio
 async def test_voice_cannot_approve_a_pending_visible_confirmation():
     server = _bare_server()
     server._interactive_request_active = True
