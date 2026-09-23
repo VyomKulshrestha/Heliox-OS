@@ -39,13 +39,16 @@ def candidate_prompts(row: dict) -> list[tuple[str, str]]:
 
 
 def load_split(name: str, *, per_source: int) -> tuple[list[dict], str]:
+    # On Windows, pyarrow's native DLLs can prevent a subsequent ONNX Runtime
+    # import. Load ORT first; this probe uses both in the same process.
+    import onnxruntime  # noqa: F401
     import pyarrow.parquet as parquet
     from huggingface_hub import hf_hub_download
 
     filename = f"data/{CONFIG}/{name}-00000-of-00001.parquet"
     path = Path(hf_hub_download(DATASET, filename, repo_type="dataset", local_files_only=True))
     columns = ("id", "group_id", "source", "question", "options", "target", "state_json")
-    rows = parquet.read_table(path, columns=columns).to_pylist()
+    rows = parquet.read_table(path, columns=list(columns)).to_pylist()
     by_source: dict[str, list[dict]] = defaultdict(list)
     for row in rows:
         target = row["target"]
