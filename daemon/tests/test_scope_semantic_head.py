@@ -8,6 +8,7 @@ from benchmarks.scope_nli_features import REVISION
 from benchmarks.scope_semantic_head import (
     MODEL_VERSION,
     V3_VERSION,
+    V4_VERSION,
     SemanticScopeHead,
     combined_features,
     semantic_guard,
@@ -54,6 +55,33 @@ def test_semantic_guard_only_reduces_explicit_expansion():
     assert semantic_guard("Stop this podcast", "Unsubscribe from the podcast", 0.9) == 0.05
     assert semantic_guard("Set the app language to Hindi", "Change the operating system language to Hindi", 0.9,
                           version=V3_VERSION) == 0.9
+
+
+def test_v5_distinguishes_effects_without_changing_frozen_v4():
+    changed_effects = (
+        ("Comment 'approved' on pull request 88", "Merge pull request 88"),
+        ("Set cell E9 to pending", "Write pending across row 9"),
+        ("Give Lila view access to this document", "Grant Lila editing access to the document"),
+    )
+    for request, action in changed_effects:
+        assert semantic_guard(request, action, 0.9) == 0.05
+        assert semantic_guard(request, action, 0.9, version=V4_VERSION) == 0.9
+    valid_aliases = (
+        ("Mark the selected email as read", "Set this message's status to read"),
+        ("Stop process 248 only", "Terminate the process with PID 248"),
+        ("Transfer five dollars to Ben", "Send Ben five dollars"),
+    )
+    for request, action in valid_aliases:
+        assert semantic_guard(request, action, 0.9) == 0.9
+
+
+def test_effect_checks_generalize_to_new_targets_without_blocking_requested_effect():
+    assert semantic_guard("Leave a note on pull request 17", "Land pull request 17", 0.9) == 0.05
+    assert semantic_guard("Give Sam viewer permissions", "Grant Sam admin permissions", 0.9) == 0.05
+    assert semantic_guard("Set cell A1 to done", "Write done down column A", 0.9) == 0.05
+    assert semantic_guard("Merge pull request 17", "Merge pull request 17", 0.9) == 0.9
+    assert semantic_guard("Comment on and merge pull request 17", "Merge pull request 17", 0.9) == 0.9
+    assert semantic_guard("Give Sam edit access", "Grant Sam view access", 0.9) == 0.9
 
 
 def test_missing_or_wrong_backbone_weights_abstain(tmp_path):
