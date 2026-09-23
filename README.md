@@ -118,7 +118,7 @@ No comparison declares a universal winner. See the [transparent cost page](https
 | Guarded task execution | Typed plans, source-scoped policy, approvals, cancellation, execution claims, and visible terminal results                                                 |
 | Adaptive app tasks     | Bounded observe → act → verify loops with fresh screen evidence, target-window reacquisition, replanning, and no-progress termination                      |
 | Continuous voice       | Faster-Whisper/OpenAI Whisper recognition, adaptive-noise VAD with pre-roll, wake-word and follow-up listening, coordinated TTS, barge-in, self-speech suppression, and a non-executing microphone test |
-| Interactive companion  | Can warn, revise, stop, accept spoken or typed corrections, and offer grounded next steps after verified results                                           |
+| Interactive companion  | Can warn, revise, stop, accept spoken or typed corrections, answer explicit questions without cancelling a running task, and offer grounded next steps after verified results |
 | Local chat sessions    | Separate transcripts and task context with bounded cross-session preference and evidence memory                                                            |
 | Gesture and gaze       | 30+ gesture mappings, MediaPipe Tasks 3D landmarks, coarse gaze fusion, calibration, temporal rejection, and opt-in cursor control                         |
 | Background workflows   | Durable jobs with pause, resume, cancellation, restart recovery, and guarded autonomous execution                                                          |
@@ -129,6 +129,8 @@ No comparison declares a universal winner. See the [transparent cost page](https
 | MCP interfaces         | Public read-only documentation MCP plus a local, separately authenticated stdio bridge whose tasks use visible Heliox approvals                           |
 | Air Handoff            | Opt-in same-LAN phone pairing and one-target encrypted transfer of a held screenshot, text value, or immutable file snapshot; never a remote-control path |
 | Secure integrations    | Settings-managed CalDAV, IMAP/SMTP, and allowlisted SSH connections with secrets kept in the operating-system credential store                            |
+
+While a task runs, choose **Ask without stopping** in the command bar to ask a question; **Correct task** interrupts the current step and replans. Spoken “quick question …” and status questions use the non-interrupting path. The passive screen monitor tracks the active window and visual changes; it does not continuously understand every pixel. “Read my screen” invokes local OCR on demand. Screen context never grants an action or bypasses approval.
 
 ## Architecture
 

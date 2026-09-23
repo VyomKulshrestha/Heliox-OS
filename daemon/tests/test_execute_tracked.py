@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -877,6 +877,59 @@ async def test_live_correction_reports_no_active_task_instead_of_queueing_work()
     result = await server._handle_interject({"input": "change the target"}, MagicMock())
 
     assert result["status"] == "no_active_execution"
+
+
+@pytest.mark.asyncio
+async def test_in_task_question_answers_without_cancelling_execution():
+    server = _server()
+    server._interactive_request_active = True
+    server._active_task_id = "task-running"
+    server._cancel_event = asyncio.Event()
+    server._model_router = MagicMock()
+    server._model_router.generate = AsyncMock(return_value="I can help while the task continues.")
+
+    result = await server._handle_interject(
+        {"input": "Can you explain the current plan?", "mode": "ask"}, MagicMock()
+    )
+
+    assert result == {
+        "status": "answered",
+        "message": "I can help while the task continues.",
+        "task_id": "task-running",
+    }
+    assert server._cancel_event.is_set() is False
+    assert server._live_correction is None
+    server._model_router.generate.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_in_task_status_question_uses_no_model_or_screen_read():
+    server = _server()
+    server._interactive_request_active = True
+    server._model_router = MagicMock()
+    server._model_router.generate = AsyncMock()
+
+    result = await server._handle_interject({"input": "status", "mode": "ask"}, MagicMock())
+
+    assert result["status"] == "answered"
+    assert "current task" in result["message"].lower()
+    server._model_router.generate.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_in_task_screen_question_reads_ocr_only_on_explicit_request():
+    server = _server()
+    server._interactive_request_active = True
+    server._model_router = MagicMock()
+    server._model_router.generate = AsyncMock()
+
+    with patch("pilot.system.vision.screen_ocr", new_callable=AsyncMock, return_value="Visible document text") as ocr:
+        result = await server._handle_interject({"input": "read my screen", "mode": "ask"}, MagicMock())
+
+    assert result["status"] == "answered"
+    assert "Visible document text" in result["message"]
+    ocr.assert_awaited_once()
+    server._model_router.generate.assert_not_awaited()
 
 
 @pytest.mark.asyncio

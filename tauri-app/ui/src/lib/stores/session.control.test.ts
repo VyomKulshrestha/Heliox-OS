@@ -69,4 +69,30 @@ describe("session execution controls", () => {
     execution.resolve({ status: "cancelled", message: "Stopped for test" });
     await activeCommand;
   });
+
+  it("answers an in-task question without stopping the active command", async () => {
+    const execution = deferred<Record<string, unknown>>();
+    daemonMocks.call.mockImplementation((method: string) => {
+      if (method === "execute") return execution.promise;
+      if (method === "interject") return Promise.resolve({ status: "answered", message: "Still checking the system." });
+      return Promise.resolve({ status: "ok" });
+    });
+    const { session } = await import("./session");
+
+    const activeCommand = session.sendCommand("Inspect the system");
+    await session.sendCommand("What are you doing?", [], "ask");
+
+    expect(daemonMocks.call).toHaveBeenCalledWith("interject", {
+      input: "What are you doing?",
+      mode: "ask",
+    });
+    expect(get(session).loading).toBe(true);
+    expect(get(session).messages.at(-1)).toMatchObject({
+      type: "result",
+      text: "Still checking the system.",
+    });
+
+    execution.resolve({ status: "success", message: "Finished checking." });
+    await activeCommand;
+  });
 });

@@ -850,28 +850,34 @@ function createSession() {
     }
   }
 
-  async function sendCommand(input: string, attachments: Attachment[] = []) {
+  async function sendCommand(input: string, attachments: Attachment[] = [], inTaskMode: "correct" | "ask" = "correct") {
     const current = get({ subscribe });
     if (current.loading) {
       const previousPhase = current.phase;
       const attachmentContext = attachments
         .map((attachment) => `[Attached File: ${attachment.name}]\n${attachment.content}`)
         .join("\n\n");
-      const correction = [input.trim(), attachmentContext].filter(Boolean).join("\n\n");
-      if (!correction) return;
+      const inTaskInput = [input.trim(), attachmentContext].filter(Boolean).join("\n\n");
+      if (!inTaskInput) return;
 
       update((s) => ({
         ...s,
-        phase: "sending live correction",
-        messages: [...s.messages, { type: "user", text: input || "Attached live correction", timestamp: Date.now() }],
+        phase: inTaskMode === "ask" ? "answering without interrupting" : "sending live correction",
+        messages: [...s.messages, { type: "user", text: input || "Attached in-task message", timestamp: Date.now() }],
       }));
 
       try {
-        const result = (await call("interject", { input: correction })) as {
+        const result = (await call("interject", { input: inTaskInput, mode: inTaskMode })) as {
           status: string;
           message?: string;
         };
-        if (result.status === "revising") {
+        if (result.status === "answered") {
+          update((s) => ({
+            ...s,
+            phase: previousPhase,
+            messages: [...s.messages, { type: "result", text: result.message || "No answer available.", timestamp: Date.now() }],
+          }));
+        } else if (result.status === "revising") {
           update((s) => ({ ...s, phase: "stopping current step and revising" }));
         } else if (result.status === "aborted") {
           update((s) => ({ ...s, phase: "stopping" }));
