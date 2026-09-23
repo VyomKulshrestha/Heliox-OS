@@ -2035,8 +2035,13 @@ class PilotServer:
                     except Exception:
                         logger.exception("Could not finalize failed queued task %s", task_id)
                 finally:
-                    self._queued_execute_requests.popleft()
-                    self._queued_reserved_task_id = ""
+                    async with self._queued_submission_lock:
+                        self._queued_execute_requests.popleft()
+                        # Reserve the next task before any notification await.
+                        # Otherwise a new execute request can jump ahead of it.
+                        self._queued_reserved_task_id = (
+                            self._queued_execute_requests[0][0] if self._queued_execute_requests else ""
+                        )
                 await self._broadcast_notification(
                     "queued_task_result",
                     {
