@@ -10,7 +10,7 @@ Architecture:
   2. AppDetector:    Identifies the active window/app via OS APIs
   3. DiffEngine:     Compares consecutive screenshots to detect changes
   4. ContextBuffer:  Maintains a rolling buffer of recent screen states
-  5. LLMDescriber:   Optionally uses vision-capable LLM to describe content
+  5. Description:    Optional active-window metadata summary (not image understanding)
 
 Platform support:
   - Windows: win32gui + PIL (mss for screenshot)
@@ -147,6 +147,7 @@ class ScreenVisionAgent:
         self._model = model_router
         self._context = ScreenContext()
         self._task: asyncio.Task[None] | None = None
+        self._capture_lock = asyncio.Lock()
         self._running = False
         self._interval_seconds: float = 3.0
         self._last_hash: str = ""
@@ -262,10 +263,14 @@ class ScreenVisionAgent:
         now = datetime.now(UTC).isoformat()
         # Run blocking OS calls in a thread to avoid starving the event loop
         app, title = await asyncio.to_thread(_get_active_window)
-        screen_hash = await self._capture_screenshot_hash()
+        async with self._capture_lock:
+            previous_hash = self._last_hash
+            screen_hash = await self._capture_screenshot_hash()
 
-        changed = screen_hash != self._last_hash and screen_hash != ""
-        self._last_hash = screen_hash
+            # The screenshot helper updates _last_hash while computing frame deltas.
+            # Compare against the fingerprint from before capture, not that new value.
+            changed = bool(screen_hash) and screen_hash != previous_hash
+            self._last_hash = screen_hash
 
         state = ScreenState(
             timestamp=now,
@@ -275,7 +280,7 @@ class ScreenVisionAgent:
             changed_from_last=changed,
         )
 
-        # Optional: use LLM to describe what's on screen
+        # Optional metadata-only description; raw pixels are not sent to a model.
         if self._enable_llm_describe and changed and self._model:
             state.description = await self._describe_screen(state)
 
@@ -387,8 +392,7 @@ class ScreenVisionAgent:
         return ""
 
     async def _describe_screen(self, state: ScreenState) -> str:
-        """Use vision-capable LLM to describe what's on screen."""
-        # Simple text-based description from metadata
+        """Describe active-window metadata, not the screenshot's contents."""
         return f"User is viewing {state.active_app}: {state.active_window_title}"
 
     # ── Public API ──

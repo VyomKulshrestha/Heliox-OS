@@ -46,6 +46,22 @@ class TestTimeoutPausesAgent:
         assert agent._consecutive_timeouts >= agent._max_consecutive_timeouts
         await agent.stop()
 
+
+@pytest.mark.asyncio
+async def test_screen_change_flag_compares_with_previous_capture(agent):
+    frames = iter(["frame-a", "frame-a", "frame-b"])
+
+    async def capture_hash():
+        fingerprint = next(frames)
+        agent._last_hash = fingerprint  # mirrors the real screenshot helper
+        return fingerprint
+
+    agent._capture_screenshot_hash = AsyncMock(side_effect=capture_hash)
+    with patch("pilot.agents.screen_vision._get_active_window", return_value=("Editor", "Document")):
+        states = [await agent._capture_state() for _ in range(3)]
+
+    assert [state.changed_from_last for state in states] == [True, False, True]
+
     @pytest.mark.asyncio
     async def test_does_not_pause_before_threshold(self, agent):
         timeouts = 0
