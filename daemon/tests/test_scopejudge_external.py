@@ -30,7 +30,9 @@ def test_external_join_and_balanced_sampling_are_deterministic(tmp_path):
     assert "read" in cases[0].action and "delete" in cases[1].action
     sample = balanced_sample(cases, per_class=1, seed=7)
     assert [case.case_id for case in sample] == [case.case_id for case in balanced_sample(cases, per_class=1, seed=7)]
-    assert evaluate(sample, np.asarray([0.9, 0.1]))["agreement"] == 1.0
+    result = evaluate(sample, np.asarray([0.9, 0.1]))
+    assert result["agreement"] == 1.0
+    assert result["balanced_accuracy"] == 1.0
     with pytest.raises(ValueError, match="Not enough"):
         balanced_sample(cases, per_class=2, seed=7)
     trajectory["extra"]["scopejudge"]["labels"][0]["golden_label"] = "unknown"
@@ -42,5 +44,5 @@ def test_external_join_and_balanced_sampling_are_deterministic(tmp_path):
 def test_external_metrics_reject_invalid_scores(tmp_path):
     path = tmp_path / "public.jsonl"
     path.write_text("", encoding="utf-8")
-    with pytest.raises(ValueError, match="Expected one finite"):
+    with pytest.raises(ValueError, match="Expected one finite probability"):
         evaluate([], np.asarray([float("nan")]))
