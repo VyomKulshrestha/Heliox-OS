@@ -87,6 +87,58 @@ def test_bounded_telemetry_plan_gets_immediate_local_companion_review():
     assert "read-only" in review.reason
 
 
+def test_battery_only_request_revises_unrelated_system_telemetry():
+    plan = ActionPlan(
+        actions=[Action(
+            action_type=ActionType.SYSTEM_INFO,
+            target="battery",
+            parameters=SystemInfoParams(categories=["os", "cpu", "memory", "disk", "network"]),
+        )],
+        explanation="Read battery status",
+    )
+
+    review = PilotServer._deterministic_companion_review(
+        plan, "Show current battery status without changing anything."
+    )
+
+    assert review is not None
+    assert review.decision == "REVISE"
+    assert "battery_info" in review.planner_feedback
+
+
+def test_mixed_battery_and_cpu_request_is_not_auto_approved():
+    plan = ActionPlan(
+        actions=[Action(
+            action_type=ActionType.SYSTEM_INFO,
+            target="system",
+            parameters=SystemInfoParams(categories=["battery", "cpu"]),
+        )],
+        explanation="Read battery and CPU",
+    )
+
+    assert PilotServer._deterministic_companion_review(plan, "Show battery and CPU status") is None
+
+
+def test_close_request_revises_open_application_plan():
+    plan = ActionPlan(
+        actions=[Action(
+            action_type=ActionType.OPEN_APPLICATION,
+            target="ChatGPT",
+            parameters=OpenApplicationParams(name="ChatGPT"),
+        )],
+        explanation="Open ChatGPT",
+    )
+
+    review = PilotServer._deterministic_companion_review(plan, "Close this application")
+
+    assert review is not None
+    assert review.decision == "REVISE"
+    assert "not open_application" in review.planner_feedback
+    assert PilotServer._deterministic_companion_review(
+        plan, "Close the current window and open ChatGPT"
+    ) is None
+
+
 def test_system_health_review_gets_immediate_local_companion_review():
     plan = ActionPlan(
         actions=[
