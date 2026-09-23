@@ -24,6 +24,22 @@ def test_high_disk_usage_flagged():
     assert any("disk usage" in r for r in reasons)
 
 
+def test_existing_high_disk_usage_does_not_flag_disk_neutral_action():
+    action = _action(ActionType.FILE_READ)
+    outcome = PredictedOutcome(disk_usage_after=0.97, proc_count_delta_normalized=0.0, source="rule")
+    risk, reasons = score_outcome(action, outcome, PilotConfig(), baseline_disk_usage=0.97)
+    assert risk == 0.0
+    assert reasons == []
+
+
+def test_disk_increase_above_threshold_remains_flagged():
+    action = _action(ActionType.FILE_WRITE)
+    outcome = PredictedOutcome(disk_usage_after=0.98, proc_count_delta_normalized=0.0, source="rule")
+    risk, reasons = score_outcome(action, outcome, PilotConfig(), baseline_disk_usage=0.97)
+    assert risk == 0.8
+    assert any("disk usage" in reason for reason in reasons)
+
+
 def test_fork_bomb_like_delta_flagged():
     action = _action()
     outcome = PredictedOutcome(disk_usage_after=0.5, proc_count_delta_normalized=0.5, source="rule")

@@ -136,7 +136,12 @@ class RiskGate:
             action_reasons: list[str] = []
             for outcome in candidates:
                 cumulative_outcome = replace(outcome, proc_count_delta_normalized=cumulative_proc_delta)
-                risk, reasons = score_outcome(action, cumulative_outcome, config)
+                risk, reasons = score_outcome(
+                    action,
+                    cumulative_outcome,
+                    config,
+                    baseline_disk_usage=simulated.disk_usage_fraction,
+                )
                 if risk > action_risk or not action_reasons:
                     action_risk = risk
                     action_reasons = reasons
