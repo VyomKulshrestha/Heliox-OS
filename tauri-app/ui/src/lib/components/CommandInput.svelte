@@ -4,7 +4,7 @@
   import { getCurrentWebview } from "@tauri-apps/api/webview";
 
   let input = $state("");
-  let inTaskMode = $state<"correct" | "ask">("correct");
+  let inTaskMode = $state<"correct" | "ask" | "next">("correct");
   const MAX_CHARS = 20000;
 
   // Accept prefill text from parent (e.g. CommandHistory replay)
@@ -107,6 +107,7 @@
       <select class="in-task-mode" aria-label="While task runs" bind:value={inTaskMode}>
         <option value="correct">Correct task</option>
         <option value="ask">Ask without stopping</option>
+        <option value="next">Queue next task</option>
       </select>
     {/if}
 
@@ -115,7 +116,8 @@
       bind:value={input}
       maxlength="20000"
       placeholder={$session.loading
-        ? inTaskMode === "ask" ? "Ask about the task or screen..." : "Correct or stop the running task..."
+        ? inTaskMode === "ask" ? "Ask about the task or screen..."
+          : inTaskMode === "next" ? "Describe the next task..." : "Correct or stop the running task..."
         : "Tell Heliox OS what to do..."}
       onkeydown={handleKeydown}
       autocomplete="off"
@@ -128,12 +130,30 @@
     <button
       type="submit"
       class="send-btn"
-      title={$session.loading ? inTaskMode === "ask" ? "Ask without interrupting" : "Correct the running task" : "Send"}
+      title={$session.loading
+        ? inTaskMode === "ask" ? "Ask without interrupting"
+          : inTaskMode === "next" ? "Queue another task" : "Correct the running task"
+        : "Send"}
       disabled={(!input.trim() && attachments.length === 0) || input.length >= MAX_CHARS}
     >
-      {$session.loading ? inTaskMode === "ask" ? "Ask" : "Correct" : "Send"}
+      {$session.loading ? inTaskMode === "ask" ? "Ask" : inTaskMode === "next" ? "Queue" : "Correct" : "Send"}
     </button>
   </div>
+
+  {#if $session.queuedTasks.some((task) => task.sessionId === $session.activeSessionId)}
+    <div class="queued-tasks" aria-label="Queued tasks">
+      {#each $session.queuedTasks.filter((task) => task.sessionId === $session.activeSessionId) as task (task.taskId)}
+        <div class="queued-task">
+          <span class="queued-task-label" title={task.input}>{task.status === "running" ? "Running" : "Queued"}: {task.input}</span>
+          {#if task.status === "queued" && task.resumeToken}
+            <button type="button" class="cancel-queued" aria-label={`Cancel queued task: ${task.input}`} onclick={() => session.cancelQueuedTask(task.taskId)}>
+              Cancel
+            </button>
+          {/if}
+        </div>
+      {/each}
+    </div>
+  {/if}
 </form>
 
 <style>
@@ -166,13 +186,48 @@
   }
 
   .in-task-mode {
-    max-width: 170px;
-    min-height: 36px;
+    width: min(170px, 40vw);
+    min-height: 44px;
     background: var(--bg-secondary);
     color: var(--text-primary);
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
     font-size: 12px;
+  }
+
+  .queued-tasks {
+    display: grid;
+    gap: 4px;
+    margin-top: 8px;
+  }
+
+  .queued-task {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+
+  .queued-task-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .cancel-queued {
+    flex: none;
+    min-height: 32px;
+    padding: 4px 8px;
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+  }
+
+  .cancel-queued:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
   }
 
   .in-task-mode:focus-visible {

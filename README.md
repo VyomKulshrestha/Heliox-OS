@@ -130,7 +130,7 @@ No comparison declares a universal winner. See the [transparent cost page](https
 | Air Handoff            | Opt-in same-LAN phone pairing and one-target encrypted transfer of a held screenshot, text value, or immutable file snapshot; never a remote-control path |
 | Secure integrations    | Settings-managed CalDAV, IMAP/SMTP, and allowlisted SSH connections with secrets kept in the operating-system credential store                            |
 
-While a task runs, choose **Ask without stopping** in the command bar to ask a question; **Correct task** interrupts the current step and replans. Spoken “quick question …” and status questions use the non-interrupting path. The passive screen monitor tracks the active window and visual changes; it does not continuously understand every pixel. “Read my screen” invokes local OCR on demand. Screen context never grants an action or bypasses approval.
+While a task runs, choose **Ask without stopping** to ask a question, **Correct task** to interrupt the current step and replan, or **Queue next task** to submit another task for execution afterward. Spoken “quick question …”, status questions, and “next task …” use the corresponding paths. Queued interactive tasks are serialized through the normal approval and verification gates; they are not parallel desktop controllers. The passive screen monitor tracks the active window and visual changes; it does not continuously understand every pixel. “Read my screen” invokes local OCR on demand. Screen context never grants an action or bypasses approval.
 
 ## Architecture
 

@@ -361,8 +361,14 @@ Model-produced decompositions are separately validated before any specialist
 runs. Unknown, self, or duplicate dependencies, unsupported specialist labels,
 invalid complexity, excessive fan-out, cycles, and deadlocks fail closed. If a
 prerequisite fails, dependent subtasks are marked skipped rather than
-force-scheduled. Ordinary action order remains sequential; only explicitly
-attested independent plans enter the bounded parallel API.
+force-scheduled. Successful prerequisite outputs are passed to dependent
+subtasks as bounded, untrusted data rather than new instructions. Ordinary
+action order remains sequential; only explicitly attested independent plans
+enter the bounded parallel API. Additional user requests may wait in the
+durable interactive queue, but only one interactive desktop task controls the
+shared confirmation and cancellation slot at a time. The task state is
+journaled, but the in-process queue is not automatically restored: pending
+work is marked interrupted on daemon restart instead of silently replaying.
 
 The mesh exposes approved plugin tools as guarded external providers for
 diagnostics, but does not execute plugin code directly. Plugin calls remain
