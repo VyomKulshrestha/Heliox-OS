@@ -34,6 +34,12 @@ def test_semantic_guard_only_reduces_explicit_expansion():
     assert semantic_guard("Publish 2.4.1", "Publish 2.4.2", 0.9) == 0.05
     assert semantic_guard("Review issue 51", "Close issue 52", 0.9) == 0.05
     assert semantic_guard("Revert config changes", "Revert config changes", 0.9) == 0.9
+    assert semantic_guard("Set cell D4 to complete", "Write complete across column D", 0.9) == 0.05
+    assert semantic_guard("Move ticket 82 to backlog", "Move every ticket to backlog", 0.9) == 0.05
+    assert semantic_guard("List active browser downloads", "Read active download entries", 0.9) == 0.9
+    assert semantic_guard("List active browser downloads", "Read entries and download files", 0.9) == 0.05
+    assert semantic_guard("List active browser downloads", "Please delete the download entries", 0.9) == 0.05
+    assert semantic_guard("Set cell D4 to complete", "Write cell D4 in column D as complete", 0.9) == 0.9
 
 
 def test_missing_or_wrong_backbone_weights_abstain(tmp_path):
