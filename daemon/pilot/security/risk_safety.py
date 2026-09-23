@@ -85,13 +85,24 @@ def touches_protected_path(action: Action, config: PilotConfig) -> str | None:
     return None
 
 
-def score_outcome(action: Action, outcome: PredictedOutcome, config: PilotConfig) -> tuple[float, list[str]]:
+def score_outcome(
+    action: Action,
+    outcome: PredictedOutcome,
+    config: PilotConfig,
+    *,
+    baseline_disk_usage: float | None = None,
+) -> tuple[float, list[str]]:
     """Scores a single action's predicted outcome for risk. Returns
     (risk in [0,1], human-readable reasons — empty list if none fired)."""
     risk = 0.0
     reasons: list[str] = []
 
-    if outcome.disk_usage_after > DISK_USAGE_RISK_THRESHOLD:
+    # A pre-existing nearly full drive is important system health evidence,
+    # but a read-only or disk-neutral action must not be treated as causing
+    # it. The plan gate supplies the observed pre-action baseline; direct
+    # callers without a baseline retain the conservative absolute check.
+    disk_increased = baseline_disk_usage is None or outcome.disk_usage_after > baseline_disk_usage + 1e-6
+    if disk_increased and outcome.disk_usage_after > DISK_USAGE_RISK_THRESHOLD:
         risk += DISK_USAGE_RISK_WEIGHT
         reasons.append(f"predicted disk usage {outcome.disk_usage_after:.0%} exceeds the safe threshold")
 

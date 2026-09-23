@@ -23,25 +23,28 @@ from urllib.parse import urlsplit
 import websockets
 from mcp.server import MCPServer
 from mcp_types import ToolAnnotations
-from pydantic import StringConstraints
+from pydantic import Field, StringConstraints
 
 from pilot import __version__
 from pilot.config import RUNTIME_DIR, PilotConfig
 
 logger = logging.getLogger("pilot.mcp")
 
-TaskInput = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=20_000)]
+TaskInput = Annotated[str, Field(min_length=1, max_length=20_000), StringConstraints(strip_whitespace=True)]
 SessionId = Annotated[
     str,
-    StringConstraints(strip_whitespace=True, min_length=1, max_length=80, pattern=r"^[A-Za-z0-9._:-]+$"),
+    Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9._:-]+$"),
+    StringConstraints(strip_whitespace=True),
 ]
 TaskId = Annotated[
     str,
-    StringConstraints(strip_whitespace=True, min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$"),
+    Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$"),
+    StringConstraints(strip_whitespace=True),
 ]
 RequestId = Annotated[
     str,
-    StringConstraints(strip_whitespace=True, max_length=128, pattern=r"^[A-Za-z0-9._:-]*$"),
+    Field(max_length=128, pattern=r"^[A-Za-z0-9._:-]*$"),
+    StringConstraints(strip_whitespace=True),
 ]
 
 
