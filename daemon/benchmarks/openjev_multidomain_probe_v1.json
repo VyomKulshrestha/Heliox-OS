@@ -1,6 +1,7 @@
 {
   "version": "openjev-style-multidomain-v1",
   "dataset": "ZefanCai/Open-Jev",
+  "dataset_revision": "c67699e13d0ae25e35b77165a4b6b079bedc8aba",
   "config": "release-v2-redistributable",
   "dataset_sha256": {
     "train": "a76be013b2986a97e4d61faad4fd5f0a6ddb934760d5dcf3161aaa118909b6bf",

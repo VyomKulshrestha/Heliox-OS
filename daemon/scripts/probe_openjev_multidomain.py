@@ -24,6 +24,7 @@ from benchmarks.scope_candidate_encoder import HIDDEN_SIZE, MAX_LENGTH, Candidat
 from benchmarks.scope_nli_features import BACKBONE, REVISION  # noqa: E402
 
 DATASET = "ZefanCai/Open-Jev"
+DATASET_REVISION = "c67699e13d0ae25e35b77165a4b6b079bedc8aba"
 CONFIG = "release-v2-redistributable"
 SEED = 20260923
 VERSION = "openjev-style-multidomain-v1"
@@ -46,7 +47,8 @@ def load_split(name: str, *, per_source: int) -> tuple[list[dict], str]:
     from huggingface_hub import hf_hub_download
 
     filename = f"data/{CONFIG}/{name}-00000-of-00001.parquet"
-    path = Path(hf_hub_download(DATASET, filename, repo_type="dataset", local_files_only=True))
+    path = Path(hf_hub_download(DATASET, filename, repo_type="dataset",
+                                revision=DATASET_REVISION, local_files_only=True))
     columns = ("id", "group_id", "source", "question", "options", "target", "state_json")
     rows = parquet.read_table(path, columns=list(columns)).to_pylist()
     by_source: dict[str, list[dict]] = defaultdict(list)
@@ -181,6 +183,7 @@ def run(cache_dir: Path, candidate: Path, output: Path) -> dict:
     report = {
         "version": VERSION,
         "dataset": DATASET,
+        "dataset_revision": DATASET_REVISION,
         "config": CONFIG,
         "dataset_sha256": hashes,
         "backbone": BACKBONE,
