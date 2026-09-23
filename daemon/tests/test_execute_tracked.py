@@ -18,18 +18,25 @@ from pilot.actions import (
     ActionResult,
     ActionType,
     BrowserParams,
+    EmptyParams,
     FileParams,
     OpenApplicationParams,
     PowerParams,
     ScreenVisionParams,
     SystemInfoParams,
     VerificationResult,
+    WindowParams,
 )
 from pilot.agents.destructive_critic import CriticVerdict
 from pilot.agents.execution_companion import CompanionReview
+from pilot.agents.executor import Executor
 from pilot.config import PilotConfig
+from pilot.security.audit import AuditLogger
+from pilot.security.permissions import PermissionChecker
 from pilot.security.rpc_identity import RpcClientRole
+from pilot.security.validator import ActionValidator
 from pilot.server import PilotServer
+from pilot.system import sysinfo
 from pilot.workflows.durable_tasks import DurableTaskStore, TaskStatus
 
 
@@ -227,6 +234,64 @@ def _server_ready_for_handle_execute(executor, plan: ActionPlan | None = None) -
 
     server._planner = _FakePlanner()
     return server
+
+
+@pytest.mark.asyncio
+async def test_all_system_info_sections_survive_executor_and_response_serialization(monkeypatch, tmp_path):
+    headings = ("System Time", "Operating System", "CPU", "Memory", "Disk", "Network", "Battery")
+
+    async def section(heading):
+        return f"=== {heading} ===\n  sample: {heading}"
+
+    monkeypatch.setattr(sysinfo, "get_platform_info", lambda: {"sample": "Operating System"})
+    for category, heading in zip(
+        ("time", "cpu", "memory", "disk", "network", "battery"),
+        ("System Time", "CPU", "Memory", "Disk", "Network", "Battery"),
+        strict=True,
+    ):
+        monkeypatch.setattr(sysinfo, f"_{category}_info", lambda heading=heading: section(heading))
+
+    plan = ActionPlan(
+        actions=[
+            Action(
+                action_type=ActionType.SYSTEM_INFO,
+                target="system",
+                parameters=SystemInfoParams(categories=["all"]),
+            )
+        ],
+        explanation="Read all system information.",
+    )
+    server = _server_ready_for_handle_execute(None, plan)
+    server._executor = Executor(
+        server.config,
+        ActionValidator(server.config),
+        PermissionChecker(server.config),
+        AuditLogger(audit_file=tmp_path / "audit.jsonl"),
+    )
+
+    class _Verifier:
+        async def verify(self, plan, results):
+            return VerificationResult(passed=all(result.success for result in results))
+
+    server._verifier = _Verifier()
+    ws = _FakeWs()
+    response = await server._handle_execute({"input": "show all system information"}, ws)
+    serialized = json.loads(json.dumps(response))
+    completed = [
+        json.loads(message)["params"]["result"]
+        for message in ws.sent
+        if json.loads(message).get("method") == "action_complete"
+    ]
+
+    assert serialized["status"] == "success"
+    assert len(serialized["results"]) == len(completed) == 1
+    assert serialized["results"][0] == completed[0]
+    assert serialized["results"][0]["action"]["parameters"]["categories"] == ["all"]
+    assert serialized["results"][0]["success"] is True
+    assert [line for line in serialized["results"][0]["output"].splitlines() if line.startswith("===")] == [
+        f"=== {heading} ===" for heading in headings
+    ]
+    assert "Battery" in serialized["message"]
 
 
 @pytest.mark.asyncio
@@ -1325,6 +1390,99 @@ async def test_proactive_companion_revises_plan_before_any_action_runs():
     assert "[INDEPENDENT COMPANION REVIEW]" in planned_inputs[1]
     assert "Use one direct file-read action" in planned_inputs[1]
     assert any(method == "companion_plan_intervention" for method, _ in server.test_broadcasts)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("user_input", "source", "proposed", "corrected", "observed_output"),
+    [
+        (
+            "Show current battery status without changing anything.",
+            "mcp",
+            Action(
+                action_type=ActionType.SYSTEM_INFO, target="system", parameters=SystemInfoParams(categories=["all"])
+            ),
+            Action(action_type=ActionType.BATTERY_INFO, target="battery", parameters=EmptyParams()),
+            "Battery: 73%, plugged in",
+        ),
+        (
+            "Close ChatGPT",
+            "text",
+            Action(
+                action_type=ActionType.OPEN_APPLICATION,
+                target="ChatGPT",
+                parameters=OpenApplicationParams(name="ChatGPT"),
+            ),
+            Action(action_type=ActionType.WINDOW_CLOSE, target="ChatGPT", parameters=WindowParams(title="ChatGPT")),
+            "Closed ChatGPT window",
+        ),
+    ],
+)
+async def test_mismatched_local_plan_revises_to_one_approved_truthful_result(
+    user_input, source, proposed, corrected, observed_output
+):
+    plans = [
+        ActionPlan(actions=[proposed], explanation="Proposed action"),
+        ActionPlan(actions=[corrected], explanation="Corrected action"),
+    ]
+    planned_inputs = []
+    executed = []
+
+    class _Planner:
+        async def plan(self, user_input, **kwargs):
+            planned_inputs.append(user_input)
+            return plans[len(planned_inputs) - 1]
+
+    class _Executor:
+        async def execute(self, plan, **kwargs):
+            assert kwargs["user_confirmed"] is True
+            executed.append(plan.actions[0].action_type)
+            result = ActionResult(action=plan.actions[0], success=True, output=observed_output)
+            await kwargs["on_action_start"](plan.actions[0])
+            await kwargs["on_action_complete"](result)
+            return [result]
+
+    class _Verifier:
+        async def verify(self, plan, results):
+            assert [result.action.action_type for result in results] == [corrected.action_type]
+            return VerificationResult(passed=True, details=["Observed action verified"])
+
+    class _Companion:
+        async def review(self, user_input, plan):
+            return CompanionReview(decision="CONTINUE", reason="Corrected plan matches the request.")
+
+    server = _server_ready_for_handle_execute(_Executor(), plans[0])
+    server._planner = _Planner()
+    server._verifier = _Verifier()
+    server._execution_companion = _Companion()
+
+    class _PermissionChecker:
+        def plan_requires_confirmation(self, plan):
+            assert plan.actions[0].action_type == corrected.action_type
+            return corrected.action_type == ActionType.WINDOW_CLOSE
+
+    server._permission_checker = _PermissionChecker()
+    ws = _FakeWs(confirmation=True)
+    ws.server = server
+
+    response = await server._handle_execute({"input": user_input, "source": source}, ws)
+    messages = [json.loads(message) for message in ws.sent]
+
+    assert len(planned_inputs) == 2
+    assert "[INDEPENDENT COMPANION REVIEW]" in planned_inputs[1]
+    assert executed == [corrected.action_type]
+    assert [
+        message["params"]["decision"] for message in messages if message.get("method") == "companion_plan_review"
+    ] == ["REVISE", "CONTINUE"]
+    assert len([message for message in messages if message.get("method") == "confirm_required"]) == 1
+    assert len([message for message in messages if message.get("method") == "action_complete"]) == 1
+    assert response["status"] == "success"
+    assert response["message"] == observed_output
+    assert len(response["results"]) == 1
+    assert response["results"][0]["action"]["action_type"] == corrected.action_type.value
+    terminal = [payload for method, payload in server.test_broadcasts if method == "task_complete"]
+    assert len(terminal) == 1
+    assert terminal[0]["summary"] == observed_output
 
 
 @pytest.mark.asyncio

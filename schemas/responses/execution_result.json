@@ -12,10 +12,17 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["action_type", "target", "success"],
+        "required": ["action", "success"],
         "properties": {
-          "action_type": { "type": "string" },
-          "target": { "type": "string" },
+          "action": {
+            "type": "object",
+            "required": ["action_type", "target", "parameters"],
+            "properties": {
+              "action_type": { "type": "string" },
+              "target": { "type": "string" },
+              "parameters": { "type": "object" }
+            }
+          },
           "success": { "type": "boolean" },
           "output": { "type": "string" },
           "error": { "type": ["string", "null"] },
