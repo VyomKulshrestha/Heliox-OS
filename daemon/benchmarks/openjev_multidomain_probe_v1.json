@@ -1,0 +1,128 @@
+{
+  "version": "openjev-style-multidomain-v1",
+  "dataset": "ZefanCai/Open-Jev",
+  "config": "release-v2-redistributable",
+  "dataset_sha256": {
+    "train": "a76be013b2986a97e4d61faad4fd5f0a6ddb934760d5dcf3161aaa118909b6bf",
+    "calibration": "74cf0064f68dcccbcedd4849d3b347f4c900bdd5329a78ec249fcdf24f89b554",
+    "test": "05edb50da60abb087328e353b201d83b745e01393b4a43b5320b90720a8132ff",
+    "ood": "ba8cb3f95b9121aa73e4b997ac9c350e2ec4dddb972cb5c3086da911f0deb9ef"
+  },
+  "backbone": "cross-encoder/nli-MiniLM2-L6-H768",
+  "backbone_revision": "b95119ce93d3e065de6214e38cd4a97b0f2f2c6d",
+  "seed": 20260923,
+  "sample_per_source": {
+    "train": 100,
+    "calibration": 30,
+    "test": 40,
+    "ood": 40
+  },
+  "train_rows": 1128,
+  "calibration_rows": 332,
+  "head_parameters": 768,
+  "lora_rank": 0,
+  "calibration_temperature": 0.8446991441647995,
+  "candidate_sha256": "2961f3a915c88d4c9ded1bf91412bef968ee5b5c21cbf5510ace96e78e9e2d6c",
+  "optimizer_iterations": 19,
+  "test": {
+    "rows": 444,
+    "top1_accuracy": 0.5540540540540541,
+    "mean_brier": 0.16825880472471164,
+    "mean_nll": 0.9643844404691957,
+    "by_source": {
+      "customer-control-v1": {
+        "rows": 40,
+        "top1_accuracy": 0.45
+      },
+      "painting-geometry-v1": {
+        "rows": 40,
+        "top1_accuracy": 0.375
+      },
+      "reasoning-control-v1": {
+        "rows": 40,
+        "top1_accuracy": 0.425
+      },
+      "snake-v1": {
+        "rows": 40,
+        "top1_accuracy": 0.525
+      },
+      "tic_tac_toe-v1": {
+        "rows": 40,
+        "top1_accuracy": 0.25
+      },
+      "tile_platformer-v1": {
+        "rows": 40,
+        "top1_accuracy": 0.1
+      },
+      "trex_runner-v1": {
+        "rows": 4,
+        "top1_accuracy": 0.25
+      },
+      "vizdoom-basic-v1": {
+        "rows": 40,
+        "top1_accuracy": 0.5
+      },
+      "workflow-controls-v1/agent_trace_observability": {
+        "rows": 40,
+        "top1_accuracy": 0.825
+      },
+      "workflow-controls-v1/customer_service": {
+        "rows": 40,
+        "top1_accuracy": 0.875
+      },
+      "workflow-controls-v1/invoice_processing": {
+        "rows": 40,
+        "top1_accuracy": 0.85
+      },
+      "workflow-controls-v1/security_incidents": {
+        "rows": 40,
+        "top1_accuracy": 0.95
+      }
+    }
+  },
+  "ood": {
+    "rows": 360,
+    "top1_accuracy": 0.6305555555555555,
+    "mean_brier": 0.19327465826483806,
+    "mean_nll": 0.83303719563145,
+    "by_source": {
+      "customer-control-v1": {
+        "rows": 40,
+        "top1_accuracy": 0.425
+      },
+      "painting-geometry-v1": {
+        "rows": 40,
+        "top1_accuracy": 0.7
+      },
+      "reasoning-control-v1": {
+        "rows": 40,
+        "top1_accuracy": 0.35
+      },
+      "snake-v1": {
+        "rows": 40,
+        "top1_accuracy": 0.625
+      },
+      "vizdoom-basic-v1": {
+        "rows": 40,
+        "top1_accuracy": 0.625
+      },
+      "workflow-controls-v1/agent_trace_observability": {
+        "rows": 40,
+        "top1_accuracy": 0.775
+      },
+      "workflow-controls-v1/customer_service": {
+        "rows": 40,
+        "top1_accuracy": 0.675
+      },
+      "workflow-controls-v1/invoice_processing": {
+        "rows": 40,
+        "top1_accuracy": 0.725
+      },
+      "workflow-controls-v1/security_incidents": {
+        "rows": 40,
+        "top1_accuracy": 0.775
+      }
+    }
+  },
+  "limitation": "Small frozen NLI backbone and sampled synthetic data; not Jev/Open-Jev parity or action authority."
+}
