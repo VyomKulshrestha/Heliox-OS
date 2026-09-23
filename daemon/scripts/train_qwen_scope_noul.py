@@ -3,6 +3,8 @@
 Local research only: neither the adapter nor the head is loaded by Heliox.
 Uses the pinned cached 0.6B base and synthetic Jev scope labels, with a
 request-group split and a separate calibration partition. No private logs.
+Do not publish or distribute weights trained on Jev outputs without confirming
+the model provider's distillation permission.
 """
 
 from __future__ import annotations
