@@ -1789,7 +1789,7 @@ class PilotServer:
                 self._active_execution_task = None
 
     @staticmethod
-    def _deterministic_companion_review(plan: ActionPlan) -> Any | None:
+    def _deterministic_companion_review(plan: ActionPlan, user_input: str = "") -> Any | None:
         """Approve one bounded telemetry read without a remote model round-trip.
 
         These plans are produced by explicit local fast paths, contain no
@@ -1825,7 +1825,32 @@ class PilotServer:
         }
         if len(plan.actions) != 1 or plan.actions[0].action_type not in immediate_local_actions:
             return None
-        action_type = plan.actions[0].action_type
+        action = plan.actions[0]
+        action_type = action.action_type
+        if action_type == ActionType.OPEN_APPLICATION and re.match(
+            r"^\s*(?:please\s+)?(?:close|quit|exit)\b", user_input, re.IGNORECASE
+        ):
+            if re.search(r"\b(?:open|reopen|launch)\b", user_input, re.IGNORECASE):
+                return None
+            return CompanionReview(
+                decision="REVISE",
+                reason="Opening an application does not fulfill a request to close it.",
+                planner_feedback="Use an action that closes the requested application, not open_application.",
+            )
+        if action_type == ActionType.SYSTEM_INFO and re.search(r"\bbattery\b", user_input, re.IGNORECASE):
+            categories = set(getattr(action.parameters, "categories", ()))
+            other_requested = re.search(
+                r"\b(?:cpu|memory|ram|disk|storage|network|operating system|system information)\b",
+                user_input, re.IGNORECASE,
+            )
+            if "battery" not in categories or (not other_requested and categories != {"battery"}):
+                return CompanionReview(
+                    decision="REVISE",
+                    reason="The proposed system read does not match the requested battery-only status.",
+                    planner_feedback="Use battery_info for a battery-only request; do not gather unrelated telemetry.",
+                )
+            if other_requested:
+                return None
         if action_type in {ActionType.OPEN_APPLICATION, ActionType.OPEN_URL, ActionType.NOTIFY}:
             reason = "The direct local action is bounded, reversible, and matches the request."
         else:
@@ -2824,7 +2849,7 @@ class PilotServer:
 
             if self.config.narration.proactive_review_enabled and self._execution_companion and not dry_run:
                 await ws.send(_notification("status", {"phase": "companion reviewing plan"}))
-                companion_review = self._deterministic_companion_review(plan)
+                companion_review = self._deterministic_companion_review(plan, user_input)
                 if companion_review is None:
                     try:
                         companion_review = await self._await_execution_tracked(
