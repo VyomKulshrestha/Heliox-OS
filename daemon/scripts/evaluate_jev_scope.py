@@ -16,7 +16,13 @@ from pathlib import Path
 import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from benchmarks.jev_scope_suite import CASES, jev_request  # noqa: E402
+from benchmarks.jev_scope_augmentation import CASES as AUGMENTATION_CASES  # noqa: E402
+from benchmarks.jev_scope_challenge import CASES as CHALLENGE_CASES  # noqa: E402
+from benchmarks.jev_scope_fresh_final import CASES as FRESH_CASES  # noqa: E402
+from benchmarks.jev_scope_random_final import CASES as RANDOM_CASES  # noqa: E402
+from benchmarks.jev_scope_stress import CASES as STRESS_CASES  # noqa: E402
+from benchmarks.jev_scope_suite import CASES, ScopeCase, jev_request  # noqa: E402
+from benchmarks.jev_scope_unseen_final import CASES as UNSEEN_CASES  # noqa: E402
 
 ENDPOINT = "https://openrouter.ai/api/alpha/decisions"
 
@@ -34,11 +40,12 @@ def _key(env_file: Path | None) -> str:
 
 
 def evaluate(
-    *, key: str, repeats: int, limit: int | None = None, case_ids: set[str] | None = None
+    *, key: str, repeats: int, limit: int | None = None, case_ids: set[str] | None = None,
+    cases: tuple[ScopeCase, ...] = CASES,
 ) -> dict[str, object]:
     results: list[dict[str, object]] = []
     total_cost = 0.0
-    selected = [case for case in CASES if case_ids is None or case.id in case_ids]
+    selected = [case for case in cases if case_ids is None or case.id in case_ids]
     if case_ids is not None and len(selected) != len(case_ids):
         raise ValueError("Unknown case ID")
     with httpx.Client(timeout=30.0, trust_env=True) as client:
@@ -94,6 +101,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--env-file", type=Path, help="Optional .env path; only OPENROUTER_API_KEY is read")
     parser.add_argument("--repeats", type=int, default=1)
+    parser.add_argument("--suite", choices=("original", "challenge", "augmentation", "stress", "fresh", "random", "unseen"), default="original")
     parser.add_argument("--limit", type=int)
     parser.add_argument("--case-id", action="append", dest="case_ids", help="Evaluate one named case; repeatable")
     parser.add_argument(
@@ -104,11 +112,21 @@ def main() -> None:
         parser.error("--repeats must be between 1 and 5")
     if args.limit is not None and args.limit < 1:
         parser.error("--limit must be positive")
+    suites = {
+        "original": CASES,
+        "challenge": CHALLENGE_CASES,
+        "augmentation": AUGMENTATION_CASES,
+        "stress": STRESS_CASES,
+        "fresh": FRESH_CASES,
+        "random": RANDOM_CASES,
+        "unseen": UNSEEN_CASES,
+    }
     report = evaluate(
         key=_key(args.env_file),
         repeats=args.repeats,
         limit=args.limit,
         case_ids=set(args.case_ids) if args.case_ids else None,
+        cases=suites[args.suite],
     )
     args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(f"calls={report['calls']} accuracy={report['accuracy']:.3f} cost_usd={report['cost_usd']:.6f}")
