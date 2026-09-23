@@ -95,4 +95,105 @@ describe("session execution controls", () => {
     execution.resolve({ status: "success", message: "Finished checking." });
     await activeCommand;
   });
+
+  it("queues and cancels a second task without interrupting the first", async () => {
+    const execution = deferred<Record<string, unknown>>();
+    daemonMocks.call.mockImplementation((method: string) => {
+      if (method === "execute") return execution.promise;
+      if (method === "queue_execute") {
+        return Promise.resolve({ status: "queued", task_id: "later-1", resume_token: "secret-token" });
+      }
+      if (method === "cancel_queued_execute") return Promise.resolve({ status: "cancelled" });
+      return Promise.resolve({ status: "ok" });
+    });
+    const { session } = await import("./session");
+
+    const activeCommand = session.sendCommand("Inspect the system");
+    await session.sendCommand("Summarize the report", [], "next");
+
+    expect(daemonMocks.call).toHaveBeenCalledWith("queue_execute", {
+      input: "Summarize the report",
+      session_id: get(session).activeSessionId,
+    });
+    expect(get(session).loading).toBe(true);
+    expect(get(session).queuedTasks).toMatchObject([{ taskId: "later-1", status: "queued" }]);
+
+    await session.cancelQueuedTask("later-1");
+    expect(daemonMocks.call).toHaveBeenCalledWith("cancel_queued_execute", {
+      task_id: "later-1",
+      resume_token: "secret-token",
+    });
+
+    execution.resolve({ status: "success", message: "Done" });
+    await activeCommand;
+  });
+
+  it("keeps the queued task active when the previous execute response arrives late", async () => {
+    const execution = deferred<Record<string, unknown>>();
+    daemonMocks.call.mockImplementation((method: string) => {
+      if (method === "execute") return execution.promise;
+      if (method === "queue_execute") {
+        return Promise.resolve({ status: "queued", task_id: "later-2", resume_token: "token-2" });
+      }
+      return Promise.resolve({ status: "ok" });
+    });
+    const { session } = await import("./session");
+    const { onNotification } = await import("../api/daemon");
+    const notify = (method: string, params: Record<string, unknown>) => {
+      for (const [handler] of vi.mocked(onNotification).mock.calls) handler(method, params);
+    };
+
+    const first = session.sendCommand("First task");
+    await session.sendCommand("Second task", [], "next");
+    notify("queued_task_started", {
+      task_id: "later-2",
+      session_id: get(session).activeSessionId,
+      input: "Second task",
+    });
+    execution.resolve({ status: "success", message: "First finished" });
+    await first;
+
+    expect(get(session).loading).toBe(true);
+    expect(get(session).queuedTasks[0].status).toBe("running");
+
+    notify("queued_task_result", {
+      task_id: "later-2",
+      session_id: get(session).activeSessionId,
+      status: "success",
+      message: "Second finished",
+      result: { status: "success", message: "Second finished" },
+    });
+    expect(get(session).loading).toBe(false);
+    expect(get(session).queuedTasks).toEqual([]);
+  });
+
+  it("shows a voice-queued task and keeps its result in the originating chat", async () => {
+    const { session } = await import("./session");
+    const { onNotification } = await import("../api/daemon");
+    const notify = (method: string, params: Record<string, unknown>) => {
+      for (const [handler] of vi.mocked(onNotification).mock.calls) handler(method, params);
+    };
+    const originalChat = get(session).activeSessionId;
+    notify("queued_task_added", {
+      task_id: "voice-next",
+      session_id: originalChat,
+      input: "Summarize the open page",
+    });
+    expect(get(session).queuedTasks).toMatchObject([{
+      taskId: "voice-next",
+      input: "Summarize the open page",
+      status: "queued",
+    }]);
+
+    expect(session.newChat()).toBe(true);
+    notify("queued_task_result", {
+      task_id: "voice-next",
+      session_id: originalChat,
+      status: "success",
+      result: { status: "success", message: "The page is about Heliox." },
+    });
+    expect(get(session).messages).toEqual([]);
+    expect(session.switchChatSession(originalChat)).toBe(true);
+    expect(get(session).messages.at(-1)?.text).toContain("The page is about Heliox.");
+  });
 });

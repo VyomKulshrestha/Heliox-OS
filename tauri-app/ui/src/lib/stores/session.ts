@@ -114,6 +114,14 @@ export interface InteractionState {
   sequence: number;
 }
 
+export interface QueuedTask {
+  taskId: string;
+  resumeToken: string;
+  sessionId: string;
+  input: string;
+  status: "queued" | "running";
+}
+
 interface SessionState {
   activeSessionId: string;
   daemonConnected: boolean;
@@ -140,6 +148,7 @@ interface SessionState {
   proactiveSuggestionPending: boolean;
   terminalStatus: string;
   durableTask?: DurableTaskReference;
+  queuedTasks: QueuedTask[];
 }
 
 export interface Attachment {
@@ -170,6 +179,7 @@ let chatSessions: ChatSessionRecord[] = loadedChatCollection.sessions.map((chat)
 }));
 const loadedActiveChat =
   chatSessions.find((chat) => chat.id === loadedChatCollection.activeSessionId) ?? chatSessions[0];
+const completedQueuedTaskIds = new Set<string>();
 
 const initialState: SessionState = {
   activeSessionId: loadedActiveChat.id,
@@ -197,6 +207,7 @@ const initialState: SessionState = {
   proactiveSuggestionPending: false,
   terminalStatus: "",
   durableTask: loadedActiveChat.durableTask,
+  queuedTasks: [],
 };
 
 const MODEL_RATES: Record<string, number> = {
@@ -320,6 +331,7 @@ function createSession() {
       totalTokens: chat.totalTokens,
       estimatedCost: chat.estimatedCost,
       durableTask: chat.durableTask,
+      queuedTasks: current.queuedTasks,
       liveActions: [],
       confirmActions: [],
     };
@@ -361,6 +373,105 @@ function createSession() {
         });
         break;
 
+      case "queued_task_added": {
+        const taskId = String(p.task_id ?? "");
+        const sessionId = String(p.session_id ?? "");
+        update((s) => ({
+          ...s,
+          queuedTasks: s.queuedTasks.some((task) => task.taskId === taskId)
+            ? s.queuedTasks
+            : [...s.queuedTasks, {
+                taskId,
+                resumeToken: "",
+                sessionId,
+                input: String(p.input ?? ""),
+                status: "queued" as const,
+              }],
+        }));
+        break;
+      }
+
+      case "queued_task_started": {
+        const taskId = String(p.task_id ?? "");
+        const sessionId = String(p.session_id ?? "");
+        update((s) => ({
+          ...s,
+          loading: sessionId === s.activeSessionId ? true : s.loading,
+          phase: sessionId === s.activeSessionId ? "running queued task" : s.phase,
+          queuedTasks: s.queuedTasks.some((task) => task.taskId === taskId)
+            ? s.queuedTasks.map((task) => task.taskId === taskId ? { ...task, status: "running" as const } : task)
+            : [...s.queuedTasks, {
+                taskId,
+                resumeToken: "",
+                sessionId,
+                input: String(p.input ?? ""),
+                status: "running" as const,
+              }],
+        }));
+        break;
+      }
+
+      case "queued_task_result": {
+        const taskId = String(p.task_id ?? "");
+        completedQueuedTaskIds.add(taskId);
+        if (completedQueuedTaskIds.size > 100) {
+          completedQueuedTaskIds.clear();
+          completedQueuedTaskIds.add(taskId);
+        }
+        const sessionId = String(p.session_id ?? "");
+        const status = String(p.status ?? "error");
+        const result = p.result && typeof p.result === "object" ? p.result as Record<string, unknown> : null;
+        const terminal = result ? classifyExecuteResponse(result) : null;
+        const message = terminal?.text || String(p.message ?? "Task finished.");
+        const actionResults: ActionResultData[] = Array.isArray(result?.results)
+          ? result.results.map((item) => {
+              const raw = item as Record<string, unknown>;
+              const action = (raw.action ?? {}) as Record<string, unknown>;
+              return normalizeActionResult({
+                action_type: String(action.action_type ?? "unknown"),
+                target: String(action.target ?? ""),
+                success: Boolean(raw.success),
+                output: String(raw.output ?? ""),
+                error: raw.error ? String(raw.error) : null,
+              });
+            })
+          : [];
+        const rawVerification = result?.verification as Record<string, unknown> | undefined;
+        const verification: VerificationData | undefined = rawVerification
+          ? { passed: Boolean(rawVerification.passed), details: (rawVerification.details ?? []) as string[] }
+          : undefined;
+        const terminalMessage: Message = {
+          type: (terminal?.messageType ?? (status === "success" ? "result" : "system")) as MessageType,
+          text: message,
+          timestamp: Date.now(),
+          actionResults,
+          verification,
+        };
+        update((s) => ({
+          ...s,
+          loading: sessionId === s.activeSessionId ? false : s.loading,
+          phase: sessionId === s.activeSessionId ? "" : s.phase,
+          durableTask: s.durableTask?.taskId === taskId ? undefined : s.durableTask,
+          queuedTasks: s.queuedTasks.filter((task) => task.taskId !== taskId),
+          messages: sessionId === s.activeSessionId
+            ? [...s.messages, terminalMessage]
+            : s.messages,
+        }));
+        if (sessionId !== get({ subscribe }).activeSessionId) {
+          const index = chatSessions.findIndex((chat) => chat.id === sessionId);
+          if (index !== -1) {
+            const chat = chatSessions[index];
+            chatSessions[index] = {
+              ...chat,
+              messages: [...chat.messages, terminalMessage],
+              updatedAt: Date.now(),
+            };
+            saveChatSessions(browserStorage, chatSessions, get({ subscribe }).activeSessionId);
+          }
+        }
+        break;
+      }
+
       case "status":
         update((s) => ({ ...s, phase: String(p.phase ?? "") }));
         break;
@@ -391,6 +502,20 @@ function createSession() {
                 ? [...s.messages, { type: "system" as MessageType, text: message, timestamp: Date.now() }]
                 : s.messages,
           }));
+          break;
+        }
+        if (status === "answered" || status === "revising" || status === "queued") {
+          const message = String(p.message ?? "").trim();
+          if (message) {
+            update((s) => ({
+              ...s,
+              messages: [...s.messages, {
+                type: status === "answered" ? "result" as MessageType : "system" as MessageType,
+                text: message,
+                timestamp: Date.now(),
+              }],
+            }));
+          }
           break;
         }
         applyTaskResult({
@@ -850,7 +975,7 @@ function createSession() {
     }
   }
 
-  async function sendCommand(input: string, attachments: Attachment[] = [], inTaskMode: "correct" | "ask" = "correct") {
+  async function sendCommand(input: string, attachments: Attachment[] = [], inTaskMode: "correct" | "ask" | "next" = "correct") {
     const current = get({ subscribe });
     if (current.loading) {
       const previousPhase = current.phase;
@@ -859,6 +984,43 @@ function createSession() {
         .join("\n\n");
       const inTaskInput = [input.trim(), attachmentContext].filter(Boolean).join("\n\n");
       if (!inTaskInput) return;
+
+      if (inTaskMode === "next") {
+        try {
+          const queued = (await call("queue_execute", {
+            input: inTaskInput,
+            session_id: current.activeSessionId,
+          })) as { status: string; task_id?: string; resume_token?: string; message?: string };
+          if (queued.status !== "queued" || !queued.task_id || !queued.resume_token) {
+            throw new Error(queued.message || "The daemon did not queue the task.");
+          }
+          const queuedTaskId = queued.task_id;
+          const queuedResumeToken = queued.resume_token;
+          update((s) => ({
+            ...s,
+            queuedTasks: completedQueuedTaskIds.has(queuedTaskId)
+              ? s.queuedTasks
+              : s.queuedTasks.some((task) => task.taskId === queuedTaskId)
+              ? s.queuedTasks.map((task) => task.taskId === queuedTaskId
+                  ? { ...task, resumeToken: queuedResumeToken }
+                  : task)
+              : [...s.queuedTasks, {
+                  taskId: queuedTaskId,
+                  resumeToken: queuedResumeToken,
+                  sessionId: current.activeSessionId,
+                  input,
+                  status: "queued" as const,
+                }],
+            messages: [...s.messages,
+              { type: "user" as MessageType, text: input, timestamp: Date.now() },
+              { type: "system" as MessageType, text: "Queued after the current task.", timestamp: Date.now() },
+            ],
+          }));
+        } catch (err) {
+          addErrorMessage(`Could not queue task: ${String(err instanceof Error ? err.message : err)}`);
+        }
+        return;
+      }
 
       update((s) => ({
         ...s,
@@ -987,7 +1149,22 @@ function createSession() {
         attachments,
         session_id: current.activeSessionId,
       })) as Record<string, unknown>;
-      applyTaskResult(result);
+      const queuedRunning = get({ subscribe }).queuedTasks.some(
+        (task) => task.sessionId === current.activeSessionId && task.status === "running",
+      );
+      if (queuedRunning) {
+        const terminal = classifyExecuteResponse(result);
+        update((s) => ({
+          ...s,
+          messages: [...s.messages, {
+            type: terminal.messageType as MessageType,
+            text: terminal.text,
+            timestamp: Date.now(),
+          }],
+        }));
+      } else {
+        applyTaskResult(result);
+      }
     } catch (err) {
       const state = get({ subscribe });
       if (
@@ -1163,6 +1340,22 @@ function createSession() {
     }
   }
 
+  async function cancelQueuedTask(taskId: string) {
+    const task = get({ subscribe }).queuedTasks.find((item) => item.taskId === taskId);
+    if (!task || !task.resumeToken || task.status !== "queued") return;
+    try {
+      const result = (await call("cancel_queued_execute", {
+        task_id: task.taskId,
+        resume_token: task.resumeToken,
+      })) as { status?: string; message?: string };
+      if (result.status !== "cancelled") {
+        addErrorMessage(`Could not cancel queued task: ${result.message || "The task may have started."}`);
+      }
+    } catch (err) {
+      addErrorMessage(`Could not cancel queued task: ${String(err instanceof Error ? err.message : err)}`);
+    }
+  }
+
   function addErrorMessage(text: string) {
     update((s) => ({
       ...s,
@@ -1306,6 +1499,7 @@ function createSession() {
     confirmRollback,
     exportChat,
     abort,
+    cancelQueuedTask,
     resumeDurableTask,
     addSystemMessage,
     clearMessages,
