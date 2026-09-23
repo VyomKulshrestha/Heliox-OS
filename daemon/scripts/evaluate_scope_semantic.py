@@ -11,6 +11,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from benchmarks.jev_scope_semantic_holdout import CASES  # noqa: E402
 from benchmarks.jev_scope_semantic_v3_holdout import CASES as V3_CASES  # noqa: E402
+from benchmarks.jev_scope_semantic_v4_holdout import CASES as V4_CASES  # noqa: E402
 from benchmarks.scope_nli_features import BACKBONE, REVISION  # noqa: E402
 from benchmarks.scope_semantic_head import SemanticScopeHead  # noqa: E402
 from scripts.train_scope_decision_challenge import _metrics, _rows  # noqa: E402
@@ -19,20 +20,20 @@ from scripts.train_scope_decision_challenge import _metrics, _rows  # noqa: E402
 def main() -> None:
     root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--suite", choices=("v2", "v3"), default="v2")
+    parser.add_argument("--suite", choices=("v2", "v3", "v4"), default="v2")
     parser.add_argument("--teacher", type=Path)
     parser.add_argument("--candidate", type=Path)
     parser.add_argument("--training-metrics", type=Path)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
-    version = "_v3" if args.suite == "v3" else ""
+    version = f"_{args.suite}" if args.suite != "v2" else ""
     teacher_path = args.teacher or root / f"benchmarks/jev_scope_semantic{version}_teacher.json"
     candidate_path = args.candidate or root / f"benchmarks/scope_semantic_candidate{version}.npz"
     training_path = args.training_metrics or root / (
-        "benchmarks/scope_semantic_v3_cv_metrics.json" if version else "benchmarks/scope_semantic_cv_metrics.json"
+        f"benchmarks/scope_semantic{version}_cv_metrics.json" if version else "benchmarks/scope_semantic_cv_metrics.json"
     )
     output_path = args.output or root / f"benchmarks/scope_semantic{version}_holdout_metrics.json"
-    cases = V3_CASES if version else CASES
+    cases = {"v2": CASES, "v3": V3_CASES, "v4": V4_CASES}[args.suite]
     training = json.loads(training_path.read_text(encoding="utf-8"))
     digest = hashlib.sha256(candidate_path.read_bytes()).hexdigest()
     if digest != training["candidate_sha256"]:
