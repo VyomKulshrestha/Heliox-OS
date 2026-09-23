@@ -20,6 +20,7 @@ from benchmarks.jev_scope_augmentation import CASES as AUGMENTATION_CASES  # noq
 from benchmarks.jev_scope_challenge import CASES as CHALLENGE_CASES  # noqa: E402
 from benchmarks.jev_scope_fresh_final import CASES as FRESH_CASES  # noqa: E402
 from benchmarks.jev_scope_random_final import CASES as RANDOM_CASES  # noqa: E402
+from benchmarks.jev_scope_semantic_holdout import CASES as SEMANTIC_CASES  # noqa: E402
 from benchmarks.jev_scope_stress import CASES as STRESS_CASES  # noqa: E402
 from benchmarks.jev_scope_suite import CASES, ScopeCase, jev_request  # noqa: E402
 from benchmarks.jev_scope_unseen_final import CASES as UNSEEN_CASES  # noqa: E402
@@ -101,7 +102,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--env-file", type=Path, help="Optional .env path; only OPENROUTER_API_KEY is read")
     parser.add_argument("--repeats", type=int, default=1)
-    parser.add_argument("--suite", choices=("original", "challenge", "augmentation", "stress", "fresh", "random", "unseen"), default="original")
+    parser.add_argument("--suite", choices=("original", "challenge", "augmentation", "stress", "fresh", "random", "unseen", "semantic"), default="original")
     parser.add_argument("--limit", type=int)
     parser.add_argument("--case-id", action="append", dest="case_ids", help="Evaluate one named case; repeatable")
     parser.add_argument(
@@ -120,6 +121,7 @@ def main() -> None:
         "fresh": FRESH_CASES,
         "random": RANDOM_CASES,
         "unseen": UNSEEN_CASES,
+        "semantic": SEMANTIC_CASES,
     }
     report = evaluate(
         key=_key(args.env_file),
