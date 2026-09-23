@@ -53,6 +53,8 @@ async def system_info(categories: list[str] | None = None) -> str:
     """Get comprehensive system information."""
     if not categories:
         categories = ["os", "cpu", "memory", "disk", "network", "time"]
+    elif "all" in categories:
+        categories = ["time", "os", "cpu", "memory", "disk", "network", "battery"]
 
     section_values: dict[str, str] = {}
     if "os" in categories:
