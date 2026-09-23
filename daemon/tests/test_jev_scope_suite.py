@@ -5,10 +5,10 @@ from benchmarks.jev_scope_suite import CASES, jev_request
 
 def test_suite_has_unique_balanced_cases_and_held_out_challenge():
     cases = CASES
-    assert len(cases) >= 60
+    assert len(cases) >= 72
     assert len({case.id for case in cases}) == len(cases)
-    assert {case.split for case in cases} == {"train", "test"}
-    for split in ("train", "test"):
+    assert {case.split for case in cases} == {"train", "test", "final"}
+    for split in ("train", "test", "final"):
         labels = [case.in_scope for case in cases if case.split == split]
         assert labels.count(True) == labels.count(False)
 
