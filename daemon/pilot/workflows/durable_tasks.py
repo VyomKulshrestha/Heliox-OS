@@ -93,7 +93,7 @@ TERMINAL_TASK_STATUSES = frozenset(
 )
 
 _ALLOWED_TRANSITIONS: dict[TaskStatus, frozenset[TaskStatus]] = {
-    TaskStatus.QUEUED: frozenset({TaskStatus.PLANNING, TaskStatus.CANCELLED}),
+    TaskStatus.QUEUED: frozenset({TaskStatus.PLANNING, TaskStatus.FAILED, TaskStatus.CANCELLED, TaskStatus.INTERRUPTED}),
     TaskStatus.PLANNING: frozenset(
         {
             TaskStatus.AWAITING_APPROVAL,
@@ -924,9 +924,10 @@ class DurableTaskStore:
                     """
                     SELECT task_id, status
                     FROM durable_tasks
-                    WHERE status IN (?, ?, ?)
+                    WHERE status IN (?, ?, ?, ?)
                     """,
                     (
+                        TaskStatus.QUEUED.value,
                         TaskStatus.PLANNING.value,
                         TaskStatus.EXECUTING.value,
                         TaskStatus.VERIFYING.value,

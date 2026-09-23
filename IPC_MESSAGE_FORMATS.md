@@ -12,7 +12,7 @@ The Heliox OS UI and daemon communicate over a local WebSocket using the [JSON-R
 | Request timeout | 5 minutes |
 | Reconnect interval | 3 seconds (auto-reconnect on close) |
 
-The daemon currently registers **184 WebSocket RPC methods**. That is the API
+The daemon currently registers **186 WebSocket RPC methods**. That is the API
 surface count, not the action catalog: Heliox exposes **157 action
 types** through the guarded planner/executor system. This document names every
 registered RPC method; grouped tables are used where several methods share one
@@ -114,15 +114,31 @@ A conversational request may validly return no actions:
 ```
 
 #### `interject`
-Correct or stop the active interactive task out of band. A correction cancels
+Correct, stop, or ask about the active interactive task out of band. A correction cancels
 the current step, preserves already observed results, and replans. It remains
 available even when optional step narration is disabled.
 
 **Params:** `{ "input": "Use Hermes, not Notepad", "mode": "correct" }`.
-Use `mode: "stop"` (or an explicit stop/cancel phrase) to abort.
+Use `mode: "stop"` (or an explicit stop/cancel phrase) to abort. Use
+`mode: "ask"` to receive a bounded read-only answer without cancelling or
+approving the task. Explicit “read my screen” uses local OCR on demand.
 
 **Result:** `{ "status": "revising", "message": "Live correction accepted." }`,
-`{ "status": "aborted" }`, or a clear disabled/no-active-task response.
+`{ "status": "answered", "message": "..." }`, `{ "status": "aborted" }`,
+or a clear disabled/no-active-task response.
+
+#### `queue_execute` / `cancel_queued_execute`
+The authenticated UI may queue up to ten additional interactive tasks while
+one is active. Queued tasks run serially through the ordinary planner,
+approval, execution, and verification path; they are not parallel desktop
+controllers. Pending tasks are marked interrupted after daemon restart rather
+than silently executed later.
+
+**Queue params:** `{ "input": "Summarize the report", "session_id": "chat_123" }`.
+**Queue result:** `{ "status": "queued", "task_id": "...", "resume_token": "...", "position": 1 }`.
+**Cancel params:** `{ "task_id": "...", "resume_token": "..." }`.
+**Cancel result:** `{ "status": "cancelled", "task_id": "..." }` when the
+task has not started; use `abort` for the currently running task.
 
 #### `resume_task`
 Authenticate and resume a non-terminal durable task after a reconnect or daemon
@@ -1157,9 +1173,9 @@ Return voice listener statistics.
 **Result:** stats dict.
 
 Recognized commands enter the same `execute` handler and observable
-`interaction_state` phases as typed commands. Speech received during active
-work is sent through `interject` as a live correction rather than starting a
-second competing task.
+`interaction_state` phases as typed commands. During active work, ordinary
+speech is a live correction; “quick question …” receives an answer without
+interrupting, and “next task …” queues a new guarded task.
 
 ---
 
@@ -1792,6 +1808,10 @@ Terminal, sanitized summary for an interactive task.
   the verified result; it is delivered asynchronously and never delays the
   task's terminal response.
 - `conversation_response` — a valid zero-action conversational answer.
+- `queued_task_added` / `queued_task_started` / `queued_task_result` — queue
+  position, execution start, and terminal result for an additional interactive
+  task. The result carries the normal action and verification response but
+  excludes the resume token.
 
 ---
 

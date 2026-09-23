@@ -15,6 +15,7 @@ import signal
 import sys
 import time
 import uuid
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -170,7 +171,7 @@ CONFIRM_TIMEOUT_SECONDS = 300
 # ``abort`` interrupts execution, ``interject`` revises it, and speech
 # replacement/stop must interrupt an in-flight utterance. All other RPCs
 # remain sequential per connection.
-OUT_OF_BAND_RPC_METHODS = frozenset({"confirm", "abort", "interject", "speak_text", "stop_speech", "neural_disarm"})
+OUT_OF_BAND_RPC_METHODS = frozenset({"confirm", "abort", "interject", "queue_execute", "cancel_queued_execute", "speak_text", "stop_speech", "neural_disarm"})
 
 # Attention-aware timing is allowed to defer only passive, replaceable
 # telemetry. User-initiated results, approvals, safety interventions, and
@@ -656,6 +657,11 @@ class PilotServer:
         # serialized, while an out-of-band interject request can revise or
         # stop the one active interactive task.
         self._interactive_request_active = False
+        self._queued_execute_requests: deque[tuple[str, str, dict[str, Any]]] = deque()
+        self._queued_submission_lock = asyncio.Lock()
+        self._queued_execute_worker: asyncio.Task[None] | None = None
+        self._queued_reserved_task_id = ""
+        self._queue_shutdown = False
         self._active_plan_id = ""
         self._active_task_id = ""
         self._active_interaction_id = ""
@@ -1257,6 +1263,8 @@ class PilotServer:
 
         self._handlers = {
             "execute": self._handle_execute,
+            "queue_execute": self._handle_queue_execute,
+            "cancel_queued_execute": self._handle_cancel_queued_execute,
             "resume_plan": self._handle_resume_plan,
             "resume_task": self._handle_resume_task,
             "mcp_plan_task": self._handle_mcp_plan_task,
@@ -1911,6 +1919,140 @@ class PilotServer:
                 task_id=task.task_id,
             )
 
+    async def _handle_queue_execute(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """Accept another user task without interrupting the current one.
+
+        Queued interactive tasks execute in order through the same planner,
+        approval, and verification path. They are not concurrent desktop
+        controllers, and queued work is never silently replayed after restart.
+        """
+        self._require_rpc_role(ws, RpcClientRole.UI)
+        return await self._queue_interactive_request(params)
+
+    async def _queue_interactive_request(self, params: dict[str, Any]) -> dict:
+        if self._durable_tasks is None or self._queue_shutdown:
+            return {"status": "unavailable", "message": "The task queue is not available."}
+        user_input = str(params.get("input") or "").strip()
+        if not user_input or len(user_input) > 20_000:
+            return {"status": "error", "message": "Task input must contain 1-20,000 characters."}
+        session_id = str(params.get("session_id") or "default")
+        user_id = str(params.get("user_id") or "local")
+        async with self._queued_submission_lock:
+            if len(self._queued_execute_requests) >= 10:
+                return {"status": "error", "message": "The interactive queue is full (10 tasks)."}
+            created = await self._durable_tasks.create_task(
+                session_id=session_id,
+                user_id=user_id,
+                user_input=user_input,
+            )
+            task_id = created.task.task_id
+            queued_params = {
+                "input": user_input,
+                "task_id": task_id,
+                "resume_token": created.resume_token,
+                "session_id": session_id,
+                "user_id": user_id,
+                "source": str(params.get("source") or "text"),
+            }
+            self._queued_execute_requests.append((task_id, created.resume_token, queued_params))
+            position = len(self._queued_execute_requests)
+            await self._broadcast_notification(
+                "queued_task_added",
+                {"task_id": task_id, "session_id": session_id, "position": position, "input": user_input},
+            )
+        self._start_queued_execute_worker()
+        return {
+            "status": "queued",
+            "task_id": task_id,
+            "resume_token": created.resume_token,
+            "position": position,
+            "message": "Task queued. It will start after the current interactive task finishes.",
+        }
+
+    async def _handle_cancel_queued_execute(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        self._require_rpc_role(ws, RpcClientRole.UI)
+        task_id = str(params.get("task_id") or "")
+        resume_token = str(params.get("resume_token") or "")
+        if not task_id or not resume_token or self._durable_tasks is None:
+            return {"status": "error", "message": "task_id and resume_token are required."}
+        authorized = await self._durable_tasks.get_by_resume_token(resume_token)
+        if authorized is None or authorized.task_id != task_id:
+            return {"status": "error", "message": "Invalid queued task credentials."}
+        if task_id == self._queued_reserved_task_id:
+            return {"status": "running", "message": "This task has started; use Stop to cancel it."}
+        queued = next((item for item in self._queued_execute_requests if item[0] == task_id), None)
+        if queued is None:
+            return {"status": "not_queued", "message": "This task is no longer waiting in the queue."}
+        self._queued_execute_requests.remove(queued)
+        response = {"status": "cancelled", "message": "Queued task cancelled before execution."}
+        await self._durable_tasks.transition(
+            task_id,
+            TaskStatus.CANCELLED,
+            reason="user cancelled queued task",
+            terminal_response=response,
+        )
+        await self._broadcast_notification(
+            "queued_task_result",
+            {"task_id": task_id, "session_id": queued[2]["session_id"], **response},
+        )
+        return {"status": "cancelled", "task_id": task_id}
+
+    def _start_queued_execute_worker(self) -> None:
+        if (
+            self._queue_shutdown
+            or self._queued_submission_lock.locked()
+            or not self._queued_execute_requests
+            or self._interactive_request_active
+            or self._mcp_reserved_task_id
+            or (self._queued_execute_worker is not None and not self._queued_execute_worker.done())
+        ):
+            return
+        self._queued_reserved_task_id = self._queued_execute_requests[0][0]
+        self._queued_execute_worker = asyncio.create_task(self._run_queued_execute())
+
+    async def _run_queued_execute(self) -> None:
+        try:
+            while not self._queue_shutdown:
+                async with self._queued_submission_lock:
+                    if not self._queued_execute_requests:
+                        break
+                    task_id, _, queued_params = self._queued_execute_requests[0]
+                    self._queued_reserved_task_id = task_id
+                session_id = queued_params["session_id"]
+                await self._broadcast_notification(
+                    "queued_task_started", {"task_id": task_id, "session_id": session_id, "input": queued_params["input"]}
+                )
+                try:
+                    response = await self._handle_execute(
+                        queued_params,
+                        _BroadcastConnection(self._broadcast_notification),
+                    )
+                except Exception:
+                    logger.exception("Queued interactive task %s failed", task_id)
+                    response = {"status": "error", "message": "The queued task failed inside the daemon."}
+                    try:
+                        await self._finalize_durable_task(task_id, response)
+                    except Exception:
+                        logger.exception("Could not finalize failed queued task %s", task_id)
+                finally:
+                    self._queued_execute_requests.popleft()
+                    self._queued_reserved_task_id = ""
+                await self._broadcast_notification(
+                    "queued_task_result",
+                    {
+                        "task_id": task_id,
+                        "session_id": session_id,
+                        "status": response.get("status", "error"),
+                        "message": response.get("message") or response.get("explanation") or "Task finished.",
+                        "result": {key: value for key, value in response.items() if key != "resume_token"},
+                    },
+                )
+        finally:
+            self._queued_reserved_task_id = ""
+            self._queued_execute_worker = None
+            if self._queued_execute_requests and not self._queue_shutdown:
+                self._start_queued_execute_worker()
+
     async def _handle_execute(self, params: dict[str, Any], ws: ServerConnection) -> dict:
         """Run one interactive request while exposing an out-of-band control slot."""
         requested_task_id = str(params.get("task_id") or uuid.uuid4())
@@ -1920,12 +2062,36 @@ class PilotServer:
                 "message": "Heliox is already handling an interactive task.",
                 "task_id": requested_task_id,
             }
-        if self._mcp_reserved_task_id and requested_task_id != self._mcp_reserved_task_id:
+        if self._queued_reserved_task_id and (
+            requested_task_id != self._queued_reserved_task_id
+            or asyncio.current_task() is not self._queued_execute_worker
+        ):
+            return {
+                "status": "busy",
+                "message": "Heliox is starting the next queued task.",
+                "task_id": requested_task_id,
+            }
+        if self._mcp_reserved_task_id and (
+            requested_task_id != self._mcp_reserved_task_id
+            or asyncio.current_task() is not self._mcp_tasks.get(self._mcp_reserved_task_id)
+        ):
             return {
                 "status": "busy",
                 "message": "Heliox is starting a local MCP task.",
                 "task_id": requested_task_id,
             }
+        # Reserve synchronously before any durable-store or interaction await.
+        # Otherwise two clients can both pass the idle check and own the one
+        # shared confirmation/cancellation slot.
+        self._interactive_request_active = True
+        try:
+            return await self._handle_execute_reserved(params, ws)
+        finally:
+            self._interactive_request_active = False
+            self._start_queued_execute_worker()
+
+    async def _handle_execute_reserved(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        requested_task_id = str(params.get("task_id") or uuid.uuid4())
         source_name = str(params.get("source") or "text").strip().lower()
         interaction_id = str(params.get("_interaction_id") or "")
         resume_token = ""
@@ -1946,25 +2112,33 @@ class PilotServer:
                         "task_id": existing.task_id,
                         "replayed": True,
                     }
-                return {
-                    "status": "interrupted",
-                    "message": "This task already exists. Use resume_task to continue it safely.",
-                    "task_id": existing.task_id,
-                    "task_state": existing.status.value,
-                }
-            created = await self._durable_tasks.create_task(
-                task_id=requested_task_id,
-                session_id=str(params.get("session_id") or "default"),
-                user_id=str(params.get("user_id") or "local"),
-                user_input=str(params.get("input") or ""),
-            )
-            requested_task_id = created.task.task_id
-            resume_token = created.resume_token
-            await self._durable_tasks.transition(
-                requested_task_id,
-                TaskStatus.PLANNING,
-                reason="interactive request accepted",
-            )
+                if existing.status != TaskStatus.QUEUED or requested_task_id != self._queued_reserved_task_id:
+                    return {
+                        "status": "interrupted",
+                        "message": "This task already exists. Use resume_task to continue it safely.",
+                        "task_id": existing.task_id,
+                        "task_state": existing.status.value,
+                    }
+                resume_token = supplied_token
+                await self._durable_tasks.transition(
+                    requested_task_id,
+                    TaskStatus.PLANNING,
+                    reason="queued interactive request started",
+                )
+            else:
+                created = await self._durable_tasks.create_task(
+                    task_id=requested_task_id,
+                    session_id=str(params.get("session_id") or "default"),
+                    user_id=str(params.get("user_id") or "local"),
+                    user_input=str(params.get("input") or ""),
+                )
+                requested_task_id = created.task.task_id
+                resume_token = created.resume_token
+                await self._durable_tasks.transition(
+                    requested_task_id,
+                    TaskStatus.PLANNING,
+                    reason="interactive request accepted",
+                )
         if not interaction_id:
             interaction = await self._interaction_runtime.start(
                 str(params.get("input") or ""),
@@ -1976,7 +2150,6 @@ class PilotServer:
             message="Planning the safest useful action",
             interaction_id=interaction_id,
         )
-        self._interactive_request_active = True
         self._active_interaction_id = interaction_id
         self._active_plan_id = ""
         self._active_task_id = requested_task_id
@@ -2067,7 +2240,6 @@ class PilotServer:
                             )
                     raise
         finally:
-            self._interactive_request_active = False
             self._active_plan_id = ""
             self._active_task_id = ""
             if self._active_interaction_id == interaction_id:
@@ -3701,7 +3873,9 @@ class PilotServer:
                     "message": "The matching MCP task was already submitted; poll its existing task id.",
                 }
 
-        if self._interactive_request_active or any(not task.done() for task in self._mcp_tasks.values()):
+        if self._interactive_request_active or self._queued_reserved_task_id or any(
+            not task.done() for task in self._mcp_tasks.values()
+        ):
             return {
                 "status": "busy",
                 "message": "Heliox is already handling an interactive task.",
@@ -3768,6 +3942,7 @@ class PilotServer:
                     "task_id": task_id,
                     "message": "The MCP task was cancelled before it started.",
                 }
+            self._start_queued_execute_worker()
 
         task.add_done_callback(_finish_mcp_task)
         return {
@@ -3927,6 +4102,8 @@ class PilotServer:
             await self._finalize_durable_task(task.task_id, response)
             return response
 
+        if self._interactive_request_active or self._queued_reserved_task_id or self._mcp_reserved_task_id:
+            return {"status": "busy", "message": "Heliox is handling another interactive task.", "task_id": task.task_id}
         self._interactive_request_active = True
         self._active_task_id = task.task_id
         self._active_plan_id = task.plan_id
@@ -3981,6 +4158,7 @@ class PilotServer:
             self._live_correction = None
             self._cancel_event = None
             self._active_experience_context = ExperienceContext()
+            self._start_queued_execute_worker()
 
     async def _handle_resume_plan(self, params: dict[str, Any], ws: ServerConnection) -> dict:
         """Resume a previously checkpointed plan from its last completed action."""
@@ -8170,9 +8348,17 @@ def handle_tool(tool_name, params):
     async def stop(self) -> None:
         """Stop the Pilot daemon server and clean up all resources."""
         self._running = False
+        self._queue_shutdown = True
         for pending in self._pending_confirms.values():
             pending.event.set()
         self._pending_confirms.clear()
+
+        queued_worker = self._queued_execute_worker
+        if queued_worker is not None and not queued_worker.done():
+            queued_worker.cancel()
+            await asyncio.gather(queued_worker, return_exceptions=True)
+        self._queued_execute_requests.clear()
+        self._queued_reserved_task_id = ""
 
         active_execution = self._active_execution_task
         if active_execution is not None and not active_execution.done():
@@ -9186,6 +9372,28 @@ def handle_tool(tool_name, params):
             return
 
         if self._interactive_request_active:
+            if normalized_command.startswith("next task "):
+                next_input = re.sub(r"^\s*next\s+task\s*[:,]?\s*", "", command_text, flags=re.IGNORECASE).strip()
+                active_context = self._active_experience_context
+                result = await self._queue_interactive_request(
+                    {
+                        "input": next_input,
+                        "session_id": active_context.session_id,
+                        "user_id": active_context.user_id,
+                        "source": "voice",
+                    }
+                )
+                await self._broadcast_notification(
+                    "voice_result",
+                    {"command": command_text, "status": result.get("status", "error"), "message": result.get("message", "")},
+                )
+                if result.get("status") == "queued":
+                    await self._speak_voice_response(
+                        "I queued that task. I will start it when this one finishes.",
+                        channel=SpeechChannel.TASK_NARRATION,
+                        dedupe_key=f"voice-queued:{result['task_id']}",
+                    )
+                return
             status_questions = {
                 "status", "what are you doing", "what are you working on",
                 "how is it going", "hows it going", "how s it going",
@@ -9194,13 +9402,18 @@ def handle_tool(tool_name, params):
             }
             question_prefixes = ("question ", "quick question ")
             is_question = normalized_command in status_questions or normalized_command.startswith(question_prefixes)
+            question_text = (
+                re.sub(r"^\s*(?:quick\s+question|question)\s*[:,]?\s*", "", command_text, flags=re.IGNORECASE).strip()
+                if normalized_command.startswith(question_prefixes)
+                else command_text
+            )
             if not is_question:
                 await self._interaction_runtime.transition(
                     InteractionPhase.CORRECTING,
                     message="Applying your spoken correction",
                 )
             result = await self._handle_interject(
-                {"input": command_text, **({"mode": "ask"} if is_question else {})},
+                {"input": question_text if is_question else command_text, **({"mode": "ask"} if is_question else {})},
                 None,
             )
             await self._broadcast_notification(
@@ -9214,7 +9427,7 @@ def handle_tool(tool_name, params):
             )
             if is_question and result.get("status") == "answered":
                 await self._speak_voice_response(
-                    str(result.get("message") or ""),
+                    str(result.get("message") or "")[:350],
                     channel=SpeechChannel.FINAL_ANSWER,
                     dedupe_key=f"voice-in-task-question:{uuid.uuid4()}",
                 )

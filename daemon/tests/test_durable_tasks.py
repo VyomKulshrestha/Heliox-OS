@@ -367,3 +367,15 @@ async def test_startup_recovery_interrupts_tasks_and_never_replays_running_actio
     assert action.decision == ActionClaimDecision.RECONCILIATION_REQUIRED
     assert approval is not None
     assert approval.status == ApprovalStatus.EXPIRED
+
+
+@pytest.mark.asyncio
+async def test_startup_recovery_does_not_silently_run_queued_user_task(store):
+    await store.create_task(task_id="queued-task", session_id="session-1", user_input="next task")
+
+    recovered = await store.recover_incomplete()
+    task = await store.get("queued-task")
+
+    assert recovered.interrupted_tasks == 1
+    assert task is not None
+    assert task.status == TaskStatus.INTERRUPTED
