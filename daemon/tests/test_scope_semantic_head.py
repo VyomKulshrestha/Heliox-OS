@@ -100,3 +100,6 @@ def test_numeric_candidate_predicts_without_approving(tmp_path):
     assert head.available
     assert head.predict_many([("Read the report", "Read the report")]).tolist() == [0.5]
     assert head.predict_many([("Show config changes", "Revert config changes")]).tolist() == [0.05]
+    raw, guarded = head.predict_many_with_raw([("Show config changes", "Revert config changes")])
+    assert raw.tolist() == [0.5]
+    assert guarded.tolist() == [0.05]

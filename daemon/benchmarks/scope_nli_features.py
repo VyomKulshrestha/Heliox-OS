@@ -26,12 +26,14 @@ def cached_paths() -> tuple[Path, Path]:
 
 
 class NliFeatureExtractor:
-    def __init__(self, model_path: Path, tokenizer_path: Path) -> None:
+    def __init__(self, model_path: Path, tokenizer_path: Path, *, max_length: int = 128) -> None:
         import onnxruntime as ort
         from tokenizers import Tokenizer
 
+        if not 8 <= max_length <= 512:
+            raise ValueError("max_length must fit the frozen backbone's 512-token input")
         self._tokenizer = Tokenizer.from_file(str(tokenizer_path))
-        self._tokenizer.enable_truncation(max_length=128)
+        self._tokenizer.enable_truncation(max_length=max_length)
         options = ort.SessionOptions()
         options.intra_op_num_threads = 2
         options.inter_op_num_threads = 1
