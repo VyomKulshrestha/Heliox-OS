@@ -1,0 +1,129 @@
+{
+  "purpose": "research_only_separate_scope_and_relevance_heads",
+  "source": {
+    "code_commit": "3308a15ccd7eea1df7a37d6ddc39b023b801ba16",
+    "adapter_sha256": "2d23935b1a7380db444abac572c04646918ba794e59002d1588236182a3ca18f",
+    "base_revision": "15852e8c16360a2fea060d615a32b45270f8a8fc"
+  },
+  "scopejudge": {
+    "dataset": "dreadnode/scopejudge",
+    "revision": "b8b06a65a09e39a4fe1682ef56f48fd14ab74800",
+    "sha256": "63a176fde1933464dc1cbfe3d5adcae8d4991ab0f93368903276c55a74efb527",
+    "license": "MIT",
+    "total_cases": 4897,
+    "selected_rows": {
+      "scope_train": 512,
+      "scope_calibration": 80,
+      "scope_test": 608
+    },
+    "selection": "trajectory-disjoint; balanced train/calibration; full test when limit covers split",
+    "selection_seed": 20260927
+  },
+  "tbac": {
+    "repository": "outshift-open/tbac-research-datasets",
+    "revision": "6385bd37654fbc36b84dd0341f0752654785dce3",
+    "license": "Apache-2.0",
+    "sha256": {
+      "validation": "3c37047c12682b4c3cf0e9d17b49475f277be76afa97b2ad4447f222d46d1283",
+      "test": "5ccf20a8519ef9a10457e0a1881c1a4dae8ee027fa71632c94593ba25603a1ff"
+    },
+    "rows": {
+      "validation": 1136,
+      "test": 935
+    },
+    "label": "tool relevance, not authorization"
+  },
+  "feature_sha256": {
+    "train": "66a823f8b72de76a3961eea24b71e25ba82aec83a7bf0a0b81d62219c27b22e4",
+    "calibration": "4e5515af0a31e27925ddd7a8893415dd950e8cd37e6594a90cf6211456aa45f8",
+    "test": "6756a2ce66cfaf908f72e201efa2d08b1a137034753e0475080b9dde413ddce9",
+    "qwen-v1": "c4703ba081a582929b35abb78f149c826f6d95ba6f36c6499c2b16c5e3bfe25a",
+    "tbac-validation": "46f9fad31f04369f782ae7d934fca1e0cdbf62d391d8cd53b92fea9be74b0225",
+    "tbac-test": "8b05ba2829296295f58bfa29e641d1048c90bb75933f9578e41d376c2e54dd65"
+  },
+  "scope_artifact_sha256": "0b48baca8040f75047d9ee58624d4d0a979e110ae47deec0cb4b122e56442440",
+  "relevance_training_rows": 910,
+  "relevance_calibration_rows": 226,
+  "relevance_fit": {
+    "selected_c": 0.01,
+    "selected_calibration_auc": 0.9568673750491933,
+    "threshold": 0.9791964574374896,
+    "artifact_sha256": "138b128004b8256b36955b80db0ec764545fa733b4a6018032ced7ebb05e9410",
+    "calibration": {
+      "rows": 226,
+      "accuracy": 0.6150442477876106,
+      "balanced_accuracy": 0.640495867768595,
+      "auc": 0.9568673750491933,
+      "positive_recall": 0.2809917355371901,
+      "negative_recall": 1.0,
+      "false_positives": 0,
+      "false_negatives": 87
+    }
+  },
+  "relevance_official_test": {
+    "rows": 935,
+    "accuracy": 0.5636363636363636,
+    "balanced_accuracy": 0.605943816375471,
+    "auc": 0.9539735007360908,
+    "positive_recall": 0.21428571428571427,
+    "negative_recall": 0.9976019184652278,
+    "false_positives": 1,
+    "false_negatives": 407
+  },
+  "comparisons": {
+    "scope": {
+      "scope_only": {
+        "rows": 546,
+        "accuracy": 0.47802197802197804,
+        "balanced_accuracy": 0.7243713733075435,
+        "auc": 0.9052891349296337,
+        "in_scope_recall": 0.44874274661508706,
+        "out_of_scope_recall": 1.0,
+        "false_allowances": 0,
+        "false_warnings": 285
+      },
+      "conjunction": {
+        "rows": 546,
+        "accuracy": 0.05311355311355311,
+        "balanced_accuracy": 0.5,
+        "in_scope_recall": 0.0,
+        "out_of_scope_recall": 1.0,
+        "false_allowances": 0,
+        "false_warnings": 517
+      },
+      "gated_ids": []
+    },
+    "inspected_heliox": {
+      "scope_only": {
+        "rows": 60,
+        "accuracy": 0.6333333333333333,
+        "balanced_accuracy": 0.6333333333333333,
+        "auc": 0.9111111111111112,
+        "in_scope_recall": 0.9333333333333333,
+        "out_of_scope_recall": 0.3333333333333333,
+        "false_allowances": 20,
+        "false_warnings": 2
+      },
+      "conjunction": {
+        "rows": 60,
+        "accuracy": 0.6333333333333333,
+        "balanced_accuracy": 0.6333333333333333,
+        "in_scope_recall": 0.26666666666666666,
+        "out_of_scope_recall": 1.0,
+        "false_allowances": 0,
+        "false_warnings": 22
+      },
+      "gated_ids": [
+        "qwen_v1_07_direct",
+        "qwen_v1_11_direct",
+        "qwen_v1_12_direct",
+        "qwen_v1_15_direct",
+        "qwen_v1_20_direct",
+        "qwen_v1_22_direct",
+        "qwen_v1_24_direct",
+        "qwen_v1_29_direct"
+      ]
+    }
+  },
+  "limitation": "Relevant does not mean authorized. Public tests and inspected synthetic suite are not desktop safety or Jev parity evidence."
+}
