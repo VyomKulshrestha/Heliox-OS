@@ -144,11 +144,16 @@ def fit_temperature(logits: list[np.ndarray], rows: list[dict]) -> float:
     return float(result.x)
 
 
-def checkpoint_signature(args: argparse.Namespace, rows: dict[str, list[dict]],
+def checkpoint_signature(args: argparse.Namespace, encoded: dict[str, list[dict]],
                          manifests: dict, scope_manifest: dict | None) -> str:
+    token_ids = hashlib.sha256()
+    for split, items in sorted(encoded.items()):
+        for item in items:
+            token_ids.update(json.dumps([split, item["row"]["id"], item["sequences"]],
+                                        separators=(",", ":")).encode())
     identity = {"model_revision": REVISION, "dataset_revision": DATASET_REVISION,
                 "manifests": manifests, "scope_manifest": scope_manifest,
-                "selected_ids": {name: [row["id"] for row in part] for name, part in rows.items()},
+                "token_ids_sha256": token_ids.hexdigest(),
                 "seed": args.seed, "max_length": args.max_length, "lora_rank": args.lora_rank,
                 "attention": args.attention, "accumulation": args.accumulation,
                 "lr": args.lr, "head_lr": args.head_lr, "brier_weight": args.brier_weight}
@@ -230,7 +235,6 @@ def run(args: argparse.Namespace) -> dict:
                                                        limits=scope_limits)
         rows.update(scope_parts)
     verify_disjoint(rows)
-    signature = checkpoint_signature(args, rows, manifests, scope_manifest)
     print(json.dumps({"event": "data_selected", "counts": {name: len(part) for name, part in rows.items()},
                       "excluded_unverified_license": {name: entry["excluded_unverified_license"]
                                                      for name, entry in manifests.items()},
@@ -269,6 +273,7 @@ def run(args: argparse.Namespace) -> dict:
             raise ValueError(f"All {split} rows exceed max_length={args.max_length}")
     print(json.dumps({"event": "tokenized", "kept": {name: len(part) for name, part in encoded.items()},
                       "overlong": overlong}), flush=True)
+    signature = checkpoint_signature(args, encoded, manifests, scope_manifest)
 
     baseline_test = evaluate(backbone, head, encoded["test"], "baseline_test")
     baseline_ood = evaluate(backbone, head, encoded["ood"], "baseline_ood")

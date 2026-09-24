@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 
 import numpy as np
@@ -18,6 +19,7 @@ from benchmarks.general_decision import (
     validate_row,
     verify_disjoint,
 )
+from scripts.train_general_decision import checkpoint_signature
 
 
 def row(kind: str = "choice") -> dict:
@@ -107,3 +109,13 @@ def test_invalid_option_types_fail_before_duplicate_check() -> None:
     validate_decision("choice", "Which route?", ["walk", "train", "drive", "cycle"])
     with pytest.raises(ValueError, match="Noul"):
         validate_decision("noul", "Can I?", ["yes", "no"])
+
+
+def test_checkpoint_signature_binds_exact_tokenized_inputs() -> None:
+    args = argparse.Namespace(seed=1, max_length=128, lora_rank=8, attention="sdpa",
+                              accumulation=4, lr=2e-5, head_lr=5e-5, brier_weight=0.1)
+    encoded = {"train": [{"row": row(), "sequences": [[1, 2, 3]]}]}
+    first = checkpoint_signature(args, encoded, {}, None)
+    assert first == checkpoint_signature(args, encoded, {}, None)
+    encoded["train"][0]["sequences"] = [[1, 2, 4]]
+    assert first != checkpoint_signature(args, encoded, {}, None)
