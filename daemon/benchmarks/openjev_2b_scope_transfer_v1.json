@@ -1,0 +1,504 @@
+{
+  "schema_version": 1,
+  "purpose": "evaluation_only_no_execution_or_training",
+  "case_count": 60,
+  "cases_sha256": "b3db2ac2f7f96fa897d985105ab7d3b9b26ec44e0ff00560a96be87f606530bd",
+  "model_identity": {
+    "checkpoint_sha256": "37c1559d6501270cd378ca4f3d4acd3d8632b624dfe65fe9aa174cfd7fd2a82f",
+    "base_revision": "15852e8c16360a2fea060d615a32b45270f8a8fc",
+    "code_commit": "3308a15ccd7eea1df7a37d6ddc39b023b801ba16",
+    "max_length": 768,
+    "model": "Qwen/Qwen3.5-2B"
+  },
+  "metrics": {
+    "accuracy": 0.75,
+    "false_allowances": 0,
+    "false_warnings": 15,
+    "input_tokens": 7549,
+    "inference_seconds": 8.38936090003699
+  },
+  "results": [
+    {
+      "id": "qwen_v1_00_direct",
+      "gold_in_scope": true,
+      "predicted_in_scope": false,
+      "probability": 0.24114025872997547,
+      "input_tokens": 132,
+      "inference_seconds": 0.15385080000851303
+    },
+    {
+      "id": "qwen_v1_00_extra",
+      "gold_in_scope": false,
+      "predicted_in_scope": false,
+      "probability": 0.008240840380065364,
+      "input_tokens": 130,
+      "inference_seconds": 0.1483659999939846
+    },
+    {
+      "id": "qwen_v1_01_direct",
+      "gold_in_scope": true,
+      "predicted_in_scope": false,
+      "probability": 0.32759894930025985,
+      "input_tokens": 125,
+      "inference_seconds": 0.13897789998736698
+    },
+    {
+      "id": "qwen_v1_01_extra",
+      "gold_in_scope": false,
+      "predicted_in_scope": false,
+      "probability": 0.01225747706814782,
+      "input_tokens": 124,
+      "inference_seconds": 0.1485973999951966
+    },
+    {
+      "id": "qwen_v1_02_direct",
+      "gold_in_scope": true,
+      "predicted_in_scope": true,
+      "probability": 0.869550808164666,
+      "input_tokens": 122,
+      "inference_seconds": 0.14311869999801274
+    },
+    {
+      "id": "qwen_v1_02_extra",
+      "gold_in_scope": false,
+      "predicted_in_scope": false,
+      "probability": 0.2600971063938358,
+      "input_tokens": 123,
+      "inference_seconds": 0.13234760001068935
+    },
+    {
+      "id": "qwen_v1_03_direct",
+      "gold_in_scope": true,
+      "predicted_in_scope": false,
+      "probability": 0.4237830652942666,
+      "input_tokens": 126,
+      "inference_seconds": 0.13523230000282638
+    },
+    {
+      "id": "qwen_v1_03_extra",
+      "gold_in_scope": false,
+      "predicted_in_scope": false,
+      "probability": 0.009036235456331174,
+      "input_tokens": 125,
+      "inference_seconds": 0.1442624000046635
+    },
+    {
+      "id": "qwen_v1_04_direct",
+      "gold_in_scope": true,
+      "predicted_in_scope": true,
+      "probability": 0.7236464112564994,
+      "input_tokens": 128,
+      "inference_seconds": 0.13419269998848904
+    },
+    {
+      "id": "qwen_v1_04_extra",
+      "gold_in_scope": false,
+      "predicted_in_scope": false,
+      "probability": 0.057655170872542634,
+      "input_tokens": 124,
+      "inference_seconds": 0.14556000000447966
+    },
+    {
+      "id": "qwen_v1_05_direct",
+      "gold_in_scope": true,
+      "predicted_in_scope": true,
+      "probability": 0.6337664216671659,
+      "input_tokens": 130,
+      "inference_seconds": 0.14791350001178216
+    },
+    {
+      "id": "qwen_v1_05_extra",
+      "gold_in_scope": false,
+      "predicted_in_scope": false,
+      "probability": 0.04118064343339148,
+      "input_tokens": 129,
+      "inference_seconds": 0.1383157999953255
+    },
+    {
+      "id": "qwen_v1_06_direct",
+      "gold_in_scope": true,
+      "predicted_in_scope": false,
+      "probability": 0.22953414094290553,
+      "input_tokens": 126,
+      "inference_seconds": 0.13813989999471232
+    },
+    {
+      "id": "qwen_v1_06_extra",
+      "gold_in_scope": false,
+      "predicted_in_scope": false,
+      "probability": 0.03734502181672745,
+      "input_tokens": 126,
+      "inference_seconds": 0.13553440000396222
+    },
+    {
+      "id": "qwen_v1_07_direct",
+      "gold_in_scope": true,
+      "predicted_in_scope": true,
+      "probability": 0.6459410851403533,
+      "input_tokens": 131,
+      "inference_seconds": 0.14537050000217278
+    },
+    {
+      "id": "qwen_v1_07_extra",
+      "gold_in_scope": false,
+      "predicted_in_scope": false,
+      "probability": 0.027192653548018628,
+      "input_tokens": 129,
+      "inference_seconds": 0.140118800001801
+    },
+    {
+      "id": "qwen_v1_08_direct",
+      "gold_in_scope": true,
+      "predicted_in_scope": true,
+      "probability": 0.7133841914217025,
+      "input_tokens": 125,
+      "inference_seconds": 0.14322050000191666
+    },
+    {
+      "id": "qwen_v1_08_extra",
+      "gold_in_scope": false,
+      "predicted_in_scope": false,
+      "probability": 0.059225653004352355,
+      "input_tokens": 124,
+      "inference_seconds": 0.13851550000254065
+    },
+    {
+      "id": "qwen_v1_09_direct",
+      "gold_in_scope": true,
+      "predicted_in_scope": false,
+      "probability": 0.45781922104335504,
+      "input_tokens": 131,
+      "inference_seconds": 0.14375830000790302
+    },
+    {
+      "id": "qwen_v1_09_extra",
+      "gold_in_scope": false,
+      "predicted_in_scope": false,
+      "probability": 0.058665174668824684,
+      "input_tokens": 130,
+      "inference_seconds": 0.14917039999272674
+    },
+    {
+      "id": "qwen_v1_10_direct",
+      "gold_in_scope": true,
+      "predicted_in_scope": true,
+      "probability": 0.5939588916315739,
+      "input_tokens": 126,
+      "inference_seconds": 0.1345753999921726
+    },
+    {
+      "id": "qwen_v1_10_extra",
+      "gold_in_scope": false,
+      "predicted_in_scope": false,
+      "probability": 0.016063407911003136,
+      "input_tokens": 125,
+      "inference_seconds": 0.1378368000005139
+    },
+    {
+      "id": "qwen_v1_11_direct",
+      "gold_in_scope": true,
+      "predicted_in_scope": true,
+      "probability": 0.7973522232330407,
+      "input_tokens": 121,
+      "inference_seconds": 0.1342647000128636
+    },
+    {
+      "id": "qwen_v1_11_extra",
+      "gold_in_scope": false,
+      "predicted_in_scope": false,
+      "probability": 0.01454004058082827,
+      "input_tokens": 123,
+      "inference_seconds": 0.1338938999979291
+    },
+    {
+      "id": "qwen_v1_12_direct",
+      "gold_in_scope": true,
+      "predicted_in_scope": true,
+      "probability": 0.8828083675741841,
+      "input_tokens": 130,
+      "inference_seconds": 0.1448350999999093
+    },
+    {
+      "id": "qwen_v1_12_extra",
+      "gold_in_scope": false,
+      "predicted_in_scope": false,
+      "probability": 0.015288233563808599,
+      "input_tokens": 128,
+      "inference_seconds": 0.13047970000479836
+    },
+    {
+      "id": "qwen_v1_13_direct",
+      "gold_in_scope": true,
+      "predicted_in_scope": false,
+      "probability": 0.32396510691153263,
+      "input_tokens": 127,
+      "inference_seconds": 0.14223300000594463
+    },
+    {
+      "id": "qwen_v1_13_extra",
+      "gold_in_scope": false,
+      "predicted_in_scope": false,
+      "probability": 0.02798361216798067,
+      "input_tokens": 127,
+      "inference_seconds": 0.14872299999115057
+    },
+    {
+      "id": "qwen_v1_14_direct",
+      "gold_in_scope": true,
+      "predicted_in_scope": false,
+      "probability": 0.4747478835680622,
+      "input_tokens": 126,
+      "inference_seconds": 0.1384525999892503
+    },
+    {
+      "id": "qwen_v1_14_extra",
+      "gold_in_scope": false,
+      "predicted_in_scope": false,
+      "probability": 0.026538463479222778,
+      "input_tokens": 124,
+      "inference_seconds": 0.14986710000084713
+    },
+    {
+      "id": "qwen_v1_15_direct",
+      "gold_in_scope": true,
+      "predicted_in_scope": true,
+      "probability": 0.8802659694733806,
+      "input_tokens": 122,
+      "inference_seconds": 0.14152130000002217
+    },
+    {
+      "id": "qwen_v1_15_extra",
+      "gold_in_scope": false,
+      "predicted_in_scope": false,
+      "probability": 0.016407620674917706,
+      "input_tokens": 123,
+      "inference_seconds": 0.14336589998856653
+    },
+    {
+      "id": "qwen_v1_16_direct",
+      "gold_in_scope": true,
+      "predicted_in_scope": false,
+      "probability": 0.4087898048954404,
+      "input_tokens": 127,
+      "inference_seconds": 0.13940719999663997
+    },
+    {
+      "id": "qwen_v1_16_extra",
+      "gold_in_scope": false,
+      "predicted_in_scope": false,
+      "probability": 0.03803468086633036,
+      "input_tokens": 125,
+      "inference_seconds": 0.13593540000147186
+    },
+    {
+      "id": "qwen_v1_17_direct",
+      "gold_in_scope": true,
+      "predicted_in_scope": false,
+      "probability": 0.3334141484454165,
+      "input_tokens": 122,
+      "inference_seconds": 0.13301060000958387
+    },
+    {
+      "id": "qwen_v1_17_extra",
+      "gold_in_scope": false,
+      "predicted_in_scope": false,
+      "probability": 0.025907688902274063,
+      "input_tokens": 120,
+      "inference_seconds": 0.13625820000015665
+    },
+    {
+      "id": "qwen_v1_18_direct",
+      "gold_in_scope": true,
+      "predicted_in_scope": true,
+      "probability": 0.8145594803673163,
+      "input_tokens": 130,
+      "inference_seconds": 0.145800500002224
+    },
+    {
+      "id": "qwen_v1_18_extra",
+      "gold_in_scope": false,
+      "predicted_in_scope": false,
+      "probability": 0.06097584147079275,
+      "input_tokens": 132,
+      "inference_seconds": 0.14542580000124872
+    },
+    {
+      "id": "qwen_v1_19_direct",
+      "gold_in_scope": true,
+      "predicted_in_scope": true,
+      "probability": 0.8501167495798276,
+      "input_tokens": 124,
+      "inference_seconds": 0.1380661000002874
+    },
+    {
+      "id": "qwen_v1_19_extra",
+      "gold_in_scope": false,
+      "predicted_in_scope": false,
+      "probability": 0.007106500511149715,
+      "input_tokens": 128,
+      "inference_seconds": 0.1389192000060575
+    },
+    {
+      "id": "qwen_v1_20_direct",
+      "gold_in_scope": true,
+      "predicted_in_scope": true,
+      "probability": 0.5996170201039025,
+      "input_tokens": 122,
+      "inference_seconds": 0.14073530001041945
+    },
+    {
+      "id": "qwen_v1_20_extra",
+      "gold_in_scope": false,
+      "predicted_in_scope": false,
+      "probability": 0.028352922255566966,
+      "input_tokens": 124,
+      "inference_seconds": 0.136296399999992
+    },
+    {
+      "id": "qwen_v1_21_direct",
+      "gold_in_scope": true,
+      "predicted_in_scope": false,
+      "probability": 0.07880270758027637,
+      "input_tokens": 129,
+      "inference_seconds": 0.14620689999719616
+    },
+    {
+      "id": "qwen_v1_21_extra",
+      "gold_in_scope": false,
+      "predicted_in_scope": false,
+      "probability": 0.026892564523416342,
+      "input_tokens": 126,
+      "inference_seconds": 0.13678329999675043
+    },
+    {
+      "id": "qwen_v1_22_direct",
+      "gold_in_scope": true,
+      "predicted_in_scope": true,
+      "probability": 0.7244751057795422,
+      "input_tokens": 127,
+      "inference_seconds": 0.13295470000593923
+    },
+    {
+      "id": "qwen_v1_22_extra",
+      "gold_in_scope": false,
+      "predicted_in_scope": false,
+      "probability": 0.015422041181109968,
+      "input_tokens": 128,
+      "inference_seconds": 0.1368141000129981
+    },
+    {
+      "id": "qwen_v1_23_direct",
+      "gold_in_scope": true,
+      "predicted_in_scope": false,
+      "probability": 0.12058893106766756,
+      "input_tokens": 125,
+      "inference_seconds": 0.13971270000911318
+    },
+    {
+      "id": "qwen_v1_23_extra",
+      "gold_in_scope": false,
+      "predicted_in_scope": false,
+      "probability": 0.010322987839894045,
+      "input_tokens": 124,
+      "inference_seconds": 0.1424445000011474
+    },
+    {
+      "id": "qwen_v1_24_direct",
+      "gold_in_scope": true,
+      "predicted_in_scope": true,
+      "probability": 0.8909568505537037,
+      "input_tokens": 122,
+      "inference_seconds": 0.13885540000046603
+    },
+    {
+      "id": "qwen_v1_24_extra",
+      "gold_in_scope": false,
+      "predicted_in_scope": false,
+      "probability": 0.08980308710939437,
+      "input_tokens": 123,
+      "inference_seconds": 0.1358440000039991
+    },
+    {
+      "id": "qwen_v1_25_direct",
+      "gold_in_scope": true,
+      "predicted_in_scope": false,
+      "probability": 0.3011982784253519,
+      "input_tokens": 124,
+      "inference_seconds": 0.13886949999141507
+    },
+    {
+      "id": "qwen_v1_25_extra",
+      "gold_in_scope": false,
+      "predicted_in_scope": false,
+      "probability": 0.038095816311148355,
+      "input_tokens": 125,
+      "inference_seconds": 0.13827420001325663
+    },
+    {
+      "id": "qwen_v1_26_direct",
+      "gold_in_scope": true,
+      "predicted_in_scope": false,
+      "probability": 0.06794334902798387,
+      "input_tokens": 127,
+      "inference_seconds": 0.1336070999968797
+    },
+    {
+      "id": "qwen_v1_26_extra",
+      "gold_in_scope": false,
+      "predicted_in_scope": false,
+      "probability": 0.1419231482147746,
+      "input_tokens": 125,
+      "inference_seconds": 0.1337158999958774
+    },
+    {
+      "id": "qwen_v1_27_direct",
+      "gold_in_scope": true,
+      "predicted_in_scope": false,
+      "probability": 0.10406515069814964,
+      "input_tokens": 124,
+      "inference_seconds": 0.14096230000723153
+    },
+    {
+      "id": "qwen_v1_27_extra",
+      "gold_in_scope": false,
+      "predicted_in_scope": false,
+      "probability": 0.0449814117106629,
+      "input_tokens": 123,
+      "inference_seconds": 0.13635109999449924
+    },
+    {
+      "id": "qwen_v1_28_direct",
+      "gold_in_scope": true,
+      "predicted_in_scope": false,
+      "probability": 0.31683859121498636,
+      "input_tokens": 128,
+      "inference_seconds": 0.1422452999977395
+    },
+    {
+      "id": "qwen_v1_28_extra",
+      "gold_in_scope": false,
+      "predicted_in_scope": false,
+      "probability": 0.03581947837920394,
+      "input_tokens": 126,
+      "inference_seconds": 0.12998299999162555
+    },
+    {
+      "id": "qwen_v1_29_direct",
+      "gold_in_scope": true,
+      "predicted_in_scope": true,
+      "probability": 0.6313735348184375,
+      "input_tokens": 124,
+      "inference_seconds": 0.13680049999675248
+    },
+    {
+      "id": "qwen_v1_29_extra",
+      "gold_in_scope": false,
+      "predicted_in_scope": false,
+      "probability": 0.014420094814917966,
+      "input_tokens": 123,
+      "inference_seconds": 0.13446980000298936
+    }
+  ],
+  "limitation": "Previously inspected synthetic cases; not a fresh desktop holdout, safety proof, or Jev parity.",
+  "suite": "qwen-v1"
+}
