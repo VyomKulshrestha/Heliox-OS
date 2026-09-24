@@ -349,6 +349,33 @@ run the pinned local
 checkpoint with `--checkpoint-every 1` and review the complete synthetic and
 ScopeJudge reports before considering any further change.
 
+### Quantized local GPU baseline and unresolved runner crash
+
+To keep testing without PyTorch, the independent
+[`evaluate_ollama_scope.py`](../daemon/scripts/evaluate_ollama_scope.py)
+uses an already-cached Ollama Qwen3.5 4B Q4_K_M model. The report pins the
+model's full digest, fixed prompt, Ollama settings, and case-set hash; Ollama's
+live process endpoint reported the model **100% GPU-resident**. This is a
+different, quantized model from the 2B research checkpoint above. Its
+[60-case report](../daemon/benchmarks/ollama_qwen3_5_4b_scope_v1.json) records
+**54/60**, zero false allowances, and six false warnings on the already-
+inspected synthetic suite. Jev answered 60/60 of those authored cases. The
+4B result is neither Jev parity nor fresh real-world validation, and it was
+not connected to Heliox execution.
+
+The disjoint public ScopeJudge test selected 608 calls. The GPU run completed
+and checkpointed the first 105, then Ollama returned HTTP 500. Those 105 are
+all in-scope, so they cannot yield balanced accuracy or false-allowance
+evidence. Windows recorded a `llama-server.exe` application crash
+(`0xc0000409`) at 19:34 on 2026-09-24 and new `nvlddmkm` events in the same
+period; this is runtime failure evidence, not a measured model error or a
+proven root cause. The incomplete checkpoint remains ignored under
+`daemon/benchmarks/.bench-state/ollama_qwen3_5_4b_scopejudge_v1.partial.json`.
+Do not treat it as a test report. Retry only after the host can sustain GPU
+inference, with the matching `--report` path and `--resume`, then inspect
+false allowances, valid-action recall, context exclusions, and latency before
+considering any further model work.
+
 ## Reproduction and release boundary
 
 The offline probes need `onnx`, `onnxruntime`, `pyarrow`, `tokenizers`,
