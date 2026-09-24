@@ -18,8 +18,6 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from benchmarks.scope_nli_features import NliFeatureExtractor, cached_paths  # noqa: E402
-from benchmarks.scope_semantic_head import SemanticScopeHead  # noqa: E402
 
 DATASET = "dreadnode/scopejudge"
 DATASET_URL = "https://huggingface.co/datasets/dreadnode/scopejudge"
@@ -104,6 +102,9 @@ def evaluate(cases: list[ExternalCase], probabilities: np.ndarray) -> dict:
 
 
 def main() -> None:
+    from benchmarks.scope_nli_features import NliFeatureExtractor, cached_paths
+    from benchmarks.scope_semantic_head import SemanticScopeHead
+
     root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset", type=Path, required=True, help="Local, public ScopeJudge train.jsonl")
