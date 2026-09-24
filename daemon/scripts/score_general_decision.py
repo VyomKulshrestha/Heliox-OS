@@ -27,6 +27,12 @@ def prepare_request(payload: dict) -> dict:
             "state_json": json.dumps(payload["state"], ensure_ascii=False)}
 
 
+def prepare_requests(payloads: list[dict]) -> list[dict]:
+    if not isinstance(payloads, list) or not 1 <= len(payloads) <= 128:
+        raise ValueError("Score between 1 and 128 decisions at a time")
+    return [prepare_request(payload) for payload in payloads]
+
+
 def verify_artifact(output_dir: Path, report_path: Path) -> tuple[dict, Path]:
     report = json.loads(report_path.read_text(encoding="utf-8"))
     adapter = output_dir / "adapter"
@@ -40,7 +46,8 @@ def verify_artifact(output_dir: Path, report_path: Path) -> tuple[dict, Path]:
     return report, head
 
 
-def score(payload: dict, output_dir: Path, report_path: Path) -> dict:
+def score_requests(payloads: list[dict], output_dir: Path, report_path: Path) -> list[dict]:
+    rows = prepare_requests(payloads)
     import torch
     from huggingface_hub import snapshot_download
     from peft import PeftModel
@@ -50,7 +57,6 @@ def score(payload: dict, output_dir: Path, report_path: Path) -> dict:
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is required for this research adapter")
     report, head_path = verify_artifact(output_dir, report_path)
-    row = prepare_request(payload)
     with np.load(head_path, allow_pickle=False) as saved:
         if str(saved["model_revision"]) != REVISION:
             raise ValueError("Head model revision mismatch")
@@ -63,7 +69,7 @@ def score(payload: dict, output_dir: Path, report_path: Path) -> dict:
 
     model_path = snapshot_download(MODEL, revision=REVISION, local_files_only=True)
     tokenizer = AutoTokenizer.from_pretrained(model_path, local_files_only=True)
-    encoded, overlong = encode_rows(tokenizer, [row], max_length)
+    encoded, overlong = encode_rows(tokenizer, rows, max_length)
     if overlong:
         raise ValueError("Decision exceeds the trained token limit; input was not truncated")
     base = AutoModelForCausalLM.from_pretrained(
@@ -78,10 +84,15 @@ def score(payload: dict, output_dir: Path, report_path: Path) -> dict:
         head.bias.copy_(torch.from_numpy(bias).to("cuda"))
     backbone.eval()
     head.eval()
-    logits = score_row(backbone, head, encoded[0])
-    return {"research_only": True, "execution_authority": False,
-            "model": MODEL, "revision": REVISION,
-            "answer": format_answer(row["kind"], row["options"], logits, temperature)}
+    return [{"research_only": True, "execution_authority": False,
+             "model": MODEL, "revision": REVISION,
+             "answer": format_answer(row["kind"], row["options"],
+                                     score_row(backbone, head, item), temperature)}
+            for row, item in zip(rows, encoded, strict=True)]
+
+
+def score(payload: dict, output_dir: Path, report_path: Path) -> dict:
+    return score_requests([payload], output_dir, report_path)[0]
 
 
 def main() -> None:
@@ -94,7 +105,11 @@ def main() -> None:
     if args.input.stat().st_size > 1_000_000:
         parser.error("Input must be no larger than 1 MB")
     request = json.loads(args.input.read_text(encoding="utf-8"))
-    print(json.dumps(score(request, args.output_dir, args.report), indent=2))
+    if isinstance(request, list):
+        result = score_requests(request, args.output_dir, args.report)
+    else:
+        result = score(request, args.output_dir, args.report)
+    print(json.dumps(result, indent=2))
 
 
 if __name__ == "__main__":
