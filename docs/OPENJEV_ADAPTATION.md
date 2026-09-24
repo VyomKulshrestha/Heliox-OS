@@ -154,6 +154,25 @@ general Jev parity. Reports: [larger GPU probe](../daemon/benchmarks/qwen_genera
 and [public Jev comparison](../daemon/benchmarks/qwen_general_jev_comparison_v2.json).
 The adapter remains local and disabled in Heliox.
 
+The next planned multi-task run adds the
+[MIT-licensed ScopeJudge](https://github.com/dreadnode/scopejudge) expert labels
+to the public general questions, keeping complete security trajectories
+disjoint. The pinned source contains 4,897 labeled calls. The selected scope
+sample has 512 balanced training calls, 80 balanced calibration calls, and
+608 calls in a full trajectory-held-out test; at the 768-token limit, 492,
+61, and 554 respectively were eligible without truncation. This run is
+**incomplete**: eager attention stopped after 192 training rows and optimized
+attention after 96, both with CUDA launch failures. Windows recorded
+`nvlddmkm` event IDs 13 and 153 at the failure times. That correlation does
+not establish whether the driver, hardware, power settings, or a kernel is
+the root cause. No v3 weights or held-out metrics exist; see the
+[attempt record](../daemon/benchmarks/qwen_general_scope_attempt_v3.json).
+The training script now saves atomic, signature-checked local checkpoints and
+can resume an unfinished run with the same inputs and `--resume`. A small CUDA
+round-trip verified trainable parameters and optimizer moments are restored.
+It does not repair the GPU fault, so sustained training should wait for a
+stable GPU environment. No Windows driver or TDR setting was changed.
+
 ## Reproduction and release boundary
 
 The offline probes need `onnx`, `onnxruntime`, `pyarrow`, `tokenizers`,

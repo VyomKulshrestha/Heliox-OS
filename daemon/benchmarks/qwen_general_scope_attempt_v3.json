@@ -1,0 +1,40 @@
+{
+  "status": "incomplete_no_model_artifact",
+  "purpose": "Combine licensed public general decisions with expert-labeled scope calls",
+  "general_dataset": "ZefanCai/Open-Jev release-v2-redistributable",
+  "scope_dataset": "dreadnode/scopejudge",
+  "scope_dataset_revision": "b8b06a65a09e39a4fe1682ef56f48fd14ab74800",
+  "scope_dataset_sha256": "63a176fde1933464dc1cbfe3d5adcae8d4991ab0f93368903276c55a74efb527",
+  "license_filter": "CC0-1.0 general rows only; MIT ScopeJudge",
+  "selected_rows": {
+    "general_train": 1536,
+    "general_calibration": 192,
+    "general_test": 256,
+    "general_ood": 256,
+    "scope_train": 512,
+    "scope_calibration": 80,
+    "scope_test": 608
+  },
+  "token_limit": 768,
+  "eligible_scope_rows": {
+    "train": 492,
+    "calibration": 61,
+    "test": 554
+  },
+  "attempts": [
+    {
+      "attention": "eager",
+      "completed_training_rows": 192,
+      "result": "CUDA launch failure during backward propagation"
+    },
+    {
+      "attention": "sdpa",
+      "completed_training_rows": 96,
+      "result": "CUDA/cuBLAS launch failure during training of a 120-token decision"
+    }
+  ],
+  "system_observation": "Windows System log contained nvlddmkm errors, event IDs 13 and 153, at the failure times. This is correlation, not a root-cause determination.",
+  "weights_saved": false,
+  "held_out_metrics_available": false,
+  "note": "The resumable checkpoint path was added and verified after these attempts; it cannot recover either failed process. Do not report a v3 accuracy or deploy it."
+}
