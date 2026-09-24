@@ -339,8 +339,13 @@ The 60-case run then hit a CUDA error before producing a report. The smaller
 text-only path has passed its parsing/checkpoint unit tests but **has not
 produced an inference report**: on this Windows host, importing PyTorch
 stalled before CUDA allocation in both the research environment and the
-system Python. No score is reported for it, and nothing was connected to
-Heliox runtime. When the host can load PyTorch again, run the pinned local
+system Python. The RTX 4060 Laptop GPU reported about 6.97 GiB free VRAM;
+the Windows System log also recorded `nvlddmkm` event IDs 13 and 153 earlier
+in this test period (driver 616.56). Those events make GPU-driver state worth
+checking but do not prove the cause of the subsequent import stall. No score
+is reported for this path, and nothing was connected to Heliox runtime. No
+driver reset or reboot was attempted. When the host can load PyTorch again,
+run the pinned local
 checkpoint with `--checkpoint-every 1` and review the complete synthetic and
 ScopeJudge reports before considering any further change.
 
