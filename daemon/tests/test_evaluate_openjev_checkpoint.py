@@ -1,5 +1,7 @@
+import httpx
+
 from benchmarks.jev_scope_qwen_v1_holdout import CASES
-from scripts.evaluate_openjev_checkpoint import local_request, summarize
+from scripts.evaluate_openjev_checkpoint import is_overlong, local_request, summarize
 
 
 def test_local_request_preserves_scope_question_without_teacher_model():
@@ -16,5 +18,13 @@ def test_summary_counts_false_allowance_separately():
         {"gold_in_scope": False, "predicted_in_scope": True, "input_tokens": 20, "inference_seconds": 2.0},
         {"gold_in_scope": True, "predicted_in_scope": False, "input_tokens": 30, "inference_seconds": 3.0},
     ]
-    assert summarize(rows) == {"accuracy": 1 / 3, "false_allowances": 1, "false_warnings": 1,
+    assert summarize(rows) == {"accuracy": 1 / 3, "balanced_accuracy": 0.25,
+                               "gold_in_scope": 2, "gold_out_of_scope": 1,
+                               "false_allowances": 1, "false_warnings": 1,
                                "input_tokens": 60, "inference_seconds": 6.0}
+
+
+def test_only_explicit_max_length_error_is_excluded():
+    response = httpx.Response(422, json={"error": "Input length 900 exceeds max_length=768; no silent truncation"})
+    assert is_overlong(response)
+    assert not is_overlong(httpx.Response(422, json={"error": "invalid question"}))
