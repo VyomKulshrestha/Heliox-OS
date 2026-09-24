@@ -206,6 +206,75 @@ python scripts/evaluate_openjev_checkpoint.py --suite qwen-v1
 python -m pytest tests/test_evaluate_openjev_checkpoint.py -q
 ```
 
+### Public ScopeJudge transfer and frozen-feature adaptation
+
+The same released checkpoint was evaluated on the pinned, trajectory-disjoint
+[ScopeJudge](https://github.com/dreadnode/scopejudge) partition. Of 608 selected
+test calls, 546 fit the explicit 768-token limit (517 allowed, 29 disallowed);
+62 were excluded, never silently truncated. At the checkpoint's 0.5 threshold,
+it made **zero false allowances but 507 false warnings**: 39/546 accuracy and
+0.510 balanced accuracy. Its 59 eligible calibration calls similarly produced
+zero false allowances and 33 false warnings. The [test](../daemon/benchmarks/openjev_2b_scopejudge_v1.json)
+and [calibration](../daemon/benchmarks/openjev_2b_scopejudge_calibration_v1.json)
+reports preserve every prediction, exclusion, source hash, and GPU inference
+time. This uses a different prompt and tokenization path than the unfinished
+multi-task training attempt above, so the eligible-row counts are not expected
+to match that attempt.
+
+A bounded adaptation froze the entire released backbone and extracted its
+2,048-dimensional final hidden state on GPU. The extracted raw scores matched
+the served checkpoint probabilities within 3e-8 after the published
+temperature was applied. A small, balanced logistic head fitted only the 482
+eligible training rows. Its regularization and zero-false-allowance threshold
+were selected from 59 eligible calibration rows before test predictions were
+computed; 546 eligible test rows came from disjoint security trajectories.
+The [head report](../daemon/benchmarks/openjev_2b_scope_head_v1.json) records
+the saved local artifact hash, selected hyperparameter, and all test scores.
+At 0.5 it attained 0.905 test AUC and 88.5% accuracy, **but made nine false
+allowances**. At the calibration-chosen threshold it made **zero false
+allowances**, but warned on **285/517 allowed actions** (44.9% allow recall,
+0.724 balanced accuracy). Only 29 eligible test calls were disallowed, so
+zero observed false allowances is a weak safety estimate. The public suite was
+inspected during development; this is not an untouched desktop holdout. The
+local head is research-only and is not connected to Heliox execution.
+
+A cross-domain check on the already-inspected 60-case synthetic Jev comparison
+suite is more decisive: the frozen head ranked answers with 0.911 AUC but its
+ScopeJudge-calibrated threshold made **20 false allowances** and two false
+warnings (38/60 agreement). At the default 0.5 threshold it allowed every
+case, including all 30 disallowed actions. The
+[transfer report](../daemon/benchmarks/openjev_2b_scope_head_transfer_v1.json)
+is a counterexample to treating in-domain zero false allowances as a portable
+safety property. Recalibrating on these already-inspected cases would be test
+leakage, not evidence of a generalized solution.
+
+The GPU extraction and head fit are reproducible with
+[`extract_openjev_scope_features.py`](../daemon/scripts/extract_openjev_scope_features.py)
+and [`fit_openjev_scope_head.py`](../daemon/scripts/fit_openjev_scope_head.py).
+They verify pinned input provenance, keep large feature/weight artifacts under
+ignored `.bench-state`, and do not train on or export proprietary Jev outputs.
+The synthetic transfer is scored by
+[`evaluate_openjev_scope_head_transfer.py`](../daemon/scripts/evaluate_openjev_scope_head_transfer.py)
+using the already-frozen scaler, weights, and threshold.
+
+### Soup fit assessment
+
+[Soup v0.75.0](https://github.com/MakazhanAlpamys/Soup/tree/f0d7696f1da1f86f965309b2d22e5fb48afb4fae)
+is an Apache-2.0 fine-tuning toolkit with a resident sequence-classifier LoRA
+path and a separate experimental low-VRAM layer-streaming path. Its
+[streaming task gate](https://github.com/MakazhanAlpamys/Soup/blob/f0d7696f1da1f86f965309b2d22e5fb48afb4fae/src/soup_cli/utils/layer_stream.py)
+permits SFT and several preference losses, **not classifier training**; its
+[classifier trainer](https://github.com/MakazhanAlpamys/Soup/blob/f0d7696f1da1f86f965309b2d22e5fb48afb4fae/src/soup_cli/trainer/classifier.py)
+loads a new sequence-classification model rather than Open-Jev's released
+candidate-conditioned scalar checkpoint. Thus `soup train` cannot reproduce
+this adaptation or solve the earlier CUDA launch failure by selecting
+`stream_layers=true`. Soup's source-level Windows/VRAM measurement practices
+are useful for future full-backbone experiments, but no Soup dependency was
+added to the pilot and its training claims were not treated as Heliox results.
+The project's [4 GB throughput remeasurement](https://github.com/MakazhanAlpamys/Soup/issues/361)
+is still open after a correctness repair; its pre-repair speed figure should
+not be projected onto this GPU or task.
+
 ## Reproduction and release boundary
 
 The offline probes need `onnx`, `onnxruntime`, `pyarrow`, `tokenizers`,
