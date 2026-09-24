@@ -321,6 +321,29 @@ The project's [4 GB throughput remeasurement](https://github.com/MakazhanAlpamys
 is still open after a correctness repair; its pre-repair speed figure should
 not be projected onto this GPU or task.
 
+### Independent instruction-review baseline (in progress)
+
+[`evaluate_qwen_instruct_scope.py`](../daemon/scripts/evaluate_qwen_instruct_scope.py)
+adds a pinned, zero-shot text-only Qwen3.5-2B baseline for the same synthetic
+scope suite and the separately partitioned public ScopeJudge test. It uses a
+fixed prompt, strict YES/NO parsing (malformed answers deny), no Jev outputs
+for training, no action execution, and identity-checked resumable reports.
+The text-only loader follows the official
+[Transformers Qwen3.5 guidance](https://huggingface.co/docs/transformers/main/model_doc/qwen3_5)
+and its [integration test](https://github.com/huggingface/transformers/blob/main/tests/models/qwen3_5/test_modeling_qwen3_5.py)
+for `Qwen3_5ForCausalLM`. It is an instruction-following comparison, not a
+replacement for a calibrated safety policy or a claim of Jev parity.
+
+Only a three-case smoke run of the earlier full multimodal wrapper completed.
+The 60-case run then hit a CUDA error before producing a report. The smaller
+text-only path has passed its parsing/checkpoint unit tests but **has not
+produced an inference report**: on this Windows host, importing PyTorch
+stalled before CUDA allocation in both the research environment and the
+system Python. No score is reported for it, and nothing was connected to
+Heliox runtime. When the host can load PyTorch again, run the pinned local
+checkpoint with `--checkpoint-every 1` and review the complete synthetic and
+ScopeJudge reports before considering any further change.
+
 ## Reproduction and release boundary
 
 The offline probes need `onnx`, `onnxruntime`, `pyarrow`, `tokenizers`,
