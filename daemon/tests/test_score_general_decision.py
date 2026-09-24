@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.score_general_decision import MODEL, REVISION, prepare_request, verify_artifact
+from scripts.score_general_decision import MODEL, REVISION, prepare_request, prepare_requests, verify_artifact
 
 
 def test_prepare_request_keeps_only_declared_input_fields() -> None:
@@ -20,6 +20,12 @@ def test_prepare_request_keeps_only_declared_input_fields() -> None:
     assert json.loads(request["state_json"]) == {"cursor": [2, 4]}
     with pytest.raises(ValueError, match="Noul"):
         prepare_request({**request, "state": "hello", "kind": "noul"})
+    assert len(prepare_requests([{"state": "a", "kind": "noul", "question": "Valid?",
+                                  "options": ["no", "yes"]},
+                                 {"state": "b", "kind": "choice", "question": "Pick?",
+                                  "options": ["one", "two"]}])) == 2
+    with pytest.raises(ValueError, match="between 1 and 128"):
+        prepare_requests([])
 
 
 def test_artifact_hashes_must_match_frozen_report(tmp_path: Path) -> None:
