@@ -172,6 +172,9 @@ can resume an unfinished run with the same inputs and `--resume`. A small CUDA
 round-trip verified trainable parameters and optimizer moments are restored.
 It does not repair the GPU fault, so sustained training should wait for a
 stable GPU environment. No Windows driver or TDR setting was changed.
+Silently lowering the token limit is not an equivalent fix: a 512-token cap
+would exclude 278 of the 608 selected ScopeJudge test calls, materially
+changing the evaluation population.
 
 ## Reproduction and release boundary
 
