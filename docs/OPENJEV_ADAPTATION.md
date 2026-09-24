@@ -87,6 +87,55 @@ The full results, including every mismatch and artifact hash, are in
 [`qwen_scope_baseline_v1.json`](../daemon/benchmarks/qwen_scope_baseline_v1.json),
 and [`jev_scope_qwen_v1_teacher.json`](../daemon/benchmarks/jev_scope_qwen_v1_teacher.json).
 
+## Licensed multi-domain GPU follow-up
+
+The scope adapter above handles only binary action-scope questions. A separate
+research model now trains **one candidate-conditioned scalar head** across
+Open-Jev's `noul`, variable-option `choice`, and ordinal `score` records. It
+uses the pinned Qwen3-0.6B base, rank-8 LoRA, no prompt labels or source IDs,
+and group-disjoint train/calibration/test/OOD partitions. The loader accepts
+only records whose per-row provenance is CC0-1.0; it excludes 4,206 training
+records with unverified upstream description rights, plus corresponding
+calibration/test/OOD records. There are no proprietary Jev outputs in this
+experiment. The base model stays frozen; the adapter and one shared head are
+trained on the GPU. Candidate gradients are replayed one at a time to keep
+memory bounded when option counts vary.
+
+The 512-train / 96-calibration / 128-test / 128-OOD source-and-kind-balanced
+probe, with 768-token maximum and no truncation, peaked at **3.653 GiB of
+allocated CUDA memory** on the 8 GB RTX 4060 Laptop GPU. Relative to the
+untrained candidate head, held-out test top-1 rose from **38.3% to 61.7%**
+and OOD top-1 from **27.3% to 57.8%**. Test negative log-likelihood fell
+from 2.117 to 1.024; OOD from 2.691 to 0.941 after calibration. The full
+[report](../daemon/benchmarks/qwen_general_probe_v1.json) contains per-kind
+and per-source results and artifact hashes. Importantly, OOD choice accuracy
+is only **34.3%** and OOD score accuracy **38.5%**; these are broad synthetic
+decision weaknesses, not Jev parity. The pilot model remains the old,
+independent production path. This experiment grants no action authority.
+
+With cached public data and pinned base model, reproduce using:
+
+```bash
+cd daemon
+python scripts/train_general_decision.py --train-rows 512 --calibration-rows 96 --test-rows 128 --ood-rows 128 --max-length 768
+python -m pytest tests/test_general_decision.py tests/test_score_general_decision.py -q
+```
+
+The research-only scorer `scripts/score_general_decision.py` takes a local
+JSON file with `state`, `kind`, `question`, and `options`. It validates the
+request and saved adapter/head hashes, refuses overlong input instead of
+truncating it, and returns probabilities without invoking Heliox tools.
+An actual saved-adapter reload on the
+[read-only action fixture](../daemon/tests/fixtures/general_decision_read_only.json)
+incorrectly favored **deleting** the file (40.2%) over reading it (34.8%).
+This qualitative failure reinforces the OOD metrics. Neither synthetic
+accuracy nor a score constitutes permission to execute.
+
+```bash
+cd daemon
+python scripts/score_general_decision.py --input tests/fixtures/general_decision_read_only.json
+```
+
 ## Reproduction and release boundary
 
 The offline probes need `onnx`, `onnxruntime`, `pyarrow`, `tokenizers`,
