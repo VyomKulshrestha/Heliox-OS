@@ -294,6 +294,15 @@ scope recall. The [synthetic transfer report](../daemon/benchmarks/openjev_2b_mu
 is not a fresh holdout. This head is **not** connected to Heliox execution,
 is not a production policy, and does not establish Jev parity.
 
+A second, hypothesis-driven check kept the two targets separate: a TBAC-only
+relevance head was calibrated on TBAC validation, then conjoined with the
+already-frozen scope head. Its [report](../daemon/benchmarks/openjev_2b_separate_heads_v1.json)
+shows zero false allowances on the inspected Heliox suite, but **22/30**
+legitimate actions were rejected. On ScopeJudge test it rejected **all 517**
+legitimate calls. The relevance-only head's official TBAC test had one false
+positive and 407 false negatives. This gate cannot be shipped either: low false
+allowance at the cost of disabling useful execution is not Jev-like behavior.
+
 ### Soup fit assessment
 
 [Soup v0.75.0](https://github.com/MakazhanAlpamys/Soup/tree/f0d7696f1da1f86f965309b2d22e5fb48afb4fae)
