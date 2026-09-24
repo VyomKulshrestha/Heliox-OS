@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from scripts.evaluate_general_scope_transfer import CASES, case_payload
 from scripts.score_general_decision import MODEL, REVISION, prepare_request, prepare_requests, verify_artifact
 
 
@@ -46,3 +47,11 @@ def test_artifact_hashes_must_match_frozen_report(tmp_path: Path) -> None:
     head.write_bytes(b"changed")
     with pytest.raises(ValueError, match="checksum mismatch"):
         verify_artifact(output_dir, report_path)
+
+
+def test_scope_transfer_payload_contains_only_request_and_action() -> None:
+    payload = case_payload(CASES[0])
+    assert payload["kind"] == "noul"
+    assert payload["state"] == {"user_request": CASES[0].request,
+                                "proposed_action": CASES[0].action}
+    assert "in_scope" not in json.dumps(payload)
