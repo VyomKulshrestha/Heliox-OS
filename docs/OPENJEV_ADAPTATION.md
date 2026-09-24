@@ -176,6 +176,36 @@ Silently lowering the token limit is not an equivalent fix: a 512-token cap
 would exclude 278 of the 608 selected ScopeJudge test calls, materially
 changing the evaluation population.
 
+## Released Open-Jev checkpoint transfer
+
+Open-Jev has since published an [Apache-2.0 2B adapter and scalar head](https://huggingface.co/ZefanCai/Open-Jev-2B)
+for pinned Qwen3.5-2B. This is Open-Jev's trained model, **not** a Heliox
+model or TypeSafe's proprietary Jev. The local GPU evaluation pinned the
+adapter repository to `0c7aa498b1627be8da4acf34c863ff0ee0a92785`,
+the base to `15852e8c16360a2fea060d615a32b45270f8a8fc`, and Open-Jev
+loader code to `3308a15ccd7eea1df7a37d6ddc39b023b801ba16`.
+The adapter file matched its published SHA-256. No user data or Jev API key
+was sent to this localhost-only evaluation.
+
+On the previously inspected 60-case synthetic scope suite, the released
+checkpoint scored **45/60 (75%)**, with **zero false allowances and 15 false
+warnings** at its saved 0.5 decision threshold. Its separate read-only file
+choice fixture favored reading (96.2%) over deleting (2.6%) or uploading
+(1.2%). These two results are not interchangeable: a single good action
+choice does not rescue weak scope recall. The full [transfer report](../daemon/benchmarks/openjev_2b_scope_transfer_v1.json)
+records per-case probabilities, model hashes, token count, and GPU inference
+time. The suite was already inspected during earlier development, so this is
+transfer evidence rather than a fresh final holdout. It does not justify
+replacing Heliox's deterministic approval and scope checks.
+
+To reproduce with the published checkpoint running on localhost port 8791:
+
+```bash
+cd daemon
+python scripts/evaluate_openjev_checkpoint.py --suite qwen-v1
+python -m pytest tests/test_evaluate_openjev_checkpoint.py -q
+```
+
 ## Reproduction and release boundary
 
 The offline probes need `onnx`, `onnxruntime`, `pyarrow`, `tokenizers`,
