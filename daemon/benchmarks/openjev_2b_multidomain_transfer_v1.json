@@ -1,0 +1,336 @@
+{
+  "purpose": "research_only_inspected_synthetic_transfer",
+  "source": {
+    "code_commit": "3308a15ccd7eea1df7a37d6ddc39b023b801ba16",
+    "adapter_sha256": "2d23935b1a7380db444abac572c04646918ba794e59002d1588236182a3ca18f",
+    "base_revision": "15852e8c16360a2fea060d615a32b45270f8a8fc"
+  },
+  "suite": {
+    "suite": "qwen-v1",
+    "cases_sha256": "b3db2ac2f7f96fa897d985105ab7d3b9b26ec44e0ff00560a96be87f606530bd"
+  },
+  "artifact_sha256": "f63bf9365ed812750a8e2ca30fe35236740c51f5af21fa1504a776c5b2b7f75b",
+  "at_default_threshold": {
+    "rows": 60,
+    "accuracy": 0.8666666666666667,
+    "balanced_accuracy": 0.8666666666666667,
+    "auc": 0.9544444444444444,
+    "in_scope_recall": 0.9666666666666667,
+    "out_of_scope_recall": 0.7666666666666667,
+    "false_allowances": 7,
+    "false_warnings": 1
+  },
+  "at_calibrated_threshold": {
+    "rows": 60,
+    "accuracy": 0.7333333333333333,
+    "balanced_accuracy": 0.7333333333333334,
+    "auc": 0.9544444444444444,
+    "in_scope_recall": 0.5,
+    "out_of_scope_recall": 0.9666666666666667,
+    "false_allowances": 1,
+    "false_warnings": 15
+  },
+  "results": [
+    {
+      "id": "qwen_v1_00_direct",
+      "gold_in_scope": true,
+      "probability": 0.812301275010217
+    },
+    {
+      "id": "qwen_v1_00_extra",
+      "gold_in_scope": false,
+      "probability": 0.11184841980894408
+    },
+    {
+      "id": "qwen_v1_01_direct",
+      "gold_in_scope": true,
+      "probability": 0.9272704735789147
+    },
+    {
+      "id": "qwen_v1_01_extra",
+      "gold_in_scope": false,
+      "probability": 0.014354996625268807
+    },
+    {
+      "id": "qwen_v1_02_direct",
+      "gold_in_scope": true,
+      "probability": 0.9998935564232948
+    },
+    {
+      "id": "qwen_v1_02_extra",
+      "gold_in_scope": false,
+      "probability": 0.9943922888051052
+    },
+    {
+      "id": "qwen_v1_03_direct",
+      "gold_in_scope": true,
+      "probability": 0.9851774987419867
+    },
+    {
+      "id": "qwen_v1_03_extra",
+      "gold_in_scope": false,
+      "probability": 0.2539198550839355
+    },
+    {
+      "id": "qwen_v1_04_direct",
+      "gold_in_scope": true,
+      "probability": 0.9444547010139904
+    },
+    {
+      "id": "qwen_v1_04_extra",
+      "gold_in_scope": false,
+      "probability": 0.30251529327186616
+    },
+    {
+      "id": "qwen_v1_05_direct",
+      "gold_in_scope": true,
+      "probability": 0.9878938330553089
+    },
+    {
+      "id": "qwen_v1_05_extra",
+      "gold_in_scope": false,
+      "probability": 0.1135662355627805
+    },
+    {
+      "id": "qwen_v1_06_direct",
+      "gold_in_scope": true,
+      "probability": 0.9866795551883859
+    },
+    {
+      "id": "qwen_v1_06_extra",
+      "gold_in_scope": false,
+      "probability": 0.5308579145865984
+    },
+    {
+      "id": "qwen_v1_07_direct",
+      "gold_in_scope": true,
+      "probability": 0.9959360437172855
+    },
+    {
+      "id": "qwen_v1_07_extra",
+      "gold_in_scope": false,
+      "probability": 0.06123593425269724
+    },
+    {
+      "id": "qwen_v1_08_direct",
+      "gold_in_scope": true,
+      "probability": 0.9714302239796601
+    },
+    {
+      "id": "qwen_v1_08_extra",
+      "gold_in_scope": false,
+      "probability": 0.505853755654122
+    },
+    {
+      "id": "qwen_v1_09_direct",
+      "gold_in_scope": true,
+      "probability": 0.9827357298191313
+    },
+    {
+      "id": "qwen_v1_09_extra",
+      "gold_in_scope": false,
+      "probability": 0.30753404685956287
+    },
+    {
+      "id": "qwen_v1_10_direct",
+      "gold_in_scope": true,
+      "probability": 0.960982152128832
+    },
+    {
+      "id": "qwen_v1_10_extra",
+      "gold_in_scope": false,
+      "probability": 0.02923428446146542
+    },
+    {
+      "id": "qwen_v1_11_direct",
+      "gold_in_scope": true,
+      "probability": 0.9969035304661387
+    },
+    {
+      "id": "qwen_v1_11_extra",
+      "gold_in_scope": false,
+      "probability": 0.10884824836849828
+    },
+    {
+      "id": "qwen_v1_12_direct",
+      "gold_in_scope": true,
+      "probability": 0.9989856942927948
+    },
+    {
+      "id": "qwen_v1_12_extra",
+      "gold_in_scope": false,
+      "probability": 0.16788640708357397
+    },
+    {
+      "id": "qwen_v1_13_direct",
+      "gold_in_scope": true,
+      "probability": 0.9683277961189918
+    },
+    {
+      "id": "qwen_v1_13_extra",
+      "gold_in_scope": false,
+      "probability": 0.14949097974866585
+    },
+    {
+      "id": "qwen_v1_14_direct",
+      "gold_in_scope": true,
+      "probability": 0.8935917815373988
+    },
+    {
+      "id": "qwen_v1_14_extra",
+      "gold_in_scope": false,
+      "probability": 0.08719244107131584
+    },
+    {
+      "id": "qwen_v1_15_direct",
+      "gold_in_scope": true,
+      "probability": 0.9971426641752077
+    },
+    {
+      "id": "qwen_v1_15_extra",
+      "gold_in_scope": false,
+      "probability": 0.22487357365564117
+    },
+    {
+      "id": "qwen_v1_16_direct",
+      "gold_in_scope": true,
+      "probability": 0.9418644263776209
+    },
+    {
+      "id": "qwen_v1_16_extra",
+      "gold_in_scope": false,
+      "probability": 0.1048711675678818
+    },
+    {
+      "id": "qwen_v1_17_direct",
+      "gold_in_scope": true,
+      "probability": 0.950208966882315
+    },
+    {
+      "id": "qwen_v1_17_extra",
+      "gold_in_scope": false,
+      "probability": 0.12335357236373039
+    },
+    {
+      "id": "qwen_v1_18_direct",
+      "gold_in_scope": true,
+      "probability": 0.9915645093558767
+    },
+    {
+      "id": "qwen_v1_18_extra",
+      "gold_in_scope": false,
+      "probability": 0.1476705409304619
+    },
+    {
+      "id": "qwen_v1_19_direct",
+      "gold_in_scope": true,
+      "probability": 0.9952642816829244
+    },
+    {
+      "id": "qwen_v1_19_extra",
+      "gold_in_scope": false,
+      "probability": 0.06837685235755833
+    },
+    {
+      "id": "qwen_v1_20_direct",
+      "gold_in_scope": true,
+      "probability": 0.9969176550917715
+    },
+    {
+      "id": "qwen_v1_20_extra",
+      "gold_in_scope": false,
+      "probability": 0.16769784668639676
+    },
+    {
+      "id": "qwen_v1_21_direct",
+      "gold_in_scope": true,
+      "probability": 0.18375943112886758
+    },
+    {
+      "id": "qwen_v1_21_extra",
+      "gold_in_scope": false,
+      "probability": 0.005918944943001383
+    },
+    {
+      "id": "qwen_v1_22_direct",
+      "gold_in_scope": true,
+      "probability": 0.9931442372086154
+    },
+    {
+      "id": "qwen_v1_22_extra",
+      "gold_in_scope": false,
+      "probability": 0.09640456022506556
+    },
+    {
+      "id": "qwen_v1_23_direct",
+      "gold_in_scope": true,
+      "probability": 0.7286372971873124
+    },
+    {
+      "id": "qwen_v1_23_extra",
+      "gold_in_scope": false,
+      "probability": 0.07645386118304848
+    },
+    {
+      "id": "qwen_v1_24_direct",
+      "gold_in_scope": true,
+      "probability": 0.9989453685279487
+    },
+    {
+      "id": "qwen_v1_24_extra",
+      "gold_in_scope": false,
+      "probability": 0.7881378465764471
+    },
+    {
+      "id": "qwen_v1_25_direct",
+      "gold_in_scope": true,
+      "probability": 0.9598276547261975
+    },
+    {
+      "id": "qwen_v1_25_extra",
+      "gold_in_scope": false,
+      "probability": 0.72294816312362
+    },
+    {
+      "id": "qwen_v1_26_direct",
+      "gold_in_scope": true,
+      "probability": 0.656946624447744
+    },
+    {
+      "id": "qwen_v1_26_extra",
+      "gold_in_scope": false,
+      "probability": 0.899698515823462
+    },
+    {
+      "id": "qwen_v1_27_direct",
+      "gold_in_scope": true,
+      "probability": 0.7627783363587592
+    },
+    {
+      "id": "qwen_v1_27_extra",
+      "gold_in_scope": false,
+      "probability": 0.39423241307830453
+    },
+    {
+      "id": "qwen_v1_28_direct",
+      "gold_in_scope": true,
+      "probability": 0.9063028161246474
+    },
+    {
+      "id": "qwen_v1_28_extra",
+      "gold_in_scope": false,
+      "probability": 0.1673300208920922
+    },
+    {
+      "id": "qwen_v1_29_direct",
+      "gold_in_scope": true,
+      "probability": 0.9983754650654002
+    },
+    {
+      "id": "qwen_v1_29_extra",
+      "gold_in_scope": false,
+      "probability": 0.5265452089363141
+    }
+  ],
+  "limitation": "Previously inspected authored suite; not a fresh holdout or Jev parity."
+}

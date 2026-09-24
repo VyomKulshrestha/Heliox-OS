@@ -257,12 +257,49 @@ The synthetic transfer is scored by
 [`evaluate_openjev_scope_head_transfer.py`](../daemon/scripts/evaluate_openjev_scope_head_transfer.py)
 using the already-frozen scaler, weights, and threshold.
 
+### Cross-domain relevance check (research only)
+
+The [Apache-2.0 TBAC task/tool dataset](https://github.com/outshift-open/tbac-research-datasets)
+offers a second, independently curated semantic-matching domain: 1,136
+validation and 935 official test pairs. We pin its repository revision and
+file hashes in [`tbac_tool_relevance.py`](../daemon/benchmarks/tbac_tool_relevance.py).
+Its label means **tool relevance, not permission to execute**. The official
+test has disjoint task text and tool names from validation; repeated validation
+tasks stay in one fit or calibration group.
+
+The released Open-Jev 2B base and adapter were frozen while GPU features were
+extracted with resumable 50-case checkpoints. Windows reported `nvlddmkm`
+events alongside two CUDA illegal-instruction failures during validation;
+resuming the same pinned job completed all 1,136 validation and 935 test rows.
+No driver or production runtime was changed. The mixed logistic head was fit on
+482 ScopeJudge train calls and 910 TBAC validation pairs. Its regularization and
+zero-calibration-false-positive threshold were selected using only the two
+calibration partitions, then frozen before either public test was scored.
+[`fit_openjev_multidomain_head.py`](../daemon/scripts/fit_openjev_multidomain_head.py)
+and the [frozen fit report](../daemon/benchmarks/openjev_2b_multidomain_head_v1.json)
+record the hashes, partitions, threshold, and per-case scores.
+
+| Frozen head at its calibration threshold | ScopeJudge test (546) | TBAC official test (935) | Inspected Heliox suite (60) |
+| --- | --- | --- | --- |
+| Scope-only head | 0 false positives, 285 false negatives | 401 false relevance positives, 16 negatives | 20 false allowances, 2 warnings |
+| Mixed head | 0 false positives, 487 false negatives | 3 false relevance positives, 344 negatives | 1 false allowance, 15 warnings |
+
+The mixed head's remaining Heliox false allowance would replace a source
+document even though the user requested a translation **in chat only**. The
+released Open-Jev checkpoint at its default threshold made **zero** false
+allowances on this same inspected suite, albeit with 15 false warnings; the
+mixed head is not an improvement on that safety measure. TBAC relevance and
+scope are different targets, and mixing them trades away substantial legitimate
+scope recall. The [synthetic transfer report](../daemon/benchmarks/openjev_2b_multidomain_transfer_v1.json)
+is not a fresh holdout. This head is **not** connected to Heliox execution,
+is not a production policy, and does not establish Jev parity.
+
 ### Soup fit assessment
 
 [Soup v0.75.0](https://github.com/MakazhanAlpamys/Soup/tree/f0d7696f1da1f86f965309b2d22e5fb48afb4fae)
 is an Apache-2.0 fine-tuning toolkit with a resident sequence-classifier LoRA
 path and a separate experimental low-VRAM layer-streaming path. Its
-[streaming task gate](https://github.com/MakazhanAlpamys/Soup/blob/f0d7696f1da1f86f965309b2d22e5fb48afb4fae/src/soup_cli/utils/layer_stream.py)
+[streaming task gate](https://github.com/MakazhanAlpamys/Soup/blob/f0d7696f1da1f86f965309b2d22e5fb48afb4fae/src/soup_cli/config/schema.py#L5798-L5812)
 permits SFT and several preference losses, **not classifier training**; its
 [classifier trainer](https://github.com/MakazhanAlpamys/Soup/blob/f0d7696f1da1f86f965309b2d22e5fb48afb4fae/src/soup_cli/trainer/classifier.py)
 loads a new sequence-classification model rather than Open-Jev's released
