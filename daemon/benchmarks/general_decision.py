@@ -28,18 +28,23 @@ def licensed_row(row: dict) -> bool:
     return license_text.startswith("CC0-1.0") and "not verified" not in license_text.lower()
 
 
+def validate_decision(kind: str, question: str, options: list[str]) -> None:
+    if kind not in KINDS or not isinstance(question, str) or not question.strip():
+        raise ValueError("Invalid decision question or kind")
+    if not isinstance(options, list) or not 2 <= len(options) <= 255:
+        raise ValueError("Decision needs 2-255 options")
+    if (any(not isinstance(value, str) or not value.strip() for value in options)
+            or len(options) != len(set(options))):
+        raise ValueError("Decision options must be unique nonempty strings")
+    if kind == "noul" and options != ["no", "yes"]:
+        raise ValueError("Noul target order must be no, yes")
+
+
 def validate_row(row: dict) -> None:
     kind = row["kind"]
     options = row["options"]
     target = row["target"]
-    if kind not in KINDS or not isinstance(row["question"], str) or not row["question"].strip():
-        raise ValueError("Invalid decision question or kind")
-    if not isinstance(options, list) or not 2 <= len(options) <= 255:
-        raise ValueError("Decision needs 2-255 options")
-    if len(options) != len(set(options)) or any(not isinstance(value, str) or not value.strip() for value in options):
-        raise ValueError("Decision options must be unique nonempty strings")
-    if kind == "noul" and options != ["no", "yes"]:
-        raise ValueError("Noul target order must be no, yes")
+    validate_decision(kind, row["question"], options)
     if len(target) != len(options) or any(not math.isfinite(value) or value < 0 for value in target):
         raise ValueError("Invalid target distribution")
     if not math.isclose(sum(target), 1.0, rel_tol=1e-5, abs_tol=1e-5):
@@ -123,6 +128,29 @@ def probabilities(logits: np.ndarray, temperature: float = 1.0) -> np.ndarray:
     shifted = scaled - max(scaled)
     values = np.exp(shifted)
     return values / sum(values)
+
+
+def format_answer(kind: str, options: list[str], logits: np.ndarray,
+                  temperature: float = 1.0) -> dict:
+    """Convert model scores to a typed decision without executing anything."""
+    if (kind not in KINDS or not options
+            or any(not isinstance(option, str) or not option.strip() for option in options)
+            or len(options) != len(set(options))):
+        raise ValueError("Unknown kind or duplicate/empty option list")
+    if kind == "noul" and options != ["no", "yes"]:
+        raise ValueError("Noul options must be no, yes")
+    values = probabilities(logits, temperature)
+    if len(values) != len(options):
+        raise ValueError("Score count does not match the declared options")
+    if kind == "noul":
+        return {"type": kind, "yes_probability": float(values[1])}
+    distribution = {option: float(value) for option, value in zip(options, values, strict=True)}
+    selected = int(np.argmax(values))
+    if kind == "choice":
+        return {"type": kind, "choice": options[selected], "probabilities": distribution,
+                "max_probability": float(values[selected])}
+    return {"type": kind, "expected_index": float(np.arange(len(values)) @ values),
+            "most_likely": options[selected], "probabilities": distribution}
 
 
 def metrics(rows: list[dict], logits: list[np.ndarray], temperature: float) -> dict:

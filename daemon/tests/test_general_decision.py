@@ -9,10 +9,12 @@ import pytest
 
 from benchmarks.general_decision import (
     candidate_prompts,
+    format_answer,
     licensed_row,
     metrics,
     probabilities,
     select_balanced,
+    validate_decision,
     validate_row,
     verify_disjoint,
 )
@@ -79,3 +81,29 @@ def test_variable_option_metrics_and_temperature() -> None:
     assert probabilities(logits[1], 0.5)[1] > probabilities(logits[1], 2.0)[1]
     with pytest.raises(ValueError, match="option counts"):
         metrics(examples, [logits[0], logits[0]], 1.0)
+
+
+def test_typed_answers_have_normalized_variable_option_probabilities() -> None:
+    yes = format_answer("noul", ["no", "yes"], np.array([0.0, 1.0]))
+    assert yes["yes_probability"] > 0.5
+    choice = format_answer("choice", ["left", "right", "wait"],
+                           np.array([0.0, 2.0, -1.0]))
+    assert choice["choice"] == "right"
+    assert sum(choice["probabilities"].values()) == pytest.approx(1.0)
+    score = format_answer("score", ["low", "medium", "high"],
+                          np.array([-2.0, 0.0, 2.0]))
+    assert 1.0 < score["expected_index"] < 2.0
+    with pytest.raises(ValueError, match="Score count"):
+        format_answer("choice", ["left", "right"], np.array([1.0]))
+    with pytest.raises(ValueError, match="option"):
+        format_answer("choice", [["left"], "right"], np.array([0.0, 1.0]))
+
+
+def test_invalid_option_types_fail_before_duplicate_check() -> None:
+    example = row()
+    example["options"] = [["left"], "right"]
+    with pytest.raises(ValueError, match="options"):
+        validate_row(example)
+    validate_decision("choice", "Which route?", ["walk", "train", "drive", "cycle"])
+    with pytest.raises(ValueError, match="Noul"):
+        validate_decision("noul", "Can I?", ["yes", "no"])
