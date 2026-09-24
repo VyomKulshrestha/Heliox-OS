@@ -79,10 +79,21 @@ def score_row(backbone, head, item: dict) -> np.ndarray:
     return logits.float().cpu().numpy().astype(np.float64)
 
 
-def evaluate(backbone, head, items: list[dict]) -> list[np.ndarray]:
+def evaluate(backbone, head, items: list[dict], label: str = "") -> list[np.ndarray]:
     backbone.eval()
     head.eval()
-    return [score_row(backbone, head, item) for item in items]
+    results = []
+    for index, item in enumerate(items, 1):
+        try:
+            results.append(score_row(backbone, head, item))
+        except RuntimeError as exc:
+            raise RuntimeError(f"{label or 'evaluation'} failed at row {index}/{len(items)} "
+                               f"id={item['row']['id']} "
+                               f"tokens={max(len(ids) for ids in item['sequences'])}") from exc
+        if label and (index % 128 == 0 or index == len(items)):
+            print(json.dumps({"event": "evaluation", "split": label,
+                              "rows": index, "total": len(items)}), flush=True)
+    return results
 
 
 def gradient_row(backbone, head, item: dict, *, brier_weight: float, scale: float) -> float:
@@ -107,8 +118,11 @@ def gradient_row(backbone, head, item: dict, *, brier_weight: float, scale: floa
     if not torch.isfinite(loss):
         raise FloatingPointError("Nonfinite decision loss")
     score_gradient = torch.autograd.grad(loss, score_variables)[0].detach()
-    for ids, derivative in zip(item["sequences"], score_gradient, strict=True):
-        (scalar_score(backbone, head, ids).float() * derivative / scale).backward()
+    for candidate, (ids, derivative) in enumerate(zip(item["sequences"], score_gradient, strict=True)):
+        try:
+            (scalar_score(backbone, head, ids).float() * derivative / scale).backward()
+        except RuntimeError as exc:
+            raise RuntimeError(f"Training failed for id={row['id']} candidate={candidate} tokens={len(ids)}") from exc
     return float(loss.detach().cpu())
 
 
@@ -135,6 +149,7 @@ def run(args: argparse.Namespace) -> dict:
     from peft import LoraConfig, get_peft_model
     from torch import nn
     from transformers import AutoModelForCausalLM, AutoTokenizer
+    from transformers.utils import logging as transformers_logging
 
     if not torch.cuda.is_available() or torch.cuda.mem_get_info()[0] < 4 * 1024**3:
         raise RuntimeError("At least 4 GiB free CUDA memory is required")
@@ -143,6 +158,7 @@ def run(args: argparse.Namespace) -> dict:
     if args.output_dir.exists() or args.report.exists():
         raise FileExistsError("Research output already exists; choose fresh artifact and report paths")
     torch.manual_seed(args.seed)
+    transformers_logging.disable_progress_bar()
     np.random.seed(args.seed)
     random.seed(args.seed)
     limits = {"train": args.train_rows, "calibration": args.calibration_rows,
@@ -170,7 +186,7 @@ def run(args: argparse.Namespace) -> dict:
     tokenizer = AutoTokenizer.from_pretrained(path, local_files_only=True)
     base = AutoModelForCausalLM.from_pretrained(
         path, local_files_only=True, dtype=torch.bfloat16,
-        device_map={"": 0}, attn_implementation="eager",
+        device_map={"": 0}, attn_implementation=args.attention,
     )
     yes, no = (tokenizer.encode(word, add_special_tokens=False) for word in ("Yes", "No"))
     if len(yes) != 1 or len(no) != 1:
@@ -200,9 +216,9 @@ def run(args: argparse.Namespace) -> dict:
     print(json.dumps({"event": "tokenized", "kept": {name: len(part) for name, part in encoded.items()},
                       "overlong": overlong}), flush=True)
 
-    baseline_test = evaluate(backbone, head, encoded["test"])
-    baseline_ood = evaluate(backbone, head, encoded["ood"])
-    baseline_scope = evaluate(backbone, head, encoded["scope_test"]) if scope_manifest else None
+    baseline_test = evaluate(backbone, head, encoded["test"], "baseline_test")
+    baseline_ood = evaluate(backbone, head, encoded["ood"], "baseline_ood")
+    baseline_scope = evaluate(backbone, head, encoded["scope_test"], "baseline_scope") if scope_manifest else None
     optimizer = torch.optim.AdamW([
         {"params": [parameter for parameter in backbone.parameters() if parameter.requires_grad], "lr": args.lr},
         {"params": head.parameters(), "lr": args.head_lr},
@@ -233,18 +249,19 @@ def run(args: argparse.Namespace) -> dict:
                               "peak_vram_gib": round(torch.cuda.max_memory_allocated() / 1024**3, 3)}), flush=True)
 
     calibration_items = encoded["calibration"] + (encoded["scope_calibration"] if scope_manifest else [])
-    calibration_logits = evaluate(backbone, head, calibration_items)
+    calibration_logits = evaluate(backbone, head, calibration_items, "calibration")
     temperature = fit_temperature(calibration_logits, [item["row"] for item in calibration_items])
-    test_logits = evaluate(backbone, head, encoded["test"])
-    ood_logits = evaluate(backbone, head, encoded["ood"])
-    trained_scope = evaluate(backbone, head, encoded["scope_test"]) if scope_manifest else None
+    test_logits = evaluate(backbone, head, encoded["test"], "trained_test")
+    ood_logits = evaluate(backbone, head, encoded["ood"], "trained_ood")
+    trained_scope = evaluate(backbone, head, encoded["scope_test"], "trained_scope") if scope_manifest else None
     args.output_dir.mkdir(parents=True, exist_ok=True)
     backbone.save_pretrained(args.output_dir / "adapter")
     np.savez_compressed(args.output_dir / "head.npz",
                         weights=head.weight.detach().cpu().numpy(),
                         bias=head.bias.detach().cpu().numpy(),
                         temperature=temperature, model_revision=REVISION,
-                        max_length=args.max_length, lora_rank=args.lora_rank)
+                        max_length=args.max_length, lora_rank=args.lora_rank,
+                        attention_implementation=args.attention)
 
     report = {
         "model": MODEL, "revision": REVISION,
@@ -252,6 +269,7 @@ def run(args: argparse.Namespace) -> dict:
         "dataset_manifests": manifests, "seed": args.seed,
         "selected_rows": limits, "evaluated_rows": {name: len(part) for name, part in encoded.items()},
         "excluded_overlong": overlong, "max_length": args.max_length,
+        "attention_implementation": args.attention,
         "lora_rank": args.lora_rank, "accumulation": args.accumulation,
         "learning_rates": {"adapter": args.lr, "head": args.head_lr},
         "brier_weight": args.brier_weight, "calibration_temperature": temperature,
@@ -288,6 +306,7 @@ def main() -> None:
     parser.add_argument("--ood-rows", type=int, default=128)
     parser.add_argument("--max-length", type=int, default=512)
     parser.add_argument("--lora-rank", type=int, default=8)
+    parser.add_argument("--attention", choices=("eager", "sdpa"), default="eager")
     parser.add_argument("--accumulation", type=int, default=4)
     parser.add_argument("--lr", type=float, default=2e-5)
     parser.add_argument("--head-lr", type=float, default=5e-5)

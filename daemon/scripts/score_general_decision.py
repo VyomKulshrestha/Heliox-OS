@@ -53,9 +53,11 @@ def score_requests(payloads: list[dict], output_dir: Path, report_path: Path) ->
     from peft import PeftModel
     from torch import nn
     from transformers import AutoModelForCausalLM, AutoTokenizer
+    from transformers.utils import logging as transformers_logging
 
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is required for this research adapter")
+    transformers_logging.disable_progress_bar()
     report, head_path = verify_artifact(output_dir, report_path)
     with np.load(head_path, allow_pickle=False) as saved:
         if str(saved["model_revision"]) != REVISION:
@@ -64,8 +66,11 @@ def score_requests(payloads: list[dict], output_dir: Path, report_path: Path) ->
         temperature = float(saved["temperature"])
         weights = saved["weights"].copy()
         bias = saved["bias"].copy()
+        attention = str(saved["attention_implementation"]) if "attention_implementation" in saved else "eager"
     if max_length != report["max_length"]:
         raise ValueError("Head token limit differs from research report")
+    if attention not in ("eager", "sdpa") or attention != report.get("attention_implementation", "eager"):
+        raise ValueError("Head attention mode differs from research report")
 
     model_path = snapshot_download(MODEL, revision=REVISION, local_files_only=True)
     tokenizer = AutoTokenizer.from_pretrained(model_path, local_files_only=True)
@@ -74,7 +79,7 @@ def score_requests(payloads: list[dict], output_dir: Path, report_path: Path) ->
         raise ValueError("Decision exceeds the trained token limit; input was not truncated")
     base = AutoModelForCausalLM.from_pretrained(
         model_path, local_files_only=True, dtype=torch.bfloat16,
-        device_map={"": 0}, attn_implementation="eager",
+        device_map={"": 0}, attn_implementation=attention,
     )
     backbone = PeftModel.from_pretrained(base.model, output_dir / "adapter", is_trainable=False)
     del base
