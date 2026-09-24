@@ -29,6 +29,7 @@ from benchmarks.general_decision import (  # noqa: E402
     probabilities,
     verify_disjoint,
 )
+from benchmarks.scopejudge_general import load_scope_parts, scope_metrics  # noqa: E402
 from scripts.train_qwen_scope_noul import MODEL, REVISION  # noqa: E402
 
 
@@ -139,6 +140,8 @@ def run(args: argparse.Namespace) -> dict:
         raise RuntimeError("At least 4 GiB free CUDA memory is required")
     if args.accumulation < 1 or args.max_length < 64 or args.lora_rank < 1:
         raise ValueError("Invalid training configuration")
+    if args.output_dir.exists() or args.report.exists():
+        raise FileExistsError("Research output already exists; choose fresh artifact and report paths")
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
     random.seed(args.seed)
@@ -149,10 +152,19 @@ def run(args: argparse.Namespace) -> dict:
         rows[split], manifests[split] = load_split(split, limit, args.seed + offset)
         if not rows[split]:
             raise ValueError(f"No licensed rows in {split}")
+    scope_manifest = None
+    if args.scopejudge_path is not None:
+        scope_limits = {"scope_train": args.scope_train_rows,
+                        "scope_calibration": args.scope_calibration_rows,
+                        "scope_test": args.scope_test_rows}
+        scope_parts, scope_manifest = load_scope_parts(args.scopejudge_path, seed=args.seed,
+                                                       limits=scope_limits)
+        rows.update(scope_parts)
     verify_disjoint(rows)
     print(json.dumps({"event": "data_selected", "counts": {name: len(part) for name, part in rows.items()},
                       "excluded_unverified_license": {name: entry["excluded_unverified_license"]
-                                                     for name, entry in manifests.items()}}), flush=True)
+                                                     for name, entry in manifests.items()},
+                      "scopejudge": scope_manifest}), flush=True)
 
     path = snapshot_download(MODEL, revision=REVISION, local_files_only=True)
     tokenizer = AutoTokenizer.from_pretrained(path, local_files_only=True)
@@ -190,19 +202,21 @@ def run(args: argparse.Namespace) -> dict:
 
     baseline_test = evaluate(backbone, head, encoded["test"])
     baseline_ood = evaluate(backbone, head, encoded["ood"])
+    baseline_scope = evaluate(backbone, head, encoded["scope_test"]) if scope_manifest else None
     optimizer = torch.optim.AdamW([
         {"params": [parameter for parameter in backbone.parameters() if parameter.requires_grad], "lr": args.lr},
         {"params": head.parameters(), "lr": args.head_lr},
     ], weight_decay=0.01)
     backbone.train()
     head.train()
-    order = list(range(len(encoded["train"])))
+    training_items = encoded["train"] + (encoded["scope_train"] if scope_manifest else [])
+    order = list(range(len(training_items)))
     random.Random(args.seed).shuffle(order)
     started = time.monotonic()
     for start in range(0, len(order), args.accumulation):
         group = order[start:start + args.accumulation]
         optimizer.zero_grad(set_to_none=True)
-        losses = [gradient_row(backbone, head, encoded["train"][index],
+        losses = [gradient_row(backbone, head, training_items[index],
                                brier_weight=args.brier_weight, scale=len(group)) for index in group]
         norm = torch.nn.utils.clip_grad_norm_(
             [parameter for parameter in backbone.parameters() if parameter.requires_grad] + list(head.parameters()),
@@ -218,10 +232,12 @@ def run(args: argparse.Namespace) -> dict:
                               "elapsed_seconds": round(time.monotonic() - started, 1),
                               "peak_vram_gib": round(torch.cuda.max_memory_allocated() / 1024**3, 3)}), flush=True)
 
-    calibration_logits = evaluate(backbone, head, encoded["calibration"])
-    temperature = fit_temperature(calibration_logits, [item["row"] for item in encoded["calibration"]])
+    calibration_items = encoded["calibration"] + (encoded["scope_calibration"] if scope_manifest else [])
+    calibration_logits = evaluate(backbone, head, calibration_items)
+    temperature = fit_temperature(calibration_logits, [item["row"] for item in calibration_items])
     test_logits = evaluate(backbone, head, encoded["test"])
     ood_logits = evaluate(backbone, head, encoded["ood"])
+    trained_scope = evaluate(backbone, head, encoded["scope_test"]) if scope_manifest else None
     args.output_dir.mkdir(parents=True, exist_ok=True)
     backbone.save_pretrained(args.output_dir / "adapter")
     np.savez_compressed(args.output_dir / "head.npz",
@@ -247,8 +263,18 @@ def run(args: argparse.Namespace) -> dict:
         "head_sha256": hashlib.sha256((args.output_dir / "head.npz").read_bytes()).hexdigest(),
         "peak_vram_gib": round(torch.cuda.max_memory_allocated() / 1024**3, 3),
         "elapsed_seconds": round(time.monotonic() - started, 1),
-        "limitation": "Licensed public synthetic sample only; not proprietary Jev parity or Heliox execution authority.",
+        "limitation": ("Public synthetic decisions plus expert-labeled security scope calls; "
+                       "not Jev parity or Heliox execution authority." if scope_manifest else
+                       "Licensed public synthetic sample only; not proprietary Jev parity or Heliox execution authority."),
     }
+    if scope_manifest:
+        report.update({
+            "scopejudge": scope_manifest,
+            "baseline_scope": scope_metrics([item["row"] for item in encoded["scope_test"]],
+                                            baseline_scope, 1.0),
+            "trained_scope": scope_metrics([item["row"] for item in encoded["scope_test"]],
+                                           trained_scope, temperature),
+        })
     args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     return report
 
@@ -268,12 +294,19 @@ def main() -> None:
     parser.add_argument("--brier-weight", type=float, default=0.1)
     parser.add_argument("--progress-every", type=int, default=32)
     parser.add_argument("--seed", type=int, default=20260924)
+    parser.add_argument("--scopejudge-path", type=Path, help="Pinned MIT ScopeJudge train.jsonl for multi-task study")
+    parser.add_argument("--scope-train-rows", type=int, default=512)
+    parser.add_argument("--scope-calibration-rows", type=int, default=128)
+    parser.add_argument("--scope-test-rows", type=int, default=128)
     parser.add_argument("--output-dir", type=Path, default=root / "benchmarks/.bench-state/qwen_general_v1")
     parser.add_argument("--report", type=Path, default=root / "benchmarks/qwen_general_probe_v1.json")
     args = parser.parse_args()
     if any(value < 1 for value in (args.train_rows, args.calibration_rows, args.test_rows,
                                    args.ood_rows, args.progress_every)):
         parser.error("Row limits and progress interval must be positive")
+    if args.scopejudge_path is not None and any(value < 2 for value in (
+            args.scope_train_rows, args.scope_calibration_rows, args.scope_test_rows)):
+        parser.error("ScopeJudge row limits must be at least two")
     report = run(args)
     print(json.dumps({key: report[key] for key in ("trained_test", "trained_ood", "peak_vram_gib")}, indent=2))
 
