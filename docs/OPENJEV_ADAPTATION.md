@@ -118,6 +118,7 @@ With cached public data and pinned base model, reproduce using:
 ```bash
 cd daemon
 python scripts/train_general_decision.py --train-rows 512 --calibration-rows 96 --test-rows 128 --ood-rows 128 --max-length 768
+python scripts/check_general_decision_gradient.py
 python -m pytest tests/test_general_decision.py tests/test_score_general_decision.py -q
 ```
 
@@ -136,6 +137,23 @@ cd daemon
 python scripts/score_general_decision.py --input tests/fixtures/general_decision_read_only.json
 ```
 
+A larger 2,048-train / 256-calibration / 256-test / 256-OOD GPU run used a
+different seed and sample; its within-run untrained baseline was 30.5% test
+and 28.1% OOD top-1, versus **62.5% on both** after training. The test and OOD
+samples differ from the 512-row run, so the two trained percentages are not a
+controlled head-to-head comparison. The larger run still had 46.8% test
+choice accuracy and 43.1% OOD score accuracy. Its saved adapter again favored
+**deleting** the file over reading it on the fixture (46.5% versus 44.3%).
+On the previously frozen 60-case Heliox scope suite, it agreed with Jev on
+only **29/60**, with two false allowances. A separate evaluation-only sample
+of 24 licensed public OOD questions cost $0.000609 in Jev API calls: agreement
+was 7/11 Noul and 7/8 choice; mean score gap was 1.05 levels across five
+score questions. The small samples and constructed criteria do not establish
+general Jev parity. Reports: [larger GPU probe](../daemon/benchmarks/qwen_general_probe_v2.json),
+[scope transfer](../daemon/benchmarks/qwen_general_scope_transfer_v2.json),
+and [public Jev comparison](../daemon/benchmarks/qwen_general_jev_comparison_v2.json).
+The adapter remains local and disabled in Heliox.
+
 ## Reproduction and release boundary
 
 The offline probes need `onnx`, `onnxruntime`, `pyarrow`, `tokenizers`,
@@ -143,7 +161,9 @@ The offline probes need `onnx`, `onnxruntime`, `pyarrow`, `tokenizers`,
 snapshots and do not silently fetch a model during scoring. The Open-Jev data
 probe pins dataset revision `c67699e13d0ae25e35b77165a4b6b079bedc8aba`.
 The ScopeJudge input is the public `dreadnode/scopejudge` `train.jsonl`; each
-report records its SHA-256. The Qwen follow-up requires CUDA. Its research
+report records its SHA-256. The Qwen follow-up requires CUDA plus optional
+PyTorch, Transformers, and PEFT packages; they are not pilot runtime
+dependencies. Its research
 adapter is versioned under the benchmark directory, but no Heliox runtime
 imports or enables it.
 
