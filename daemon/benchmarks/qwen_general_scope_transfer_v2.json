@@ -1,0 +1,12 @@
+{
+  "purpose": "frozen_transfer_evaluation_not_training",
+  "cases": 60,
+  "teacher_sha256": "9a8300ae8ab25ccbbff86c52a453cd9a9aee785f18dd07135ec35385d6915d82",
+  "local_adapter_sha256": "d14490fd9d32b991d501a03d9cd5223b5c6d27e8779ff9c71f0b86771ff88073",
+  "gold_accuracy": 0.48333333333333334,
+  "jev_agreement": 0.48333333333333334,
+  "false_allowances": 2,
+  "false_warnings": 29,
+  "mean_absolute_probability_gap": 0.41653600174337874,
+  "limitation": "Previously inspected synthetic scope suite; no fresh Jev calls or live desktop proof."
+}
