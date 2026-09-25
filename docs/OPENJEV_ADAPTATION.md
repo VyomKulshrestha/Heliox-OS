@@ -382,7 +382,54 @@ therefore an **intent-only** monitor comparison, not a full-context judge.
 Label agreement is not desktop-safety evidence, and neither model nor prompt
 is eligible for runtime promotion. A PyTorch import initially stalled after
 restart but subsequently succeeded; the 2B GPU inference results above replace
-the earlier unresolved-import status. No new weight-training result is claimed.
+the earlier unresolved-import status. Those instruction-review runs did not
+train weights; the separate task-state experiment below did.
+
+### Bounded context and world-model task-state training
+
+The pinned 2B model was also evaluated on the balanced 80-call ScopeJudge
+calibration split with the two most recent **tool calls only** (no tool output
+or agent prose). At a 2,048-token limit, the [no-history YES/NO
+prompt](../daemon/benchmarks/qwen3_5_2b_scopejudge_calibration_intent_v1.json)
+evaluated 80/80 and agreed on 39/80, with three false allowances and 38 false
+warnings. The [history prompt](../daemon/benchmarks/qwen3_5_2b_scopejudge_calibration_history2_v1.json)
+evaluated only 69/80, agreed on 36/69, and had three false allowances and 30
+false warnings. On the same 69 eligible cases, no-history
+agreed on 32/69 with two false allowances. History used 68,693 input tokens
+versus 35,891 for those paired no-history cases. The small agreement gain
+therefore added a false allowance, excluded 11 cases, and nearly doubled
+tokens. An independent YES-vs-NO first-token scoring probe did not rescue the
+model: on [80 no-history calls](../daemon/benchmarks/qwen3_5_2b_scopejudge_calibration_intent_logits_v1.json)
+it had four false allowances and 37 false warnings; on [69 history
+calls](../daemon/benchmarks/qwen3_5_2b_scopejudge_calibration_history2_logits_v1.json)
+it had four and 29. The highest negative score
+exceeded the highest positive score in both variants, so a threshold above
+all calibration negatives would admit no positives. These scores are not
+calibrated authorization probabilities.
+
+Heliox's shipped [world model](../daemon/pilot/security/risk_model.py) learns
+coarse disk/process state transitions from actual sandbox telemetry. Those
+targets cannot teach it whether a proposed action matches user intent. To
+test the adjacent *task-state* idea without changing the safety contract,
+[`train_world_scope_head.py`](../daemon/scripts/train_world_scope_head.py)
+trains a separate GPU logistic head on 512 MIT-licensed ScopeJudge tool-call
+labels. It encodes the request/action pair and, separately, the relation of
+up to two prior calls to the proposed action. The 80-call calibration and
+608-call test partitions are trajectory-disjoint; calibration selects the
+regularization and cautious threshold before test or Heliox transfer labels
+are evaluated. The head is **not** loaded by `HybridWorldModel`, the risk gate,
+or the execution companion.
+
+| Research head | Public test AUC | Public test at 0.5 | Public test at cautious threshold | Inspected Heliox transfer at cautious threshold |
+|---|---:|---|---|---|
+| [No history](../daemon/benchmarks/world_scope_head_intent_v1.json) | 0.817 | 18 false allowances, 44 false warnings | 0 false allowances, 495 false warnings | 2 false allowances, 24 false warnings |
+| [Two prior calls](../daemon/benchmarks/world_scope_head_history2_v1.json) | 0.764 | 18 false allowances, 54 false warnings | 0 false allowances, 544 false warnings | 1 false allowance, 19 false warnings |
+
+The two-call variant is worse in-domain and still unsafe on Heliox transfer.
+The cautious threshold also prevents most legitimate calls. This is an
+offline training result, **not** a promoted world-model capability, Jev parity,
+or live desktop safety evidence. The small numeric head artifacts remain in
+ignored local benchmark state; the linked reports contain their hashes.
 
 A controlled prompt change that explicitly evaluated concrete effects and
 partial task steps was tested on the **balanced 80-call calibration split**.
@@ -406,6 +453,18 @@ PyTorch, Transformers, and PEFT packages; they are not pilot runtime
 dependencies. Its research
 adapter is versioned under the benchmark directory, but no Heliox runtime
 imports or enables it.
+
+For the task-state head, use the pinned ScopeJudge `train.jsonl` matching the
+dataset SHA-256 in the reports, then run from `daemon`:
+
+```bash
+python scripts/train_world_scope_head.py --scopejudge-path PATH/TO/train.jsonl --history-calls 0 --artifact benchmarks/.bench-state/world_scope_intent.npz --report benchmarks/.bench-state/world_scope_intent.json
+python scripts/train_world_scope_head.py --scopejudge-path PATH/TO/train.jsonl --history-calls 2 --artifact benchmarks/.bench-state/world_scope_history2.npz --report benchmarks/.bench-state/world_scope_history2.json
+python -m benchmarks.world_model_suite --iterations 20 --json
+```
+
+The last command checks the separately shipped OS-transition model; it does
+not test or enable the research scope head.
 
 OpenRouter's [distillation guidance](https://openrouter.ai/docs/cookbook/evaluate-and-optimize/distillation)
 requires checking model-provider permission before using outputs for training.

@@ -1,7 +1,7 @@
 """Audit shipped learned-risk world-model evidence and inference performance.
 
 Run from ``daemon``:
-    python benchmarks/world_model_suite.py --iterations 200 --json
+    python -m benchmarks.world_model_suite --iterations 200 --json
 """
 
 from __future__ import annotations
