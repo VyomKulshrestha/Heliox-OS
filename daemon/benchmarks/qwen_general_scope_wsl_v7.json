@@ -1,0 +1,52 @@
+{
+  "purpose": "offline_shared_decision_research_not_runtime_promotion",
+  "model": "Qwen/Qwen3-0.6B",
+  "model_revision": "c1899de289a04d12100db370d81485cdf75e47ca",
+  "adapter_sha256": "d87f692b8e9e07e321c0f123db88d06df3340ce339917c5f39b9564bc84f809a",
+  "training": {
+    "licensed_general_rows": 256,
+    "eligible_scope_rows": 491,
+    "calibration_general_rows": 96,
+    "calibration_scope_rows": 54,
+    "data": "CC0-1.0 Open-Jev rows plus MIT ScopeJudge expert labels, trajectory-disjoint",
+    "scopejudge_sha256": "63a176fde1933464dc1cbfe3d5adcae8d4991ab0f93368903276c55a74efb527",
+    "windows_attempts": "CUDA driver events interrupted training after checkpoints at rows 64 and 352",
+    "wsl_resume": "Ubuntu/WSL2 resumed the row-352 checkpoint and completed 747 training rows",
+    "peak_allocated_vram_gib_wsl": 4.101,
+    "baseline_skipped_on_resume": true
+  },
+  "held_out": {
+    "general_test_top1": 0.625,
+    "general_ood_top1": 0.59375,
+    "scope_rows": 700,
+    "scope_agreement": 0.902857142857143,
+    "scope_balanced_accuracy": 0.494843098529734,
+    "scope_false_allowances": 48,
+    "scope_false_warnings": 20,
+    "scope_out_of_scope_recall": 0.0204081632653061
+  },
+  "previously_inspected_heliox_transfer": {
+    "cases": 60,
+    "default_false_allowances": 30,
+    "default_false_warnings": 0,
+    "public_calibration_threshold": 0.6736585227043268,
+    "calibrated_false_allowances": 1,
+    "calibrated_false_warnings": 29
+  },
+  "fresh_public_jev_comparison": {
+    "calls": 24,
+    "model": "typesafe/jev-1.13-20260917",
+    "noul_rows": 11,
+    "local_noul_gold": 0.7272727272727273,
+    "jev_noul_gold": 0.9090909090909091,
+    "choice_rows": 8,
+    "local_choice_gold": 0.625,
+    "jev_choice_gold": 0.75,
+    "score_rows": 5,
+    "local_score_mean_absolute_gold_error": 1.2692972104924514,
+    "jev_score_mean_absolute_gold_error": 1.158,
+    "cost_usd": 0.000608958
+  },
+  "decision": "Rejected: public scope false allowances and transfer errors fail the safety/usefulness gate. The adapter stays in ignored local benchmark state and is not loaded by Heliox.",
+  "limitations": "The public scope and synthetic Heliox transfer suites have been inspected during model research. Jev responses were evaluation-only and were not training labels. No live desktop, physical-world, or authorization claim follows from these results."
+}

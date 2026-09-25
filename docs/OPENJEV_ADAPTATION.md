@@ -463,6 +463,38 @@ generated tokens without an answer. These are failed probes, not a trained
 improvement. The prompt file and configurable evaluation settings are retained
 for reproducible calibration experiments, but the candidate remains offline.
 
+### Shared GPU retry and world/task-state transfer
+
+The shared Open-Jev-style candidate model was retrained on 256 licensed general
+decisions plus 491 token-eligible ScopeJudge calls. Windows CUDA interrupted
+training after checkpoints at rows 64 and 352, with `nvlddmkm` events 13/153.
+An isolated Ubuntu/WSL2 CUDA environment loaded the **same row-352 checkpoint**
+and completed all 747 rows; this avoids attributing the Windows failure to a
+particular cause. [NVIDIA's WSL guidance](https://docs.nvidia.com/cuda/wsl-user-guide/)
+explains that WSL uses the Windows-host GPU driver, not a separate Linux driver.
+The resumed report correctly marks the skipped baseline as unavailable.
+
+The result is **not usable for Heliox scope decisions**. On 700 eligible,
+trajectory-held-out public calls, its 90.3% overall agreement hid 49.5%
+balanced accuracy: it falsely allowed **48 of 49** out-of-scope calls. On the
+previously inspected 60-case Heliox/Jev suite it falsely allowed all 30
+out-of-scope cases at the default threshold. A threshold fixed solely from
+public calibration negatives reduced that transfer count to one, but falsely
+warned on 29 legitimate cases. The 128-row general test and OOD top-1 scores
+were 62.5% and 59.4%. A fresh, evaluation-only 24-call public OOD comparison
+favored Jev on the 11 binary and eight choice cases; neither those calls nor
+the older synthetic Jev labels entered this model's training. Counts, hashes,
+and limitations are in [the frozen summary](../daemon/benchmarks/qwen_general_scope_wsl_v7.json).
+The adapter remains in ignored local benchmark state and is **not** loaded by
+Heliox's world model, companion, or approval path.
+
+We also examined [Look Before You Click](https://huggingface.co/datasets/ash256/look-before-you-click)
+and [AutoElicit-Exec](https://huggingface.co/datasets/osunlp/AutoElicit-Exec)
+as desktop-trajectory sources. Their reviewer/trajectory outcomes are not
+independent, per-step expert authorization labels, so they were not mixed into
+the scope training split. More screen context alone does not repair the
+missing label quality or the measured false-allowance rate.
+
 ## Reproduction and release boundary
 
 The offline probes need `onnx`, `onnxruntime`, `pyarrow`, `tokenizers`,
