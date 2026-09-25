@@ -446,6 +446,43 @@ python -m scripts.sample_world_visual_transitions --pages 24 --page-length 50 --
 python -m scripts.train_world_visual_transition --device cuda --architecture spatial --disable-cudnn --features benchmarks/.bench-state/tess_visual_repro.npz --source-report benchmarks/.bench-state/tess_visual_repro.json --report benchmarks/.bench-state/tess_visual_spatial_repro.json --weights benchmarks/.bench-state/tess_visual_spatial_repro.pt
 ```
 
+### Controlled action-alignment check
+
+The [state-transition pretraining study](https://arxiv.org/abs/2607.24112)
+jointly optimizes forward and inverse GUI dynamics from explicit
+`(screen, action, next screen)` tuples. To separate a broken trainer from an
+ambiguous public trajectory sample, `daemon/scripts/collect_controlled_ui_transitions.py`
+now creates isolated headless pages, executes one click or mouse move per
+sample, checks the resulting DOM state, and retains only the same in-memory
+16×16 feature used above. It never visits a remote page, touches the user's
+desktop, or saves raw screenshots. Four generated layout families are used for
+fit, one for validation, and a different one for evaluation; each of two seeds
+produced 320/80/80 transitions. The ignored source feature SHA-256 values are
+`74adc438341f187845ce58f1393277f015f6e400b2f41cc59916dbdff5a44e4e`
+and `823ab8bb94856267049c42873f5d0d1f289b0b04e06502add1662869dd9b2758`.
+
+The same spatial predictor trained on CUDA passed an action-control check on
+both held-out layout families. For seed `20260926`, evaluation weighted MSE
+was **0.02938** for unchanged screen, **0.00176** with the correct action,
+**0.02792** with a fully shuffled action, and **0.02098** when locations were
+shuffled only among rows of the same action type. For seed `20260927`, the
+same values were **0.02922**, **0.00216**, **0.02781**, and **0.02021**.
+This demonstrates that the pipeline can use both action type and location for
+simple, causally verified button toggles. It does **not** rescue the failed
+public-trajectory result, establish transfer to real desktop applications,
+or justify loading these weights into Heliox. The controlled pages have only
+two controls and one predictable effect; task context, text, menus, delayed
+effects, and competing external events are absent. Neither the paper's inverse
+dynamics objective nor its larger multimodal backbone has been implemented
+here. Both trained artifacts remain ignored local research files.
+
+Reproduce from `daemon/` with fresh ignored paths:
+
+```bash
+python -m scripts.collect_controlled_ui_transitions --samples-per-family 80 --seed 20260926 --features benchmarks/.bench-state/controlled_ui_repro.npz --report benchmarks/.bench-state/controlled_ui_repro.json
+python -m scripts.train_world_visual_transition --device cuda --architecture spatial --disable-cudnn --features benchmarks/.bench-state/controlled_ui_repro.npz --source-report benchmarks/.bench-state/controlled_ui_repro.json --report benchmarks/.bench-state/controlled_ui_model_repro.json --weights benchmarks/.bench-state/controlled_ui_model_repro.pt
+```
+
 The shipped structured predictor remains available without learned weights.
 It now identifies the destination (not source or download URL) as the changed
 file for copy/download, models moves as separate source-removal and
