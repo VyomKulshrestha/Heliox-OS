@@ -213,7 +213,10 @@ async def build_catalog() -> dict[str, Any]:
                     "method": verifier or "executor_result_only",
                     "independent_postcondition": independent,
                     "note": (
-                        "Verifier checks an observed post-condition."
+                        "Verifier checks this post-condition only when the live state is unambiguous; "
+                        "other outcomes remain executor-reported."
+                        if verifier and verifier.startswith("conditional_")
+                        else "Verifier checks an observed post-condition."
                         if independent
                         else "No independent post-condition check is currently registered."
                     ),
