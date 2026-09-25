@@ -476,6 +476,16 @@ effects, and competing external events are absent. Neither the paper's inverse
 dynamics objective nor its larger multimodal backbone has been implemented
 here. Both trained artifacts remain ignored local research files.
 
+An inverse probe tests whether these 16×16 features retain information about
+the executed action. On held-out controlled pages it reached 0.80 action-type
+accuracy versus a 0.50 majority baseline; click coordinate mean absolute
+error was 0.1298 versus a 0.2334 center baseline. On the public TESS sample
+it reached only 0.7616 accuracy versus a 0.7815 majority baseline, with
+0.3040 macro recall. This is a controlled representation check, not desktop
+action understanding or joint forward/inverse training. Reproduce with
+`python -m scripts.probe_world_visual_inverse --help`; keep resulting weights
+and reports in ignored `.bench-state` paths.
+
 Reproduce from `daemon/` with fresh ignored paths:
 
 ```bash
