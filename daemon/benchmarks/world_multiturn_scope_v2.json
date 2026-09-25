@@ -1,0 +1,93 @@
+{
+  "purpose": "offline_multiturn_world_task_state_research_not_runtime_promotion",
+  "backbone": "Qwen/Qwen3.5-2B",
+  "backbone_revision": "15852e8c16360a2fea060d615a32b45270f8a8fc",
+  "representation": "Frozen final-token hidden state, batch-of-four extraction, and a numeric logistic head",
+  "training_sources": [
+    "Apache-2.0 Cisco Outshift TBAC generated pre-call dialogue validation",
+    "MIT ScopeJudge expert tool-call train"
+  ],
+  "tbac_revision": "6385bd37654fbc36b84dd0341f0752654785dce3",
+  "agentic_validation_sha256": "2fd100bcc5973792d1fa35e4309eeb30a6dfb7543f14201db0f2015b295261a8",
+  "agentic_test_sha256": "b7bfe395aa24ca6442a23b232ff014ebbe2bb3680738db54baa8ed8701c08231",
+  "scopejudge_sha256": "63a176fde1933464dc1cbfe3d5adcae8d4991ab0f93368903276c55a74efb527",
+  "max_input_tokens": 1024,
+  "selected_rows": {
+    "agentic_train": 873,
+    "agentic_calibration": 263,
+    "agentic_test": 935,
+    "tbac_test": 935,
+    "scope_train": 512,
+    "scope_calibration": 80,
+    "scope_test": 608,
+    "heliox": 60
+  },
+  "excluded_overlong": {
+    "agentic_train": 22,
+    "agentic_calibration": 6,
+    "agentic_test": 26,
+    "tbac_test": 0,
+    "scope_train": 5,
+    "scope_calibration": 6,
+    "scope_test": 21,
+    "heliox": 0
+  },
+  "selected_regularization_C": 0.001,
+  "public_calibration_threshold": 0.8970551403148751,
+  "agentic_test_default": {
+    "auc": 0.9253459076202932,
+    "balanced_accuracy": 0.8474933375291329,
+    "out_of_scope_rows": 398,
+    "false_allowances": 77,
+    "false_warnings": 57
+  },
+  "agentic_test_cautious": {
+    "balanced_accuracy": 0.6351744043111841,
+    "out_of_scope_rows": 398,
+    "false_allowances": 3,
+    "false_warnings": 369
+  },
+  "tbac_test_default": {
+    "auc": 0.881137560993676,
+    "balanced_accuracy": 0.7283686564262104,
+    "out_of_scope_rows": 417,
+    "false_allowances": 204,
+    "false_warnings": 28
+  },
+  "tbac_test_cautious": {
+    "balanced_accuracy": 0.6929066785181893,
+    "out_of_scope_rows": 417,
+    "false_allowances": 13,
+    "false_warnings": 302
+  },
+  "scopejudge_test_default": {
+    "auc": 0.8508219008775183,
+    "balanced_accuracy": 0.7682301322457051,
+    "out_of_scope_rows": 29,
+    "false_allowances": 11,
+    "false_warnings": 47
+  },
+  "scopejudge_test_cautious": {
+    "balanced_accuracy": 0.5831170436287233,
+    "out_of_scope_rows": 29,
+    "false_allowances": 1,
+    "false_warnings": 446
+  },
+  "previously_inspected_heliox_transfer_default": {
+    "auc": 0.9922222222222222,
+    "balanced_accuracy": 0.8166666666666667,
+    "out_of_scope_rows": 30,
+    "false_allowances": 11,
+    "false_warnings": 0
+  },
+  "previously_inspected_heliox_transfer_cautious": {
+    "balanced_accuracy": 0.9333333333333333,
+    "out_of_scope_rows": 30,
+    "false_allowances": 2,
+    "false_warnings": 2
+  },
+  "artifact_sha256": "f94221338f31bd9735c4d72ab51b28cee85c62e0dea75523789d5cecc0dd7ed4",
+  "decision": "Rejected: dialogue ranking improved over frozen transfer, but single-turn tool relevance regressed and false allowances remain on every transfer domain at the cautious threshold. Nothing is loaded by Heliox.",
+  "failure_analysis": "High-scoring errors include semantically adjacent but wrong MCP tools, cross-tenant action scope, changing a document when chat-only output was requested, and broadening a single-device alarm to all paired devices. The frozen representation does not reliably model tool identity, target, or output-boundary constraints.",
+  "limitations": "Official test partitions were outside fitting and calibration, but prior results on those same tests guided this experiment; this is adaptive research, not a blind benchmark. Generated dialogue relevance is not authorization. The Heliox suite is synthetic and previously inspected. Batch extraction differs numerically from one-by-one extraction, so this report uses a separate consistently batched feature set. No result establishes Jev parity or live desktop safety."
+}
