@@ -1,0 +1,69 @@
+{
+  "purpose": "offline_candidate_relative_world_task_state_research_not_runtime_promotion",
+  "source_report_sha256": "2fe8cc1c44a07e1e1690203d0d5aa62ef4353293383349daaaeb848b0c40c57b",
+  "backbone": "Qwen/Qwen3.5-2B frozen features from world_multiturn_scope_v3",
+  "head": "64-unit GELU MLP trained with balanced binary loss plus within-task pairwise logistic ranking",
+  "training_pair_counts": {
+    "agentic": 383,
+    "tbac": 403
+  },
+  "candidate_pairwise_weights": [0.0, 0.5, 2.0],
+  "selected_pairwise_weight": 0.5,
+  "selected_seed": 19,
+  "public_calibration_threshold": 0.9987012147903443,
+  "held_out_mixed_task_top_one": {
+    "agentic": {"correct": 320, "tasks": 338},
+    "tbac": {"correct": 344, "tasks": 355}
+  },
+  "nonpairwise_mlp_top_one_on_same_cases": {
+    "agentic": {"correct": 323, "tasks": 338},
+    "tbac": {"correct": 344, "tasks": 355}
+  },
+  "agentic_test_default": {
+    "auc": 0.9303316976270787,
+    "out_of_scope_rows": 398,
+    "false_allowances": 62,
+    "false_warnings": 52
+  },
+  "agentic_test_cautious": {
+    "out_of_scope_rows": 398,
+    "false_allowances": 1,
+    "false_warnings": 485
+  },
+  "tbac_test_default": {
+    "auc": 0.914469968426803,
+    "out_of_scope_rows": 417,
+    "false_allowances": 76,
+    "false_warnings": 84
+  },
+  "tbac_test_cautious": {
+    "out_of_scope_rows": 417,
+    "false_allowances": 0,
+    "false_warnings": 499
+  },
+  "scopejudge_test_default": {
+    "auc": 0.8566308243727598,
+    "out_of_scope_rows": 29,
+    "false_allowances": 6,
+    "false_warnings": 83
+  },
+  "scopejudge_test_cautious": {
+    "out_of_scope_rows": 29,
+    "false_allowances": 0,
+    "false_warnings": 543
+  },
+  "previously_inspected_heliox_transfer_default": {
+    "auc": 0.9822222222222223,
+    "out_of_scope_rows": 30,
+    "false_allowances": 9,
+    "false_warnings": 1
+  },
+  "previously_inspected_heliox_transfer_cautious": {
+    "out_of_scope_rows": 30,
+    "false_allowances": 0,
+    "false_warnings": 26
+  },
+  "artifact_sha256": "6e0269a90ffc701fd59cb975a961421fa9ee6635de854916e4ab623013e79888",
+  "decision": "Rejected: pairwise training did not improve held-out mixed-task top-one ranking and cautious calibration still either misses scope or blocks nearly all legitimate actions. Nothing is loaded by Heliox.",
+  "limitations": "Task-tool relevance is not action authorization. Tests were outside this fit but were inspected in prior adaptive research. Heliox transfer is synthetic and previously inspected; no blind desktop or Jev-parity evidence."
+}
