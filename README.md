@@ -374,6 +374,7 @@ Open a [bug report](https://github.com/VyomKulshrestha/Heliox-OS/issues/new/choo
 - [Plugin marketplace](docs/PLUGIN_MARKETPLACE.md)
 - [Neural intent research controls](docs/NEURAL_INTENT.md)
 - [Intelligence evaluation and research map](docs/INTELLIGENCE_EVALUATION.md)
+- [Opt-in recorded workflows and local visual samples](docs/RECORDED_WORKFLOWS.md)
 - [Jev scope-decision study and held-out results](docs/JEV_SCOPE_STUDY.md)
 - [Forensics runbook](docs/FORENSICS_RUNBOOK.md)
 - [Contributing](CONTRIBUTING.md)

@@ -472,8 +472,8 @@ simple, causally verified button toggles. It does **not** rescue the failed
 public-trajectory result, establish transfer to real desktop applications,
 or justify loading these weights into Heliox. The controlled pages have only
 two controls and one predictable effect; task context, text, menus, delayed
-effects, and competing external events are absent. Neither the paper's inverse
-dynamics objective nor its larger multimodal backbone has been implemented
+effects, and competing external events are absent. Neither the paper's joint
+forward/inverse dynamics objective nor its larger multimodal backbone has been implemented
 here. Both trained artifacts remain ignored local research files.
 
 An inverse probe tests whether these 16×16 features retain information about

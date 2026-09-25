@@ -22,6 +22,7 @@
   import SshIntegrationPanel from "./SshIntegrationPanel.svelte";
   import GestureWorkflowBindings from "./GestureWorkflowBindings.svelte";
   import VoiceGestureWorkflowStatus from "./VoiceGestureWorkflowStatus.svelte";
+  import RecordedWorkflowsPanel from "./RecordedWorkflowsPanel.svelte";
   import SelfHealingPanel from "./SelfHealingPanel.svelte";
   import NarrationPanel from "./NarrationPanel.svelte";
   import SupervisionPanel from "./SupervisionPanel.svelte";
@@ -2094,6 +2095,10 @@
 
   <section class="settings-group feature-panel-section">
     <VoiceGestureWorkflowStatus />
+  </section>
+
+  <section class="settings-group feature-panel-section">
+    <RecordedWorkflowsPanel />
   </section>
 
   <section class="settings-group feature-panel-section">
