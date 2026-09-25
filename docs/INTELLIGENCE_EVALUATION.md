@@ -408,7 +408,10 @@ not explicitly establish the pre/post-action timing of every screenshot, so
 adjacency alone cannot prove that the annotated action caused the change.
 
 `daemon/scripts/train_world_visual_transition.py` trained a residual linear
-predictor and a small residual MLP on the RTX 4060. Checkpoint selection used
+predictor, a small residual MLP, and a spatial convolutional predictor on the
+RTX 4060. The spatial run required cuDNN disabled locally after its default
+CUDA kernel raised a device assertion; that is a machine/runtime workaround,
+not evidence about model quality. Checkpoint selection used
 validation weighted pixel MSE; evaluation episodes were not used to select
 weights. On the held-out episodes, the MLP's changed-pixel MSE improved from
 **0.1002** (unchanged-screen baseline) to **0.0719**, and weighted MSE from
@@ -418,19 +421,24 @@ evaluation rows gave **0.1107** weighted MSE, slightly *better* than the
 correct-action **0.1123**. The linear run showed the same failure pattern:
 **0.1204** correct-action versus **0.1208** shuffled-action weighted MSE, a
 negligible difference. The sample is also dominated by left clicks (767/968).
+The spatial run reduced weighted MSE to **0.1062**, but shuffled actions
+again did slightly better (**0.1049**); even a model with the click location
+as a spatial input did not pass the action-conditioning control.
 This does **not** establish a learned action-conditioned world model, even
-though changing-region predictions improved. Both weight files remain ignored
+though changing-region predictions improved. All three weight files remain ignored
 local research artifacts and are incompatible with the live `UiJepaPredictor`;
-neither is staged for shadow runtime inference or gating. The live model
+none is staged for shadow runtime inference or gating. The live model
 still needs action-aligned observations, a compatible action vocabulary,
 environment-disjoint transfer, calibrated uncertainty, and consented live
 verification before promotion.
 
-To reproduce from `daemon`, use fresh ignored output names:
+To reproduce from `daemon`, use fresh ignored output names. On affected
+Windows Python 3.12 installations, the WMI import workaround described above
+is needed before Python can import CUDA PyTorch:
 
 ```bash
 python -m scripts.sample_world_visual_transitions --pages 24 --page-length 50 --features benchmarks/.bench-state/tess_visual_repro.npz --report benchmarks/.bench-state/tess_visual_repro.json
-python -m scripts.train_world_visual_transition --device cuda --architecture mlp --features benchmarks/.bench-state/tess_visual_repro.npz --source-report benchmarks/.bench-state/tess_visual_repro.json --report benchmarks/.bench-state/tess_visual_mlp_repro.json --weights benchmarks/.bench-state/tess_visual_mlp_repro.pt
+python -m scripts.train_world_visual_transition --device cuda --architecture spatial --disable-cudnn --features benchmarks/.bench-state/tess_visual_repro.npz --source-report benchmarks/.bench-state/tess_visual_repro.json --report benchmarks/.bench-state/tess_visual_spatial_repro.json --weights benchmarks/.bench-state/tess_visual_spatial_repro.pt
 ```
 
 The shipped structured predictor remains available without learned weights.
