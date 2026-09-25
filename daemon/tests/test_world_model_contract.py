@@ -287,4 +287,4 @@ def test_historical_failure_risk_waits_for_repeated_real_outcomes() -> None:
     history.record(ActionType.BROWSER_CLICK_TEXT, False)
     score, reason = history.score(ActionType.BROWSER_CLICK_TEXT)
     assert score >= 0.3
-    assert "3 of 3 verified" in reason
+    assert "3 of 3 observed" in reason

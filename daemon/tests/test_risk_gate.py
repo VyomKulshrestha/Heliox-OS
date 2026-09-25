@@ -3,6 +3,7 @@ import pytest
 
 from pilot.actions import Action, ActionPlan, ActionType, EmptyParams
 from pilot.config import PilotConfig
+from pilot.intelligence.online_learning import AdaptationScore
 from pilot.security.risk_gate import RiskGate, get_risk_gate
 from pilot.security.risk_model import EMBEDDING_SIZE
 from pilot.security.risk_observation import OsSnapshot
@@ -145,7 +146,7 @@ def test_prediction_contract_covers_browser_transition(monkeypatch):
     assert prediction["predicted_state"]["browser"]["dom_state"] == "requires_observation"
 
 
-def test_repeated_verified_failures_add_historical_caution(monkeypatch):
+def test_repeated_callback_failures_add_historical_caution(monkeypatch):
     monkeypatch.setattr(
         "pilot.security.risk_gate.capture_os_snapshot",
         lambda: OsSnapshot(
@@ -165,6 +166,38 @@ def test_repeated_verified_failures_add_historical_caution(monkeypatch):
     )
 
     assert risk >= 0.3
-    assert "verified browser_click_text executions failed" in reasons[0]
+    assert "observed browser_click_text executor callbacks failed" in reasons[0]
     prediction = gate.last_evaluation["predictions"][0]
-    assert "verified_history" in prediction["sources"]
+    assert "execution_history" in prediction["sources"]
+
+
+def test_verified_online_transition_adds_caution_only_for_known_source(monkeypatch):
+    monkeypatch.setattr(
+        "pilot.security.risk_gate.capture_os_snapshot",
+        lambda: OsSnapshot(
+            proc_count=100,
+            disk_usage_fraction=0.5,
+            memory_usage_fraction=0.5,
+            disk_path="/",
+        ),
+    )
+
+    class Learner:
+        def score_transition(self, *, action_type, source):
+            assert action_type == "file_write"
+            assert source == "interactive"
+            return AdaptationScore(probability=0.1, labels=8, state="promoted")
+
+    gate = RiskGate(weights_path="/nonexistent.npz")
+    gate.set_online_learner(Learner())
+    plan = _plan(ActionType.FILE_WRITE)
+
+    without_source, _ = gate.evaluate_plan(plan, PilotConfig())
+    with_source, reasons = gate.evaluate_plan(plan, PilotConfig(), source="interactive")
+
+    assert with_source >= without_source
+    assert with_source == pytest.approx(0.7)
+    assert "independently verified" in reasons[0]
+    prediction = gate.last_evaluation["predictions"][0]
+    assert "verified_online_transition" in prediction["sources"]
+    assert any(evidence["source"] == "verified_online_transition" for evidence in prediction["risk_evidence"])

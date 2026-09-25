@@ -31,6 +31,7 @@ from pilot.security.risk_safety import score_outcome
 if TYPE_CHECKING:
     from pilot.actions import ActionPlan
     from pilot.config import PilotConfig
+    from pilot.intelligence.online_learning import VerifiedOnlineLearner
 
 
 class RiskGate:
@@ -42,7 +43,12 @@ class RiskGate:
         self._transition = RiskTransitionModel(weights_path)
         self._world_model = HybridWorldModel()
         self._history = HistoricalFailureRisk()
+        self._online_learner: VerifiedOnlineLearner | None = None
         self._last_evaluation: dict[str, object] | None = None
+
+    def set_online_learner(self, learner: VerifiedOnlineLearner) -> None:
+        """Attach verified outcome evidence without changing policy authority."""
+        self._online_learner = learner
 
     def record_outcome(self, action_type: object, success: bool) -> None:
         """Feed only observed execution outcomes into historical caution."""
@@ -82,10 +88,13 @@ class RiskGate:
             "learnable_action_types": sorted(action_type.value for action_type in LEARNABLE_ACTION_TYPES),
             "prediction_contract": self._world_model.status(),
             "historical_risk": self._history.status(),
+            "verified_online_transition": (
+                self._online_learner.status()["transitions"] if self._online_learner is not None else None
+            ),
             "last_evaluation": self._last_evaluation,
         }
 
-    def evaluate_plan(self, plan: ActionPlan, config: PilotConfig) -> tuple[float, list[str]]:
+    def evaluate_plan(self, plan: ActionPlan, config: PilotConfig, *, source: str = "") -> tuple[float, list[str]]:
         """Returns (worst risk in [0,1] seen across the plan's actions,
         the reasons that fired for that worst action — empty if none)."""
         if not plan.actions:
@@ -154,6 +163,8 @@ class RiskGate:
                         learned_or_rule.confidence if learned_or_rule.source != "rule" else None
                     )
 
+            transition_risk = action_risk
+            transition_reasons = list(action_reasons)
             historical_risk, historical_reason = self._history.score(action.action_type)
             if historical_risk > action_risk:
                 action_risk = historical_risk
@@ -162,11 +173,34 @@ class RiskGate:
                 worst_risk = historical_risk
                 worst_reasons = [historical_reason]
                 worst_action_type = action.action_type.value
-                worst_sources = ["verified_history"]
+                worst_sources = ["execution_history"]
                 worst_prediction_confidence = min(
                     1.0,
                     self._history.status()["samples"] / 10.0,
                 )
+
+            online_risk = 0.0
+            online_reason = ""
+            if self._online_learner is not None and source:
+                adaptation = self._online_learner.score_transition(
+                    action_type=action.action_type.value,
+                    source=source,
+                )
+                if adaptation.state == "promoted" and adaptation.probability < 0.42:
+                    online_risk = min(0.7, max(0.0, (0.5 - adaptation.probability) * 2.0))
+                    online_reason = (
+                        f"{adaptation.labels} independently verified {action.action_type.value} "
+                        "outcomes suggest elevated failure risk"
+                    )
+            if online_risk > action_risk:
+                action_risk = online_risk
+                action_reasons = [online_reason]
+            if online_risk > worst_risk:
+                worst_risk = online_risk
+                worst_reasons = [online_reason]
+                worst_action_type = action.action_type.value
+                worst_sources = ["verified_online_transition"]
+                worst_prediction_confidence = None
 
             contract_payload = contract_prediction.to_dict()
             contract_payload["sources"] = list(
@@ -179,23 +213,35 @@ class RiskGate:
             )
             contract_payload["risk_score"] = action_risk
             if historical_risk > 0:
-                contract_payload["sources"] = list(dict.fromkeys([*contract_payload["sources"], "verified_history"]))
+                contract_payload["sources"] = list(dict.fromkeys([*contract_payload["sources"], "execution_history"]))
                 contract_payload["risk_evidence"].append(
                     {
-                        "source": "verified_history",
+                        "source": "execution_history",
                         "score": historical_risk,
                         "reason": historical_reason,
+                        "deterministic": False,
+                    }
+                )
+            if online_risk > 0:
+                contract_payload["sources"] = list(
+                    dict.fromkeys([*contract_payload["sources"], "verified_online_transition"])
+                )
+                contract_payload["risk_evidence"].append(
+                    {
+                        "source": "verified_online_transition",
+                        "score": online_risk,
+                        "reason": online_reason,
                         "deterministic": False,
                     }
                 )
             contract_payload["risk_evidence"].extend(
                 {
                     "source": "risk_transition",
-                    "score": action_risk,
+                    "score": transition_risk,
                     "reason": reason,
                     "deterministic": "rule" in contract_payload["sources"],
                 }
-                for reason in action_reasons
+                for reason in transition_reasons
             )
             world_predictions.append(contract_payload)
 

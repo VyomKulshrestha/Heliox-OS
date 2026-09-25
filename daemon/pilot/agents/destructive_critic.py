@@ -91,7 +91,12 @@ def heuristic_risk(plan: ActionPlan) -> float:
     return min(1.0, score)
 
 
-def assess_plan_risk(plan: ActionPlan, config: PilotConfig | None = None) -> PlanRiskAssessment:
+def assess_plan_risk(
+    plan: ActionPlan,
+    config: PilotConfig | None = None,
+    *,
+    source: str = "",
+) -> PlanRiskAssessment:
     """Evaluate heuristic and learned world-model signals without hiding either."""
     base = heuristic_risk(plan)
     if config is None or not config.gateway.risk_gate_enabled:
@@ -105,7 +110,7 @@ def assess_plan_risk(plan: ActionPlan, config: PilotConfig | None = None) -> Pla
         from pilot.security.risk_gate import get_risk_gate
 
         gate = get_risk_gate()
-        world_model_score, reasons = gate.evaluate_plan(plan, config)
+        world_model_score, reasons = gate.evaluate_plan(plan, config, source=source)
         latest = gate.last_evaluation or {}
         return PlanRiskAssessment(
             heuristic_score=base,

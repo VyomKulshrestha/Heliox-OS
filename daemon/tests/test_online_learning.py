@@ -316,6 +316,94 @@ async def test_real_verifier_result_trains_only_checked_file_transition(tmp_path
 
 
 @pytest.mark.asyncio
+async def test_transition_promotion_requires_support_for_action_and_source(
+    tmp_path, occurred_at, monkeypatch
+):
+    learner = VerifiedOnlineLearner(tmp_path / "learning-state.json")
+    ledger = ExperienceLedger(tmp_path / "experience.db")
+    await ledger.initialize()
+    ledger.subscribe(learner.consume)
+
+    for index in range(MINIMUM_PROMOTION_LABELS):
+        action_id = f"action-{index}"
+        plan_id = f"plan-{index}"
+        await ledger.append(
+            ExperienceEventType.ACTION_STARTED,
+            idempotency_key=f"{action_id}:started",
+            plan_id=plan_id,
+            action_id=action_id,
+            source="interactive",
+            occurred_at=occurred_at,
+            payload={"index": 0, "action_type": "file_write"},
+        )
+        await ledger.append(
+            ExperienceEventType.ACTION_COMPLETED,
+            idempotency_key=f"{action_id}:completed",
+            plan_id=plan_id,
+            action_id=action_id,
+            source="interactive",
+            occurred_at=occurred_at,
+            payload={"index": 0, "success": True, "executed": True, "callback_observed": True},
+        )
+        await ledger.append(
+            ExperienceEventType.OUTCOME_VERIFIED,
+            idempotency_key=f"{plan_id}:verified",
+            plan_id=plan_id,
+            source="verifier",
+            occurred_at=occurred_at,
+            payload={
+                "result_count": 1,
+                "verification": {
+                    "passed": False,
+                    "failed_actions": [0],
+                    "independently_observed_actions": [0],
+                },
+            },
+        )
+    await ledger.drain_subscribers()
+
+    supported = learner.score_transition(action_type="file_write", source="interactive", occurred_at=occurred_at)
+    other_action = learner.score_transition(action_type="browser_navigate", source="interactive", occurred_at=occurred_at)
+    other_source = learner.score_transition(action_type="file_write", source="mcp", occurred_at=occurred_at)
+    assert supported.labels == MINIMUM_PROMOTION_LABELS
+    assert supported.state == "promoted"
+    assert supported.probability < 0.42
+    assert other_action.labels == other_source.labels == 0
+    assert other_action.state == other_source.state == "candidate"
+    rebuilt = VerifiedOnlineLearner(tmp_path / "learning-state.json")
+    await rebuilt.initialize(ledger)
+    assert rebuilt.score_transition(
+        action_type="file_write", source="interactive", occurred_at=occurred_at
+    ).state == "promoted"
+
+    from pilot.security.risk_gate import RiskGate
+    from pilot.security.risk_observation import OsSnapshot
+
+    monkeypatch.setattr(
+        "pilot.security.risk_gate.capture_os_snapshot",
+        lambda: OsSnapshot(
+            proc_count=100,
+            disk_usage_fraction=0.5,
+            memory_usage_fraction=0.5,
+            disk_path="/",
+        ),
+    )
+    gate = RiskGate(weights_path="/nonexistent.npz")
+    gate.set_online_learner(rebuilt)
+    plan = ActionPlan(actions=[Action(
+        action_type=ActionType.FILE_WRITE,
+        target="safe.txt",
+        parameters=FileParams(path="safe.txt", content="expected"),
+    )])
+    risk, reasons = gate.evaluate_plan(plan, PilotConfig(), source="interactive")
+    assert risk > 0
+    assert "independently verified" in reasons[0]
+    assert "verified_online_transition" in gate.last_evaluation["prediction_sources"]
+    assert gate.status(enabled=True)["verified_online_transition"]["labels"] == MINIMUM_PROMOTION_LABELS
+    await ledger.close()
+
+
+@pytest.mark.asyncio
 async def test_rebuild_and_reset_checkpoint_are_deterministic(tmp_path, occurred_at):
     state_path = tmp_path / "learning-state.json"
     ledger = ExperienceLedger(tmp_path / "experience.db")

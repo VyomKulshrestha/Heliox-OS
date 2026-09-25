@@ -239,7 +239,16 @@ class VerifiedOnlineLearner:
             source=source,
             occurred_at=occurred_at or datetime.now(timezone.utc).isoformat(),
         )
-        return self._transitions.score(features)
+        action_key = f"action={_safe_bucket(action_type)}"
+        source_key = f"source={_safe_bucket(source)}"
+        support = sum(
+            1 for sample in self._transitions.samples
+            if action_key in sample.features and source_key in sample.features
+        )
+        if support < MINIMUM_PROMOTION_LABELS:
+            return AdaptationScore(0.5, support, "candidate")
+        scored = self._transitions.score(features)
+        return AdaptationScore(scored.probability, support, scored.state)
 
     def status(self) -> dict[str, Any]:
         routine_items = self._decayed_routines()[:10]

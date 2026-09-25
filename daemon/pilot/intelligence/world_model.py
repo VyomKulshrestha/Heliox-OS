@@ -667,7 +667,7 @@ class HybridWorldModel:
 
 
 class HistoricalFailureRisk:
-    """Bounded empirical risk from actual, non-dry-run action outcomes."""
+    """Bounded empirical risk from executor callbacks, not postconditions."""
 
     def __init__(self, *, minimum_samples: int = 3) -> None:
         self._minimum_samples = max(1, minimum_samples)
@@ -691,7 +691,7 @@ class HistoricalFailureRisk:
             return 0.0, ""
         return (
             score,
-            f"{failures} of {total} verified {key} executions failed recently",
+            f"{failures} of {total} observed {key} executor callbacks failed",
         )
 
     def status(self) -> dict[str, Any]:
