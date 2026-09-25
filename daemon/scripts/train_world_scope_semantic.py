@@ -64,25 +64,81 @@ def select_head(train: np.ndarray, train_labels: np.ndarray,
     return selected[2], threshold, [{"C": item[1], "calibration_auc": item[0]} for item in trials]
 
 
-def embed_cases(model, tokenizer, cases, max_length: int, label: str) -> tuple[np.ndarray, np.ndarray, int]:
+def feature_identity(cases, max_length: int) -> str:
+    identity = {"model": MODEL_ID, "revision": MODEL_REVISION,
+                "prompt_sha256": hashlib.sha256(SYSTEM_PROMPT.encode()).hexdigest(),
+                "max_length": max_length,
+                "cases": [(case.id, case.request, case.action, case.in_scope) for case in cases]}
+    return hashlib.sha256(json.dumps(identity, ensure_ascii=False).encode()).hexdigest()
+
+
+def save_feature_checkpoint(path: Path, identity: str, processed: int, overlong: int,
+                            indices: list[int], vectors: list[np.ndarray],
+                            targets: list[bool]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    with temporary.open("wb") as handle:
+        np.savez_compressed(handle, identity=identity, processed=processed,
+                            overlong=overlong, indices=np.asarray(indices, dtype=np.int32),
+                            features=np.asarray(vectors, dtype=np.float32),
+                            labels=np.asarray(targets, dtype=np.bool_))
+    temporary.replace(path)
+
+
+def load_feature_checkpoint(path: Path, identity: str, cases) -> tuple[int, int, list,
+                                                                         list[np.ndarray], list[bool]]:
+    if not path.exists():
+        return 0, 0, [], [], []
+    with np.load(path, allow_pickle=False) as saved:
+        if str(saved["identity"]) != identity:
+            raise ValueError(f"Feature checkpoint identity mismatch: {path}")
+        processed = int(saved["processed"])
+        overlong = int(saved["overlong"])
+        indices = saved["indices"].astype(int).tolist()
+        vectors = list(saved["features"])
+        targets = saved["labels"].astype(bool).tolist()
+    if (not 0 <= processed <= len(cases) or overlong != processed - len(indices) or
+            len(indices) != len(vectors) or len(indices) != len(targets) or
+            indices != sorted(set(indices)) or any(index < 1 or index > processed for index in indices) or
+            any(not np.isfinite(vector).all() for vector in vectors) or
+            any(cases[index - 1].in_scope is not target
+                for index, target in zip(indices, targets, strict=True))):
+        raise ValueError(f"Feature checkpoint contents invalid: {path}")
+    return processed, overlong, indices, vectors, targets
+
+
+def embed_cases(model, tokenizer, cases, max_length: int, label: str,
+                checkpoint_path: Path | None = None) -> tuple[np.ndarray, np.ndarray, int]:
     import torch
 
-    vectors, targets, overlong = [], [], 0
+    cases = tuple(cases)
+    identity = feature_identity(cases, max_length) if checkpoint_path else None
+    processed, overlong, indices, vectors, targets = (
+        load_feature_checkpoint(checkpoint_path, identity, cases) if checkpoint_path
+        else (0, 0, [], [], []))
+    if processed:
+        print(json.dumps({"event": "resumed", "split": label, "rows": processed,
+                          "total": len(cases), "overlong": overlong}), flush=True)
     with torch.inference_mode():
-        for index, case in enumerate(cases, 1):
+        for index in range(processed + 1, len(cases) + 1):
+            case = cases[index - 1]
             prompt = tokenizer.apply_chat_template(
                 messages(case.request, case.action), tokenize=False,
                 add_generation_prompt=True, enable_thinking=False)
             encoded = tokenizer(prompt, return_tensors="pt", truncation=False)
             if encoded["input_ids"].shape[1] > max_length:
                 overlong += 1
-                continue
-            hidden = model.model(input_ids=encoded["input_ids"].to("cuda"),
-                                 use_cache=False, return_dict=True).last_hidden_state[0, -1]
-            if not torch.isfinite(hidden).all():
-                raise FloatingPointError(f"Nonfinite semantic representation in {label} row {index}")
-            vectors.append(hidden.float().cpu().numpy())
-            targets.append(case.in_scope)
+            else:
+                hidden = model.model(input_ids=encoded["input_ids"].to("cuda"),
+                                     use_cache=False, return_dict=True).last_hidden_state[0, -1]
+                if not torch.isfinite(hidden).all():
+                    raise FloatingPointError(f"Nonfinite semantic representation in {label} row {index}")
+                vectors.append(hidden.float().cpu().numpy())
+                targets.append(case.in_scope)
+                indices.append(index)
+            if checkpoint_path and (index % 100 == 0 or index == len(cases)):
+                save_feature_checkpoint(checkpoint_path, identity, index, overlong,
+                                        indices, vectors, targets)
             if index % 100 == 0 or index == len(cases):
                 print(json.dumps({"event": "embedded", "split": label, "rows": index,
                                   "total": len(cases), "overlong": overlong}), flush=True)

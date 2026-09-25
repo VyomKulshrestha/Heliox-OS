@@ -88,6 +88,8 @@ def main() -> None:
     parser.add_argument("--dataset-dir", type=Path, default=state / "tbac_6385bd3")
     parser.add_argument("--scopejudge-path", type=Path, required=True)
     parser.add_argument("--max-length", type=int, default=1024)
+    parser.add_argument("--feature-dir", type=Path,
+                        default=state / "world_multiturn_features_v1")
     parser.add_argument("--artifact", type=Path,
                         default=state / "world_multiturn_scope_v1.npz")
     parser.add_argument("--report", type=Path,
@@ -137,7 +139,8 @@ def main() -> None:
     features, labels, excluded = {}, {}, {}
     for name, part in cases.items():
         features[name], labels[name], excluded[name] = embed_cases(
-            model, tokenizer, part, args.max_length, name)
+            model, tokenizer, part, args.max_length, name,
+            checkpoint_path=args.feature_dir / f"{name}.npz")
     del model
     features["train"] = np.vstack((features["agentic_train"], features["scope_train"]))
     normalized, mean, scale = normalize(features)
@@ -164,6 +167,8 @@ def main() -> None:
         "scopejudge": manifests["scope_train"], "max_length": args.max_length,
         "rows": {name: len(part) for name, part in cases.items()},
         "excluded_overlong": excluded, "regularization_trials": trials,
+        "feature_checkpoint_sha256": {name: hashlib.sha256(
+            (args.feature_dir / f"{name}.npz").read_bytes()).hexdigest() for name in cases},
         "selected_C": float(head.C), "calibration_threshold": threshold,
         "metrics": {name: {"default": metrics(labels[name], scores[name], 0.5),
                            "cautious": metrics(labels[name], scores[name], threshold)}
