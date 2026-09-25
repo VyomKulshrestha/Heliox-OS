@@ -828,6 +828,7 @@ class PilotServer:
 
         gate = get_risk_gate()
         gate.set_online_learner(self._online_learning)
+        gate.set_ui_observation_provider(None)
         self._executor.set_world_model_outcome_recorder(gate.record_outcome)
         # Import and warm the local system probe stack before readiness so the
         # first harmless status request does not pay lazy import/thread startup.
@@ -1072,6 +1073,7 @@ class PilotServer:
                 interval_seconds=sv_config.capture_interval_seconds,
                 enable_describe=False,
             )
+            gate.set_ui_observation_provider(self._screen_vision.get_world_observation)
             logger.info("ScreenVisionAgent auto-started (every %.1fs, JARVIS mode)", sv_config.capture_interval_seconds)
         except Exception:
             logger.warning("ScreenVisionAgent init failed (non-critical)", exc_info=True)
@@ -8445,6 +8447,9 @@ def handle_tool(tool_name, params):
                 await self._subconscious.close()
         if hasattr(self, "_screen_vision") and self._screen_vision:
             await self._screen_vision.stop()
+            from pilot.security.risk_gate import get_risk_gate
+
+            get_risk_gate().set_ui_observation_provider(None)
             if hasattr(self._screen_vision, "close"):
                 await self._screen_vision.close()
         if self._executor is not None:

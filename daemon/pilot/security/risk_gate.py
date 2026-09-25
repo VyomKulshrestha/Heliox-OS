@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Callable
 
 from pilot.intelligence.world_model import (
     HistoricalFailureRisk,
@@ -44,11 +44,18 @@ class RiskGate:
         self._world_model = HybridWorldModel()
         self._history = HistoricalFailureRisk()
         self._online_learner: VerifiedOnlineLearner | None = None
+        self._ui_observation_provider: Callable[[], dict[str, Any] | None] | None = None
         self._last_evaluation: dict[str, object] | None = None
 
     def set_online_learner(self, learner: VerifiedOnlineLearner) -> None:
         """Attach verified outcome evidence without changing policy authority."""
         self._online_learner = learner
+
+    def set_ui_observation_provider(
+        self, provider: Callable[[], dict[str, Any] | None] | None,
+    ) -> None:
+        """Use an existing fresh screen observation; never capture in this gate."""
+        self._ui_observation_provider = provider
 
     def record_outcome(self, action_type: object, success: bool) -> None:
         """Feed only observed execution outcomes into historical caution."""
@@ -115,6 +122,13 @@ class RiskGate:
         # state isn't expected to shift meaningfully action-to-action —
         # and psutil calls aren't free, so one call beats N.
         snapshot = capture_os_snapshot()
+        ui_observation: dict[str, Any] = {}
+        if self._ui_observation_provider is not None:
+            try:
+                ui_observation = self._ui_observation_provider() or {}
+            except Exception:
+                # Screen availability must not decide whether policy runs.
+                ui_observation = {}
 
         simulated = snapshot
         cumulative_proc_delta = 0.0
@@ -126,7 +140,7 @@ class RiskGate:
         world_predictions: list[dict[str, object]] = []
         for action in plan.actions:
             contract_prediction = self._world_model.predict(
-                WorldState.from_os_snapshot(simulated),
+                WorldState.from_os_snapshot(simulated, ui=ui_observation),
                 action,
             )
             learned_or_rule = self._transition.predict(simulated, action)
