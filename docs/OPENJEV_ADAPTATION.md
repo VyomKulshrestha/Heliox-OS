@@ -629,6 +629,24 @@ is rejected. More capacity alone did not solve calibrated scope or the
 wrong-tool problem. Like the earlier runs, this is adaptive public research,
 not a blind safety or Jev-parity claim.
 
+Because Open-Jev scores alternatives relative to one question, a
+[pairwise training probe](../daemon/scripts/train_world_pairwise_scope.py)
+added within-task relevant-versus-irrelevant ranking loss to the same frozen
+features, alongside expert-scope binary loss. The public training partition
+contained 383 eligible dialogue and 403 single-turn candidate pairs. A
+nonzero pairwise weight was selected on calibration, but on held-out mixed
+candidate tasks its top-one choice was **320/338** for dialogue and **344/355**
+for single-turn, versus **323/338** and **344/355** for the non-pairwise MLP.
+It therefore did not improve candidate ranking. Its cautious threshold left
+one false allowance among 398 irrelevant dialogue tools and warned on
+485/511 relevant tools; it rejected 499/518 relevant single-turn tools and
+543/558 allowed ScopeJudge actions. Both saved MLP artifacts replayed their
+reported metrics exactly through the independent, shape-checked
+[scorer](../daemon/scripts/score_world_mlp_artifact.py). The [frozen pairwise
+result](../daemon/benchmarks/world_pairwise_scope_v1.json) is rejected too.
+Copying Jev's relative-loss idea without better task/target supervision does
+not make this a Jev-equivalent world model.
+
 The pinned public data and cached Qwen backbone reproduce the experiment from
 `daemon` with a fresh output name; the feature directory is local and ignored:
 
