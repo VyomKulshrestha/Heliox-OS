@@ -79,6 +79,15 @@ def metrics(predicted: np.ndarray, state: np.ndarray, target: np.ndarray) -> dic
     }
 
 
+def within_action_permutation(actions: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+    """Shuffle locations while preserving each row's action type."""
+    permutation = np.arange(len(actions))
+    for action_type in range(9):
+        indices = np.flatnonzero(actions[:, action_type] == 1)
+        permutation[indices] = rng.permutation(indices)
+    return permutation
+
+
 def main() -> None:
     state = Path(__file__).resolve().parents[1] / "benchmarks/.bench-state"
     parser = argparse.ArgumentParser(description=__doc__)
@@ -173,12 +182,20 @@ def main() -> None:
         for split in ("validation", "eval"):
             partition = rows[split]
             shuffled_scores = []
+            within_type_scores = []
             rng = np.random.default_rng(args.seed + (1 if split == "validation" else 2))
             for _ in range(args.action_permutations):
                 shuffled = dict(arrays[split])
                 shuffled["action"] = arrays[split]["action"][rng.permutation(len(partition["state"]))]
                 shuffled_scores.append(metrics(
                     predict(shuffled).cpu().numpy(), partition["state"], partition["target"]
+                ))
+                within_type = dict(arrays[split])
+                within_type["action"] = arrays[split]["action"][
+                    within_action_permutation(partition["action"], rng)
+                ]
+                within_type_scores.append(metrics(
+                    predict(within_type).cpu().numpy(), partition["state"], partition["target"]
                 ))
             scores[split] = {
                 "unchanged_state": metrics(partition["state"], partition["state"], partition["target"]),
@@ -189,6 +206,10 @@ def main() -> None:
                 "shuffled_action": {
                     key: float(np.mean([score[key] for score in shuffled_scores]))
                     for key in shuffled_scores[0]
+                },
+                "shuffled_location_same_action": {
+                    key: float(np.mean([score[key] for score in within_type_scores]))
+                    for key in within_type_scores[0]
                 },
             }
     report = {

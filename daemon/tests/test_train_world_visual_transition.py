@@ -6,7 +6,7 @@ import json
 import numpy as np
 import pytest
 
-from scripts.train_world_visual_transition import load_features, metrics
+from scripts.train_world_visual_transition import load_features, metrics, within_action_permutation
 
 
 def _write_features(tmp_path, groups=("a", "b", "c")):
@@ -43,3 +43,14 @@ def test_rejects_episode_leakage_and_changed_source(tmp_path) -> None:
     report.write_text('{"features_sha256": "not-the-file"}', encoding="utf-8")
     with pytest.raises(ValueError, match="do not match"):
         load_features(features, report)
+
+
+def test_location_permutation_keeps_action_types() -> None:
+    actions = np.zeros((8, 11), dtype=np.float32)
+    actions[:4, 1] = 1
+    actions[4:, 2] = 1
+    actions[:, 9] = np.arange(8) / 8
+    permutation = within_action_permutation(actions, np.random.default_rng(7))
+    assert sorted(permutation.tolist()) == list(range(8))
+    assert np.array_equal(actions[:, :9], actions[permutation, :9])
+    assert not np.array_equal(actions[:, 9], actions[permutation, 9])
