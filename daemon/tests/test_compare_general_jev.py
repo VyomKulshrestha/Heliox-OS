@@ -67,7 +67,8 @@ def test_transient_transport_failure_retries_without_changing_request(monkeypatc
 
 def test_hosted_preflight_precedes_gpu_scoring(tmp_path, monkeypatch) -> None:
     events = []
-    rows = [dict(row("noul", ["no", "yes"], [0, 1]), id=f"row-{index}") for index in range(2)]
+    rows = [dict(row("noul", ["no", "yes"], [0, 1]), id=f"row-{index}", source="public")
+            for index in range(2)]
     model_report = tmp_path / "model.json"
     model_report.write_text(json.dumps({"adapter_sha256": "frozen"}), encoding="utf-8")
     report = tmp_path / "comparison.json"
@@ -103,4 +104,6 @@ def test_hosted_preflight_precedes_gpu_scoring(tmp_path, monkeypatch) -> None:
     ])
     comparison.main()
     assert events == ["jev:row-0", "local", "jev:row-1"]
-    assert json.loads(report.read_text(encoding="utf-8"))["calls"] == 2
+    saved = json.loads(report.read_text(encoding="utf-8"))
+    assert saved["calls"] == 2
+    assert saved["uniform_baseline"]["noul"]["top1_accuracy"] == 0.0

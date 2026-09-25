@@ -1,0 +1,62 @@
+{
+  "purpose": "evaluation_only_no_teacher_training",
+  "dataset_revision": "c67699e13d0ae25e35b77165a4b6b079bedc8aba",
+  "dataset_manifest": {
+    "sha256": "ba8cb3f95b9121aa73e4b997ac9c350e2ec4dddb972cb5c3086da911f0deb9ef",
+    "total_rows": 15701,
+    "licensed_rows": 15101,
+    "excluded_unverified_license": 600,
+    "selected_rows": 384
+  },
+  "selection_seed": 20260929,
+  "selected_ids_sha256": "51281960c0049591ad0c241bcd8159feefd73b2fe87e4bd262bc3216f3941d13",
+  "local_adapter_sha256": "d14490fd9d32b991d501a03d9cd5223b5c6d27e8779ff9c71f0b86771ff88073",
+  "jev_models": [
+    "typesafe/jev-1.13-20260917"
+  ],
+  "calls": 128,
+  "cost_usd": 0.003250002000000001,
+  "uniform_baseline": {
+    "choice": {
+      "rows": 35,
+      "top1_accuracy": 0.2857142857142857,
+      "mean_nll": 1.5533991490361563,
+      "mean_brier": 0.16431674382716052
+    },
+    "noul": {
+      "rows": 67,
+      "top1_accuracy": 0.7910447761194029,
+      "mean_nll": 0.6931471805599454,
+      "mean_brier": 0.25
+    },
+    "score": {
+      "rows": 26,
+      "top1_accuracy": 0.2692307692307692,
+      "mean_nll": 1.4434982397669267,
+      "mean_brier": 0.18040598290598295,
+      "mean_rank_error": 0.9230769230769231
+    }
+  },
+  "comparison": {
+    "noul": {
+      "rows": 67,
+      "agreement": 0.6865671641791045,
+      "local_gold": 0.6567164179104478,
+      "jev_gold": 0.8208955223880597,
+      "probability_gap": 0.2739421476924906
+    },
+    "choice": {
+      "rows": 35,
+      "agreement": 0.4857142857142857,
+      "local_gold": 0.37142857142857144,
+      "jev_gold": 0.8
+    },
+    "score": {
+      "rows": 26,
+      "score_gap": 0.7445163630286957,
+      "local_gold_error": 1.0134018374943197,
+      "jev_gold_error": 0.3938461538461538
+    }
+  },
+  "limitation": "Small public synthetic OOD sample; no training permission or desktop-safety proof."
+}
