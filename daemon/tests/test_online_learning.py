@@ -404,6 +404,57 @@ async def test_transition_promotion_requires_support_for_action_and_source(
 
 
 @pytest.mark.asyncio
+async def test_repeated_actions_in_one_plan_do_not_promote_transition(tmp_path, occurred_at):
+    learner = VerifiedOnlineLearner(tmp_path / "learning-state.json")
+    ledger = ExperienceLedger(tmp_path / "experience.db")
+    await ledger.initialize()
+    ledger.subscribe(learner.consume)
+
+    for index in range(MINIMUM_PROMOTION_LABELS):
+        action_id = f"action-{index}"
+        await ledger.append(
+            ExperienceEventType.ACTION_STARTED,
+            idempotency_key=f"{action_id}:started",
+            plan_id="one-plan",
+            action_id=action_id,
+            source="interactive",
+            occurred_at=occurred_at,
+            payload={"index": index, "action_type": "file_write"},
+        )
+        await ledger.append(
+            ExperienceEventType.ACTION_COMPLETED,
+            idempotency_key=f"{action_id}:completed",
+            plan_id="one-plan",
+            action_id=action_id,
+            source="interactive",
+            occurred_at=occurred_at,
+            payload={"index": index, "success": True, "executed": True, "callback_observed": True},
+        )
+    await ledger.append(
+        ExperienceEventType.OUTCOME_VERIFIED,
+        idempotency_key="one-plan:verified",
+        plan_id="one-plan",
+        source="verifier",
+        occurred_at=occurred_at,
+        payload={
+            "result_count": MINIMUM_PROMOTION_LABELS,
+            "verification": {
+                "passed": False,
+                "failed_actions": list(range(MINIMUM_PROMOTION_LABELS)),
+                "independently_observed_actions": list(range(MINIMUM_PROMOTION_LABELS)),
+            },
+        },
+    )
+    await ledger.drain_subscribers()
+
+    assert learner.status()["transitions"]["labels"] == MINIMUM_PROMOTION_LABELS
+    score = learner.score_transition(action_type="file_write", source="interactive", occurred_at=occurred_at)
+    assert score.labels == 1
+    assert score.state == "candidate"
+    await ledger.close()
+
+
+@pytest.mark.asyncio
 async def test_rebuild_and_reset_checkpoint_are_deterministic(tmp_path, occurred_at):
     state_path = tmp_path / "learning-state.json"
     ledger = ExperienceLedger(tmp_path / "experience.db")
