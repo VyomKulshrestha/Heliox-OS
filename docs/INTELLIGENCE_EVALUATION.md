@@ -208,6 +208,35 @@ action type and executor source can add RiskGate caution; it cannot lower existi
 approve an action, or replace a rule. Executor-callback history remains a
 separate, weaker signal and is labeled as such in prediction provenance.
 
+### Research-only tool-response transition probe
+
+To test a learned *outcome* predictor rather than another action-scope label,
+`scripts/sample_world_transition_corpus.py` samples revision-checked rows from
+the [Patronus world-model corpus](https://huggingface.co/datasets/PatronusAI/world_model_corpus).
+`scripts/train_world_transition_lora.py` trains a local Qwen3-0.6B LoRA to
+predict the next tool response from the supplied state and action;
+`scripts/evaluate_world_transition_generation.py` compares exact held-out
+outcomes against the unchanged base. The adapter and sampled rows remain in
+ignored local benchmark state, and no runtime world-model path loads them.
+
+The first bounded sample contained 64 source-train and 9 source-eval rows.
+Its dataset-server revision was `d4aeb7d73de29bcf6ffceca3e132d734059e0237`;
+the local source-rows SHA-256 was
+`2f6dbc9889f821ab55ddd1ddc81b038178933ed4fe153f4c6ca9dd0819d2cdb6`.
+After no-truncation token filtering, only 33 train and 8 eval rows remained;
+all eligible eval rows came from one contiguous `pandora` page. One GPU epoch
+changed mean held-out token loss from 2.377 to 0.411. With explicit attention
+masks and greedy generation, exact tool-outcome matches changed from 0/8 for
+the base to 3/8 for the adapter. This is evidence that the small adapter learned
+some synthetic response patterns, **not** that Heliox learned actual OS action
+effects: the set is tiny, highly correlated, and mostly not OS/UI work. A
+larger resample attempt hit dataset-server 429/502 responses and supplied no
+additional validation data. An environment-disjoint corpus of independently
+observed Heliox outcomes
+and prospective postcondition tests is required before considering any
+runtime integration. Lower token loss or a well-formed `<tool_response>` wrapper
+cannot authorize an action or establish Jev-level generalization.
+
 The shipped structured predictor remains available without learned weights.
 An optional UI-JEPA artifact loads only when finite tensor shapes and its exact
 ordered `ActionType` vocabulary match the running build. Gating additionally
