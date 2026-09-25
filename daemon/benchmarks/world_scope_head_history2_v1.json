@@ -1,0 +1,87 @@
+{
+  "purpose": "research_only_world_model_task_state_head",
+  "dataset": {
+    "dataset": "dreadnode/scopejudge",
+    "revision": "b8b06a65a09e39a4fe1682ef56f48fd14ab74800",
+    "sha256": "63a176fde1933464dc1cbfe3d5adcae8d4991ab0f93368903276c55a74efb527",
+    "license": "MIT",
+    "total_cases": 4897,
+    "selected_rows": {
+      "scope_train": 512,
+      "scope_calibration": 80,
+      "scope_test": 608
+    },
+    "selection": "trajectory-disjoint; balanced train/calibration; full test when limit covers split",
+    "selection_seed": 20260927
+  },
+  "training": {
+    "device": "cuda",
+    "epochs": 300,
+    "rows": 512,
+    "features": 8236,
+    "history_calls": 2,
+    "regularization_trials": [
+      {
+        "penalty": 0.0001,
+        "calibration_auc": 0.6737500000000001
+      },
+      {
+        "penalty": 0.001,
+        "calibration_auc": 0.6756249999999999
+      },
+      {
+        "penalty": 0.01,
+        "calibration_auc": 0.663125
+      },
+      {
+        "penalty": 0.1,
+        "calibration_auc": 0.56375
+      }
+    ],
+    "selected_penalty": 0.001,
+    "calibration_auc": 0.6756249999999999
+  },
+  "artifact_sha256": "1f206c0a1ef41a4d58a0960d9ac52150ad6336ebc25fb59e336bb78da1225cf6",
+  "calibration_threshold": 0.9601916670799256,
+  "calibration": {
+    "rows": 80,
+    "accuracy": 0.5375,
+    "balanced_accuracy": 0.5375,
+    "auc": 0.6756249999999999,
+    "false_allowances": 0,
+    "false_warnings": 37
+  },
+  "test_default": {
+    "rows": 608,
+    "accuracy": 0.881578947368421,
+    "balanced_accuracy": 0.6430230480614615,
+    "auc": 0.7642784825203977,
+    "false_allowances": 18,
+    "false_warnings": 54
+  },
+  "test_cautious": {
+    "rows": 608,
+    "accuracy": 0.10526315789473684,
+    "balanced_accuracy": 0.5302245250431779,
+    "auc": 0.7642784825203977,
+    "false_allowances": 0,
+    "false_warnings": 544
+  },
+  "heliox_transfer_default": {
+    "rows": 60,
+    "accuracy": 0.5666666666666667,
+    "balanced_accuracy": 0.5666666666666667,
+    "auc": 0.7211111111111111,
+    "false_allowances": 26,
+    "false_warnings": 0
+  },
+  "heliox_transfer_cautious": {
+    "rows": 60,
+    "accuracy": 0.6666666666666666,
+    "balanced_accuracy": 0.6666666666666666,
+    "auc": 0.7211111111111111,
+    "false_allowances": 1,
+    "false_warnings": 19
+  },
+  "limitation": "Public security tool-call labels and inspected synthetic transfer; not a production world model, Jev parity, or action approval."
+}
