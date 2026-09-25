@@ -328,7 +328,8 @@ def run(args: argparse.Namespace) -> dict:
             1.0,
         )
         if not torch.isfinite(norm):
-            raise FloatingPointError("Nonfinite gradient")
+            ids = [training_items[index]["row"]["id"] for index in group]
+            raise FloatingPointError(f"Nonfinite gradient after training rows {ids}")
         optimizer.step()
         done = start + len(group)
         elapsed = elapsed_before + time.monotonic() - started

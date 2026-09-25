@@ -174,6 +174,16 @@ the frozen control. The adapter remains local and disabled. See the
 [trial](../daemon/benchmarks/qwen_general_ordinal_v1_ablation.json), and
 [trial training report](../daemon/benchmarks/qwen_general_ordinal_v1.json).
 
+A 4,096-row continuation with the 2,048-row run's frozen held-out selections
+did not finish. It checkpointed 896/4,096 training rows, then encountered
+CUDA illegal-instruction and cuBLAS failures accompanied by Windows
+`nvlddmkm` event IDs 13 and 153; an intervening retry produced a non-finite
+gradient. The checkpoint's trainable weights, head, and optimizer tensors were
+finite, but there are **no final test/OOD metrics or promoted weights** from
+this run. The [attempt record](../daemon/benchmarks/qwen_general_scale_attempt_v3.json)
+preserves the checkpoint hash and failure sequence. The event correlation
+does not prove whether the root cause is hardware, driver, power, or a kernel.
+
 The next planned multi-task run adds the
 [MIT-licensed ScopeJudge](https://github.com/dreadnode/scopejudge) expert labels
 to the public general questions, keeping complete security trajectories
