@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from pilot.models.router import ModelRouter
 
 logger = logging.getLogger("pilot.agents.verifier")
+MAX_COPY_CONTENT_VERIFY_BYTES = 64 * 1024 * 1024
 
 
 # Public evidence generation imports this registry so the catalog cannot claim
@@ -143,7 +144,8 @@ class Verifier:
             if independently_observed:
                 observed_indices.append(i)
             if check_passed:
-                details.append(f"Action {i} ({result.action.action_type.value}): VERIFIED")
+                status = "VERIFIED" if independently_observed else "REPORTED — no independent postcondition"
+                details.append(f"Action {i} ({result.action.action_type.value}): {status}")
             else:
                 details.append(f"Action {i} ({result.action.action_type.value}): MISMATCH — {check_detail}")
                 failed_indices.append(i)
@@ -193,7 +195,7 @@ class Verifier:
                 check = await self._verify_download(result)
 
             elif action.action_type == ActionType.FILE_COPY:
-                check = await self._verify_file_copy(action.parameters)  # type: ignore[arg-type]
+                return await self._verify_file_copy(action.parameters)  # type: ignore[arg-type]
 
             elif action.action_type == ActionType.FILE_MOVE:
                 check = await self._verify_file_move(action.parameters)  # type: ignore[arg-type]
@@ -250,14 +252,38 @@ class Verifier:
             return False, f"File still exists after delete: {params.path}"
         return True, "File successfully deleted"
 
-    async def _verify_file_copy(self, params: FileParams) -> tuple[bool, str]:
+    async def _verify_file_copy(self, params: FileParams) -> tuple[bool, str, bool]:
+        import asyncio
         from pathlib import Path
 
         if not params.path or not params.destination:
             raise ValueError("File copy has no source or destination to observe")
-        if not Path(params.destination).exists():
-            return False, f"Destination does not exist after copy: {params.destination}"
-        return True, "Copy destination exists"
+        source = Path(params.path)
+        destination = Path(params.destination)
+        if not source.exists():
+            return False, f"Source does not exist after copy: {params.path}", True
+        if not destination.exists():
+            return False, f"Destination does not exist after copy: {params.destination}", True
+        if source.is_file() and destination.is_file():
+            source_size = source.stat().st_size
+            destination_size = destination.stat().st_size
+            if source_size != destination_size:
+                return False, "Copy destination size mismatch", True
+            if source_size > MAX_COPY_CONTENT_VERIFY_BYTES:
+                return True, "Copy destination exists; file is too large to compare within verifier budget", False
+
+            def contents_match() -> bool:
+                with source.open("rb") as original, destination.open("rb") as copied:
+                    for chunk in iter(lambda: original.read(1024 * 1024), b""):
+                        if chunk != copied.read(len(chunk)):
+                            return False
+                    return not copied.read(1)
+
+            matches = await asyncio.to_thread(contents_match)
+            return matches, "Copy content matches source" if matches else "Copy destination content mismatch", True
+        if source.is_dir() and destination.is_dir():
+            return True, "Copy destination exists; directory contents were not compared", False
+        return False, "Copy destination type does not match source", True
 
     async def _verify_file_move(self, params: FileParams) -> tuple[bool, str]:
         from pathlib import Path
