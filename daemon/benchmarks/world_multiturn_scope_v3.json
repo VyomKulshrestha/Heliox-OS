@@ -1,0 +1,91 @@
+{
+  "purpose": "offline_three_domain_world_task_state_research_not_runtime_promotion",
+  "backbone": "Qwen/Qwen3.5-2B",
+  "backbone_revision": "15852e8c16360a2fea060d615a32b45270f8a8fc",
+  "training_sources": [
+    "Cisco Outshift TBAC generated pre-call dialogue validation",
+    "Cisco Outshift TBAC single-turn task-tool validation",
+    "ScopeJudge expert tool-call train"
+  ],
+  "source_licenses": ["Apache-2.0", "MIT"],
+  "agentic_validation_sha256": "2fd100bcc5973792d1fa35e4309eeb30a6dfb7543f14201db0f2015b295261a8",
+  "agentic_test_sha256": "b7bfe395aa24ca6442a23b232ff014ebbe2bb3680738db54baa8ed8701c08231",
+  "tbac_validation_sha256": "c30ea9f51a2aca5552602f8034cce691bdb69c6c0b9c990db7ac7e9a99292355",
+  "tbac_test_sha256": "956b46f636e12f94dbc1d8ed433ff50a511a6b40db1a2c7889c85612cfc784e8",
+  "scopejudge_sha256": "63a176fde1933464dc1cbfe3d5adcae8d4991ab0f93368903276c55a74efb527",
+  "max_input_tokens": 1024,
+  "batch_size": 4,
+  "selected_rows": {
+    "agentic_train": 873,
+    "agentic_calibration": 263,
+    "agentic_test": 935,
+    "tbac_train": 873,
+    "tbac_calibration": 263,
+    "tbac_test": 935,
+    "scope_train": 512,
+    "scope_calibration": 80,
+    "scope_test": 608,
+    "heliox": 60
+  },
+  "excluded_overlong": {
+    "agentic_train": 22,
+    "agentic_calibration": 6,
+    "agentic_test": 26,
+    "tbac_train": 0,
+    "tbac_calibration": 0,
+    "tbac_test": 0,
+    "scope_train": 5,
+    "scope_calibration": 6,
+    "scope_test": 21,
+    "heliox": 0
+  },
+  "selected_regularization_C": 0.01,
+  "public_calibration_threshold": 0.9892384757631995,
+  "agentic_test_default": {
+    "auc": 0.9283649165593132,
+    "out_of_scope_rows": 398,
+    "false_allowances": 81,
+    "false_warnings": 52
+  },
+  "agentic_test_cautious": {
+    "out_of_scope_rows": 398,
+    "false_allowances": 2,
+    "false_warnings": 416
+  },
+  "tbac_test_default": {
+    "auc": 0.9043035841596992,
+    "out_of_scope_rows": 417,
+    "false_allowances": 81,
+    "false_warnings": 81
+  },
+  "tbac_test_cautious": {
+    "out_of_scope_rows": 417,
+    "false_allowances": 1,
+    "false_warnings": 458
+  },
+  "scopejudge_test_default": {
+    "auc": 0.8282041774811519,
+    "out_of_scope_rows": 29,
+    "false_allowances": 15,
+    "false_warnings": 50
+  },
+  "scopejudge_test_cautious": {
+    "out_of_scope_rows": 29,
+    "false_allowances": 0,
+    "false_warnings": 507
+  },
+  "previously_inspected_heliox_transfer_default": {
+    "auc": 0.9788888888888889,
+    "out_of_scope_rows": 30,
+    "false_allowances": 11,
+    "false_warnings": 0
+  },
+  "previously_inspected_heliox_transfer_cautious": {
+    "out_of_scope_rows": 30,
+    "false_allowances": 1,
+    "false_warnings": 14
+  },
+  "artifact_sha256": "6634212965d7db28595ff2ae703040a2dc1a7a11c09dcb2e5da4a88d7382bf81",
+  "decision": "Rejected: mixed dialogue and single-turn training repaired single-turn transfer but degraded expert action-scope ranking and retained false allowances across domains. Nothing is loaded by Heliox.",
+  "limitations": "The official test partitions were not used in fitting or threshold selection, but earlier tests motivated this adaptive experiment. The Heliox transfer is synthetic and previously inspected. Dialogue relevance, tool relevance, and expert action scope are different targets; none grants execution permission or establishes Jev parity."
+}
