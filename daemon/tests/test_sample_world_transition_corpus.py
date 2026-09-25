@@ -1,5 +1,7 @@
 """World-transition samples retain source integrity and split boundaries."""
 
+import io
+import json
 from urllib.error import HTTPError
 
 import pytest
@@ -78,3 +80,20 @@ def test_fetch_page_stops_on_rate_limit(monkeypatch):
     monkeypatch.setattr(sampler, "urlopen", rate_limited)
     with pytest.raises(RuntimeError, match="rate limit"):
         sampler.fetch_page("train", "train", 0, 1)
+
+
+def test_fetch_page_retries_transient_server_error(monkeypatch):
+    response = io.BytesIO(json.dumps({"rows": []}).encode())
+    response.headers = {"x-revision": "a" * 40}
+    calls = iter([HTTPError("https://example.invalid", 502, "bad gateway", {}, None),
+                  response])
+
+    def fetch(*args, **kwargs):
+        item = next(calls)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+    monkeypatch.setattr(sampler, "urlopen", fetch)
+    monkeypatch.setattr(sampler.time, "sleep", lambda seconds: None)
+    assert sampler.fetch_page("train", "train", 0, 1) == ({"rows": []}, "a" * 40)

@@ -41,7 +41,9 @@ def fetch_page(config: str, split: str, offset: int, length: int) -> tuple[dict,
         except HTTPError as error:
             if error.code == 429:
                 raise RuntimeError("Dataset server rate limit reached; wait before resampling") from error
-            raise
+            if error.code not in {500, 502, 503, 504} or attempt == 2:
+                raise
+            time.sleep(2**attempt)
         except (TimeoutError, URLError):
             if attempt == 2:
                 raise
