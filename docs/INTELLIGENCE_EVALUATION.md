@@ -150,6 +150,39 @@ parity or world-model transition fidelity. Reproduce the experiment from
 checkpoints, and fresh artifact/report paths; the private local replay report
 is not a shipped benchmark.
 
+Post-hoc calibration of that *frozen* GPU head was also tested with
+[temperature scaling](https://proceedings.mlr.press/v70/guo17a.html) and a
+monotone scale-plus-bias map. Both were fit on balanced calibration domains;
+test sets were scored only after fitting. On the 100-case When2Call test,
+raw/temperature/scale-plus-bias Brier scores were 0.1968/0.1965/0.1980.
+At a fixed 0.5 cutoff, false allowances were 14/14/9, while valid accepted
+actions were 34/34/32. Thus the lower false-allowance count is not a free
+accuracy gain, and calibration did not improve ranking (AUC 0.7616 for all
+three). At a 0.9 cutoff, the three maps accepted 7/3/3 actions, respectively.
+The [risk-coverage tradeoff](https://proceedings.neurips.cc/paper_files/paper/2017/hash/4a8423d5e91fda00bb7e46540e2b0cf1-Abstract.html)
+must be evaluated before an abstaining predictor could be considered useful.
+The GPU head was already selected using these calibration partitions, and
+the Heliox probe was previously inspected, so this is exploratory evidence,
+not independent validation. No calibrator is shipped or authorized for
+runtime use. Reproduce from `daemon/` using
+`scripts/calibrate_world_task_head.py` with the saved head, source feature
+report/checkpoints, optional When2Call report/checkpoints, and a fresh report
+path.
+
+A stricter GPU leave-one-domain-out diagnostic retrained the same small head
+four times with fixed architecture, seed, and epochs. Each fold normalized and
+trained on only the *other* three domains' training rows, then scored the
+excluded domain's test split. Held-out agentic and TBAC AUCs were 0.879 and
+0.849, but held-out ScopeJudge and When2Call fell to 0.411 and 0.497.
+The When2Call-excluded fold accepted all 100 When2Call test cases at 0.5,
+including all 50 negatives. This is a generalization failure: the current
+task-state head needs domain-specific training examples and cannot be called
+a transferable Jev-like world model. Reproduce with
+`scripts/evaluate_world_cross_domain.py` and fresh report path; the local
+feature checkpoints and generated report remain research-only. These domain
+families informed earlier hyperparameter exploration, so this diagnostic is
+not a pristine independent benchmark either.
+
 The separate River transition-reliability learner now requires an executed,
 non-dry-run action plus a matching independently observed postcondition before
 it accepts a training label. Existing ledger verification events lack the
