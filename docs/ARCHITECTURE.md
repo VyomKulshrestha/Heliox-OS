@@ -287,9 +287,11 @@ it never creates an action.
 
 The River-based online learner consumes only newly inserted ledger events. It
 learns suggestion relevance from explicit feedback, transition reliability
-from callback-observed non-dry-run outcomes, and coarse routines from
-privacy-preserving application/time features. Repeated evidence is required
-before promotion.
+only when a non-dry-run executor callback is followed by a matching,
+independently observed action postcondition, and coarse routines from
+privacy-preserving application/time features. Unsupported actions and older
+verification records without per-action observation evidence do not supply
+transition labels. Repeated evidence is required before promotion.
 
 Bounded replay and ADWIN drift detection decay obsolete behavior. Resetting the
 learner creates a checkpoint without rewriting the immutable audit ledger.
