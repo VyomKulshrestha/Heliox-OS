@@ -1,0 +1,33 @@
+{
+  "purpose": "offline_semantic_task_state_world_model_research_not_runtime_promotion",
+  "model": "Qwen/Qwen3.5-2B",
+  "model_revision": "15852e8c16360a2fea060d615a32b45270f8a8fc",
+  "representation": "Frozen final-token text hidden state plus calibrated numeric logistic head",
+  "training_source": "MIT ScopeJudge expert tool-call labels; trajectory-disjoint train/calibration/test",
+  "scopejudge_sha256": "63a176fde1933464dc1cbfe3d5adcae8d4991ab0f93368903276c55a74efb527",
+  "max_input_tokens": 768,
+  "eligible_rows": {"train": 480, "calibration": 59, "test": 542, "heliox_transfer": 60},
+  "excluded_overlong": {"train": 32, "calibration": 21, "test": 66, "heliox_transfer": 0},
+  "selected_regularization_C": 0.001,
+  "public_calibration_threshold": 0.798182477509722,
+  "public_test_default": {
+    "auc": 0.8667742152315654,
+    "balanced_accuracy": 0.7746521476104054,
+    "false_allowances": 9,
+    "false_warnings": 72
+  },
+  "public_test_cautious": {
+    "balanced_accuracy": 0.7630906768837804,
+    "false_allowances": 3,
+    "false_warnings": 190
+  },
+  "previously_inspected_heliox_transfer": {
+    "default_false_allowances": 29,
+    "default_false_warnings": 0,
+    "cautious_false_allowances": 18,
+    "cautious_false_warnings": 0
+  },
+  "artifact_sha256": "9b45144e3854ea16bebdf869e2323ab857af38a4e6390ce2aa7b931ac5a19397",
+  "decision": "Rejected: calibration does not transfer and both public and Heliox suites retain false allowances. The 2B backbone and head are not loaded by Heliox.",
+  "limitations": "The public and synthetic transfer suites have been inspected during research. The Heliox transfer is synthetic, not a live desktop or independent user evaluation. This model cannot authorize actions or establish Jev parity."
+}
