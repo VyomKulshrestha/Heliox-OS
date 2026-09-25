@@ -1,0 +1,42 @@
+{
+  "purpose": "rejected_research_only_grouped_world_task_binding_head",
+  "training_source": {
+    "url": "https://github.com/R-Suresh/EntityBindingFailures",
+    "revision": "af311d10f52680576d83cdaf3d05d5b090445de4",
+    "dataset_sha256": "8b57c8a4460d02a4f21a3e0cd65ef458aef789679d5bef229c8e80bfa0089cb4",
+    "license": "CC BY 4.0"
+  },
+  "transfer_source": {
+    "url": "https://github.com/sierra-research/tau-bench",
+    "revision": "59a200c6d575d595120f1cb70fea53cef0632f6b",
+    "license": "MIT"
+  },
+  "model": "Pinned Qwen3.5-2B frozen features, CUDA-trained linear listwise head with abstention",
+  "split": "EntityBindingFailures domain plus ambiguity families kept intact; five resolvable and one ambiguous family for training, one resolvable family for calibration, one resolvable and one ambiguous family for internal holdout",
+  "selection": "Minimum calibration cross-entropy; neither the family holdout nor tau-bench selected the checkpoint",
+  "selected_epoch": 300,
+  "groups": {
+    "train": 44,
+    "calibration": 8,
+    "internal_holdout": 8,
+    "tau_transfer": 37
+  },
+  "internal_holdout": {
+    "exact_or_valid_selection": 8,
+    "resolvable": 5,
+    "ambiguous": 3
+  },
+  "tau_transfer": {
+    "correct_top_rank": 23,
+    "exact_or_valid_selection": 0,
+    "wrong_target": 1,
+    "false_warnings": 36
+  },
+  "feature_checkpoint_sha256": {
+    "entity_binding": "ba571a4961c7dd83a59dc7d4bcdfcf0c100febdc76138e5782ee5d640b1a829a",
+    "tau_retail": "f5eb727c970b9fc50d1e89d882a00c41180ee8346462de10c6d7ca856d8303be"
+  },
+  "local_artifact_sha256": "f89a5c29008de53077e4b7535d0226adbf6b15077760d578ea32f7c4916c4522",
+  "decision": "Reject runtime promotion: severe cross-domain abstention and a wrong-target selection on previously inspected retail cases.",
+  "limitations": "The entity source repeats a few templates, so even whole-family holdout is small and may share construction patterns. Both sources were inspected before this experiment; neither is a fresh blind test. Retail action annotations can depend on prior workflow steps. This is not Jev parity or execution authority."
+}

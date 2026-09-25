@@ -775,6 +775,27 @@ not yet an Heliox benchmark or training result. Integration must preserve
 the sandbox's native state and success checks, and its Apple license must be
 reviewed before redistributing any source or derived data.
 
+A CUDA-trained groupwise target head tested whether explicit candidate
+competition and an abstain option would repair the binding failures. It uses
+the pinned Qwen3.5-2B feature checkpoints and public EntityBindingFailures
+labels for training, keeping whole `(domain, ambiguity)` families together
+across train, calibration, and holdout. That matters: a random task-ID split
+leaks near-duplicate templates and produced an invalidly reassuring result.
+The corrected family holdout matched **8/8** groups, but covers only two
+families. On the differently authored, previously inspected tau-bench retail
+cases, the head selected a valid target in **0/37** groups: it abstained on
+36 and chose a wrong target once; ignoring abstention, it ranked a valid
+candidate first in **23/37** groups. The
+[pinned result](../daemon/benchmarks/world_group_binding_family_v1.json)
+therefore rejects runtime promotion. It neither outperforms the frozen
+direct-review probe on transfer nor justifies a Jev-like or live-desktop
+claim. The local weights remain ignored under `benchmarks/.bench-state/`.
+Reproduce from `daemon` with the pinned public sources and cached features:
+
+```bash
+python -m scripts.train_world_group_binding --tau-source-root benchmarks/.bench-state/tau-bench-source --artifact benchmarks/.bench-state/world_group_binding_family_repro.npz --report benchmarks/.bench-state/world_group_binding_family_repro.json
+```
+
 Reproduce from `daemon` with the pinned public sources and local GPU model:
 
 ```bash
