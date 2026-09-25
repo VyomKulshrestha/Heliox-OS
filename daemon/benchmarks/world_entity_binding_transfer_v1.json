@@ -1,0 +1,48 @@
+{
+  "purpose": "frozen_external_evaluation_only",
+  "source": {
+    "url": "https://github.com/R-Suresh/EntityBindingFailures",
+    "revision": "af311d10f52680576d83cdaf3d05d5b090445de4",
+    "path": "data/tasks_entity_binding_final_60.jsonl",
+    "sha256": "8b57c8a4460d02a4f21a3e0cd65ef458aef789679d5bef229c8e80bfa0089cb4",
+    "license": "CC BY 4.0"
+  },
+  "protocol": "Use the published instruction, candidate entities and gold tool schema to enumerate candidate bindings. A gold binding is positive; wrong bindings and direct actions on ambiguous tasks are negative. No evaluation labels are used in training or threshold selection.",
+  "backbone": {
+    "model": "Qwen/Qwen3.5-2B",
+    "revision": "15852e8c16360a2fea060d615a32b45270f8a8fc"
+  },
+  "feature_checkpoint_sha256": "ba571a4961c7dd83a59dc7d4bcdfcf0c100febdc76138e5782ee5d640b1a829a",
+  "tasks": 60,
+  "resolvable_tasks": 55,
+  "ambiguous_tasks": 5,
+  "candidate_actions": 149,
+  "positive_actions": 55,
+  "negative_actions": 94,
+  "frozen_heads": {
+    "three_domain_mlp": {
+      "artifact_sha256": "147e84054af1c8cf0d9bda653fdec0c9b325b6bf7d773881ce861504608e2e9c",
+      "auc": 0.665183752417795,
+      "default_false_allowances": 77,
+      "default_false_warnings": 0,
+      "cautious_false_allowances": 12,
+      "cautious_false_warnings": 55,
+      "correct_top_rank_on_resolvable": 39,
+      "default_correct_safe_tasks": 39,
+      "cautious_correct_safe_tasks": 1
+    },
+    "pairwise_mlp": {
+      "artifact_sha256": "6e0269a90ffc701fd59cb975a961421fa9ee6635de854916e4ab623013e79888",
+      "auc": 0.6634429400386848,
+      "default_false_allowances": 78,
+      "default_false_warnings": 8,
+      "cautious_false_allowances": 11,
+      "cautious_false_warnings": 55,
+      "correct_top_rank_on_resolvable": 39,
+      "default_correct_safe_tasks": 39,
+      "cautious_correct_safe_tasks": 2
+    }
+  },
+  "decision": "reject_both_heads_for_runtime",
+  "limitations": "Small templated public benchmark. This is an external transfer test of research heads, not Jev equivalence, user authorization, a desktop safety evaluation, or a test of the separately shipped OS-transition world model."
+}

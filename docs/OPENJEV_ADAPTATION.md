@@ -647,6 +647,27 @@ result](../daemon/benchmarks/world_pairwise_scope_v1.json) is rejected too.
 Copying Jev's relative-loss idea without better task/target supervision does
 not make this a Jev-equivalent world model.
 
+We froze both nonlinear heads before reading the [EntityBindingFailures
+benchmark](https://github.com/R-Suresh/EntityBindingFailures), then tested
+transfer to right-tool/wrong-entity choices without fitting or selecting on
+its labels. Its pinned, CC BY 4.0 task set has 60 tasks: 55 resolvable and
+five requiring clarification. Enumerating schema-typed candidate bindings
+gave 55 valid and 94 wrong or ambiguous direct actions. GPU extraction of
+the pinned Qwen features and an independent cached replay agreed. The
+[external transfer result](../daemon/benchmarks/world_entity_binding_transfer_v1.json)
+shows AUC **0.665** for the three-domain MLP and **0.663** for the pairwise
+MLP. At their default thresholds they falsely allowed **77/94** and **78/94**
+wrong or ambiguous actions. At their preselected cautious thresholds they
+still allowed **12/94** and **11/94**, while rejecting **all 55** valid
+actions. Both correctly ranked the gold binding for only **39/55** resolvable
+tasks. This fresh external test therefore rejects both heads for runtime;
+it is not a training set, a Jev comparison, or a test of the separately
+shipped OS-transition world model. Reproduce against the pinned public data
+with `python -m scripts.evaluate_world_entity_binding` from `daemon` after
+extracting the frozen features, or replay another frozen head with
+`--artifact`, `--artifact-report`, and a fresh `--report` path. The validated
+feature checkpoint permits repeated scoring without reloading the GPU model.
+
 The pinned public data and cached Qwen backbone reproduce the experiment from
 `daemon` with a fresh output name; the feature directory is local and ignored:
 
