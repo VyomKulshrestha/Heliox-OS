@@ -34,8 +34,10 @@ and Escape are recorded as key steps. Modifier shortcuts and unknown
 keys mark the recording incomplete rather than guessing an unsafe replay.
 Drag paths are not retained, so only start/end coordinates and duration are
 available as a reference to the guarded planner.
-Heliox-injected actions and clicks while its approval prompt is pending are
-excluded from the manual stream; on Windows, the hook also excludes a
+Input received while Heliox executes an action or awaits approval is
+excluded from the manual stream, so user actions at exactly those times may
+also be missed. Such mixed sessions carry a visible overlap warning and need
+review; on Windows, the hook also excludes a
 foreground window titled “Heliox OS” as a best-effort safeguard. Hook health
 is shown while recording. The hook stops when the recording stops or the daemon
 exits. Global hooks may miss elevated/UAC screens or fail silently; a manual
@@ -43,7 +45,8 @@ workflow is therefore a draft, not a faithful or safe replay guarantee.
 
 The separate “16×16 before/after screen features” option is off by default
 even when action recording is on. It captures a fresh in-memory feature only
-around a single eligible mouse action, after the normal action gates. It does
+around a single eligible **Heliox-executed** mouse action, after the normal
+action gates; manual desktop actions do not create visual training pairs. It does
 not write raw screenshots. A short settle interval follows the action; clicks
 outside the captured primary monitor and relative pointer moves are not used
 as visual training labels. Derived features **can still reveal screen

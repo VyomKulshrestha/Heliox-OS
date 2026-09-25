@@ -16,6 +16,7 @@
     omitted_actions: number;
     incomplete: boolean;
     needs_review: boolean;
+    overlap_warning: boolean;
     placeholders: string[];
     schedule: { next_run_at: string; repeat_seconds: number } | null;
   }
@@ -190,7 +191,7 @@
     <div class="active-box" role="status">
       <strong>{recording.name}</strong>
       <span>{recording.step_count} replayable steps · {recording.omitted_actions} omitted · {recording.sample_count} visual pairs</span>
-      <span>{recording.capture_visual ? "16×16 screen features are being recorded locally." : "Visual feature capture is off."}</span>
+      <span>{recording.capture_visual ? "16×16 screen features are captured around eligible Heliox actions only." : "Visual feature capture is off."}</span>
       {#if recording.capture_manual}<span>{recording.manual_hook_healthy ? "Manual desktop input is being observed." : "Manual input hook is not healthy; stop and review this draft."}</span>{/if}
       <div class="actions">
         <button disabled={busy} onclick={() => void stop(true)}>Stop and save draft</button>
@@ -207,7 +208,7 @@
         <label class="check"><input type="checkbox" bind:checked={manualConsent} /> I consent to a temporary desktop-wide mouse and keyboard hook until I stop recording.</label>
         <p class="warning">Mouse coordinates, drag endpoints, and scrolls are saved locally. Typed characters are never saved; text entry becomes an editable placeholder. Shortcuts and unknown actions make the draft incomplete. Pause before opening sensitive screens.</p>
       {/if}
-      <label class="check"><input type="checkbox" bind:checked={captureVisual} /> Also capture 16×16 before/after screen features for local world-model research.</label>
+      <label class="check"><input type="checkbox" bind:checked={captureVisual} /> Also capture 16×16 before/after screen features around Heliox-executed mouse actions for local world-model research.</label>
       {#if captureVisual}
         <p class="warning">These small features can still reveal screen content. They are encrypted locally, never sent to the model, and excluded from workflow previews.</p>
       {/if}
@@ -228,6 +229,7 @@
           <summary><strong>{workflow.name}</strong><span>{workflow.step_count} steps · {workflow.sample_count} private samples</span></summary>
           <p class="goal">Goal: {workflow.goal}</p>
           {#if workflow.incomplete}<p class="warning">{workflow.omitted_actions} actions were excluded (for example Heliox-entered text, shortcuts, scripts, or parallel actions). This draft cannot run or schedule; those steps need a parameterized workflow.</p>{/if}
+          {#if workflow.overlap_warning}<p class="warning">Heliox also acted during this recording. Manual input at the same moment may have been missed; review the steps carefully.</p>{/if}
           {#if workflow.needs_review && !workflow.incomplete}
             <label class="check"><input type="checkbox" checked={reviewed[workflow.id] === true} onchange={(event) => reviewed[workflow.id] = event.currentTarget.checked} /> I reviewed these manual or coordinate-based steps and understand the current screen may differ.</label>
           {/if}
