@@ -752,6 +752,29 @@ missing target/state supervision and calibrated abstention, not merely a
 smaller binary head. Both external sources were inspected before these
 comparisons, so future model selection needs genuinely fresh held-out tasks.
 
+We screened further stateful corpora before adding more training labels.
+The pinned [Arc CRM Benchmark](https://huggingface.co/datasets/Arc-Intelligence/arc-crm-benchmark)
+snapshot (`Arc-Computer/arc-crm-benchmark` commit
+`5bf1dc5b07dd941e30bbbfdee2bf03b8c7bb93c3`, MIT dataset card) has 1,200
+synthetic conversations and 5,916 turns. Only 31 expected-argument bindings
+in this snapshot have multiple same-type entities in the starting state;
+every one names the target ID literally in the user utterance. Training on
+those cases would mostly teach ID copying, not the implicit or ambiguous
+target selection that failed above, so no Arc rows were fitted. The
+[STATE-Bench](https://github.com/Microsoft/STATE-Bench) learning-track
+trajectories include attempted agent actions and later user corrections;
+an attempted call cannot be treated as a positive label without verifying
+its outcome. We did not import those calls as training examples.
+
+The pinned [ToolSandbox](https://github.com/apple/ToolSandbox) checkout
+(`c8571d7854316d2e1c5f288e59fe1e34e53f6dd1`) supplies stateful starting
+contexts plus human-authored milestones and minefields. Its
+[paper](https://aclanthology.org/2025.findings-naacl.65/) describes 1,032
+scenarios. This is a candidate for a *new* end-to-end state/action evaluation,
+not yet an Heliox benchmark or training result. Integration must preserve
+the sandbox's native state and success checks, and its Apple license must be
+reviewed before redistributing any source or derived data.
+
 Reproduce from `daemon` with the pinned public sources and local GPU model:
 
 ```bash
