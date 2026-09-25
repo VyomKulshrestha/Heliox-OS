@@ -122,7 +122,7 @@ No comparison declares a universal winner. See the [transparent cost page](https
 | Local chat sessions    | Separate transcripts and task context with bounded cross-session preference and evidence memory                                                            |
 | Gesture and gaze       | 30+ gesture mappings, MediaPipe Tasks 3D landmarks, coarse gaze fusion, calibration, temporal rejection, and opt-in cursor control                         |
 | Background workflows   | Durable jobs with pause, resume, cancellation, restart recovery, and guarded autonomous execution                                                          |
-| Hybrid risk model      | Deterministic policy plus structured transitions, learned risk, verified failure history, and optional shadow UI-JEPA; learned output can only add caution |
+| Hybrid risk model      | Deterministic policy plus structured transitions, learned risk, executor-callback history, verified outcome adaptation, and optional shadow UI-JEPA; learned output can only add caution |
 | Bounded learning       | Provenance-aware temporal memory, repeated-evidence promotion, replay, drift detection, and reset controls                                                 |
 | Plugin ecosystem       | Reviewed GitHub marketplace, signed local plugins, per-file hashes, capability manifests, and constrained native/WASM brokers                              |
 | Neural research        | BrainFlow synthetic, recorded EEG playback, public EEGBCI benchmarking, calibrated SSVEP selection, replay-safe Tier 0/1 goals, and explicit staged autonomous task launch |

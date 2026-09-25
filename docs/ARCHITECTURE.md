@@ -263,7 +263,8 @@ uncertainty, evidence, sources, and model version. It combines:
 - deterministic policy;
 - structured OS, filesystem, process, package, service, browser, and UI
   transition prediction;
-- calibrated learned disk/process impact and verified historical failure risk;
+- calibrated learned disk/process impact, execution-callback failure history,
+  and verified per-action transition caution when evidence is sufficient;
 - an optional action-conditioned UI-JEPA embedding predictor.
 
 The optional JEPA path stays unavailable when compatible weights are not
@@ -291,7 +292,11 @@ only when a non-dry-run executor callback is followed by a matching,
 independently observed action postcondition, and coarse routines from
 privacy-preserving application/time features. Unsupported actions and older
 verification records without per-action observation evidence do not supply
-transition labels. Repeated evidence is required before promotion.
+transition labels. Repeated evidence for the same action type and invocation
+source is required before promotion. The session plan risk gate uses the
+resolved executor source and can apply a promoted low-success estimate only to
+add caution. Other risk paths without an explicit source remain at their
+existing deterministic and callback-history assessments.
 
 Bounded replay and ADWIN drift detection decay obsolete behavior. Resetting the
 learner creates a checkpoint without rewriting the immutable audit ledger.

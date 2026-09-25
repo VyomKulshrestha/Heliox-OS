@@ -155,6 +155,10 @@ non-dry-run action plus a matching independently observed postcondition before
 it accepts a training label. Existing ledger verification events lack the
 per-action observation field and are not retroactively relabeled from executor
 callbacks. This learner remains advisory and needs new validated outcome data.
+For session plans, a promoted estimate with enough observations for that
+action type and executor source can add RiskGate caution; it cannot lower existing risk,
+approve an action, or replace a rule. Executor-callback history remains a
+separate, weaker signal and is labeled as such in prediction provenance.
 
 The shipped structured predictor remains available without learned weights.
 An optional UI-JEPA artifact loads only when finite tensor shapes and its exact
