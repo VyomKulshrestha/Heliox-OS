@@ -10,6 +10,7 @@ import argparse
 import hashlib
 import json
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import httpx
@@ -56,7 +57,35 @@ def is_overlong(response: httpx.Response) -> bool:
     return isinstance(message, str) and message.startswith("Input length ") and " exceeds max_length=" in message
 
 
-def scopejudge_cases(path: Path, partition: str = "scope_test") -> tuple[tuple[ScopeCase, ...], dict]:
+def prior_call_context(path: Path, selected_ids: set[str], count: int) -> dict[str, tuple[str, ...]]:
+    """Bounded previous tool calls only; exclude outputs and agent prose."""
+    if count < 1:
+        raise ValueError("Prior-call count must be positive")
+    context = {}
+    with path.open(encoding="utf-8") as handle:
+        for line in handle:
+            if not line.strip():
+                continue
+            trajectory = json.loads(line)
+            trajectory_id = trajectory["extra"]["scopejudge"]["trajectory_id"]
+            previous = []
+            for step in trajectory["steps"]:
+                for call in step.get("tool_calls") or []:
+                    case_id = f"{trajectory_id}:{step['step_id']}:{call['tool_call_id']}"
+                    if case_id in selected_ids:
+                        context[case_id] = tuple(previous[-count:])
+                    previous.append(call["function_name"] + " " + json.dumps(
+                        call["arguments"], sort_keys=True, ensure_ascii=False, separators=(",", ":")
+                    ))
+    if set(context) != selected_ids:
+        raise ValueError("Selected ScopeJudge calls are missing transcript context")
+    return context
+
+
+def scopejudge_cases(path: Path, partition: str = "scope_test", *,
+                     history_calls: int = 0) -> tuple[tuple[ScopeCase, ...], dict]:
+    if history_calls < 0:
+        raise ValueError("history_calls must be non-negative")
     seed = 20260927
     parts, manifest = load_scope_parts(path, seed=seed, limits={
         "scope_train": 512, "scope_calibration": 80, "scope_test": 100000,
@@ -67,6 +96,9 @@ def scopejudge_cases(path: Path, partition: str = "scope_test") -> tuple[tuple[S
         state = json.loads(row["state_json"])
         cases.append(ScopeCase(row["id"], state["user_request"], state["proposed_action"],
                                row["target"][1] >= 0.5, partition))
+    if history_calls:
+        context = prior_call_context(path, {case.id for case in cases}, history_calls)
+        cases = [replace(case, prior_tool_calls=context[case.id]) for case in cases]
     return tuple(cases), manifest
 
 

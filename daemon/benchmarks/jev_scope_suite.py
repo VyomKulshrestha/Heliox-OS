@@ -16,6 +16,7 @@ class ScopeCase:
     action: str
     in_scope: bool
     split: str = "train"
+    prior_tool_calls: tuple[str, ...] = ()
 
 
 CASES = (
