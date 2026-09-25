@@ -83,7 +83,9 @@ def main() -> None:
             raise ValueError("Scope calibration source differs from the training report")
         tokenizer = AutoTokenizer.from_pretrained(
             snapshot_download(MODEL, revision=REVISION, local_files_only=True), local_files_only=True)
-        encoded, overlong = encode_rows(tokenizer, parts["scope_calibration"], model_report["max_length"])
+        encoded, overlong = encode_rows(
+            tokenizer, parts["scope_calibration"], model_report["max_length"],
+            prompt_style=model_report.get("prompt_style", "candidate_v1"))
         selected = [item["row"] for item in encoded]
         if not selected:
             raise ValueError("No eligible scope calibration rows")
