@@ -448,6 +448,30 @@ class ScreenVisionAgent:
             "screen_observed_at": current.timestamp,
         }
 
+    async def capture_world_feature_now(self) -> dict[str, Any] | None:
+        """Capture a fresh feature in memory for an explicitly enabled recorder.
+
+        This path deliberately has no screenshot-file fallback. It is never
+        called by the periodic monitor or by ordinary execution.
+        """
+        if not self._running or self._paused:
+            return None
+        return await asyncio.wait_for(asyncio.to_thread(self._sync_world_feature), timeout=self._capture_timeout)
+
+    @staticmethod
+    def _sync_world_feature() -> dict[str, Any] | None:
+        from mss import mss
+        from PIL import Image
+
+        with mss() as capture:
+            monitor = capture.monitors[1]
+            frame = capture.grab(monitor)
+            image = Image.frombytes("RGB", frame.size, frame.bgra, "raw", "BGRX")
+            feature = _world_embedding_from_frame(image.resize((64, 64)).convert("L"))
+            if not feature:
+                return None
+            return {"embedding": feature, "width": monitor["width"], "height": monitor["height"]}
+
     async def observe_now(self) -> ScreenState:
         """Capture fresh foreground state for an active reasoning loop.
 

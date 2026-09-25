@@ -369,3 +369,34 @@ class TestActionPreviewWiring:
         assert narrator.action_preview_calls == []
         assert results[0].success is False
         assert "real preview could not be generated" in results[0].error
+
+
+class TestRecordedWorkflowWiring:
+    @pytest.mark.asyncio
+    async def test_recorder_surrounds_only_executed_actions(self, tmp_path):
+        ex = _executor(tmp_path)
+        recorder = type("Recorder", (), {})()
+        recorder.before = AsyncMock(return_value={"session_id": "one", "before": None})
+        recorder.after = AsyncMock()
+        ex.set_recorded_workflow_store(recorder)
+
+        results = await ex.execute(_plan(), invocation_source=InvocationSource.INTERACTIVE)
+
+        assert results[0].success is True
+        recorder.before.assert_awaited_once()
+        assert recorder.before.await_args.kwargs["single_action_batch"] is True
+        recorder.after.assert_awaited_once()
+        assert recorder.after.await_args.args[1] is results[0]
+
+    @pytest.mark.asyncio
+    async def test_gateway_denial_never_captures(self, tmp_path):
+        ex = _executor(tmp_path, gateway=_FakeGateway(allowed=False))
+        recorder = type("Recorder", (), {})()
+        recorder.before = AsyncMock()
+        recorder.after = AsyncMock()
+        ex.set_recorded_workflow_store(recorder)
+
+        await ex.execute(_plan(), invocation_source=InvocationSource.AUTONOMOUS)
+
+        recorder.before.assert_not_awaited()
+        recorder.after.assert_not_awaited()
