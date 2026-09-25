@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import shutil
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from pilot.actions import Action, ActionPlan, ActionResult, ActionType, FileParams
+from pilot.actions import Action, ActionPlan, ActionResult, ActionType, BrowserParams, FileParams
 from pilot.agents import verifier as verifier_module
 from pilot.agents.verifier import Verifier
 from pilot.intelligence.world_model import EffectDomain, StructuredTransitionPredictor, WorldState
@@ -70,6 +70,84 @@ async def test_success_without_independent_postcondition_is_reported_not_verifie
     assert verification.passed is True
     assert verification.independently_observed_actions == []
     assert "REPORTED — no independent postcondition" in verification.details[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action_type, params", [
+    (ActionType.BROWSER_NAVIGATE, BrowserParams(url="https://example.com")),
+    (ActionType.BROWSER_TYPE, BrowserParams(selector="#name", text="ready")),
+    (ActionType.BROWSER_SELECT, BrowserParams(selector="#choice", value="yes")),
+    (ActionType.BROWSER_FILL_FORM, BrowserParams(fields={"#name": "ready"})),
+])
+async def test_matching_browser_postcondition_is_independently_observed(monkeypatch, action_type, params) -> None:
+    from pilot.system import browser
+
+    check = AsyncMock(return_value=(True, "state matches"))
+    monkeypatch.setattr(browser, "browser_action_already_satisfied", check)
+    action = Action(action_type=action_type, target="browser", parameters=params)
+
+    verification = await Verifier(MagicMock()).verify(
+        ActionPlan(actions=[action]), [ActionResult(action=action, success=True)])
+
+    assert verification.passed is True
+    assert verification.independently_observed_actions == [0]
+    assert "VERIFIED" in verification.details[0]
+    check.assert_awaited_once_with(action_type.value, params)
+
+
+@pytest.mark.asyncio
+async def test_redirect_is_not_mislabeled_as_failed_or_independently_verified(monkeypatch) -> None:
+    from pilot.system import browser
+
+    monkeypatch.setattr(browser, "browser_action_already_satisfied",
+                        AsyncMock(return_value=(False, "current URL is https://secret.example/?token=hidden")))
+    action = Action(action_type=ActionType.BROWSER_NAVIGATE, target="https://example.com",
+                    parameters=BrowserParams(url="https://example.com"))
+
+    verification = await Verifier(MagicMock()).verify(
+        ActionPlan(actions=[action]), [ActionResult(action=action, success=True)])
+
+    assert verification.passed is True
+    assert verification.independently_observed_actions == []
+    assert "REPORTED" in verification.details[0]
+    assert "secret.example" not in str(verification)
+
+
+@pytest.mark.asyncio
+async def test_browser_field_mismatch_is_observed_failure(monkeypatch) -> None:
+    from pilot.system import browser
+
+    monkeypatch.setattr(browser, "browser_action_already_satisfied", AsyncMock(return_value=(False, "different")))
+    action = Action(action_type=ActionType.BROWSER_TYPE, target="#name",
+                    parameters=BrowserParams(selector="#name", text="ready"))
+
+    verification = await Verifier(MagicMock()).verify(
+        ActionPlan(actions=[action]), [ActionResult(action=action, success=True)])
+
+    assert verification.passed is False
+    assert verification.failed_actions == [0]
+    assert verification.independently_observed_actions == [0]
+
+
+@pytest.mark.asyncio
+async def test_submitted_or_explicit_tab_browser_action_is_not_a_training_label(monkeypatch) -> None:
+    from pilot.system import browser
+
+    check = AsyncMock(return_value=None)
+    monkeypatch.setattr(browser, "browser_action_already_satisfied", check)
+    actions = [
+        Action(action_type=ActionType.BROWSER_FILL_FORM, target="form",
+               parameters=BrowserParams(fields={"#name": "ready"}, submit_selector="#submit")),
+        Action(action_type=ActionType.BROWSER_TYPE, target="#name",
+               parameters=BrowserParams(selector="#name", text="ready", tab_index=2)),
+    ]
+    verification = await Verifier(MagicMock()).verify(
+        ActionPlan(actions=actions), [ActionResult(action=action, success=True) for action in actions])
+
+    assert verification.passed is True
+    assert verification.independently_observed_actions == []
+    assert all("REPORTED" in detail for detail in verification.details)
+    check.assert_awaited_once()
 
 
 @pytest.mark.asyncio

@@ -123,6 +123,46 @@ async def test_browser_step_check_does_not_suppress_ambiguous_locator(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_verifier_observes_browser_field_from_the_live_session(monkeypatch):
+    _install_page(monkeypatch, _Page("https://example.com/", {"#name": "ready"}))
+    action = Action(action_type=ActionType.BROWSER_TYPE, target="#name",
+                    parameters=BrowserParams(selector="#name", text="ready"))
+
+    verification = await Verifier(MagicMock()).verify(
+        ActionPlan(actions=[action]), [ActionResult(action=action, success=True)])
+
+    assert verification.passed is True
+    assert verification.independently_observed_actions == [0]
+
+
+@pytest.mark.asyncio
+async def test_verifier_does_not_learn_from_redirected_browser_navigation(monkeypatch):
+    _install_page(monkeypatch, _Page("https://example.com/login"))
+    action = Action(action_type=ActionType.BROWSER_NAVIGATE, target="https://example.com/account",
+                    parameters=BrowserParams(url="https://example.com/account"))
+
+    verification = await Verifier(MagicMock()).verify(
+        ActionPlan(actions=[action]), [ActionResult(action=action, success=True)])
+
+    assert verification.passed is True
+    assert verification.independently_observed_actions == []
+    assert "REPORTED" in verification.details[0]
+
+
+@pytest.mark.asyncio
+async def test_precheck_does_not_skip_action_for_nondefault_browser_tab(monkeypatch):
+    requested_tabs: list[int] = []
+    _install_page(monkeypatch, _Page("https://example.com/"), requested_tabs)
+    action = Action(action_type=ActionType.BROWSER_NAVIGATE, target="https://example.com/",
+                    parameters=BrowserParams(url="https://example.com/", tab_index=2))
+
+    precheck = await Verifier(MagicMock()).check_already_satisfied(action)
+
+    assert precheck is None
+    assert requested_tabs == []
+
+
+@pytest.mark.asyncio
 async def test_verifier_precheck_is_conservative(tmp_path):
     target = tmp_path / "ready.txt"
     target.write_text("ready", encoding="utf-8")

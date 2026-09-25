@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from pilot.actions import Action, ActionPlan, ActionResult, ActionType, FileParams
+from pilot.actions import Action, ActionPlan, ActionResult, ActionType, BrowserParams, FileParams
 from pilot.agents.verifier import Verifier
 from pilot.config import PilotConfig
 from pilot.intelligence.experience import ExperienceEventType, ExperienceLedger
@@ -346,6 +346,42 @@ async def test_directory_copy_existence_does_not_train_world_transition(tmp_path
     assert verification.passed is True
     assert verification.independently_observed_actions == []
     assert learner.status()["transitions"]["labels"] == 0
+    await ledger.close()
+
+
+@pytest.mark.asyncio
+async def test_browser_world_transition_requires_matching_observed_url(tmp_path, occurred_at, monkeypatch):
+    from unittest.mock import AsyncMock, MagicMock
+
+    from pilot.system import browser
+
+    learner = VerifiedOnlineLearner(tmp_path / "learning-state.json")
+    ledger = ExperienceLedger(tmp_path / "experience.db")
+    await ledger.initialize()
+    ledger.subscribe(learner.consume)
+    action = Action(action_type=ActionType.BROWSER_NAVIGATE, target="https://example.com/account",
+                    parameters=BrowserParams(url="https://example.com/account"))
+
+    for index, matched in enumerate((True, False)):
+        monkeypatch.setattr(browser, "browser_action_already_satisfied",
+                            AsyncMock(return_value=(matched, "current page")))
+        plan_id = f"browser-plan-{index}"
+        action_id = f"browser-action-{index}"
+        await ledger.append(ExperienceEventType.ACTION_STARTED, idempotency_key=f"{action_id}:started",
+                            plan_id=plan_id, action_id=action_id, source="interactive", occurred_at=occurred_at,
+                            payload={"index": 0, "action_type": "browser_navigate"})
+        await ledger.append(ExperienceEventType.ACTION_COMPLETED, idempotency_key=f"{action_id}:completed",
+                            plan_id=plan_id, action_id=action_id, source="interactive", occurred_at=occurred_at,
+                            payload={"index": 0, "success": True, "executed": True, "callback_observed": True})
+        verification = await Verifier(MagicMock()).verify(
+            ActionPlan(actions=[action]), [ActionResult(action=action, success=True)])
+        await ledger.append(ExperienceEventType.OUTCOME_VERIFIED, idempotency_key=f"{plan_id}:verified",
+                            plan_id=plan_id, source="verifier", occurred_at=occurred_at,
+                            payload={"result_count": 1, "verification": verification})
+    await ledger.drain_subscribers()
+
+    assert learner.status()["transitions"]["labels"] == 1
+    assert learner.status()["transitions"]["positive"] == 1
     await ledger.close()
 
 

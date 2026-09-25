@@ -37,6 +37,10 @@ MAX_COPY_CONTENT_VERIFY_BYTES = 64 * 1024 * 1024
 # Public evidence generation imports this registry so the catalog cannot claim
 # an independent verifier that is absent from the runtime verification path.
 POSTCONDITION_VERIFIERS: dict[ActionType, str] = {
+    ActionType.BROWSER_NAVIGATE: "conditional_exact_url_postcondition",
+    ActionType.BROWSER_TYPE: "conditional_field_value_postcondition",
+    ActionType.BROWSER_SELECT: "conditional_field_value_postcondition",
+    ActionType.BROWSER_FILL_FORM: "conditional_field_value_postcondition",
     ActionType.FILE_WRITE: "file_content_postcondition",
     ActionType.FILE_DELETE: "file_absence_postcondition",
     ActionType.FILE_COPY: "copy_destination_postcondition",
@@ -94,6 +98,8 @@ class Verifier:
             ActionType.BROWSER_SELECT,
             ActionType.BROWSER_FILL_FORM,
         }:
+            if getattr(action.parameters, "tab_index", -1) != -1:
+                return None
             from pilot.system.browser import browser_action_already_satisfied
 
             return await browser_action_already_satisfied(action.action_type.value, action.parameters)
@@ -170,6 +176,14 @@ class Verifier:
         action = result.action
 
         try:
+            if action.action_type in {
+                ActionType.BROWSER_NAVIGATE,
+                ActionType.BROWSER_TYPE,
+                ActionType.BROWSER_SELECT,
+                ActionType.BROWSER_FILL_FORM,
+            }:
+                return await self._verify_browser_state(action)
+
             if action.action_type == ActionType.FILE_WRITE:
                 check = await self._verify_file_write(action.parameters)  # type: ignore[arg-type]
 
@@ -228,6 +242,23 @@ class Verifier:
         except Exception as e:
             logger.warning("Verification check failed: %s", e)
             return False, f"Verification error: {e}", False
+
+    async def _verify_browser_state(self, action: Action) -> tuple[bool, str, bool]:
+        from pilot.system.browser import browser_action_already_satisfied
+
+        params = action.parameters
+        if getattr(params, "tab_index", -1) != -1:
+            return True, "Browser action tab is not bound to the executor backend", False
+        observed = await browser_action_already_satisfied(action.action_type.value, params)
+        if observed is None:
+            return True, "Browser postcondition is unavailable or has side effects", False
+        if action.action_type == ActionType.BROWSER_NAVIGATE:
+            if observed[0]:
+                return True, "Browser URL matches requested navigation", True
+            return True, "Browser URL differs or redirected; exact outcome is unverified", False
+        if observed[0]:
+            return True, "Browser field state matches requested value", True
+        return False, "Browser field state differs from requested value", True
 
     async def _verify_file_write(self, params: FileParams) -> tuple[bool, str]:
         from pathlib import Path
