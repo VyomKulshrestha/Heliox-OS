@@ -21,10 +21,12 @@ from river import drift, linear_model, optim
 
 from pilot.intelligence.experience import ExperienceEvent, ExperienceEventType, ExperienceLedger
 
-MODEL_VERSION = "verified-online-v1"
+MODEL_VERSION = "verified-online-v2"
 MINIMUM_PROMOTION_LABELS = 6
 REPLAY_CAPACITY = 256
 MAX_ROUTINES = 256
+MAX_PENDING_PLANS = 256
+MAX_PENDING_ACTIONS = 512
 DECAY_HALF_LIFE_DAYS = 30.0
 
 
@@ -170,7 +172,8 @@ class VerifiedOnlineLearner:
         self._seen_sequences: set[int] = set()
         self._suggestion_features: dict[str, dict[str, float]] = {}
         self._action_features: dict[str, dict[str, float]] = {}
-        self._plan_actions: dict[str, list[str]] = {}
+        self._plan_actions: dict[str, dict[int, tuple[str, str]]] = {}
+        self._completed_actions: dict[str, dict[int, tuple[str, bool]]] = {}
         self._routines: Counter[str] = Counter()
         self._routine_epoch = datetime.now(timezone.utc)
         self._workflow_outcomes: Counter[str] = Counter()
@@ -274,6 +277,7 @@ class VerifiedOnlineLearner:
             self._suggestion_features.clear()
             self._action_features.clear()
             self._plan_actions.clear()
+            self._completed_actions.clear()
             self._routines.clear()
             self._routine_epoch = datetime.now(timezone.utc)
             self._workflow_outcomes.clear()
@@ -315,22 +319,33 @@ class VerifiedOnlineLearner:
             action = payload.get("action")
             action_data = action if isinstance(action, dict) else {}
             action_type = str(action_data.get("action_type") or payload.get("action_type") or "")
-            if event.action_id and action_type:
-                vector = self._transition_vector(
-                    action_type=action_type,
-                    source=event.source,
-                    occurred_at=event.occurred_at,
-                )
-                self._action_features[event.action_id] = vector
-                self._plan_actions.setdefault(event.plan_id, []).append(_safe_bucket(action_type))
+            index = payload.get("index")
+            if (event.plan_id and event.action_id and action_type
+                    and isinstance(index, int) and not isinstance(index, bool) and index >= 0):
+                if event.plan_id not in self._plan_actions and len(self._plan_actions) >= MAX_PENDING_PLANS:
+                    self._forget_plan(next(iter(self._plan_actions)))
+                self._plan_actions.setdefault(event.plan_id, {})[index] = (event.action_id, _safe_bucket(action_type))
+                if event_type == ExperienceEventType.ACTION_STARTED:
+                    self._action_features[event.action_id] = self._transition_vector(
+                        action_type=action_type,
+                        source=event.source,
+                        occurred_at=event.occurred_at,
+                    )
+                    if len(self._action_features) > MAX_PENDING_ACTIONS:
+                        self._action_features.pop(next(iter(self._action_features)))
         elif event_type == ExperienceEventType.ACTION_COMPLETED:
-            if not bool(payload.get("callback_observed", False)):
+            if payload.get("callback_observed") is not True or payload.get("executed") is not True:
                 return
             if str(payload.get("output_excerpt", "")).startswith("(dry run)"):
                 return
-            features = self._action_features.get(event.action_id)
-            if features is not None:
-                self._transitions.learn(features, bool(payload.get("success", False)), event.occurred_at)
+            index = payload.get("index")
+            if (event.plan_id and event.action_id in self._action_features
+                    and isinstance(index, int) and not isinstance(index, bool) and index >= 0):
+                planned = self._plan_actions.get(event.plan_id, {}).get(index)
+                if planned is not None and planned[0] == event.action_id:
+                    self._completed_actions.setdefault(event.plan_id, {})[index] = (
+                        event.action_id, payload.get("success") is True,
+                    )
         elif event_type == ExperienceEventType.OBSERVATION:
             observation_time = _parse_time(event.occurred_at)
             active_app = _safe_bucket(payload.get("active_app"))
@@ -346,10 +361,8 @@ class VerifiedOnlineLearner:
                 for key, _ in self._routines.most_common()[MAX_ROUTINES:]:
                     del self._routines[key]
         elif event_type == ExperienceEventType.OUTCOME_VERIFIED:
-            signature = ">".join(self._plan_actions.get(event.plan_id, ()))
-            if signature:
-                passed = self._verified_outcome(payload)
-                self._workflow_outcomes[f"{signature}:{'success' if passed else 'failure'}"] += 1
+            if event.source == "verifier":
+                self._learn_verified_plan(event)
         elif event_type == ExperienceEventType.PREDICTION_ERROR:
             self._prediction_errors += 1
         elif event_type == ExperienceEventType.USER_CORRECTION:
@@ -384,12 +397,44 @@ class VerifiedOnlineLearner:
         features[f"source={_safe_bucket(source)}"] = 1.0
         return features
 
-    @staticmethod
-    def _verified_outcome(payload: dict[str, Any]) -> bool:
-        verification = payload.get("verification")
-        if isinstance(verification, dict) and "passed" in verification:
-            return bool(verification["passed"])
-        return str(payload.get("status", "")).lower() in {"success", "completed", "verified"}
+    def _learn_verified_plan(self, event: ExperienceEvent) -> None:
+        plan_actions = self._plan_actions.get(event.plan_id, {})
+        completed = self._completed_actions.get(event.plan_id, {})
+        verification = event.payload.get("verification")
+        result_count = event.payload.get("result_count")
+        try:
+            if (not isinstance(verification, dict) or not isinstance(result_count, int)
+                    or isinstance(result_count, bool) or result_count <= 0
+                    or set(plan_actions) != set(range(result_count))):
+                return
+            failed = verification.get("failed_actions")
+            observed = verification.get("independently_observed_actions")
+            passed = verification.get("passed")
+            if (not isinstance(failed, list) or not isinstance(observed, list)
+                    or not isinstance(passed, bool)
+                    or any(not isinstance(index, int) or isinstance(index, bool)
+                           or index not in plan_actions for index in (*failed, *observed))
+                    or len(set(failed)) != len(failed) or len(set(observed)) != len(observed)
+                    or passed != (not failed)):
+                return
+            failed_indices = set(failed)
+            for index in observed:
+                action_id = plan_actions[index][0]
+                completion = completed.get(index)
+                features = self._action_features.get(action_id)
+                if completion is not None and completion[0] == action_id and features is not None:
+                    self._transitions.learn(features, completion[1] and index not in failed_indices,
+                                            event.occurred_at)
+            if len(observed) == result_count:
+                signature = ">".join(plan_actions[index][1] for index in range(result_count))
+                self._workflow_outcomes[f"{signature}:{'success' if passed else 'failure'}"] += 1
+        finally:
+            self._forget_plan(event.plan_id)
+
+    def _forget_plan(self, plan_id: str) -> None:
+        for action_id, _ in self._plan_actions.pop(plan_id, {}).values():
+            self._action_features.pop(action_id, None)
+        self._completed_actions.pop(plan_id, None)
 
     def _decayed_routines(self) -> list[tuple[str, float]]:
         # Routine observations are intentionally coarse. Count decay keeps an

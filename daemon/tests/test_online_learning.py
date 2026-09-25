@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 
 import pytest
 
+from pilot.actions import Action, ActionPlan, ActionResult, ActionType, FileParams
+from pilot.agents.verifier import Verifier
 from pilot.config import PilotConfig
 from pilot.intelligence.experience import ExperienceEventType, ExperienceLedger
 from pilot.intelligence.online_learning import MINIMUM_PROMOTION_LABELS, VerifiedOnlineLearner
@@ -132,7 +134,7 @@ async def test_ignored_suggestions_are_negative_labels(tmp_path, occurred_at):
 
 
 @pytest.mark.asyncio
-async def test_transition_learning_requires_real_callback_observation(tmp_path, occurred_at):
+async def test_transition_learning_requires_independent_postcondition(tmp_path, occurred_at):
     learner = VerifiedOnlineLearner(tmp_path / "learning-state.json")
     ledger = ExperienceLedger(tmp_path / "experience.db")
     await ledger.initialize()
@@ -140,51 +142,176 @@ async def test_transition_learning_requires_real_callback_observation(tmp_path, 
 
     for index in range(MINIMUM_PROMOTION_LABELS):
         action_id = f"action-{index}"
+        plan_id = f"plan-{index}"
         await ledger.append(
             ExperienceEventType.CANDIDATE_ACTION,
             idempotency_key=f"{action_id}:candidate",
             action_id=action_id,
-            plan_id=f"plan-{index}",
+            plan_id=plan_id,
             source="interactive",
             occurred_at=occurred_at,
-            payload={"action": {"action_type": "browser_navigate"}},
+            payload={"index": 0, "action": {"action_type": "file_write"}},
+        )
+        await ledger.append(
+            ExperienceEventType.ACTION_STARTED,
+            idempotency_key=f"{action_id}:started",
+            action_id=action_id,
+            plan_id=plan_id,
+            source="interactive",
+            occurred_at=occurred_at,
+            payload={"index": 0, "action_type": "file_write"},
         )
         await ledger.append(
             ExperienceEventType.ACTION_COMPLETED,
             idempotency_key=f"{action_id}:complete",
             action_id=action_id,
-            plan_id=f"plan-{index}",
+            plan_id=plan_id,
             source="interactive",
             occurred_at=occurred_at,
             payload={
+                "index": 0,
                 "success": True,
-                "callback_observed": index != 0,
+                "executed": True,
+                "callback_observed": True,
                 "output_excerpt": "loaded",
             },
         )
-    await ledger.append(
-        ExperienceEventType.ACTION_COMPLETED,
-        idempotency_key="dry-run:complete",
-        action_id="action-1",
-        source="interactive",
-        occurred_at=occurred_at,
-        payload={
-            "success": True,
-            "callback_observed": True,
-            "output_excerpt": "(dry run) would navigate",
-        },
-    )
+    await ledger.drain_subscribers()
+    assert learner.status()["transitions"]["labels"] == 0
+
+    for index in range(MINIMUM_PROMOTION_LABELS):
+        await ledger.append(
+            ExperienceEventType.OUTCOME_VERIFIED,
+            idempotency_key=f"plan-{index}:verified",
+            plan_id=f"plan-{index}",
+            source="verifier",
+            occurred_at=occurred_at,
+            payload={
+                "result_count": 1,
+                "verification": {
+                    "passed": True,
+                    "failed_actions": [],
+                    "independently_observed_actions": [0] if index else [],
+                },
+            },
+        )
     await ledger.drain_subscribers()
 
     assert learner.status()["transitions"]["labels"] == MINIMUM_PROMOTION_LABELS - 1
+    assert learner.status()["workflow_patterns"] == 1
     assert (
         learner.score_transition(
-            action_type="browser_navigate",
+            action_type="file_write",
             source="interactive",
             occurred_at=occurred_at,
         ).state
         == "candidate"
     )
+    await ledger.close()
+
+
+@pytest.mark.asyncio
+async def test_transition_learning_uses_failed_observed_postcondition(tmp_path, occurred_at):
+    learner = VerifiedOnlineLearner(tmp_path / "learning-state.json")
+    ledger = ExperienceLedger(tmp_path / "experience.db")
+    await ledger.initialize()
+    ledger.subscribe(learner.consume)
+    await ledger.append(
+        ExperienceEventType.ACTION_STARTED,
+        idempotency_key="started",
+        plan_id="plan-1",
+        action_id="action-1",
+        source="interactive",
+        occurred_at=occurred_at,
+        payload={"index": 0, "action_type": "file_write"},
+    )
+    await ledger.append(
+        ExperienceEventType.ACTION_COMPLETED,
+        idempotency_key="completed",
+        plan_id="plan-1",
+        action_id="action-1",
+        source="interactive",
+        occurred_at=occurred_at,
+        payload={"index": 0, "success": True, "executed": True, "callback_observed": True},
+    )
+    await ledger.append(
+        ExperienceEventType.OUTCOME_VERIFIED,
+        idempotency_key="verified",
+        plan_id="plan-1",
+        source="verifier",
+        occurred_at=occurred_at,
+        payload={
+            "result_count": 1,
+            "verification": {
+                "passed": False,
+                "failed_actions": [0],
+                "independently_observed_actions": [0],
+            },
+        },
+    )
+    await ledger.drain_subscribers()
+
+    assert learner.status()["transitions"]["labels"] == 1
+    assert learner.status()["transitions"]["negative"] == 1
+    await ledger.close()
+
+
+@pytest.mark.asyncio
+async def test_real_verifier_result_trains_only_checked_file_transition(tmp_path, occurred_at):
+    from unittest.mock import MagicMock
+
+    learner = VerifiedOnlineLearner(tmp_path / "learning-state.json")
+    ledger = ExperienceLedger(tmp_path / "experience.db")
+    await ledger.initialize()
+    ledger.subscribe(learner.consume)
+    verifier = Verifier(MagicMock())
+
+    for index, actual_content in enumerate(("expected", "unexpected")):
+        path = tmp_path / f"output-{index}.txt"
+        path.write_text(actual_content, encoding="utf-8")
+        action = Action(
+            action_type=ActionType.FILE_WRITE,
+            target=str(path),
+            parameters=FileParams(path=str(path), content="expected"),
+        )
+        plan_id = f"plan-{index}"
+        action_id = f"action-{index}"
+        for event_type, suffix, payload in (
+            (ExperienceEventType.ACTION_STARTED, "started", {"index": 0, "action_type": "file_write"}),
+            (
+                ExperienceEventType.ACTION_COMPLETED,
+                "completed",
+                {"index": 0, "success": True, "executed": True, "callback_observed": True},
+            ),
+        ):
+            await ledger.append(
+                event_type,
+                idempotency_key=f"{action_id}:{suffix}",
+                action_id=action_id,
+                plan_id=plan_id,
+                source="interactive",
+                occurred_at=occurred_at,
+                payload=payload,
+            )
+        verification = await verifier.verify(
+            ActionPlan(actions=[action]), [ActionResult(action=action, success=True)]
+        )
+        await ledger.append(
+            ExperienceEventType.OUTCOME_VERIFIED,
+            idempotency_key=f"{plan_id}:verified",
+            plan_id=plan_id,
+            source="verifier",
+            occurred_at=occurred_at,
+            payload={"result_count": 1, "verification": verification},
+        )
+    await ledger.drain_subscribers()
+
+    assert learner.status()["transitions"]["labels"] == 2
+    assert learner.status()["transitions"]["positive"] == 1
+    assert learner.status()["transitions"]["negative"] == 1
+    rebuilt = VerifiedOnlineLearner(tmp_path / "learning-state.json")
+    await rebuilt.initialize(ledger)
+    assert rebuilt.status()["transitions"] == learner.status()["transitions"]
     await ledger.close()
 
 
