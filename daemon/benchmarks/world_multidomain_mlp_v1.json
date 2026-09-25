@@ -1,0 +1,56 @@
+{
+  "purpose": "offline_nonlinear_world_task_state_research_not_runtime_promotion",
+  "backbone": "Qwen/Qwen3.5-2B frozen features from world_multiturn_scope_v3",
+  "source_report_sha256": "2fe8cc1c44a07e1e1690203d0d5aa62ef4353293383349daaaeb848b0c40c57b",
+  "head": "Two-layer GELU MLP, 64 hidden units, dropout 0.3",
+  "training": "Three domain/class-balanced public training partitions, 120 AdamW epochs on CUDA; six hidden-size/seed candidates selected by minimum calibration AUC",
+  "selected_seed": 73,
+  "public_calibration_threshold": 0.997869372367859,
+  "agentic_test_default": {
+    "auc": 0.9331048589326278,
+    "out_of_scope_rows": 398,
+    "false_allowances": 65,
+    "false_warnings": 45
+  },
+  "agentic_test_cautious": {
+    "out_of_scope_rows": 398,
+    "false_allowances": 2,
+    "false_warnings": 470
+  },
+  "tbac_test_default": {
+    "auc": 0.9106830365823171,
+    "out_of_scope_rows": 417,
+    "false_allowances": 78,
+    "false_warnings": 78
+  },
+  "tbac_test_cautious": {
+    "out_of_scope_rows": 417,
+    "false_allowances": 1,
+    "false_warnings": 493
+  },
+  "scopejudge_test_default": {
+    "auc": 0.8583611420096402,
+    "out_of_scope_rows": 29,
+    "false_allowances": 5,
+    "false_warnings": 80
+  },
+  "scopejudge_test_cautious": {
+    "out_of_scope_rows": 29,
+    "false_allowances": 0,
+    "false_warnings": 533
+  },
+  "previously_inspected_heliox_transfer_default": {
+    "auc": 0.9833333333333334,
+    "out_of_scope_rows": 30,
+    "false_allowances": 8,
+    "false_warnings": 0
+  },
+  "previously_inspected_heliox_transfer_cautious": {
+    "out_of_scope_rows": 30,
+    "false_allowances": 0,
+    "false_warnings": 27
+  },
+  "artifact_sha256": "147e84054af1c8cf0d9bda653fdec0c9b325b6bf7d773881ce861504608e2e9c",
+  "decision": "Rejected: better rankings do not yield a viable safe operating threshold; cautious calibration leaves public false allowances and blocks most legitimate actions. Nothing is loaded by Heliox.",
+  "limitations": "A small public calibration set selected among six candidates; earlier results on the same official test sets motivated this adaptive experiment. The Heliox transfer is synthetic and previously inspected. This is neither a blind benchmark nor action authorization, live desktop evidence, or Jev parity."
+}
