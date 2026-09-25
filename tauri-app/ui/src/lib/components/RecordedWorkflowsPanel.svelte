@@ -16,12 +16,15 @@
     omitted_actions: number;
     incomplete: boolean;
     needs_review: boolean;
+    placeholders: string[];
     schedule: { next_run_at: string; repeat_seconds: number } | null;
   }
   interface RecordingStatus {
     active: boolean;
     name: string;
     capture_visual: boolean;
+    capture_manual: boolean;
+    manual_hook_healthy: boolean;
     step_count: number;
     sample_count: number;
     omitted_actions: number;
@@ -29,18 +32,26 @@
 
   let workflows = $state<Workflow[]>([]);
   let recording = $state<RecordingStatus>({
-    active: false, name: "", capture_visual: false, step_count: 0, sample_count: 0, omitted_actions: 0,
+    active: false, name: "", capture_visual: false, capture_manual: false, manual_hook_healthy: false,
+    step_count: 0, sample_count: 0, omitted_actions: 0,
   });
   let name = $state("");
   let goal = $state("");
   let consent = $state(false);
   let captureVisual = $state(false);
+  let captureManual = $state(false);
+  let manualConsent = $state(false);
   let busy = $state(false);
   let error = $state("");
   let notice = $state("");
   let runAt = $state<Record<string, string>>({});
   let repeat = $state<Record<string, string>>({});
   let reviewed = $state<Record<string, boolean>>({});
+  let textValues = $state<Record<string, Record<string, string>>>({});
+
+  function textReady(workflow: Workflow): boolean {
+    return (workflow.placeholders ?? []).every((key) => (textValues[workflow.id]?.[key] ?? "").trim().length > 0);
+  }
 
   onMount(() => {
     void refresh();
@@ -74,17 +85,20 @@
   }
 
   async function start() {
-    if (busy || !consent || !name.trim()) return;
+    if (busy || !consent || !name.trim() || (captureManual && !manualConsent)) return;
     busy = true; error = ""; notice = "";
     try {
       requireOkResult((await call("recorded_workflow_start", {
         name: name.trim(), goal: goal.trim(), consent: true, capture_visual: captureVisual,
+        capture_manual: captureManual, manual_consent: captureManual && manualConsent,
       })) as DaemonStatusResult, "Could not start recording");
       consent = false;
       captureVisual = false;
+      captureManual = false;
+      manualConsent = false;
       name = "";
       goal = "";
-      notice = "Recording started. Only Heliox-executed actions are observed.";
+      notice = "Recording started. Stop it when your demonstration is complete.";
       await refreshStatus();
     } catch (cause) { error = message(cause); }
     finally { busy = false; }
@@ -103,12 +117,14 @@
   }
 
   async function run(workflow: Workflow) {
-    if (busy || workflow.incomplete) return;
+    if (busy || workflow.incomplete || !textReady(workflow)) return;
     busy = true; error = ""; notice = "";
     try {
       requireResultStatus((await call("recorded_workflow_run", {
         workflow_id: workflow.id, reviewed: reviewed[workflow.id] === true,
+        text_values: textValues[workflow.id] ?? {},
       })) as DaemonStatusResult, "submitted", "Could not run workflow");
+      textValues[workflow.id] = {};
       notice = `${workflow.name} submitted through Heliox's normal approvals and verification.`;
     } catch (cause) { error = message(cause); }
     finally { busy = false; }
@@ -116,7 +132,7 @@
 
   async function schedule(workflow: Workflow) {
     const local = runAt[workflow.id];
-    if (busy || !local || workflow.incomplete) return;
+    if (busy || !local || workflow.incomplete || (workflow.placeholders ?? []).length) return;
     const timestamp = new Date(local);
     if (Number.isNaN(timestamp.getTime()) || timestamp.getTime() <= Date.now()) {
       error = "Choose a future date and time.";
@@ -165,7 +181,7 @@
   <div class="heading">
     <div>
       <h3 id="recorded-title">Recorded workflows</h3>
-      <p>Turn actions Heliox executes into a reviewable recipe. Recording is always off after restart.</p>
+      <p>Turn Heliox actions, and optionally your manual desktop actions, into a reviewable recipe. Recording is always off after restart.</p>
     </div>
     <span class:live={recording.active} class="state">{recording.active ? "Recording" : "Off"}</span>
   </div>
@@ -175,6 +191,7 @@
       <strong>{recording.name}</strong>
       <span>{recording.step_count} replayable steps · {recording.omitted_actions} omitted · {recording.sample_count} visual pairs</span>
       <span>{recording.capture_visual ? "16×16 screen features are being recorded locally." : "Visual feature capture is off."}</span>
+      {#if recording.capture_manual}<span>{recording.manual_hook_healthy ? "Manual desktop input is being observed." : "Manual input hook is not healthy; stop and review this draft."}</span>{/if}
       <div class="actions">
         <button disabled={busy} onclick={() => void stop(true)}>Stop and save draft</button>
         <button class="secondary" disabled={busy} onclick={() => void stop(false)}>Discard</button>
@@ -185,11 +202,16 @@
       <label>Workflow name <input bind:value={name} maxlength="100" placeholder="e.g. Morning status review" /></label>
       <label>Task goal <input bind:value={goal} maxlength="2000" placeholder="What should Heliox achieve when rerun?" /></label>
       <label class="check"><input type="checkbox" bind:checked={consent} /> I want Heliox to record actions it executes until I stop it.</label>
+      <label class="check"><input type="checkbox" bind:checked={captureManual} /> Also record my manual desktop actions.</label>
+      {#if captureManual}
+        <label class="check"><input type="checkbox" bind:checked={manualConsent} /> I consent to a temporary desktop-wide mouse and keyboard hook until I stop recording.</label>
+        <p class="warning">Mouse coordinates, drag endpoints, and scrolls are saved locally. Typed characters are never saved; text entry becomes an editable placeholder. Shortcuts and unknown actions make the draft incomplete. Pause before opening sensitive screens.</p>
+      {/if}
       <label class="check"><input type="checkbox" bind:checked={captureVisual} /> Also capture 16×16 before/after screen features for local world-model research.</label>
       {#if captureVisual}
         <p class="warning">These small features can still reveal screen content. They are encrypted locally, never sent to the model, and excluded from workflow previews.</p>
       {/if}
-      <button disabled={busy || !consent || !name.trim()} onclick={() => void start()}>Start recording</button>
+      <button disabled={busy || !consent || !name.trim() || (captureManual && !manualConsent)} onclick={() => void start()}>Start recording</button>
     </div>
   {/if}
 
@@ -205,20 +227,24 @@
         <details class="workflow">
           <summary><strong>{workflow.name}</strong><span>{workflow.step_count} steps · {workflow.sample_count} private samples</span></summary>
           <p class="goal">Goal: {workflow.goal}</p>
-          {#if workflow.incomplete}<p class="warning">{workflow.omitted_actions} actions were excluded (for example typed text, scripts, or parallel actions). This draft cannot run or schedule; those steps need a parameterized workflow.</p>{/if}
+          {#if workflow.incomplete}<p class="warning">{workflow.omitted_actions} actions were excluded (for example Heliox-entered text, shortcuts, scripts, or parallel actions). This draft cannot run or schedule; those steps need a parameterized workflow.</p>{/if}
           {#if workflow.needs_review && !workflow.incomplete}
-            <label class="check"><input type="checkbox" checked={reviewed[workflow.id] === true} onchange={(event) => reviewed[workflow.id] = event.currentTarget.checked} /> I reviewed these coordinate-based steps and understand the current screen may differ.</label>
+            <label class="check"><input type="checkbox" checked={reviewed[workflow.id] === true} onchange={(event) => reviewed[workflow.id] = event.currentTarget.checked} /> I reviewed these manual or coordinate-based steps and understand the current screen may differ.</label>
           {/if}
+          {#each workflow.placeholders ?? [] as key}
+            <label>Text for step {Number(key) + 1} <input type="text" maxlength="2000" autocomplete="off" value={textValues[workflow.id]?.[key] ?? ""} oninput={(event) => { textValues[workflow.id] ??= {}; textValues[workflow.id][key] = event.currentTarget.value; }} placeholder="Enter at run time; not saved" /></label>
+          {/each}
+          {#if (workflow.placeholders ?? []).length}<p class="warning">Text values are sent to the configured model and may appear in normal task history. Do not enter passwords or other secrets. Workflows with text cannot be scheduled unattended.</p>{/if}
           <ol>{#each workflow.steps as step}<li><code>{step.action_type}</code> <span>{JSON.stringify(step.parameters)}</span></li>{/each}</ol>
           {#if workflow.schedule}
             <p class="schedule-note">Next run: {new Date(workflow.schedule.next_run_at).toLocaleString()} {workflow.schedule.repeat_seconds ? `(every ${workflow.schedule.repeat_seconds / 3600} hours)` : "(once)"}</p>
           {/if}
           <div class="actions">
-            <button disabled={busy || workflow.incomplete || (workflow.needs_review && !reviewed[workflow.id])} onclick={() => void run(workflow)}>Run with approvals</button>
+            <button disabled={busy || workflow.incomplete || !textReady(workflow) || (workflow.needs_review && !reviewed[workflow.id])} onclick={() => void run(workflow)}>Run with approvals</button>
             {#if workflow.schedule}<button class="secondary" disabled={busy} onclick={() => void unschedule(workflow)}>Remove schedule</button>{/if}
             <button class="danger" disabled={busy} onclick={() => void remove(workflow)}>Delete</button>
           </div>
-          {#if !workflow.schedule}
+          {#if !workflow.schedule && !(workflow.placeholders ?? []).length}
             <div class="schedule-form">
               <p>Times use your local timezone. The daemon must be running to dispatch a scheduled task.</p>
               <label>First run <input type="datetime-local" value={runAt[workflow.id] ?? ""} onchange={(event) => runAt[workflow.id] = event.currentTarget.value} /></label>

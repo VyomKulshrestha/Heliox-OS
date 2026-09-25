@@ -34,6 +34,23 @@ describe("recorded workflow consent", () => {
     await fireEvent.click(start);
     expect(daemonMocks.call).toHaveBeenCalledWith("recorded_workflow_start", {
       name: "Morning review", goal: "", consent: true, capture_visual: false,
+      capture_manual: false, manual_consent: false,
+    });
+  });
+
+  it("requires a second consent for desktop-wide manual input", async () => {
+    render(RecordedWorkflowsPanel);
+    const start = await screen.findByRole("button", { name: "Start recording" });
+    await fireEvent.input(screen.getByLabelText("Workflow name"), { target: { value: "Desktop review" } });
+    await fireEvent.click(screen.getByLabelText(/I want Heliox to record actions/));
+    await fireEvent.click(screen.getByLabelText(/Also record my manual desktop actions/));
+    expect((start as HTMLButtonElement).disabled).toBe(true);
+    await fireEvent.click(screen.getByLabelText(/I consent to a temporary desktop-wide/));
+    expect((start as HTMLButtonElement).disabled).toBe(false);
+    await fireEvent.click(start);
+    expect(daemonMocks.call).toHaveBeenCalledWith("recorded_workflow_start", {
+      name: "Desktop review", goal: "", consent: true, capture_visual: false,
+      capture_manual: true, manual_consent: true,
     });
   });
 });

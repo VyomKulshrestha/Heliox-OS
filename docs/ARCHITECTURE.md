@@ -405,9 +405,11 @@ environment before continuing. An empty plan is successful only when it
 contains an explicit completion claim backed by fresh evidence; exact-text
 goals are checked case-sensitively.
 
-An optional recorded-workflow store observes only successfully executed,
-single-action Heliox steps after the normal gates. It is off after startup;
-the user explicitly starts and stops it from Settings. Allowlisted structured
+An optional recorded-workflow store observes successfully executed,
+single-action Heliox steps after the normal gates. With separate consent, a
+temporary desktop input hook also captures manual clicks, scrolls, and
+text-entry placeholders without retaining typed characters. Both sources are
+off after startup; the user explicitly starts and stops them from Settings. Allowlisted structured
 steps become a reviewable recipe, and replay/scheduling submits that recipe
 back through the guarded autonomous loop rather than executing a privileged
 macro. A separate opt-in before/after 16×16 screen-feature path remains local,
