@@ -486,6 +486,13 @@ action understanding or joint forward/inverse training. Reproduce with
 `python -m scripts.probe_world_visual_inverse --help`; keep resulting weights
 and reports in ignored `.bench-state` paths.
 
+An opt-in local recorder can collect after/before 16×16 pairs around approved
+Heliox mouse actions. Its explicit offline trainer holds decrypted features
+in memory, splits by whole recording, evaluates unchanged and shuffled-action
+controls, and encrypts its derived weights. Recording is off by default; no
+real-desktop dataset or promotion result is claimed yet. See
+[Recorded workflows](RECORDED_WORKFLOWS.md).
+
 Reproduce from `daemon/` with fresh ignored paths:
 
 ```bash

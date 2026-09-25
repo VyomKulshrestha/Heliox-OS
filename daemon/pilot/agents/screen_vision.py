@@ -470,7 +470,11 @@ class ScreenVisionAgent:
             feature = _world_embedding_from_frame(image.resize((64, 64)).convert("L"))
             if not feature:
                 return None
-            return {"embedding": feature, "width": monitor["width"], "height": monitor["height"]}
+            return {
+                "embedding": feature,
+                "left": monitor["left"], "top": monitor["top"],
+                "width": monitor["width"], "height": monitor["height"],
+            }
 
     async def observe_now(self) -> ScreenState:
         """Capture fresh foreground state for an active reasoning loop.

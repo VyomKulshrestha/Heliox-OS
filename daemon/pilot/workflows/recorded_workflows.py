@@ -7,6 +7,7 @@ store or appear in list/get responses.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
@@ -28,9 +29,11 @@ logger = logging.getLogger("pilot.workflows.recorded_workflows")
 KEYRING_SERVICE = "Heliox OS Recorded Workflows"
 KEYRING_ACCOUNT = "local-recordings-v1"
 STORE_AAD = b"heliox-recorded-workflows-v1"
+MODEL_AAD = b"heliox-recorded-world-weights-v1"
 MAX_STEPS = 200
 MAX_SAMPLES = 200
 MAX_WORKFLOWS = 50
+VISUAL_SETTLE_SECONDS = 0.15
 MIN_REPEAT_SECONDS = 300
 MAX_REPEAT_SECONDS = 365 * 24 * 60 * 60
 
@@ -249,6 +252,7 @@ class RecordedWorkflowStore:
         if not before or len(session["samples"]) >= MAX_SAMPLES:
             return
         try:
+            await asyncio.sleep(VISUAL_SETTLE_SECONDS)
             after = await self._capture_feature() if self._capture_feature else None
         except Exception:
             logger.warning("Post-action visual feature capture failed", exc_info=True)
@@ -260,18 +264,22 @@ class RecordedWorkflowStore:
         if before_bytes is None or after_bytes is None:
             return
         width, height = before.get("width", 0), before.get("height", 0)
+        left, top = before.get("left", 0), before.get("top", 0)
         params = result.action.parameters
         if (
             not isinstance(width, (int, float)) or not isinstance(height, (int, float))
+            or not isinstance(left, (int, float)) or not isinstance(top, (int, float))
             or not math.isfinite(width) or not math.isfinite(height)
+            or not math.isfinite(left) or not math.isfinite(top)
             or width <= 0 or height <= 0
+            or getattr(params, "relative", False)
+            or not (left <= params.x < left + width and top <= params.y < top + height)
         ):
             return
         sample = {
             "step_index": step_index,
             "action_type": result.action.action_type.value,
-            "coords": [min(1.0, max(0.0, params.x / width)),
-                       min(1.0, max(0.0, params.y / height))],
+            "coords": [(params.x - left) / width, (params.y - top) / height],
             "before": before_bytes,
             "after": after_bytes,
             "post_observed": True,
@@ -339,6 +347,22 @@ class RecordedWorkflowStore:
                     return self._public(record)
         raise KeyError("Recorded workflow not found")
 
+    def load_research_samples(self) -> list[dict[str, Any]]:
+        """Decrypt local visual pairs for an explicit offline training command.
+
+        This is intentionally not an RPC or a planner-context provider.
+        """
+        with self._records_lock:
+            return [
+                {"workflow_id": record["id"], "samples": record["samples"]}
+                for record in self._read() if record["samples"]
+            ]
+
+    def encrypt_model_artifact(self, plaintext: bytes) -> bytes:
+        """Keep research weights derived from private screens encrypted too."""
+        nonce = os.urandom(12)
+        return nonce + AESGCM(self._encryption_key()).encrypt(nonce, plaintext, MODEL_AAD)
+
     def delete(self, workflow_id: str) -> None:
         with self._records_lock:
             records = self._read()
@@ -368,7 +392,7 @@ class RecordedWorkflowStore:
             if record is None:
                 raise KeyError("Recorded workflow not found")
             if record["omitted_actions"]:
-                raise ValueError("Incomplete recordings cannot be scheduled; re-record the missing steps")
+                raise ValueError("Incomplete recordings cannot be scheduled; unsupported steps need a parameterized workflow")
             if self._public(record)["needs_review"] and reviewed is not True:
                 raise ValueError("Coordinate-based workflows require explicit review before scheduling")
             record["schedule"] = {

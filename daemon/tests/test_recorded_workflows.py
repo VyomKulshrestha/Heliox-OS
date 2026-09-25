@@ -3,6 +3,7 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from pilot.actions import (
     Action,
@@ -12,7 +13,7 @@ from pilot.actions import (
     KeyboardParams,
     MouseParams,
 )
-from pilot.workflows.recorded_workflows import RecordedWorkflowStore
+from pilot.workflows.recorded_workflows import MODEL_AAD, RecordedWorkflowStore
 
 
 @pytest.mark.asyncio
@@ -65,6 +66,21 @@ async def test_visual_samples_require_opt_in_and_never_appear_in_public_record(t
     assert "embedding" not in str(store.list())
     assert store._read()[0]["samples"][0]["coords"] == [0.25, 0.75]
     assert store._read()[0]["samples"][0]["before"] == [26] * 256
+
+
+@pytest.mark.asyncio
+async def test_click_outside_captured_monitor_is_not_mislabeled(tmp_path) -> None:
+    async def capture() -> dict:
+        return {"embedding": [0.5] * 256, "left": 100, "top": 0, "width": 100, "height": 100}
+
+    store = RecordedWorkflowStore(
+        tmp_path / "recordings.enc", key_provider=lambda: b"k" * 32, capture_feature=capture
+    )
+    store.start(name="Different monitor", consent=True, capture_visual=True)
+    action = Action(action_type=ActionType.MOUSE_CLICK, parameters=MouseParams(x=25, y=75))
+    token = await store.before(action, single_action_batch=True)
+    await store.after(token, ActionResult(action=action, success=True))
+    assert store.stop(save=True)["sample_count"] == 0
 
 
 @pytest.mark.asyncio
@@ -151,3 +167,10 @@ def test_tampered_ciphertext_fails_closed(tmp_path) -> None:
     with pytest.raises(RuntimeError, match="could not be decrypted"):
         store.prepare()
     assert store.status()["active"] is False
+
+
+def test_private_model_weights_are_encrypted(tmp_path) -> None:
+    store = RecordedWorkflowStore(tmp_path / "recordings.enc", key_provider=lambda: b"k" * 32)
+    protected = store.encrypt_model_artifact(b"private model weights")
+    assert b"private model weights" not in protected
+    assert AESGCM(b"k" * 32).decrypt(protected[:12], protected[12:], MODEL_AAD) == b"private model weights"

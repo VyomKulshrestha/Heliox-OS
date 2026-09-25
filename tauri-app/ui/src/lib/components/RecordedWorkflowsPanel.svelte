@@ -205,7 +205,7 @@
         <details class="workflow">
           <summary><strong>{workflow.name}</strong><span>{workflow.step_count} steps · {workflow.sample_count} private samples</span></summary>
           <p class="goal">Goal: {workflow.goal}</p>
-          {#if workflow.incomplete}<p class="warning">{workflow.omitted_actions} actions were excluded (for example typed text, scripts, or parallel actions). Re-record a complete task before replaying or scheduling.</p>{/if}
+          {#if workflow.incomplete}<p class="warning">{workflow.omitted_actions} actions were excluded (for example typed text, scripts, or parallel actions). This draft cannot run or schedule; those steps need a parameterized workflow.</p>{/if}
           {#if workflow.needs_review && !workflow.incomplete}
             <label class="check"><input type="checkbox" checked={reviewed[workflow.id] === true} onchange={(event) => reviewed[workflow.id] = event.currentTarget.checked} /> I reviewed these coordinate-based steps and understand the current screen may differ.</label>
           {/if}
@@ -220,6 +220,7 @@
           </div>
           {#if !workflow.schedule}
             <div class="schedule-form">
+              <p>Times use your local timezone. The daemon must be running to dispatch a scheduled task.</p>
               <label>First run <input type="datetime-local" value={runAt[workflow.id] ?? ""} onchange={(event) => runAt[workflow.id] = event.currentTarget.value} /></label>
               <label>Repeat <select value={repeat[workflow.id] ?? "0"} onchange={(event) => repeat[workflow.id] = event.currentTarget.value}><option value="0">Once</option><option value="86400">Daily</option><option value="604800">Weekly</option></select></label>
               <button class="secondary" disabled={busy || workflow.incomplete || !runAt[workflow.id] || (workflow.needs_review && !reviewed[workflow.id])} onclick={() => void schedule(workflow)}>Schedule with approvals</button>
@@ -250,6 +251,7 @@
   .active-box span { font-size: 13px; color: var(--text-secondary); }
   .actions, .schedule-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; }
   .schedule-form label { flex: 1 1 150px; }
+  .schedule-form p { flex-basis: 100%; font-size: 12px; }
   button { min-height: 36px; padding: 7px 12px; border: 1px solid var(--accent); border-radius: 8px; background: var(--accent); color: var(--bg-primary); cursor: pointer; font: inherit; }
   button.secondary { background: transparent; color: var(--text-primary); border-color: var(--border); }
   button.danger { background: transparent; color: var(--danger); border-color: currentColor; }

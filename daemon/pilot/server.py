@@ -9984,7 +9984,7 @@ def handle_tool(tool_name, params):
                 self._recorded_workflows.get, str(params.get("workflow_id", ""))
             )
             if workflow["incomplete"]:
-                raise ValueError("Incomplete recordings cannot be replayed; re-record the missing steps")
+                raise ValueError("Incomplete recordings cannot be replayed; unsupported steps need a parameterized workflow")
             if workflow["needs_review"] and not _validated_bool(params, "reviewed", False):
                 raise ValueError("Review coordinate-based steps before replay")
             job = await self._autonomous.submit(
