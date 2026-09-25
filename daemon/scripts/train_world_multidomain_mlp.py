@@ -50,16 +50,17 @@ def load_features(feature_dir: Path, source: dict) -> tuple[dict[str, np.ndarray
     return features, labels
 
 
-def balanced_weights(labels: dict[str, np.ndarray]) -> np.ndarray:
-    size = sum(len(labels[f"{domain}_train"]) for domain in DOMAINS)
+def balanced_weights(labels: dict[str, np.ndarray],
+                     domains: tuple[str, ...] = DOMAINS) -> np.ndarray:
+    size = sum(len(labels[f"{domain}_train"]) for domain in domains)
     weights = []
-    for domain in DOMAINS:
+    for domain in domains:
         targets = labels[f"{domain}_train"]
         positive, negative = int(targets.sum()), int((~targets).sum())
         if not positive or not negative:
             raise ValueError(f"Training domain lacks a class: {domain}")
-        weights.append(np.where(targets, size / (2 * len(DOMAINS) * positive),
-                                size / (2 * len(DOMAINS) * negative)))
+        weights.append(np.where(targets, size / (2 * len(domains) * positive),
+                                size / (2 * len(domains) * negative)))
     return np.concatenate(weights).astype(np.float32)
 
 
@@ -71,6 +72,8 @@ def main() -> None:
                         default=state / "world_multiturn_scope_v3.json")
     parser.add_argument("--feature-dir", type=Path,
                         default=state / "world_multiturn_features_v2")
+    parser.add_argument("--when2call-report", type=Path)
+    parser.add_argument("--when2call-feature-dir", type=Path)
     parser.add_argument("--artifact", type=Path,
                         default=state / "world_multidomain_mlp_v1.npz")
     parser.add_argument("--report", type=Path,
@@ -78,12 +81,40 @@ def main() -> None:
     args = parser.parse_args()
     if args.artifact.exists() or args.report.exists():
         parser.error("Use fresh artifact and report paths")
+    if bool(args.when2call_report) != bool(args.when2call_feature_dir):
+        parser.error("Pass both When2Call feature report and directory, or neither")
     source_bytes = args.source_report.read_bytes()
     source = json.loads(source_bytes)
     if source["domains"] != list(DOMAINS) or not source["tbac"]["validation_in_training"]:
         raise ValueError("Expected frozen three-domain feature report")
     features, labels = load_features(args.feature_dir, source)
-    features["train"] = np.vstack([features[f"{name}_train"] for name in DOMAINS])
+    domains = DOMAINS
+    evaluation = EVALUATION
+    when2call_sha256 = None
+    if args.when2call_report:
+        when2call_bytes = args.when2call_report.read_bytes()
+        when2call = json.loads(when2call_bytes)
+        if (when2call["purpose"] != "research_only_grouped_call_readiness_features" or
+                when2call["model"] != source["model"] or
+                when2call["revision"] != source["revision"] or
+                set(when2call["splits"]) != {"train", "calibration", "test"}):
+            raise ValueError("Unexpected When2Call feature source")
+        extra_source = {
+            "rows": {f"when2call_{name}": data["rows"]
+                     for name, data in when2call["splits"].items()},
+            "excluded_overlong": {f"when2call_{name}": data["overlong"]
+                                  for name, data in when2call["splits"].items()},
+            "feature_checkpoint_sha256": {
+                f"when2call_{name}": data["checkpoint_sha256"]
+                for name, data in when2call["splits"].items()},
+        }
+        extra_features, extra_labels = load_features(args.when2call_feature_dir, extra_source)
+        features.update(extra_features)
+        labels.update(extra_labels)
+        domains = (*DOMAINS, "when2call")
+        evaluation = (*EVALUATION, "when2call_test")
+        when2call_sha256 = hashlib.sha256(when2call_bytes).hexdigest()
+    features["train"] = np.vstack([features[f"{name}_train"] for name in domains])
     normalized, mean, scale = normalize(features)
 
     import torch
@@ -92,12 +123,12 @@ def main() -> None:
         raise RuntimeError("CUDA is required for this research training run")
     device = torch.device("cuda")
     train_x = torch.as_tensor(normalized["train"], dtype=torch.float32, device=device)
-    train_y = torch.as_tensor(np.concatenate([labels[f"{name}_train"] for name in DOMAINS]),
+    train_y = torch.as_tensor(np.concatenate([labels[f"{name}_train"] for name in domains]),
                               dtype=torch.float32, device=device)
-    weights = torch.as_tensor(balanced_weights(labels), device=device)
+    weights = torch.as_tensor(balanced_weights(labels, domains), device=device)
     calibration_x = {name: torch.as_tensor(normalized[f"{name}_calibration"],
                                            dtype=torch.float32, device=device)
-                     for name in DOMAINS}
+                     for name in domains}
     candidates = []
     selected = None
     for hidden in HIDDEN_SIZES:
@@ -124,10 +155,10 @@ def main() -> None:
             auc = {name: float(roc_auc_score(labels[f"{name}_calibration"], values))
                    for name, values in calibration_scores.items()}
             threshold = math.nextafter(max(float(np.max(calibration_scores[name][
-                ~labels[f"{name}_calibration"]])) for name in DOMAINS), math.inf)
+                ~labels[f"{name}_calibration"]])) for name in domains), math.inf)
             recall = {name: float(np.mean(calibration_scores[name][
-                labels[f"{name}_calibration"]] >= threshold)) for name in DOMAINS}
-            rank = (min(auc.values()), min(recall.values()), sum(auc.values()) / len(DOMAINS))
+                labels[f"{name}_calibration"]] >= threshold)) for name in domains}
+            rank = (min(auc.values()), min(recall.values()), sum(auc.values()) / len(domains))
             candidates.append({"hidden": hidden, "seed": seed, "calibration_auc": auc,
                                "calibration_cautious_recall": recall,
                                "threshold": threshold})
@@ -152,24 +183,26 @@ def main() -> None:
                         b1=state_dict["0.bias"].numpy(), w2=state_dict["3.weight"].numpy(),
                         b2=state_dict["3.bias"].numpy(), mean=mean.astype(np.float32),
                         scale=scale.astype(np.float32), threshold=threshold,
-                        source_report_sha256=hashlib.sha256(source_bytes).hexdigest())
+                        source_report_sha256=hashlib.sha256(source_bytes).hexdigest(),
+                        when2call_report_sha256=when2call_sha256 or "")
     report = {
         "purpose": "research_only_nonlinear_world_task_state_head",
         "source_report_sha256": hashlib.sha256(source_bytes).hexdigest(),
-        "training_domains": list(DOMAINS), "epochs": EPOCHS,
+        "when2call_report_sha256": when2call_sha256,
+        "training_domains": list(domains), "epochs": EPOCHS,
         "optimizer": {"name": "AdamW", "learning_rate": 3e-4, "weight_decay": 0.1},
         "selection": "maximum minimum calibration AUC, then minimum cautious recall; no test selection",
         "candidates": candidates,
         "selected": {"hidden": hidden, "seed": seed, "threshold": threshold},
         "metrics": {name: {"default": metrics(labels[name], scores[name], 0.5),
                            "cautious": metrics(labels[name], scores[name], threshold)}
-                    for name in EVALUATION},
+                    for name in evaluation},
         "artifact_sha256": hashlib.sha256(args.artifact.read_bytes()).hexdigest(),
         "limitation": "Public relevance/scope and inspected synthetic transfer only; not action "
                       "authorization, blind desktop evidence, or Jev parity.",
     }
     args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps({name: report["metrics"][name] for name in EVALUATION}, indent=2))
+    print(json.dumps({name: report["metrics"][name] for name in evaluation}, indent=2))
 
 
 if __name__ == "__main__":
