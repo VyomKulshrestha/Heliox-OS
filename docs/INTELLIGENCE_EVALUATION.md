@@ -188,6 +188,16 @@ feature checkpoints and generated report remain research-only. These domain
 families informed earlier hyperparameter exploration, so this diagnostic is
 not a pristine independent benchmark either.
 
+A fixed-settings [two-output GPU probe](../daemon/scripts/train_world_multitask_head.py)
+then kept authorization-scope and call-preference labels on separate outputs
+of one shared nonlinear head. Held-out agentic/TBAC/ScopeJudge scope AUCs were
+0.931/0.912/0.848; When2Call preference AUC was 0.732. On the already-inspected
+Heliox probe it scored 49/60 but accepted 11/30 negative actions, compared
+with 46/60 and 1/30 for the earlier selected shared-binary head. Architecture
+and selection settings differ, so this is not a controlled causal comparison;
+it is another unpromoted failure to achieve reliable cross-task decisions.
+The artifact and report remain local research outputs, not runtime models.
+
 The separate River transition-reliability learner now requires an executed,
 non-dry-run action plus a matching independently observed postcondition before
 it accepts a training label. Existing ledger verification events lack the
