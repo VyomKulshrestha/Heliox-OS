@@ -54,6 +54,7 @@ class _ReplaySample:
     features: dict[str, float]
     label: bool
     occurred_at: str
+    group_id: str = ""
 
 
 def _new_classifier() -> Any:
@@ -102,11 +103,13 @@ class _VerifiedClassifier:
         self.negative = 0
         self.drift_events = 0
 
-    def learn(self, features: dict[str, float], label: bool, occurred_at: str) -> None:
+    def learn(
+        self, features: dict[str, float], label: bool, occurred_at: str, *, group_id: str = ""
+    ) -> None:
         probability = float(self.model.predict_proba_one(features).get(True, 0.5))
         self.detector.update(abs(float(label) - probability))
         self.model.learn_one(features, label)
-        self.samples.append(_ReplaySample(dict(features), label, occurred_at))
+        self.samples.append(_ReplaySample(dict(features), label, occurred_at, group_id))
         self.labels += 1
         if label:
             self.positive += 1
@@ -241,10 +244,10 @@ class VerifiedOnlineLearner:
         )
         action_key = f"action={_safe_bucket(action_type)}"
         source_key = f"source={_safe_bucket(source)}"
-        support = sum(
-            1 for sample in self._transitions.samples
+        support = len({
+            sample.group_id for sample in self._transitions.samples
             if action_key in sample.features and source_key in sample.features
-        )
+        })
         if support < MINIMUM_PROMOTION_LABELS:
             return AdaptationScore(0.5, support, "candidate")
         scored = self._transitions.score(features)
@@ -432,8 +435,12 @@ class VerifiedOnlineLearner:
                 completion = completed.get(index)
                 features = self._action_features.get(action_id)
                 if completion is not None and completion[0] == action_id and features is not None:
-                    self._transitions.learn(features, completion[1] and index not in failed_indices,
-                                            event.occurred_at)
+                    self._transitions.learn(
+                        features,
+                        completion[1] and index not in failed_indices,
+                        event.occurred_at,
+                        group_id=event.plan_id,
+                    )
             if len(observed) == result_count:
                 signature = ">".join(plan_actions[index][1] for index in range(result_count))
                 self._workflow_outcomes[f"{signature}:{'success' if passed else 'failure'}"] += 1

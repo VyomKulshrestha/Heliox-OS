@@ -292,8 +292,8 @@ only when a non-dry-run executor callback is followed by a matching,
 independently observed action postcondition, and coarse routines from
 privacy-preserving application/time features. Unsupported actions and older
 verification records without per-action observation evidence do not supply
-transition labels. Repeated evidence for the same action type and invocation
-source is required before promotion. The session plan risk gate uses the
+transition labels. Evidence from distinct plans for the same action type and
+invocation source is required before promotion. The session plan risk gate uses the
 resolved executor source and can apply a promoted low-success estimate only to
 add caution. Other risk paths without an explicit source remain at their
 existing deterministic and callback-history assessments.
