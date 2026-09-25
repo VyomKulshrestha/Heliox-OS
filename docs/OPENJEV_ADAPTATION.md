@@ -556,6 +556,21 @@ records data coverage, hashes, and error counts. The adapter remains in
 ignored local benchmark state; it is **not** loaded by the world model,
 companion, or permission gateway.
 
+To probe mid-task context without leaking a future answer, the
+[pre-call conversation evaluator](../daemon/scripts/evaluate_world_conversation_scope.py)
+cuts Cisco Outshift's generated multi-agent dialogues immediately before the
+first candidate tool call. It passes only earlier user/assistant text to the
+frozen mixed head—not tool output or later user revisions. On 909 of 935
+token-eligible official test conversations, AUC fell to 0.875 and the default
+threshold falsely marked 142/398 irrelevant tools as relevant. A cautious
+threshold left two false relevance approvals while rejecting 439/511 relevant
+tools. Twenty-six conversations were overlong and excluded; the comparison
+with the single-turn test has different eligible subsets and is not a paired
+causal estimate. The [frozen dialogue summary](../daemon/benchmarks/world_conversation_scope_v1.json)
+shows that the present head does **not** robustly track task intent through a
+multi-turn interaction. These generated relevance labels do not establish
+authorization or live desktop behavior.
+
 ## Reproduction and release boundary
 
 The offline probes need `onnx`, `onnxruntime`, `pyarrow`, `tokenizers`,
