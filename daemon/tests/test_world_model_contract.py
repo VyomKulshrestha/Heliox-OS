@@ -246,6 +246,8 @@ def test_ui_jepa_predicts_latent_transition_without_pixels(tmp_path) -> None:
     assert prediction.risk_evidence == ()
     assert prediction.expected_effects[0].operation == "predict_latent_transition"
     assert "latent_embedding" not in prediction.to_dict()["expected_effects"][0]["after"]
+    assert "latent_embedding" not in prediction.to_dict()["predicted_state"]["ui"]
+    assert state.ui["latent_embedding"] == [0.1, 0.2, 0.3]
 
 
 def test_unvalidated_ui_jepa_cannot_add_gating_evidence(tmp_path) -> None:

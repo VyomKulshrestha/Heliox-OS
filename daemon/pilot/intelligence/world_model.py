@@ -99,9 +99,13 @@ class WorldPrediction:
     model_version: str
 
     def to_dict(self) -> dict[str, Any]:
+        predicted_state = asdict(self.predicted_state)
+        # The visual latent can encode private on-screen content. It is an
+        # internal model input, not part of the user-facing prediction trace.
+        predicted_state["ui"].pop("latent_embedding", None)
         return {
             "action_type": self.action_type,
-            "predicted_state": asdict(self.predicted_state),
+            "predicted_state": predicted_state,
             "expected_effects": [{**asdict(effect), "domain": effect.domain.value} for effect in self.expected_effects],
             "uncertainty": self.uncertainty,
             "risk_evidence": [asdict(item) for item in self.risk_evidence],
