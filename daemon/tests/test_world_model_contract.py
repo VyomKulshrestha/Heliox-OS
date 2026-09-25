@@ -4,6 +4,7 @@ from pilot.actions import (
     Action,
     ActionType,
     BrowserParams,
+    DownloadParams,
     EmptyParams,
     FileParams,
     ProcessParams,
@@ -86,6 +87,35 @@ def test_file_delete_predicts_absence_and_irreversible_evidence() -> None:
     }
 
 
+def test_file_copy_and_move_predict_distinct_source_destination_effects() -> None:
+    copy = Action(action_type=ActionType.FILE_COPY, target="source.txt",
+                  parameters=FileParams(path="source.txt", destination="copy.txt"))
+    move = Action(action_type=ActionType.FILE_MOVE, target="source.txt",
+                  parameters=FileParams(path="source.txt", destination="moved.txt"))
+
+    copy_effects = [effect for effect in StructuredTransitionPredictor().predict(_state(), copy).expected_effects
+                    if effect.domain == EffectDomain.FILESYSTEM]
+    move_effects = [effect for effect in StructuredTransitionPredictor().predict(_state(), move).expected_effects
+                    if effect.domain == EffectDomain.FILESYSTEM]
+
+    assert [(effect.target, effect.after) for effect in copy_effects] == [
+        ("copy.txt", "present_or_updated")]
+    assert [(effect.target, effect.after) for effect in move_effects] == [
+        ("source.txt", "absent"), ("moved.txt", "present_or_updated")]
+
+
+def test_download_predicts_output_file_not_source_url() -> None:
+    action = Action(action_type=ActionType.DOWNLOAD_FILE, target="https://example.invalid/file",
+                    parameters=DownloadParams(url="https://example.invalid/file",
+                                              output_path="downloaded.bin"))
+
+    effects = [effect for effect in StructuredTransitionPredictor().predict(_state(), action).expected_effects
+               if effect.domain == EffectDomain.FILESYSTEM]
+
+    assert [(effect.target, effect.after) for effect in effects] == [
+        ("downloaded.bin", "present_or_updated")]
+
+
 def test_process_and_service_effects_are_both_exposed() -> None:
     action = Action(
         action_type=ActionType.SERVICE_START,
@@ -101,6 +131,19 @@ def test_process_and_service_effects_are_both_exposed() -> None:
         EffectDomain.SERVICE,
         EffectDomain.APPROVAL,
     }
+
+
+def test_one_shot_command_does_not_claim_known_persistent_process_count() -> None:
+    action = Action(action_type=ActionType.SHELL_COMMAND, target="",
+                    parameters=ShellCommandParams(command="echo ready"))
+
+    prediction = StructuredTransitionPredictor().predict(_state(), action)
+    process_effects = [effect for effect in prediction.expected_effects
+                       if effect.domain == EffectDomain.PROCESS]
+
+    assert prediction.predicted_state.system["process_count"] == "requires_observation"
+    assert [(effect.operation, effect.before, effect.after) for effect in process_effects] == [
+        ("run_transient", 100, "requires_observation")]
 
 
 def test_unmodeled_read_action_is_honest_about_observation() -> None:
