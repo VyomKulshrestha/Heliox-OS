@@ -10,6 +10,7 @@ import argparse
 import hashlib
 import itertools
 import json
+import shutil
 import subprocess
 from collections import defaultdict
 from pathlib import Path
@@ -29,8 +30,11 @@ DATA_SHA256 = "8b57c8a4460d02a4f21a3e0cd65ef458aef789679d5bef229c8e80bfa0089cb4"
 
 def load_rows(path: Path | None) -> list[dict]:
     if path is None:
+        github_cli = shutil.which("gh") or shutil.which("gh.exe")
+        if github_cli is None:
+            raise RuntimeError("GitHub CLI is required, or pass --dataset")
         result = subprocess.run(
-            ["gh", "api", f"repos/{REPOSITORY}/contents/{DATA_PATH}?ref={REVISION}",
+            [github_cli, "api", f"repos/{REPOSITORY}/contents/{DATA_PATH}?ref={REVISION}",
              "-H", "Accept: application/vnd.github.raw+json"],
             check=True, capture_output=True)
         source = result.stdout
