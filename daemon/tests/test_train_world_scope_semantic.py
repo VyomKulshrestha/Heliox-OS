@@ -54,5 +54,6 @@ def test_feature_checkpoint_resumes_only_matching_case_content(tmp_path) -> None
     assert (processed, overlong, indices, labels) == (3, 1, [1, 3], [True, True])
     np.testing.assert_array_equal(vectors, [[1.0, 2.0], [3.0, 4.0]])
     assert feature_identity(cases, 768) != identity
+    assert feature_identity(cases, 1024, batch_size=4) != identity
     with pytest.raises(ValueError, match="identity mismatch"):
         load_feature_checkpoint(path, feature_identity(cases, 768), cases)

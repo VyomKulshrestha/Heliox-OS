@@ -88,15 +88,17 @@ def main() -> None:
     parser.add_argument("--dataset-dir", type=Path, default=state / "tbac_6385bd3")
     parser.add_argument("--scopejudge-path", type=Path, required=True)
     parser.add_argument("--max-length", type=int, default=1024)
+    parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--feature-dir", type=Path,
-                        default=state / "world_multiturn_features_v1")
+                        default=state / "world_multiturn_features_v2")
     parser.add_argument("--artifact", type=Path,
-                        default=state / "world_multiturn_scope_v1.npz")
+                        default=state / "world_multiturn_scope_v2.npz")
     parser.add_argument("--report", type=Path,
-                        default=state / "world_multiturn_scope_v1.json")
+                        default=state / "world_multiturn_scope_v2.json")
     args = parser.parse_args()
-    if args.max_length < 64 or args.artifact.exists() or args.report.exists():
-        parser.error("Use max-length >=64 and fresh artifact/report paths")
+    if (args.max_length < 64 or args.batch_size < 1 or
+            args.artifact.exists() or args.report.exists()):
+        parser.error("Use max-length >=64, batch-size >=1, and fresh artifact/report paths")
     agentic_source = args.dataset_dir / "agentic_validation_4o.json"
     agentic_val = load_pre_call_cases(agentic_source, AGENTIC_VALIDATION_SHA256)
     agentic_test_source = args.dataset_dir / "agentic_test_4o.json"
@@ -140,7 +142,8 @@ def main() -> None:
     for name, part in cases.items():
         features[name], labels[name], excluded[name] = embed_cases(
             model, tokenizer, part, args.max_length, name,
-            checkpoint_path=args.feature_dir / f"{name}.npz")
+            checkpoint_path=args.feature_dir / f"{name}.npz",
+            batch_size=args.batch_size)
     del model
     features["train"] = np.vstack((features["agentic_train"], features["scope_train"]))
     normalized, mean, scale = normalize(features)
@@ -165,6 +168,7 @@ def main() -> None:
                     "validation_sha256": AGENTIC_VALIDATION_SHA256,
                     "test_sha256": AGENTIC_TEST_SHA256},
         "scopejudge": manifests["scope_train"], "max_length": args.max_length,
+        "batch_size": args.batch_size,
         "rows": {name: len(part) for name, part in cases.items()},
         "excluded_overlong": excluded, "regularization_trials": trials,
         "feature_checkpoint_sha256": {name: hashlib.sha256(
