@@ -615,6 +615,20 @@ generalized fix. The head remains offline and rejected. Reproduce with
 `--include-tbac-validation` and fresh `--artifact` and `--report` paths,
 using the same pinned inputs and feature directory as above.
 
+A small [nonlinear GPU head](../daemon/scripts/train_world_multidomain_mlp.py)
+then reused the frozen three-domain features, balancing all six
+domain/class cells. Six fixed hidden-size/seed candidates were selected on
+calibration only. The selected 64-unit model improved official test AUC to
+0.933 dialogue, 0.911 task-tool, and 0.858 ScopeJudge; default false
+allowances were 65/398, 78/417, and 5/29. But the cautious threshold still
+allowed two irrelevant dialogue tools and one irrelevant single-turn tool,
+while rejecting 470/511, 493/518, and 533/558 legitimate examples in those
+three domains. On the already-inspected Heliox synthetic suite it blocked
+27/30 legitimate actions. The [frozen nonlinear result](../daemon/benchmarks/world_multidomain_mlp_v1.json)
+is rejected. More capacity alone did not solve calibrated scope or the
+wrong-tool problem. Like the earlier runs, this is adaptive public research,
+not a blind safety or Jev-parity claim.
+
 The pinned public data and cached Qwen backbone reproduce the experiment from
 `daemon` with a fresh output name; the feature directory is local and ignored:
 
