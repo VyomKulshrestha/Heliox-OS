@@ -107,8 +107,8 @@ def calibration_metrics(labels: np.ndarray, probabilities: np.ndarray) -> dict[s
         accepted = probability >= threshold
         acceptance[str(threshold)] = {
             "accepted": int(accepted.sum()),
-            "valid_accepted": int((accepted & target).sum()),
-            "false_allowances": int((accepted & ~target).sum()),
+            "positive_accepted": int((accepted & target).sum()),
+            "negative_accepted": int((accepted & ~target).sum()),
         }
     return {
         "rows": len(target),
@@ -118,8 +118,8 @@ def calibration_metrics(labels: np.ndarray, probabilities: np.ndarray) -> dict[s
         "brier": float(np.mean((probability - target) ** 2)),
         "ece_equal_count_10": float(ece),
         "accuracy_at_0.5": float(np.mean(decisions == target)),
-        "false_allowances_at_0.5": int((decisions & ~target).sum()),
-        "false_warnings_at_0.5": int((~decisions & target).sum()),
+        "false_positives_at_0.5": int((decisions & ~target).sum()),
+        "false_negatives_at_0.5": int((~decisions & target).sum()),
         "acceptance": acceptance,
     }
 
