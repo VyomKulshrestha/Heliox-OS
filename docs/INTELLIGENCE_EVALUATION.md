@@ -238,6 +238,13 @@ runtime integration. Lower token loss or a well-formed `<tool_response>` wrapper
 cannot authorize an action or establish Jev-level generalization.
 
 The shipped structured predictor remains available without learned weights.
+It now identifies the destination (not source or download URL) as the changed
+file for copy/download, models moves as separate source-removal and
+destination-creation effects, and leaves post-command process count explicitly
+unobserved. A successful file-copy callback is independently verified only
+when the verifier compares file contents within a 64 MiB read budget. Directory
+and larger-file copies can still be reported successful, but their existence
+check alone is not a verified outcome or an online-training label.
 An optional UI-JEPA artifact loads only when finite tensor shapes and its exact
 ordered `ActionType` vocabulary match the running build. Gating additionally
 requires at least 100 training samples, validation error no greater than 0.35,
