@@ -171,7 +171,9 @@ def checkpoint_signature(args: argparse.Namespace, encoded: dict[str, list[dict]
                 "seed": args.seed, "max_length": args.max_length, "lora_rank": args.lora_rank,
                 "attention": args.attention, "accumulation": args.accumulation,
                 "lr": args.lr, "head_lr": args.head_lr, "brier_weight": args.brier_weight,
-                "ordinal_weight": args.ordinal_weight, "prompt_style": args.prompt_style}
+                "ordinal_weight": args.ordinal_weight}
+    if args.prompt_style != "candidate_v1":
+        identity["prompt_style"] = args.prompt_style
     return hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
 
 
