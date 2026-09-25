@@ -163,6 +163,17 @@ against the public target expectation was 0.861 locally versus 0.445 for Jev.
 The sample is still small and synthetic; it does not establish parity, desktop
 transfer, or execution authority. See the [frozen comparison](../daemon/benchmarks/qwen_general_jev_comparison_v3.json).
 
+An ordinal-loss ablation then reused the earlier 512-row run's exact public
+train/calibration/test/OOD selections and changed only the normalized
+expected-rank loss weight from 0 to 0.5. Held-out OOD top-1 moved from
+74/128 to 75/128 and score top-1 from 10/26 to 11/26, but score expected-rank
+error was **1.1809 without** versus **1.1818 with** the new loss. The primary
+ordinal metric did not improve, so this is not a demonstrated improvement over
+the frozen control. The adapter remains local and disabled. See the
+[control](../daemon/benchmarks/qwen_general_v1_ordinal_ablation.json),
+[trial](../daemon/benchmarks/qwen_general_ordinal_v1_ablation.json), and
+[trial training report](../daemon/benchmarks/qwen_general_ordinal_v1.json).
+
 The next planned multi-task run adds the
 [MIT-licensed ScopeJudge](https://github.com/dreadnode/scopejudge) expert labels
 to the public general questions, keeping complete security trajectories

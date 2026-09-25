@@ -162,18 +162,25 @@ def metrics(rows: list[dict], logits: list[np.ndarray], temperature: float) -> d
         predicted = probabilities(values, temperature)
         if len(target) != len(predicted):
             raise ValueError("Prediction and target option counts differ")
-        per_row.append({
+        item = {
             "source": row["source"], "kind": row["kind"],
             "top1": int(np.argmax(target) == np.argmax(predicted)),
             "nll": float(-target @ np.log(np.clip(predicted, 1e-12, 1.0))),
             "brier": float(np.mean((predicted - target) ** 2)),
-        })
+        }
+        if row["kind"] == "score":
+            positions = np.arange(len(target))
+            item["rank_error"] = float(abs(positions @ predicted - positions @ target))
+        per_row.append(item)
 
     def aggregate(items: list[dict]) -> dict:
-        return {"rows": len(items),
-                "top1_accuracy": float(np.mean([item["top1"] for item in items])),
-                "mean_nll": float(np.mean([item["nll"] for item in items])),
-                "mean_brier": float(np.mean([item["brier"] for item in items]))}
+        result = {"rows": len(items),
+                  "top1_accuracy": float(np.mean([item["top1"] for item in items])),
+                  "mean_nll": float(np.mean([item["nll"] for item in items])),
+                  "mean_brier": float(np.mean([item["brier"] for item in items]))}
+        if all(item["kind"] == "score" for item in items):
+            result["mean_rank_error"] = float(np.mean([item["rank_error"] for item in items]))
+        return result
 
     return {**aggregate(per_row),
             "by_kind": {kind: aggregate([item for item in per_row if item["kind"] == kind])
