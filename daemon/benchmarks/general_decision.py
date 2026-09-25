@@ -193,3 +193,8 @@ def metrics(rows: list[dict], logits: list[np.ndarray], temperature: float) -> d
                         for kind in sorted({item["kind"] for item in per_row})},
             "by_source": {source: aggregate([item for item in per_row if item["source"] == source])
                           for source in sorted({item["source"] for item in per_row})}}
+
+
+def uniform_baseline(rows: list[dict]) -> dict:
+    """Score a label-blind equal-probability comparator for each option set."""
+    return metrics(rows, [np.zeros(len(row["options"]), dtype=np.float64) for row in rows], 1.0)
