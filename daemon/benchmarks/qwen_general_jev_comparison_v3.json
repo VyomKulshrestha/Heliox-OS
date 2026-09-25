@@ -1,0 +1,41 @@
+{
+  "purpose": "evaluation_only_no_teacher_training",
+  "dataset_revision": "c67699e13d0ae25e35b77165a4b6b079bedc8aba",
+  "dataset_manifest": {
+    "sha256": "ba8cb3f95b9121aa73e4b997ac9c350e2ec4dddb972cb5c3086da911f0deb9ef",
+    "total_rows": 15701,
+    "licensed_rows": 15101,
+    "excluded_unverified_license": 600,
+    "selected_rows": 144
+  },
+  "selection_seed": 20260927,
+  "selected_ids_sha256": "1c3e0540a47fb09b5cfb4404cc0b147692f5cd3a8f25cb69b09a55fbcbe11cb1",
+  "local_adapter_sha256": "d14490fd9d32b991d501a03d9cd5223b5c6d27e8779ff9c71f0b86771ff88073",
+  "jev_models": [
+    "typesafe/jev-1.13-20260917"
+  ],
+  "calls": 48,
+  "cost_usd": 0.0012405120000000003,
+  "comparison": {
+    "noul": {
+      "rows": 25,
+      "agreement": 0.8,
+      "local_gold": 0.88,
+      "jev_gold": 0.84,
+      "probability_gap": 0.1843209038819318
+    },
+    "choice": {
+      "rows": 13,
+      "agreement": 0.6923076923076923,
+      "local_gold": 0.6923076923076923,
+      "jev_gold": 0.8461538461538461
+    },
+    "score": {
+      "rows": 10,
+      "score_gap": 0.6906509028126064,
+      "local_gold_error": 0.861120543592218,
+      "jev_gold_error": 0.4450000000000001
+    }
+  },
+  "limitation": "Small public synthetic OOD sample; no training permission or desktop-safety proof."
+}
