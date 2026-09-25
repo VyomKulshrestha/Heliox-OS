@@ -690,6 +690,44 @@ the same metrics. From `daemon`, reproduce with
 and a fresh `--report` path. The source checkout must match the pinned file
 hashes.
 
+To test whether the world head could learn when *not* to call a tool, we
+added grouped call-versus-text preferences from the pinned
+[NVIDIA When2Call](https://github.com/NVIDIA/When2Call) training source as
+an optional fourth offline domain. Its repository is Apache-2.0 and the
+source is derived from Salesforce xLAM 60k (CC BY 4.0); no source rows or
+weights are distributed with Heliox. We retained only one-call contrasts
+whose selected tool was offered, removed contradictory request/tool groups,
+then split by request/tool hash before fitting (400 train, 100 calibration,
+100 test). The labels are synthetic preferences, not user approvals or
+ground truth for executing a candidate action. Pinned CUDA extraction and
+the [four-domain report](../daemon/benchmarks/world_multidomain_mlp_w2c_v1.json)
+record the exact source, feature, and artifact hashes.
+
+The selected head reached 0.762 AUC on the grouped When2Call test but at
+the normal threshold still falsely favored 14/50 rejected calls and warned
+on 16/50 preferred calls. Its public-calibrated cautious threshold rejected
+all 50 preferred calls. On the three prior public test domains, cautious
+scoring still falsely allowed 2/398 irrelevant dialogue tools and 1/417
+single-turn tools while warning on 485/511, 510/518, and 541/558 legitimate
+examples. The already-inspected synthetic Heliox suite rejected all 30
+legitimate examples at that threshold. Replaying the new head on the two
+external binding probes yielded AUC 0.609 on EntityBindingFailures and
+0.678 on tau-bench retail; the normal threshold falsely allowed 67/94 and
+10/47 wrong candidate bindings. Although a strict threshold removed those
+false allowances, it also rejected every valid binding. These external
+probes have now been inspected and cannot be treated as blind selection
+sets for further iterations. This experiment is rejected for runtime;
+improving call/no-call preferences did not solve target binding or calibrated
+action readiness. The separately shipped deterministic OS-transition world
+model and approval boundaries are unchanged.
+
+Reproduce the optional training from `daemon` using fresh output names after
+preparing the pinned preference corpus and extracting its features:
+
+```bash
+python -m scripts.train_world_multidomain_mlp --when2call-report benchmarks/.bench-state/world_when2call_features_v1.json --when2call-feature-dir benchmarks/.bench-state/world_when2call_features_v1 --artifact benchmarks/.bench-state/world_multidomain_mlp_w2c_repro.npz --report benchmarks/.bench-state/world_multidomain_mlp_w2c_repro.json
+```
+
 The pinned public data and cached Qwen backbone reproduce the experiment from
 `daemon` with a fresh output name; the feature directory is local and ignored:
 
