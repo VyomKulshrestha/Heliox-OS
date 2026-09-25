@@ -171,7 +171,7 @@ CONFIRM_TIMEOUT_SECONDS = 300
 # ``abort`` interrupts execution, ``interject`` revises it, and speech
 # replacement/stop must interrupt an in-flight utterance. All other RPCs
 # remain sequential per connection.
-OUT_OF_BAND_RPC_METHODS = frozenset({"confirm", "abort", "interject", "queue_execute", "cancel_queued_execute", "speak_text", "stop_speech", "neural_disarm"})
+OUT_OF_BAND_RPC_METHODS = frozenset({"confirm", "abort", "interject", "queue_execute", "cancel_queued_execute", "speak_text", "stop_speech", "neural_disarm", "recorded_workflow_start", "recorded_workflow_status", "recorded_workflow_stop"})
 
 # Attention-aware timing is allowed to defer only passive, replaceable
 # telemetry. User-initiated results, approvals, safety interventions, and
@@ -591,6 +591,7 @@ class PilotServer:
         self._gateway_audit: Any = None
         self._voice_gesture_workflows: Any = None
         self._recorded_workflows: Any = None
+        self._manual_workflow_hook: Any = None
         self._recorded_workflow_scheduler: asyncio.Task[None] | None = None
         self._reflector: Any = None
         self._multi_agent: Any = None
@@ -837,6 +838,7 @@ class PilotServer:
         self._recorded_workflows = RecordedWorkflowStore(
             DATA_DIR / "recorded_workflows.enc",
             capture_feature=self._capture_recording_feature,
+            allow_manual_event=lambda: not self._pending_confirms,
         )
         self._executor.set_recorded_workflow_store(self._recorded_workflows)
         # Import and warm the local system probe stack before readiness so the
@@ -8407,6 +8409,9 @@ def handle_tool(tool_name, params):
             self._recorded_workflow_scheduler.cancel()
             await asyncio.gather(self._recorded_workflow_scheduler, return_exceptions=True)
             self._recorded_workflow_scheduler = None
+        if self._manual_workflow_hook is not None:
+            self._manual_workflow_hook.stop()
+            self._manual_workflow_hook = None
         for pending in self._pending_confirms.values():
             pending.event.set()
         self._pending_confirms.clear()
@@ -9922,27 +9927,49 @@ def handle_tool(tool_name, params):
         return await vision.capture_world_feature_now() if vision is not None else None
 
     async def _handle_recorded_workflow_status(self, params: dict, ws: ServerConnection) -> dict:
-        return {"status": "ok", **self._recorded_workflows.status()}
+        return {"status": "ok", **self._recorded_workflows.status(),
+                "manual_hook_healthy": bool(self._manual_workflow_hook and self._manual_workflow_hook.healthy())}
 
     async def _handle_recorded_workflow_start(self, params: dict, ws: ServerConnection) -> dict:
         try:
             consent = _validated_bool(params, "consent", False)
             capture_visual = _validated_bool(params, "capture_visual", False)
+            capture_manual = _validated_bool(params, "capture_manual", False)
+            manual_consent = _validated_bool(params, "manual_consent", False)
             if not consent:
                 raise ValueError("Explicit recording consent is required")
+            if capture_manual and not manual_consent:
+                raise ValueError("Separate consent is required to observe manual desktop input")
             await asyncio.to_thread(self._recorded_workflows.prepare)
             session = self._recorded_workflows.start(
                 name=str(params.get("name", "")),
                 goal=str(params.get("goal", "")),
                 consent=consent,
                 capture_visual=capture_visual,
+                capture_manual=capture_manual,
+                manual_consent=manual_consent,
             )
+            if capture_manual:
+                from pilot.workflows.manual_workflow_hook import ManualWorkflowHook
+
+                hook = ManualWorkflowHook(self._recorded_workflows)
+                try:
+                    hook.start()
+                except Exception:
+                    self._recorded_workflows.stop(save=False)
+                    raise
+                self._manual_workflow_hook = hook
             return {"status": "ok", **session}
         except (ValueError, RuntimeError) as exc:
             return {"status": "error", "message": str(exc)}
 
     async def _handle_recorded_workflow_stop(self, params: dict, ws: ServerConnection) -> dict:
         try:
+            if self._manual_workflow_hook is not None:
+                if not self._manual_workflow_hook.healthy():
+                    self._recorded_workflows.mark_manual_gap()
+                self._manual_workflow_hook.stop()
+                self._manual_workflow_hook = None
             result = await asyncio.to_thread(
                 self._recorded_workflows.stop, save=_validated_bool(params, "save", False)
             )
@@ -9986,9 +10013,12 @@ def handle_tool(tool_name, params):
             if workflow["incomplete"]:
                 raise ValueError("Incomplete recordings cannot be replayed; unsupported steps need a parameterized workflow")
             if workflow["needs_review"] and not _validated_bool(params, "reviewed", False):
-                raise ValueError("Review coordinate-based steps before replay")
+                raise ValueError("Review manual or coordinate-based steps before replay")
+            text_values = params.get("text_values", {})
+            if not isinstance(text_values, dict):
+                raise ValueError("Text placeholder values must be an object")
             job = await self._autonomous.submit(
-                workflow_prompt(workflow),
+                workflow_prompt(workflow, text_values=text_values),
                 source="recorded_workflow",
                 session_id=f"recorded:{workflow['id']}",
             )

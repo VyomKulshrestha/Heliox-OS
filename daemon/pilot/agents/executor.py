@@ -13,6 +13,7 @@ import logging
 import re
 import typing
 import uuid
+from contextlib import nullcontext
 from typing import TYPE_CHECKING
 
 from pilot.actions import (
@@ -1211,11 +1212,16 @@ class Executor:
                     except Exception:
                         logger.warning("Workflow pre-action recording failed", exc_info=True)
                 try:
-                    result = await self._execute_single(
-                        action,
-                        snapshot_id,
-                        user_confirmed=user_confirmed,
+                    suppress_manual = getattr(
+                        self._recorded_workflow_store, "suppress_manual_during_heliox_action", nullcontext
                     )
+                    scope = suppress_manual()
+                    with scope:
+                        result = await self._execute_single(
+                            action,
+                            snapshot_id,
+                            user_confirmed=user_confirmed,
+                        )
                 except BaseException as exc:
                     if claimed and self._durable_task_store is not None:
                         await self._durable_task_store.mark_action_uncertain(
