@@ -349,7 +349,7 @@ run the pinned local
 checkpoint with `--checkpoint-every 1` and review the complete synthetic and
 ScopeJudge reports before considering any further change.
 
-### Quantized local GPU baseline and unresolved runner crash
+### Quantized local GPU baseline and public transfer
 
 To keep testing without PyTorch, the independent
 [`evaluate_ollama_scope.py`](../daemon/scripts/evaluate_ollama_scope.py)
@@ -363,18 +363,38 @@ inspected synthetic suite. Jev answered 60/60 of those authored cases. The
 4B result is neither Jev parity nor fresh real-world validation, and it was
 not connected to Heliox execution.
 
-The disjoint public ScopeJudge test selected 608 calls. The GPU run completed
-and checkpointed the first 105, then Ollama returned HTTP 500. Those 105 are
-all in-scope, so they cannot yield balanced accuracy or false-allowance
-evidence. Windows recorded a `llama-server.exe` application crash
-(`0xc0000409`) at 19:34 on 2026-09-24 and new `nvlddmkm` events in the same
-period; this is runtime failure evidence, not a measured model error or a
-proven root cause. The incomplete checkpoint remains ignored under
-`daemon/benchmarks/.bench-state/ollama_qwen3_5_4b_scopejudge_v1.partial.json`.
-Do not treat it as a test report. Retry only after the host can sustain GPU
-inference, with the matching `--report` path and `--resume`, then inspect
-false allowances, valid-action recall, context exclusions, and latency before
-considering any further model work.
+The disjoint public ScopeJudge test selected 608 calls. Ollama checkpointed
+105 before returning HTTP 500; Windows recorded a `llama-server.exe` crash
+(`0xc0000409`) and `nvlddmkm` events on 2026-09-24. Those events do not prove
+the underlying cause. After the host restart, the same Ollama version, model
+digest, prompt, and cases were verified and the GPU run resumed to completion.
+The [public report](../daemon/benchmarks/ollama_qwen3_5_4b_scopejudge_v1.json)
+records all **608/608** calls, with 100% GPU residency and no context
+exclusions. It agrees with only **34/608** expert labels (5.6%; balanced
+accuracy 50.4%): **zero** false allowances on 29 out-of-scope calls, but
+**574** false warnings on 579 in-scope calls. One answer hit the 16-token
+generation cap without a valid decision and was denied.
+The model mostly says NO, so its apparent conservatism would prevent useful
+work. This public offensive-security dataset is heavily positive in its full
+test partition. The [ScopeJudge paper](https://arxiv.org/html/2607.07774)
+states that experts saw the prior trajectory when labeling each call, whereas
+this baseline presents only the original request and proposed action. It is
+therefore an **intent-only** monitor comparison, not a full-context judge.
+Label agreement is not desktop-safety evidence, and neither
+the model nor this prompt is eligible for runtime promotion. A post-restart
+PyTorch import still stalled, so weight-training experiments remain unavailable
+on this host; only the Ollama inference path has been verified stable for this
+completed run.
+
+A controlled prompt change that explicitly evaluated concrete effects and
+partial task steps was tested on the **balanced 80-call calibration split**.
+Both it and the original prompt returned NO for every call (40 false warnings,
+zero false allowances), so the wording change showed no improvement. A
+20-call reasoning-mode smoke test with a 256-token generation limit produced
+no final YES/NO answers; a longer single positive case still exhausted 2,048
+generated tokens without an answer. These are failed probes, not a trained
+improvement. The prompt file and configurable evaluation settings are retained
+for reproducible calibration experiments, but the candidate remains offline.
 
 ## Reproduction and release boundary
 
