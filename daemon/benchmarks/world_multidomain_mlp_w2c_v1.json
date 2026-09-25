@@ -1,0 +1,48 @@
+{
+  "purpose": "offline_four_domain_call_readiness_research_not_runtime_promotion",
+  "backbone": "Qwen/Qwen3.5-2B frozen features, revision 15852e8c16360a2fea060d615a32b45270f8a8fc",
+  "additional_source": {
+    "url": "https://github.com/NVIDIA/When2Call",
+    "revision": "ecc8d42388e91ab37e7e737d48e16e8ecea3d1dc",
+    "path": "data/train/when2call_train_pref.jsonl",
+    "sha256": "d90637f108fabf1b097493c5818c3692e1d73140259d2f8e490536255e765bc4",
+    "license_note": "Apache-2.0 repository; derived from Salesforce xLAM 60k (CC BY 4.0)"
+  },
+  "additional_training": "400 grouped, class-balanced call-versus-text preference cases; 100 calibration and 100 test cases with disjoint request/tool groups; synthetic labels may be noisy",
+  "selection": "Six GPU-trained heads; 128 hidden units, seed 19 selected by minimum calibration AUC across four domains, without test-label selection",
+  "selected_calibration_auc": {
+    "agentic": 0.9493,
+    "tbac": 0.9303,
+    "scopejudge": 0.8648,
+    "when2call": 0.7928
+  },
+  "public_calibration_threshold": 0.9996310472488404,
+  "official_test_default": {
+    "agentic": {"auc": 0.9357, "false_allowances": 63, "negative_rows": 398, "false_warnings": 48, "positive_rows": 511},
+    "tbac": {"auc": 0.9043, "false_allowances": 79, "negative_rows": 417, "false_warnings": 88, "positive_rows": 518},
+    "scopejudge": {"auc": 0.8426, "false_allowances": 5, "negative_rows": 29, "false_warnings": 80, "positive_rows": 558},
+    "when2call": {"auc": 0.7616, "false_allowances": 14, "negative_rows": 50, "false_warnings": 16, "positive_rows": 50}
+  },
+  "official_test_cautious": {
+    "agentic": {"false_allowances": 2, "false_warnings": 485},
+    "tbac": {"false_allowances": 1, "false_warnings": 510},
+    "scopejudge": {"false_allowances": 0, "false_warnings": 541},
+    "when2call": {"false_allowances": 0, "false_warnings": 50}
+  },
+  "previously_inspected_heliox_synthetic": {
+    "auc": 0.91,
+    "default_false_allowances": 1,
+    "default_false_warnings": 13,
+    "cautious_false_allowances": 0,
+    "cautious_false_warnings": 30,
+    "positive_rows": 30,
+    "negative_rows": 30
+  },
+  "external_transfer_after_training": {
+    "entity_binding": {"auc": 0.6089, "default_false_allowances": 67, "negative_rows": 94, "cautious_false_allowances": 0, "cautious_false_warnings": 55, "positive_rows": 55, "correct_top_rank": 18, "resolvable_tasks": 55},
+    "tau_retail_binding": {"auc": 0.6784, "default_false_allowances": 10, "negative_rows": 47, "cautious_false_allowances": 0, "cautious_false_warnings": 43, "positive_rows": 43, "correct_top_rank": 29, "groups": 37}
+  },
+  "artifact_sha256": "b15bea2c4bb0720d15803081d59d724c2c8514751ce394451b412f92da65b2d7",
+  "decision": "Rejected: call-readiness training does not yield a usable safety/utility threshold or reliable target binding. Nothing is loaded by Heliox.",
+  "limitations": "Adaptive public research, not a blind benchmark, action authorization, live desktop evidence, or Jev parity. External transfer results have now been inspected and must not be reused as a blind selection set."
+}
