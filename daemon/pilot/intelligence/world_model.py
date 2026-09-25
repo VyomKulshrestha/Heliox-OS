@@ -149,11 +149,12 @@ _WINDOW_ACTIONS = {
 }
 _PROCESS_START = {
     ActionType.OPEN_APPLICATION,
+    ActionType.SERVICE_START,
+}
+_TRANSIENT_PROCESS_ACTIONS = {
     ActionType.SHELL_COMMAND,
     ActionType.SHELL_SCRIPT,
-    ActionType.PTY_EXEC,
     ActionType.CODE_EXECUTE,
-    ActionType.SERVICE_START,
 }
 _PROCESS_STOP = {
     ActionType.PROCESS_KILL,
@@ -278,16 +279,52 @@ class StructuredTransitionPredictor:
                 )
             )
 
+        if action_type in _TRANSIENT_PROCESS_ACTIONS:
+            count = current_state.system.get("process_count")
+            predicted.system["process_count"] = "requires_observation"
+            effects.append(
+                ExpectedEffect(
+                    EffectDomain.PROCESS,
+                    "run_transient",
+                    action_type.value,
+                    before=count,
+                    after="requires_observation",
+                    confidence=0.5,
+                    evidence="handler waits for its direct child; background side effects require observation",
+                )
+            )
+
         if action_type in _FILE_ACTIONS:
             path = self._safe_target(candidate_action, params)
-            operation = action_type.value.removeprefix("file_").removeprefix("download_")
+            destination = str(params.get("destination") or "").strip()[:300]
+            if action_type == ActionType.DOWNLOAD_FILE:
+                path = str(params.get("output_path") or "").strip()[:300]
+            elif action_type == ActionType.FILE_COPY:
+                path = destination
+            elif action_type == ActionType.FILE_MOVE:
+                source = str(params.get("path") or "").strip()[:300]
+                effects.append(
+                    ExpectedEffect(
+                        EffectDomain.FILESYSTEM,
+                        "move",
+                        source or "declared source",
+                        after="absent",
+                        confidence=0.9 if source and destination else 0.35,
+                        reversible=candidate_action.reversible,
+                        evidence="filesystem move source postcondition",
+                    )
+                )
+                path = destination
+            operation = "move_destination" if action_type == ActionType.FILE_MOVE else (
+                action_type.value.removeprefix("file_").removeprefix("download_")
+            )
             effects.append(
                 ExpectedEffect(
                     EffectDomain.FILESYSTEM,
                     operation,
                     path or "declared file target",
                     after=self._file_after_state(action_type, params),
-                    confidence=0.9,
+                    confidence=0.9 if path else 0.35,
                     reversible=candidate_action.reversible,
                     evidence="filesystem action contract",
                 )
@@ -388,7 +425,7 @@ class StructuredTransitionPredictor:
         if action_type == ActionType.FILE_DELETE:
             return "absent"
         if action_type == ActionType.FILE_MOVE:
-            return f"moved_to:{str(params.get('destination') or 'declared destination')[:200]}"
+            return "present_or_updated"
         if action_type in {ActionType.FILE_WRITE, ActionType.FILE_COPY, ActionType.DOWNLOAD_FILE}:
             return "present_or_updated"
         return "metadata_changed"
