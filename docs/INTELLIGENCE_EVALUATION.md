@@ -292,6 +292,52 @@ already-inspected evaluation set; they are not a fresh model-selection holdout.
 Lexical gains do **not** demonstrate faithful UI effects, and neither adapter
 is suitable for live Heliox use.
 
+### Adjacent observed-state probe
+
+[State Transition Pretraining](https://arxiv.org/abs/2607.24112) motivates
+learning from consecutive `(state, action, next state)` observations. Its
+[AgentNet conversion code](https://github.com/xyliugo/gui-state-transition-pretraining/blob/main/data_preparation/agentnet/convert_forward_task.py)
+pairs adjacent screenshots. Heliox's smaller GPU probe instead pairs the
+**textual screen observation** at source step `t`, its described action, and
+the textual screen observation at step `t+1` from the same task. It does not
+download images or perform the paper's visual or inverse-dynamics training.
+`daemon/scripts/sample_adjacent_world_observations.py` pins the source
+revision, requires consecutive step indices and adjacent source rows, rejects
+ambiguous state/action boundaries, and excludes task groups shared by the
+sampled training and evaluation partitions. No source action is executed.
+
+At the same `world-model-transitions` revision above, a 12-page/8-page seeded
+sample of 100-row pages yielded 914 training pairs from 89 tasks and 68
+held-out pairs from 62 different tasks (source SHA-256
+`96c7da9a8a14bf5e7d2fe6c9c9163bfceebeec0ddd15ef3c6a292ff7f7ee6971`).
+With 1024-input/256-target token limits, 718 training and 56 held-out pairs
+from 50 held-out tasks remained. One RTX 4060 LoRA epoch on the same pinned
+Qwen3-0.6B reduced mean per-row held-out target-token loss from **2.333 to
+1.460**. In a fixed 12-task greedy-generation check, mean ROUGE-L F1 rose
+from 0.248 to 0.275 and token F1 from 0.414 to 0.449; 7/12 cases improved
+on ROUGE-L and 4/12 adapter responses reached the 256-token cap.
+The ignored local evidence is in
+`daemon/benchmarks/.bench-state/agentnet_adjacent_world_v1.json`,
+`agentnet_adjacent_world_lora_capped_v1.json`, and
+`agentnet_adjacent_world_generation_v1.json`. Reproduction uses the pinned
+revision above, sampler default seed and page settings, `--max-input-tokens 1024`,
+`--max-target-tokens 256`, `--learning-rate 1e-4`, and the evaluator's default
+12 cases and seed.
+
+This is not a faithful world model. In the largest regression, opening a
+folder produced a fabricated `README.md` and repeated `build.gradle` until
+the token cap; the reference showed a `data` folder and `sample.txt`. The
+largest lexical win was directionally correct: after a click in an empty
+email body, the adapter predicted a positioned cursor while the base model
+incorrectly predicted that text had already been typed. This is one audited
+example, not evidence of broad task correctness. The first, longer-sequence
+GPU attempt terminated with a CUDA launch failure and
+coincident NVIDIA driver events, without a model report. The capped run
+finished without new driver events. Neither loss nor lexical overlap proves
+correct action effects, visual fidelity, cross-environment generalization,
+or Jev parity. The adapter remains ignored local research data and is not
+loaded by the daemon.
+
 The shipped structured predictor remains available without learned weights.
 It now identifies the destination (not source or download URL) as the changed
 file for copy/download, models moves as separate source-removal and
