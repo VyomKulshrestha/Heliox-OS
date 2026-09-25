@@ -210,6 +210,7 @@ class RecordedWorkflowStore:
                 "steps": [],
                 "samples": [],
                 "omitted_actions": 0,
+                "overlap_warning": False,
             }
         return self.status()
 
@@ -231,6 +232,8 @@ class RecordedWorkflowStore:
         """Do not mistake Heliox-injected input for the user's own action."""
         with self._session_lock:
             self._manual_suppression += 1
+            if self._active is not None and self._active["capture_manual"]:
+                self._active["overlap_warning"] = True
         try:
             yield
         finally:
@@ -411,7 +414,8 @@ class RecordedWorkflowStore:
             "sample_count": len(record["samples"]),
             "omitted_actions": record["omitted_actions"],
             "incomplete": bool(record["omitted_actions"]),
-            "needs_review": bool(record["omitted_actions"]) or any(
+            "overlap_warning": bool(record.get("overlap_warning", False)),
+            "needs_review": bool(record["omitted_actions"] or record.get("overlap_warning")) or any(
                 step["action_type"].startswith("mouse_") or step.get("source") == "manual"
                 for step in record["steps"]
             ),

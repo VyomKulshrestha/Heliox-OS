@@ -214,4 +214,6 @@ def test_manual_events_suppressed_during_heliox_actions_and_approval(tmp_path) -
     store.record_manual_event("click", x=40, y=60, button="left")
     pending = False
     store.record_manual_event("click", x=40, y=60, button="left")
-    assert store.stop(save=True)["step_count"] == 1
+    saved = store.stop(save=True)
+    assert saved["step_count"] == 1
+    assert saved["overlap_warning"] is True
