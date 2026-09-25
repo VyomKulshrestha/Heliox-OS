@@ -363,13 +363,15 @@ the earlier language-model probe, so these are exploratory diagnostics, not
 an untouched promotion result. Reports and weights remain ignored under
 `daemon/benchmarks/.bench-state/`.
 
-The intended CUDA run could not start: the existing Windows Python 3.12
-PyTorch import stalled before reaching CUDA initialization, although
-`nvidia-smi` showed the RTX 4060 available. A separate Python 3.11 CPU-only
-PyTorch installation completed the control runs. We did not treat idle GPU
-memory as proof a GPU training run occurred or silently substitute the CPU
-result for one. The previous capped Qwen LoRA run above remains the completed
-GPU evidence for this dataset.
+A later Windows diagnosis traced that import stall to Python 3.12's
+`platform._wmi_query` hanging in a local WMI CPU-architecture lookup, before
+PyTorch reached CUDA initialization. A process-local workaround that makes
+that lookup raise `OSError` allowed the installed CUDA PyTorch to import; no
+system-wide monkeypatch was installed. The completed GPU control on the same
+text-hash features reached **0.691** held-out target cosine and **52.9%**
+retrieval, versus **0.799** and **66.2%** for unchanged state. It still failed
+the held-out discrimination baseline. The Python 3.11 CPU-only controls above
+remain separate runs.
 
 Reproduce the CPU controls from `daemon` with fresh report and weights paths
 (this Windows host used `py -3.11`; use the equivalent Python in another
@@ -386,6 +388,50 @@ or visual prediction fidelity, uncertainty calibration, task success, action
 authority, or Jev parity. The result argues against staging this latent model
 in Heliox until a fresh, consented observed-state corpus and stronger
 environment-disjoint evaluation exist.
+
+### Observed visual transition GPU probe
+
+`daemon/scripts/sample_world_visual_transitions.py` samples adjacent
+screen/action rows from the [TESS AgentNet dataset](https://huggingface.co/datasets/TESS-Computer/tess-agentnet),
+whose card declares MIT licensing and describes normalized mouse coordinates,
+click types, and episode identifiers. It accepts only consecutive steps in the
+same episode, checks image URLs against a chosen dataset revision, derives the
+same 16×16 grayscale features as Heliox's live screen observer, and retains no
+raw screenshots. The row API itself is not revision-pinned, so the recorded
+source revision and feature hash are provenance checks, not a guarantee that
+future sampling returns identical rows. The ignored local feature file has SHA-256
+`221b0bc5b98023224770d84e6de603285789b8898da4d4a759770aeb0074214c`.
+The bounded sample has **968 pairs** from **89 episodes**: 707/110/151 rows
+and 62/13/14 episode groups in train/validation/evaluation. This is one
+public dataset, not environment-disjoint Heliox data. The dataset card does
+not explicitly establish the pre/post-action timing of every screenshot, so
+adjacency alone cannot prove that the annotated action caused the change.
+
+`daemon/scripts/train_world_visual_transition.py` trained a residual linear
+predictor and a small residual MLP on the RTX 4060. Checkpoint selection used
+validation weighted pixel MSE; evaluation episodes were not used to select
+weights. On the held-out episodes, the MLP's changed-pixel MSE improved from
+**0.1002** (unchanged-screen baseline) to **0.0719**, and weighted MSE from
+**0.1410** to **0.1123**. But overall MSE worsened from **0.0282** to
+**0.0315**. More importantly, permuting valid actions and coordinates between
+evaluation rows gave **0.1107** weighted MSE, slightly *better* than the
+correct-action **0.1123**. The linear run showed the same failure pattern:
+**0.1204** correct-action versus **0.1208** shuffled-action weighted MSE, a
+negligible difference. The sample is also dominated by left clicks (767/968).
+This does **not** establish a learned action-conditioned world model, even
+though changing-region predictions improved. Both weight files remain ignored
+local research artifacts and are incompatible with the live `UiJepaPredictor`;
+neither is staged for shadow runtime inference or gating. The live model
+still needs action-aligned observations, a compatible action vocabulary,
+environment-disjoint transfer, calibrated uncertainty, and consented live
+verification before promotion.
+
+To reproduce from `daemon`, use fresh ignored output names:
+
+```bash
+python -m scripts.sample_world_visual_transitions --pages 24 --page-length 50 --features benchmarks/.bench-state/tess_visual_repro.npz --report benchmarks/.bench-state/tess_visual_repro.json
+python -m scripts.train_world_visual_transition --device cuda --architecture mlp --features benchmarks/.bench-state/tess_visual_repro.npz --source-report benchmarks/.bench-state/tess_visual_repro.json --report benchmarks/.bench-state/tess_visual_mlp_repro.json --weights benchmarks/.bench-state/tess_visual_mlp_repro.pt
+```
 
 The shipped structured predictor remains available without learned weights.
 It now identifies the destination (not source or download URL) as the changed
