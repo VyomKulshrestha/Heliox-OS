@@ -20,7 +20,12 @@ import numpy as np
 from benchmarks.jev_scope_suite import ScopeCase
 from scripts.evaluate_qwen_instruct_scope import MODEL_ID, MODEL_REVISION
 from scripts.score_world_mlp_artifact import score_features
-from scripts.train_world_scope_semantic import embed_cases, metrics
+from scripts.train_world_scope_semantic import (
+    embed_cases,
+    feature_identity,
+    load_feature_checkpoint,
+    metrics,
+)
 
 REPOSITORY = "R-Suresh/EntityBindingFailures"
 REVISION = "af311d10f52680576d83cdaf3d05d5b090445de4"
@@ -132,22 +137,27 @@ def main() -> None:
     if hashlib.sha256(source).hexdigest() != trained["artifact_sha256"]:
         raise ValueError("Frozen head artifact hash mismatch")
 
-    import torch
-    from transformers import AutoTokenizer, Qwen3_5ForCausalLM
+    processed, overlong, _, vectors, targets = load_feature_checkpoint(
+        args.feature_checkpoint, feature_identity(cases, 1024, 4), cases)
+    if processed == len(cases):
+        features, labels = np.asarray(vectors), np.asarray(targets, dtype=np.bool_)
+    else:
+        import torch
+        from transformers import AutoTokenizer, Qwen3_5ForCausalLM
 
-    if not torch.cuda.is_available() or torch.cuda.mem_get_info()[0] < 5 * 1024**3:
-        raise RuntimeError("At least 5 GiB free CUDA memory is required")
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, revision=MODEL_REVISION,
-                                               local_files_only=True)
-    model, loading = Qwen3_5ForCausalLM.from_pretrained(
-        MODEL_ID, revision=MODEL_REVISION, local_files_only=True,
-        dtype=torch.bfloat16, attn_implementation="eager",
-        device_map={"": "cuda:0"}, output_loading_info=True)
-    if loading.get("missing_keys"):
-        raise RuntimeError("Pinned text backbone has missing weights")
-    features, labels, overlong = embed_cases(
-        model.eval(), tokenizer, cases, 1024, "entity_binding",
-        checkpoint_path=args.feature_checkpoint, batch_size=4)
+        if not torch.cuda.is_available() or torch.cuda.mem_get_info()[0] < 5 * 1024**3:
+            raise RuntimeError("At least 5 GiB free CUDA memory is required")
+        tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, revision=MODEL_REVISION,
+                                                   local_files_only=True)
+        model, loading = Qwen3_5ForCausalLM.from_pretrained(
+            MODEL_ID, revision=MODEL_REVISION, local_files_only=True,
+            dtype=torch.bfloat16, attn_implementation="eager",
+            device_map={"": "cuda:0"}, output_loading_info=True)
+        if loading.get("missing_keys"):
+            raise RuntimeError("Pinned text backbone has missing weights")
+        features, labels, overlong = embed_cases(
+            model.eval(), tokenizer, cases, 1024, "entity_binding",
+            checkpoint_path=args.feature_checkpoint, batch_size=4)
     if overlong:
         raise ValueError("External entity-binding evaluation excluded overlong cases")
     with np.load(args.artifact, allow_pickle=False) as artifact:
