@@ -1,0 +1,28 @@
+{
+  "purpose": "incomplete_public_decision_scaling_attempt",
+  "model": "Qwen/Qwen3-0.6B",
+  "dataset": "ZefanCai/Open-Jev",
+  "dataset_revision": "c67699e13d0ae25e35b77165a4b6b079bedc8aba",
+  "selection_seed": 20260925,
+  "planned_rows": {
+    "train": 4096,
+    "calibration": 256,
+    "test": 256,
+    "ood": 256
+  },
+  "max_length": 768,
+  "prompt_style": "candidate_v1",
+  "last_checkpoint": {
+    "next_position": 896,
+    "sha256": "4f7802167cff7e8149853ea4cdcfa51880efa15ff1a5ed99a153496b8fde7887",
+    "finite_trainable_head_optimizer": true,
+    "location": "ignored local .bench-state/qwen_general_v3/checkpoint.pt"
+  },
+  "failures": [
+    "CUDA illegal instruction during the initial training process; Windows logged nvlddmkm IDs 13 and 153 at 2026-09-26 03:32 local time",
+    "Nonfinite gradient after resuming from row 640; no new nvlddmkm event observed for this attempt",
+    "CUBLAS_STATUS_EXECUTION_FAILED after resuming from row 896 with CUDA_LAUNCH_BLOCKING=1; Windows logged nvlddmkm IDs 13 and 153 at 2026-09-26 03:45 local time"
+  ],
+  "result": "incomplete_no_holdout_metrics_no_promoted_model",
+  "limitation": "GPU fault correlation does not identify the hardware, driver, power, or kernel root cause. Do not compare this partial run with frozen models."
+}
