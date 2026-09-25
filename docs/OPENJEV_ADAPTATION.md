@@ -321,7 +321,7 @@ The project's [4 GB throughput remeasurement](https://github.com/MakazhanAlpamys
 is still open after a correctness repair; its pre-repair speed figure should
 not be projected onto this GPU or task.
 
-### Independent instruction-review baseline (in progress)
+### Independent instruction-review GPU baseline
 
 [`evaluate_qwen_instruct_scope.py`](../daemon/scripts/evaluate_qwen_instruct_scope.py)
 adds a pinned, zero-shot text-only Qwen3.5-2B baseline for the same synthetic
@@ -334,20 +334,19 @@ and its [integration test](https://github.com/huggingface/transformers/blob/main
 for `Qwen3_5ForCausalLM`. It is an instruction-following comparison, not a
 replacement for a calibrated safety policy or a claim of Jev parity.
 
-Only a three-case smoke run of the earlier full multimodal wrapper completed.
-The 60-case run then hit a CUDA error before producing a report. The smaller
-text-only path has passed its parsing/checkpoint unit tests but **has not
-produced an inference report**: on this Windows host, importing PyTorch
-stalled before CUDA allocation in both the research environment and the
-system Python. The RTX 4060 Laptop GPU reported about 6.97 GiB free VRAM;
-the Windows System log also recorded `nvlddmkm` event IDs 13 and 153 earlier
-in this test period (driver 616.56). Those events make GPU-driver state worth
-checking but do not prove the cause of the subsequent import stall. No score
-is reported for this path, and nothing was connected to Heliox runtime. No
-driver reset or reboot was attempted. When the host can load PyTorch again,
-run the pinned local
-checkpoint with `--checkpoint-every 1` and review the complete synthetic and
-ScopeJudge reports before considering any further change.
+The earlier full multimodal wrapper completed only a three-case smoke run
+before a CUDA error. After the host restart, the smaller text-only path loaded
+the pinned checkpoint on the RTX 4060 Laptop GPU with Hugging Face offline
+mode enforced. Its [synthetic report](../daemon/benchmarks/qwen3_5_2b_instruct_scope_v1.json)
+records **56/60**, zero false allowances, and four false warnings. On the
+[public ScopeJudge test](../daemon/benchmarks/qwen3_5_2b_instruct_scopejudge_v1.json),
+**542/608** calls were within the 768-token input limit and **66** were
+excluded. Among evaluated calls, agreement was **124/542** (22.9%; balanced
+accuracy 54.4%), with **three false allowances** on 29 out-of-scope calls and
+**415 false warnings** on 513 in-scope calls. The PyTorch fallback ran without
+the optional fast attention libraries; no inference crash occurred in these
+completed runs. The synthetic success did not transfer to this public domain,
+and the candidate was not connected to Heliox execution.
 
 ### Quantized local GPU baseline and public transfer
 
@@ -380,11 +379,10 @@ test partition. The [ScopeJudge paper](https://arxiv.org/html/2607.07774)
 states that experts saw the prior trajectory when labeling each call, whereas
 this baseline presents only the original request and proposed action. It is
 therefore an **intent-only** monitor comparison, not a full-context judge.
-Label agreement is not desktop-safety evidence, and neither
-the model nor this prompt is eligible for runtime promotion. A post-restart
-PyTorch import still stalled, so weight-training experiments remain unavailable
-on this host; only the Ollama inference path has been verified stable for this
-completed run.
+Label agreement is not desktop-safety evidence, and neither model nor prompt
+is eligible for runtime promotion. A PyTorch import initially stalled after
+restart but subsequently succeeded; the 2B GPU inference results above replace
+the earlier unresolved-import status. No new weight-training result is claimed.
 
 A controlled prompt change that explicitly evaluated concrete effects and
 partial task steps was tested on the **balanced 80-call calibration split**.
