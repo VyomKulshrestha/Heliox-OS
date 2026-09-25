@@ -193,6 +193,16 @@ because the public labels are imbalanced; the trained adapter gets **99/136
 alone therefore hides a binary-decision failure, and this synthetic baseline
 is not a Jev or live-desktop comparator.
 
+A fresh [128-call public OOD comparison](../daemon/benchmarks/qwen_general_jev_comparison_v4.json)
+made the gap clearer. Against licensed public labels, Jev versus the frozen
+local adapter scored **55/67 versus 44/67** on Noul and **28/35 versus
+13/35** on choice; mean score expected-rank error was **0.394 versus 1.013**
+across 26 questions. On this exact selection, equal option probabilities
+would score 53/67 on Noul and 0.923 expected-rank error on score, both better
+than the trained adapter. The comparison cost $0.003250 in Jev API calls;
+responses were used only for aggregate evaluation, not fitting. The sample
+is synthetic and still cannot establish desktop performance or safety.
+
 The next planned multi-task run adds the
 [MIT-licensed ScopeJudge](https://github.com/dreadnode/scopejudge) expert labels
 to the public general questions, keeping complete security trajectories

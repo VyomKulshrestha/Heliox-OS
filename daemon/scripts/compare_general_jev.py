@@ -17,7 +17,7 @@ import httpx
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from benchmarks.general_decision import DATASET_REVISION, load_split  # noqa: E402
+from benchmarks.general_decision import DATASET_REVISION, load_split, uniform_baseline  # noqa: E402
 from scripts.evaluate_jev_scope import ENDPOINT, _key  # noqa: E402
 from scripts.score_general_decision import score_requests  # noqa: E402
 
@@ -139,6 +139,7 @@ def main() -> None:
                   "\n".join(row["id"] for row in rows).encode()).hexdigest(),
               "local_adapter_sha256": json.loads(args.model_report.read_text(encoding="utf-8"))["adapter_sha256"],
               "jev_models": sorted(versions), "calls": len(rows), "cost_usd": cost,
+              "uniform_baseline": uniform_baseline(rows)["by_kind"],
               "comparison": compare(rows, local, jev),
               "limitation": "Small public synthetic OOD sample; no training permission or desktop-safety proof."}
     args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
