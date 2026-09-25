@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import random
+import sys
 
 import pytest
 
@@ -95,3 +96,17 @@ def test_sample_split_checks_page_indices(monkeypatch) -> None:
             expected_revision=None, group_path="metadata.task_id",
             max_input_chars=500, max_target_chars=500,
         )
+
+
+def test_cli_requires_pinned_source_revision(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(sys, "argv", [
+        "sample_grouped_world_transitions.py", "--dataset", "example/transitions",
+        "--expected-revision", "a" * 40, "--rows", str(tmp_path / "rows.jsonl"),
+        "--report", str(tmp_path / "report.json"),
+    ])
+    monkeypatch.setattr(sampler, "fetch_page", lambda *_args: ({"num_rows_total": 384}, "b" * 40))
+
+    with pytest.raises(ValueError, match="revision changed"):
+        sampler.main()
+
+    assert not (tmp_path / "rows.jsonl").exists()

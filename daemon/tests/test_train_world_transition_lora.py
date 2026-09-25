@@ -1,10 +1,11 @@
 """The transition probe trains only on source training outcomes."""
 
 import json
+import sys
 
 import pytest
 
-from scripts.train_world_transition_lora import encode_rows, load_rows
+from scripts.train_world_transition_lora import encode_rows, load_rows, main
 
 
 def _row(split, context):
@@ -68,3 +69,17 @@ def test_encode_rows_keeps_group_id_for_eligible_rows():
                           max_input_tokens=2, max_target_tokens=2)
 
     assert rows["train"][0]["group_sha256"] == "a" * 64
+
+
+@pytest.mark.parametrize("rate", ["0", "-0.01", "nan", "inf"])
+def test_main_rejects_invalid_learning_rate_before_loading_gpu(tmp_path, monkeypatch, rate):
+    source = tmp_path / "rows.jsonl"
+    source.write_text("{}\n", encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", [
+        "train_world_transition_lora.py", "--rows", str(source),
+        "--report", str(tmp_path / "report.json"),
+        "--adapter", str(tmp_path / "adapter"), "--learning-rate", rate,
+    ])
+
+    with pytest.raises(SystemExit):
+        main()
