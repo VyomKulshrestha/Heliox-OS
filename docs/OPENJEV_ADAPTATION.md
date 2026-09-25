@@ -721,6 +721,20 @@ improving call/no-call preferences did not solve target binding or calibrated
 action readiness. The separately shipped deterministic OS-transition world
 model and approval boundaries are unchanged.
 
+A later [GPU leave-one-domain-out diagnostic](../daemon/scripts/evaluate_world_cross_domain.py)
+trained on three task families at a time and tested on the fourth without
+using the excluded family's rows for normalization or fitting. Held-out
+agentic/TBAC AUCs were 0.879/0.849, but ScopeJudge/When2Call AUCs fell to
+0.411/0.497. Without When2Call training examples, the head favored all 100
+test calls, including all 50 dispreferred calls. A separate
+[post-hoc calibration probe](../daemon/scripts/calibrate_world_task_head.py)
+could trade preferred-call coverage against dispreferred-call acceptance,
+but did not repair ranking. When2Call's *preferred versus dispreferred*
+response labels are not the same target as the other domains' scope labels;
+the shared binary head and authorization-framed feature prompt must not turn
+that preference signal into a permission claim. This is an exploratory
+diagnostic on previously explored task families, not new blind evidence.
+
 Reproduce the optional training from `daemon` using fresh output names after
 preparing the pinned preference corpus and extracting its features:
 

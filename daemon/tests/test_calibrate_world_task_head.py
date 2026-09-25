@@ -56,12 +56,12 @@ def test_monotone_calibrators_reduce_fitting_nll_without_changing_ranking():
         np.testing.assert_array_equal(np.argsort(logits * scale + bias), np.argsort(logits))
 
 
-def test_fixed_acceptance_grid_counts_false_allowances():
+def test_fixed_acceptance_grid_counts_negative_examples():
     result = calibration_metrics(np.asarray([True, False, True, False]),
                                  np.asarray([0.95, 0.91, 0.8, 0.1]))
-    assert result["false_allowances_at_0.5"] == 1
+    assert result["false_positives_at_0.5"] == 1
     assert result["acceptance"]["0.9"] == {
-        "accepted": 2, "valid_accepted": 1, "false_allowances": 1,
+        "accepted": 2, "positive_accepted": 1, "negative_accepted": 1,
     }
     with pytest.raises(ValueError, match="Invalid probability"):
         calibration_metrics(np.asarray([True]), np.asarray([1.2]))
