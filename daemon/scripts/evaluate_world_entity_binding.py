@@ -177,9 +177,10 @@ def main() -> None:
         "task_default": task_metrics(cases, scores, 0.5, resolvable),
         "task_cautious": task_metrics(cases, scores, threshold, resolvable),
         "feature_checkpoint_sha256": hashlib.sha256(args.feature_checkpoint.read_bytes()).hexdigest(),
-        "limitation": "Small templated external research benchmark; model was frozen before this "
-                      "dataset was examined. Entity binding relevance is not execution authorization "
-                      "or broad live desktop safety evidence.",
+        "limitation": "Small templated external research benchmark. This script does not fit "
+                      "or select a model on these labels, but prior inspection of the dataset "
+                      "must be considered before claiming a blind test. Entity binding "
+                      "relevance is not execution authorization or live desktop evidence.",
     }
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
