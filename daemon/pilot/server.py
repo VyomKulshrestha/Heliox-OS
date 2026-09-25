@@ -590,6 +590,8 @@ class PilotServer:
         self._agent_gateway: Any = None
         self._gateway_audit: Any = None
         self._voice_gesture_workflows: Any = None
+        self._recorded_workflows: Any = None
+        self._recorded_workflow_scheduler: asyncio.Task[None] | None = None
         self._reflector: Any = None
         self._multi_agent: Any = None
         self._background: Any = None
@@ -830,6 +832,13 @@ class PilotServer:
         gate.set_online_learner(self._online_learning)
         gate.set_ui_observation_provider(None)
         self._executor.set_world_model_outcome_recorder(gate.record_outcome)
+        from pilot.workflows.recorded_workflows import RecordedWorkflowStore
+
+        self._recorded_workflows = RecordedWorkflowStore(
+            DATA_DIR / "recorded_workflows.enc",
+            capture_feature=self._capture_recording_feature,
+        )
+        self._executor.set_recorded_workflow_store(self._recorded_workflows)
         # Import and warm the local system probe stack before readiness so the
         # first harmless status request does not pay lazy import/thread startup.
         from pilot.system.sysinfo import prepare_system_probes
@@ -1419,6 +1428,15 @@ class PilotServer:
             "supervision_status": self._handle_supervision_status,
             "supervision_config_update": self._handle_supervision_config_update,
             "voice_gesture_workflow_submit": self._handle_voice_gesture_workflow_submit,
+            "recorded_workflow_status": self._handle_recorded_workflow_status,
+            "recorded_workflow_start": self._handle_recorded_workflow_start,
+            "recorded_workflow_stop": self._handle_recorded_workflow_stop,
+            "recorded_workflow_list": self._handle_recorded_workflow_list,
+            "recorded_workflow_get": self._handle_recorded_workflow_get,
+            "recorded_workflow_delete": self._handle_recorded_workflow_delete,
+            "recorded_workflow_run": self._handle_recorded_workflow_run,
+            "recorded_workflow_schedule": self._handle_recorded_workflow_schedule,
+            "recorded_workflow_unschedule": self._handle_recorded_workflow_unschedule,
             "voice_gesture_workflow_list": self._handle_voice_gesture_workflow_list,
             "voice_gesture_workflow_get": self._handle_voice_gesture_workflow_get,
             "voice_gesture_workflow_pause": self._handle_voice_gesture_workflow_pause,
@@ -8346,6 +8364,9 @@ def handle_tool(tool_name, params):
             ping_timeout=300,  # allow up to 5 min for pong (matches LLM timeout)
         )
         logger.info("Pilot daemon ready")
+        self._recorded_workflow_scheduler = asyncio.create_task(
+            self._run_recorded_workflow_scheduler(), name="recorded_workflow_scheduler"
+        )
         self._start_tts_warmup()
 
         # ── Start LAN mesh if enabled ──
@@ -8382,6 +8403,10 @@ def handle_tool(tool_name, params):
         """Stop the Pilot daemon server and clean up all resources."""
         self._running = False
         self._queue_shutdown = True
+        if self._recorded_workflow_scheduler is not None:
+            self._recorded_workflow_scheduler.cancel()
+            await asyncio.gather(self._recorded_workflow_scheduler, return_exceptions=True)
+            self._recorded_workflow_scheduler = None
         for pending in self._pending_confirms.values():
             pending.event.set()
         self._pending_confirms.clear()
@@ -9891,6 +9916,138 @@ def handle_tool(tool_name, params):
         }
 
     # ── Autonomous Executor Handlers ──
+
+    async def _capture_recording_feature(self) -> dict[str, Any] | None:
+        vision = self._screen_vision
+        return await vision.capture_world_feature_now() if vision is not None else None
+
+    async def _handle_recorded_workflow_status(self, params: dict, ws: ServerConnection) -> dict:
+        return {"status": "ok", **self._recorded_workflows.status()}
+
+    async def _handle_recorded_workflow_start(self, params: dict, ws: ServerConnection) -> dict:
+        try:
+            consent = _validated_bool(params, "consent", False)
+            capture_visual = _validated_bool(params, "capture_visual", False)
+            if not consent:
+                raise ValueError("Explicit recording consent is required")
+            await asyncio.to_thread(self._recorded_workflows.prepare)
+            session = self._recorded_workflows.start(
+                name=str(params.get("name", "")),
+                goal=str(params.get("goal", "")),
+                consent=consent,
+                capture_visual=capture_visual,
+            )
+            return {"status": "ok", **session}
+        except (ValueError, RuntimeError) as exc:
+            return {"status": "error", "message": str(exc)}
+
+    async def _handle_recorded_workflow_stop(self, params: dict, ws: ServerConnection) -> dict:
+        try:
+            result = await asyncio.to_thread(
+                self._recorded_workflows.stop, save=_validated_bool(params, "save", False)
+            )
+            return {"status": "ok", **result}
+        except (ValueError, RuntimeError) as exc:
+            return {"status": "error", "message": str(exc)}
+
+    async def _handle_recorded_workflow_list(self, params: dict, ws: ServerConnection) -> dict:
+        try:
+            return {"status": "ok", "workflows": await asyncio.to_thread(self._recorded_workflows.list)}
+        except (ValueError, RuntimeError) as exc:
+            return {"status": "error", "message": str(exc)}
+
+    async def _handle_recorded_workflow_get(self, params: dict, ws: ServerConnection) -> dict:
+        try:
+            workflow = await asyncio.to_thread(
+                self._recorded_workflows.get, str(params.get("workflow_id", ""))
+            )
+            return {"status": "ok", "workflow": workflow}
+        except (KeyError, ValueError, RuntimeError) as exc:
+            return {"status": "error", "message": str(exc)}
+
+    async def _handle_recorded_workflow_delete(self, params: dict, ws: ServerConnection) -> dict:
+        try:
+            await asyncio.to_thread(self._recorded_workflows.delete, str(params.get("workflow_id", "")))
+            return {"status": "ok"}
+        except (KeyError, ValueError, RuntimeError) as exc:
+            return {"status": "error", "message": str(exc)}
+
+    async def _handle_recorded_workflow_run(self, params: dict, ws: ServerConnection) -> dict:
+        from pilot.workflows.recorded_workflows import workflow_prompt
+
+        if self._autonomous is None:
+            return {"status": "error", "message": "Guarded autonomous execution is unavailable"}
+        if self._recorded_workflows.status()["active"]:
+            return {"status": "error", "message": "Stop the current recording before replaying a workflow"}
+        try:
+            workflow = await asyncio.to_thread(
+                self._recorded_workflows.get, str(params.get("workflow_id", ""))
+            )
+            if workflow["incomplete"]:
+                raise ValueError("Incomplete recordings cannot be replayed; re-record the missing steps")
+            if workflow["needs_review"] and not _validated_bool(params, "reviewed", False):
+                raise ValueError("Review coordinate-based steps before replay")
+            job = await self._autonomous.submit(
+                workflow_prompt(workflow),
+                source="recorded_workflow",
+                session_id=f"recorded:{workflow['id']}",
+            )
+            return {"status": "submitted", "job": job.to_dict()}
+        except (KeyError, ValueError, RuntimeError) as exc:
+            return {"status": "error", "message": str(exc)}
+
+    async def _handle_recorded_workflow_schedule(self, params: dict, ws: ServerConnection) -> dict:
+        try:
+            workflow = await asyncio.to_thread(
+                self._recorded_workflows.schedule,
+                str(params.get("workflow_id", "")),
+                run_at=str(params.get("run_at", "")),
+                repeat_seconds=_validated_int(params, "repeat_seconds", 0, minimum=0, maximum=31536000),
+                reviewed=_validated_bool(params, "reviewed", False),
+            )
+            return {"status": "ok", "workflow": workflow}
+        except (KeyError, ValueError, RuntimeError) as exc:
+            return {"status": "error", "message": str(exc)}
+
+    async def _handle_recorded_workflow_unschedule(self, params: dict, ws: ServerConnection) -> dict:
+        try:
+            workflow = await asyncio.to_thread(
+                self._recorded_workflows.unschedule, str(params.get("workflow_id", ""))
+            )
+            return {"status": "ok", "workflow": workflow}
+        except (KeyError, ValueError, RuntimeError) as exc:
+            return {"status": "error", "message": str(exc)}
+
+    async def _run_recorded_workflow_scheduler(self) -> None:
+        from pilot.workflows.recorded_workflows import workflow_prompt
+
+        while self._running:
+            try:
+                if (
+                    self._autonomous is not None
+                    and self._recorded_workflows is not None
+                    and not self._recorded_workflows.status()["active"]
+                ):
+                    for workflow in await asyncio.to_thread(self._recorded_workflows.take_due):
+                        try:
+                            job = await self._autonomous.submit(
+                                workflow_prompt(workflow),
+                                source="recorded_workflow_schedule",
+                                session_id=f"recorded:{workflow['id']}",
+                            )
+                            await self._broadcast_notification(
+                                "recorded_workflow_dispatched",
+                                {"workflow_id": workflow["id"], "name": workflow["name"], "job_id": job.job_id},
+                            )
+                        except Exception:
+                            logger.exception("Scheduled recorded workflow dispatch failed")
+                            await self._broadcast_notification(
+                                "recorded_workflow_failed",
+                                {"workflow_id": workflow["id"], "name": workflow["name"]},
+                            )
+            except Exception:
+                logger.exception("Recorded workflow scheduler check failed")
+            await asyncio.sleep(10)
 
     async def _handle_autonomous_submit(self, params: dict, ws: ServerConnection) -> dict:
         """Submit a task for autonomous background execution.

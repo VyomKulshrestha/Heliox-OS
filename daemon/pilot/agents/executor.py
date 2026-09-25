@@ -158,6 +158,7 @@ class Executor:
         self._speech: Any = None
         self._experience_ledger: ExperienceLedger | None = None
         self._world_model_outcome_recorder: Any = None
+        self._recorded_workflow_store: Any = None
         self._step_checker: Any = None
         self._durable_task_store: DurableTaskStore | None = None
         self._controller_lease: ControllerLeaseManager | None = None
@@ -420,6 +421,10 @@ class Executor:
     def set_world_model_outcome_recorder(self, recorder: Any) -> None:
         """Wire verified execution outcomes into historical world-model risk."""
         self._world_model_outcome_recorder = recorder
+
+    def set_recorded_workflow_store(self, store: Any) -> None:
+        """Observe only real approved actions for an opt-in local recording."""
+        self._recorded_workflow_store = store
 
     def set_step_checker(self, checker: Any) -> None:
         """Wire the deterministic pre-action state checker."""
@@ -1018,7 +1023,7 @@ class Executor:
 
             logger.info("Batch %d: executing %d action(s) in parallel", batch_idx + 1, len(batch))
 
-            async def execute_single_action(action: Action, idx: int):
+            async def execute_single_action(action: Action, idx: int, *, single_action_batch: bool = len(batch) == 1):
                 action_key = stable_action_idempotency_key(
                     plan_id,
                     durable_action_indices[id(action)],
@@ -1197,6 +1202,14 @@ class Executor:
                                 await self._narrator.on_action_complete(result)
                             return idx, result
 
+                recording_token = None
+                if self._recorded_workflow_store is not None:
+                    try:
+                        recording_token = await self._recorded_workflow_store.before(
+                            action, single_action_batch=single_action_batch
+                        )
+                    except Exception:
+                        logger.warning("Workflow pre-action recording failed", exc_info=True)
                 try:
                     result = await self._execute_single(
                         action,
@@ -1212,6 +1225,11 @@ class Executor:
                             error=f"{type(exc).__name__}: {exc}",
                         )
                     raise
+                if self._recorded_workflow_store is not None:
+                    try:
+                        await self._recorded_workflow_store.after(recording_token, result)
+                    except Exception:
+                        logger.warning("Workflow post-action recording failed", exc_info=True)
                 if claimed and self._durable_task_store is not None:
                     from pilot.workflows.durable_tasks import ActionExecutionStatus
 

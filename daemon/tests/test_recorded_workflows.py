@@ -1,0 +1,153 @@
+"""Opt-in recordings stay local, encrypted, bounded, and non-authoritative."""
+
+from datetime import UTC, datetime, timedelta
+
+import pytest
+
+from pilot.actions import (
+    Action,
+    ActionResult,
+    ActionType,
+    BrowserParams,
+    KeyboardParams,
+    MouseParams,
+)
+from pilot.workflows.recorded_workflows import RecordedWorkflowStore
+
+
+@pytest.mark.asyncio
+async def test_recording_requires_consent_and_never_captures_by_default(tmp_path) -> None:
+    captures = 0
+
+    async def capture() -> dict:
+        nonlocal captures
+        captures += 1
+        return {"embedding": [0.5] * 256, "width": 100, "height": 100}
+
+    path = tmp_path / "recordings.enc"
+    store = RecordedWorkflowStore(path, key_provider=lambda: b"k" * 32, capture_feature=capture)
+    action = Action(action_type=ActionType.MOUSE_CLICK, parameters=MouseParams(x=25, y=75))
+    assert await store.before(action, single_action_batch=True) is None
+    assert not path.exists()
+    with pytest.raises(ValueError, match="consent"):
+        store.start(name="Test", consent=False, capture_visual=True)
+    store.start(name="Test", consent=True)
+    token = await store.before(action, single_action_batch=True)
+    await store.after(token, ActionResult(action=action, success=True))
+    assert captures == 0
+    saved = store.stop(save=True)
+    assert saved["sample_count"] == 0
+    assert saved["step_count"] == 1
+    assert b"mouse_click" not in path.read_bytes()
+    assert store.status()["active"] is False
+
+
+@pytest.mark.asyncio
+async def test_visual_samples_require_opt_in_and_never_appear_in_public_record(tmp_path) -> None:
+    captures = 0
+
+    async def capture() -> dict:
+        nonlocal captures
+        captures += 1
+        return {"embedding": [captures / 10] * 256, "width": 100, "height": 100}
+
+    store = RecordedWorkflowStore(
+        tmp_path / "recordings.enc", key_provider=lambda: b"k" * 32, capture_feature=capture
+    )
+    store.start(name="Click", consent=True, capture_visual=True)
+    action = Action(action_type=ActionType.MOUSE_CLICK, parameters=MouseParams(x=25, y=75))
+    token = await store.before(action, single_action_batch=True)
+    await store.after(token, ActionResult(action=action, success=True))
+    saved = store.stop(save=True)
+    assert captures == 2
+    assert saved["sample_count"] == 1
+    assert "samples" not in saved
+    assert "embedding" not in str(store.list())
+    assert store._read()[0]["samples"][0]["coords"] == [0.25, 0.75]
+    assert store._read()[0]["samples"][0]["before"] == [26] * 256
+
+
+@pytest.mark.asyncio
+async def test_failed_and_secret_actions_are_not_replayable(tmp_path) -> None:
+    store = RecordedWorkflowStore(tmp_path / "recordings.enc", key_provider=lambda: b"k" * 32)
+    store.start(name="Safe subset", consent=True)
+    secret = Action(action_type=ActionType.KEYBOARD_TYPE, parameters=KeyboardParams(text="password123"))
+    token = await store.before(secret, single_action_batch=True)
+    await store.after(token, ActionResult(action=secret, success=True))
+    click = Action(action_type=ActionType.BROWSER_CLICK, parameters=BrowserParams(selector="#save"))
+    token = await store.before(click, single_action_batch=True)
+    await store.after(token, ActionResult(action=click, success=False))
+    token = await store.before(click, single_action_batch=False)
+    await store.after(token, ActionResult(action=click, success=True))
+    token = await store.before(click, single_action_batch=True)
+    await store.after(token, ActionResult(action=click, success=True))
+    saved = store.stop(save=True)
+    assert saved["step_count"] == 1
+    assert saved["omitted_actions"] == 2
+    assert saved["incomplete"] is True
+    assert b"password123" not in store.path.read_bytes()
+    assert "password123" not in str(store.list())
+
+
+@pytest.mark.asyncio
+async def test_schedule_requires_review_and_claims_due_run_once(tmp_path) -> None:
+    store = RecordedWorkflowStore(tmp_path / "recordings.enc", key_provider=lambda: b"k" * 32)
+    store.start(name="Dashboard click", consent=True)
+    click = Action(action_type=ActionType.MOUSE_CLICK, parameters=MouseParams(x=25, y=75))
+    token = await store.before(click, single_action_batch=True)
+    await store.after(token, ActionResult(action=click, success=True))
+    saved = store.stop(save=True)
+    when = datetime.now(UTC) + timedelta(hours=1)
+    with pytest.raises(ValueError, match="review"):
+        store.schedule(saved["id"], run_at=when.isoformat())
+    scheduled = store.schedule(saved["id"], run_at=when.isoformat(), reviewed=True)
+    assert scheduled["schedule"]["next_run_at"] == when.isoformat()
+    assert store.take_due(now=when - timedelta(seconds=1)) == []
+    assert [row["id"] for row in store.take_due(now=when)] == [saved["id"]]
+    assert store.take_due(now=when) == []
+
+
+@pytest.mark.asyncio
+async def test_incomplete_workflow_cannot_be_scheduled(tmp_path) -> None:
+    store = RecordedWorkflowStore(tmp_path / "recordings.enc", key_provider=lambda: b"k" * 32)
+    store.start(name="With a password", consent=True)
+    secret = Action(action_type=ActionType.KEYBOARD_TYPE, parameters=KeyboardParams(text="secret"))
+    click = Action(action_type=ActionType.BROWSER_CLICK, parameters=BrowserParams(selector="#save"))
+    for action in (secret, click):
+        token = await store.before(action, single_action_batch=True)
+        await store.after(token, ActionResult(action=action, success=True))
+    saved = store.stop(save=True)
+    with pytest.raises(ValueError, match="Incomplete"):
+        store.schedule(
+            saved["id"], run_at=(datetime.now(UTC) + timedelta(hours=1)).isoformat(), reviewed=True
+        )
+
+
+@pytest.mark.asyncio
+async def test_repeat_schedule_survives_restart_but_recording_does_not(tmp_path) -> None:
+    path = tmp_path / "recordings.enc"
+    store = RecordedWorkflowStore(path, key_provider=lambda: b"k" * 32)
+    store.start(name="Review", consent=True)
+    action = Action(action_type=ActionType.BROWSER_CLICK, parameters=BrowserParams(selector="#review"))
+    token = await store.before(action, single_action_batch=True)
+    await store.after(token, ActionResult(action=action, success=True))
+    saved = store.stop(save=True)
+    first = datetime.now(UTC) + timedelta(hours=1)
+    store.schedule(saved["id"], run_at=first.isoformat(), repeat_seconds=86400)
+
+    restarted = RecordedWorkflowStore(path, key_provider=lambda: b"k" * 32)
+    assert restarted.status()["active"] is False
+    assert restarted.take_due(now=first)[0]["id"] == saved["id"]
+    assert restarted.take_due(now=first) == []
+    assert restarted.get(saved["id"])["schedule"]["next_run_at"] == (
+        first + timedelta(days=1)
+    ).isoformat()
+
+
+def test_tampered_ciphertext_fails_closed(tmp_path) -> None:
+    path = tmp_path / "recordings.enc"
+    path.write_bytes(b"x" * 40)
+    store = RecordedWorkflowStore(path, key_provider=lambda: b"k" * 32)
+    with pytest.raises(RuntimeError, match="could not be decrypted"):
+        store.prepare()
+    assert store.status()["active"] is False
