@@ -11,7 +11,7 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from benchmarks.general_decision import format_answer, validate_decision  # noqa: E402
+from benchmarks.general_decision import PROMPT_STYLES, format_answer, validate_decision  # noqa: E402
 from scripts.qwen_model_pin import MODEL, REVISION  # noqa: E402
 from scripts.train_general_decision import encode_rows, score_row  # noqa: E402
 
@@ -67,14 +67,17 @@ def score_requests(payloads: list[dict], output_dir: Path, report_path: Path) ->
         weights = saved["weights"].copy()
         bias = saved["bias"].copy()
         attention = str(saved["attention_implementation"]) if "attention_implementation" in saved else "eager"
+        prompt_style = str(saved["prompt_style"]) if "prompt_style" in saved else "candidate_v1"
     if max_length != report["max_length"]:
         raise ValueError("Head token limit differs from research report")
     if attention not in ("eager", "sdpa") or attention != report.get("attention_implementation", "eager"):
         raise ValueError("Head attention mode differs from research report")
+    if prompt_style not in PROMPT_STYLES or prompt_style != report.get("prompt_style", "candidate_v1"):
+        raise ValueError("Head prompt style differs from research report")
 
     model_path = snapshot_download(MODEL, revision=REVISION, local_files_only=True)
     tokenizer = AutoTokenizer.from_pretrained(model_path, local_files_only=True)
-    encoded, overlong = encode_rows(tokenizer, rows, max_length)
+    encoded, overlong = encode_rows(tokenizer, rows, max_length, prompt_style=prompt_style)
     if overlong:
         raise ValueError("Decision exceeds the trained token limit; input was not truncated")
     base = AutoModelForCausalLM.from_pretrained(

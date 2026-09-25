@@ -25,6 +25,7 @@ from benchmarks.general_decision import (  # noqa: E402
     DATASET,
     DATASET_CONFIG,
     DATASET_REVISION,
+    PROMPT_STYLES,
     candidate_prompts,
     load_split,
     metrics,
@@ -35,12 +36,13 @@ from benchmarks.scopejudge_general import load_scope_parts, scope_metrics  # noq
 from scripts.qwen_model_pin import MODEL, REVISION  # noqa: E402
 
 
-def encode_rows(tokenizer, rows: list[dict], max_length: int) -> tuple[list[dict], int]:
+def encode_rows(tokenizer, rows: list[dict], max_length: int,
+                *, prompt_style: str = "candidate_v1") -> tuple[list[dict], int]:
     encoded = []
     overlong = 0
     for row in rows:
         sequences = []
-        for prompt in candidate_prompts(row):
+        for prompt in candidate_prompts(row, style=prompt_style):
             rendered = tokenizer.apply_chat_template(
                 [{"role": "user", "content": prompt}], tokenize=False,
                 add_generation_prompt=True, enable_thinking=False,
@@ -169,7 +171,7 @@ def checkpoint_signature(args: argparse.Namespace, encoded: dict[str, list[dict]
                 "seed": args.seed, "max_length": args.max_length, "lora_rank": args.lora_rank,
                 "attention": args.attention, "accumulation": args.accumulation,
                 "lr": args.lr, "head_lr": args.head_lr, "brier_weight": args.brier_weight,
-                "ordinal_weight": args.ordinal_weight}
+                "ordinal_weight": args.ordinal_weight, "prompt_style": args.prompt_style}
     return hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
 
 
@@ -284,7 +286,8 @@ def run(args: argparse.Namespace) -> dict:
 
     encoded, overlong = {}, {}
     for split, selected in rows.items():
-        encoded[split], overlong[split] = encode_rows(tokenizer, selected, args.max_length)
+        encoded[split], overlong[split] = encode_rows(
+            tokenizer, selected, args.max_length, prompt_style=args.prompt_style)
         if not encoded[split]:
             raise ValueError(f"All {split} rows exceed max_length={args.max_length}")
     print(json.dumps({"event": "tokenized", "kept": {name: len(part) for name, part in encoded.items()},
@@ -350,7 +353,7 @@ def run(args: argparse.Namespace) -> dict:
                         bias=head.bias.detach().cpu().numpy(),
                         temperature=temperature, model_revision=REVISION,
                         max_length=args.max_length, lora_rank=args.lora_rank,
-                        attention_implementation=args.attention)
+                        attention_implementation=args.attention, prompt_style=args.prompt_style)
 
     report = {
         "model": MODEL, "revision": REVISION,
@@ -362,6 +365,7 @@ def run(args: argparse.Namespace) -> dict:
         "excluded_overlong": overlong, "max_length": args.max_length,
         "attention_implementation": args.attention,
         "lora_rank": args.lora_rank, "accumulation": args.accumulation,
+        "prompt_style": args.prompt_style,
         "checkpoint_every": args.checkpoint_every, "resumed": args.resume,
         "baseline_skipped_on_resume": not run_baseline,
         "learning_rates": {"adapter": args.lr, "head": args.head_lr},
@@ -411,6 +415,7 @@ def main() -> None:
     parser.add_argument("--lr", type=float, default=2e-5)
     parser.add_argument("--head-lr", type=float, default=5e-5)
     parser.add_argument("--brier-weight", type=float, default=0.1)
+    parser.add_argument("--prompt-style", choices=sorted(PROMPT_STYLES), default="candidate_v1")
     parser.add_argument("--ordinal-weight", type=float, default=0.0,
                         help="Optional normalized expected-rank loss for ordered score decisions")
     parser.add_argument("--progress-every", type=int, default=32)

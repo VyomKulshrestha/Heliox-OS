@@ -19,6 +19,7 @@ DATASET = "ZefanCai/Open-Jev"
 DATASET_REVISION = "c67699e13d0ae25e35b77165a4b6b079bedc8aba"
 DATASET_CONFIG = "release-v2-redistributable"
 KINDS = frozenset({"noul", "choice", "score"})
+PROMPT_STYLES = frozenset({"candidate_v1", "full_options_v2"})
 
 
 def licensed_row(row: dict) -> bool:
@@ -51,13 +52,18 @@ def validate_row(row: dict) -> None:
         raise ValueError("Target distribution must sum to one")
 
 
-def candidate_prompts(row: dict) -> list[str]:
-    """Render only input fields; no label, source, ID, or adjacent option leaks."""
+def candidate_prompts(row: dict, *, style: str = "candidate_v1") -> list[str]:
+    """Render only input fields; never include labels, source, or row IDs."""
+    if style not in PROMPT_STYLES:
+        raise ValueError("Unknown decision prompt style")
     state = json.loads(row["state_json"])
     rendered = state if isinstance(state, str) else json.dumps(state, sort_keys=True, ensure_ascii=False)
     prefix = f"Context:\n{rendered}\n\nQuestion: {row['question']}\n"
     if row["kind"] == "noul":
         return [prefix + "Is the answer to this question yes? Answer Yes or No."]
+    if style == "full_options_v2":
+        choices = "\n".join(f"{index + 1}. {option}" for index, option in enumerate(row["options"]))
+        prefix += f"Available answers:\n{choices}\n"
     return [prefix + f"Proposed answer: {option}\nIs this proposed answer correct? Answer Yes or No."
             for option in row["options"]]
 

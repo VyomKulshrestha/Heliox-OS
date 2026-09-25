@@ -45,6 +45,17 @@ def test_candidate_prompts_share_context_without_labels(kind: str, count: int) -
                    for prompt, option in zip(prompts, example["options"], strict=True))
 
 
+def test_full_option_prompts_share_choices_without_labels() -> None:
+    example = row("choice")
+    prompts = candidate_prompts(example, style="full_options_v2")
+    assert len(prompts) == len(example["options"])
+    assert all("Available answers:\n1. left\n2. right\n3. wait" in prompt for prompt in prompts)
+    assert all("parent" not in prompt and "target" not in prompt for prompt in prompts)
+    assert "Available answers:" not in candidate_prompts(example)[0]
+    with pytest.raises(ValueError, match="prompt style"):
+        candidate_prompts(example, style="unknown")
+
+
 def test_reject_unverified_rights_and_invalid_targets() -> None:
     example = row()
     assert licensed_row(example)
@@ -121,7 +132,8 @@ def test_invalid_option_types_fail_before_duplicate_check() -> None:
 def test_checkpoint_signature_binds_exact_tokenized_inputs() -> None:
     args = argparse.Namespace(seed=1, max_length=128, lora_rank=8, attention="sdpa",
                               accumulation=4, lr=2e-5, head_lr=5e-5,
-                              brier_weight=0.1, ordinal_weight=0.0)
+                              brier_weight=0.1, ordinal_weight=0.0,
+                              prompt_style="candidate_v1")
     encoded = {"train": [{"row": row(), "sequences": [[1, 2, 3]]}]}
     first = checkpoint_signature(args, encoded, {}, None)
     assert first == checkpoint_signature(args, encoded, {}, None)
@@ -129,6 +141,9 @@ def test_checkpoint_signature_binds_exact_tokenized_inputs() -> None:
     assert first != checkpoint_signature(args, encoded, {}, None)
     encoded["train"][0]["sequences"] = [[1, 2, 3]]
     args.ordinal_weight = 0.25
+    assert first != checkpoint_signature(args, encoded, {}, None)
+    args.ordinal_weight = 0.0
+    args.prompt_style = "full_options_v2"
     assert first != checkpoint_signature(args, encoded, {}, None)
 
 
