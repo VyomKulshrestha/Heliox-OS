@@ -100,17 +100,15 @@ def main() -> None:
                 set(when2call["splits"]) != {"train", "calibration", "test"}):
             raise ValueError("Unexpected When2Call feature source")
         extra_source = {
-            "rows": {f"when2call_{name}": data["rows"]
-                     for name, data in when2call["splits"].items()},
-            "excluded_overlong": {f"when2call_{name}": data["overlong"]
+            "rows": {name: data["rows"] for name, data in when2call["splits"].items()},
+            "excluded_overlong": {name: data["overlong"]
                                   for name, data in when2call["splits"].items()},
-            "feature_checkpoint_sha256": {
-                f"when2call_{name}": data["checkpoint_sha256"]
-                for name, data in when2call["splits"].items()},
+            "feature_checkpoint_sha256": {name: data["checkpoint_sha256"]
+                                          for name, data in when2call["splits"].items()},
         }
         extra_features, extra_labels = load_features(args.when2call_feature_dir, extra_source)
-        features.update(extra_features)
-        labels.update(extra_labels)
+        features.update({f"when2call_{name}": values for name, values in extra_features.items()})
+        labels.update({f"when2call_{name}": values for name, values in extra_labels.items()})
         domains = (*DOMAINS, "when2call")
         evaluation = (*EVALUATION, "when2call_test")
         when2call_sha256 = hashlib.sha256(when2call_bytes).hexdigest()
