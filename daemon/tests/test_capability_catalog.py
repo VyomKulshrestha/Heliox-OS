@@ -55,7 +55,7 @@ def test_generated_capability_catalog_matches_runtime(tmp_path: Path) -> None:
     assert all(entry["providers"] for entry in generated["actions"])
     assert all(entry["platform_support"]["platforms"] for entry in generated["actions"])
     assert generated["summary"]["independent_postcondition_verifiers"] > 0
-    assert generated["summary"]["independent_postcondition_verifiers"] == len(POSTCONDITION_VERIFIERS) == 18
+    assert generated["summary"]["independent_postcondition_verifiers"] == len(POSTCONDITION_VERIFIERS) == 22
     high_risk = {
         ActionType.PROCESS_KILL,
         ActionType.POWER_SHUTDOWN,

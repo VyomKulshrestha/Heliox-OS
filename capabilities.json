@@ -19,11 +19,11 @@
   "sources": {
     "action_registry": {
       "path": "daemon/pilot/actions.py",
-      "sha256": "0c3f7da0ef6698bb08671dc55ef99781727690a481f880648b993068a711661b"
+      "sha256": "647a48eb435965e6b8bd35e573f0645bd3e9d159658e19ba18880fdbd7c160de"
     },
     "postcondition_verifier": {
       "path": "daemon/pilot/agents/verifier.py",
-      "sha256": "97a6dd2adffe0de5e8ddd047a1c8a70e35bc66c84839b6c47505bbd8464da355"
+      "sha256": "8bb9946f7a7e0c29abd2adaa41268f155f2d5ebb532d9d2aacdeff2062b33c8a"
     },
     "plugin_manifests": [
       {
@@ -90,7 +90,7 @@
       "system_modify": 35,
       "user_write": 58
     },
-    "independent_postcondition_verifiers": 18,
+    "independent_postcondition_verifiers": 22,
     "plugins": 6,
     "mesh": {
       "specialists": 21,
@@ -3861,9 +3861,9 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "conditional_exact_url_postcondition",
+        "independent_postcondition": true,
+        "note": "Verifier checks this post-condition only when the live state is unambiguous; other outcomes remain executor-reported."
       }
     },
     {
@@ -3960,9 +3960,9 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "conditional_field_value_postcondition",
+        "independent_postcondition": true,
+        "note": "Verifier checks this post-condition only when the live state is unambiguous; other outcomes remain executor-reported."
       }
     },
     {
@@ -3993,9 +3993,9 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "conditional_field_value_postcondition",
+        "independent_postcondition": true,
+        "note": "Verifier checks this post-condition only when the live state is unambiguous; other outcomes remain executor-reported."
       }
     },
     {
@@ -4257,9 +4257,9 @@
         }
       ],
       "verification": {
-        "method": "executor_result_only",
-        "independent_postcondition": false,
-        "note": "No independent post-condition check is currently registered."
+        "method": "conditional_field_value_postcondition",
+        "independent_postcondition": true,
+        "note": "Verifier checks this post-condition only when the live state is unambiguous; other outcomes remain executor-reported."
       }
     },
     {

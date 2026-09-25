@@ -245,6 +245,14 @@ unobserved. A successful file-copy callback is independently verified only
 when the verifier compares file contents within a 64 MiB read budget. Directory
 and larger-file copies can still be reported successful, but their existence
 check alone is not a verified outcome or an online-training label.
+Browser navigation now produces an online transition label only when the
+active page's URL exactly matches the requested URL after execution. For
+side-effect-free typing, selection, and unsubmitted form fill, the verifier
+requires unique visible fields with matching values. Redirects, submitted
+forms, Enter-key actions, unavailable sessions, and explicit non-default tab
+targets remain unverified; executor success alone cannot train the learner.
+These checks establish only the stated browser state, not downstream web-app
+effects or general browser-task success.
 An optional UI-JEPA artifact loads only when finite tensor shapes and its exact
 ordered `ActionType` vocabulary match the running build. Gating additionally
 requires at least 100 training samples, validation error no greater than 0.35,
