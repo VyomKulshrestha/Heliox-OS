@@ -152,6 +152,7 @@ def main() -> None:
     parser.add_argument("--train-split", default="train")
     parser.add_argument("--eval-split", default="validation")
     parser.add_argument("--group-path", default="metadata.task_id")
+    parser.add_argument("--expected-revision", help="Require this exact dataset-server source revision")
     parser.add_argument("--train-pages", type=int, default=12)
     parser.add_argument("--eval-pages", type=int, default=8)
     parser.add_argument("--page-length", type=int, default=32)
@@ -163,13 +164,15 @@ def main() -> None:
     args = parser.parse_args()
     if (args.rows.exists() or args.report.exists() or args.train_pages < 1 or args.eval_pages < 1
             or not 1 <= args.page_length <= 100 or args.max_input_chars < 1
-            or args.max_target_chars < 1 or not args.group_path.strip()):
+            or args.max_target_chars < 1 or not args.group_path.strip()
+            or (args.expected_revision is not None
+                and not REVISION.fullmatch(args.expected_revision))):
         parser.error("Use fresh outputs and positive bounded sampling settings")
     rng = random.Random(args.seed)
     train, train_exclusions, revision, train_total = sample_split(
         dataset=args.dataset, config=args.config, source_split=args.train_split,
         output_split="train", pages=args.train_pages, page_length=args.page_length,
-        rng=rng, expected_revision=None, group_path=args.group_path,
+        rng=rng, expected_revision=args.expected_revision, group_path=args.group_path,
         max_input_chars=args.max_input_chars, max_target_chars=args.max_target_chars,
     )
     evaluation, eval_exclusions, revision, eval_total = sample_split(

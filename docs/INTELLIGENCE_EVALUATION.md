@@ -237,6 +237,61 @@ and prospective postcondition tests is required before considering any
 runtime integration. Lower token loss or a well-formed `<tool_response>` wrapper
 cannot authorize an action or establish Jev-level generalization.
 
+### Task-group-disjoint desktop transition probe
+
+The [Computer-Using World Model paper](https://arxiv.org/abs/2602.17365)
+motivates predicting action-induced UI changes from state/action/next-state
+transitions. Heliox's next research probe uses the MIT-labeled
+[world-model-transitions dataset](https://huggingface.co/datasets/ageppert/world-model-transitions),
+derived from [OpenCUA AgentNet](https://huggingface.co/datasets/xlangai/AgentNet).
+The source contains textual descriptions of the current desktop state,
+planned action, and subsequent outcome, not the raw next screenshot. The
+sampler checks the Hugging Face source revision and keeps task IDs disjoint
+between the sampled training and evaluation rows, since the source's published
+row-level validation split can include the same task as training.
+
+At revision `aa6bc2dcef1bcbf922133e621a3c75f502919d8e`, a seeded local
+sample yielded 384 training rows from 34 tasks and 256 held-out rows from 123
+different tasks (SHA-256
+`834dcd9a5626ba8da2fc121993b9e8b542b6060593cbe03d2b6019c45a03a516`).
+One RTX 4060 LoRA epoch on pinned Qwen3-0.6B reduced mean per-row held-out
+target-token loss from **2.741 to 1.643** at learning rate `1e-4`; no rows were
+excluded by the 1536-input/384-target token limits. This is a better-grounded
+*text transition* probe than the small tool-response sample above, but still
+does not measure actual screenshot
+prediction, Heliox task success, calibration, safety, or Jev parity. The adapter
+and source text stay in ignored local benchmark storage and are not loaded by
+the daemon. Reproduce the sampler, training, and generation diagnostics with
+`daemon/scripts/sample_grouped_world_transitions.py`,
+`daemon/scripts/train_world_transition_lora.py`, and
+`daemon/scripts/evaluate_grouped_world_generation.py`. Reproduce the sampled
+source with `--dataset ageppert/world-model-transitions` and
+`--expected-revision aa6bc2dcef1bcbf922133e621a3c75f502919d8e`, plus the sampler's default
+seed/page settings; use `--max-input-tokens 1536 --max-target-tokens 384` for
+training and generation. Compare the source SHA-256 above before interpreting
+new results.
+
+The fixed greedy-generation check used one row from each of 12 held-out task
+groups. A second one-epoch run at `2e-5` tested whether a lower learning rate
+would avoid repetition on the same sample:
+
+| Run | Mean held-out loss | Mean ROUGE-L F1 | Mean token F1 | ROUGE-L wins over base | Hit 384-token cap |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Base, first run | 2.741 | 0.205 | 0.342 | — | — |
+| Adapter, `1e-4` | 1.643 | 0.232 | 0.360 | 8/12 | 4/12 |
+| Adapter, `2e-5` | 1.781 | 0.220 | 0.354 | 7/12 | 5/12 |
+
+Small differences in base generation metrics were observed across runs (second
+run: ROUGE-L 0.206, token F1 0.343). The first adapter's worst ROUGE-L
+regression hallucinated and repeated formatting-dialog controls to the token
+cap. The lower-rate adapter improved that case's lexical score and stopped at
+114 tokens, but still incorrectly claimed the Find and Replace dialog had
+closed and repeated control descriptions. The base response also erred, claiming
+the document was already formatted. These exploratory comparisons use an
+already-inspected evaluation set; they are not a fresh model-selection holdout.
+Lexical gains do **not** demonstrate faithful UI effects, and neither adapter
+is suitable for live Heliox use.
+
 The shipped structured predictor remains available without learned weights.
 It now identifies the destination (not source or download URL) as the changed
 file for copy/download, models moves as separate source-removal and

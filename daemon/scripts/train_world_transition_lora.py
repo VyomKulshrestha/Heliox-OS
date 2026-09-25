@@ -1,4 +1,4 @@
-"""Research-only GPU probe: predict a tool response from a state and action.
+"""Research-only GPU probe: predict text outcomes from state/action descriptions.
 
 This is not loaded by the daemon. A lower held-out loss would not establish
 OS-action fidelity, safe autonomy, or generalization to other environments.
@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import random
 from pathlib import Path
 
@@ -79,11 +80,14 @@ def main() -> None:
     parser.add_argument("--max-input-tokens", type=int, default=1024)
     parser.add_argument("--max-target-tokens", type=int, default=128)
     parser.add_argument("--epochs", type=int, default=1)
+    parser.add_argument("--learning-rate", type=float, default=1e-4)
     parser.add_argument("--seed", type=int, default=20260925)
     args = parser.parse_args()
     if (not args.rows.is_file() or args.report.exists() or args.adapter.exists()
             or args.max_input_tokens < 1 or args.max_target_tokens < 1 or args.epochs < 1):
         parser.error("Use existing source rows, fresh outputs, and positive limits")
+    if not math.isfinite(args.learning_rate) or args.learning_rate <= 0:
+        parser.error("Learning rate must be positive and finite")
 
     import torch
     from huggingface_hub import snapshot_download
@@ -135,7 +139,7 @@ def main() -> None:
                         "gate_proj", "up_proj", "down_proj"],
     ))
     optimizer = torch.optim.AdamW((parameter for parameter in model.parameters()
-                                   if parameter.requires_grad), lr=1e-4)
+                                   if parameter.requires_grad), lr=args.learning_rate)
     print(json.dumps({"event": "ready", "train": len(rows["train"]),
                       "eval": len(rows["eval"]), "base_eval_loss": base_loss}), flush=True)
     for epoch in range(args.epochs):
@@ -158,6 +162,7 @@ def main() -> None:
         "base_model": {"id": MODEL, "revision": REVISION},
         "train_rows": len(rows["train"]), "eval_rows": len(rows["eval"]),
         "excluded_overlong": exclusions, "epochs": args.epochs,
+        "learning_rate": args.learning_rate,
         "max_input_tokens": args.max_input_tokens,
         "max_target_tokens": args.max_target_tokens,
         "base_eval_loss": base_loss, "tuned_eval_loss": tuned_loss,
