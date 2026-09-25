@@ -571,6 +571,43 @@ shows that the present head does **not** robustly track task intent through a
 multi-turn interaction. These generated relevance labels do not establish
 authorization or live desktop behavior.
 
+A fourth [offline world task-state head](../daemon/scripts/train_world_multiturn_scope_semantic.py)
+was fitted on the pre-call **training** dialogues plus trajectory-disjoint
+ScopeJudge training calls. Repeated dialogue seed tasks stayed together in
+train or calibration; official dialogue, task-tool, and ScopeJudge test rows
+were never fitted or used to choose regularization or threshold. A pinned
+Qwen3.5-2B backbone extracted features on the local GPU, and a numeric head
+selected its 0.001 regularization and 0.897 caution threshold from the two
+calibration partitions. The run used resumable, input-signature-checked local
+feature checkpoints because sleep and a system reboot interrupted earlier
+attempts. Batch-of-four extraction was kept separate from older single-row
+features after a parity check found small but nonzero numeric differences.
+
+On 909 eligible official dialogue test rows, ranking rose from the earlier
+frozen head's 0.875 AUC to **0.925 AUC**, and default-threshold false
+relevance allowances fell from 142/398 to **77/398**. But the cautious
+threshold still allowed **3/398** irrelevant dialogue tools and warned on
+369/511 relevant tools. More importantly, single-turn TBAC transfer regressed
+to **0.881 AUC and 204/417 false allowances** at the default threshold;
+the cautious threshold still allowed 13/417. ScopeJudge had 11/29 default
+and 1/29 cautious false allowances. On the already-inspected Heliox synthetic
+suite, caution still allowed 2/30 out-of-scope actions. The
+[frozen multi-turn result](../daemon/benchmarks/world_multiturn_scope_v2.json)
+is therefore **rejected for runtime**. Error inspection found wrong but
+semantically related tools, cross-tenant scope, and unauthorized target or
+output expansion. Better dialogue ranking is not a generalized world model,
+Jev parity, or permission to execute. The tests were excluded from this fit,
+but earlier results on those tests informed this adaptive research; none is a
+fresh blind validation.
+
+The pinned public data and cached Qwen backbone reproduce the experiment from
+`daemon` with a fresh output name; the feature directory is local and ignored:
+
+```bash
+python -m scripts.train_world_multiturn_scope_semantic --scopejudge-path PATH/TO/train.jsonl --artifact benchmarks/.bench-state/world_multiturn_scope_repro.npz --report benchmarks/.bench-state/world_multiturn_scope_repro.json
+python -m scripts.inspect_world_multiturn_errors --scopejudge-path PATH/TO/train.jsonl
+```
+
 ## Reproduction and release boundary
 
 The offline probes need `onnx`, `onnxruntime`, `pyarrow`, `tokenizers`,
