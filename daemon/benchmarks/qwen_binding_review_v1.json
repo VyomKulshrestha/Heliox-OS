@@ -1,0 +1,81 @@
+{
+  "purpose": "research_only_diagnostic_comparison_not_runtime_promotion",
+  "model": "Qwen/Qwen3.5-2B",
+  "revision": "15852e8c16360a2fea060d615a32b45270f8a8fc",
+  "hardware": "RTX 4060 Laptop GPU, WSL Ubuntu, bfloat16 eager attention",
+  "sources": {
+    "entity_binding": {
+      "url": "https://github.com/R-Suresh/EntityBindingFailures",
+      "revision": "af311d10f52680576d83cdaf3d05d5b090445de4",
+      "path": "data/tasks_entity_binding_final_60.jsonl",
+      "sha256": "8b57c8a4460d02a4f21a3e0cd65ef458aef789679d5bef229c8e80bfa0089cb4",
+      "data_license": "CC BY 4.0"
+    },
+    "tau_retail": {
+      "url": "https://github.com/sierra-research/tau-bench",
+      "revision": "59a200c6d575d595120f1cb70fea53cef0632f6b",
+      "license": "MIT",
+      "source_hashes": {
+        "tasks": "fcd6f0daada96372ede73415a5b80dce90116287a24ad7c7a8a49fa68b0ffe91",
+        "orders": "81595d5cb28171e01133b52714b456003a9cd733cfd013c1d9d397ac0a7484c4",
+        "users": "351c93bce10ce26ba2c9f6a048665d7e002ccff2c1c42a9d628680e73acc5342"
+      }
+    }
+  },
+  "independent_candidate_review": {
+    "method": "Fixed zero-shot prompt; first-token YES versus NO logit softmax; fixed 0.5 cutoff, no training or source-label calibration",
+    "prompt_sha256": "fc97713c848130bff2ec41919f0b16377e47f958c21e9ae1cee4200db8d5c2ad",
+    "entity_binding": {
+      "rows": 149,
+      "positive_rows": 55,
+      "negative_rows": 94,
+      "auc": 0.8201,
+      "false_allowances": 37,
+      "false_warnings": 8,
+      "correct_top_rank": 39,
+      "resolvable_tasks": 55,
+      "input_tokens": 49729,
+      "raw_report_sha256": "8165a0b01012f71fb63df5c3ac236c5f16b80508fae47a68ab5093d9a871c7d9"
+    },
+    "tau_retail": {
+      "rows": 90,
+      "positive_rows": 43,
+      "negative_rows": 47,
+      "auc": 0.8060,
+      "false_allowances": 5,
+      "false_warnings": 22,
+      "correct_top_rank": 30,
+      "groups": 37,
+      "input_tokens": 51271,
+      "raw_report_sha256": "f5a413b06bc6477a81e54fb4d2fabfbb821dce0f7aa08069f68e93c26c66f188"
+    },
+    "inspected_threshold_sweep_not_calibration": {
+      "entity_binding_0_7": {"false_allowances": 5, "false_warnings": 32},
+      "entity_binding_0_8": {"false_allowances": 0, "false_warnings": 55},
+      "tau_retail_0_7": {"false_allowances": 2, "false_warnings": 29},
+      "tau_retail_0_8": {"false_allowances": 0, "false_warnings": 32}
+    }
+  },
+  "groupwise_review": {
+    "method": "Fixed zero-shot prompt chooses a JSON array of candidate indices or abstains with []; prompt created after first-token results were inspected",
+    "prompt_sha256": "505ee4ba97e9950cc14826badb44a561ac8085ee1af45af20fd83464dc2a0763",
+    "entity_binding": {
+      "groups": 60,
+      "exact_groups": 10,
+      "ambiguous_groups": 5,
+      "ambiguous_abstentions": 0,
+      "false_allowances": 54,
+      "false_warnings": 37,
+      "raw_report_sha256": "9f0a997829fa29ca0185a470b8add3f8479460e5a81c71a02ddfc0c4b1dc2067"
+    },
+    "tau_retail": {
+      "groups": 37,
+      "exact_groups": 9,
+      "false_allowances": 34,
+      "false_warnings": 5,
+      "raw_report_sha256": "389e82ac3b2a1e286bcc703f8cedfc9853ecea703db2e082baa6b88bd11bb766"
+    }
+  },
+  "decision": "Neither reviewer is eligible for runtime action gating or Jev-parity claims. Independent first-token scoring improves candidate ranking over the small trained head but has uncalibrated false allowances; groupwise generation over-selects and never abstains on ambiguous entity tasks.",
+  "limitations": "Both public sources had been inspected in prior experiments. Scores and threshold sweeps are adaptive diagnostics, not blind validation, user authorization, live desktop evidence, or physical-world performance. The entity run resumed from a pinned checkpoint after a CUDA illegal-instruction failure; the final report covers every candidate."
+}
