@@ -668,6 +668,28 @@ extracting the frozen features, or replay another frozen head with
 `--artifact`, `--artifact-report`, and a fresh `--report` path. The validated
 feature checkpoint permits repeated scoring without reloading the GPU model.
 
+An independent, differently authored [tau-bench retail](https://github.com/sierra-research/tau-bench)
+probe tests target binding without literal order IDs in most requests. We
+pin its `tasks.py`, order database, and user database, then compare published
+tool/order annotations with same-user, same-status alternatives. Item-specific
+calls are excluded so a mismatched item identifier cannot trivially identify
+the negative. This produces 37 candidate groups, 29 with implicit references,
+and 90 candidate actions (43 annotated positives, 47 alternatives). The
+[frozen transfer report](../daemon/benchmarks/world_tau_binding_transfer_v1.json)
+shows AUC **0.688** for the three-domain MLP and **0.675** for the pairwise
+MLP. Default thresholds falsely allow **15/47** and **13/47** alternatives;
+the cautious thresholds allow none but reject **all 43** annotated positives.
+Both choose a positive top-ranked candidate in **29/37** groups. Thus a
+second external domain also rejects runtime promotion. These are
+observational relevance labels: some published actions depend on earlier
+workflow outcomes, so they cannot be read as unconditional execution
+authorization. GPU feature extraction completed with the pinned Qwen model;
+cached replay of the first head and independent scoring of the second gave
+the same metrics. From `daemon`, reproduce with
+`python -m scripts.evaluate_world_tau_binding --source-root PATH/TO/tau-bench`
+and a fresh `--report` path. The source checkout must match the pinned file
+hashes.
+
 The pinned public data and cached Qwen backbone reproduce the experiment from
 `daemon` with a fresh output name; the feature directory is local and ignored:
 

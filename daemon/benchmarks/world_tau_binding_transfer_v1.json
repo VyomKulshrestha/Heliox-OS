@@ -1,0 +1,49 @@
+{
+  "purpose": "frozen_external_evaluation_only",
+  "source": {
+    "url": "https://github.com/sierra-research/tau-bench",
+    "revision": "59a200c6d575d595120f1cb70fea53cef0632f6b",
+    "tasks_sha256": "fcd6f0daada96372ede73415a5b80dce90116287a24ad7c7a8a49fa68b0ffe91",
+    "orders_sha256": "81595d5cb28171e01133b52714b456003a9cd733cfd013c1d9d397ac0a7484c4",
+    "users_sha256": "351c93bce10ce26ba2c9f6a048665d7e002ccff2c1c42a9d628680e73acc5342",
+    "license": "MIT"
+  },
+  "protocol": "Published retail tasks.py annotations generate positive order bindings; same-user, same-status alternative orders generate negatives. Item-specific calls are excluded. No task or label is used to fit or select a head or threshold.",
+  "backbone": {
+    "model": "Qwen/Qwen3.5-2B",
+    "revision": "15852e8c16360a2fea060d615a32b45270f8a8fc"
+  },
+  "feature_checkpoint_sha256": "f5eb727c970b9fc50d1e89d882a00c41180ee8346462de10c6d7ca856d8303be",
+  "source_tasks": 115,
+  "candidate_groups": 37,
+  "implicit_reference_groups": 29,
+  "candidate_actions": 90,
+  "positive_actions": 43,
+  "negative_actions": 47,
+  "frozen_heads": {
+    "three_domain_mlp": {
+      "artifact_sha256": "147e84054af1c8cf0d9bda653fdec0c9b325b6bf7d773881ce861504608e2e9c",
+      "auc": 0.6882731321128154,
+      "default_false_allowances": 15,
+      "default_false_warnings": 16,
+      "cautious_false_allowances": 0,
+      "cautious_false_warnings": 43,
+      "correct_top_rank": 29,
+      "default_correct_safe_groups": 14,
+      "cautious_correct_safe_groups": 0
+    },
+    "pairwise_mlp": {
+      "artifact_sha256": "6e0269a90ffc701fd59cb975a961421fa9ee6635de854916e4ab623013e79888",
+      "auc": 0.6754082137555666,
+      "default_false_allowances": 13,
+      "default_false_warnings": 18,
+      "cautious_false_allowances": 0,
+      "cautious_false_warnings": 43,
+      "correct_top_rank": 29,
+      "default_correct_safe_groups": 13,
+      "cautious_correct_safe_groups": 0
+    }
+  },
+  "decision": "reject_both_heads_for_runtime",
+  "limitations": "Small observational candidate-relevance test. Source annotations may be conditional on earlier workflow outcomes; this does not prove execution authorization, desktop safety, or Jev parity."
+}
