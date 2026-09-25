@@ -87,7 +87,8 @@ def main() -> None:
     parser.add_argument("--report", type=Path, default=state / "tess_visual_model_v1.json")
     parser.add_argument("--weights", type=Path, default=state / "tess_visual_model_v1.pt")
     parser.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
-    parser.add_argument("--architecture", choices=("linear", "mlp"), default="linear")
+    parser.add_argument("--disable-cudnn", action="store_true")
+    parser.add_argument("--architecture", choices=("linear", "mlp", "spatial"), default="linear")
     parser.add_argument("--epochs", type=int, default=80)
     parser.add_argument("--action-permutations", type=int, default=10)
     parser.add_argument("--seed", type=int, default=20260926)
@@ -101,13 +102,23 @@ def main() -> None:
     import torch
     from torch import nn
 
+    if args.disable_cudnn:
+        torch.backends.cudnn.enabled = False
     if args.device == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA is required for this run")
     torch.manual_seed(args.seed)
     device = torch.device("cuda:0" if args.device == "cuda" else "cpu")
     arrays = {split: {key: torch.from_numpy(value).to(device) for key, value in partition.items()
                       if key != "groups"} for split, partition in rows.items()}
-    if args.architecture == "mlp":
+    if args.architecture == "spatial":
+        model = nn.Sequential(
+            nn.Conv2d(11, 32, 3, padding=1), nn.GELU(),
+            nn.Conv2d(32, 32, 3, padding=1), nn.GELU(),
+            nn.Conv2d(32, 1, 3, padding=1),
+        ).to(device)
+        nn.init.zeros_(model[-1].weight)
+        nn.init.zeros_(model[-1].bias)
+    elif args.architecture == "mlp":
         model = nn.Sequential(nn.Linear(267, 256), nn.GELU(), nn.Linear(256, 256)).to(device)
         nn.init.zeros_(model[-1].weight)
         nn.init.zeros_(model[-1].bias)
@@ -119,6 +130,16 @@ def main() -> None:
 
     def predict(partition: dict, *, ablate_action: bool = False):
         action = torch.zeros_like(partition["action"]) if ablate_action else partition["action"]
+        if args.architecture == "spatial":
+            state_image = partition["state"].reshape(-1, 1, 16, 16)
+            y, x = torch.meshgrid(torch.arange(16, device=device),
+                                  torch.arange(16, device=device), indexing="ij")
+            cx = action[:, 9, None, None] * 15
+            cy = action[:, 10, None, None] * 15
+            locus = torch.exp(-((x - cx) ** 2 + (y - cy) ** 2) / 4.5).unsqueeze(1)
+            kind = action[:, :9, None, None].expand(-1, -1, 16, 16)
+            delta = model(torch.cat((state_image, locus, kind), dim=1)).reshape(-1, 256)
+            return torch.clamp(partition["state"] + delta, 0, 1)
         return torch.clamp(
             partition["state"] + model(torch.cat((partition["state"], action), dim=1)), 0, 1
         )
@@ -174,13 +195,14 @@ def main() -> None:
         "purpose": "research_only_observed_visual_world_transition_probe",
         "features_sha256": hashlib.sha256(args.features.read_bytes()).hexdigest(),
         "device": str(device), "architecture": args.architecture,
+        "torch_version": torch.__version__, "cudnn_enabled": torch.backends.cudnn.enabled,
         "seed": args.seed, "selected_epoch": best_epoch,
         "action_permutations": args.action_permutations,
         "rows": {split: len(partition["state"]) for split, partition in rows.items()},
         "groups": {split: len(set(partition["groups"])) for split, partition in rows.items()},
         "scores": scores,
         "limitation": "16x16 grayscale images and mouse action type/coordinates only. "
-                      "Linear research model is not the live UiJepaPredictor. "
+                      "Research model is not the live UiJepaPredictor. "
                       "Episode-disjoint within one dataset, not environment-disjoint. "
                       "No safety, autonomy, Jev parity, or runtime loading claim.",
     }
