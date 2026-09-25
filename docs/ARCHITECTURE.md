@@ -405,6 +405,16 @@ environment before continuing. An empty plan is successful only when it
 contains an explicit completion claim backed by fresh evidence; exact-text
 goals are checked case-sensitively.
 
+An optional recorded-workflow store observes only successfully executed,
+single-action Heliox steps after the normal gates. It is off after startup;
+the user explicitly starts and stops it from Settings. Allowlisted structured
+steps become a reviewable recipe, and replay/scheduling submits that recipe
+back through the guarded autonomous loop rather than executing a privileged
+macro. A separate opt-in before/after 16×16 screen-feature path remains local,
+AES-GCM encrypted with an OS-keyring key, and never appears in planner or RPC
+workflow responses. See [Recorded workflows](RECORDED_WORKFLOWS.md) for
+privacy and replay limits.
+
 UI coordinates must come from a current element-detection result. A placeholder
 `(0, 0)` click is resolved through `screen_detect_elements`; a missing or
 ambiguous target fails instead of guessing. Three repeats of the same plan and
