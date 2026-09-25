@@ -188,9 +188,10 @@ def main() -> None:
         "group_default": group_metrics(cases, groups, scores, 0.5),
         "group_cautious": group_metrics(cases, groups, scores, threshold),
         "feature_checkpoint_sha256": hashlib.sha256(args.feature_checkpoint.read_bytes()).hexdigest(),
-        "limitation": "Small observational benchmark. Published tool annotations may be conditional "
-                      "on earlier workflow outcomes; this tests candidate relevance, not direct execution "
-                      "authorization or broad desktop safety.",
+        "limitation": "Small observational benchmark. This script does not fit or select a model "
+                      "on these labels, but prior inspection prevents calling a later replay blind. "
+                      "Published tool annotations may be conditional on earlier workflow outcomes; "
+                      "candidate relevance is not execution authorization or desktop safety.",
     }
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
