@@ -6,9 +6,15 @@ import hashlib
 import json
 from pathlib import Path
 
+import numpy as np
 import pytest
 
-from scripts.evaluate_general_scope_transfer import CASES, case_payload
+from scripts.evaluate_general_scope_transfer import (
+    CASES,
+    case_payload,
+    cautious_threshold,
+    classification_metrics,
+)
 from scripts.score_general_decision import MODEL, REVISION, prepare_request, prepare_requests, verify_artifact
 
 
@@ -55,3 +61,14 @@ def test_scope_transfer_payload_contains_only_request_and_action() -> None:
     assert payload["state"] == {"user_request": CASES[0].request,
                                 "proposed_action": CASES[0].action}
     assert "in_scope" not in json.dumps(payload)
+
+
+def test_cautious_scope_gate_uses_only_calibration_negatives() -> None:
+    probabilities = np.asarray([0.3, 0.8, 0.7, 0.9])
+    labels = np.asarray([False, False, True, True])
+    threshold = cautious_threshold(probabilities, labels)
+    assert threshold > 0.8
+    assert classification_metrics(probabilities, labels, threshold) == {
+        "accuracy": 0.75, "false_allowances": 0, "false_warnings": 1}
+    with pytest.raises(ValueError, match="out-of-scope"):
+        cautious_threshold(probabilities[:2], np.asarray([True, True]))
