@@ -22,6 +22,16 @@ def test_load_rows_rejects_cross_split_context_leakage(tmp_path):
         load_rows(source)
 
 
+def test_load_rows_rejects_cross_split_task_leakage(tmp_path):
+    source = tmp_path / "rows.jsonl"
+    train = {**_row("train", "a"), "group_sha256": "f" * 64}
+    evaluation = {**_row("eval", "b"), "group_sha256": "f" * 64}
+    source.write_text("\n".join(json.dumps(row) for row in (train, evaluation)), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="share a task group"):
+        load_rows(source)
+
+
 def test_encode_rows_masks_state_and_action_tokens():
     class FakeTokenizer:
         eos_token_id = 9
@@ -40,3 +50,21 @@ def test_encode_rows_masks_state_and_action_tokens():
     assert excluded == {"train": 0, "eval": 0}
     assert rows["train"][0]["ids"] == [1, 2, 3, 9]
     assert rows["train"][0]["labels"] == [-100, -100, 3, 9]
+
+
+def test_encode_rows_keeps_group_id_for_eligible_rows():
+    class FakeTokenizer:
+        eos_token_id = 9
+
+        def apply_chat_template(self, messages, **kwargs):
+            return "prompt"
+
+        def __call__(self, text, **kwargs):
+            return {"input_ids": [1]}
+
+    training = {**_row("train", "a"), "group_sha256": "a" * 64}
+    evaluation = {**_row("eval", "b"), "group_sha256": "b" * 64}
+    rows, _ = encode_rows(FakeTokenizer(), {"train": [training], "eval": [evaluation]},
+                          max_input_tokens=2, max_target_tokens=2)
+
+    assert rows["train"][0]["group_sha256"] == "a" * 64
