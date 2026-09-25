@@ -67,8 +67,8 @@ def main() -> None:
         from huggingface_hub import snapshot_download
         from transformers import AutoTokenizer
 
+        from scripts.qwen_model_pin import MODEL, REVISION
         from scripts.train_general_decision import encode_rows
-        from scripts.train_qwen_scope_noul import MODEL, REVISION
 
         limits = {name: model_report["selected_rows"][name] for name in
                   ("scope_train", "scope_calibration", "scope_test")}

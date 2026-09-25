@@ -12,8 +12,8 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from benchmarks.general_decision import format_answer, validate_decision  # noqa: E402
+from scripts.qwen_model_pin import MODEL, REVISION  # noqa: E402
 from scripts.train_general_decision import encode_rows, score_row  # noqa: E402
-from scripts.train_qwen_scope_noul import MODEL, REVISION  # noqa: E402
 
 
 def prepare_request(payload: dict) -> dict:

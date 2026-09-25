@@ -31,7 +31,7 @@ from benchmarks.general_decision import (  # noqa: E402
     verify_disjoint,
 )
 from benchmarks.scopejudge_general import load_scope_parts, scope_metrics  # noqa: E402
-from scripts.train_qwen_scope_noul import MODEL, REVISION  # noqa: E402
+from scripts.qwen_model_pin import MODEL, REVISION  # noqa: E402
 
 
 def encode_rows(tokenizer, rows: list[dict], max_length: int) -> tuple[list[dict], int]:
