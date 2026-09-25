@@ -1,0 +1,17 @@
+{
+  "purpose": "offline_pre_call_multiturn_task_tool_relevance_not_runtime_promotion",
+  "trained_head": "Frozen TBAC plus ScopeJudge Qwen3.5-2B semantic numeric head",
+  "trained_artifact_sha256": "677e6217bffa1b52a0182f4434dd2669bcc3c1fadb3799e619e78a26960aaa10",
+  "source": "Cisco Outshift TBAC generated multi-agent conversation-tool official test, GPT-4o variant",
+  "source_revision": "6385bd37654fbc36b84dd0341f0752654785dce3",
+  "source_sha256": "b7bfe395aa24ca6442a23b232ff014ebbe2bb3680738db54baa8ed8701c08231",
+  "input_boundary": "Only user and assistant text before the first candidate tool call; no tool outputs or later messages",
+  "selected_rows": 935,
+  "eligible_rows": 909,
+  "excluded_overlong": {"total": 26, "relevant": 7, "irrelevant": 19},
+  "default": {"auc": 0.8748881393267708, "balanced_accuracy": 0.773662834721553, "relevant_rows": 511, "irrelevant_rows": 398, "false_relevance_allowances": 142, "false_relevance_warnings": 49},
+  "cautious": {"balanced_accuracy": 0.5679375350332878, "relevant_rows": 511, "irrelevant_rows": 398, "false_relevance_allowances": 2, "false_relevance_warnings": 439},
+  "single_turn_comparison": {"tbac_test_auc": 0.9075534938844291, "irrelevant_rows": 417, "default_false_relevance_allowances": 70, "cautious_false_relevance_allowances": 0},
+  "decision": "Rejected for runtime: multi-turn pre-call context reduces discrimination and leaves false relevance approvals. Nothing is loaded by the daemon.",
+  "limitations": "This corpus is generated and shares seed tasks with the official TBAC test. The two comparisons have different token-eligible subsets, so the difference is directional, not a paired causal effect. Relevance is not authorization, real conversation quality, or Jev parity. Earlier test results guided adaptive research."
+}
