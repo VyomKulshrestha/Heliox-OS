@@ -511,6 +511,20 @@ summary](../daemon/benchmarks/world_scope_semantic_2b_v1.json) records coverage,
 metrics, and the local artifact hash. This head is **not** wired into the
 world model, companion, or permission gateway.
 
+A second offline 2B head trained on Cisco Outshift's [Apache-2.0 TBAC
+task-tool data](https://github.com/outshift-open/tbac-research-datasets),
+whose validation and official test tasks do not overlap. Its 873 task-disjoint
+training and 263 calibration pairs yielded 0.920 AUC on all 935 official
+test pairs, but the default threshold still falsely allowed 82 of 417
+irrelevant tools. On the previously inspected Heliox synthetic transfer it
+falsely allowed one of 30 out-of-scope actions. More decisively, on a separate
+ScopeJudge test the same adapter fell below chance (0.434 AUC) and falsely
+allowed 25 of 29 token-eligible out-of-scope calls. The 1024-token cap
+excluded 21 ScopeJudge test calls, all in-scope; no input was truncated.
+The [frozen cross-domain summary](../daemon/benchmarks/world_tool_scope_semantic_v1.json)
+therefore rejects this adapter too. Its promising single-domain score is not
+evidence that it generalizes to agent tool actions, and it has no runtime path.
+
 ## Reproduction and release boundary
 
 The offline probes need `onnx`, `onnxruntime`, `pyarrow`, `tokenizers`,
