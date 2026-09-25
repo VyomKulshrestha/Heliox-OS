@@ -24,8 +24,8 @@ import asyncio
 import ctypes
 import hashlib
 import logging
-import platform
 import subprocess
+import sys
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -44,6 +44,17 @@ MIN_CAPTURE_INTERVAL_SECONDS = 0.5
 MAX_CAPTURE_INTERVAL_SECONDS = 60.0
 
 
+def _world_embedding_from_frame(frame: Any) -> list[float]:
+    """Pool the actual 64x64 grayscale capture into a bounded visual feature."""
+    import numpy as np
+
+    array = np.asarray(frame, dtype=np.float32)
+    if array.shape != (64, 64) or not np.all(np.isfinite(array)):
+        return []
+    pooled = array.reshape(16, 4, 16, 4).mean(axis=(1, 3)) / 255.0
+    return np.clip(pooled, 0.0, 1.0).reshape(-1).tolist()
+
+
 @dataclass
 class ScreenState:
     """Snapshot of the current screen state."""
@@ -57,6 +68,9 @@ class ScreenState:
     screenshot_path: str = ""
     brain_load: float = 0.0
     neural_saliency: list[float] = field(default_factory=list)
+    # In-memory only. A 16x16 frame can still reveal screen content, so it is
+    # never included in to_dict(), logs, planner context, or persisted state.
+    world_embedding: list[float] = field(default_factory=list, repr=False)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -163,6 +177,7 @@ class ScreenVisionAgent:
         # Delta-Frame Throttler State
         self._visual_delta_threshold: float = 100.0  # Raised to ignore minor UI noise
         self._last_frame_array = None
+        self._current_world_embedding: list[float] = []
 
     def set_interval(self, interval_seconds: float) -> None:
         """Update the capture cadence while keeping it inside safe bounds."""
@@ -260,11 +275,11 @@ class ScreenVisionAgent:
 
     async def _capture_state(self) -> ScreenState:
         """Capture current screen state."""
-        now = datetime.now(UTC).isoformat()
         # Run blocking OS calls in a thread to avoid starving the event loop
         app, title = await asyncio.to_thread(_get_active_window)
         async with self._capture_lock:
             previous_hash = self._last_hash
+            self._current_world_embedding = []
             screen_hash = await self._capture_screenshot_hash()
 
             # The screenshot helper updates _last_hash while computing frame deltas.
@@ -273,11 +288,12 @@ class ScreenVisionAgent:
             self._last_hash = screen_hash
 
         state = ScreenState(
-            timestamp=now,
+            timestamp=datetime.now(UTC).isoformat(),
             active_app=app,
             active_window_title=title,
             screen_hash=screen_hash,
             changed_from_last=changed,
+            world_embedding=list(self._current_world_embedding),
         )
 
         # Optional metadata-only description; raw pixels are not sent to a model.
@@ -313,11 +329,16 @@ class ScreenVisionAgent:
         """Synchronous screenshot hash — runs in a thread using MSE delta."""
         import uuid
 
-        import mss
         import numpy as np
         from PIL import Image
+        if sys.platform == "win32":
+            from mss.windows import MSS
+        elif sys.platform == "darwin":
+            from mss.darwin import MSS
+        else:
+            from mss.linux import MSS
 
-        with mss.mss() as sct:
+        with MSS() as sct:
             monitor = sct.monitors[1]  # Primary monitor
             img = sct.grab(monitor)
 
@@ -325,6 +346,7 @@ class ScreenVisionAgent:
             pil_img = Image.frombytes("RGB", img.size, img.bgra, "raw", "BGRX")
             pil_img = pil_img.resize((64, 64)).convert("L")
             current_frame = np.array(pil_img, dtype=np.float32)
+            self._current_world_embedding = _world_embedding_from_frame(current_frame)
 
             if getattr(self, "_last_frame_array", None) is None:
                 self._last_frame_array = current_frame
@@ -344,18 +366,17 @@ class ScreenVisionAgent:
 
     def _sync_fallback_screenshot_hash(self) -> str:
         """Synchronous fallback screenshot hash using MSE delta."""
-        import platform
         import subprocess
         import uuid
 
         import numpy as np
         from PIL import Image
 
-        os_name = platform.system()
+        os_name = sys.platform
         tmp_path = self._screenshot_dir / "_latest.png"
         tmp_path.unlink(missing_ok=True)  # Clears the old screenshot to prevent false 0 MSE
         try:
-            if os_name == "Windows":
+            if os_name == "win32":
                 ps_cmd = f"""
                 Add-Type -AssemblyName System.Windows.Forms
                 $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
@@ -365,7 +386,7 @@ class ScreenVisionAgent:
                 $bitmap.Save('{str(tmp_path)}')
                 """
                 subprocess.run(["powershell", "-Command", ps_cmd], capture_output=True, timeout=5)
-            elif os_name == "Darwin":
+            elif os_name == "darwin":
                 subprocess.run(["screencapture", "-x", str(tmp_path)], capture_output=True, timeout=5)
             else:
                 subprocess.run(["scrot", str(tmp_path)], capture_output=True, timeout=5)
@@ -373,6 +394,7 @@ class ScreenVisionAgent:
             if tmp_path.exists():
                 pil_img = Image.open(tmp_path).resize((64, 64)).convert("L")
                 current_frame = np.array(pil_img, dtype=np.float32)
+                self._current_world_embedding = _world_embedding_from_frame(current_frame)
 
                 if getattr(self, "_last_frame_array", None) is None:
                     self._last_frame_array = current_frame
@@ -409,6 +431,22 @@ class ScreenVisionAgent:
     def get_context_for_planner(self) -> str:
         """Return screen context formatted for planner injection."""
         return self._context.summary()
+
+    def get_world_observation(self, *, max_age_seconds: float = 5.0) -> dict[str, Any] | None:
+        """Return only a fresh in-memory visual feature for shadow prediction."""
+        current = self._context.current()
+        if not self._running or self._paused or current is None or not current.world_embedding:
+            return None
+        try:
+            age = (datetime.now(UTC) - datetime.fromisoformat(current.timestamp)).total_seconds()
+        except ValueError:
+            return None
+        if not 0 <= age <= max_age_seconds:
+            return None
+        return {
+            "latent_embedding": list(current.world_embedding),
+            "screen_observed_at": current.timestamp,
+        }
 
     async def observe_now(self) -> ScreenState:
         """Capture fresh foreground state for an active reasoning loop.
@@ -536,12 +574,12 @@ class ScreenVisionAgent:
 
 def _get_active_window() -> tuple[str, str]:
     """Get the active window's application name and title."""
-    os_name = platform.system()
+    os_name = sys.platform
 
     try:
-        if os_name == "Windows":
+        if os_name == "win32":
             return _get_active_window_windows()
-        elif os_name == "Darwin":
+        elif os_name == "darwin":
             return _get_active_window_macos()
         else:
             return _get_active_window_linux()
