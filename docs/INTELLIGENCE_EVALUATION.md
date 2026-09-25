@@ -338,6 +338,55 @@ correct action effects, visual fidelity, cross-environment generalization,
 or Jev parity. The adapter remains ignored local research data and is not
 loaded by the daemon.
 
+### Action-conditioned latent world-model check
+
+To test whether Heliox's optional latent world-model direction can learn from
+the same adjacent observations, `daemon/scripts/train_world_latent_transition.py`
+maps current-state and action text into a shared, fixed 512-dimensional hashed
+space, trains a residual next-state predictor, and compares it with simply
+retaining the current state. The 914 training pairs are split again by task
+into 713 fit rows (71 tasks) and 201 validation rows (18 tasks). The original
+68-row, 62-task evaluation partition is never used for gradient updates or
+checkpoint selection. Unlike the shipped `UiJepaPredictor`, this research
+model consumes free-form action text, not Heliox's enumerated action types;
+its weights are not compatible with or loaded by the live predictor.
+
+The first CPU control selected epoch 5 by validation target cosine. On the
+held-out partition, mean target cosine rose from **0.799** for the unchanged-
+state baseline to **0.830**, but next-state retrieval among the 68 observed
+candidates fell from **66.2% to 47.1%**. Selecting a checkpoint by validation
+retrieval instead chose epoch 55; held-out retrieval remained worse at
+**50.0%**, with target cosine falling to **0.680**. This is a failure to
+discriminate action effects despite a seemingly better embedding alignment
+in the first run. The evaluation partition had already been inspected during
+the earlier language-model probe, so these are exploratory diagnostics, not
+an untouched promotion result. Reports and weights remain ignored under
+`daemon/benchmarks/.bench-state/`.
+
+The intended CUDA run could not start: the existing Windows Python 3.12
+PyTorch import stalled before reaching CUDA initialization, although
+`nvidia-smi` showed the RTX 4060 available. A separate Python 3.11 CPU-only
+PyTorch installation completed the control runs. We did not treat idle GPU
+memory as proof a GPU training run occurred or silently substitute the CPU
+result for one. The previous capped Qwen LoRA run above remains the completed
+GPU evidence for this dataset.
+
+Reproduce the CPU controls from `daemon` with fresh report and weights paths
+(this Windows host used `py -3.11`; use the equivalent Python in another
+environment):
+
+```bash
+py -3.11 -m scripts.train_world_latent_transition --device cpu --selection-metric cosine --rows benchmarks/.bench-state/agentnet_adjacent_world_v1.jsonl --report benchmarks/.bench-state/world_latent_cosine_repro.json --weights benchmarks/.bench-state/world_latent_cosine_repro.pt
+py -3.11 -m scripts.train_world_latent_transition --device cpu --selection-metric retrieval --rows benchmarks/.bench-state/agentnet_adjacent_world_v1.jsonl --report benchmarks/.bench-state/world_latent_retrieval_repro.json --weights benchmarks/.bench-state/world_latent_retrieval_repro.pt
+```
+
+Text-hash vectors are not screenshot features or live UI embeddings. Neither
+cosine nor retrieval on sampled candidate descriptions establishes physical
+or visual prediction fidelity, uncertainty calibration, task success, action
+authority, or Jev parity. The result argues against staging this latent model
+in Heliox until a fresh, consented observed-state corpus and stronger
+environment-disjoint evaluation exist.
+
 The shipped structured predictor remains available without learned weights.
 It now identifies the destination (not source or download URL) as the changed
 file for copy/download, models moves as separate source-removal and
