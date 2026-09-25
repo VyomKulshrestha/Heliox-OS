@@ -316,6 +316,40 @@ async def test_real_verifier_result_trains_only_checked_file_transition(tmp_path
 
 
 @pytest.mark.asyncio
+async def test_directory_copy_existence_does_not_train_world_transition(tmp_path, occurred_at):
+    from unittest.mock import MagicMock
+
+    learner = VerifiedOnlineLearner(tmp_path / "learning-state.json")
+    ledger = ExperienceLedger(tmp_path / "experience.db")
+    await ledger.initialize()
+    ledger.subscribe(learner.consume)
+    source = tmp_path / "source"
+    destination = tmp_path / "destination"
+    source.mkdir()
+    destination.mkdir()
+    action = Action(action_type=ActionType.FILE_COPY, target=str(source),
+                    parameters=FileParams(path=str(source), destination=str(destination), recursive=True))
+    for event_type, suffix, payload in (
+        (ExperienceEventType.ACTION_STARTED, "started", {"index": 0, "action_type": "file_copy"}),
+        (ExperienceEventType.ACTION_COMPLETED, "completed",
+         {"index": 0, "success": True, "executed": True, "callback_observed": True}),
+    ):
+        await ledger.append(event_type, idempotency_key=f"copy:{suffix}", action_id="copy-action",
+                            plan_id="copy-plan", source="interactive", occurred_at=occurred_at, payload=payload)
+    verification = await Verifier(MagicMock()).verify(
+        ActionPlan(actions=[action]), [ActionResult(action=action, success=True)])
+    await ledger.append(ExperienceEventType.OUTCOME_VERIFIED, idempotency_key="copy:verified",
+                        plan_id="copy-plan", source="verifier", occurred_at=occurred_at,
+                        payload={"result_count": 1, "verification": verification})
+    await ledger.drain_subscribers()
+
+    assert verification.passed is True
+    assert verification.independently_observed_actions == []
+    assert learner.status()["transitions"]["labels"] == 0
+    await ledger.close()
+
+
+@pytest.mark.asyncio
 async def test_transition_promotion_requires_support_for_action_and_source(
     tmp_path, occurred_at, monkeypatch
 ):
