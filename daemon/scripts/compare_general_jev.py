@@ -43,8 +43,14 @@ def public_payload(row: dict) -> dict:
 
 def query_jev(client: httpx.Client, key: str, row: dict) -> tuple[dict, float, str]:
     for attempt in range(3):
-        response = client.post(ENDPOINT, headers={"Authorization": f"Bearer {key}"},
-                               json=decision_request(row))
+        try:
+            response = client.post(ENDPOINT, headers={"Authorization": f"Bearer {key}"},
+                                   json=decision_request(row))
+        except httpx.TransportError:
+            if attempt == 2:
+                raise
+            time.sleep(1 + 2 * attempt)
+            continue
         if response.status_code in (429, 500, 502, 503, 504) and attempt < 2:
             time.sleep(1 + 2 * attempt)
             continue
@@ -110,11 +116,18 @@ def main() -> None:
     rows = [row for row in rows if row["kind"] != "score" or len(row["options"]) <= 10][:args.limit]
     if len(rows) != args.limit:
         raise ValueError("Not enough compatible licensed OOD decisions")
-    local = score_requests([public_payload(row) for row in rows], args.output_dir, args.model_report)
     key = _key(args.env_file)
     jev, cost, versions = [], 0.0, set()
     with httpx.Client(timeout=45.0, trust_env=True) as client:
-        for index, row in enumerate(rows, 1):
+        # One real request verifies routing, credentials, and model availability
+        # before a full local GPU pass. Responses remain evaluation-only.
+        answer, charge, version = query_jev(client, key, rows[0])
+        jev.append(answer)
+        cost += charge
+        versions.add(version)
+        print(f"Evaluated 1/{len(rows)} public {rows[0]['kind']} decisions", flush=True)
+        local = score_requests([public_payload(row) for row in rows], args.output_dir, args.model_report)
+        for index, row in enumerate(rows[1:], 2):
             answer, charge, version = query_jev(client, key, row)
             jev.append(answer)
             cost += charge

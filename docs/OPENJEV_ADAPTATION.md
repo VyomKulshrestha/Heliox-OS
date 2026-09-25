@@ -154,6 +154,15 @@ general Jev parity. Reports: [larger GPU probe](../daemon/benchmarks/qwen_genera
 and [public Jev comparison](../daemon/benchmarks/qwen_general_jev_comparison_v2.json).
 The adapter remains local and disabled in Heliox.
 
+A second, independently seeded evaluation-only sample of 48 licensed public
+OOD questions used 48 live Jev calls ($0.001241). The same frozen local adapter
+agreed with Jev on 20/25 Noul and 9/13 choice questions. Against the public
+labels, local versus Jev accuracy was 22/25 versus 21/25 for Noul and 9/13
+versus 11/13 for choice. On ten ordinal score questions, mean absolute error
+against the public target expectation was 0.861 locally versus 0.445 for Jev.
+The sample is still small and synthetic; it does not establish parity, desktop
+transfer, or execution authority. See the [frozen comparison](../daemon/benchmarks/qwen_general_jev_comparison_v3.json).
+
 The next planned multi-task run adds the
 [MIT-licensed ScopeJudge](https://github.com/dreadnode/scopejudge) expert labels
 to the public general questions, keeping complete security trajectories
