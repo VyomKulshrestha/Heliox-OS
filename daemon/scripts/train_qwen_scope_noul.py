@@ -23,11 +23,10 @@ from sklearn.model_selection import GroupShuffleSplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from benchmarks.jev_scope_openjev_v1_holdout import CASES as COMPARISON_CASES  # noqa: E402
+from scripts.qwen_model_pin import MODEL, REVISION  # noqa: E402
 from scripts.train_scope_decision_challenge import _metrics, _rows  # noqa: E402
 from scripts.train_scope_decision_semantic import SUITES  # noqa: E402
 
-MODEL = "Qwen/Qwen3-0.6B"
-REVISION = "c1899de289a04d12100db370d81485cdf75e47ca"
 SEED = 20260923
 MAX_LENGTH = 256
 LORA_RANK = 8
