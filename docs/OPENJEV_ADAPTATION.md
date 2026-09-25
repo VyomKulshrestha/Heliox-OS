@@ -735,6 +735,16 @@ the shared binary head and authorization-framed feature prompt must not turn
 that preference signal into a permission claim. This is an exploratory
 diagnostic on previously explored task families, not new blind evidence.
 
+A fixed-settings [two-output GPU follow-up](../daemon/scripts/train_world_multitask_head.py)
+separated scope and preference labels while sharing frozen Qwen features.
+It achieved AUC 0.931/0.912/0.848 on agentic/TBAC/ScopeJudge tests and 0.732
+on the When2Call preference test. The already-inspected Heliox probe rose
+to 49/60 overall but accepted 11/30 negative actions, versus 1/30 for the
+earlier selected shared-binary head. Because model sizes and selection
+procedures differ, this comparison does not isolate the effect of task heads;
+it also does not justify runtime use. The saved two-output artifact is local
+and research-only.
+
 Reproduce the optional training from `daemon` using fresh output names after
 preparing the pinned preference corpus and extracting its features:
 
