@@ -19,7 +19,7 @@ from benchmarks.general_decision import (
     validate_row,
     verify_disjoint,
 )
-from scripts.train_general_decision import checkpoint_signature
+from scripts.train_general_decision import checkpoint_signature, ordinal_penalty
 
 
 def row(kind: str = "choice") -> dict:
@@ -85,6 +85,13 @@ def test_variable_option_metrics_and_temperature() -> None:
         metrics(examples, [logits[0], logits[0]], 1.0)
 
 
+def test_ordinal_metrics_report_expected_rank_error() -> None:
+    example = row("score")
+    example["target"] = [0.0, 0.0, 1.0]
+    report = metrics([example], [np.array([0.0, 0.0, 0.0])], 1.0)
+    assert report["by_kind"]["score"]["mean_rank_error"] == pytest.approx(1.0)
+
+
 def test_typed_answers_have_normalized_variable_option_probabilities() -> None:
     yes = format_answer("noul", ["no", "yes"], np.array([0.0, 1.0]))
     assert yes["yes_probability"] > 0.5
@@ -113,9 +120,23 @@ def test_invalid_option_types_fail_before_duplicate_check() -> None:
 
 def test_checkpoint_signature_binds_exact_tokenized_inputs() -> None:
     args = argparse.Namespace(seed=1, max_length=128, lora_rank=8, attention="sdpa",
-                              accumulation=4, lr=2e-5, head_lr=5e-5, brier_weight=0.1)
+                              accumulation=4, lr=2e-5, head_lr=5e-5,
+                              brier_weight=0.1, ordinal_weight=0.0)
     encoded = {"train": [{"row": row(), "sequences": [[1, 2, 3]]}]}
     first = checkpoint_signature(args, encoded, {}, None)
     assert first == checkpoint_signature(args, encoded, {}, None)
     encoded["train"][0]["sequences"] = [[1, 2, 4]]
     assert first != checkpoint_signature(args, encoded, {}, None)
+    encoded["train"][0]["sequences"] = [[1, 2, 3]]
+    args.ordinal_weight = 0.25
+    assert first != checkpoint_signature(args, encoded, {}, None)
+
+
+def test_ordinal_penalty_respects_distance_and_option_count() -> None:
+    target = np.array([0.0, 0.0, 1.0])
+    near = np.array([0.0, 0.5, 0.5])
+    far = np.array([1.0, 0.0, 0.0])
+    positions = np.arange(3)
+    assert ordinal_penalty(near, target, positions) < ordinal_penalty(far, target, positions)
+    assert ordinal_penalty(target, target, positions) == 0
+    assert ordinal_penalty(np.array([1.0, 0.0]), np.array([0.0, 1.0]), np.arange(2)) == 1

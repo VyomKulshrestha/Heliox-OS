@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import random
 import sys
@@ -80,6 +81,13 @@ def score_row(backbone, head, item: dict) -> np.ndarray:
     return logits.float().cpu().numpy().astype(np.float64)
 
 
+def ordinal_penalty(predicted, target, positions):
+    """Bounded expected-rank error for ordered score options of any length."""
+    scale = max(len(target) - 1, 1)
+    difference = (predicted @ positions - target @ positions) / scale
+    return difference * difference
+
+
 def evaluate(backbone, head, items: list[dict], label: str = "") -> list[np.ndarray]:
     backbone.eval()
     head.eval()
@@ -97,7 +105,8 @@ def evaluate(backbone, head, items: list[dict], label: str = "") -> list[np.ndar
     return results
 
 
-def gradient_row(backbone, head, item: dict, *, brier_weight: float, scale: float) -> float:
+def gradient_row(backbone, head, item: dict, *, brier_weight: float,
+                 ordinal_weight: float, scale: float) -> float:
     """Exact two-pass gradient with O(1) candidate activation memory.
 
     First compute all scalar scores without autograd, differentiate the small
@@ -116,6 +125,9 @@ def gradient_row(backbone, head, item: dict, *, brier_weight: float, scale: floa
     predicted = logits.softmax(-1)
     loss = -(target * logits.log_softmax(-1)).sum()
     loss = loss + brier_weight * (predicted - target).square().sum()
+    if row["kind"] == "score" and ordinal_weight:
+        positions = torch.arange(len(target), dtype=predicted.dtype, device=predicted.device)
+        loss = loss + ordinal_weight * ordinal_penalty(predicted, target, positions)
     if not torch.isfinite(loss):
         raise FloatingPointError("Nonfinite decision loss")
     score_gradient = torch.autograd.grad(loss, score_variables)[0].detach()
@@ -156,7 +168,8 @@ def checkpoint_signature(args: argparse.Namespace, encoded: dict[str, list[dict]
                 "token_ids_sha256": token_ids.hexdigest(),
                 "seed": args.seed, "max_length": args.max_length, "lora_rank": args.lora_rank,
                 "attention": args.attention, "accumulation": args.accumulation,
-                "lr": args.lr, "head_lr": args.head_lr, "brier_weight": args.brier_weight}
+                "lr": args.lr, "head_lr": args.head_lr, "brier_weight": args.brier_weight,
+                "ordinal_weight": args.ordinal_weight}
     return hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
 
 
@@ -207,7 +220,8 @@ def run(args: argparse.Namespace) -> dict:
 
     if not torch.cuda.is_available() or torch.cuda.mem_get_info()[0] < 4 * 1024**3:
         raise RuntimeError("At least 4 GiB free CUDA memory is required")
-    if args.accumulation < 1 or args.max_length < 64 or args.lora_rank < 1:
+    if (args.accumulation < 1 or args.max_length < 64 or args.lora_rank < 1
+            or not math.isfinite(args.ordinal_weight) or args.ordinal_weight < 0):
         raise ValueError("Invalid training configuration")
     checkpoint_path = args.output_dir / "checkpoint.pt"
     if args.resume:
@@ -302,7 +316,8 @@ def run(args: argparse.Namespace) -> dict:
         group = order[start:start + args.accumulation]
         optimizer.zero_grad(set_to_none=True)
         losses = [gradient_row(backbone, head, training_items[index],
-                               brier_weight=args.brier_weight, scale=len(group)) for index in group]
+                               brier_weight=args.brier_weight, ordinal_weight=args.ordinal_weight,
+                               scale=len(group)) for index in group]
         norm = torch.nn.utils.clip_grad_norm_(
             [parameter for parameter in backbone.parameters() if parameter.requires_grad] + list(head.parameters()),
             1.0,
@@ -350,7 +365,8 @@ def run(args: argparse.Namespace) -> dict:
         "checkpoint_every": args.checkpoint_every, "resumed": args.resume,
         "baseline_skipped_on_resume": not run_baseline,
         "learning_rates": {"adapter": args.lr, "head": args.head_lr},
-        "brier_weight": args.brier_weight, "calibration_temperature": temperature,
+        "brier_weight": args.brier_weight, "ordinal_weight": args.ordinal_weight,
+        "calibration_temperature": temperature,
         "baseline_test": (metrics([item["row"] for item in encoded["test"]], baseline_test, 1.0)
                           if baseline_test is not None else None),
         "baseline_ood": (metrics([item["row"] for item in encoded["ood"]], baseline_ood, 1.0)
@@ -395,6 +411,8 @@ def main() -> None:
     parser.add_argument("--lr", type=float, default=2e-5)
     parser.add_argument("--head-lr", type=float, default=5e-5)
     parser.add_argument("--brier-weight", type=float, default=0.1)
+    parser.add_argument("--ordinal-weight", type=float, default=0.0,
+                        help="Optional normalized expected-rank loss for ordered score decisions")
     parser.add_argument("--progress-every", type=int, default=32)
     parser.add_argument("--checkpoint-every", type=int, default=32)
     parser.add_argument("--resume", action="store_true")
