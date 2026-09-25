@@ -3,8 +3,17 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
-from scripts.train_world_scope_semantic import metrics, normalize, select_head
+from benchmarks.jev_scope_suite import ScopeCase
+from scripts.train_world_scope_semantic import (
+    feature_identity,
+    load_feature_checkpoint,
+    metrics,
+    normalize,
+    save_feature_checkpoint,
+    select_head,
+)
 
 
 def test_normalization_uses_only_training_split() -> None:
@@ -30,3 +39,20 @@ def test_calibration_threshold_excludes_all_calibration_negatives() -> None:
     evidence = metrics(calibration_labels, scores, threshold)
     assert evidence["false_allowances"] == 0
     assert evidence["out_of_scope_rows"] == 2
+
+
+def test_feature_checkpoint_resumes_only_matching_case_content(tmp_path) -> None:
+    cases = (ScopeCase("a", "Read file", "read", True, "test"),
+             ScopeCase("b", "Read file", "delete", False, "test"),
+             ScopeCase("c", "Open page", "open", True, "test"))
+    identity = feature_identity(cases, 1024)
+    path = tmp_path / "features.npz"
+    save_feature_checkpoint(path, identity, 3, 1, [1, 3],
+                            [np.array([1.0, 2.0]), np.array([3.0, 4.0])], [True, True])
+    processed, overlong, indices, vectors, labels = load_feature_checkpoint(
+        path, identity, cases)
+    assert (processed, overlong, indices, labels) == (3, 1, [1, 3], [True, True])
+    np.testing.assert_array_equal(vectors, [[1.0, 2.0], [3.0, 4.0]])
+    assert feature_identity(cases, 768) != identity
+    with pytest.raises(ValueError, match="identity mismatch"):
+        load_feature_checkpoint(path, feature_identity(cases, 768), cases)
