@@ -14,6 +14,7 @@ from scripts.evaluate_general_scope_transfer import (
     case_payload,
     cautious_threshold,
     classification_metrics,
+    scope_limits,
 )
 from scripts.score_general_decision import MODEL, REVISION, prepare_request, prepare_requests, verify_artifact
 
@@ -72,3 +73,11 @@ def test_cautious_scope_gate_uses_only_calibration_negatives() -> None:
         "accuracy": 0.75, "false_allowances": 0, "false_warnings": 1}
     with pytest.raises(ValueError, match="out-of-scope"):
         cautious_threshold(probabilities[:2], np.asarray([True, True]))
+
+
+def test_scope_calibration_uses_pinned_scope_manifest_limits() -> None:
+    report = {"selected_rows": {"train": 256},
+              "scopejudge": {"selected_rows": {
+                  "scope_train": 512, "scope_calibration": 58, "scope_test": 755}}}
+    assert scope_limits(report) == {"scope_train": 512,
+                                    "scope_calibration": 58, "scope_test": 755}

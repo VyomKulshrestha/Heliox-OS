@@ -43,6 +43,12 @@ def cautious_threshold(probabilities: np.ndarray, labels: np.ndarray) -> float:
     return float(np.nextafter(np.max(probabilities[~labels]), np.inf))
 
 
+def scope_limits(model_report: dict) -> dict[str, int]:
+    selected = model_report["scopejudge"]["selected_rows"]
+    return {name: selected[name] for name in
+            ("scope_train", "scope_calibration", "scope_test")}
+
+
 def main() -> None:
     root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
@@ -70,8 +76,7 @@ def main() -> None:
         from scripts.qwen_model_pin import MODEL, REVISION
         from scripts.train_general_decision import encode_rows
 
-        limits = {name: model_report["selected_rows"][name] for name in
-                  ("scope_train", "scope_calibration", "scope_test")}
+        limits = scope_limits(model_report)
         parts, manifest = load_scope_parts(args.scopejudge_path,
                                            seed=model_report["seed"], limits=limits)
         if manifest != model_report["scopejudge"]:
