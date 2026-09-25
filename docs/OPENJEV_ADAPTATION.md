@@ -540,6 +540,22 @@ to mix corpora; this is adaptive research rather than a new blind benchmark.
 The [frozen mixed-corpus summary](../daemon/benchmarks/world_multicorpus_scope_v1.json)
 and local artifact hash preserve the result. It remains offline only.
 
+We then tested a [4-bit LoRA world task-state adapter](../daemon/scripts/train_world_scope_qlora.py)
+on the same licensed training partitions. It followed the
+[PEFT quantization procedure](https://huggingface.co/docs/peft/developer_guides/quantization)
+and trained 8.4 million adapter parameters plus a binary head on the local GPU.
+A four-example 1024-token worst-case backward smoke test succeeded, and the
+full 1,380-example epoch completed. TBAC test ranking improved to 0.936 AUC,
+but the default threshold still falsely allowed 7/417 irrelevant tools and
+rejected 374/518 relevant ones. ScopeJudge ranking dropped to 0.703 AUC and
+the model rejected 372/558 legitimate actions while falsely allowing 3/29.
+On the inspected Heliox synthetic suite it rejected all 30 authorized
+actions. The cautious threshold did not yield a useful controller either.
+The [frozen LoRA result](../daemon/benchmarks/world_scope_qlora_v1.json)
+records data coverage, hashes, and error counts. The adapter remains in
+ignored local benchmark state; it is **not** loaded by the world model,
+companion, or permission gateway.
+
 ## Reproduction and release boundary
 
 The offline probes need `onnx`, `onnxruntime`, `pyarrow`, `tokenizers`,
