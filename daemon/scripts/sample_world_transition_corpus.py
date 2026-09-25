@@ -18,7 +18,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from scripts.evaluate_qwen_instruct_scope import MODEL_ID, MODEL_REVISION
+from scripts.qwen_model_pin import MODEL
+from scripts.qwen_model_pin import REVISION as MODEL_REVISION
 
 DATASET = "PatronusAI/world_model_corpus"
 ENDPOINT = "https://datasets-server.huggingface.co/rows"
@@ -111,10 +112,12 @@ def sample_split(*, config: str, split: str, pages: int, page_length: int,
 
 def token_filter(records: list[dict], *, max_input_tokens: int,
                  max_target_tokens: int) -> tuple[list[dict], Counter]:
+    from huggingface_hub import snapshot_download
     from transformers import AutoTokenizer
 
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, revision=MODEL_REVISION,
-                                               local_files_only=True)
+    snapshot = snapshot_download(repo_id=MODEL, revision=MODEL_REVISION,
+                                 local_files_only=True)
+    tokenizer = AutoTokenizer.from_pretrained(snapshot, local_files_only=True)
     accepted, exclusions = [], Counter()
     for record in records:
         input_text = tokenizer.apply_chat_template(
@@ -186,7 +189,7 @@ def main() -> None:
                      "max_target_chars": args.max_target_chars,
                      "max_input_tokens": args.max_input_tokens,
                      "max_target_tokens": args.max_target_tokens,
-                     "tokenizer": {"model": MODEL_ID, "revision": MODEL_REVISION}},
+                     "tokenizer": {"model": MODEL, "revision": MODEL_REVISION}},
         "accepted": dict(Counter(record["split"] for record in records)),
         "exclusions": counts,
         "token_filter": dict(token_counts),

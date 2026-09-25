@@ -56,8 +56,10 @@ def test_token_filter_excludes_overlong_targets_without_truncation(monkeypatch):
             assert kwargs["add_special_tokens"] is False
             return {"input_ids": text.split()}
 
+    import huggingface_hub
     from transformers import AutoTokenizer
 
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", lambda **kwargs: "cached-snapshot")
     monkeypatch.setattr(AutoTokenizer, "from_pretrained", lambda *args, **kwargs: FakeTokenizer())
     records = [{"messages": _entry(content="one two")["row"]["messages"]},
                {"messages": _entry(content="one two three")["row"]["messages"]}]
