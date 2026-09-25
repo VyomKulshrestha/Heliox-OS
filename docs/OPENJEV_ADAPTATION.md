@@ -600,6 +600,21 @@ Jev parity, or permission to execute. The tests were excluded from this fit,
 but earlier results on those tests informed this adaptive research; none is a
 fresh blind validation.
 
+We then added the **single-turn TBAC validation pairs** as a third training
+domain, keeping each seed task's dialogue and single-turn examples on the
+same side of the train/calibration boundary. The [three-domain result](../daemon/benchmarks/world_multiturn_scope_v3.json)
+repaired much of the task-tool regression: TBAC test AUC rose from 0.881 to
+**0.904**, with default false allowances falling from 204/417 to **81/417**.
+Dialogue ranking stayed near 0.928 AUC. But ScopeJudge ranking fell from
+0.851 to **0.828 AUC**, and its default false allowances rose to 15/29.
+The calibration-chosen cautious threshold still allowed 2/398 irrelevant
+dialogue tools, 1/417 single-turn tools, and 1/30 out-of-scope actions in the
+previously inspected Heliox suite; it also warned on 416/511, 458/518, and
+14/30 legitimate examples respectively. This is a domain trade-off, not a
+generalized fix. The head remains offline and rejected. Reproduce with
+`--include-tbac-validation` and fresh `--artifact` and `--report` paths,
+using the same pinned inputs and feature directory as above.
+
 The pinned public data and cached Qwen backbone reproduce the experiment from
 `daemon` with a fresh output name; the feature directory is local and ignored:
 
