@@ -728,6 +728,39 @@ preparing the pinned preference corpus and extracting its features:
 python -m scripts.train_world_multidomain_mlp --when2call-report benchmarks/.bench-state/world_when2call_features_v1.json --when2call-feature-dir benchmarks/.bench-state/world_when2call_features_v1 --artifact benchmarks/.bench-state/world_multidomain_mlp_w2c_repro.npz --report benchmarks/.bench-state/world_multidomain_mlp_w2c_repro.json
 ```
 
+To separate a weak frozen representation from a weak fitted head, we also
+scored the pinned Qwen3.5-2B model directly with a fixed target-review prompt
+and first-token YES/NO logits. On the already-inspected external sources,
+this improved AUC to **0.820** for EntityBindingFailures and **0.806** for
+tau-bench retail, versus 0.609 and 0.678 for the four-domain head. But its
+unselected 0.5 cutoff still falsely favored **37/94** wrong entity bindings
+and **5/47** wrong retail orders. A descriptive sweep over these test labels
+showed that 0.8 eliminated wrong accepts only by rejecting **55/55** valid
+entity bindings and **32/43** valid retail candidates. The two-logit softmax
+is not a calibrated permission probability, and this sweep is not a new
+calibration set.
+
+A second, explicitly groupwise prompt let the same model select numbered
+candidates or abstain. It exactly matched only **10/60** entity tasks and
+**9/37** retail groups, selected **54/94** and **34/47** wrong candidates,
+and abstained on **none** of five ambiguous entity tasks. Groupwise prompting
+alone made over-selection worse. The
+[comparison report](../daemon/benchmarks/qwen_binding_review_v1.json) pins
+both prompts, sources, and complete raw-result hashes. Neither review mode is
+loaded by Heliox or comparable to a Jev deployment. The findings point to
+missing target/state supervision and calibrated abstention, not merely a
+smaller binary head. Both external sources were inspected before these
+comparisons, so future model selection needs genuinely fresh held-out tasks.
+
+Reproduce from `daemon` with the pinned public sources and local GPU model:
+
+```bash
+python -m scripts.evaluate_qwen_binding_review --suite entity-binding --report benchmarks/.bench-state/qwen_entity_binding_repro.json
+python -m scripts.evaluate_qwen_binding_review --suite tau-retail --source-root PATH/TO/tau-bench --report benchmarks/.bench-state/qwen_tau_binding_repro.json
+python -m scripts.evaluate_qwen_group_binding --suite entity-binding --report benchmarks/.bench-state/qwen_group_entity_repro.json
+python -m scripts.evaluate_qwen_group_binding --suite tau-retail --source-root PATH/TO/tau-bench --report benchmarks/.bench-state/qwen_group_tau_repro.json
+```
+
 The pinned public data and cached Qwen backbone reproduce the experiment from
 `daemon` with a fresh output name; the feature directory is local and ignored:
 
