@@ -213,6 +213,8 @@ def run(args: argparse.Namespace) -> dict:
     if args.resume:
         if not checkpoint_path.is_file() or args.report.exists():
             raise FileNotFoundError("Resume needs an unfinished checkpoint and no final report")
+    elif args.skip_baseline_on_resume:
+        raise ValueError("Skipping the baseline requires --resume")
     elif args.output_dir.exists() or args.report.exists():
         raise FileExistsError("Research output already exists; choose fresh artifact and report paths")
     torch.manual_seed(args.seed)
@@ -275,9 +277,11 @@ def run(args: argparse.Namespace) -> dict:
                       "overlong": overlong}), flush=True)
     signature = checkpoint_signature(args, encoded, manifests, scope_manifest)
 
-    baseline_test = evaluate(backbone, head, encoded["test"], "baseline_test")
-    baseline_ood = evaluate(backbone, head, encoded["ood"], "baseline_ood")
-    baseline_scope = evaluate(backbone, head, encoded["scope_test"], "baseline_scope") if scope_manifest else None
+    run_baseline = not (args.resume and args.skip_baseline_on_resume)
+    baseline_test = evaluate(backbone, head, encoded["test"], "baseline_test") if run_baseline else None
+    baseline_ood = evaluate(backbone, head, encoded["ood"], "baseline_ood") if run_baseline else None
+    baseline_scope = (evaluate(backbone, head, encoded["scope_test"], "baseline_scope")
+                      if run_baseline and scope_manifest else None)
     optimizer = torch.optim.AdamW([
         {"params": [parameter for parameter in backbone.parameters() if parameter.requires_grad], "lr": args.lr},
         {"params": head.parameters(), "lr": args.head_lr},
@@ -344,10 +348,13 @@ def run(args: argparse.Namespace) -> dict:
         "attention_implementation": args.attention,
         "lora_rank": args.lora_rank, "accumulation": args.accumulation,
         "checkpoint_every": args.checkpoint_every, "resumed": args.resume,
+        "baseline_skipped_on_resume": not run_baseline,
         "learning_rates": {"adapter": args.lr, "head": args.head_lr},
         "brier_weight": args.brier_weight, "calibration_temperature": temperature,
-        "baseline_test": metrics([item["row"] for item in encoded["test"]], baseline_test, 1.0),
-        "baseline_ood": metrics([item["row"] for item in encoded["ood"]], baseline_ood, 1.0),
+        "baseline_test": (metrics([item["row"] for item in encoded["test"]], baseline_test, 1.0)
+                          if baseline_test is not None else None),
+        "baseline_ood": (metrics([item["row"] for item in encoded["ood"]], baseline_ood, 1.0)
+                         if baseline_ood is not None else None),
         "trained_test": metrics([item["row"] for item in encoded["test"]], test_logits, temperature),
         "trained_ood": metrics([item["row"] for item in encoded["ood"]], ood_logits, temperature),
         "adapter_sha256": hashlib.sha256((args.output_dir / "adapter/adapter_model.safetensors").read_bytes()).hexdigest(),
@@ -364,8 +371,9 @@ def run(args: argparse.Namespace) -> dict:
     if scope_manifest:
         report.update({
             "scopejudge": scope_manifest,
-            "baseline_scope": scope_metrics([item["row"] for item in encoded["scope_test"]],
-                                            baseline_scope, 1.0),
+            "baseline_scope": (scope_metrics([item["row"] for item in encoded["scope_test"]],
+                                             baseline_scope, 1.0)
+                               if baseline_scope is not None else None),
             "trained_scope": scope_metrics([item["row"] for item in encoded["scope_test"]],
                                            trained_scope, temperature),
         })
@@ -390,6 +398,8 @@ def main() -> None:
     parser.add_argument("--progress-every", type=int, default=32)
     parser.add_argument("--checkpoint-every", type=int, default=32)
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--skip-baseline-on-resume", action="store_true",
+                        help="Avoid repeated baseline inference after a saved training checkpoint")
     parser.add_argument("--seed", type=int, default=20260924)
     parser.add_argument("--scopejudge-path", type=Path, help="Pinned MIT ScopeJudge train.jsonl for multi-task study")
     parser.add_argument("--scope-train-rows", type=int, default=512)
