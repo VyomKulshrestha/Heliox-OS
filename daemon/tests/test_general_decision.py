@@ -15,6 +15,7 @@ from benchmarks.general_decision import (
     metrics,
     probabilities,
     select_balanced,
+    uniform_baseline,
     validate_decision,
     validate_row,
     verify_disjoint,
@@ -101,6 +102,13 @@ def test_ordinal_metrics_report_expected_rank_error() -> None:
     example["target"] = [0.0, 0.0, 1.0]
     report = metrics([example], [np.array([0.0, 0.0, 0.0])], 1.0)
     assert report["by_kind"]["score"]["mean_rank_error"] == pytest.approx(1.0)
+
+
+def test_uniform_baseline_uses_no_labels_to_form_predictions() -> None:
+    example = row("noul")
+    assert uniform_baseline([example])["by_kind"]["noul"]["top1_accuracy"] == 0.0
+    example["target"] = [1.0, 0.0]
+    assert uniform_baseline([example])["by_kind"]["noul"]["top1_accuracy"] == 1.0
 
 
 def test_typed_answers_have_normalized_variable_option_probabilities() -> None:

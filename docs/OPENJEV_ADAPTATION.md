@@ -184,6 +184,15 @@ this run. The [attempt record](../daemon/benchmarks/qwen_general_scale_attempt_v
 preserves the checkpoint hash and failure sequence. The event correlation
 does not prove whether the root cause is hardware, driver, power, or a kernel.
 
+A label-blind [uniform-option baseline](../daemon/benchmarks/qwen_general_uniform_baseline_v2.json)
+on the 2,048-row run's held-out selections exposes a further weakness. On OOD
+Noul questions it selects the first option, "no", and gets **103/136 (75.7%)**
+because the public labels are imbalanced; the trained adapter gets **99/136
+(72.8%)**. The adapter does beat this blind comparator on OOD choice
+(39/69 versus 25/69) and score top-1 (22/51 versus 11/51). Overall accuracy
+alone therefore hides a binary-decision failure, and this synthetic baseline
+is not a Jev or live-desktop comparator.
+
 The next planned multi-task run adds the
 [MIT-licensed ScopeJudge](https://github.com/dreadnode/scopejudge) expert labels
 to the public general questions, keeping complete security trajectories
