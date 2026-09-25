@@ -13,11 +13,13 @@
   "public_test_default": {
     "auc": 0.8667742152315654,
     "balanced_accuracy": 0.7746521476104054,
+    "out_of_scope_rows": 29,
     "false_allowances": 9,
     "false_warnings": 72
   },
   "public_test_cautious": {
     "balanced_accuracy": 0.7630906768837804,
+    "out_of_scope_rows": 29,
     "false_allowances": 3,
     "false_warnings": 190
   },

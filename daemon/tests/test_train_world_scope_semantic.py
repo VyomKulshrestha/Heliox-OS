@@ -27,4 +27,6 @@ def test_calibration_threshold_excludes_all_calibration_negatives() -> None:
     scores = head.predict_proba(calibration)[:, 1]
     assert len(trials) == 4
     assert threshold > scores[~calibration_labels].max()
-    assert metrics(calibration_labels, scores, threshold)["false_allowances"] == 0
+    evidence = metrics(calibration_labels, scores, threshold)
+    assert evidence["false_allowances"] == 0
+    assert evidence["out_of_scope_rows"] == 2

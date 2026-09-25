@@ -34,7 +34,9 @@ REGULARIZATION = (0.001, 0.01, 0.1, 1.0)
 def metrics(labels: np.ndarray, scores: np.ndarray, threshold: float) -> dict:
     predicted = scores >= threshold
     positive, negative = labels, ~labels
-    return {"rows": len(labels), "auc": float(roc_auc_score(labels, scores)),
+    return {"rows": len(labels), "in_scope_rows": int(np.sum(positive)),
+            "out_of_scope_rows": int(np.sum(negative)),
+            "auc": float(roc_auc_score(labels, scores)),
             "accuracy": float(np.mean(predicted == labels)),
             "balanced_accuracy": float((np.mean(predicted[positive]) +
                                         np.mean(~predicted[negative])) / 2),

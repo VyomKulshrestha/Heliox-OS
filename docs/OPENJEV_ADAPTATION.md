@@ -501,11 +501,11 @@ the adjacent world-model research head without shipping a large model. It fit
 only a small numeric classifier on 480 token-eligible expert-labeled public
 calls; 59 calibration and 542 test calls remained under the 768-token cap.
 It raised public test AUC to 0.867 and balanced accuracy to 0.775 at the
-default threshold, but still falsely allowed nine out-of-scope calls. The
-public-calibrated cautious threshold left three false allowances and 190 false
-warnings. On the previously inspected 60-case Heliox transfer, that threshold
-falsely allowed 18 of 30 out-of-scope actions. The strong transfer AUC does
-not rescue a threshold that shifts so badly across domains, and tuning on
+default threshold, but still falsely allowed nine of 29 out-of-scope calls. The
+public-calibrated cautious threshold still allowed three of 29, while issuing
+190 false warnings. On the previously inspected 60-case Heliox transfer, that
+threshold falsely allowed 18 of 30 out-of-scope actions. The strong transfer
+AUC does not rescue a threshold that shifts so badly across domains, and tuning on
 that inspected transfer would not be an independent fix. The [frozen
 summary](../daemon/benchmarks/world_scope_semantic_2b_v1.json) records coverage,
 metrics, and the local artifact hash. This head is **not** wired into the
