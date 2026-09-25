@@ -28,6 +28,15 @@ def load_rows(path: Path) -> dict[str, list[dict]]:
         partitions[row["split"]].append(row)
     if not all(partitions.values()):
         raise ValueError("Both train and eval must contain source rows")
+    all_rows = [*partitions["train"], *partitions["eval"]]
+    if any("group_sha256" in row for row in all_rows):
+        if any(not isinstance(row.get("group_sha256"), str) or len(row["group_sha256"]) != 64
+               for row in all_rows):
+            raise ValueError("Grouped rows require a 64-character group hash")
+        train_groups = {row["group_sha256"] for row in partitions["train"]}
+        eval_groups = {row["group_sha256"] for row in partitions["eval"]}
+        if train_groups & eval_groups:
+            raise ValueError("Train and eval share a task group")
     return partitions
 
 
@@ -48,10 +57,13 @@ def encode_rows(tokenizer, partitions: dict[str, list[dict]], *, max_input_token
                 exclusions[split] += 1
                 continue
             ids = prompt_ids + target_ids + [tokenizer.eos_token_id]
-            encoded[split].append({"ids": ids,
-                                   "labels": [-100] * len(prompt_ids)
-                                   + target_ids + [tokenizer.eos_token_id],
-                                   "domain": row["dataset"]})
+            encoded_row = {"ids": ids,
+                           "labels": [-100] * len(prompt_ids)
+                           + target_ids + [tokenizer.eos_token_id],
+                           "domain": row["dataset"]}
+            if "group_sha256" in row:
+                encoded_row["group_sha256"] = row["group_sha256"]
+            encoded[split].append(encoded_row)
     if not all(encoded.values()):
         raise ValueError("Token filtering emptied a split")
     return encoded, exclusions
@@ -84,9 +96,13 @@ def main() -> None:
     torch.manual_seed(args.seed)
     snapshot = snapshot_download(repo_id=MODEL, revision=REVISION, local_files_only=True)
     tokenizer = AutoTokenizer.from_pretrained(snapshot, local_files_only=True)
-    rows, exclusions = encode_rows(tokenizer, load_rows(args.rows),
+    source_rows = load_rows(args.rows)
+    grouped = "group_sha256" in source_rows["train"][0]
+    rows, exclusions = encode_rows(tokenizer, source_rows,
                                    max_input_tokens=args.max_input_tokens,
                                    max_target_tokens=args.max_target_tokens)
+    group_counts = ({split: len({row["group_sha256"] for row in partition})
+                     for split, partition in rows.items()} if grouped else None)
     config = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4",
                                bnb_4bit_use_double_quant=True,
                                bnb_4bit_compute_dtype=torch.bfloat16)
@@ -136,7 +152,8 @@ def main() -> None:
     args.adapter.mkdir(parents=True)
     model.save_pretrained(args.adapter)
     report = {
-        "purpose": "research_only_tool_response_transition_probe",
+        "purpose": ("research_only_grouped_ui_transition_probe" if grouped
+                    else "research_only_tool_response_transition_probe"),
         "source_rows_sha256": hashlib.sha256(args.rows.read_bytes()).hexdigest(),
         "base_model": {"id": MODEL, "revision": REVISION},
         "train_rows": len(rows["train"]), "eval_rows": len(rows["eval"]),
@@ -146,8 +163,15 @@ def main() -> None:
         "base_eval_loss": base_loss, "tuned_eval_loss": tuned_loss,
         "base_eval_loss_by_domain": base_domains,
         "tuned_eval_loss_by_domain": tuned_domains,
-        "limitation": "Small synthetic tool-response sample. A loss improvement is not action-effect "
-                      "accuracy, OS generalization, authority, safety, or Jev parity. Not runtime-loaded.",
+        "groups": group_counts,
+        "limitation": (
+            "Task-group-disjoint text observations and outcome descriptions are not raw next-state "
+            "evidence. A loss improvement is not action-effect accuracy, OS generalization, "
+            "authority, safety, or Jev parity. Not runtime-loaded."
+            if grouped else
+            "Small synthetic tool-response sample. A loss improvement is not action-effect "
+            "accuracy, OS generalization, authority, safety, or Jev parity. Not runtime-loaded."
+        ),
     }
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
