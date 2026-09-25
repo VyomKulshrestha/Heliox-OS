@@ -13,7 +13,7 @@ from pilot.actions import (
     KeyboardParams,
     MouseParams,
 )
-from pilot.workflows.recorded_workflows import MODEL_AAD, RecordedWorkflowStore
+from pilot.workflows.recorded_workflows import MODEL_AAD, RecordedWorkflowStore, workflow_prompt
 
 
 @pytest.mark.asyncio
@@ -174,3 +174,44 @@ def test_private_model_weights_are_encrypted(tmp_path) -> None:
     protected = store.encrypt_model_artifact(b"private model weights")
     assert b"private model weights" not in protected
     assert AESGCM(b"k" * 32).decrypt(protected[:12], protected[12:], MODEL_AAD) == b"private model weights"
+
+
+def test_manual_actions_need_separate_consent_and_text_is_parameterized(tmp_path) -> None:
+    store = RecordedWorkflowStore(tmp_path / "recordings.enc", key_provider=lambda: b"k" * 32)
+    with pytest.raises(ValueError, match="Separate consent"):
+        store.start(name="Manual", consent=True, capture_manual=True)
+    store.start(name="Manual", consent=True, capture_manual=True, manual_consent=True)
+    store.record_manual_event("click", x=40, y=60, button="left")
+    store.record_manual_event("text")
+    store.record_manual_event("text")
+    store.record_manual_event("key", name="tab")
+    store.record_manual_event("text")
+    workflow = store.stop(save=True)
+    assert workflow["step_count"] == 4
+    assert workflow["placeholders"] == ["1", "3"]
+    assert "manual_text" in str(workflow["steps"])
+    assert b"password" not in store.path.read_bytes()
+    with pytest.raises(ValueError, match="placeholder"):
+        workflow_prompt(workflow)
+    prompt = workflow_prompt(workflow, text_values={"1": "Project", "3": "Summary"})
+    assert "keyboard_type(text='Project')" in prompt
+    with pytest.raises(ValueError, match="Text placeholders"):
+        store.schedule(
+            workflow["id"], run_at=(datetime.now(UTC) + timedelta(hours=1)).isoformat(), reviewed=True
+        )
+
+
+def test_manual_events_suppressed_during_heliox_actions_and_approval(tmp_path) -> None:
+    pending = False
+    store = RecordedWorkflowStore(
+        tmp_path / "recordings.enc", key_provider=lambda: b"k" * 32,
+        allow_manual_event=lambda: not pending,
+    )
+    store.start(name="Manual", consent=True, capture_manual=True, manual_consent=True)
+    with store.suppress_manual_during_heliox_action():
+        store.record_manual_event("click", x=40, y=60, button="left")
+    pending = True
+    store.record_manual_event("click", x=40, y=60, button="left")
+    pending = False
+    store.record_manual_event("click", x=40, y=60, button="left")
+    assert store.stop(save=True)["step_count"] == 1

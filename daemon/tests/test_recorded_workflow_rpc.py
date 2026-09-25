@@ -8,6 +8,7 @@ from pilot.actions import Action, ActionResult, ActionType, BrowserParams
 from pilot.config import PilotConfig
 from pilot.security.rpc_identity import RpcClientRole, rpc_method_allowed
 from pilot.server import PilotServer
+from pilot.workflows.manual_workflow_hook import ManualWorkflowHook
 from pilot.workflows.recorded_workflows import RecordedWorkflowStore
 
 
@@ -64,3 +65,49 @@ async def test_ui_only_start_and_guarded_replay(tmp_path) -> None:
         {"workflow_id": workflow_id, "run_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat()}, None
     )
     assert scheduled["status"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_manual_recording_requires_separate_consent_and_run_time_text(tmp_path) -> None:
+    server = PilotServer(PilotConfig())
+    server._recorded_workflows = RecordedWorkflowStore(
+        tmp_path / "recordings.enc", key_provider=lambda: b"k" * 32
+    )
+    server._autonomous = _Autonomous()
+    denied = await server._handle_recorded_workflow_start(
+        {"name": "Manual", "consent": True, "capture_manual": True}, None
+    )
+    assert denied["status"] == "error"
+    assert server._recorded_workflows.status()["active"] is False
+    server._recorded_workflows.start(
+        name="Manual", consent=True, capture_manual=True, manual_consent=True
+    )
+    server._recorded_workflows.record_manual_event("text")
+    saved = server._recorded_workflows.stop(save=True)
+    missing = await server._handle_recorded_workflow_run(
+        {"workflow_id": saved["id"], "reviewed": True}, None
+    )
+    assert missing["status"] == "error"
+    submitted = await server._handle_recorded_workflow_run(
+        {"workflow_id": saved["id"], "reviewed": True, "text_values": {"0": "status report"}}, None
+    )
+    assert submitted["status"] == "submitted"
+    assert "status report" in server._autonomous.submitted[0][0]
+
+
+@pytest.mark.asyncio
+async def test_manual_hook_failure_leaves_recording_off(tmp_path, monkeypatch) -> None:
+    server = PilotServer(PilotConfig())
+    server._recorded_workflows = RecordedWorkflowStore(
+        tmp_path / "recordings.enc", key_provider=lambda: b"k" * 32
+    )
+
+    def fail_start(_self):
+        raise RuntimeError("OS hook unavailable")
+
+    monkeypatch.setattr(ManualWorkflowHook, "start", fail_start)
+    result = await server._handle_recorded_workflow_start(
+        {"name": "Manual", "consent": True, "capture_manual": True, "manual_consent": True}, None
+    )
+    assert result["status"] == "error"
+    assert server._recorded_workflows.status()["active"] is False

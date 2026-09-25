@@ -15,6 +15,7 @@ import math
 import os
 import threading
 import uuid
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Awaitable, Callable
@@ -123,16 +124,19 @@ class RecordedWorkflowStore:
         *,
         key_provider: Callable[[], bytes] = _key_from_os_keyring,
         capture_feature: Callable[[], Awaitable[dict[str, Any] | None]] | None = None,
+        allow_manual_event: Callable[[], bool] | None = None,
     ) -> None:
         self.path = path
         self._key_provider = key_provider
         self._key: bytes | None = None
         self._key_lock = threading.Lock()
         self._capture_feature = capture_feature
+        self._allow_manual_event = allow_manual_event
         self._active: dict[str, Any] | None = None
         self._session_lock = threading.Lock()
         self._records_lock = threading.RLock()
         self._saving = False
+        self._manual_suppression = 0
 
     def _encryption_key(self) -> bytes:
         with self._key_lock:
@@ -178,10 +182,13 @@ class RecordedWorkflowStore:
             temp.unlink(missing_ok=True)
 
     def start(
-        self, *, name: str, consent: bool, capture_visual: bool = False, goal: str = ""
+        self, *, name: str, consent: bool, capture_visual: bool = False,
+        capture_manual: bool = False, manual_consent: bool = False, goal: str = ""
     ) -> dict[str, Any]:
         if consent is not True:
             raise ValueError("Explicit recording consent is required")
+        if capture_manual and manual_consent is not True:
+            raise ValueError("Separate consent is required to observe manual desktop input")
         name = name.strip()
         if not name or len(name) > 100:
             raise ValueError("Workflow name must contain 1–100 characters")
@@ -199,6 +206,7 @@ class RecordedWorkflowStore:
                 "goal": goal.strip() or name,
                 "created_at": datetime.now(UTC).isoformat(),
                 "capture_visual": capture_visual,
+                "capture_manual": capture_manual,
                 "steps": [],
                 "samples": [],
                 "omitted_actions": 0,
@@ -212,10 +220,83 @@ class RecordedWorkflowStore:
                 "active": session is not None,
                 "name": session["name"] if session else "",
                 "capture_visual": bool(session and session["capture_visual"]),
+                "capture_manual": bool(session and session["capture_manual"]),
                 "step_count": len(session["steps"]) if session else 0,
                 "sample_count": len(session["samples"]) if session else 0,
                 "omitted_actions": session["omitted_actions"] if session else 0,
             }
+
+    @contextmanager
+    def suppress_manual_during_heliox_action(self):
+        """Do not mistake Heliox-injected input for the user's own action."""
+        with self._session_lock:
+            self._manual_suppression += 1
+        try:
+            yield
+        finally:
+            with self._session_lock:
+                self._manual_suppression -= 1
+
+    def record_manual_event(self, event: str, **values: Any) -> None:
+        """Called by the opt-in OS hook. No typed characters are accepted."""
+        with self._session_lock:
+            session = self._active
+            if (not session or not session["capture_manual"] or self._manual_suppression
+                or (self._allow_manual_event is not None and not self._allow_manual_event())):
+                return
+            if event == "text":
+                # One placeholder per text-entry burst, never a length or value.
+                if session["steps"] and session["steps"][-1]["action_type"] == "manual_text":
+                    return
+                step = {"action_type": "manual_text", "parameters": {"placeholder": "Text to enter"}}
+            elif event == "click":
+                x, y, button = values.get("x"), values.get("y"), values.get("button")
+                if (not isinstance(x, int) or not isinstance(y, int)
+                    or button not in {"left", "right", "middle"}):
+                    session["omitted_actions"] += 1
+                    return
+                step = {"action_type": "mouse_click", "parameters": {"x": x, "y": y, "button": button, "clicks": 1}}
+            elif event == "scroll":
+                x, y, amount, horizontal = (
+                    values.get("x"), values.get("y"), values.get("amount"), values.get("horizontal")
+                )
+                if (not isinstance(x, int) or not isinstance(y, int)
+                    or not isinstance(amount, int) or not amount or abs(amount) > 100
+                    or not isinstance(horizontal, bool)):
+                    session["omitted_actions"] += 1
+                    return
+                step = {"action_type": "mouse_scroll", "parameters": {
+                    "x": x, "y": y, "amount": amount, "horizontal": horizontal,
+                }}
+            elif event == "drag":
+                x, y = values.get("x"), values.get("y")
+                end_x, end_y = values.get("end_x"), values.get("end_y")
+                button, duration = values.get("button"), values.get("duration")
+                if (not all(isinstance(coord, int) for coord in (x, y, end_x, end_y))
+                    or button not in {"left", "right"}
+                    or not isinstance(duration, (int, float)) or not math.isfinite(duration)):
+                    session["omitted_actions"] += 1
+                    return
+                step = {"action_type": "mouse_drag", "parameters": {
+                    "x": x, "y": y, "end_x": end_x, "end_y": end_y,
+                    "button": button, "duration": max(0.1, min(float(duration), 5.0)),
+                }}
+            elif event == "key" and values.get("name") in {"enter", "tab", "esc"}:
+                step = {"action_type": "keyboard_press", "parameters": {"key": values["name"]}}
+            else:
+                session["omitted_actions"] += 1
+                return
+            if len(session["steps"]) >= MAX_STEPS:
+                session["omitted_actions"] += 1
+            else:
+                step["source"] = "manual"
+                session["steps"].append(step)
+
+    def mark_manual_gap(self) -> None:
+        """A dead OS hook makes the resulting recipe incomplete, not trustworthy."""
+        with self._session_lock:
+            if self._active is not None and self._active["capture_manual"]:
+                self._active["omitted_actions"] += 1
 
     async def before(self, action: Action, *, single_action_batch: bool) -> dict[str, Any] | None:
         with self._session_lock:
@@ -298,7 +379,7 @@ class RecordedWorkflowStore:
                 raise ValueError("No replayable actions were captured; nothing was saved")
             self._active = None
             self._saving = save
-            record = {key: value for key, value in session.items() if key != "capture_visual"}
+            record = {key: value for key, value in session.items() if key not in {"capture_visual", "capture_manual"}}
         if not save:
             return {"saved": False, **self.status()}
         record["schedule"] = None
@@ -331,8 +412,11 @@ class RecordedWorkflowStore:
             "omitted_actions": record["omitted_actions"],
             "incomplete": bool(record["omitted_actions"]),
             "needs_review": bool(record["omitted_actions"]) or any(
-                step["action_type"].startswith("mouse_") for step in record["steps"]
+                step["action_type"].startswith("mouse_") or step.get("source") == "manual"
+                for step in record["steps"]
             ),
+            "placeholders": [str(index) for index, step in enumerate(record["steps"])
+                             if step["action_type"] == "manual_text"],
             "schedule": record.get("schedule"),
         }
 
@@ -393,6 +477,8 @@ class RecordedWorkflowStore:
                 raise KeyError("Recorded workflow not found")
             if record["omitted_actions"]:
                 raise ValueError("Incomplete recordings cannot be scheduled; unsupported steps need a parameterized workflow")
+            if any(step["action_type"] == "manual_text" for step in record["steps"]):
+                raise ValueError("Text placeholders cannot be scheduled without interactive input")
             if self._public(record)["needs_review"] and reviewed is not True:
                 raise ValueError("Coordinate-based workflows require explicit review before scheduling")
             record["schedule"] = {
@@ -435,10 +521,20 @@ class RecordedWorkflowStore:
             return due
 
 
-def workflow_prompt(workflow: dict[str, Any]) -> str:
+def workflow_prompt(workflow: dict[str, Any], *, text_values: dict[str, str] | None = None) -> str:
     """Convert an observed recipe into a re-planning goal, not a raw macro."""
     steps = []
+    text_values = text_values or {}
+    expected = set(workflow.get("placeholders", []))
+    if set(text_values) != expected:
+        raise ValueError("Supply a value for each text placeholder before running")
+    for value in text_values.values():
+        if not isinstance(value, str) or not value or len(value) > 2000:
+            raise ValueError("Text values must contain 1–2000 characters")
     for index, step in enumerate(workflow["steps"], start=1):
+        if step["action_type"] == "manual_text":
+            steps.append(f"{index}. keyboard_type(text={text_values[str(index - 1)]!r})")
+            continue
         args = ", ".join(f"{key}={value!r}" for key, value in step["parameters"].items())
         steps.append(f"{index}. {step['action_type']}({args})")
     return (
