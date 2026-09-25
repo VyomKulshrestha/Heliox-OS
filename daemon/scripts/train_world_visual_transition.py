@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -88,11 +90,71 @@ def within_action_permutation(actions: np.ndarray, rng: np.random.Generator) -> 
     return permutation
 
 
+RECORDED_ACTION_IDS = {
+    "mouse_move": 0,
+    "mouse_click": 1,
+    "mouse_double_click": 2,
+    "mouse_right_click": 3,
+}
+
+
+def load_recorded_features(store: Any, seed: int) -> dict[str, dict[str, np.ndarray]]:
+    """Split decrypted consented samples by recording, never by adjacent frame."""
+    recordings = store.load_research_samples()
+    groups = []
+    for recording in recordings:
+        rows = []
+        for sample in recording["samples"]:
+            action_id = RECORDED_ACTION_IDS.get(sample.get("action_type"))
+            before, after, coords = sample.get("before"), sample.get("after"), sample.get("coords")
+            if action_id is None or not sample.get("post_observed"):
+                continue
+            if not isinstance(before, list) or not isinstance(after, list) or not isinstance(coords, list):
+                continue
+            if len(before) != 256 or len(after) != 256 or len(coords) != 2:
+                continue
+            values = np.asarray(before + after + coords, dtype=np.float32)
+            if (not np.all(np.isfinite(values)) or np.any(values[:512] < 0)
+                    or np.any(values[:512] > 255) or np.any(values[:512] != np.floor(values[:512]))):
+                continue
+            if np.any(values[512:] < 0) or np.any(values[512:] > 1):
+                continue
+            rows.append((values[:256] / 255, values[256:512] / 255, action_id, values[512:]))
+        if rows:
+            groups.append((recording["workflow_id"], rows))
+    if len(groups) < 4:
+        raise ValueError("At least four separate visual recordings are needed for held-out evaluation")
+    rng = np.random.default_rng(seed)
+    rng.shuffle(groups)
+    train_end = max(2, int(len(groups) * 0.6))
+    validation_end = min(len(groups) - 1, train_end + max(1, int(len(groups) * 0.2)))
+    partitions = {
+        "train": groups[:train_end],
+        "validation": groups[train_end:validation_end],
+        "eval": groups[validation_end:],
+    }
+    result = {}
+    for split, partition in partitions.items():
+        rows = [(group_id, row) for group_id, group_rows in partition for row in group_rows]
+        if len(rows) < 10:
+            raise ValueError(f"At least ten {split} visual pairs are needed")
+        actions = np.eye(9, dtype=np.float32)[[row[2] for _, row in rows]]
+        coords = np.asarray([row[3] for _, row in rows], dtype=np.float32)
+        result[split] = {
+            "state": np.asarray([row[0] for _, row in rows], dtype=np.float32),
+            "target": np.asarray([row[1] for _, row in rows], dtype=np.float32),
+            "action": np.concatenate((actions, coords), axis=1),
+            "groups": np.asarray([group_id for group_id, _ in rows]),
+        }
+    return result
+
+
 def main() -> None:
     state = Path(__file__).resolve().parents[1] / "benchmarks/.bench-state"
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--features", type=Path, default=state / "tess_visual_transitions_v1.npz")
     parser.add_argument("--source-report", type=Path, default=state / "tess_visual_transitions_v1.json")
+    parser.add_argument("--recorded-store", type=Path, help="Encrypted opt-in local workflow store")
     parser.add_argument("--report", type=Path, default=state / "tess_visual_model_v1.json")
     parser.add_argument("--weights", type=Path, default=state / "tess_visual_model_v1.pt")
     parser.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
@@ -102,11 +164,25 @@ def main() -> None:
     parser.add_argument("--action-permutations", type=int, default=10)
     parser.add_argument("--seed", type=int, default=20260926)
     args = parser.parse_args()
-    if (not args.features.is_file() or not args.source_report.is_file()
+    if ((not args.recorded_store and (not args.features.is_file() or not args.source_report.is_file()))
+            or (args.recorded_store and not args.recorded_store.is_file())
             or args.report.exists() or args.weights.exists() or args.epochs < 1
             or args.action_permutations < 1):
         parser.error("Use existing pinned features, fresh outputs, and positive epochs")
-    rows = load_features(args.features, args.source_report)
+    recorded_store = None
+    if args.recorded_store:
+        if args.weights.suffix != ".enc":
+            parser.error("Recorded-screen model weights must be saved to an encrypted .enc path")
+        from pilot.workflows.recorded_workflows import RecordedWorkflowStore
+
+        recorded_store = RecordedWorkflowStore(args.recorded_store)
+        source_hash = hashlib.sha256(args.recorded_store.read_bytes()).hexdigest()
+        rows = load_recorded_features(recorded_store, args.seed)
+        if hashlib.sha256(args.recorded_store.read_bytes()).hexdigest() != source_hash:
+            raise RuntimeError("Recorded workflow store changed during feature loading; retry training")
+    else:
+        rows = load_features(args.features, args.source_report)
+        source_hash = hashlib.sha256(args.features.read_bytes()).hexdigest()
 
     import torch
     from torch import nn
@@ -214,7 +290,8 @@ def main() -> None:
             }
     report = {
         "purpose": "research_only_observed_visual_world_transition_probe",
-        "features_sha256": hashlib.sha256(args.features.read_bytes()).hexdigest(),
+        "features_sha256": source_hash,
+        "source_kind": "encrypted_local_recordings" if recorded_store else "pinned_feature_archive",
         "device": str(device), "architecture": args.architecture,
         "torch_version": torch.__version__, "cudnn_enabled": torch.backends.cudnn.enabled,
         "seed": args.seed, "selected_epoch": best_epoch,
@@ -224,11 +301,18 @@ def main() -> None:
         "scores": scores,
         "limitation": "16x16 grayscale images and mouse action type/coordinates only. "
                       "Research model is not the live UiJepaPredictor. "
-                      "Episode-disjoint within one dataset, not environment-disjoint. "
-                      "No safety, autonomy, Jev parity, or runtime loading claim.",
+                      + ("Recording-disjoint, not environment-disjoint; action outcomes are observed, "
+                         "not independently verified. " if recorded_store else
+                         "Episode-disjoint within one public dataset, not environment-disjoint. ")
+                      + "No safety, autonomy, Jev parity, or runtime loading claim.",
     }
     args.weights.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(best_weights, args.weights)
+    if recorded_store:
+        buffer = io.BytesIO()
+        torch.save(best_weights, buffer)
+        args.weights.write_bytes(recorded_store.encrypt_model_artifact(buffer.getvalue()))
+    else:
+        torch.save(best_weights, args.weights)
     args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report, indent=2), flush=True)
 

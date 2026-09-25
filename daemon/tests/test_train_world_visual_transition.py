@@ -6,7 +6,12 @@ import json
 import numpy as np
 import pytest
 
-from scripts.train_world_visual_transition import load_features, metrics, within_action_permutation
+from scripts.train_world_visual_transition import (
+    load_features,
+    load_recorded_features,
+    metrics,
+    within_action_permutation,
+)
 
 
 def _write_features(tmp_path, groups=("a", "b", "c")):
@@ -54,3 +59,41 @@ def test_location_permutation_keeps_action_types() -> None:
     assert sorted(permutation.tolist()) == list(range(8))
     assert np.array_equal(actions[:, :9], actions[permutation, :9])
     assert not np.array_equal(actions[:, 9], actions[permutation, 9])
+
+
+def test_private_samples_split_by_recording_without_plaintext_files() -> None:
+    class Store:
+        def load_research_samples(self):
+            return [
+                {
+                    "workflow_id": f"recording-{group}",
+                    "samples": [
+                        {
+                            "action_type": "mouse_click" if index % 2 else "mouse_move",
+                            "before": [0] * 256,
+                            "after": [255] * 256,
+                            "coords": [0.25, 0.75],
+                            "post_observed": True,
+                        }
+                        for index in range(12)
+                    ],
+                }
+                for group in range(4)
+            ]
+
+    rows = load_recorded_features(Store(), seed=7)
+    assert {key: len(value["state"]) for key, value in rows.items()} == {
+        "train": 24, "validation": 12, "eval": 12,
+    }
+    assert set(rows["train"]["groups"]).isdisjoint(rows["eval"]["groups"])
+    assert rows["train"]["action"].shape == (24, 11)
+    assert np.all(rows["eval"]["target"] == 1)
+
+
+def test_private_samples_require_four_independent_recordings() -> None:
+    class Store:
+        def load_research_samples(self):
+            return [{"workflow_id": "one", "samples": []}]
+
+    with pytest.raises(ValueError, match="four separate"):
+        load_recorded_features(Store(), seed=7)
