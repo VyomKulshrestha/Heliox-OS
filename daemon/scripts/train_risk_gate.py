@@ -282,7 +282,7 @@ def main() -> None:
         type=float,
         default=0.15,
         help="Per-action fraction reserved for calibration and again for final validation; "
-        "the saved MLP is refit on the full dataset afterward.",
+        "neither split is used to fit the saved MLP.",
     )
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
@@ -338,32 +338,32 @@ def main() -> None:
     print(f"Calibrated held-out val MSE:     {val_mse:.8e}  (the number that actually matters)")
     print(f"Calibrated held-out MAE:         disk={validation_mae[0]:.10f} proc={validation_mae[1]:.10f}")
     if val_mse > baseline_val_mse:
-        print("WARNING: learned model is worse than predicting zero on held-out data -- do not ship these weights.")
+        raise RuntimeError("Learned model is worse than predicting zero on held-out data; weights not written")
 
-    # Validation above already confirmed this architecture/hyperparameters
-    # generalize; refit on the FULL dataset (train+val) for the weights
-    # actually shipped, since there's no reason to withhold real data from
-    # the production model once its generalization is confirmed.
-    w1, b1, w2, b2 = train(X, Y, hidden_size=args.hidden, epochs=args.epochs, lr=args.lr, seed=args.seed)
-    production_medians = _action_medians(Y, action_types)
-    feature_mean = X[:, :3].mean(axis=0)
-    feature_scale = X[:, :3].std(axis=0)
+    # Save the exact model measured above. Refitting on calibration and
+    # validation rows would invalidate both the calibration blend and the
+    # reported held-out metrics for the artifact used at runtime.
+    feature_mean = X_train[:, :3].mean(axis=0)
+    feature_scale = X_train[:, :3].std(axis=0)
     write_weights(
         args.out,
         w1,
         b1,
         w2,
         b2,
-        X.shape[0],
+        len(train_indices),
         validation_samples=len(validation_indices),
         validation_mae=validation_mae,
         baseline_mae=baseline_mae,
-        action_medians=production_medians,
+        action_medians=medians,
         calibration_alpha=calibration_alpha,
         feature_mean=feature_mean,
         feature_scale=feature_scale,
     )
-    print(f"Wrote weights (trained on all {X.shape[0]} samples) to {args.out}")
+    print(
+        f"Wrote held-out weights ({len(train_indices)} training, "
+        f"{len(calibration_indices)} calibration, {len(validation_indices)} validation) to {args.out}"
+    )
 
 
 if __name__ == "__main__":

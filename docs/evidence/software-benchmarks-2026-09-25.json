@@ -1,0 +1,252 @@
+{
+  "schema_version": "1.0.0",
+  "captured_at": "2026-09-25T18:54:08.664432+05:30",
+  "captured_on": "2026-09-25",
+  "source_commit": "2b927a9f44dad2326d626b178b81fdbe28b1e693",
+  "claim_boundary": "Local software benchmark bundle; no claim of model-provider, network, browser page-load, microphone, camera, speaker, gaze, gesture, EEG, or human accuracy",
+  "guarded_cpu_request": {
+    "schema_version": "2.0.0",
+    "benchmark": "guarded_local_cpu_usage",
+    "scope": "Ready-daemon guarded CPU usage request: local planning, routing, risk assessment, execution, postcondition verification, and response shaping",
+    "environment": {
+      "operating_system": "Windows",
+      "operating_system_release": "11",
+      "python": "3.12.6",
+      "warmup_iterations": 10
+    },
+    "cold_ready_request_ms": 60.152,
+    "steady_state": {
+      "iterations": 100,
+      "mean_ms": 26.819,
+      "median_ms": 26.629,
+      "p95_ms": 29.547,
+      "p99_ms": 30.248,
+      "min_ms": 24.389,
+      "max_ms": 30.339,
+      "stdev_ms": 1.369
+    },
+    "model_generate_calls": 0,
+    "total_model_generate_calls": 0,
+    "limitations": [
+      "Uses real local planner, policy, executor, verifier, and response code with in-memory transport.",
+      "Excludes daemon process startup, UI rendering, cloud models, networks, browsers, voice, cameras, TTS, and neural hardware.",
+      "A local reproducibility snapshot is not a universal performance guarantee."
+    ]
+  },
+  "local_status_suite": {
+    "schema_version": "1.0.0",
+    "benchmark": "guarded_local_status_suite",
+    "scope": "Ready-daemon local planning, routing, policy, real read-only execution, postcondition verification, and response shaping",
+    "environment": {
+      "operating_system": "Windows",
+      "operating_system_release": "11",
+      "python": "3.12.6",
+      "warmup_iterations_per_scenario": 5
+    },
+    "scenarios": {
+      "cpu_usage": {
+        "query": "What's my CPU usage?",
+        "expected_action": "cpu_usage",
+        "iterations": 50,
+        "mean_ms": 27.832,
+        "median_ms": 27.501,
+        "p95_ms": 30.147,
+        "p99_ms": 30.627,
+        "min_ms": 25.041,
+        "max_ms": 30.816,
+        "stdev_ms": 1.453
+      },
+      "memory_usage": {
+        "query": "What's my memory usage?",
+        "expected_action": "memory_usage",
+        "iterations": 50,
+        "mean_ms": 3.856,
+        "median_ms": 3.734,
+        "p95_ms": 4.852,
+        "p99_ms": 6.008,
+        "min_ms": 3.185,
+        "max_ms": 6.791,
+        "stdev_ms": 0.605
+      },
+      "disk_usage": {
+        "query": "What's my disk usage?",
+        "expected_action": "disk_usage",
+        "iterations": 50,
+        "mean_ms": 3.964,
+        "median_ms": 3.642,
+        "p95_ms": 5.817,
+        "p99_ms": 7.193,
+        "min_ms": 3.235,
+        "max_ms": 7.62,
+        "stdev_ms": 0.899
+      },
+      "system_information": {
+        "query": "Show system information",
+        "expected_action": "system_info",
+        "iterations": 50,
+        "mean_ms": 66.407,
+        "median_ms": 59.552,
+        "p95_ms": 85.914,
+        "p99_ms": 90.45,
+        "min_ms": 56.185,
+        "max_ms": 93.489,
+        "stdev_ms": 11.418
+      }
+    },
+    "model_generate_calls": 0,
+    "limitations": [
+      "Measures four deterministic local status intents with in-memory transport.",
+      "Does not measure model-backed planning, UI rendering, network, browser, voice, camera, TTS, or neural hardware.",
+      "Host state and operating-system APIs affect timings."
+    ]
+  },
+  "event_loop_responsiveness": {
+    "schema_version": "1.0.0",
+    "benchmark": "event_loop_responsiveness_during_cpu_monitor",
+    "scope": "Real psutil one-second CPU monitor sample with a concurrent asyncio heartbeat",
+    "environment": {
+      "operating_system": "Windows",
+      "operating_system_release": "11",
+      "python": "3.12.6",
+      "target_heartbeat_ms": 10.0
+    },
+    "sample_duration_ms": 1001.893,
+    "cpu_percent": 8.2,
+    "heartbeat_ticks": 66,
+    "heartbeat_median_ms": 15.482,
+    "heartbeat_p95_ms": 16.1,
+    "heartbeat_max_ms": 16.649,
+    "max_scheduler_delay_ms": 6.649,
+    "limitations": [
+      "Measures scheduler availability, not CPU-monitor completion latency.",
+      "Windows timer granularity and host load affect heartbeat intervals.",
+      "Does not measure UI rendering or hardware input latency."
+    ]
+  },
+  "intent_dispatch": {
+    "schema_version": "1.0.0",
+    "benchmark": "deterministic_intent_dispatch",
+    "scope": "Curated bounded local intents and ambiguous fall-through controls; planning only, no execution",
+    "environment": {
+      "operating_system": "Windows",
+      "python": "3.12.6"
+    },
+    "case_count": 59,
+    "passed": 59,
+    "failed": 0,
+    "accuracy": 1.0,
+    "categories": {
+      "url": {
+        "passed": 6,
+        "total": 6,
+        "accuracy": 1.0
+      },
+      "browser_click": {
+        "passed": 6,
+        "total": 6,
+        "accuracy": 1.0
+      },
+      "screen": {
+        "passed": 8,
+        "total": 8,
+        "accuracy": 1.0
+      },
+      "system_info": {
+        "passed": 4,
+        "total": 4,
+        "accuracy": 1.0
+      },
+      "usage": {
+        "passed": 9,
+        "total": 9,
+        "accuracy": 1.0
+      },
+      "application": {
+        "passed": 6,
+        "total": 6,
+        "accuracy": 1.0
+      },
+      "file_read": {
+        "passed": 3,
+        "total": 3,
+        "accuracy": 1.0
+      },
+      "forensics": {
+        "passed": 4,
+        "total": 4,
+        "accuracy": 1.0
+      },
+      "browser_workflow": {
+        "passed": 1,
+        "total": 1,
+        "accuracy": 1.0
+      },
+      "fallback": {
+        "passed": 12,
+        "total": 12,
+        "accuracy": 1.0
+      }
+    },
+    "latency": {
+      "iterations": 59,
+      "mean_ms": 0.091,
+      "median_ms": 0.048,
+      "p95_ms": 0.254,
+      "p99_ms": 0.965,
+      "min_ms": 0.008,
+      "max_ms": 1.225,
+      "stdev_ms": 0.183
+    },
+    "failures": [],
+    "limitations": [
+      "The fixed corpus is a regression set, not a population-level language-understanding benchmark.",
+      "Passing fall-through cases means model planning is required; it does not grade the model's later answer.",
+      "Application cases grade routing only and do not prove the application is installed or launched."
+    ]
+  },
+  "learned_risk_world_model": {
+    "schema_version": "1.0.0",
+    "benchmark": "shipped_learned_risk_world_model",
+    "scope": "Shipped calibrated weights, stored temporal holdout evidence, direction invariants, and local inference latency",
+    "environment": {
+      "operating_system": "Windows",
+      "python": "3.12.6"
+    },
+    "model_version": "risk-mlp-v4-heldout",
+    "training_samples": 25200,
+    "validation_samples": 5400,
+    "learned_action_types": 12,
+    "validation": {
+      "disk_delta_mae": 3.3039651015087657e-08,
+      "disk_zero_baseline_mae": 7.18494490570265e-08,
+      "disk_improvement_percent": 54.0154,
+      "process_delta_mae": 1.3025066436966881e-05,
+      "process_zero_baseline_mae": 0.0022166655398905277,
+      "process_improvement_percent": 99.4124
+    },
+    "direction_checks": {
+      "file_write_increases_disk": true,
+      "file_delete_decreases_disk": true,
+      "service_start_increases_processes": true,
+      "service_stop_decreases_processes": true,
+      "process_kill_decreases_processes": true
+    },
+    "direction_checks_passed": 5,
+    "inference": {
+      "iterations": 12000,
+      "mean_ms": 0.034,
+      "median_ms": 0.025,
+      "p95_ms": 0.078,
+      "p99_ms": 0.166,
+      "min_ms": 0.021,
+      "max_ms": 0.439,
+      "stdev_ms": 0.027
+    },
+    "limitations": [
+      "Validation metrics are metadata for the exact saved weights on a stratified temporal holdout.",
+      "The benchmark verifies shipped metadata and inference behavior; it does not recreate the holdout.",
+      "Only 12 learnable action types use these weights; deterministic rules remain authoritative for safety and broader coverage.",
+      "The model predicts coarse disk/process effects, not the full physical world or user intent."
+    ]
+  }
+}

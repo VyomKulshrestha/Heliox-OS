@@ -1,4 +1,5 @@
 import json
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -13,7 +14,13 @@ from pilot.security.risk_model import (
     encode,
 )
 from pilot.security.risk_observation import OsSnapshot
-from scripts.train_risk_gate import load_action_types, load_dataset, stratified_temporal_split
+from scripts.train_risk_gate import (
+    _predict,
+    apply_calibration,
+    load_action_types,
+    load_dataset,
+    stratified_temporal_split,
+)
 
 
 def _snapshot(**overrides) -> OsSnapshot:
@@ -102,16 +109,72 @@ def test_training_split_holds_out_each_action_temporally():
         assert action_type.value in action_types[validation]
 
 
+def test_training_saves_the_model_that_was_validated(tmp_path, monkeypatch):
+    from scripts import train_risk_gate
+
+    dataset = tmp_path / "transitions.jsonl"
+    rows = [
+        json.dumps({
+            "embedding": [0.0] * EMBEDDING_SIZE,
+            "disk_delta": 0.0,
+            "proc_delta": 0.0,
+            "action_type": action_type.value,
+        })
+        for action_type in LEARNABLE_ACTION_TYPE_ORDER
+        for _ in range(10)
+    ]
+    dataset.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    artifact = tmp_path / "weights.npz"
+    calls = []
+
+    def train_once(X, Y, hidden_size, epochs, lr, seed):
+        calls.append(len(X))
+        return (
+            np.zeros((EMBEDDING_SIZE, hidden_size), dtype=np.float32),
+            np.zeros(hidden_size, dtype=np.float32),
+            np.zeros((hidden_size, 2), dtype=np.float32),
+            np.zeros(2, dtype=np.float32),
+        )
+
+    monkeypatch.setattr(train_risk_gate, "train", train_once)
+    monkeypatch.setattr(sys, "argv", ["train_risk_gate", "--dataset", str(dataset),
+                                   "--out", str(artifact), "--epochs", "1"])
+    train_risk_gate.main()
+
+    assert calls == [96]
+    with np.load(artifact, allow_pickle=False) as saved:
+        assert int(saved["training_samples"]) == 96
+        assert int(saved["validation_samples"]) == 12
+        assert saved["model_version"].item() == "risk-mlp-v4-heldout"
+        assert np.array_equal(saved["validation_mae"], np.zeros(2, dtype=np.float32))
+
+
+def test_shipped_validation_metrics_replay_with_saved_weights():
+    root = Path(__file__).resolve().parents[1]
+    dataset = root / "scripts" / "risk_dataset.jsonl"
+    X, Y = load_dataset(str(dataset))
+    action_types = load_action_types(str(dataset))
+    _, _, validation = stratified_temporal_split(action_types, 0.15)
+
+    with np.load(root / "pilot" / "security" / "risk_gate_weights.npz", allow_pickle=False) as saved:
+        raw = _predict(X[validation], *(saved[key] for key in ("w1", "b1", "w2", "b2")))
+        calibrated = apply_calibration(
+            raw, action_types[validation], saved["action_medians"], saved["calibration_alpha"]
+        )
+        actual_mae = np.mean(np.abs(calibrated - Y[validation]), axis=0)
+        np.testing.assert_allclose(actual_mae, saved["validation_mae"], rtol=1e-5, atol=1e-12)
+
+
 class TestRiskTransitionModel:
-    def test_shipped_v2_weights_load_and_separate_opposite_process_actions(self):
+    def test_shipped_weights_load_and_separate_opposite_process_actions(self):
         model = RiskTransitionModel()
 
         start = model.predict(_snapshot(), _action(ActionType.SERVICE_START))
         stop = model.predict(_snapshot(), _action(ActionType.SERVICE_STOP))
 
         assert model.is_loaded is True
-        assert model.model_version == "risk-mlp-v3-calibrated"
-        assert model.training_samples == 36_000
+        assert model.model_version == "risk-mlp-v4-heldout"
+        assert model.training_samples == 25_200
         assert model.validation_samples == 5_400
         assert model.is_calibrated is True
         assert model.validation_mae is not None
