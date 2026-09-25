@@ -1087,4 +1087,5 @@ class VerificationResult(BaseModel):
     passed: bool
     details: list[str] = Field(default_factory=list)
     failed_actions: list[int] = Field(default_factory=list)
+    independently_observed_actions: list[int] = Field(default_factory=list)
     rollback_triggered: bool = False
