@@ -103,12 +103,14 @@ class Verifier:
             params: PackageParams = action.parameters  # type: ignore[assignment]
             if params.version or params.repository:
                 return None
-        return await self._verify_single(ActionResult(action=action, success=True))
+        passed, detail, _ = await self._verify_single(ActionResult(action=action, success=True))
+        return passed, detail
 
     async def verify(self, plan: ActionPlan, results: list[ActionResult]) -> VerificationResult:
         """Verify all action results against the plan."""
         details: list[str] = []
         failed_indices: list[int] = []
+        observed_indices: list[int] = []
 
         if len(results) != len(plan.actions):
             details.append(
@@ -137,7 +139,9 @@ class Verifier:
                 failed_indices.append(i)
                 continue
 
-            check_passed, check_detail = await self._verify_single(result)
+            check_passed, check_detail, independently_observed = await self._verify_single(result)
+            if independently_observed:
+                observed_indices.append(i)
             if check_passed:
                 details.append(f"Action {i} ({result.action.action_type.value}): VERIFIED")
             else:
@@ -155,74 +159,79 @@ class Verifier:
             passed=passed,
             details=details,
             failed_actions=failed_indices,
+            independently_observed_actions=observed_indices,
             rollback_triggered=False,
         )
 
-    async def _verify_single(self, result: ActionResult) -> tuple[bool, str]:
-        """Verify a single action result. Returns (passed, detail)."""
+    async def _verify_single(self, result: ActionResult) -> tuple[bool, str, bool]:
+        """Return (passed, detail, independent observation completed)."""
         action = result.action
 
         try:
             if action.action_type == ActionType.FILE_WRITE:
-                return await self._verify_file_write(action.parameters)  # type: ignore[arg-type]
+                check = await self._verify_file_write(action.parameters)  # type: ignore[arg-type]
 
-            if action.action_type == ActionType.FILE_DELETE:
-                return await self._verify_file_delete(action.parameters)  # type: ignore[arg-type]
+            elif action.action_type == ActionType.FILE_DELETE:
+                check = await self._verify_file_delete(action.parameters)  # type: ignore[arg-type]
 
-            if action.action_type == ActionType.PACKAGE_INSTALL:
-                return await self._verify_package_install(action.parameters)  # type: ignore[arg-type]
+            elif action.action_type == ActionType.PACKAGE_INSTALL:
+                check = await self._verify_package_install(action.parameters)  # type: ignore[arg-type]
 
-            if action.action_type == ActionType.PACKAGE_REMOVE:
-                return await self._verify_package_remove(action.parameters)  # type: ignore[arg-type]
+            elif action.action_type == ActionType.PACKAGE_REMOVE:
+                check = await self._verify_package_remove(action.parameters)  # type: ignore[arg-type]
 
-            if action.action_type in (ActionType.SERVICE_START, ActionType.SERVICE_RESTART):
-                return await self._verify_service_running(action.parameters)  # type: ignore[arg-type]
+            elif action.action_type in (ActionType.SERVICE_START, ActionType.SERVICE_RESTART):
+                check = await self._verify_service_running(action.parameters)  # type: ignore[arg-type]
 
-            if action.action_type == ActionType.SERVICE_STOP:
-                return await self._verify_service_stopped(action.parameters)  # type: ignore[arg-type]
+            elif action.action_type == ActionType.SERVICE_STOP:
+                check = await self._verify_service_stopped(action.parameters)  # type: ignore[arg-type]
 
-            if action.action_type == ActionType.GNOME_SETTING_WRITE:
-                return await self._verify_gnome_setting(action.parameters)  # type: ignore[arg-type]
+            elif action.action_type == ActionType.GNOME_SETTING_WRITE:
+                check = await self._verify_gnome_setting(action.parameters)  # type: ignore[arg-type]
 
-            if action.action_type == ActionType.DOWNLOAD_FILE:
-                return await self._verify_download(result)
+            elif action.action_type == ActionType.DOWNLOAD_FILE:
+                check = await self._verify_download(result)
 
-            if action.action_type == ActionType.FILE_COPY:
-                return await self._verify_file_copy(action.parameters)  # type: ignore[arg-type]
+            elif action.action_type == ActionType.FILE_COPY:
+                check = await self._verify_file_copy(action.parameters)  # type: ignore[arg-type]
 
-            if action.action_type == ActionType.FILE_MOVE:
-                return await self._verify_file_move(action.parameters)  # type: ignore[arg-type]
+            elif action.action_type == ActionType.FILE_MOVE:
+                check = await self._verify_file_move(action.parameters)  # type: ignore[arg-type]
 
-            if action.action_type == ActionType.PROCESS_KILL:
-                return await self._verify_process_kill(action.parameters)  # type: ignore[arg-type]
+            elif action.action_type == ActionType.PROCESS_KILL:
+                check = await self._verify_process_kill(action.parameters)  # type: ignore[arg-type]
 
-            if action.action_type in {
+            elif action.action_type in {
                 ActionType.POWER_SHUTDOWN,
                 ActionType.POWER_RESTART,
                 ActionType.POWER_LOGOUT,
             }:
-                return await self._verify_power_transition(action.action_type)
+                check = await self._verify_power_transition(action.action_type)
 
-            if action.action_type == ActionType.WINDOW_CLOSE:
-                return await self._verify_window_close(action.parameters)  # type: ignore[arg-type]
+            elif action.action_type == ActionType.WINDOW_CLOSE:
+                check = await self._verify_window_close(action.parameters)  # type: ignore[arg-type]
 
-            if action.action_type == ActionType.DISK_UNMOUNT:
-                return await self._verify_disk_unmount(action.parameters)  # type: ignore[arg-type]
+            elif action.action_type == ActionType.DISK_UNMOUNT:
+                check = await self._verify_disk_unmount(action.parameters)  # type: ignore[arg-type]
 
-            if action.action_type == ActionType.SCHEDULE_DELETE:
-                return await self._verify_schedule_delete(action.parameters)  # type: ignore[arg-type]
+            elif action.action_type == ActionType.SCHEDULE_DELETE:
+                check = await self._verify_schedule_delete(action.parameters)  # type: ignore[arg-type]
 
-            # For most actions, success in execution = verified
-            # (process_list, clipboard_write, volume_set, etc. are self-verifying)
-            return True, "No additional verification needed for this action type"
+            else:
+                # The executor callback alone is not evidence of a state transition.
+                return True, "No independent postcondition for this action type", False
+
+            return check[0], check[1], True
 
         except Exception as e:
             logger.warning("Verification check failed: %s", e)
-            return False, f"Verification error: {e}"
+            return False, f"Verification error: {e}", False
 
     async def _verify_file_write(self, params: FileParams) -> tuple[bool, str]:
         from pathlib import Path
 
+        if not params.path:
+            raise ValueError("File write has no path to observe")
         p = Path(params.path)
         if not p.exists():
             return False, f"File does not exist after write: {params.path}"
@@ -235,6 +244,8 @@ class Verifier:
     async def _verify_file_delete(self, params: FileParams) -> tuple[bool, str]:
         from pathlib import Path
 
+        if not params.path:
+            raise ValueError("File delete has no path to observe")
         if Path(params.path).exists():
             return False, f"File still exists after delete: {params.path}"
         return True, "File successfully deleted"
@@ -242,8 +253,8 @@ class Verifier:
     async def _verify_file_copy(self, params: FileParams) -> tuple[bool, str]:
         from pathlib import Path
 
-        if not params.destination:
-            return True, "No destination to verify"
+        if not params.path or not params.destination:
+            raise ValueError("File copy has no source or destination to observe")
         if not Path(params.destination).exists():
             return False, f"Destination does not exist after copy: {params.destination}"
         return True, "Copy destination exists"
@@ -251,8 +262,8 @@ class Verifier:
     async def _verify_file_move(self, params: FileParams) -> tuple[bool, str]:
         from pathlib import Path
 
-        if not params.destination:
-            return True, "No destination to verify"
+        if not params.path or not params.destination:
+            raise ValueError("File move has no source or destination to observe")
         if not Path(params.destination).exists():
             return False, f"Destination does not exist after move: {params.destination}"
         if Path(params.path).exists():
@@ -262,6 +273,8 @@ class Verifier:
     async def _verify_package_install(self, params: PackageParams) -> tuple[bool, str]:
         from pilot.system.package_mgr import is_installed
 
+        if not params.name:
+            raise ValueError("Package install has no name to observe")
         if await is_installed(params.name):
             return True, f"Package {params.name} is installed"
         return False, f"Package {params.name} is not installed after install"
@@ -269,6 +282,8 @@ class Verifier:
     async def _verify_package_remove(self, params: PackageParams) -> tuple[bool, str]:
         from pilot.system.package_mgr import is_installed
 
+        if not params.name:
+            raise ValueError("Package remove has no name to observe")
         if not await is_installed(params.name):
             return True, f"Package {params.name} is removed"
         return False, f"Package {params.name} is still installed after remove"
@@ -276,6 +291,8 @@ class Verifier:
     async def _verify_service_running(self, params: ServiceParams) -> tuple[bool, str]:
         from pilot.system.systemctl import is_active
 
+        if not params.name:
+            raise ValueError("Service action has no name to observe")
         if await is_active(params.name, user_scope=params.user_scope):
             return True, f"Service {params.name} is active"
         return False, f"Service {params.name} is not active"
@@ -283,6 +300,8 @@ class Verifier:
     async def _verify_service_stopped(self, params: ServiceParams) -> tuple[bool, str]:
         from pilot.system.systemctl import is_active
 
+        if not params.name:
+            raise ValueError("Service stop has no name to observe")
         if not await is_active(params.name, user_scope=params.user_scope):
             return True, f"Service {params.name} is stopped"
         return False, f"Service {params.name} is still active after stop"
@@ -290,8 +309,8 @@ class Verifier:
     async def _verify_gnome_setting(self, params: GnomeSettingParams) -> tuple[bool, str]:
         from pilot.system.gnome import get_setting
 
-        if params.value is None:
-            return True, "No value to verify for read operation"
+        if not params.schema_id or not params.key or params.value is None:
+            raise ValueError("Setting write has no schema, key, or value to observe")
         actual = await get_setting(params.schema_id, params.key)
         expected = params.value.strip("'\"")
         actual_clean = actual.strip("'\"")
@@ -305,6 +324,8 @@ class Verifier:
         from pilot.actions import DownloadParams
 
         params: DownloadParams = result.action.parameters  # type: ignore[assignment]
+        if not params.output_path:
+            raise ValueError("Download has no output path to observe")
         if Path(params.output_path).exists():
             size = Path(params.output_path).stat().st_size
             return True, f"File downloaded: {params.output_path} ({size:,} bytes)"
@@ -314,7 +335,7 @@ class Verifier:
         from pilot.system.processes import process_exists
 
         if params.pid is None and not params.name:
-            return False, "Process kill has no PID or process name to observe"
+            raise ValueError("Process kill has no PID or process name to observe")
         if await process_exists(pid=params.pid, name=params.name):
             return False, f"Process is still running: {params.pid if params.pid is not None else params.name}"
         return True, f"Process is absent: {params.pid if params.pid is not None else params.name}"
@@ -332,7 +353,7 @@ class Verifier:
 
         target = params.window_id or params.title or params.process_name
         if not target:
-            return False, "Window close has no window selector to observe"
+            raise ValueError("Window close has no window selector to observe")
         if await window_exists(
             window_id=params.window_id,
             title=params.title,
@@ -346,7 +367,7 @@ class Verifier:
 
         target = params.mount_point or params.device
         if not target:
-            return False, "Disk unmount has no device or mount point to observe"
+            raise ValueError("Disk unmount has no device or mount point to observe")
         if await mount_exists(device=params.device, mount_point=params.mount_point):
             return False, f"Mount is still active: {target}"
         return True, f"Mount is absent: {target}"
@@ -356,7 +377,7 @@ class Verifier:
 
         target = params.task_id or params.name
         if not target:
-            return False, "Schedule delete has no task identifier to observe"
+            raise ValueError("Schedule delete has no task identifier to observe")
         if await schedule_exists(target):
             return False, f"Scheduled task still exists: {target}"
         return True, f"Scheduled task is absent: {target}"
