@@ -406,6 +406,11 @@ and 62/13/14 episode groups in train/validation/evaluation. This is one
 public dataset, not environment-disjoint Heliox data. The dataset card does
 not explicitly establish the pre/post-action timing of every screenshot, so
 adjacency alone cannot prove that the annotated action caused the change.
+The upstream [AgentNet release](https://huggingface.co/datasets/xlangai/AgentNet)
+describes state–action trajectories, but this probe omits its task instruction,
+action history, readable UI detail, and any separate post-action validation.
+Those missing conditions make many next screenshots ambiguous from a 16×16
+image and click alone; adding model capacity cannot fix missing causal context.
 
 `daemon/scripts/train_world_visual_transition.py` trained a residual linear
 predictor, a small residual MLP, and a spatial convolutional predictor on the
