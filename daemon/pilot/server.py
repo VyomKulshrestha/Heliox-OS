@@ -826,7 +826,9 @@ class PilotServer:
         self._executor.set_experience_ledger(self._experience_ledger)
         from pilot.security.risk_gate import get_risk_gate
 
-        self._executor.set_world_model_outcome_recorder(get_risk_gate().record_outcome)
+        gate = get_risk_gate()
+        gate.set_online_learner(self._online_learning)
+        self._executor.set_world_model_outcome_recorder(gate.record_outcome)
         # Import and warm the local system probe stack before readiness so the
         # first harmless status request does not pay lazy import/thread startup.
         from pilot.system.sysinfo import prepare_system_probes
@@ -2902,7 +2904,8 @@ class PilotServer:
             plan_has_tier3 = any(a.permission_tier == PermissionTier.DESTRUCTIVE for a in plan.actions)
             plan_has_irreversible = any(getattr(a, "is_irreversible", False) for a in plan.actions)
             plan_has_blockable_authority = plan_has_tier4 or plan_has_tier3 or plan_has_irreversible
-            risk_assessment = assess_plan_risk(plan, self.config)
+            invocation_source, scope_override = self._execution_scope_for_source(interaction_source)
+            risk_assessment = assess_plan_risk(plan, self.config, source=invocation_source.value)
             risk_score = risk_assessment.combined_score
             world_model_interrupt = risk_assessment.requires_confirmation
             await self._append_experience(
@@ -3181,8 +3184,6 @@ class PilotServer:
             action_idx = 0
             _total_actions = len(plan.actions)
             completed_results: list[Any] = []
-            invocation_source, scope_override = self._execution_scope_for_source(interaction_source)
-
             async def _on_action_start(
                 action: Any, _exec_phase: str = exec_phase, _total: int = _total_actions
             ) -> None:
