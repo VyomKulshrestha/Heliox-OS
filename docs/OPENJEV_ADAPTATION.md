@@ -495,6 +495,22 @@ independent, per-step expert authorization labels, so they were not mixed into
 the scope training split. More screen context alone does not repair the
 missing label quality or the measured false-allowance rate.
 
+A separate [2B semantic task-state head](../daemon/scripts/train_world_scope_semantic.py)
+then tested whether a stronger, frozen language representation could improve
+the adjacent world-model research head without shipping a large model. It fit
+only a small numeric classifier on 480 token-eligible expert-labeled public
+calls; 59 calibration and 542 test calls remained under the 768-token cap.
+It raised public test AUC to 0.867 and balanced accuracy to 0.775 at the
+default threshold, but still falsely allowed nine out-of-scope calls. The
+public-calibrated cautious threshold left three false allowances and 190 false
+warnings. On the previously inspected 60-case Heliox transfer, that threshold
+falsely allowed 18 of 30 out-of-scope actions. The strong transfer AUC does
+not rescue a threshold that shifts so badly across domains, and tuning on
+that inspected transfer would not be an independent fix. The [frozen
+summary](../daemon/benchmarks/world_scope_semantic_2b_v1.json) records coverage,
+metrics, and the local artifact hash. This head is **not** wired into the
+world model, companion, or permission gateway.
+
 ## Reproduction and release boundary
 
 The offline probes need `onnx`, `onnxruntime`, `pyarrow`, `tokenizers`,
