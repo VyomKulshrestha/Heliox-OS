@@ -82,7 +82,7 @@ LEARNABLE_ACTION_TYPE_ORDER = tuple(sorted(LEARNABLE_ACTION_TYPES, key=lambda ac
 IDX_ACTION_TYPE_BASE = IDX_FAMILY_BASE + len(FAMILY_ORDER)
 EMBEDDING_SIZE = IDX_ACTION_TYPE_BASE + len(LEARNABLE_ACTION_TYPE_ORDER)
 
-MODEL_VERSION = "risk-mlp-v3-calibrated"
+MODEL_VERSION = "risk-mlp-v4-heldout"
 
 
 @dataclass(frozen=True)

@@ -39,7 +39,7 @@ def test_public_proof_exposes_evidence_boundaries(tmp_path: Path) -> None:
     assert "result is intentionally linked rather than copied as “green”" in text
     assert "f2df192" in text
     assert "59/59 cases" in text
-    assert "36,000 training" in text
+    assert "25,200 training" in text
     assert "Event-loop responsiveness" in text
     assert latest_software_evidence in text
     assert "Subscription-backed planning" in text

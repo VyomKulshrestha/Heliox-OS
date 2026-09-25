@@ -160,10 +160,10 @@ class TestRiskGateStatusAndUpdate:
         assert result["status"] == "ok"
         assert result["enabled"] is True
         assert result["weights_loaded"] is True
-        assert result["model_version"] == "risk-mlp-v3-calibrated"
+        assert result["model_version"] == "risk-mlp-v4-heldout"
         assert result["calibrated"] is True
         assert result["validation_samples"] == 5_400
-        assert result["training_samples"] == 36_000
+        assert result["training_samples"] == 25_200
         assert result["learnable_action_types"]
 
     @pytest.mark.asyncio

@@ -88,8 +88,8 @@ def benchmark(iterations: int = 200) -> dict[str, Any]:
         "direction_checks_passed": sum(direction_checks.values()),
         "inference": summarize(timings_ms),
         "limitations": [
-            "Validation metrics are metadata saved during a stratified temporal holdout before the production refit.",
-            "The benchmark verifies shipped metadata and inference behavior; it does not recreate training.",
+            "Validation metrics are metadata for the exact saved weights on a stratified temporal holdout.",
+            "The benchmark verifies shipped metadata and inference behavior; it does not recreate the holdout.",
             "Only 12 learnable action types use these weights; deterministic rules remain authoritative for safety and broader coverage.",
             "The model predicts coarse disk/process effects, not the full physical world or user intent.",
         ],
