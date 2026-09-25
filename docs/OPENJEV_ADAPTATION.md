@@ -441,6 +441,18 @@ events do not prove the root cause. No shared-model weights or held-out metrics
 resulted. The small numeric task-state head above is the completed training
 experiment, and neither experiment changes runtime authority.
 
+A bounded diagnostic then followed [PyTorch's CUDA debugging
+guidance](https://docs.pytorch.org/docs/stable/notes/cuda.html) with
+`CUDA_LAUNCH_BLOCKING=1` and `PYTORCH_NO_CUDA_MEMORY_CACHING=1`. That
+[small run](../daemon/benchmarks/qwen_general_scope_gpu_debug_v5.json) finished
+56 eligible training rows and 27 eligible public scope test rows without a new
+driver event. Scope agreement remained **13/27** before and after training:
+all 14 out-of-scope calls were allowed. The diagnostic changed both execution
+settings and sample size, so it neither identifies the original CUDA root
+cause nor demonstrates useful transfer. The PyTorch peak-allocation counter
+was unavailable with caching disabled; its original zero reading must not be
+interpreted as zero GPU usage. No candidate from these runs was enabled.
+
 A controlled prompt change that explicitly evaluated concrete effects and
 partial task steps was tested on the **balanced 80-call calibration split**.
 Both it and the original prompt returned NO for every call (40 false warnings,

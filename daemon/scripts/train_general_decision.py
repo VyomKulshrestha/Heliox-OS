@@ -335,6 +335,8 @@ def run(args: argparse.Namespace) -> dict:
 
     report = {
         "model": MODEL, "revision": REVISION,
+        "diagnostic_environment": {name: os.environ.get(name) for name in (
+            "HF_HUB_OFFLINE", "CUDA_LAUNCH_BLOCKING", "PYTORCH_NO_CUDA_MEMORY_CACHING")},
         "dataset": DATASET, "dataset_revision": DATASET_REVISION, "dataset_config": DATASET_CONFIG,
         "dataset_manifests": manifests, "seed": args.seed,
         "selected_rows": limits, "evaluated_rows": {name: len(part) for name, part in encoded.items()},
@@ -350,7 +352,10 @@ def run(args: argparse.Namespace) -> dict:
         "trained_ood": metrics([item["row"] for item in encoded["ood"]], ood_logits, temperature),
         "adapter_sha256": hashlib.sha256((args.output_dir / "adapter/adapter_model.safetensors").read_bytes()).hexdigest(),
         "head_sha256": hashlib.sha256((args.output_dir / "head.npz").read_bytes()).hexdigest(),
-        "peak_vram_gib": round(max(prior_peak, torch.cuda.max_memory_allocated() / 1024**3), 3),
+        "peak_vram_gib": (None if os.environ.get("PYTORCH_NO_CUDA_MEMORY_CACHING") == "1"
+                          else round(max(prior_peak, torch.cuda.max_memory_allocated() / 1024**3), 3)),
+        "memory_note": ("PyTorch peak-allocation counter is unavailable with caching disabled"
+                        if os.environ.get("PYTORCH_NO_CUDA_MEMORY_CACHING") == "1" else None),
         "elapsed_seconds": round(elapsed_before + time.monotonic() - started, 1),
         "limitation": ("Public synthetic decisions plus expert-labeled security scope calls; "
                        "not Jev parity or Heliox execution authority." if scope_manifest else
