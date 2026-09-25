@@ -525,6 +525,21 @@ The [frozen cross-domain summary](../daemon/benchmarks/world_tool_scope_semantic
 therefore rejects this adapter too. Its promising single-domain score is not
 evidence that it generalizes to agent tool actions, and it has no runtime path.
 
+Training a [third, mixed-corpus offline head](../daemon/scripts/train_world_multicorpus_scope_semantic.py)
+on the TBAC validation and ScopeJudge training partitions improved the
+ScopeJudge test AUC to 0.855 while retaining 0.908 TBAC test AUC. The
+calibration choice balanced both corpus/class cells rather than allowing the
+rare ScopeJudge negatives to be swamped. Even so, its default threshold
+falsely allowed 10/29 ScopeJudge and 70/417 TBAC out-of-scope actions, plus
+3/30 on the previously inspected Heliox synthetic suite. The cautious
+threshold showed zero false allowances on these particular test rows but
+rejected 515/558 legitimate ScopeJudge actions and 484/518 legitimate TBAC
+tools. That does not demonstrate a viable controller. The official tests were
+outside fitting and calibration, but earlier test results guided the decision
+to mix corpora; this is adaptive research rather than a new blind benchmark.
+The [frozen mixed-corpus summary](../daemon/benchmarks/world_multicorpus_scope_v1.json)
+and local artifact hash preserve the result. It remains offline only.
+
 ## Reproduction and release boundary
 
 The offline probes need `onnx`, `onnxruntime`, `pyarrow`, `tokenizers`,
