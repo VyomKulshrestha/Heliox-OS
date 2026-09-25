@@ -431,6 +431,16 @@ offline training result, **not** a promoted world-model capability, Jev parity,
 or live desktop safety evidence. The small numeric head artifacts remain in
 ignored local benchmark state; the linked reports contain their hashes.
 
+A further GPU attempt with the existing shared Qwen3-0.6B decision trainer
+combined licensed Open-Jev general-decision rows and ScopeJudge labels. It
+[failed during baseline inference](../daemon/benchmarks/qwen_general_scope_gpu_attempt_v4.json)
+at row 29, before any gradient or optimizer step, with a CUDA illegal
+instruction. Windows recorded `nvlddmkm` events 13 and 153 at that time.
+This repeats a GPU stability symptom seen in the larger earlier attempts; the
+events do not prove the root cause. No shared-model weights or held-out metrics
+resulted. The small numeric task-state head above is the completed training
+experiment, and neither experiment changes runtime authority.
+
 A controlled prompt change that explicitly evaluated concrete effects and
 partial task steps was tested on the **balanced 80-call calibration split**.
 Both it and the original prompt returned NO for every call (40 false warnings,
