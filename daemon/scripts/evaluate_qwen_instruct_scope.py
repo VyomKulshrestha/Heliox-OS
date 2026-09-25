@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import time
 from pathlib import Path
@@ -122,6 +123,8 @@ def main() -> None:
         raise FileExistsError(f"Checkpoint exists at {partial}; pass --resume")
     rows = load_partial(partial, identity, cases) if partial.exists() else []
 
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
     import torch
     from transformers import AutoTokenizer, Qwen3_5ForCausalLM
 
