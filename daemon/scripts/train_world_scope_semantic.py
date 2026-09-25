@@ -64,11 +64,13 @@ def select_head(train: np.ndarray, train_labels: np.ndarray,
     return selected[2], threshold, [{"C": item[1], "calibration_auc": item[0]} for item in trials]
 
 
-def feature_identity(cases, max_length: int) -> str:
+def feature_identity(cases, max_length: int, batch_size: int = 1) -> str:
     identity = {"model": MODEL_ID, "revision": MODEL_REVISION,
                 "prompt_sha256": hashlib.sha256(SYSTEM_PROMPT.encode()).hexdigest(),
                 "max_length": max_length,
                 "cases": [(case.id, case.request, case.action, case.in_scope) for case in cases]}
+    if batch_size != 1:
+        identity["batch_size"] = batch_size
     return hashlib.sha256(json.dumps(identity, ensure_ascii=False).encode()).hexdigest()
 
 
@@ -107,18 +109,56 @@ def load_feature_checkpoint(path: Path, identity: str, cases) -> tuple[int, int,
     return processed, overlong, indices, vectors, targets
 
 
-def embed_cases(model, tokenizer, cases, max_length: int, label: str,
-                checkpoint_path: Path | None = None) -> tuple[np.ndarray, np.ndarray, int]:
+def embed_batch(model, token_ids: list, pad_token_id: int) -> list[np.ndarray]:
     import torch
 
+    lengths = [len(ids) for ids in token_ids]
+    device = next(model.parameters()).device
+    input_ids = torch.full((len(token_ids), max(lengths)), pad_token_id,
+                           dtype=torch.long, device=device)
+    attention_mask = torch.zeros_like(input_ids)
+    for row, ids in enumerate(token_ids):
+        input_ids[row, :len(ids)] = ids.to(device)
+        attention_mask[row, :len(ids)] = 1
+    hidden = model.model(input_ids=input_ids, attention_mask=attention_mask,
+                         use_cache=False, return_dict=True).last_hidden_state
+    selected = hidden[torch.arange(len(lengths), device=device),
+                      torch.tensor(lengths, device=device) - 1]
+    if not torch.isfinite(selected).all():
+        raise FloatingPointError("Nonfinite semantic representation")
+    return [vector.float().cpu().numpy() for vector in selected]
+
+
+def embed_cases(model, tokenizer, cases, max_length: int, label: str,
+                checkpoint_path: Path | None = None,
+                batch_size: int = 1) -> tuple[np.ndarray, np.ndarray, int]:
+    import torch
+
+    if batch_size < 1:
+        raise ValueError("batch_size must be positive")
+    pad_token_id = tokenizer.pad_token_id
+    if pad_token_id is None:
+        raise ValueError("Tokenizer has no pad token")
     cases = tuple(cases)
-    identity = feature_identity(cases, max_length) if checkpoint_path else None
+    identity = feature_identity(cases, max_length, batch_size) if checkpoint_path else None
     processed, overlong, indices, vectors, targets = (
         load_feature_checkpoint(checkpoint_path, identity, cases) if checkpoint_path
         else (0, 0, [], [], []))
     if processed:
         print(json.dumps({"event": "resumed", "split": label, "rows": processed,
                           "total": len(cases), "overlong": overlong}), flush=True)
+    pending_ids, pending_indices = [], []
+
+    def flush() -> None:
+        if pending_ids:
+            for row, vector in zip(pending_indices,
+                                   embed_batch(model, pending_ids, pad_token_id), strict=True):
+                vectors.append(vector)
+                targets.append(cases[row - 1].in_scope)
+                indices.append(row)
+            pending_ids.clear()
+            pending_indices.clear()
+
     with torch.inference_mode():
         for index in range(processed + 1, len(cases) + 1):
             case = cases[index - 1]
@@ -129,13 +169,12 @@ def embed_cases(model, tokenizer, cases, max_length: int, label: str,
             if encoded["input_ids"].shape[1] > max_length:
                 overlong += 1
             else:
-                hidden = model.model(input_ids=encoded["input_ids"].to("cuda"),
-                                     use_cache=False, return_dict=True).last_hidden_state[0, -1]
-                if not torch.isfinite(hidden).all():
-                    raise FloatingPointError(f"Nonfinite semantic representation in {label} row {index}")
-                vectors.append(hidden.float().cpu().numpy())
-                targets.append(case.in_scope)
-                indices.append(index)
+                pending_ids.append(encoded["input_ids"][0])
+                pending_indices.append(index)
+                if len(pending_ids) == batch_size:
+                    flush()
+            if index % 100 == 0 or index == len(cases):
+                flush()
             if checkpoint_path and (index % 100 == 0 or index == len(cases)):
                 save_feature_checkpoint(checkpoint_path, identity, index, overlong,
                                         indices, vectors, targets)
