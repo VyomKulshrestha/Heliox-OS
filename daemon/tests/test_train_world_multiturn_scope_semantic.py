@@ -2,8 +2,10 @@
 
 import json
 
+import numpy as np
+
 from benchmarks.jev_scope_suite import ScopeCase
-from scripts.train_world_multiturn_scope_semantic import split_agentic
+from scripts.train_world_multiturn_scope_semantic import select_head, split_agentic
 
 
 def test_split_agentic_keeps_repeated_seed_task_together(tmp_path):
@@ -20,3 +22,15 @@ def test_split_agentic_keeps_repeated_seed_task_together(tmp_path):
     train_tasks = {tasks[int(case.id)] for case in train}
     calibration_tasks = {tasks[int(case.id)] for case in calibration}
     assert not train_tasks & calibration_tasks
+
+
+def test_three_domain_head_calibrates_against_each_negative_group():
+    domains = ("agentic", "tbac", "scope")
+    train = np.asarray([[-2.0], [-1.0], [1.0], [2.0]] * len(domains))
+    labels = {name: np.asarray([False, False, True, True]) for name in domains}
+    calibration = {name: np.asarray([[-1.5], [-0.5], [0.5], [1.5]])
+                   for name in domains}
+    head, threshold, trials = select_head(train, labels, calibration, labels, domains)
+    assert len(trials) == 4
+    assert all(np.all(head.predict_proba(calibration[name])[:2, 1] < threshold)
+               for name in domains)

@@ -30,7 +30,11 @@ from scripts.train_world_scope_semantic import (
     metrics,
     normalize,
 )
-from scripts.train_world_tool_scope_semantic import DATASET_HASHES, load_cases
+from scripts.train_world_tool_scope_semantic import (
+    DATASET_HASHES,
+    load_cases,
+    split_validation,
+)
 
 AGENTIC_VALIDATION_SHA256 = "2fd100bcc5973792d1fa35e4309eeb30a6dfb7543f14201db0f2015b295261a8"
 DOMAINS = ("agentic", "scope")
@@ -53,25 +57,26 @@ def split_agentic(cases, source: Path) -> tuple[tuple, tuple, set[str]]:
 
 
 def select_head(train: np.ndarray, train_labels: dict[str, np.ndarray],
-                calibration: dict[str, np.ndarray], calibration_labels: dict[str, np.ndarray]):
-    targets = np.concatenate([train_labels[name] for name in DOMAINS])
+                calibration: dict[str, np.ndarray], calibration_labels: dict[str, np.ndarray],
+                domains: tuple[str, ...] = DOMAINS):
+    targets = np.concatenate([train_labels[name] for name in domains])
     size = len(targets)
     weights = []
-    for name in DOMAINS:
+    for name in domains:
         labels = train_labels[name]
         if len(np.unique(labels)) != 2:
             raise ValueError(f"{name} training requires both classes")
         positive = int(np.sum(labels))
         negative = len(labels) - positive
-        weights.extend(np.where(labels, size / (4 * positive),
-                                size / (4 * negative)).tolist())
+        weights.extend(np.where(labels, size / (2 * len(domains) * positive),
+                                size / (2 * len(domains) * negative)).tolist())
     trials = []
     for penalty in REGULARIZATION:
         head = LogisticRegression(C=penalty, max_iter=1000)
         head.fit(train, targets, sample_weight=np.asarray(weights))
-        scores = {name: head.predict_proba(calibration[name])[:, 1] for name in DOMAINS}
+        scores = {name: head.predict_proba(calibration[name])[:, 1] for name in domains}
         auc = {name: float(roc_auc_score(calibration_labels[name], scores[name]))
-               for name in DOMAINS}
+               for name in domains}
         trials.append((min(auc.values()), sum(auc.values()) / len(auc), penalty,
                        head, scores, auc))
     selected = max(trials, key=lambda item: (item[0], item[1], -item[2]))
@@ -89,6 +94,7 @@ def main() -> None:
     parser.add_argument("--scopejudge-path", type=Path, required=True)
     parser.add_argument("--max-length", type=int, default=1024)
     parser.add_argument("--batch-size", type=int, default=4)
+    parser.add_argument("--include-tbac-validation", action="store_true")
     parser.add_argument("--feature-dir", type=Path,
                         default=state / "world_multiturn_features_v2")
     parser.add_argument("--artifact", type=Path,
@@ -110,6 +116,15 @@ def main() -> None:
         raise ValueError("Agentic validation and official test seed tasks overlap")
     tbac_test = load_cases(args.dataset_dir / "test.json", DATASET_HASHES["test"],
                            "tbac_test")
+    tbac_partitions = {}
+    if args.include_tbac_validation:
+        tbac_val = load_cases(args.dataset_dir / "validation.json",
+                              DATASET_HASHES["validation"], "tbac_validation")
+        tbac_partitions["tbac_train"], tbac_partitions["tbac_calibration"] = (
+            split_validation(tbac_val))
+        if (val_tasks != {case.request for case in tbac_val} or
+                val_tasks & {case.request for case in tbac_test}):
+            raise ValueError("TBAC and dialogue seed-task partitions do not align")
     scope, manifests = {}, {}
     for name in ("scope_train", "scope_calibration", "scope_test"):
         scope[name], manifests[name] = scopejudge_cases(args.scopejudge_path, name)
@@ -121,8 +136,9 @@ def main() -> None:
             ("scope_calibration", "scope_test"))):
         raise ValueError("ScopeJudge trajectories overlap")
     cases = {"agentic_train": agentic_train, "agentic_calibration": agentic_calibration,
-             "agentic_test": agentic_test, "tbac_test": tbac_test, **scope,
+             "agentic_test": agentic_test, "tbac_test": tbac_test, **tbac_partitions, **scope,
              "heliox": tuple(HELIOX_CASES)}
+    domains = ("agentic", "tbac", "scope") if args.include_tbac_validation else DOMAINS
 
     import torch
     from transformers import AutoTokenizer, Qwen3_5ForCausalLM
@@ -145,13 +161,13 @@ def main() -> None:
             checkpoint_path=args.feature_dir / f"{name}.npz",
             batch_size=args.batch_size)
     del model
-    features["train"] = np.vstack((features["agentic_train"], features["scope_train"]))
+    features["train"] = np.vstack([features[f"{name}_train"] for name in domains])
     normalized, mean, scale = normalize(features)
     head, threshold, trials = select_head(
         normalized["train"],
-        {name: labels[f"{name}_train"] for name in DOMAINS},
-        {name: normalized[f"{name}_calibration"] for name in DOMAINS},
-        {name: labels[f"{name}_calibration"] for name in DOMAINS})
+        {name: labels[f"{name}_train"] for name in domains},
+        {name: normalized[f"{name}_calibration"] for name in domains},
+        {name: labels[f"{name}_calibration"] for name in domains}, domains)
     args.artifact.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(args.artifact, weights=head.coef_.astype(np.float32),
                         bias=head.intercept_.astype(np.float32), mean=mean.astype(np.float32),
@@ -160,13 +176,15 @@ def main() -> None:
     scores = {name: head.predict_proba(values)[:, 1] for name, values in normalized.items()
               if name != "train"}
     report = {
-        "purpose": "research_only_multiturn_world_task_state_head",
+        "purpose": "research_only_multidomain_world_task_state_head",
         "model": MODEL_ID, "revision": MODEL_REVISION,
         "prompt_sha256": hashlib.sha256(SYSTEM_PROMPT.encode()).hexdigest(),
         "agentic": {"url": "https://github.com/outshift-open/tbac-research-datasets",
                     "revision": DATASET_REVISION,
                     "validation_sha256": AGENTIC_VALIDATION_SHA256,
                     "test_sha256": AGENTIC_TEST_SHA256},
+        "tbac": {"sha256": DATASET_HASHES, "validation_in_training": args.include_tbac_validation},
+        "domains": list(domains),
         "scopejudge": manifests["scope_train"], "max_length": args.max_length,
         "batch_size": args.batch_size,
         "rows": {name: len(part) for name, part in cases.items()},
@@ -176,8 +194,8 @@ def main() -> None:
         "selected_C": float(head.C), "calibration_threshold": threshold,
         "metrics": {name: {"default": metrics(labels[name], scores[name], 0.5),
                            "cautious": metrics(labels[name], scores[name], threshold)}
-                    for name in ("agentic_calibration", "scope_calibration",
-                                 "agentic_test", "tbac_test", "scope_test", "heliox")},
+                    for name in tuple(f"{domain}_calibration" for domain in domains) +
+                    ("agentic_test", "tbac_test", "scope_test", "heliox")},
         "artifact_sha256": hashlib.sha256(args.artifact.read_bytes()).hexdigest(),
         "limitation": "Generated dialogue relevance and public expert scope are not live "
                       "authorization evidence, Jev parity, or permission to execute.",
