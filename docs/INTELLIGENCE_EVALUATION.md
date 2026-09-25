@@ -133,6 +133,29 @@ results.
 
 ## Hybrid world model
 
+The shipped OS-impact head predicts coarse disk/process changes, not whether
+an arbitrary proposed tool call fulfills a user's task. Its stored temporal
+validation covers 5,400 samples across 12 action types; the benchmark checks
+the saved evidence and direction invariants, not fresh Jev-style reasoning.
+
+A separate **research-only GPU task-state head** was retrained from frozen
+Qwen3.5-2B features on the pinned agentic, TBAC, ScopeJudge, and When2Call
+training splits. On the held-out When2Call test it reached 70/100, with 14
+false allowances and 16 false warnings; on the previously inspected 60-case
+Heliox probe it reached 46/60. A calibration threshold that removed false
+allowances rejected all 50 valid When2Call actions. This head is **not loaded
+by the daemon** or used as permission evidence. It does not establish Jev
+parity or world-model transition fidelity. Reproduce the experiment from
+`daemon/` with `scripts/train_world_multidomain_mlp.py`, the pinned feature
+checkpoints, and fresh artifact/report paths; the private local replay report
+is not a shipped benchmark.
+
+The separate River transition-reliability learner now requires an executed,
+non-dry-run action plus a matching independently observed postcondition before
+it accepts a training label. Existing ledger verification events lack the
+per-action observation field and are not retroactively relabeled from executor
+callbacks. This learner remains advisory and needs new validated outcome data.
+
 The shipped structured predictor remains available without learned weights.
 An optional UI-JEPA artifact loads only when finite tensor shapes and its exact
 ordered `ActionType` vocabulary match the running build. Gating additionally
