@@ -685,6 +685,20 @@ development diagnostics and did not repair this failure. The
 pins the CUDA reports and local weight hashes. This is a narrow, selected
 research improvement, not a live model, robust theme transfer, or Jev parity.
 
+A subsequent development run added a separate dark-theme fit/validation
+archive while keeping the primary light evaluation partition isolated. A
+per-example transition-scale loss was tested at powers 0, 0.5, 0.75, and 1;
+0.75 was selected after inspecting the earlier same-app diagnostics. With
+weights then frozen, two newly captured 20-pair sets gave correct-action
+weighted MSE of **0.34786** (light) and **0.00352** (dark), versus unchanged
+baselines of **1.65705** and **0.00601**. The paired alternative action was
+worse in **20/20** groups for each appearance, at **2.01022** and **0.00414**
+respectively. The [mixed-appearance evidence](../daemon/benchmarks/world_visual_multitheme_probe_v1.json)
+pins data, model, and transfer-report hashes. The two actions, one app, shared
+layout family, and tiny dark error margin make this a bounded development
+check—not independent GUI transfer, a calibrated execution gate, or Jev parity.
+No learned weights were promoted.
+
 To repeat with fresh ignored output paths, start the local Vite UI with
 `tauri-app/ui/node_modules/.bin/vite.cmd --host 127.0.0.1 --port 1420`, then
 from `daemon` run `python -m scripts.collect_heliox_ui_transitions --help`,

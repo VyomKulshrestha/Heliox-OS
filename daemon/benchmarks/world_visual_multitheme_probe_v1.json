@@ -1,0 +1,45 @@
+{
+  "study": "development-selected mixed-appearance visual transition model with later frozen same-app checks",
+  "date": "2026-09-26",
+  "device": "NVIDIA GeForce RTX 4060 Laptop GPU",
+  "model": {
+    "architecture": "spatial_global",
+    "transition_scale_power": 0.75,
+    "light_fit_features_sha256": "f996b69c315c8dffb3b99dae049f9810b67af3247dd5086da085386ce39c4462",
+    "dark_fit_features_sha256": "c8339b6c264079be1ef59e4b391d8f554cf0f6a6e9b57ec3fa05bcbf92e2a9a7",
+    "dark_source_report_sha256": "5dba2299d00a8f55b0c9b26564b2254d8b621de0c98f978e75ea28cf4e3b8c59",
+    "train_validation_eval_rows": [160, 40, 24],
+    "eval_source": "Primary light-theme archive only; the additional dark archive contributed fit and validation rows, not eval rows.",
+    "model_report_sha256": "047c35db2076a3ee3e2f180e0b1c8c72308b5d95ac5218f7e9a1899e4d5fbb20",
+    "weights_sha256": "dac5f1eb87ae14489e02ee1a9285e1a6f14984ee8a92c0c4aead5f1751703ddb"
+  },
+  "selection_history": "Scale powers 0, 0.5, 0.75, and 1 were inspected on earlier same-app light/dark evaluations. The 0.75 candidate was frozen before two new 20-pair evaluation archives were collected. This is development selection, not an independent environment-blind benchmark.",
+  "fresh_light": {
+    "feature_sha256": "62fef0a10d8583a36a4e32ea92e8ea962662692978311533f24b76a798e7c701",
+    "source_report_sha256": "680c95cc72f247fa5ed39185c871a42d926031d26d2e1366a3c9ecc7d59b527c",
+    "transfer_report_sha256": "0c3ad40616984b85fbccfdbef1e710608b2bccb65c1d034fb6ad422ac09ef8e0",
+    "rows": 40,
+    "paired_groups": 20,
+    "weighted_mse": {
+      "correct_action": 0.34786338040786025,
+      "paired_alternative_action": 2.0102211358478534,
+      "unchanged_state": 1.6570473318241603
+    },
+    "correct_action_pair_wins": 20
+  },
+  "fresh_dark": {
+    "feature_sha256": "01ebff87d26e1862713f5d2f4d52f8e891e39c252ef084e3c86e3406686d71bb",
+    "source_report_sha256": "43d482e651a899cac4dffb2561108dfbc7c11a0d03f9131024030481e59bea21",
+    "transfer_report_sha256": "9d1148e2c396aa0d93f317682f4711238ffe725c99359a6d1faa8861fc38dac6",
+    "rows": 40,
+    "paired_groups": 20,
+    "weighted_mse": {
+      "correct_action": 0.003515971301804389,
+      "paired_alternative_action": 0.004137913311433039,
+      "unchanged_state": 0.0060097313607072505
+    },
+    "correct_action_pair_wins": 20
+  },
+  "capture_note": "Fresh headless browser storage; same-origin HTTP and WebSocket restrictions; decorative canvas and telemetry hidden; no raw screenshots retained. The earlier dark fit report used the split-basis label viewport_family_and_theme even though that particular capture was dark for all six families; the collector label was corrected afterward. Its rows remained viewport-family partitioned.",
+  "interpretation": "One app and two deterministic navigation choices show an action-conditioned signal across light and dark appearances under small viewport variations. The 20 groups in each fresh set are not independent applications or tasks. This does not validate multi-step planning, open-world desktop transfer, calibrated uncertainty, safe execution, or Jev parity. Research weights remain ignored local files and are not loaded into the live UiJepaPredictor."
+}

@@ -1430,6 +1430,13 @@ action-swap control is motivated by action-conditioned consistency work such as
 [ACPC](https://arxiv.org/abs/2608.12939); it does not implement that paper's
 full evaluation protocol or establish Jev parity.
 
+The later [mixed-appearance probe](../daemon/benchmarks/world_visual_multitheme_probe_v1.json)
+fit light and dark observations with scale-normalized transition loss. A
+frozen candidate beat unchanged-screen and paired swapped-action controls on
+two fresh 20-pair light/dark captures of Heliox's own navigation UI. That is
+a narrow one-app result; no real desktop or unseen application was tested,
+and the weights remain incompatible with the live predictor and unpromoted.
+
 The offline probes need `onnx`, `onnxruntime`, `pyarrow`, `tokenizers`,
 `huggingface_hub`, NumPy, SciPy, and scikit-learn. They use cached model/data
 snapshots and do not silently fetch a model during scoring. The Open-Jev data
