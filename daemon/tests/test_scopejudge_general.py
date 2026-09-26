@@ -107,3 +107,28 @@ def test_balanced_trajectory_split_is_deterministic_and_disjoint() -> None:
         name: [row["id"] for row in rows] for name, rows in second.items()}
     assert all(any(row["target"][1] for row in rows) and
                any(not row["target"][1] for row in rows) for rows in first.values())
+
+
+def test_group_diverse_sampling_does_not_let_one_trajectory_fill_a_class() -> None:
+    examples = [ExternalCase(f"group-{group}:{index}:call", "Review", "Read", index == 0)
+                for group in range(10) for index in range(2)]
+    examples += [ExternalCase(f"group-0:{index}:call", "Review", "Inspect", False)
+                 for index in range(2, 50)]
+    selected = balanced_cases(examples, 20, 9, group_diverse=True)
+    assert len(selected) == 20
+    assert len({case.case_id.split(":", 1)[0] for case in selected if not case.in_scope}) == 10
+
+
+def test_diverse_trajectory_split_is_deterministic_and_disjoint() -> None:
+    limits = {"scope_train": 12, "scope_calibration": 4, "scope_test": 100}
+    first = split_cases(cases(), seed=19, limits=limits, strategy="diverse_trajectory_v3")
+    second = split_cases(cases(), seed=19, limits=limits, strategy="diverse_trajectory_v3")
+    reordered = split_cases(list(reversed(cases())), seed=19, limits=limits,
+                            strategy="diverse_trajectory_v3")
+    verify_disjoint(first)
+    assert {name: [row["id"] for row in rows] for name, rows in first.items()} == {
+        name: [row["id"] for row in rows] for name, rows in second.items()}
+    assert {name: [row["id"] for row in rows] for name, rows in first.items()} == {
+        name: [row["id"] for row in rows] for name, rows in reordered.items()}
+    assert {name: len(rows) for name, rows in first.items()} == {
+        "scope_train": 12, "scope_calibration": 4, "scope_test": 8}
