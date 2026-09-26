@@ -669,6 +669,22 @@ pins the local feature, report, and weight hashes. These research weights are
 not compatible with or loaded by the live `UiJepaPredictor`; no promotion or
 Jev-parity claim follows from this experiment.
 
+The original spatial research model placed click coordinates only in a small
+local hotspot. Its shallow convolutional stack could not convey that location
+to distant screen regions. A separate `spatial_global` variant also broadcasts
+normalized x/y across the feature map. On the same 24 light-theme Heliox eval
+rows, correct-action weighted MSE fell from **0.59339** to **0.10659**; swapping
+the two actions from the exact same starting screen raised it to **2.35744**.
+A frozen model on a second seed of the controlled pages scored **0.00313**
+correct versus **0.07256** with the paired alternative action. However, the
+Heliox dark-theme transfer remained a severe failure: **2.22222** correct
+versus **0.00599** for leaving the screen unchanged. A coordinate-only linear
+head, paired-ranking loss, and photometric augmentation were also tried as
+development diagnostics and did not repair this failure. The
+[global-action evidence record](../daemon/benchmarks/world_visual_global_action_probe_v1.json)
+pins the CUDA reports and local weight hashes. This is a narrow, selected
+research improvement, not a live model, robust theme transfer, or Jev parity.
+
 To repeat with fresh ignored output paths, start the local Vite UI with
 `tauri-app/ui/node_modules/.bin/vite.cmd --host 127.0.0.1 --port 1420`, then
 from `daemon` run `python -m scripts.collect_heliox_ui_transitions --help`,

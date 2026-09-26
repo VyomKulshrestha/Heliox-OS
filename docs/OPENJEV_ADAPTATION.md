@@ -1420,6 +1420,16 @@ the diff remains observation rather than permission to replay an effect.
 
 ## Reproduction and release boundary
 
+The later [global action-location probe](../daemon/benchmarks/world_visual_global_action_probe_v1.json)
+fixed a receptive-field weakness in the separate 16×16 visual research model:
+broadcasting click coordinates made same-screen navigation choices distinguishable
+on held-out light-theme Heliox layouts and on a second seed of generated pages.
+Its frozen dark-theme error was far worse than an unchanged-screen baseline,
+so the research weights remain local and are not loaded into Heliox. The paired
+action-swap control is motivated by action-conditioned consistency work such as
+[ACPC](https://arxiv.org/abs/2608.12939); it does not implement that paper's
+full evaluation protocol or establish Jev parity.
+
 The offline probes need `onnx`, `onnxruntime`, `pyarrow`, `tokenizers`,
 `huggingface_hub`, NumPy, SciPy, and scikit-learn. They use cached model/data
 snapshots and do not silently fetch a model during scoring. The Open-Jev data

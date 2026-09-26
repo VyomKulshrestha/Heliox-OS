@@ -1,0 +1,52 @@
+{
+  "study": "exploratory action-location conditioning of a 16x16 research visual transition model",
+  "date": "2026-09-26",
+  "device": "NVIDIA GeForce RTX 4060 Laptop GPU",
+  "model_change": "The spatial_global architecture broadcasts normalized x/y action coordinates over every spatial cell in addition to the existing local click locus and action type. It does not change the live UiJepaPredictor.",
+  "heliox_light_ui": {
+    "source_features_sha256": "f996b69c315c8dffb3b99dae049f9810b67af3247dd5086da085386ce39c4462",
+    "eval_rows": 24,
+    "eval_groups": 12,
+    "split_basis": "viewport_family_within_one_app",
+    "weighted_mse": {
+      "local_locus_only_correct": 0.5933899637631144,
+      "global_coordinates_correct": 0.10658823954477918,
+      "global_coordinates_swapped_paired_action": 2.357435573244862,
+      "global_coordinates_no_action": 1.244972894413144,
+      "unchanged_state": 1.6580015190896027
+    },
+    "local_baseline_report_sha256": "dfa8a0c9fc410ba6ebf0b5955f80a84ae31781225953bf87718a6d8c71de065c",
+    "global_report_sha256": "e832678e945d27bbecf949ce4e0a5858cda99103c8bb99c9d863f9bf5f982274",
+    "global_weights_sha256": "dfc1dcb6e7daca356eb2073489fc051e40e1427911ce07b2a3fd97e74853d2ca"
+  },
+  "controlled_page_second_seed": {
+    "target_features_sha256": "6301a0969a7d8c82bc3e24613103db847f147b5ab390145b1303bfa7347320dc",
+    "target_rows": 40,
+    "target_groups": 20,
+    "weighted_mse": {
+      "frozen_correct_action": 0.0031264307532903497,
+      "frozen_swapped_paired_action": 0.07255545255194278,
+      "frozen_no_action": 0.061683505715898715,
+      "unchanged_state": 0.05808674338005535
+    },
+    "source_model_report_sha256": "f4be02150a4e8d6138481a4e1c42e8cdc4b0ee25b51213725a5426f21748fd76",
+    "source_weights_sha256": "253ae8a7cfdb28d744705928bc80578ab42a8e21804c66733dab0e292c30fb45",
+    "transfer_report_sha256": "bf8d5a166d0356535fd9dfa8dba50015fa66db09857b33af4aebe266f7c4319a"
+  },
+  "dark_theme_failure": {
+    "target_features_sha256": "8fcb1c4d9161feb53a38014587308b3aeaa4fa7608c81b793554d8bcc370204c",
+    "target_rows": 16,
+    "weighted_mse": {
+      "frozen_global_correct_action": 2.2222182339248064,
+      "frozen_global_swapped_paired_action": 2.1095383123028597,
+      "unchanged_state": 0.005987894579073831
+    },
+    "transfer_report_sha256": "ad903ffc8fb3f1f5528cf8ad7da3cf06d43c0e67fba69560c498a0b5f2016106"
+  },
+  "rejected_development_trials": {
+    "simple_coordinate_linear": "On controlled pairs, correct-action weighted MSE 0.03835 was worse than action-ablated 0.03292.",
+    "paired_ranking_loss": "On Heliox light eval, correct-action weighted MSE 0.59354 and swapped 0.59341 were essentially indistinguishable.",
+    "photometric_augmentation": "On the 16-row dark transfer diagnostic, correct-action weighted MSE rose to 1.10563 against unchanged-state 0.00599."
+  },
+  "interpretation": "Broadcast coordinates fix a receptive-field limitation and show action sensitivity in two small same-environment studies. The severe appearance-shift failure rejects runtime promotion. These development-selected checks are not independent application transfer, multi-step world modeling, safety validation, or Jev parity. Weights remain ignored local research artifacts."
+}
