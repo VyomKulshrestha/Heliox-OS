@@ -103,6 +103,33 @@ def choose_literal_match(prompt: str) -> str:
     return "0"
 
 
+def choose_metadata_rules(prompt: str) -> str:
+    """MiniWoB-only symbolic baseline from control type, color, and relative size."""
+    goal = prompt.split("\nGoal: ", 1)[1].split("\nControls: ", 1)[0].casefold()
+    controls = json.loads(prompt.split("\nControls: ", 1)[1].split("\nIndex:", 1)[0])
+    remaining = controls
+    for field, predicate in (
+        ("letter", lambda c: c["tag"] == "text" and str(c["label"]).isalpha()),
+        ("number", lambda c: c["tag"] == "text" and str(c["label"]).isdigit()),
+        ("shape", lambda c: c["tag"] in {"rect", "circle", "polygon"}),
+    ):
+        if re.search(rf"\b{field}\b", goal):
+            matches = [control for control in remaining if predicate(control)]
+            if matches:
+                remaining = matches
+    colors = [control for control in remaining
+              if isinstance(control.get("declared_color"), str)
+              and control["declared_color"].strip()
+              and re.search(rf"(?<!\w){re.escape(control['declared_color'].casefold())}(?!\w)", goal)]
+    if colors:
+        remaining = colors
+    for size, select in (("small", min), ("large", max)):
+        if re.search(rf"\b{size}\b", goal):
+            height = select(int(control["height"]) for control in remaining)
+            remaining = [control for control in remaining if int(control["height"]) == height]
+    return str(remaining[0]["index"])
+
+
 def evaluate(rows: list[dict], split: str, choose: Callable[[str], str]) -> dict:
     groups: dict[str, list[dict]] = defaultdict(list)
     for row in rows:
