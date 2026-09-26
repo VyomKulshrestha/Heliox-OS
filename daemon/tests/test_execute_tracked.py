@@ -538,6 +538,7 @@ async def test_handle_execute_approved_success_reports_verified_outcome():
                 passed=True,
                 details=["Action 0 (browser_navigate): VERIFIED"],
                 failed_actions=[],
+                independently_observed_actions=[0],
             )
 
     plan = ActionPlan(
@@ -561,6 +562,7 @@ async def test_handle_execute_approved_success_reports_verified_outcome():
     assert result["status"] == "success"
     assert result["verification"]["passed"] is True
     assert result["message"] == "opened"
+    assert server._recent_companion_context_by_session["default"].startswith("Previous request: open example.com\nExecution result:")
     assert sum('"method": "confirm_required"' in message for message in ws.sent) == 1
     assert [method for method, _ in server.test_broadcasts].count("task_complete") == 1
 
@@ -1458,7 +1460,11 @@ async def test_mismatched_local_plan_revises_to_one_approved_truthful_result(
     class _Verifier:
         async def verify(self, plan, results):
             assert [result.action.action_type for result in results] == [corrected.action_type]
-            return VerificationResult(passed=True, details=["Observed action verified"])
+            return VerificationResult(
+                passed=True,
+                details=["Observed action verified"],
+                independently_observed_actions=[0],
+            )
 
     class _Companion:
         async def review(self, user_input, plan, *, screen_context=""):

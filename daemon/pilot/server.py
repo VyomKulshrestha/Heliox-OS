@@ -3517,7 +3517,7 @@ class PilotServer:
                 message = success_message(plan, results, verification, dry_run=dry_run)
                 self._recent_companion_context_by_session[chat_session_id] = (
                     f"Previous request: {_sanitize_summary(user_input, limit=300)}\n"
-                    f"Verified result: {_sanitize_summary(message, limit=700)}"
+                    f"Execution result: {_sanitize_summary(message, limit=700)}"
                 )
                 await _emit_task_complete("success", message)
 
@@ -3786,13 +3786,13 @@ class PilotServer:
                 if chat_session_id:
                     self._recent_companion_context_by_session[chat_session_id] = (
                         f"Previous request: {_sanitize_summary(user_input, limit=300)}\n"
-                        f"Verified result: {_sanitize_summary(result_text, limit=300)}\n"
+                        f"Execution result: {_sanitize_summary(result_text, limit=300)}\n"
                         f"Companion next ideas: {' | '.join(follow_up.suggestions)}"
                     )
                 else:
                     self._recent_companion_context = (
                         f"Previous request: {_sanitize_summary(user_input, limit=300)}\n"
-                        f"Verified result: {_sanitize_summary(result_text, limit=300)}\n"
+                        f"Execution result: {_sanitize_summary(result_text, limit=300)}\n"
                         f"Companion next ideas: {' | '.join(follow_up.suggestions)}"
                     )
 
