@@ -68,6 +68,9 @@ def main() -> None:
             or feature_report["manifest_sha256"] != manifest_hash
             or feature_report["features_sha256"] != feature_hash):
         raise ValueError("Frozen feature provenance differs from selection")
+    input_view = feature_report.get("input_view", "post_action")
+    if input_view not in {"post_action", "pre_action"}:
+        raise ValueError("Unknown frozen outcome input view")
     with np.load(args.features, allow_pickle=False) as saved:
         if saved["signature"].item() != feature_report["signature"]:
             raise ValueError("Frozen feature signature differs from report")
@@ -104,7 +107,8 @@ def main() -> None:
                         cautious_threshold=cautious, manifest_sha256=manifest_hash,
                         feature_sha256=feature_hash)
     report = {
-        "purpose": "agentnet_post_action_outcome_development_only",
+        "purpose": ("agentnet_pre_action_effect_development_only" if input_view == "pre_action"
+                    else "agentnet_post_action_outcome_development_only"),
         "label_provenance": manifest["label_provenance"],
         "source_sha256": SOURCE_SHA256, "manifest_sha256": manifest_hash,
         "feature_sha256": feature_hash, "regularization_C": strength,
@@ -117,6 +121,8 @@ def main() -> None:
         "final_and_ood_labels_opened": False,
         "limitation": "Model-reflector outcomes, not human-verified action safety; research only.",
     }
+    if input_view == "pre_action":
+        report["input_view"] = input_view
     args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({"regularization_C": strength,
                       "development_default": report["development_default"],
