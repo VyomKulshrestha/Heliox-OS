@@ -143,6 +143,12 @@ def _features(texts: list[str], *, dimension: int) -> np.ndarray:
     return vectorizer.transform(_NODE_ID.sub(" ", text) for text in texts).toarray().astype(np.float32)
 
 
+def _state_digests(texts: list[str]) -> np.ndarray:
+    """Keep exact pre-action identity without retaining the raw page tree."""
+    return np.stack([np.frombuffer(hashlib.sha256(text.encode("utf-8")).digest(), dtype=np.uint8)
+                     for text in texts])
+
+
 def _state_connected_labels(states: np.ndarray, groups: np.ndarray) -> np.ndarray:
     """Label whole trajectories connected by identical pre-action features."""
     unique = sorted(set(groups.tolist()))
@@ -208,10 +214,11 @@ def _load_checkpoint(
         pages_done = int(data["pages_done"].item())
         if not 0 <= pages_done <= len(offsets):
             raise ValueError("Invalid WebWorld checkpoint progress")
-        if "action_path" not in data.files:
-            raise ValueError("WebWorld checkpoint predates path features; use a fresh checkpoint")
+        if "action_path" not in data.files or "state_digest" not in data.files:
+            raise ValueError("WebWorld checkpoint predates exact pre-state identity; use a fresh checkpoint")
         arrays = {key: data[key].copy() for key in
-                  ("state", "target", "action_type", "action_bound", "action_path", "group")}
+                  ("state", "target", "action_type", "action_bound", "action_path",
+                   "state_digest", "group")}
         exclusions = Counter(json.loads(str(data["exclusions"].item())))
         bound_rows = int(data["bound_rows"].item())
     count = len(arrays["group"])
@@ -219,6 +226,8 @@ def _load_checkpoint(
             or arrays["action_type"].shape != (count, 256)
             or arrays["action_bound"].shape != (count, 256)
             or arrays["action_path"].shape != (count, 256)
+            or arrays["state_digest"].shape != (count, 32)
+            or arrays["state_digest"].dtype != np.uint8
             or not 0 <= bound_rows <= count):
         raise ValueError("Invalid WebWorld checkpoint features")
     return pages_done, arrays, exclusions, bound_rows
@@ -275,6 +284,7 @@ def main() -> None:
             "action_type": np.empty((0, 256), dtype=np.float32),
             "action_bound": np.empty((0, 256), dtype=np.float32),
             "action_path": np.empty((0, 256), dtype=np.float32),
+            "state_digest": np.empty((0, 32), dtype=np.uint8),
             "group": np.empty(0, dtype=np.int32),
         }
     for page_index in range(pages_done, len(offsets)):
@@ -307,6 +317,7 @@ def main() -> None:
                 ),
                 "action_bound": _features(action_bound, dimension=256),
                 "action_path": _features(action_path, dimension=256),
+                "state_digest": _state_digests([row[1] for row in records]),
                 "group": np.asarray([row[0] for row in records], dtype=np.int32),
             }
             arrays = {key: np.concatenate((arrays[key], values)) for key, values in page_arrays.items()}
@@ -345,6 +356,7 @@ def main() -> None:
         "pages": args.pages, "page_length": args.page_length, "offsets": offsets,
         "transition_rows": len(arrays["group"]), "trajectories": len(set(arrays["group"])),
         "state_connected_components": component_count,
+        "exact_prestate_identity": "sha256_of_raw_pre_action_tree",
         "bound_action_rows": bound_rows,
         "path_augmented_rows": int(np.any(arrays["action_path"] != arrays["action_bound"], axis=1).sum()),
         "splits": dict(Counter(splits)),

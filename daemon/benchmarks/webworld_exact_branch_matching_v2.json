@@ -1,0 +1,42 @@
+{
+  "purpose": "research_only_exact_accessibility_tree_branch_diagnostic",
+  "dataset": "Qwen/WebWorldData",
+  "dataset_revision": "e108c5f8e35445c9ddff71cde2a5b1fc4db4020c",
+  "declared_license": "apache-2.0",
+  "local_features_sha256": "336a5e64464feff31ec9c75fdd6c86f70956cefaa469d997feb9639bb51e2729",
+  "device": "NVIDIA GeForce RTX 4060 Laptop GPU; CUDA with PyTorch 2.6.0+cu124",
+  "archive_comparison": "All 2271 state, target, action_type, action_bound, action_path, group, and split rows are identical to the previous archive. Only raw-tree SHA-256 identities were added.",
+  "feature_equivalent_pairs": {"train": 54, "validation": 13, "eval": 26},
+  "exact_raw_tree_pairs": {"train": 26, "validation": 5, "eval": 9},
+  "protocol": "Fixed 80 epochs, 30 within-type permutations, three seeds, original validation weighted-MSE checkpoint selection, optional paired matching weight 0.1. The comparison keeps all model inputs and evaluation rows fixed and changes only pair identity and paired-training membership.",
+  "evaluation": [
+    {
+      "seed": 20260926,
+      "type_only_pair_wins": 0,
+      "flat_pair_wins": [4, 4],
+      "flat_weighted_mse": [0.0016053281939435859, 0.00161319058899334],
+      "path_pair_wins": [6, 5],
+      "path_weighted_mse": [0.00160576791336607, 0.00161330604891289]
+    },
+    {
+      "seed": 123,
+      "type_only_pair_wins": 0,
+      "flat_pair_wins": [2, 3],
+      "flat_weighted_mse": [0.0015984577986059658, 0.00161658574428379],
+      "path_pair_wins": [6, 3],
+      "path_weighted_mse": [0.00158704718345207, 0.00159573483013774]
+    },
+    {
+      "seed": 456,
+      "type_only_pair_wins": 0,
+      "flat_pair_wins": [5, 5],
+      "flat_weighted_mse": [0.001580002957784834, 0.001585013881438],
+      "path_pair_wins": [6, 6],
+      "path_weighted_mse": [0.00157667497156938, 0.00157812118441579]
+    }
+  ],
+  "array_order": "[original reconstruction objective, reconstruction plus exact-tree paired matching loss]",
+  "validation": "Only five exact-tree validation pairs remain. Paired-loss training did not increase validation wins for either action representation in any seed.",
+  "decision": "Do not promote. Exact-tree correction removes most apparent branches, and paired-loss training increases overall held-out weighted MSE in all six matched comparisons without consistent branch gains.",
+  "limitations": "Identical raw accessibility trees can still have different hidden browser state or history. Pair observations are not verified simultaneous alternative actions, are few and dependent, and do not establish site-disjoint transfer. No live desktop, safety, autonomy, or Jev-parity evidence. All feature and weight artifacts remain ignored local research files."
+}

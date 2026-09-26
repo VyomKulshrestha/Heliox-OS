@@ -1492,6 +1492,19 @@ are **feature-equivalent pairs**, not verified same-screen counterfactuals.
 This negative result leaves the live world model unchanged and unpromoted;
 more GPU time alone does not resolve the supervision gap.
 
+An [exact-tree identity recheck](../daemon/benchmarks/webworld_exact_branch_matching_v2.json)
+found that the earlier hashed-feature grouping overstated branch evidence:
+only 26/54 training, 5/13 validation, and 9/26 evaluation pairs shared the
+exact raw pre-action accessibility tree. All original model inputs, targets,
+trajectory groups, and split labels were identical; only SHA-256 pre-state
+identities were added. On the nine exact-tree evaluation pairs, type-only tied
+all, and target/path heads won 2–6 depending on seed. Training with the
+corrected 26 pairs still increased overall held-out error in all six matched
+target/path comparisons, with no validation win gain. Even exact tree equality
+does not establish shared hidden browser state or simultaneous alternative
+actions. The earlier feature-pair result is retained as an alias-contaminated
+diagnostic, not evidence for promotion.
+
 The offline probes need `onnx`, `onnxruntime`, `pyarrow`, `tokenizers`,
 `huggingface_hub`, NumPy, SciPy, and scikit-learn. They use cached model/data
 snapshots and do not silently fetch a model during scoring. The Open-Jev data
