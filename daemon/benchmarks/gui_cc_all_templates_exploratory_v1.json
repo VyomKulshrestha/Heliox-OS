@@ -1,0 +1,21 @@
+{
+  "purpose": "exploratory_gui_transition_training_scale_check_after_small_subset_failure",
+  "dataset": "minuzero/GUI-CC",
+  "revision": "758a5bcf4093ba4111a2cc882632eb47423130d1",
+  "offline_samples_sha256": "8f7f54cde40ba2bdebffe30d55ba89796adf470be61dcbaa07295f8e48596313",
+  "selection": "Take the last row for each distinct task_meta in source order. This 62-template expansion was chosen after the 18-template pilot failed action-location grounding; it is exploratory, not an independent confirmation.",
+  "sample_ids": [
+    "084", "088", "013", "073", "031", "081", "095", "051", "063", "064",
+    "096", "120", "115", "135", "186", "173", "172", "187", "133", "140",
+    "188", "170", "191", "179", "174", "178", "192", "305", "310", "309",
+    "312", "311", "241", "284", "256", "279", "341", "315", "317", "340",
+    "322", "336", "344", "355", "346", "370", "436", "420", "424", "460",
+    "458", "464", "459", "434", "427", "418", "462", "499", "493", "495",
+    "483", "500"
+  ],
+  "grouping": "casefolded_task_meta",
+  "split_seed": 20260926,
+  "license": "CC-BY-4.0 offline track; research probe only",
+  "limits": "One trajectory per available template; raw images stay ignored locally. Derived 16x16 grayscale features are not a full GUI world model.",
+  "promotion": "none"
+}
