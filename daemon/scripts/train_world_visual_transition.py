@@ -160,6 +160,8 @@ def main() -> None:
     parser.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
     parser.add_argument("--disable-cudnn", action="store_true")
     parser.add_argument("--architecture", choices=("linear", "mlp", "spatial"), default="linear")
+    parser.add_argument("--train-without-action", action="store_true",
+                        help="Fit a matched state-only baseline with action inputs zeroed")
     parser.add_argument("--epochs", type=int, default=80)
     parser.add_argument("--action-permutations", type=int, default=10)
     parser.add_argument("--seed", type=int, default=20260926)
@@ -214,7 +216,8 @@ def main() -> None:
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=0.02)
 
     def predict(partition: dict, *, ablate_action: bool = False):
-        action = torch.zeros_like(partition["action"]) if ablate_action else partition["action"]
+        action = (torch.zeros_like(partition["action"])
+                  if ablate_action or args.train_without_action else partition["action"])
         if args.architecture == "spatial":
             state_image = partition["state"].reshape(-1, 1, 16, 16)
             y, x = torch.meshgrid(torch.arange(16, device=device),
@@ -293,6 +296,7 @@ def main() -> None:
         "features_sha256": source_hash,
         "source_kind": "encrypted_local_recordings" if recorded_store else "pinned_feature_archive",
         "device": str(device), "architecture": args.architecture,
+        "trained_without_action": args.train_without_action,
         "torch_version": torch.__version__, "cudnn_enabled": torch.backends.cudnn.enabled,
         "seed": args.seed, "selected_epoch": best_epoch,
         "action_permutations": args.action_permutations,

@@ -39,8 +39,11 @@ def _metadata(path: Path) -> dict[str, dict]:
     if path.stat().st_size > 2 * 1024 * 1024:
         raise ValueError("Metadata exceeds the bounded read limit")
     records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    if any(not isinstance(record, dict) for record in records):
+        raise ValueError("Metadata rows must be objects")
     ids = [record.get("sample_id") for record in records]
-    if len(records) > 1000 or len(ids) != len(set(ids)):
+    if (len(records) > 1000 or any(not isinstance(identifier, str) for identifier in ids)
+            or len(ids) != len(set(ids))):
         raise ValueError("Metadata has too many or duplicate sample IDs")
     return dict(zip(ids, records))
 
@@ -51,15 +54,17 @@ def import_pairs(root: Path, selection: dict) -> tuple[list[dict], Counter, str]
         raise ValueError("Offline metadata does not match the frozen selection")
     sample_ids = selection["sample_ids"]
     if (not isinstance(sample_ids, list) or not 3 <= len(sample_ids) <= 100
-            or len(set(sample_ids)) != len(sample_ids)
             or any(not isinstance(sample, str) or re.fullmatch(r"[0-9]{3}", sample) is None
-                   for sample in sample_ids)):
+                   for sample in sample_ids)
+            or len(set(sample_ids)) != len(sample_ids)):
         raise ValueError("Selection must contain distinct bounded sample IDs")
     metadata = _metadata(metadata_path)
     rows: list[dict] = []
     reasons: Counter = Counter()
     reference_hashes = []
     for sample in sample_ids:
+        if sample not in metadata:
+            raise ValueError(f"Selected sample {sample} is missing from metadata")
         record = metadata[sample]
         task = record.get("task_meta")
         step_count = record.get("n_steps")
