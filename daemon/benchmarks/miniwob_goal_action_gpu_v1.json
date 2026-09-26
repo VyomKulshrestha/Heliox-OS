@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "purpose": "research_only_goal_conditioned_miniwob_first_action_probe",
+  "source": {
+    "repository": "https://github.com/Farama-Foundation/MiniWoB-plusplus",
+    "commit": "33c3b4ddef8c6eb67c57a29663d844b1eda7e614",
+    "license": "MIT",
+    "collector": "daemon/scripts/collect_miniwob_reward_actions.py",
+    "raw_rows_location": "daemon/benchmarks/.bench-state (ignored; not shipped)"
+  },
+  "hardware": {
+    "gpu": "NVIDIA GeForce RTX 4060 Laptop GPU",
+    "driver": "617.14",
+    "torch": "2.6.0+cu124",
+    "device": "cuda:0"
+  },
+  "protocol": {
+    "split_basis": "MiniWoB task family",
+    "action_label": "Observed positive or negative terminal reward from a fresh reset of the same measured prestate",
+    "selection": "Retain only groups with both terminal reward classes",
+    "model_input": "Visible goal, candidate text/type/role/geometry/CSS colors; no reward labels or screenshots in prompts",
+    "cross_split_identical_16x16_prestates": 0,
+    "metric": "Groups where the selected first action has observed positive terminal reward"
+  },
+  "runs": [
+    {
+      "name": "shape_holdout_exploratory",
+      "rows_sha256": "2460f8ed98f07b41a2e7964901c3777ec60c8eb3b39f59490516c0314ef7255e",
+      "train_tasks": ["click-button", "click-link", "click-widget"],
+      "validation_tasks": ["click-test-2"],
+      "eval_tasks": ["click-shape"],
+      "rows": {"train": 98, "validation": 20, "eval": 107},
+      "groups": {"train": 26, "validation": 10, "eval": 12},
+      "eval_correct_of_12": {
+        "random_expected": 4.12,
+        "literal_match_baseline": 4,
+        "qwen3_0_6b_frozen_zero_shot": 7,
+        "qwen3_0_6b_frozen_head": 5,
+        "qwen3_5_2b_frozen_zero_shot": 9
+      },
+      "finding": "The larger frozen model exceeds literal matching on an inspected synthetic shape holdout. The trained 0.6B head overfits validation and underperforms its frozen base."
+    },
+    {
+      "name": "color_holdout_exploratory",
+      "rows_sha256": "f524fea793affcc7fe5219dbe9835f122edc87117069f265fa55bc7dacb4b5b7",
+      "train_tasks": ["click-button", "click-link", "click-widget", "click-shape"],
+      "validation_tasks": ["click-test-2"],
+      "eval_tasks": ["click-color"],
+      "rows": {"train": 240, "validation": 20, "eval": 48},
+      "groups": {"train": 43, "validation": 10, "eval": 12},
+      "eval_correct_of_12": {
+        "random_expected": 3,
+        "literal_match_baseline": 12,
+        "qwen3_0_6b_frozen_zero_shot": 6,
+        "qwen3_0_6b_frozen_head": 9,
+        "qwen3_5_2b_frozen_zero_shot": 12
+      },
+      "frozen_head": {
+        "base_model": "Qwen/Qwen3-0.6B",
+        "selected_l2_penalty": 1.0,
+        "validation_correct_of_10": 10,
+        "weights_sha256": "e59e2a0cf01d5abd26ec187b20ec27ae32a50e03f10de8704d14694e8f545550"
+      },
+      "finding": "The 2B model matches a literal color-name baseline, so 12/12 is not evidence of learned visual world dynamics or Jev-like reasoning. The trained 0.6B head improves over its frozen base but remains below literal matching."
+    }
+  ],
+  "model_revisions": {
+    "Qwen/Qwen3-0.6B": "c1899de289a04d12100db370d81485cdf75e47ca",
+    "Qwen/Qwen3.5-2B": "15852e8c16360a2fea060d615a32b45270f8a8fc"
+  },
+  "limitations": [
+    "Synthetic one-step browser controls, not multi-step execution, real desktop transfer, physical-world prediction, safety, or Jev parity.",
+    "Task families and representations were explored before these small holdouts; neither run is a preregistered independent benchmark.",
+    "The color goal and control metadata expose exact matching names, as demonstrated by the 12/12 no-model baseline.",
+    "The selected contrastive groups do not estimate unbiased success on all generated MiniWoB episodes.",
+    "No Jev responses were used as training labels; the reward head is research-only and is not integrated into Heliox's action authority."
+  ],
+  "promoted_to_runtime": false
+}
