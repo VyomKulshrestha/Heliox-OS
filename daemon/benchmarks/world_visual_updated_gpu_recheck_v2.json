@@ -1,0 +1,22 @@
+{
+  "study": "fresh-seed action-grounding recheck after GPU update",
+  "date": "2026-09-26",
+  "device": "NVIDIA GeForce RTX 4060 Laptop GPU",
+  "dataset": "TESS AgentNet pinned episode-disjoint feature archive",
+  "source_features_sha256": "221b0bc5b98023224770d84e6de603285789b8898da4d4a759770aeb0074214c",
+  "architecture": "spatial_global",
+  "seed": 20260927,
+  "selected_epoch": 54,
+  "training_rows": 707,
+  "validation_rows": 110,
+  "evaluation_rows": 151,
+  "weighted_mse": {
+    "correct_action": 0.11325473668607448,
+    "shuffled_action": 0.11105112158792387,
+    "shuffled_location_same_action": 0.11085768328968779,
+    "unchanged_state": 0.14099680569305215
+  },
+  "local_report_sha256": "3d9fa5650a663b42ac8ee79f0a391e141c23c89e56b035792b7afcdcafb07baf",
+  "local_weights_sha256": "c5e6f6a2377c77c0d305f421da96888b6f0e6b5bab1a13153341d7b240c4aefa",
+  "decision": "No promotion. Shuffled actions outperform correct actions on held-out episodes. A successful CUDA run does not establish action grounding, general desktop transfer, or Jev parity. The report and weights stay in ignored local bench-state paths."
+}

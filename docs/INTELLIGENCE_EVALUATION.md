@@ -710,6 +710,13 @@ pins both local reports and weights. Thus the local paired-page gain does not
 establish broad action conditioning: the public data either fail or weakly
 support the action-shuffle control, and lack verified same-screen alternatives.
 
+After the GPU update, a new-seed CUDA fit on the same pinned TESS split still
+failed the action-shuffle control: correct-action weighted MSE was **0.11325**
+versus **0.11105** for shuffled actions on 151 held-out episode rows. This
+confirms the training path runs, not that the model understands the action.
+The [updated-GPU recheck](../daemon/benchmarks/world_visual_updated_gpu_recheck_v2.json)
+pins the ignored local report and weight hashes; no weights were promoted.
+
 To repeat with fresh ignored output paths, start the local Vite UI with
 `tauri-app/ui/node_modules/.bin/vite.cmd --host 127.0.0.1 --port 1420`, then
 from `daemon` run `python -m scripts.collect_heliox_ui_transitions --help`,
