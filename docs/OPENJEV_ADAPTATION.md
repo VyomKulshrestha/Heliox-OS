@@ -219,6 +219,17 @@ or permutation robustness. The variant remains local and disabled. See its
 [permutation](../daemon/benchmarks/qwen_general_full_options_permuted_v1.json),
 and [control permutation](../daemon/benchmarks/qwen_general_v1_permuted_control.json).
 
+A [binary calibration probe](../daemon/benchmarks/qwen_general_v2_binary_calibration_v1.json)
+used 58 public Noul calibration rows to choose a threshold before scoring a
+disjoint 67-row OOD slice. Moving from the frozen default 0.5 threshold to
+the calibration-selected 0.453 raised OOD balanced accuracy from **0.577 to
+0.655** and accuracy from **48/67 to 50/67**. But false positives increased
+from **7 to 8**, and the 50/67 accuracy only matched the label-blind "no"
+baseline on that slice. This is evidence of some ranking signal, not a
+generalized or safe decision policy; no Heliox threshold was changed. The
+[frozen diagnostic](../daemon/benchmarks/qwen_general_v2_binary_diagnostics.json)
+also records the uncalibrated confusion breakdown.
+
 The next planned multi-task run adds the
 [MIT-licensed ScopeJudge](https://github.com/dreadnode/scopejudge) expert labels
 to the public general questions, keeping complete security trajectories
