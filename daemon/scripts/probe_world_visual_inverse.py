@@ -13,7 +13,14 @@ from pathlib import Path
 
 import numpy as np
 
-from scripts.train_world_visual_transition import load_features
+from scripts.train_world_visual_transition import feature_shape, load_features
+
+
+def inverse_features(partition: dict[str, np.ndarray], *, state_only: bool) -> np.ndarray:
+    """Use the same input width for the observed-transition and state-only fits."""
+    state = partition["state"]
+    delta = np.zeros_like(state) if state_only else partition["target"] - state
+    return np.concatenate((state, delta), axis=1)
 
 
 def score_inverse(
@@ -41,12 +48,16 @@ def main() -> None:
     parser.add_argument("--source-report", type=Path, required=True)
     parser.add_argument("--report", type=Path, required=True)
     parser.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
+    parser.add_argument("--train-without-after", action="store_true",
+                        help="Fit a matched before-screen-only baseline")
     parser.add_argument("--epochs", type=int, default=60)
     parser.add_argument("--seed", type=int, default=20260926)
     args = parser.parse_args()
     if args.report.exists() or args.epochs < 1 or not args.report.parent.exists():
         parser.error("Use a fresh report path in an existing directory and positive epochs")
     rows = load_features(args.features, args.source_report)
+    shape = feature_shape(args.source_report)
+    dimension = int(np.prod(shape))
 
     import torch
     from torch import nn
@@ -57,8 +68,7 @@ def main() -> None:
     device = torch.device("cuda:0" if args.device == "cuda" else "cpu")
     arrays = {}
     for split, partition in rows.items():
-        features = np.concatenate((partition["state"],
-                                   partition["target"] - partition["state"]), axis=1)
+        features = inverse_features(partition, state_only=args.train_without_after)
         arrays[split] = {
             "features": torch.from_numpy(features).to(device),
             "type": torch.from_numpy(np.argmax(partition["action"][:, :9], axis=1)).long().to(device),
@@ -67,7 +77,7 @@ def main() -> None:
     counts = torch.bincount(arrays["train"]["type"], minlength=9).float()
     weights = torch.where(counts > 0, counts.clamp_min(1).rsqrt(), 0).to(device)
     majority = int(torch.argmax(counts).item())
-    model = nn.Sequential(nn.Linear(512, 128), nn.GELU(), nn.Linear(128, 11)).to(device)
+    model = nn.Sequential(nn.Linear(dimension * 2, 128), nn.GELU(), nn.Linear(128, 11)).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=0.02)
 
     def loss_for(batch: dict) -> torch.Tensor:
@@ -112,10 +122,11 @@ def main() -> None:
             "features_sha256"
         ],
         "device": str(device), "seed": args.seed, "selected_epoch": best_epoch,
+        "feature_shape": list(shape), "trained_without_after": args.train_without_after,
         "training_action_counts": {str(index): int(count) for index, count in enumerate(counts.tolist())
                                    if count},
         "scores": scores,
-        "limitation": "Small inverse classifier on 16x16 grayscale features. Not a joint "
+        "limitation": f"Small inverse classifier on {shape} visual features. Not a joint "
                       "forward/inverse model, a real desktop result, or a production artifact.",
     }
     args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
