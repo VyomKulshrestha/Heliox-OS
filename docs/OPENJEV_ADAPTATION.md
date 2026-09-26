@@ -1400,6 +1400,14 @@ correction is narrower: terminal responses now distinguish executor-reported
 effects from independently verified postconditions without changing policy,
 approvals, or the verifier.
 
+After the GPU update, a bounded [eight-action CUDA recheck](../daemon/benchmarks/agentnet_postrestart_gpu_recheck_v1.json)
+reloaded the pinned Qwen3.5-2B backbone and reproduced the earlier frozen
+features exactly, with 3.588 GiB peak allocated VRAM. These were reused fit
+cases, so this checks the GPU execution path only, not accuracy or sustained
+stability. The browser runtime also no longer repeats a successful click,
+submission, type, or selection merely because the DOM snapshot is unchanged;
+the diff remains observation rather than permission to replay an effect.
+
 ## Reproduction and release boundary
 
 The offline probes need `onnx`, `onnxruntime`, `pyarrow`, `tokenizers`,

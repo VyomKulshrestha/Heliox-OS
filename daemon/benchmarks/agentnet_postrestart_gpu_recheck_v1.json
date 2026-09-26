@@ -1,0 +1,20 @@
+{
+  "purpose": "bounded_post_gpu_update_frozen_feature_reproduction",
+  "model": "Qwen/Qwen3.5-2B",
+  "revision": "15852e8c16360a2fea060d615a32b45270f8a8fc",
+  "source_sha256": "8e24c5a5a1ef5a5113755b33ed12164fc37ce8fbbd35d1c7dba81bf950d53d00",
+  "case_selection": "first_8_case_ids_in_agentnet_outcome_selection_v1.json",
+  "input_view": "post_action",
+  "rows": 8,
+  "max_input_tokens": 661,
+  "feature_dim": 2048,
+  "features_sha256": "72d77bd091e4f7a2b9333bd51bb79519767330017772108599832680df9448f2",
+  "peak_allocated_vram_gib": 3.588,
+  "comparison": {
+    "reference": "first_8_rows_of_agentnet_outcome_features_v1.npz",
+    "case_ids_identical": true,
+    "all_features_finite": true,
+    "max_absolute_feature_difference": 0.0
+  },
+  "limitations": "These cases and their features were already used in the previous fit. This is a hardware-path reproduction, not a fresh accuracy, sustained-stability, live-desktop, or Jev-parity result. No research head is enabled in Heliox."
+}
