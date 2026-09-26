@@ -37,14 +37,15 @@
   },
   "one_prior_call": {
     "status": "incomplete_no_held_out_metrics",
-    "last_checkpoint_row": 368,
+    "last_checkpoint_row": 416,
     "total_training_rows": 756,
-    "checkpoint_sha256": "4dc35392f9e9ef1546299f5eba856dd210f5635c1ef7eb5923964f713c2a5d40",
+    "checkpoint_sha256": "9f968da70ae32d8df1fcc08b1ec5e0a5786ac1547f5ec9f6d078d523c49b1376",
     "checkpoint_tensors_finite": true,
     "diagnostics": [
       "Native CUDA illegal instruction interrupted training after the row-368 checkpoint; Windows logged nvlddmkm events 13 and 153.",
       "An exact native resume failed in the next training group with a device-side assertion; a WSL CUDA resume failed in the same group with an illegal instruction.",
       "The failing group contains both long scope prompts and a short general-decision prompt; the trace does not identify a root-cause input.",
+      "A post-restart native run with CUDA_LAUNCH_BLOCKING=1, PYTORCH_NO_CUDA_MEMORY_CACHING=1, and four-row checkpoints passed the earlier failing group and reached row 416, then failed in native PyTorch/CUDA while Windows logged fresh nvlddmkm events 13 and 153. The row-416 checkpoint contains 904 finite tensors. Disabling caching did not resolve the fault; a deterministic bad row is less likely but not ruled out.",
       "No test, OOD, or ScopeJudge metrics exist for this incomplete arm."
     ]
   },
@@ -63,5 +64,5 @@
     "history_arm_scope_test_rows_retaining_history": 622,
     "model_trained_or_evaluated_on_v2": false
   },
-  "conclusion": "The larger context comparison has no completed history result. Overall control agreement hides 19/23 false allowances. The GPU update did not eliminate native or WSL faults. Neither arm is suitable for runtime approvals or evidence of Jev parity."
+  "conclusion": "The larger context comparison has no completed history result. Overall control agreement hides 19/23 false allowances. GPU driver 617.14, native CUDA, WSL CUDA, and a native no-caching debug run have not provided a stable completion path. Neither arm is suitable for runtime approvals or evidence of Jev parity."
 }

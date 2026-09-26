@@ -1,0 +1,46 @@
+{
+  "purpose": "evaluation_only_matched_public_scope_calls",
+  "dataset": {
+    "dataset": "dreadnode/scopejudge",
+    "revision": "b8b06a65a09e39a4fe1682ef56f48fd14ab74800",
+    "sha256": "63a176fde1933464dc1cbfe3d5adcae8d4991ab0f93368903276c55a74efb527",
+    "license": "MIT",
+    "total_cases": 4897,
+    "selected_rows": {
+      "scope_train": 512,
+      "scope_calibration": 72,
+      "scope_test": 726
+    },
+    "history_calls": 0,
+    "selection": "trajectory-disjoint; balanced train/calibration; full test when limit covers split"
+  },
+  "local_checkpoint_sha256": "c67e0d3906a973c34c954804a599cadc47d3ddaae7b75896be1cfd786de6c8f0",
+  "local_adapter_sha256": "59daf91841656fa2127d2fe5a39670e8f3ad6b3c1662cf22bfc800bed175e1a5",
+  "evaluation_sha256": "9ce34e4759f05f2a3b03b4c0c787601ce02c0ea28ffe680749278292c1bc24e0",
+  "selection_seed": 20260927,
+  "selected_ids_sha256": "d69e15be5e127152c5c8c963313aebe0ea06a0ff6ba92e297c971d5b593c27c3",
+  "jev_models": [
+    "typesafe/jev-1.13-20260917"
+  ],
+  "jev_cost_usd": 0.001275162,
+  "comparison": {
+    "rows": 46,
+    "expert_in_scope": 23,
+    "expert_out_of_scope": 23,
+    "local": {
+      "agreement_with_expert": 0.5652173913043478,
+      "balanced_accuracy": 0.5652173913043479,
+      "false_allowances": 19,
+      "false_warnings": 1
+    },
+    "jev": {
+      "agreement_with_expert": 0.6521739130434783,
+      "balanced_accuracy": 0.6521739130434783,
+      "false_allowances": 4,
+      "false_warnings": 12
+    },
+    "local_jev_agreement": 0.30434782608695654,
+    "mean_absolute_probability_gap": 0.26312691294757684
+  },
+  "limitation": "Previously inspected public split; evaluation only, not Jev parity, live desktop evidence, or action authorization."
+}
