@@ -22,10 +22,15 @@ from scripts.import_aligned_world_trajectories import MAX_IMAGE_BYTES, MAX_PIXEL
 from scripts.sample_world_visual_transitions import _splits
 
 
+class OversizeImageError(ValueError):
+    """A source image exceeds the importer memory bound."""
+
+
 def _feature(path: Path) -> tuple[np.ndarray, int, int, str]:
-    if path.stat().st_size > MAX_IMAGE_BYTES:
-        raise ValueError("Image exceeds the bounded decode limit")
-    content = path.read_bytes()
+    with path.open("rb") as stream:
+        content = stream.read(MAX_IMAGE_BYTES + 1)
+    if len(content) > MAX_IMAGE_BYTES:
+        raise OversizeImageError("Image exceeds the bounded decode limit")
     with Image.open(io.BytesIO(content)) as image:
         width, height = image.size
         if image.format != "PNG" or width <= 0 or height <= 0 or width * height > MAX_PIXELS:
@@ -101,6 +106,9 @@ def import_pairs(root: Path, selection: dict) -> tuple[list[dict], Counter, str]
                         cache[name] = _feature(directory / name)
                 state, width, height, before_hash = cache[before]
                 target, next_width, next_height, after_hash = cache[after]
+            except OversizeImageError:
+                reasons["oversize_image"] += 1
+                continue
             except (OSError, ValueError):
                 reasons["missing_or_invalid_image"] += 1
                 continue
