@@ -641,6 +641,42 @@ simple generated button effects across held-out layout families, **not**
 general GUI or desktop-world prediction. The public GUI-CC tests above still
 fail their action-shuffle control; no learned weights are promoted.
 
+### Paired transitions in Heliox's own browser UI
+
+The [local UI collector](../daemon/scripts/collect_heliox_ui_transitions.py)
+resets a fresh headless Heliox session before each Dashboard or Settings click,
+checks the selected tab, and requires exact equality of the two 16×16
+pre-action features and distinct outcomes. Decorative canvases and live header
+telemetry are hidden only for capture stability; raw screenshots are not
+retained. Its current version blocks non-origin HTTP, external WebSockets, and
+service workers. The first full 144-row set used fresh browser storage with no
+daemon listening but was collected **before** that network restriction was
+added. Four viewport families were fitted, one validated, and one held out.
+
+On 24 same-appearance held-out rows, the CUDA MLP's weighted MSE was
+**0.57824** with the correct action, **0.58636** for a separately trained
+state-only MLP, **0.60770** with the paired alternative action, and **1.65800**
+for an unchanged screen. This is a small action signal for two navigation
+choices in one app, not broad GUI understanding. A later 16-row, eight-pair
+dark-theme holdout used the restricted collector and a frozen light-trained
+model: correct-action error was **0.02911**, worse than the **0.00599**
+unchanged-screen baseline. This small same-app sample exposes an
+appearance-shift failure, not a general performance estimate. An initial
+larger run was stopped before artifact creation when C: free space fell below
+0.5 GiB; a guarded bounded rerun produced the 16-row holdout. The
+[evidence record](../daemon/benchmarks/world_heliox_ui_navigation_probe_v1.json)
+pins the local feature, report, and weight hashes. These research weights are
+not compatible with or loaded by the live `UiJepaPredictor`; no promotion or
+Jev-parity claim follows from this experiment.
+
+To repeat with fresh ignored output paths, start the local Vite UI with
+`tauri-app/ui/node_modules/.bin/vite.cmd --host 127.0.0.1 --port 1420`, then
+from `daemon` run `python -m scripts.collect_heliox_ui_transitions --help`,
+`python -m scripts.train_world_visual_transition --help`, and
+`python -m scripts.probe_world_visual_model_transfer --help`. The optional
+`--eval-dark` makes the last viewport family a dark-theme holdout. Keep the
+browser run bounded and verify free disk space before collecting.
+
 An inverse probe tests whether these 16×16 features retain information about
 the executed action. On held-out controlled pages it reached 0.80 action-type
 accuracy versus a 0.50 majority baseline; click coordinate mean absolute
