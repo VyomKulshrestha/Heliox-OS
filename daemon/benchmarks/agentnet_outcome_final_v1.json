@@ -1,0 +1,22 @@
+{
+  "purpose": "one_shot_frozen_agentnet_post_action_outcome_final_test",
+  "label_provenance": "model_generated_reflector_step_correct_not_human",
+  "source_sha256": "8e24c5a5a1ef5a5113755b33ed12164fc37ce8fbbd35d1c7dba81bf950d53d00",
+  "manifest_sha256": "7366b4c71f4b6c19f079714a15ab85fc739b54cbb152821bd02f00a9f12a7f04",
+  "feature_sha256": "d7efc2bc1b660199603c6ffc6b6ed66f4cd6f2c576b7f037af9496a0b6eb45d7",
+  "fit_report_sha256": "d138e64ff5b5fbb624c6356079737a4ebd9ecced8e2ad8c4619cbb952bf17828",
+  "artifact_sha256": "1fc8e5d342c05432ab3ed3e346653739dfe7a84542f31fb2bfd315c8b761fb8e",
+  "ood_domain": "VScode",
+  "splits": {
+    "final": {
+      "default": {"rows": 128, "auc": 0.86865234375, "false_allowances": 14, "false_warnings": 10},
+      "calibration_cautious": {"rows": 128, "auc": 0.86865234375, "false_allowances": 0, "false_warnings": 61}
+    },
+    "ood": {
+      "default": {"rows": 128, "auc": 0.87109375, "false_allowances": 22, "false_warnings": 6},
+      "calibration_cautious": {"rows": 128, "auc": 0.87109375, "false_allowances": 0, "false_warnings": 56}
+    }
+  },
+  "promotion": "none",
+  "limitation": "Model-reflector outcomes are not human-verified safety, Jev parity, or action authority. The next observation is already available; this is post-action detection only."
+}

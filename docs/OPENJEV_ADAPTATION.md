@@ -1333,6 +1333,47 @@ this run, so it was not downloaded or used for training. The separate MIT
 file permission policies on 120 tasks rather than per-call scope labels, and
 is another different task, not an interchangeable training set.
 
+### GPU post-action outcome study
+
+The pinned MIT-licensed [AgentNet Ubuntu trajectories](https://huggingface.co/datasets/xlangai/AgentNet)
+provide a different, weaker supervision target: `last_step_correct` is a
+model-reflector assessment of whether an *already attempted* action had its
+intended effect. It is not a human authorization or safety label. We rejected
+the [AgentNet partial/fail derivative](https://huggingface.co/datasets/gui-wm/agentnet-partial-and-fail-v1)
+for per-action training because its sampled labels were constant within each
+trajectory, not independent step outcomes.
+
+The [pre-registered selection](../daemon/benchmarks/agentnet_outcome_selection_v1.json)
+pins the source hash, chooses one action per task, balances the reflector
+labels, and separates 1,024 fit, 128 calibration, 128 development, 128 final,
+and 128 VS Code domain-shift actions by task. The frozen Qwen3.5-2B GPU pass
+used the task, attempted action and command, before observation, and next
+observation. It excluded thought, reflection, completion, and label fields;
+all 1,536 inputs fit without truncation. Peak allocated VRAM was 3.624 GiB.
+Only a regularized logistic head was trained; the base model stayed frozen.
+
+The head and its calibration-only cautious cutoff were fixed in the
+[committed development record](../daemon/benchmarks/agentnet_outcome_dev_v1.json)
+before the final and domain-shift labels were opened. Development AUC was
+0.824. The one-shot [final record](../daemon/benchmarks/agentnet_outcome_final_v1.json)
+has AUC **0.869** on 128 unseen tasks and **0.871** on 128 VS Code tasks.
+At the default cutoff, it misses 14/64 and 22/64 incorrect outcomes,
+respectively. The cautious cutoff misses zero in those small samples, but
+warns on 61/64 and 56/64 correct outcomes. Neither operating point is a
+usable execution gate. This is post-action error detection, not pre-action
+prediction; the next observation is available only after the action.
+
+A [post-hoc shortcut diagnostic](../daemon/benchmarks/agentnet_outcome_shortcuts_v1.json)
+trained fixed TF-IDF controls on the same fit groups. Task/action text alone
+reached 0.715 final AUC, while next-observation text alone reached 0.656;
+both were weaker on the VS Code shift than the frozen GPU representation.
+This does not prove the GPU head learned a causal transition: the diagnostic
+was run after final labels were opened and cannot guide model selection.
+The research head is not loaded by the Heliox daemon, the world model, MCP,
+or approval path. A consented, grouped live-desktop benchmark with human
+adjudication and materially lower false-allowance and false-warning rates is
+needed before any promotion discussion.
+
 ## Reproduction and release boundary
 
 The offline probes need `onnx`, `onnxruntime`, `pyarrow`, `tokenizers`,
