@@ -1,0 +1,26 @@
+{
+  "purpose": "post_final_wrong_screenshot_diagnostic",
+  "dataset": "osunlp/MisActBench",
+  "selection_sha256": "288fdb2be6398db1e3bd309b62ab2fd3cd793f5df73c555264c49de9b993aab3",
+  "frozen_original_visual_head_sha256": "f648642e9f7726faf0fae495fba02336ccb60c6d3a91217f34f5a6044fe88e52",
+  "wrong_image_features_sha256": "a0e60ff9d27c30686183e9de418d29650cc2e8e892043ee8e004dc309a36bf17",
+  "ignored_extraction_report_sha256": "4ef1fc775c08737a7afa25b06d779579e5c30ddce02146e834b3a2072eb58b18",
+  "ignored_diagnostic_report_sha256": "a1c2bebc4b0c23c10b2123c727a5cad165d0a23849632955aee4b47c5f73062c",
+  "perturbation": "Rotate screenshot pairings by 71 case positions with seed 20261005; keep each case's instruction, proposed action, and original/displayed coordinate metadata unchanged; no head refit or threshold change.",
+  "development": {
+    "correct_image_auc": 0.79296875,
+    "wrong_image_auc": 0.734375,
+    "default_decisions_changed_out_of_32": 10
+  },
+  "final": {
+    "correct_image_auc": 0.7587890625,
+    "wrong_image_auc": 0.5869140625,
+    "default_decisions_changed_out_of_64": 27,
+    "correct_image_cautious_false_allowances_out_of_32": 3,
+    "wrong_image_cautious_false_allowances_out_of_32": 5,
+    "correct_image_cautious_false_warnings_out_of_32": 21,
+    "wrong_image_cautious_false_warnings_out_of_32": 32
+  },
+  "interpretation": "The frozen head's predictions depend on the screenshot pairing; its underperformance relative to the paired text-only control is not evidence that the image was ignored. Wrong-image inputs are deliberately out of distribution. This diagnostic does not establish useful grounding, causal world modeling, or live safety.",
+  "promotion": "none"
+}
