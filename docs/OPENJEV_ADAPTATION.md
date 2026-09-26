@@ -1465,6 +1465,21 @@ three seeds were worse than type-only actions on held-out weighted MSE. More
 rows alone did not validate this hashed-tree representation as a transferable
 action-conditioned world model, so the no-promotion decision stands.
 
+A matched [accessibility-ancestry ablation](../daemon/benchmarks/webworld_a11y_transfer_v3.json)
+then added bounded parent roles and names to 1,349 action features while keeping
+all 2,271 pre-action states, outcomes, flat actions, and split labels identical.
+On the same 344-row held-out split, the path head beat shuffled path actions,
+but none of its three seeds showed a component-clustered advantage over both
+the type-only and flat-target heads. Merely appending hierarchy tokens is not
+the representation change needed for reliable transfer. The later
+[Discriminative World Models for Web Agents](https://arxiv.org/abs/2609.02885)
+study motivates same-state alternative-outcome supervision and an
+action-discriminative objective instead of reconstructing mostly unchanged
+trees. Its [project page](https://dhruvpendharkar.github.io/dwm/) listed code
+and data as forthcoming when checked on 2026-09-26; this experiment does not
+claim to reproduce that model or its benchmark. No research weights are loaded
+by Heliox.
+
 The offline probes need `onnx`, `onnxruntime`, `pyarrow`, `tokenizers`,
 `huggingface_hub`, NumPy, SciPy, and scikit-learn. They use cached model/data
 snapshots and do not silently fetch a model during scoring. The Open-Jev data
