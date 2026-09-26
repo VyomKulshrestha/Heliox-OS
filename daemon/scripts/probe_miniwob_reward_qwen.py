@@ -89,6 +89,20 @@ def parse_index(answer: str, count: int) -> int | None:
     return index if 0 <= index < count else None
 
 
+def choose_literal_match(prompt: str) -> str:
+    """No-model baseline: match visible control names literally in the goal."""
+    goal = prompt.split("\nGoal: ", 1)[1].split("\nControls: ", 1)[0].casefold()
+    controls = json.loads(prompt.split("\nControls: ", 1)[1].split("\nIndex:", 1)[0])
+    for control in controls:
+        for field in ("label", "declared_color"):
+            value = control.get(field)
+            if isinstance(value, str) and value.strip() and re.search(
+                rf"(?<!\w){re.escape(value.strip().casefold())}(?!\w)", goal
+            ):
+                return str(control["index"])
+    return "0"
+
+
 def evaluate(rows: list[dict], split: str, choose: Callable[[str], str]) -> dict:
     groups: dict[str, list[dict]] = defaultdict(list)
     for row in rows:

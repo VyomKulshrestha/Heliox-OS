@@ -6,7 +6,13 @@ import json
 import pytest
 
 from scripts.collect_miniwob_branches import SOURCE_COMMIT, SOURCE_REPO
-from scripts.probe_miniwob_reward_qwen import evaluate, load_rows, parse_index, prompt_for
+from scripts.probe_miniwob_reward_qwen import (
+    choose_literal_match,
+    evaluate,
+    load_rows,
+    parse_index,
+    prompt_for,
+)
 
 
 def _rows():
@@ -40,6 +46,15 @@ def test_evaluation_counts_group_success_and_invalid_answers() -> None:
     assert good["random_success_rate"] == 0.5
     bad = evaluate(rows, "eval", lambda _: "unknown")
     assert bad["invalid_answers"] == 1 and bad["success_rate"] == 0
+
+
+def test_literal_baseline_matches_visible_name_without_model() -> None:
+    rows = _rows()[:2]
+    rows[0]["candidate"]["label"] = "TWO"
+    rows[1]["candidate"]["label"] = "ONE"
+    assert choose_literal_match(prompt_for(rows)) == "1"
+    rows[1]["candidate"]["label"] = "OTHER"
+    assert choose_literal_match(prompt_for(rows)) == "0"
 
 
 def test_loader_requires_integrity_contrast_and_disjoint_prestates(tmp_path) -> None:
