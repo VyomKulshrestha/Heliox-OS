@@ -519,6 +519,13 @@ class TestDomDiffToDict:
         d = diff_dom(before, after).to_dict()
         assert len(d["added_sample"]) <= 5
 
+    def test_samples_do_not_echo_visible_page_text(self):
+        before = _snap([_node("div", id="old", text="private-before")])
+        after = _snap([_node("div", id="new", text="private-after")])
+        d = diff_dom(before, after).to_dict()
+        assert "private-before" not in str(d)
+        assert "private-after" not in str(d)
+
     def test_counts_match_lists(self):
         before = _snap([_node("div", id="a"), _node("span", id="b")])
         after = _snap([_node("div", id="a"), _node("p", id="c")])

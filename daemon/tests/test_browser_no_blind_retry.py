@@ -91,3 +91,24 @@ async def test_successful_action_is_not_repeated_when_dom_is_unchanged(
 
     assert page.actions == expected
     assert '[DOM_DIFF] {"change_score": 0.0}' in result
+
+
+@pytest.mark.asyncio
+async def test_browser_action_output_does_not_echo_typed_or_form_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = _QuietPage()
+
+    async def fake_get_page(tab_index: int = -1) -> _QuietPage:
+        return page
+
+    monkeypatch.setattr(browser, "_get_page", fake_get_page)
+    monkeypatch.setattr(browser, "DOM_DIFF_ENABLED", False)
+
+    typed = await browser.browser_type("#password", "private-password")
+    submitted = await browser.browser_fill_form({"#token": "private-token"}, "#submit")
+
+    assert "private-password" not in typed
+    assert "private-token" not in submitted
+    assert typed == "Typed into #password"
+    assert submitted == "Filled 1 form field(s) and submitted form"

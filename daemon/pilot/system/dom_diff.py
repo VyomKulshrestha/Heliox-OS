@@ -9,9 +9,8 @@ Key concepts
 - ``DomSnapshot``     — lightweight structural fingerprint of the DOM tree
 - ``DomDiff``         — result of comparing two snapshots (added/removed/mutated
                         nodes + a numeric change_score in [0.0, 1.0])
-- ``DomUnchangedError`` — raised when change_score < threshold, signalling that
-                          the action had no visible effect and self-correction
-                          should be attempted
+- ``DomUnchangedError`` — diagnostic for a diff below a caller's threshold;
+                          it does not prove that an action had no external effect
 - ``snapshot_dom()``  — async function that captures a snapshot from the live page
 - ``diff_dom()``      — pure function that computes a DomDiff from two snapshots
 - ``assess_target()`` — pure function that checks whether a click/type/select
@@ -203,8 +202,8 @@ class DomDiff:
             "before_node_count": self.before_count,
             "after_node_count": self.after_count,
             "summary": self.summary(),
-            "added_sample": [{"tag": n.tag, "id": n.id, "text": n.text[:60]} for n in self.added[:5]],
-            "removed_sample": [{"tag": n.tag, "id": n.id, "text": n.text[:60]} for n in self.removed[:5]],
+            "added_sample": [{"tag": n.tag, "id": n.id} for n in self.added[:5]],
+            "removed_sample": [{"tag": n.tag, "id": n.id} for n in self.removed[:5]],
         }
 
 
@@ -221,7 +220,7 @@ class DomUnchangedError(Exception):
         self.diff = diff
         self.action_desc = action_desc
         super().__init__(
-            f"DOM unchanged after '{action_desc}' (change_score={diff.change_score:.3f}). Self-correction required."
+            f"No DOM change observed after '{action_desc}' (change_score={diff.change_score:.3f}); effect unknown."
         )
 
 
@@ -345,7 +344,9 @@ def assert_dom_changed(
     min_score: float = 0.01,
     action_desc: str = "",
 ) -> DomDiff:
-    """Compute the diff and raise ``DomUnchangedError`` if change_score < min_score.
+    """Compute the diff and raise ``DomUnchangedError`` below a diagnostic threshold.
+
+    A small diff does not prove that an action failed or authorize repeating it.
 
     Parameters
     ----------
@@ -354,8 +355,7 @@ def assert_dom_changed(
     after:
         Post-action DOM snapshot.
     min_score:
-        Minimum change_score required to consider the action successful.
-        Default 0.01 (1% of nodes must change).
+        Minimum change_score for this diagnostic. Default 0.01.
     action_desc:
         Human-readable description of the action, used in the error message.
 

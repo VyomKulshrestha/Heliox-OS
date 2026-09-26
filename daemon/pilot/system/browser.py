@@ -422,7 +422,7 @@ async def browser_type(
     await page.wait_for_timeout(200)
     after = await _snap(page)
 
-    return _append_diff(f"Typed into {selector}: {text[:80]}", before, after, f"type:{selector}")
+    return _append_diff(f"Typed into {selector}", before, after, f"type:{selector}")
 
 
 async def browser_select(selector: str, value: str) -> str:
@@ -717,8 +717,7 @@ async def browser_fill_form(fields: dict[str, str], submit_selector: str | None 
         await page.wait_for_timeout(300)
 
     after_form = await _snap(page)
-    filled = ", ".join(f"{k}={v[:20]}..." for k, v in fields.items())
-    base = f"Filled form: {filled}" + (f" and submitted via {submit_selector}" if submit_selector else "")
+    base = f"Filled {len(fields)} form field(s)" + (" and submitted form" if submit_selector else "")
     return _append_diff(base, before_form, after_form, "fill_form")
 
 
