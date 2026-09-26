@@ -34,6 +34,14 @@
     "ignored_local_adapter_sha256": "0d3bc233a512b7fff209814cc9fe4c066e385dfdb19bb102727c96ae4fe21957",
     "ignored_local_head_sha256": "d44f004ef2dda3d6dfa15fbde3b62fb2acb289f8f0553e90c62c634b19500ca1"
   },
-  "interpretation": "Both runs passed the earlier 16- and 32-row CUDA failure points, but this does not establish sustained GPU stability or diagnose prior nvlddmkm resets. Different seeds and sizes make their accuracies non-comparable. The short head accepted all held-out actions; the longer head rejected all held-out actions. Neither is usable for Heliox authority decisions, and neither is Jev parity.",
+  "calibration_only_cutoff_check": {
+    "calibration_rows": 32,
+    "calibration_auc": 0.703125,
+    "test_auc": 0.599609375,
+    "cautious_test_false_allowances": 1,
+    "cautious_test_false_warnings": 27,
+    "ignored_local_report_sha256": "60e5f1c20adaed298e4d5c483eeb05f3cc30a545b9dd7c1ccd3cd35de5da3f6f"
+  },
+  "interpretation": "Both runs passed the earlier 16- and 32-row CUDA failure points, but this does not establish sustained GPU stability or diagnose prior nvlddmkm resets. Different seeds and sizes make their accuracies non-comparable. The short head accepted all held-out actions; the longer head rejected all held-out actions at default cutoff. A calibration-only cautious cutoff still falsely allows a held-out bad action and rejects 27/32 valid ones. Neither is usable for Heliox authority decisions, and neither is Jev parity.",
   "promotion": "none"
 }
