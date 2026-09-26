@@ -1,0 +1,22 @@
+{
+  "purpose": "post_gpu_update_recheck_of_unpromoted_visual_transition_model",
+  "source": "TESS-Computer/tess-agentnet bounded local sample",
+  "feature_sha256": "221b0bc5b98023224770d84e6de603285789b8898da4d4a759770aeb0074214c",
+  "device": "NVIDIA GeForce RTX 4060 Laptop GPU",
+  "torch_version": "2.6.0+cu124",
+  "architecture": "spatial",
+  "cudnn_enabled": false,
+  "seed": 20260926,
+  "selected_epoch": 80,
+  "rows": {"train": 707, "validation": 110, "eval": 151},
+  "eval_weighted_mse": {
+    "unchanged_state": 0.14099680569305215,
+    "correct_action": 0.10621454164182974,
+    "shuffled_action": 0.10621419784768753,
+    "shuffled_location_same_action": 0.10657214340939336
+  },
+  "full_ignored_report_sha256": "1986c1afbca2e8b1ef383fe1b7b909a6a33f4551301f5347a5d8a155e38163e4",
+  "local_weights_sha256": "5daac2b68ccd0c8439c1dc8bc41c1dafe09f1cf1d69334a4b0ff415586a206eb",
+  "promotion": "none",
+  "interpretation": "The updated GPU can train the model, but correct and shuffled actions have effectively identical held-out error. This does not establish action-conditioned prediction or Jev parity."
+}
