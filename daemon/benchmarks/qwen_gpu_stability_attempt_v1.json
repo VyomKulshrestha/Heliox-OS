@@ -1,0 +1,41 @@
+{
+  "purpose": "incomplete_local_gpu_research_attempt",
+  "date_local": "2026-09-26",
+  "environment": {
+    "gpu": "NVIDIA GeForce RTX 4060 Laptop GPU (8 GiB)",
+    "windows_driver": "616.56",
+    "wsl_kernel": "6.6.87.2-microsoft-standard-WSL2",
+    "pytorch": "2.6.0+cu124"
+  },
+  "qwen3_0_6b_lora": {
+    "planned_train_rows": 4096,
+    "checkpoint_next_position": 1712,
+    "checkpoint_sha256": "475f6708f16159cc9d3e8756ef618ffebad11c57acc25314d5746d7fecd2a334",
+    "checkpoint_signature": "c3ac5023459d225b7aa3a62d63261ebba4a4e06f9ca761541ded518a73b0688c",
+    "trainable_head_optimizer_all_finite": true,
+    "artifact": "ignored local .bench-state/qwen_general_v3/checkpoint.pt",
+    "final_report_exists": false
+  },
+  "qwen3_5_2b_frozen_features": {
+    "planned_rows": {
+      "train": 256,
+      "calibration": 64,
+      "test": 128,
+      "ood": 128
+    },
+    "train_rows_within_token_limit": 225,
+    "verified_train_rows_completed": 128,
+    "verified_candidate_features": 463,
+    "train_checkpoint_sha256": "e2009cbabf91b487a1ac88a137a45a28db3d2e5446903de42a496861d6abc73f",
+    "artifact": "ignored local .bench-state/qwen2b_frozen_general_v1/train.npz",
+    "final_report_exists": false
+  },
+  "observations": [
+    "Short 2B feature-extraction smoke completed all four small splits.",
+    "Standalone BF16 and FP32 CUDA forward/backward stress passed, including a 4 GiB resident allocation.",
+    "Both longer Qwen workloads later failed with CUDA errors and contemporaneous Windows nvlddmkm events; the 2B retry advanced past the first failure point before a later TDR reset.",
+    "Windows event groups occurred at 10:57:49, 11:00:45, 11:03:33, 11:10:09, and 11:19:12-15 local time; event IDs included 13 and 153."
+  ],
+  "result": "incomplete_no_heldout_metrics_no_jev_comparison_no_promoted_model",
+  "limitation": "Event correlation does not establish whether the root cause is hardware, driver, power, WSL, or a model kernel. Passing standalone CUDA stress does not establish sustained model stability."
+}
