@@ -42,6 +42,7 @@ def test_collects_contrastive_terminal_actions_from_fresh_resets(monkeypatch) ->
 
     monkeypatch.setattr(collector, "_reset", reset)
     monkeypatch.setattr(collector, "visual_feature", lambda _: np.zeros(256, dtype=np.float32))
+    monkeypatch.setattr(collector, "goal_description", lambda _: "Click ONE")
     monkeypatch.setattr(collector, "candidate_actions", lambda _: [
         {"x": 10, "y": 20, "label": "ONE"}, {"x": 30, "y": 40, "label": "TWO"},
     ])
@@ -65,6 +66,7 @@ def test_rejects_mismatched_reset_and_cross_split_state(monkeypatch) -> None:
     monkeypatch.setattr(
         collector, "visual_feature", lambda png: np.full(256, png[0], dtype=np.float32)
     )
+    monkeypatch.setattr(collector, "goal_description", lambda _: "Click ONE")
     monkeypatch.setattr(collector, "candidate_actions", lambda _: [
         {"x": 10, "y": 20}, {"x": 30, "y": 40},
     ])

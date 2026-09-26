@@ -20,6 +20,10 @@ from scripts.collect_miniwob_reward_actions import require_disjoint_prestates
 
 MODEL = "Qwen/Qwen3-0.6B"
 REVISION = "c1899de289a04d12100db370d81485cdf75e47ca"
+MODEL_REVISIONS = {
+    REVISION: MODEL,
+    "15852e8c16360a2fea060d615a32b45270f8a8fc": "Qwen/Qwen3.5-2B",
+}
 
 
 def load_rows(path: Path, source_report: Path) -> list[dict]:
@@ -53,9 +57,16 @@ def load_rows(path: Path, source_report: Path) -> list[dict]:
     if any(len({row["task"] for row in group}) != 1
            or len({row["split"] for row in group}) != 1
            or len({row["goal"] for row in group}) != 1
+           or len({row["prestate_sha256"] for row in group}) != 1
            or {row["reward"] for row in group} != {-1, 1}
            for group in groups.values()):
         raise ValueError("Reward groups must be single-task contrastive resets")
+    if (report.get("rows") != {split: sum(row["split"] == split for row in rows)
+            for split in ("train", "validation", "eval")}
+            or report.get("groups") != {split: len({row["group"] for row in rows
+                                                   if row["split"] == split})
+                                        for split in ("train", "validation", "eval")}):
+        raise ValueError("Reward counts differ from their pinned source report")
     return rows
 
 
@@ -63,7 +74,7 @@ def prompt_for(group: list[dict]) -> str:
     candidates = [
         {"index": index, **{key: row["candidate"].get(key) for key in
                             ("label", "tag", "type", "role", "width", "height",
-                             "background", "fill")}}
+                             "background", "fill", "declared_color")}}
         for index, row in enumerate(group)
     ]
     return ("Choose the visible GUI control most likely to satisfy the goal. "
@@ -86,8 +97,11 @@ def evaluate(rows: list[dict], split: str, choose: Callable[[str], str]) -> dict
     if not groups:
         raise ValueError("No held-out groups")
     outcomes = []
+    prompts = []
     for group_id, group in groups.items():
-        answer = choose(prompt_for(group))
+        prompt = prompt_for(group)
+        prompts.append(prompt)
+        answer = choose(prompt)
         selected = parse_index(answer, len(group))
         outcomes.append({
             "group": group_id, "task": group[0]["task"], "selected_index": selected,
@@ -100,6 +114,7 @@ def evaluate(rows: list[dict], split: str, choose: Callable[[str], str]) -> dict
         "invalid_answers": sum(row["selected_index"] is None for row in outcomes),
         "success_rate": sum(row["correct"] for row in outcomes) / len(outcomes),
         "random_success_rate": sum(row["random_success_probability"] for row in outcomes) / len(outcomes),
+        "prompt_sha256": hashlib.sha256("\n".join(prompts).encode()).hexdigest(),
         "selected_groups_sha256": hashlib.sha256("\n".join(groups).encode()).hexdigest(),
         "outcomes": outcomes,
     }
@@ -116,7 +131,7 @@ def main() -> None:
     parser.add_argument("--report", type=Path, default=root / "miniwob_reward_qwen_v1.json")
     args = parser.parse_args()
     if (not args.rows.is_file() or not args.source_report.is_file()
-            or args.model_snapshot.name != REVISION or not args.model_snapshot.is_dir()
+            or args.model_snapshot.name not in MODEL_REVISIONS or not args.model_snapshot.is_dir()
             or args.report.exists()):
         parser.error("Use existing pinned rows/model snapshot and a fresh report path")
     rows = load_rows(args.rows, args.source_report)
@@ -150,9 +165,10 @@ def main() -> None:
                                 skip_special_tokens=True).strip()
 
     result = evaluate(rows, args.split, choose)
+    revision = args.model_snapshot.name
     report = {
         "purpose": "research_only_frozen_local_goal_action_probe",
-        "model": MODEL, "revision": REVISION, "device": "cuda:0",
+        "model": MODEL_REVISIONS[revision], "revision": revision, "device": "cuda:0",
         "rows_sha256": hashlib.sha256(args.rows.read_bytes()).hexdigest(),
         "split": args.split, **result,
         "limitation": "Exploratory zero-shot first-action choices on synthetic task-disjoint MiniWoB. "
