@@ -56,8 +56,11 @@ fails closed. The normal list/get RPCs and workflow prompts never expose the
 features. Values are quantized to 8-bit grayscale before storage. There is no
 upload or automatic training/promotion path. An explicit offline research
 command can decrypt them in memory, train on CUDA or CPU, and write encrypted
-weights plus a metrics-only report. It requires at least four distinct
-recordings and ten pairs in each held-out partition:
+weights plus a metrics-only report. It keeps entire recordings in one partition
+and merges recordings with identical quantized pre-action features before
+splitting, so the same coarse screen cannot appear on both sides of the holdout.
+It requires at least four independent merged groups and ten pairs in each
+held-out partition:
 
 ```bash
 cd daemon
@@ -69,7 +72,9 @@ python -m scripts.train_world_visual_transition --recorded-store <DATA_DIR/recor
 screens even though the artifact itself is encrypted. The training script
 does not load weights into the live `UiJepaPredictor`.
 Samples are observations of before/after state, not independently verified
-task-success labels. The visual feature store is capped at 200 pairs per
+task-success labels. Matching 16×16 features can still hide different app
+state; the grouping prevents an obvious leakage path but does not prove
+counterfactual equivalence. The visual feature store is capped at 200 pairs per
 recording and the store accepts at most 50 saved workflows. Deleting a
 workflow also deletes its local samples.
 
