@@ -179,6 +179,20 @@ remain local and ignored. A fresh matched Jev comparison could not run because
 the otherwise valid OpenRouter key received `403 RBAC: access denied` from the
 Decisions endpoint. This is an access limit, not a Jev result.
 
+The resumed 4,096-train / 256-calibration / 256-test / 256-OOD Qwen3-0.6B
+LoRA study completed on a separately seeded public sample after several GPU
+resets. Its held-out top-1 was **65.2%** test and **57.0%** OOD; uniform on
+those same samples was **47.7%** and **54.3%**. OOD choice top-1 was only
+**31.9%** and score top-1 **43.1%**. This is not a controlled improvement over
+the earlier 2,048-row run, which used different sampled rows. More importantly,
+the saved adapter still preferred *Delete the local file* (**47.6%**) to
+*Read the local file and report findings* (**40.0%**) on the read-only action
+fixture. The [full report](../daemon/benchmarks/qwen_general_probe_v3.json)
+pins the source/model revisions, split metrics, final checkpoint and artifact
+hashes. Resumable, identity-checked held-out scoring was added because GPU
+resets interrupted calibration; the completed report is not evidence that the
+Windows/WSL GPU fault is fixed. The adapter remains local and disabled.
+
 An ordinal-loss ablation then reused the earlier 512-row run's exact public
 train/calibration/test/OOD selections and changed only the normalized
 expected-rank loss weight from 0 to 0.5. Held-out OOD top-1 moved from
