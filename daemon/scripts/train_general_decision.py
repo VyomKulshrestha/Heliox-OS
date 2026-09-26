@@ -136,18 +136,23 @@ def evaluate_checkpointed(backbone, head, items: list[dict], label: str, *,
     for index in range(len(results), len(items)):
         item = items[index]
         try:
-            results.append(score_row(backbone, head, item))
+            prediction = score_row(backbone, head, item)
         except RuntimeError as exc:
             raise RuntimeError(f"{label} failed at row {index + 1}/{len(items)} "
                                f"id={item['row']['id']} "
                                f"tokens={max(len(ids) for ids in item['sequences'])}") from exc
+        if (prediction.shape != (len(item["row"]["target"]),)
+                or not np.isfinite(prediction).all()):
+            raise ValueError(f"{label} produced invalid logits at row {index + 1}")
+        results.append(prediction)
         completed = index + 1
         if completed % checkpoint_every == 0 or completed == len(items):
             path.parent.mkdir(parents=True, exist_ok=True)
             temporary = path.with_suffix(".tmp")
             temporary.write_text(json.dumps({"schema_version": 1, "signature": signature,
                                              "ids": ids,
-                                             "logits": [value.tolist() for value in results]}),
+                                             "logits": [value.tolist() for value in results]},
+                                            allow_nan=False),
                                  encoding="utf-8")
             os.replace(temporary, path)
             print(json.dumps({"event": "evaluation", "split": label,

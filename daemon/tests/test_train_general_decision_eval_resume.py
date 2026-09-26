@@ -68,3 +68,14 @@ def test_evaluation_rejects_wrong_model_rows_and_logits(tmp_path, monkeypatch):
         training.evaluate_checkpointed(_EvalOnly(), _EvalOnly(), _items(2), "test",
                                         path=path, signature="model-a", resume=True,
                                         checkpoint_every=1)
+
+
+def test_evaluation_does_not_save_new_nonfinite_logits(tmp_path, monkeypatch):
+    path = tmp_path / "evaluation.json"
+    monkeypatch.setattr(training, "score_row",
+                        lambda _backbone, _head, _item: np.asarray([np.nan, 0.0]))
+    with pytest.raises(ValueError, match="invalid logits at row 1"):
+        training.evaluate_checkpointed(_EvalOnly(), _EvalOnly(), _items(1), "ood",
+                                        path=path, signature="model-a", resume=False,
+                                        checkpoint_every=1)
+    assert not path.exists()
