@@ -1,0 +1,15 @@
+{
+  "purpose": "post_hoc_agentnet_text_shortcut_diagnostic",
+  "source_sha256": "8e24c5a5a1ef5a5113755b33ed12164fc37ce8fbbd35d1c7dba81bf950d53d00",
+  "manifest_sha256": "7366b4c71f4b6c19f079714a15ab85fc739b54cbb152821bd02f00a9f12a7f04",
+  "method": "train_only_tfidf_word_1_2_min_df_2_C_1_logistic_fixed_parameters",
+  "exploratory_after_final_labels_opened": true,
+  "views": {
+    "all_fields": {"vocabulary_size": 31210, "development_auc": 0.71240234375, "final_auc": 0.66650390625, "ood_auc": 0.593017578125},
+    "no_next_observation": {"vocabulary_size": 22795, "development_auc": 0.71826171875, "final_auc": 0.69189453125, "ood_auc": 0.560791015625},
+    "next_observation_only": {"vocabulary_size": 17014, "development_auc": 0.733154296875, "final_auc": 0.656005859375, "ood_auc": 0.664794921875},
+    "task_and_action_only": {"vocabulary_size": 8200, "development_auc": 0.69873046875, "final_auc": 0.715087890625, "ood_auc": 0.524658203125}
+  },
+  "promotion": "none",
+  "limitation": "Model-generated labels and a post-hoc diagnostic; never use these splits to select a runtime model."
+}
