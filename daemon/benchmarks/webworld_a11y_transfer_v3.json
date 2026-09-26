@@ -1,0 +1,47 @@
+{
+  "purpose": "research_only_accessibility_ancestry_ablation",
+  "dataset": "Qwen/WebWorldData",
+  "dataset_revision": "e108c5f8e35445c9ddff71cde2a5b1fc4db4020c",
+  "declared_license": "apache-2.0",
+  "local_features_sha256": "a556cf1ad88acac9e91fbb84ba3e5d6f0af1cd83420621aec648e0a4346f15e7",
+  "local_source_report_sha256": "ee950e35f2c591fcbb7ce4111a5650280669fd240976f8c72eb75a084968e2a7",
+  "device": "NVIDIA GeForce RTX 4060 Laptop GPU; CUDA with PyTorch 2.6.0+cu124",
+  "sample": {
+    "retained_transitions": 2271,
+    "path_augmented_rows": 1349,
+    "evaluation_rows": 344,
+    "evaluation_state_connected_components": 116,
+    "comparison_to_v2": "state, target, action_type, action_bound, group, and split arrays are identical"
+  },
+  "evaluation_weighted_mse": [
+    {
+      "seed": 20260926,
+      "type_only": 0.001606860688627936,
+      "flat_bound": 0.0016053281939435859,
+      "path_bound": 0.00160576791336607,
+      "path_within_type_shuffle_mean": 0.00163156258590006,
+      "type_minus_path_95_component_interval": [-0.00000904920341770044, 0.0000113652434841393],
+      "flat_minus_path_95_component_interval": [-0.00000729039251458781, 0.00000604272558806388]
+    },
+    {
+      "seed": 123,
+      "type_only": 0.0015821950544420591,
+      "flat_bound": 0.0015984577986059658,
+      "path_bound": 0.00158704718345207,
+      "path_within_type_shuffle_mean": 0.00162265390355417,
+      "type_minus_path_95_component_interval": [-0.00002227032972878, 0.0000112816821150735],
+      "flat_minus_path_95_component_interval": [-0.00000328997976684598, 0.0000264812723697191]
+    },
+    {
+      "seed": 456,
+      "type_only": 0.0015767124896640845,
+      "flat_bound": 0.001580002957784834,
+      "path_bound": 0.00157667497156938,
+      "path_within_type_shuffle_mean": 0.00161142505709547,
+      "type_minus_path_95_component_interval": [-0.0000170750307318003, 0.0000160801853824439],
+      "flat_minus_path_95_component_interval": [-0.00000758271684815043, 0.0000144202215183495]
+    }
+  ],
+  "decision": "Do not promote. Ancestry features distinguish the queried target from shuffled actions, but do not show a reliable held-out improvement over flat-bound or type-only controls.",
+  "limitations": "The same sampled split was reused for this ablation. Hashed tree features still lose order and history, and this dataset has few verified same-state alternative actions. No site-disjoint, live-desktop, Jev-parity, or execution-authority evidence."
+}
