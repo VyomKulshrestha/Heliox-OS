@@ -9,7 +9,9 @@ import pytest
 from scripts.probe_webworld_transition import (
     action_permutation,
     clustered_advantage,
+    feature_equivalent_action_pairs,
     load_features,
+    paired_outcome_diagnostic,
     weighted_mse,
 )
 
@@ -68,3 +70,21 @@ def test_clustered_advantage_resamples_whole_trajectories() -> None:
     assert result["cluster_bootstrap_95_low"] > 0
     with pytest.raises(ValueError, match="align"):
         clustered_advantage(np.array([0.1]), np.array([0.2, 0.3]), np.array([1]), seed=7)
+
+
+def test_feature_equivalent_pairs_reward_the_right_action_outcome() -> None:
+    partition = {
+        "state": np.zeros((4, 2), dtype=np.float32),
+        "action_type": np.array([[1, 0], [1, 0], [1, 0], [0, 1]], dtype=np.float32),
+        "action_bound": np.array([[1, 0], [0, 1], [1, 0], [0, 1]], dtype=np.float32),
+        "target": np.array([[1, 0], [0, 1], [1, 0], [0, 1]], dtype=np.float32),
+    }
+    pairs = feature_equivalent_action_pairs(partition)
+    assert pairs.tolist() == [[0, 1], [1, 2]]
+    correct = paired_outcome_diagnostic(partition["target"], partition["target"], pairs)
+    assert correct["correct_action_wins"] == 2
+    assert correct["mean_swapped_minus_correct_mse"] > 0
+    tied = paired_outcome_diagnostic(np.zeros((4, 2), dtype=np.float32), partition["target"], pairs)
+    assert tied["ties"] == 2
+    with pytest.raises(ValueError, match="outside"):
+        paired_outcome_diagnostic(partition["target"], partition["target"], np.array([[0, 4]]))

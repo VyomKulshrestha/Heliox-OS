@@ -9,6 +9,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+from collections import defaultdict
+from itertools import combinations
 from pathlib import Path
 
 import numpy as np
@@ -77,6 +79,50 @@ def weighted_mse(predicted: np.ndarray, state: np.ndarray, target: np.ndarray) -
     return float((((predicted - target) ** 2) * weights).mean())
 
 
+def feature_equivalent_action_pairs(partition: dict[str, np.ndarray]) -> np.ndarray:
+    """Find distinct observed outcomes for different actions from one feature state.
+
+    Equality here is only equality of hashed features, not proof that the raw
+    browser screens or histories were identical.
+    """
+    buckets: dict[tuple[bytes, bytes], list[int]] = defaultdict(list)
+    for index, (state, action_type) in enumerate(zip(partition["state"], partition["action_type"])):
+        buckets[(state.tobytes(), action_type.tobytes())].append(index)
+    pairs = [
+        (left, right)
+        for indices in buckets.values()
+        for left, right in combinations(indices, 2)
+        if not np.array_equal(partition["action_bound"][left], partition["action_bound"][right])
+        and not np.array_equal(partition["target"][left], partition["target"][right])
+    ]
+    return np.asarray(pairs, dtype=np.int64).reshape(-1, 2)
+
+
+def paired_outcome_diagnostic(
+    predicted: np.ndarray, target: np.ndarray, pairs: np.ndarray,
+) -> dict[str, float | int]:
+    """Score whether each action prediction matches its outcome over the alternative."""
+    if predicted.shape != target.shape or pairs.ndim != 2 or pairs.shape[1] != 2:
+        raise ValueError("Predictions, targets, and pairs must align")
+    if len(pairs) == 0:
+        return {"pairs": 0, "correct_action_wins": 0, "ties": 0,
+                "mean_swapped_minus_correct_mse": 0.0}
+    left, right = pairs.T
+    if np.any(pairs < 0) or np.any(pairs >= len(target)):
+        raise ValueError("Pair index is outside the prediction partition")
+    correct = (((predicted[left] - target[left]) ** 2).mean(axis=1)
+               + ((predicted[right] - target[right]) ** 2).mean(axis=1))
+    swapped = (((predicted[left] - target[right]) ** 2).mean(axis=1)
+               + ((predicted[right] - target[left]) ** 2).mean(axis=1))
+    advantage = swapped - correct
+    return {
+        "pairs": len(pairs),
+        "correct_action_wins": int(np.sum(advantage > 1e-9)),
+        "ties": int(np.sum(np.abs(advantage) <= 1e-9)),
+        "mean_swapped_minus_correct_mse": float(advantage.mean()),
+    }
+
+
 def clustered_advantage(
     type_errors: np.ndarray, bound_errors: np.ndarray, groups: np.ndarray, *, seed: int,
 ) -> dict[str, float | int]:
@@ -125,6 +171,7 @@ def main() -> None:
     torch.manual_seed(args.seed)
     results = {}
     per_row_errors: dict[str, dict[str, np.ndarray]] = {}
+    paired_outcomes: dict[str, dict[str, dict[str, float | int]]] = {}
     action_keys = ("action_type", "action_bound") + (("action_path",) if "action_path" in rows["train"] else ())
     for action_key in action_keys:
         torch.manual_seed(args.seed)
@@ -172,11 +219,15 @@ def main() -> None:
         model.eval()
         split_scores = {}
         per_row_errors[action_key] = {}
+        paired_outcomes[action_key] = {}
         with torch.no_grad():
             for split in ("validation", "eval"):
                 partition, tensors = rows[split], arrays[split]
                 state, target = partition["state"], partition["target"]
                 correct = predict(tensors, tensors[action_key]).cpu().numpy()
+                paired_outcomes[action_key][split] = paired_outcome_diagnostic(
+                    correct, target, feature_equivalent_action_pairs(partition)
+                )
                 weights = 1 + 4 * (np.abs(target - state) >= 0.01)
                 per_row_errors[action_key][split] = (((correct - target) ** 2) * weights).mean(axis=1)
                 rng = np.random.default_rng(args.seed + (1 if split == "validation" else 2))
@@ -206,6 +257,7 @@ def main() -> None:
         "action_permutations": args.permutations,
         "split_basis": "trajectory_plus_identical_prestate_not_website",
         "results": results,
+        "feature_equivalent_paired_outcomes": paired_outcomes,
         "paired_type_vs_bound": {
             split: clustered_advantage(
                 per_row_errors["action_type"][split],
@@ -229,7 +281,8 @@ def main() -> None:
         } if "action_path" in action_keys else None),
         "paired_bootstrap_unit": "state_connected_trajectory_component",
         "limitation": "Hashed accessibility features, small sampled trajectories, no site-disjoint transfer. "
-                      "Shuffling compares observed actions from other states, not verified same-state counterfactuals. "
+                      "Feature-equivalent pairs can alias different raw screens or histories; they are not "
+                      "verified same-state counterfactuals. Shuffling compares observed actions from other states. "
                       "No runtime model, safety, autonomy, or Jev parity claim.",
     }
     args.report.parent.mkdir(parents=True, exist_ok=True)
