@@ -262,7 +262,9 @@ def main() -> None:
     split_basis = "recording_and_exact_pre_screen" if recorded_store else source_metadata.get("split_basis", "episode")
     source_context = ("consented local recordings" if recorded_store else
                       "generated local browser pages" if source_metadata.get("purpose")
-                      == "research_only_controlled_browser_visual_transitions" else "one public dataset")
+                      == "research_only_controlled_browser_visual_transitions" else
+                      "the local Heliox UI" if source_metadata.get("purpose")
+                      == "research_only_local_heliox_browser_navigation" else "one public dataset")
     channels, height, width = (1, 16, 16) if recorded_store else feature_shape(args.source_report)
     dimension = channels * height * width
 
