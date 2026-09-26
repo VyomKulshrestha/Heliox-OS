@@ -8,6 +8,7 @@ from pathlib import Path
 
 import numpy as np
 
+from scripts.evaluate_misactbench_image_shift import _features
 from scripts.extract_misactbench_visual_features import save
 from scripts.fit_misactbench_visual_head import assess
 from scripts.probe_misactbench_visual import PROMPT_V2
@@ -50,6 +51,11 @@ def test_feature_checkpoint_is_plain_numeric_data(tmp_path) -> None:
         assert result["signature"].item() == "pinned"
         assert result["ids"].tolist() == ["a:1", "b:2"]
         assert result["features"].shape == (2, 2)
+    restored = _features(path, {"features_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                                "signature": "pinned"}, ["a:1", "b:2"])
+    assert restored.tolist() == [[1.0, 2.0], [3.0, 4.0]]
+    with np.testing.assert_raises(ValueError):
+        _features(path, {"features_sha256": "wrong", "signature": "pinned"}, ["a:1", "b:2"])
 
 
 def test_action_assessment_counts_false_allowances_and_warnings() -> None:
