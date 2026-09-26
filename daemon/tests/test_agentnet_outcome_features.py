@@ -10,7 +10,13 @@ import numpy as np
 
 from scripts import evaluate_agentnet_outcome_final as evaluate
 from scripts.diagnose_agentnet_outcome_shortcuts import selected_rows
-from scripts.extract_agentnet_outcome_features import PROMPT, save, selected_prompts, sha256_file
+from scripts.extract_agentnet_outcome_features import (
+    PRE_ACTION_PROMPT,
+    PROMPT,
+    save,
+    selected_prompts,
+    sha256_file,
+)
 from scripts.fit_agentnet_outcome_head import assess, labels_for
 
 
@@ -34,6 +40,11 @@ def test_selected_prompt_uses_only_task_transition_evidence(tmp_path) -> None:
     assert all(secret not in text for secret in (
         "SECRET_THOUGHT", "SECRET_LABEL", "SECRET_FUTURE_ACTION"))
     assert "last_step_correct" not in PROMPT
+    prior_only = selected_prompts(source, {"case_ids": ["task-a:0"]}, view="pre_action")[0]
+    assert "Document is closed" in prior_only
+    assert "Document is visible" not in prior_only
+    assert "SECRET_FUTURE_ACTION" not in prior_only
+    assert "last_step_correct" not in PRE_ACTION_PROMPT
     assert labels_for(source, ["task-a:0"]).tolist() == [False]
 
 
