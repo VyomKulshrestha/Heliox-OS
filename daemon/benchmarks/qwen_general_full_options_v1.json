@@ -1,0 +1,426 @@
+{
+  "model": "Qwen/Qwen3-0.6B",
+  "revision": "c1899de289a04d12100db370d81485cdf75e47ca",
+  "diagnostic_environment": {
+    "HF_HUB_OFFLINE": null,
+    "CUDA_LAUNCH_BLOCKING": null,
+    "PYTORCH_NO_CUDA_MEMORY_CACHING": null
+  },
+  "dataset": "ZefanCai/Open-Jev",
+  "dataset_revision": "c67699e13d0ae25e35b77165a4b6b079bedc8aba",
+  "dataset_config": "release-v2-redistributable",
+  "dataset_manifests": {
+    "train": {
+      "sha256": "a76be013b2986a97e4d61faad4fd5f0a6ddb934760d5dcf3161aaa118909b6bf",
+      "total_rows": 79116,
+      "licensed_rows": 74910,
+      "excluded_unverified_license": 4206,
+      "selected_rows": 512
+    },
+    "calibration": {
+      "sha256": "74cf0064f68dcccbcedd4849d3b347f4c900bdd5329a78ec249fcdf24f89b554",
+      "total_rows": 4672,
+      "licensed_rows": 4324,
+      "excluded_unverified_license": 348,
+      "selected_rows": 96
+    },
+    "test": {
+      "sha256": "05edb50da60abb087328e353b201d83b745e01393b4a43b5320b90720a8132ff",
+      "total_rows": 10356,
+      "licensed_rows": 9750,
+      "excluded_unverified_license": 606,
+      "selected_rows": 128
+    },
+    "ood": {
+      "sha256": "ba8cb3f95b9121aa73e4b997ac9c350e2ec4dddb972cb5c3086da911f0deb9ef",
+      "total_rows": 15701,
+      "licensed_rows": 15101,
+      "excluded_unverified_license": 600,
+      "selected_rows": 128
+    }
+  },
+  "seed": 20260924,
+  "selected_rows": {
+    "train": 512,
+    "calibration": 96,
+    "test": 128,
+    "ood": 128
+  },
+  "evaluated_rows": {
+    "train": 512,
+    "calibration": 96,
+    "test": 128,
+    "ood": 128
+  },
+  "excluded_overlong": {
+    "train": 0,
+    "calibration": 0,
+    "test": 0,
+    "ood": 0
+  },
+  "max_length": 768,
+  "attention_implementation": "eager",
+  "lora_rank": 8,
+  "accumulation": 4,
+  "prompt_style": "full_options_v2",
+  "checkpoint_every": 32,
+  "resumed": false,
+  "baseline_skipped_on_resume": false,
+  "learning_rates": {
+    "adapter": 2e-05,
+    "head": 5e-05
+  },
+  "brier_weight": 0.1,
+  "ordinal_weight": 0.0,
+  "calibration_temperature": 2.5472585310976212,
+  "baseline_test": {
+    "rows": 128,
+    "top1_accuracy": 0.3984375,
+    "mean_nll": 2.178794638674048,
+    "mean_brier": 0.4012103365752461,
+    "by_kind": {
+      "choice": {
+        "rows": 48,
+        "top1_accuracy": 0.5416666666666666,
+        "mean_nll": 1.5325833901055228,
+        "mean_brier": 0.18508402931389167
+      },
+      "noul": {
+        "rows": 58,
+        "top1_accuracy": 0.29310344827586204,
+        "mean_nll": 3.059192917126011,
+        "mean_brier": 0.6731744905273302
+      },
+      "score": {
+        "rows": 22,
+        "top1_accuracy": 0.36363636363636365,
+        "mean_nll": 1.2676600832683833,
+        "mean_brier": 0.1557622374536156,
+        "mean_rank_error": 0.8575615119488944
+      }
+    },
+    "by_source": {
+      "painting-geometry-v1": {
+        "rows": 24,
+        "top1_accuracy": 0.3333333333333333,
+        "mean_nll": 2.348383720658346,
+        "mean_brier": 0.3563463542010619
+      },
+      "reasoning-control-v1": {
+        "rows": 23,
+        "top1_accuracy": 0.30434782608695654,
+        "mean_nll": 2.032270667045967,
+        "mean_brier": 0.37290993126759636
+      },
+      "snake-v1": {
+        "rows": 14,
+        "top1_accuracy": 0.42857142857142855,
+        "mean_nll": 2.1055132749803898,
+        "mean_brier": 0.46967724200579425
+      },
+      "tic_tac_toe-v1": {
+        "rows": 7,
+        "top1_accuracy": 0.2857142857142857,
+        "mean_nll": 1.362262538504228,
+        "mean_brier": 0.2088154842247934
+      },
+      "tile_platformer-v1": {
+        "rows": 7,
+        "top1_accuracy": 0.8571428571428571,
+        "mean_nll": 1.0335689868626432,
+        "mean_brier": 0.0736324357101749
+      },
+      "trex_runner-v1": {
+        "rows": 4,
+        "top1_accuracy": 0.75,
+        "mean_nll": 1.0957679742468398,
+        "mean_brier": 0.14503580412307462
+      },
+      "vizdoom-basic-v1": {
+        "rows": 21,
+        "top1_accuracy": 0.5714285714285714,
+        "mean_nll": 1.303707516443386,
+        "mean_brier": 0.21689549679315778
+      },
+      "workflow-controls-v1/agent_trace_observability": {
+        "rows": 7,
+        "top1_accuracy": 0.14285714285714285,
+        "mean_nll": 3.876703095233855,
+        "mean_brier": 0.8357874281962709
+      },
+      "workflow-controls-v1/customer_service": {
+        "rows": 7,
+        "top1_accuracy": 0.5714285714285714,
+        "mean_nll": 1.801533489443105,
+        "mean_brier": 0.41507511171452094
+      },
+      "workflow-controls-v1/invoice_processing": {
+        "rows": 7,
+        "top1_accuracy": 0.2857142857142857,
+        "mean_nll": 3.0703888676964346,
+        "mean_brier": 0.6944705069695234
+      },
+      "workflow-controls-v1/security_incidents": {
+        "rows": 7,
+        "top1_accuracy": 0.0,
+        "mean_nll": 5.218994953744974,
+        "mean_brier": 0.9886836223877971
+      }
+    }
+  },
+  "baseline_ood": {
+    "rows": 128,
+    "top1_accuracy": 0.2265625,
+    "mean_nll": 2.8078998750058677,
+    "mean_brier": 0.5022227001515791,
+    "by_kind": {
+      "choice": {
+        "rows": 35,
+        "top1_accuracy": 0.17142857142857143,
+        "mean_nll": 2.341943577159022,
+        "mean_brier": 0.27397058830814053
+      },
+      "noul": {
+        "rows": 67,
+        "top1_accuracy": 0.22388059701492538,
+        "mean_nll": 3.5774947283482157,
+        "mean_brier": 0.7523371716343059
+      },
+      "score": {
+        "rows": 26,
+        "top1_accuracy": 0.3076923076923077,
+        "mean_nll": 1.4519620000328795,
+        "mean_brier": 0.16495940496610415,
+        "mean_rank_error": 1.3989298742946557
+      }
+    },
+    "by_source": {
+      "painting-geometry-v1": {
+        "rows": 27,
+        "top1_accuracy": 0.37037037037037035,
+        "mean_nll": 1.6613392219497496,
+        "mean_brier": 0.20684991779799033
+      },
+      "reasoning-control-v1": {
+        "rows": 27,
+        "top1_accuracy": 0.25925925925925924,
+        "mean_nll": 2.5290793234407136,
+        "mean_brier": 0.36588055539446324
+      },
+      "snake-v1": {
+        "rows": 18,
+        "top1_accuracy": 0.2222222222222222,
+        "mean_nll": 2.437598040464511,
+        "mean_brier": 0.5760515942503212
+      },
+      "vizdoom-basic-v1": {
+        "rows": 24,
+        "top1_accuracy": 0.20833333333333334,
+        "mean_nll": 2.3966952088410154,
+        "mean_brier": 0.4135999316403076
+      },
+      "workflow-controls-v1/agent_trace_observability": {
+        "rows": 8,
+        "top1_accuracy": 0.125,
+        "mean_nll": 3.954091894779827,
+        "mean_brier": 0.8531508371755765
+      },
+      "workflow-controls-v1/customer_service": {
+        "rows": 8,
+        "top1_accuracy": 0.25,
+        "mean_nll": 4.107290323064735,
+        "mean_brier": 0.7432801597068448
+      },
+      "workflow-controls-v1/invoice_processing": {
+        "rows": 8,
+        "top1_accuracy": 0.0,
+        "mean_nll": 4.663646242087376,
+        "mean_brier": 0.9791044609135199
+      },
+      "workflow-controls-v1/security_incidents": {
+        "rows": 8,
+        "top1_accuracy": 0.0,
+        "mean_nll": 5.384025731900934,
+        "mean_brier": 0.9901465156206485
+      }
+    }
+  },
+  "trained_test": {
+    "rows": 128,
+    "top1_accuracy": 0.59375,
+    "mean_nll": 1.018378772206052,
+    "mean_brier": 0.18200666344149966,
+    "by_kind": {
+      "choice": {
+        "rows": 48,
+        "top1_accuracy": 0.4583333333333333,
+        "mean_nll": 1.3578116330695416,
+        "mean_brier": 0.16507744151729362
+      },
+      "noul": {
+        "rows": 58,
+        "top1_accuracy": 0.7413793103448276,
+        "mean_nll": 0.608298187108887,
+        "mean_brier": 0.20446677510388603
+      },
+      "score": {
+        "rows": 22,
+        "top1_accuracy": 0.5,
+        "mean_nll": 1.358919527396419,
+        "mean_brier": 0.15973012598438516,
+        "mean_rank_error": 0.983147669715218
+      }
+    },
+    "by_source": {
+      "painting-geometry-v1": {
+        "rows": 24,
+        "top1_accuracy": 0.7083333333333334,
+        "mean_nll": 1.3468666985449869,
+        "mean_brier": 0.12656691488013308
+      },
+      "reasoning-control-v1": {
+        "rows": 23,
+        "top1_accuracy": 0.5217391304347826,
+        "mean_nll": 0.9847824542687,
+        "mean_brier": 0.18069474740351496
+      },
+      "snake-v1": {
+        "rows": 14,
+        "top1_accuracy": 0.5,
+        "mean_nll": 0.8404058348161573,
+        "mean_brier": 0.1997424941308706
+      },
+      "tic_tac_toe-v1": {
+        "rows": 7,
+        "top1_accuracy": 0.5714285714285714,
+        "mean_nll": 1.180002313253344,
+        "mean_brier": 0.18324851267116182
+      },
+      "tile_platformer-v1": {
+        "rows": 7,
+        "top1_accuracy": 1.0,
+        "mean_nll": 1.2074462538480044,
+        "mean_brier": 0.08356610165742959
+      },
+      "trex_runner-v1": {
+        "rows": 4,
+        "top1_accuracy": 0.25,
+        "mean_nll": 1.3653414201419616,
+        "mean_brier": 0.1851006205070575
+      },
+      "vizdoom-basic-v1": {
+        "rows": 21,
+        "top1_accuracy": 0.3333333333333333,
+        "mean_nll": 1.1753452920576368,
+        "mean_brier": 0.2453844408379398
+      },
+      "workflow-controls-v1/agent_trace_observability": {
+        "rows": 7,
+        "top1_accuracy": 0.8571428571428571,
+        "mean_nll": 0.40514200705748,
+        "mean_brier": 0.12152696667020525
+      },
+      "workflow-controls-v1/customer_service": {
+        "rows": 7,
+        "top1_accuracy": 0.42857142857142855,
+        "mean_nll": 1.2031206051987795,
+        "mean_brier": 0.43461064223670565
+      },
+      "workflow-controls-v1/invoice_processing": {
+        "rows": 7,
+        "top1_accuracy": 0.7142857142857143,
+        "mean_nll": 0.6385735227013283,
+        "mean_brier": 0.21735808432086426
+      },
+      "workflow-controls-v1/security_incidents": {
+        "rows": 7,
+        "top1_accuracy": 1.0,
+        "mean_nll": 0.1469134590711278,
+        "mean_brier": 0.0187464232508854
+      }
+    }
+  },
+  "trained_ood": {
+    "rows": 128,
+    "top1_accuracy": 0.5546875,
+    "mean_nll": 0.9606239118833131,
+    "mean_brier": 0.1635195736629079,
+    "by_kind": {
+      "choice": {
+        "rows": 35,
+        "top1_accuracy": 0.3142857142857143,
+        "mean_nll": 1.5481841209620102,
+        "mean_brier": 0.18483963966256486
+      },
+      "noul": {
+        "rows": 67,
+        "top1_accuracy": 0.7761194029850746,
+        "mean_nll": 0.4745695371955344,
+        "mean_brier": 0.15245029331190635
+      },
+      "score": {
+        "rows": 26,
+        "top1_accuracy": 0.3076923076923077,
+        "mean_nll": 1.42220221135742,
+        "mean_brier": 0.16334416879864302,
+        "mean_rank_error": 1.2086391925256097
+      }
+    },
+    "by_source": {
+      "painting-geometry-v1": {
+        "rows": 27,
+        "top1_accuracy": 0.37037037037037035,
+        "mean_nll": 1.5126926471715336,
+        "mean_brier": 0.18491076633242395
+      },
+      "reasoning-control-v1": {
+        "rows": 27,
+        "top1_accuracy": 0.2222222222222222,
+        "mean_nll": 1.264557071996279,
+        "mean_brier": 0.23078150793043745
+      },
+      "snake-v1": {
+        "rows": 18,
+        "top1_accuracy": 0.8333333333333334,
+        "mean_nll": 0.688661291228469,
+        "mean_brier": 0.13363299618780766
+      },
+      "vizdoom-basic-v1": {
+        "rows": 24,
+        "top1_accuracy": 0.4583333333333333,
+        "mean_nll": 1.0515436522282913,
+        "mean_brier": 0.18725562214568134
+      },
+      "workflow-controls-v1/agent_trace_observability": {
+        "rows": 8,
+        "top1_accuracy": 0.875,
+        "mean_nll": 0.3626972107905467,
+        "mean_brier": 0.10567552253306794
+      },
+      "workflow-controls-v1/customer_service": {
+        "rows": 8,
+        "top1_accuracy": 0.75,
+        "mean_nll": 0.6134332925454541,
+        "mean_brier": 0.20176860611523156
+      },
+      "workflow-controls-v1/invoice_processing": {
+        "rows": 8,
+        "top1_accuracy": 1.0,
+        "mean_nll": 0.16597850555183075,
+        "mean_brier": 0.02392764335086184
+      },
+      "workflow-controls-v1/security_incidents": {
+        "rows": 8,
+        "top1_accuracy": 1.0,
+        "mean_nll": 0.1505369171048819,
+        "mean_brier": 0.019538873110597002
+      }
+    }
+  },
+  "adapter_sha256": "dcb0f23ccf72ca33f619123cf04c99c21ab6efed74163beaeab834a3c532c73c",
+  "head_sha256": "08b38d6dd526d3c09acdac03d058725f806925dcbe90a172c2ced6df0e841b00",
+  "peak_vram_gib": 3.668,
+  "memory_note": null,
+  "elapsed_seconds": 440.6,
+  "limitation": "Licensed public synthetic sample only; not proprietary Jev parity or Heliox execution authority."
+}

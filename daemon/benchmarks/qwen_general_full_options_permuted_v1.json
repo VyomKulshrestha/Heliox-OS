@@ -1,0 +1,95 @@
+{
+  "purpose": "offline_frozen_artifact_comparison",
+  "dataset_revision": "c67699e13d0ae25e35b77165a4b6b079bedc8aba",
+  "dataset_manifest": {
+    "sha256": "ba8cb3f95b9121aa73e4b997ac9c350e2ec4dddb972cb5c3086da911f0deb9ef",
+    "total_rows": 15701,
+    "licensed_rows": 15101,
+    "excluded_unverified_license": 600,
+    "selected_rows": 128
+  },
+  "split": "ood",
+  "seed": 20260927,
+  "rows": 128,
+  "permute_options_seed": 7,
+  "adapter_sha256": "dcb0f23ccf72ca33f619123cf04c99c21ab6efed74163beaeab834a3c532c73c",
+  "head_sha256": "08b38d6dd526d3c09acdac03d058725f806925dcbe90a172c2ced6df0e841b00",
+  "metrics": {
+    "rows": 128,
+    "top1_accuracy": 0.5625,
+    "mean_nll": 0.964478261507907,
+    "mean_brier": 0.16383259560661662,
+    "by_kind": {
+      "choice": {
+        "rows": 35,
+        "top1_accuracy": 0.34285714285714286,
+        "mean_nll": 1.562280028160525,
+        "mean_brier": 0.1859844056281282
+      },
+      "noul": {
+        "rows": 67,
+        "top1_accuracy": 0.7761194029850746,
+        "mean_nll": 0.4745695371955344,
+        "mean_brier": 0.15245029331190638
+      },
+      "score": {
+        "rows": 26,
+        "top1_accuracy": 0.3076923076923077,
+        "mean_nll": 1.42220221135742,
+        "mean_brier": 0.16334416879864302,
+        "mean_rank_error": 1.2086391925256097
+      }
+    },
+    "by_source": {
+      "painting-geometry-v1": {
+        "rows": 27,
+        "top1_accuracy": 0.4074074074074074,
+        "mean_nll": 1.5212378370964714,
+        "mean_brier": 0.1847536586386043
+      },
+      "reasoning-control-v1": {
+        "rows": 27,
+        "top1_accuracy": 0.2222222222222222,
+        "mean_nll": 1.263867501061561,
+        "mean_brier": 0.23012362055630153
+      },
+      "snake-v1": {
+        "rows": 18,
+        "top1_accuracy": 0.9444444444444444,
+        "mean_nll": 0.6769214533807009,
+        "mean_brier": 0.13096833476044267
+      },
+      "vizdoom-basic-v1": {
+        "rows": 24,
+        "top1_accuracy": 0.375,
+        "mean_nll": 1.0720674905812873,
+        "mean_brier": 0.19184043803410158
+      },
+      "workflow-controls-v1/agent_trace_observability": {
+        "rows": 8,
+        "top1_accuracy": 0.875,
+        "mean_nll": 0.36269721079054673,
+        "mean_brier": 0.10567552253306797
+      },
+      "workflow-controls-v1/customer_service": {
+        "rows": 8,
+        "top1_accuracy": 0.75,
+        "mean_nll": 0.6134332925454541,
+        "mean_brier": 0.20176860611523156
+      },
+      "workflow-controls-v1/invoice_processing": {
+        "rows": 8,
+        "top1_accuracy": 1.0,
+        "mean_nll": 0.16597850555183075,
+        "mean_brier": 0.023927643350861845
+      },
+      "workflow-controls-v1/security_incidents": {
+        "rows": 8,
+        "top1_accuracy": 1.0,
+        "mean_nll": 0.1505369171048819,
+        "mean_brier": 0.019538873110597002
+      }
+    }
+  },
+  "limitation": "Licensed public synthetic decisions; no Jev or desktop-safety proof."
+}
