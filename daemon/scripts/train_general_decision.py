@@ -37,21 +37,39 @@ from scripts.qwen_model_pin import MODEL, REVISION  # noqa: E402
 
 
 def encode_rows(tokenizer, rows: list[dict], max_length: int,
-                *, prompt_style: str = "candidate_v1") -> tuple[list[dict], int]:
+                *, prompt_style: str = "candidate_v1",
+                fit_history: bool = False) -> tuple[list[dict], int]:
     encoded = []
     overlong = 0
     for row in rows:
-        sequences = []
-        for prompt in candidate_prompts(row, style=prompt_style):
-            rendered = tokenizer.apply_chat_template(
-                [{"role": "user", "content": prompt}], tokenize=False,
-                add_generation_prompt=True, enable_thinking=False,
-            )
-            sequences.append(tokenizer(rendered, add_special_tokens=False)["input_ids"])
+        effective = row
+        state = json.loads(row["state_json"]) if fit_history else None
+        history = list(state.get("previous_tool_calls", [])) if isinstance(state, dict) else []
+        dropped = 0
+        while True:
+            sequences = []
+            for prompt in candidate_prompts(effective, style=prompt_style):
+                rendered = tokenizer.apply_chat_template(
+                    [{"role": "user", "content": prompt}], tokenize=False,
+                    add_generation_prompt=True, enable_thinking=False,
+                )
+                sequences.append(tokenizer(rendered, add_special_tokens=False)["input_ids"])
+            if all(ids and len(ids) <= max_length for ids in sequences) or not history:
+                break
+            history.pop(0)
+            dropped += 1
+            state = dict(state)
+            if history:
+                state["previous_tool_calls"] = history
+            else:
+                state.pop("previous_tool_calls", None)
+            effective = {**row, "state_json": json.dumps(state, ensure_ascii=False)}
         if any(not ids or len(ids) > max_length for ids in sequences):
             overlong += 1
             continue
-        encoded.append({"row": row, "sequences": sequences})
+        encoded.append({"row": effective, "sequences": sequences,
+                        "history_calls_dropped": dropped,
+                        "history_calls_retained": len(history)})
     return encoded, overlong
 
 
@@ -338,7 +356,8 @@ def run(args: argparse.Namespace) -> dict:
                         "scope_calibration": args.scope_calibration_rows,
                         "scope_test": args.scope_test_rows}
         scope_parts, scope_manifest = load_scope_parts(args.scopejudge_path, seed=args.seed,
-                                                       limits=scope_limits)
+                                                       limits=scope_limits,
+                                                       history_calls=args.scope_history_calls)
         rows.update(scope_parts)
     verify_disjoint(rows)
     print(json.dumps({"event": "data_selected", "counts": {name: len(part) for name, part in rows.items()},
@@ -375,7 +394,8 @@ def run(args: argparse.Namespace) -> dict:
     encoded, overlong = {}, {}
     for split, selected in rows.items():
         encoded[split], overlong[split] = encode_rows(
-            tokenizer, selected, args.max_length, prompt_style=args.prompt_style)
+            tokenizer, selected, args.max_length, prompt_style=args.prompt_style,
+            fit_history=args.scope_history_calls > 0 and split.startswith("scope_"))
         if not encoded[split]:
             raise ValueError(f"All {split} rows exceed max_length={args.max_length}")
     print(json.dumps({"event": "tokenized", "kept": {name: len(part) for name, part in encoded.items()},
@@ -456,6 +476,11 @@ def run(args: argparse.Namespace) -> dict:
         "dataset_manifests": manifests, "seed": args.seed,
         "selected_rows": limits, "evaluated_rows": {name: len(part) for name, part in encoded.items()},
         "excluded_overlong": overlong, "max_length": args.max_length,
+        "scope_history_budget": {
+            name: {"rows_with_history": sum(item["history_calls_retained"] > 0 for item in part),
+                   "calls_dropped": sum(item["history_calls_dropped"] for item in part)}
+            for name, part in encoded.items() if name.startswith("scope_")
+        },
         "attention_implementation": args.attention,
         "training_checkpoint_sha256": checkpoint_hash,
         "lora_rank": args.lora_rank, "accumulation": args.accumulation,
@@ -519,6 +544,8 @@ def main() -> None:
                         help="Avoid repeated baseline inference after a saved training checkpoint")
     parser.add_argument("--seed", type=int, default=20260924)
     parser.add_argument("--scopejudge-path", type=Path, help="Pinned MIT ScopeJudge train.jsonl for multi-task study")
+    parser.add_argument("--scope-history-calls", type=int, default=0,
+                        help="Include up to this many calls from completed earlier trajectory steps")
     parser.add_argument("--scope-train-rows", type=int, default=512)
     parser.add_argument("--scope-calibration-rows", type=int, default=128)
     parser.add_argument("--scope-test-rows", type=int, default=128)
@@ -531,6 +558,8 @@ def main() -> None:
     if args.scopejudge_path is not None and any(value < 2 for value in (
             args.scope_train_rows, args.scope_calibration_rows, args.scope_test_rows)):
         parser.error("ScopeJudge row limits must be at least two")
+    if args.scope_history_calls < 0 or (args.scope_history_calls and args.scopejudge_path is None):
+        parser.error("Scope history requires a dataset path and a non-negative call count")
     report = run(args)
     print(json.dumps({key: report[key] for key in ("trained_test", "trained_ood", "peak_vram_gib")}, indent=2))
 
