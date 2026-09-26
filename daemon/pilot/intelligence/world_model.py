@@ -204,6 +204,10 @@ class StructuredTransitionPredictor:
             ui=deepcopy(current_state.ui),
             browser=deepcopy(current_state.browser),
         )
+        # Rules can describe UI effects but cannot synthesize a next frame.
+        predicted.ui.pop("latent_embedding", None)
+        predicted.ui.pop("latent_source", None)
+        predicted.ui.pop("latent_transition", None)
         effects: list[ExpectedEffect] = []
         uncertainty = self._uncertainty(action_type)
 
@@ -614,6 +618,8 @@ class UiJepaPredictor:
             system=deepcopy(current_state.system),
             ui={
                 **deepcopy(current_state.ui),
+                "latent_embedding": predicted_latent.tolist(),
+                "latent_source": "predicted",
                 "latent_transition": {
                     "delta_norm": round(delta_norm, 6),
                     "cosine_similarity": round(cosine, 6),
@@ -687,12 +693,17 @@ class HybridWorldModel:
         visual = self._visual.predict_optional(current_state, candidate_action)
         if visual is None:
             return structured
+        visual_updates = {
+            key: deepcopy(value)
+            for key, value in visual.predicted_state.ui.items()
+            if key not in current_state.ui or value != current_state.ui[key]
+        }
         fused_state = WorldState(
             observed_at=structured.predicted_state.observed_at,
             system=deepcopy(structured.predicted_state.system),
             ui={
                 **deepcopy(structured.predicted_state.ui),
-                **deepcopy(visual.predicted_state.ui),
+                **visual_updates,
             },
             browser=deepcopy(structured.predicted_state.browser),
         )

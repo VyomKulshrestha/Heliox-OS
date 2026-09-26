@@ -138,11 +138,15 @@ class RiskGate:
         worst_sources: list[str] = []
         worst_prediction_confidence: float | None = None
         world_predictions: list[dict[str, object]] = []
-        for action in plan.actions:
+        rollout_ui = ui_observation
+        rollout_browser: dict[str, Any] = {}
+        for step_index, action in enumerate(plan.actions):
             contract_prediction = self._world_model.predict(
-                WorldState.from_os_snapshot(simulated, ui=ui_observation),
+                WorldState.from_os_snapshot(simulated, ui=rollout_ui, browser=rollout_browser),
                 action,
             )
+            rollout_ui = dict(contract_prediction.predicted_state.ui)
+            rollout_browser = dict(contract_prediction.predicted_state.browser)
             learned_or_rule = self._transition.predict(simulated, action)
             deterministic = self._transition.predict_rule(simulated, action)
             candidates = [learned_or_rule]
@@ -217,6 +221,7 @@ class RiskGate:
                 worst_prediction_confidence = None
 
             contract_payload = contract_prediction.to_dict()
+            contract_payload["input_state_source"] = "observed" if step_index == 0 else "predicted"
             contract_payload["sources"] = list(
                 dict.fromkeys(
                     [
