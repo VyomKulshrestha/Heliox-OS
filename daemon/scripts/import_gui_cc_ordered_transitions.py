@@ -38,8 +38,9 @@ def _feature(path: Path, representation: str) -> tuple[np.ndarray, int, int, str
         if representation == "gray16":
             frame = np.asarray(image.convert("RGB").resize((64, 64)).convert("L"), dtype=np.float32)
             feature = np.asarray(_world_embedding_from_frame(frame), dtype=np.float32)
-        elif representation == "rgb32":
-            frame = np.asarray(image.convert("RGB").resize((32, 32)), dtype=np.float32)
+        elif representation in {"rgb32", "rgb64"}:
+            size = int(representation[3:])
+            frame = np.asarray(image.convert("RGB").resize((size, size)), dtype=np.float32)
             feature = (frame.transpose(2, 0, 1) / 255.0).reshape(-1)
         else:
             raise ValueError("Unknown visual representation")
@@ -60,7 +61,7 @@ def _metadata(path: Path) -> dict[str, dict]:
 
 
 def import_pairs(root: Path, selection: dict, *, representation: str = "gray16") -> tuple[list[dict], Counter, str]:
-    if representation not in {"gray16", "rgb32"}:
+    if representation not in {"gray16", "rgb32", "rgb64"}:
         raise ValueError("Unknown visual representation")
     metadata_path = root / "offline_samples.jsonl"
     if _file_sha256(metadata_path) != selection["offline_samples_sha256"]:
@@ -136,7 +137,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--selection", type=Path, required=True)
-    parser.add_argument("--representation", choices=("gray16", "rgb32"), default="gray16")
+    parser.add_argument("--representation", choices=("gray16", "rgb32", "rgb64"), default="gray16")
     parser.add_argument("--features", type=Path, default=state / "gui_cc_tap_transitions_v1.npz")
     parser.add_argument("--report", type=Path, default=state / "gui_cc_tap_transitions_v1.json")
     args = parser.parse_args()
@@ -174,7 +175,8 @@ def main() -> None:
         "groups": dict(Counter(assignments.values())),
         "split_basis": "casefolded_task_meta",
         "representation": args.representation,
-        "feature_shape": [1, 16, 16] if args.representation == "gray16" else [3, 32, 32],
+        "feature_shape": ([1, 16, 16] if args.representation == "gray16" else
+                          [3, int(args.representation[3:]), int(args.representation[3:])]),
         "action_filter": "tap_with_pixel_coordinates_only",
         "exclusions": dict(reasons),
         "features_sha256": _file_sha256(args.features),
