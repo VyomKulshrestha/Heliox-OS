@@ -11,6 +11,7 @@
   "split_basis": "task_family",
   "rows": {"train": 64, "validation": 24, "eval": 48},
   "counterfactual_groups": {"train": 32, "validation": 12, "eval": 24},
+  "cross_split_identical_16x16_prestates": 0,
   "skipped_train_groups_without_distinct_16x16_outcomes": 4,
   "feature_shape": [1, 16, 16],
   "hardware": {
