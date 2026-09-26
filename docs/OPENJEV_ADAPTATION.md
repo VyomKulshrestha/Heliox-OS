@@ -1211,6 +1211,26 @@ screenshots and full case-level output belong under the ignored
 history and is not a full MisActBench score, a live-desktop safety result,
 or evidence of Jev parity.
 
+### Later GPU training check
+
+With the current RTX 4060/driver 617.14 setup, we retried the isolated
+FP16 rank-4 Qwen3-0.6B LoRA path using licensed Open-Jev examples and
+MisActBench human action labels. A 73-row training/evaluation smoke passed
+the earlier 16- and 32-row failure points, then a separate-seed 354-row run
+completed training and held-out evaluation at 2.772 GiB peak allocated VRAM.
+That is evidence of **two completed runs**, not proof the earlier CUDA/
+`nvlddmkm` fault is fixed or that sustained training is stable.
+
+The 16-action smoke head falsely allowed all eight off-task actions. The
+larger run's 64-action test went to the opposite extreme: **0/32 false
+allowances but 32/32 false warnings**; its aligned-action ranking AUC was
+only 0.600. Open-Jev held-out top-1 was 0.500 on 58 actions and 0.704 on
+27 OOD actions. Different seeds and sample sizes make the two runs' scores
+non-comparable. The [post-update GPU report](../daemon/benchmarks/qwen_misact_post_update_gpu_v1.json)
+pins raw local report and artifact hashes. The adapters remain ignored local
+research artifacts and are not loaded by Heliox. A completed GPU job cannot
+turn an always-allow or always-reject action judge into a usable safety layer.
+
 An additional source check found the Apache-2.0
 [`ProCreations/auto`](https://huggingface.co/datasets/ProCreations/auto)
 training corpus and its separate

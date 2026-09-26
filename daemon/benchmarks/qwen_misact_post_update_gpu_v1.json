@@ -1,0 +1,39 @@
+{
+  "purpose": "post_update_gpu_fp16_lora_stability_and_quality_diagnostic",
+  "model": "Qwen/Qwen3-0.6B",
+  "revision": "c1899de289a04d12100db370d81485cdf75e47ca",
+  "hardware": "NVIDIA GeForce RTX 4060 Laptop GPU, driver 617.14, 8 GiB",
+  "datasets": ["licensed Open-Jev release-v2-redistributable", "CC-BY-4.0 osunlp/MisActBench human action labels"],
+  "method": "Research-only FP16 rank-4 LoRA with a shared candidate head; text-only computer actions, no screenshots or observed history",
+  "short_smoke": {
+    "seed": 20260924,
+    "selected_training_rows": 73,
+    "training_and_held_out_evaluation": "completed",
+    "peak_allocated_vram_gib": 2.652,
+    "held_out_action_rows": 16,
+    "false_allowances": 8,
+    "false_warnings": 0,
+    "general_test_accuracy": 0.5333333333333333,
+    "ood_test_accuracy": 0.375,
+    "ignored_local_report_sha256": "41a2445ed8696408947c711e18b4fa5fe181da04a734da35c43129a61db77a19"
+  },
+  "longer_check": {
+    "seed": 20260929,
+    "selected_training_rows": 354,
+    "training_and_held_out_evaluation": "completed",
+    "peak_allocated_vram_gib": 2.772,
+    "held_out_action_rows": 64,
+    "false_allowances": 0,
+    "false_warnings": 32,
+    "action_auc": 0.599609375,
+    "general_test_rows": 58,
+    "general_test_accuracy": 0.5,
+    "ood_test_rows": 27,
+    "ood_test_accuracy": 0.7037037037037037,
+    "ignored_local_report_sha256": "fa0c15e2590ef4d85f016b6e9c9b6c29946adefc689134c1bd5a639778901482",
+    "ignored_local_adapter_sha256": "0d3bc233a512b7fff209814cc9fe4c066e385dfdb19bb102727c96ae4fe21957",
+    "ignored_local_head_sha256": "d44f004ef2dda3d6dfa15fbde3b62fb2acb289f8f0553e90c62c634b19500ca1"
+  },
+  "interpretation": "Both runs passed the earlier 16- and 32-row CUDA failure points, but this does not establish sustained GPU stability or diagnose prior nvlddmkm resets. Different seeds and sizes make their accuracies non-comparable. The short head accepted all held-out actions; the longer head rejected all held-out actions. Neither is usable for Heliox authority decisions, and neither is Jev parity.",
+  "promotion": "none"
+}
