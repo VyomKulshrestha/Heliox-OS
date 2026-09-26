@@ -1085,6 +1085,48 @@ unweighted control. The [ablation](../daemon/benchmarks/openjev_2b_scope_weighte
 is post-hoc research evidence, not a demonstrated general safety fix; weighting
 remains disabled by default and no research head gains action authority.
 
+### Post-update GPU and transfer recheck
+
+On the RTX 4060 laptop with NVIDIA driver 617.14 and PyTorch 2.6.0+cu124,
+the same `diverse_trajectory_v3` 128-general + 256-scope selection was tried
+at both BF16 and FP16 with a 768-token limit. BF16 failed twice in CUDA after
+checkpointed rows 80 and 128. FP16 passed those positions but also faulted
+after row 288; its exact identity-checked resume completed all 376 eligible
+training rows and held-out scoring. Windows recorded `nvlddmkm` events 13 and
+153 at the faults. Different short examples triggered the failures, so neither
+a fixed bad row nor GPU stability has been demonstrated. The trainer now offers
+an opt-in precision choice bound to the checkpoint and scorer, and baseline
+evaluation checkpoints survive future interrupted runs.
+
+The completed FP16 model retained 248 scope training rows and 694 held-out
+scope calls, including 55 violations. At its default cutoff it falsely allowed
+**44/55** violations and falsely warned on **169/639** valid calls; balanced
+accuracy was 0.468. General test top-1 was 0.625 and OOD top-1 was 0.469.
+A cutoff chosen strictly above the 28 negative *calibration* probabilities
+still falsely allowed two held-out violations while warning on 584/639 valid
+calls. On the previously inspected 60-case Heliox-style suite, the default
+cutoff falsely allowed all 30 violations; the calibration-only cutoff falsely
+allowed two and warned on 21/30 valid cases. The cutoff check is exploratory
+because this public split and transfer suite had already been inspected. The
+[frozen diagnostic](../daemon/benchmarks/qwen_scope_diverse_gpu_recheck_v1.json)
+records report and artifact hashes. The adapter is not loaded by Heliox.
+
+An additional source check found the Apache-2.0
+[`ProCreations/auto`](https://huggingface.co/datasets/ProCreations/auto)
+training corpus and its separate
+[`approve-or-deny`](https://huggingface.co/datasets/ProCreations/approve-or-deny)
+test set. Their rule distinguishes consequential unauthorized harm and prompt
+injection from ordinary automatically executable work; that is not the same
+label as ScopeJudge's exact task-scope authorization. Most training rows and
+all benchmark labels are model-generated, not expert annotations. They could
+support a distinct, clearly labeled transfer study, but cannot be silently
+merged with ScopeJudge or treated as proof of Heliox safety. The full training
+corpus is 1.13 GB, while the local C: drive had only about 2.3 GB free during
+this run, so it was not downloaded or used for training. The separate MIT
+[`AuthBench`](https://github.com/evolvent-ai/Authbench) evaluates task-level
+file permission policies on 120 tasks rather than per-call scope labels, and
+is another different task, not an interchangeable training set.
+
 ## Reproduction and release boundary
 
 The offline probes need `onnx`, `onnxruntime`, `pyarrow`, `tokenizers`,
