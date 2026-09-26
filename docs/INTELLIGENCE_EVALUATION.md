@@ -420,6 +420,19 @@ python -m scripts.import_aligned_world_trajectories --jsonl /path/to/trajectorie
 python -m scripts.train_world_visual_transition --device cuda --architecture spatial --disable-cudnn --features benchmarks/.bench-state/aligned_probe.npz --source-report benchmarks/.bench-state/aligned_probe.json --report benchmarks/.bench-state/aligned_model.json --weights benchmarks/.bench-state/aligned_model.pt
 ```
 
+The [GUI-CC offline track](https://github.com/Fu-Fu-Fu-Fu/GUI-CC/blob/main/docs/offline.md)
+is a stronger *future evaluation* target: 500 mobile GUI trajectories and
+4,905 transitions, with `initial.png` followed by numbered after-action
+screenshots, fixed reference actions, and autoregressive rollout scoring.
+Its [dataset card](https://huggingface.co/datasets/minuzero/GUI-CC) distinguishes
+the CC BY 4.0-derived offline track from online screenshots restricted to
+non-commercial research. No GUI-CC benchmark has been run here. The present
+16×16 grayscale predictor cannot return a legible full-resolution next screen
+or maintain long-horizon interface state, so its one-step pixel loss is not
+comparable to GUI-CC's contextual-consistency score. Promotion would need a
+different model/output contract, rights review, and a separately held-out
+multi-step benchmark before any live dependency on it.
+
 `daemon/scripts/sample_world_visual_transitions.py` samples adjacent
 screen/action rows from the [TESS AgentNet dataset](https://huggingface.co/datasets/TESS-Computer/tess-agentnet),
 whose card declares MIT licensing and describes normalized mouse coordinates,
