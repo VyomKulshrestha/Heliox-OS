@@ -97,8 +97,15 @@ def main() -> None:
                         cautious_threshold=cautious, manifest_sha256=manifest_hash,
                         feature_sha256=feature_hash)
     text_only = feature_report.get("text_only") is True
-    report = {"purpose": ("frozen_text_feature_cpu_head_development_only" if text_only
-                           else "frozen_visual_feature_cpu_head_development_only"),
+    observed_history = feature_report.get("observed_history") is True
+    if text_only and observed_history:
+        raise ValueError("Feature report has incompatible input modes")
+    purpose = "frozen_visual_feature_cpu_head_development_only"
+    if text_only:
+        purpose = "frozen_text_feature_cpu_head_development_only"
+    if observed_history:
+        purpose = "frozen_history_feature_cpu_head_development_only"
+    report = {"purpose": purpose,
               "dataset_sha256": DATASET_SHA256,
               "manifest_sha256": manifest_hash, "feature_sha256": feature_hash,
               "regularization_C": strength, "calibration_log_loss": calibration_loss,
@@ -114,6 +121,8 @@ def main() -> None:
                              "Public screenshot/action head; no runtime action authority or live desktop validation.")}
     if text_only:
         report["input_mode"] = "text_only"
+    if observed_history:
+        report["input_mode"] = "observed_history"
     args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({key: report[key] for key in (
         "regularization_C", "development_default", "development_cautious")}, indent=2))
