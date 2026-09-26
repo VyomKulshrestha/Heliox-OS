@@ -1,0 +1,16 @@
+{
+  "purpose": "precommitted_small_ordered_gui_transition_probe",
+  "dataset": "minuzero/GUI-CC",
+  "revision": "758a5bcf4093ba4111a2cc882632eb47423130d1",
+  "offline_samples_sha256": "8f7f54cde40ba2bdebffe30d55ba89796adf470be61dcbaa07295f8e48596313",
+  "selection": "Take the last row for each distinct task_meta in source order, then every third distinct template, capped at 18. No images or outcomes were inspected to choose the IDs.",
+  "sample_ids": [
+    "084", "073", "095", "064", "115", "173", "133", "170", "174",
+    "305", "312", "284", "341", "340", "344", "370", "424", "464"
+  ],
+  "grouping": "casefolded_task_meta",
+  "split_seed": 20260926,
+  "license": "CC-BY-4.0 offline track; research probe only",
+  "limits": "Selected trajectories only; raw images stay ignored locally. Derived 16x16 grayscale features are not a full GUI world model.",
+  "promotion": "none"
+}
