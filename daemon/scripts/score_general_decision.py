@@ -68,12 +68,15 @@ def score_requests(payloads: list[dict], output_dir: Path, report_path: Path) ->
         bias = saved["bias"].copy()
         attention = str(saved["attention_implementation"]) if "attention_implementation" in saved else "eager"
         prompt_style = str(saved["prompt_style"]) if "prompt_style" in saved else "candidate_v1"
+        model_dtype = str(saved["model_dtype"]) if "model_dtype" in saved else "bfloat16"
     if max_length != report["max_length"]:
         raise ValueError("Head token limit differs from research report")
     if attention not in ("eager", "sdpa") or attention != report.get("attention_implementation", "eager"):
         raise ValueError("Head attention mode differs from research report")
     if prompt_style not in PROMPT_STYLES or prompt_style != report.get("prompt_style", "candidate_v1"):
         raise ValueError("Head prompt style differs from research report")
+    if model_dtype not in ("bfloat16", "float16") or model_dtype != report.get("model_dtype", "bfloat16"):
+        raise ValueError("Head precision differs from research report")
 
     model_path = snapshot_download(MODEL, revision=REVISION, local_files_only=True)
     tokenizer = AutoTokenizer.from_pretrained(model_path, local_files_only=True)
@@ -81,7 +84,8 @@ def score_requests(payloads: list[dict], output_dir: Path, report_path: Path) ->
     if overlong:
         raise ValueError("Decision exceeds the trained token limit; input was not truncated")
     base = AutoModelForCausalLM.from_pretrained(
-        model_path, local_files_only=True, dtype=torch.bfloat16,
+        model_path, local_files_only=True,
+        dtype={"bfloat16": torch.bfloat16, "float16": torch.float16}[model_dtype],
         device_map={"": 0}, attn_implementation=attention,
     )
     backbone = PeftModel.from_pretrained(base.model, output_dir / "adapter", is_trainable=False)

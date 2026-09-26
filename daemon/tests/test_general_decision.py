@@ -166,6 +166,10 @@ def test_checkpoint_signature_binds_exact_tokenized_inputs() -> None:
     args.prompt_style = "full_options_v2"
     assert first != checkpoint_signature(args, encoded, {}, None)
     args.prompt_style = "candidate_v1"
+    args.dtype = "float16"
+    assert first != checkpoint_signature(args, encoded, {}, None)
+    args.dtype = "bfloat16"
+    assert first == checkpoint_signature(args, encoded, {}, None)
     args.scope_group_weighting = "inverse_sqrt"
     assert first != checkpoint_signature(args, encoded, {}, None)
     assert checkpoint_signature(args, encoded, {}, None, [1.0, 0.5]) != checkpoint_signature(
