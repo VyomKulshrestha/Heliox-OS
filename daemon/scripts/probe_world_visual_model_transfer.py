@@ -50,9 +50,10 @@ def main() -> None:
         raise RuntimeError("CUDA is required for this transfer probe")
     device = torch.device("cuda:0" if args.device == "cuda" else "cpu")
     architecture = model_report["architecture"]
-    if architecture == "spatial":
+    if architecture in {"spatial", "spatial_global"}:
         model = nn.Sequential(
-            nn.Conv2d(channels + 10, 32, 3, padding=1), nn.GELU(),
+            nn.Conv2d(channels + (12 if architecture == "spatial_global" else 10),
+                      32, 3, padding=1), nn.GELU(),
             nn.Conv2d(32, 32, 3, padding=1), nn.GELU(),
             nn.Conv2d(32, channels, 3, padding=1),
         )
@@ -72,7 +73,7 @@ def main() -> None:
     def predict(actions):
         if model_report["trained_without_action"]:
             actions = torch.zeros_like(actions)
-        if architecture == "spatial":
+        if architecture in {"spatial", "spatial_global"}:
             y, x = torch.meshgrid(torch.arange(height, device=device),
                                   torch.arange(width, device=device), indexing="ij")
             cx = actions[:, 9, None, None] * (width - 1)
@@ -80,8 +81,10 @@ def main() -> None:
             radius = 4.5 * (min(height, width) / 16) ** 2
             locus = torch.exp(-((x - cx) ** 2 + (y - cy) ** 2) / radius).unsqueeze(1)
             kind = actions[:, :9, None, None].expand(-1, -1, height, width)
-            delta = model(torch.cat((state.reshape(-1, channels, height, width),
-                                     locus, kind), dim=1)).reshape(-1, dimension)
+            inputs = [state.reshape(-1, channels, height, width), locus, kind]
+            if architecture == "spatial_global":
+                inputs.append(actions[:, 9:11, None, None].expand(-1, -1, height, width))
+            delta = model(torch.cat(inputs, dim=1)).reshape(-1, dimension)
         else:
             delta = model(torch.cat((state, actions), dim=1))
         return torch.clamp(state + delta, 0, 1).cpu().numpy()
