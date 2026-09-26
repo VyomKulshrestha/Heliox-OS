@@ -104,3 +104,23 @@ def test_repeated_task_group_is_stable(tmp_path):
     rows, _, _ = import_pairs(root, selection)
     assert rows[0]["group"] == rows[1]["group"]
     assert rows[0]["episode"] != rows[1]["episode"]
+
+
+def test_rgb_representation_preserves_color_channels(tmp_path, monkeypatch):
+    root, manifest, selection = _dataset(tmp_path)
+    image = root / "offline_data" / "001" / "initial.png"
+    stream = io.BytesIO()
+    Image.new("RGB", (16, 16), (255, 0, 0)).save(stream, format="PNG")
+    image.write_bytes(stream.getvalue())
+    rows, _, _ = import_pairs(root, selection, representation="rgb32")
+    assert rows[0]["state"].shape == (3072,)
+    assert np.all(rows[0]["state"][:1024] == 1)
+    assert np.all(rows[0]["state"][1024:] == 0)
+    features, report = tmp_path / "rgb.npz", tmp_path / "rgb.json"
+    monkeypatch.setattr(sys, "argv", ["import", "--root", str(root), "--selection", str(manifest),
+                                  "--representation", "rgb32", "--features", str(features),
+                                  "--report", str(report)])
+    main()
+    assert json.loads(report.read_text(encoding="utf-8"))["feature_shape"] == [3, 32, 32]
+    partitions = load_features(features, report)
+    assert sum(len(partition["state"]) for partition in partitions.values()) == 6

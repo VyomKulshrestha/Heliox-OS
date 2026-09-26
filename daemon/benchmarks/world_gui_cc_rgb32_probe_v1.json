@@ -1,0 +1,30 @@
+{
+  "purpose": "exploratory_richer_visual_representation_ablation_after_action_grounding_failure",
+  "dataset": "minuzero/GUI-CC offline track",
+  "revision": "758a5bcf4093ba4111a2cc882632eb47423130d1",
+  "selection": "gui_cc_all_templates_exploratory_v1.json",
+  "selection_timing": "Representation selected after the gray16 probe failed; held-out rows were already inspected, so this is not confirmatory evidence",
+  "source_image_hashes_match_gray16": true,
+  "feature_shape": [3, 32, 32],
+  "features_sha256": "1806987e51ee62738560ce49071131bc4fdd30493a5b2008098167e6bbb65fe4",
+  "rows": {"train": 361, "validation": 75, "eval": 87},
+  "groups": {"train": 43, "validation": 9, "eval": 10},
+  "model": "globally connected residual MLP, 80 maximum epochs, validation-selected checkpoint",
+  "device": "NVIDIA GeForce RTX 4060 Laptop GPU",
+  "eval_weighted_mse": {
+    "unchanged_screen": 0.6808425457750209,
+    "correct_tap": 0.4823731456838838,
+    "shuffled_tap_location": 0.48192728507223936,
+    "matched_state_only": 0.48552232000298595
+  },
+  "local_report_sha256": {
+    "action": "1a33b191121b7760561046520bcce6f32f7d037ef08404a0cbbb897be413bbbc",
+    "state_only": "fcdd505d732d74f57946a09683e471e8c4381d3e93710caf86a3a6f1752922e4"
+  },
+  "local_weights_sha256": {
+    "action": "6534825e8121fc543f52428d7f4f49b8416fc7c83ff3572110e6fc497f96b427",
+    "state_only": "e69173ec78f55bc41e2b1f61315a87f53a5db92d4f219ca0656d6fafc16861b1"
+  },
+  "promotion": "none",
+  "interpretation": "The richer representation and global connectivity did not establish action grounding: shuffling locations slightly improved held-out error. This is one-step mobile GUI evidence only, not real desktop or Jev parity."
+}

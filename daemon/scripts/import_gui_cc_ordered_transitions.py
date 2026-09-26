@@ -1,7 +1,7 @@
 """Import a preselected GUI-CC offline subset as ordered, tap-only screen transitions.
 
 Raw screenshots remain in the ignored local dataset directory. The derived
-16x16 grayscale features are for research, not live model promotion.
+visual features are for research, not live model promotion.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ class OversizeImageError(ValueError):
     """A source image exceeds the importer memory bound."""
 
 
-def _feature(path: Path) -> tuple[np.ndarray, int, int, str]:
+def _feature(path: Path, representation: str) -> tuple[np.ndarray, int, int, str]:
     with path.open("rb") as stream:
         content = stream.read(MAX_IMAGE_BYTES + 1)
     if len(content) > MAX_IMAGE_BYTES:
@@ -35,9 +35,15 @@ def _feature(path: Path) -> tuple[np.ndarray, int, int, str]:
         width, height = image.size
         if image.format != "PNG" or width <= 0 or height <= 0 or width * height > MAX_PIXELS:
             raise ValueError("Image format or dimensions exceed the bounded decode limit")
-        frame = np.asarray(image.convert("RGB").resize((64, 64)).convert("L"), dtype=np.float32)
-    return (np.asarray(_world_embedding_from_frame(frame), dtype=np.float32),
-            width, height, hashlib.sha256(content).hexdigest())
+        if representation == "gray16":
+            frame = np.asarray(image.convert("RGB").resize((64, 64)).convert("L"), dtype=np.float32)
+            feature = np.asarray(_world_embedding_from_frame(frame), dtype=np.float32)
+        elif representation == "rgb32":
+            frame = np.asarray(image.convert("RGB").resize((32, 32)), dtype=np.float32)
+            feature = (frame.transpose(2, 0, 1) / 255.0).reshape(-1)
+        else:
+            raise ValueError("Unknown visual representation")
+    return feature, width, height, hashlib.sha256(content).hexdigest()
 
 
 def _metadata(path: Path) -> dict[str, dict]:
@@ -53,7 +59,9 @@ def _metadata(path: Path) -> dict[str, dict]:
     return dict(zip(ids, records))
 
 
-def import_pairs(root: Path, selection: dict) -> tuple[list[dict], Counter, str]:
+def import_pairs(root: Path, selection: dict, *, representation: str = "gray16") -> tuple[list[dict], Counter, str]:
+    if representation not in {"gray16", "rgb32"}:
+        raise ValueError("Unknown visual representation")
     metadata_path = root / "offline_samples.jsonl"
     if _file_sha256(metadata_path) != selection["offline_samples_sha256"]:
         raise ValueError("Offline metadata does not match the frozen selection")
@@ -103,7 +111,7 @@ def import_pairs(root: Path, selection: dict) -> tuple[list[dict], Counter, str]
             try:
                 for name in (before, after):
                     if name not in cache:
-                        cache[name] = _feature(directory / name)
+                        cache[name] = _feature(directory / name, representation)
                 state, width, height, before_hash = cache[before]
                 target, next_width, next_height, after_hash = cache[after]
             except OversizeImageError:
@@ -128,6 +136,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--selection", type=Path, required=True)
+    parser.add_argument("--representation", choices=("gray16", "rgb32"), default="gray16")
     parser.add_argument("--features", type=Path, default=state / "gui_cc_tap_transitions_v1.npz")
     parser.add_argument("--report", type=Path, default=state / "gui_cc_tap_transitions_v1.json")
     args = parser.parse_args()
@@ -135,7 +144,7 @@ def main() -> None:
             or args.report.exists() or args.features.resolve() == args.report.resolve()):
         parser.error("Supply a local dataset, frozen selection, and fresh output paths")
     selection = json.loads(args.selection.read_text(encoding="utf-8"))
-    rows, reasons, references_hash = import_pairs(args.root, selection)
+    rows, reasons, references_hash = import_pairs(args.root, selection, representation=args.representation)
     assignments = _splits({row["group"] for row in rows}, selection["split_seed"])
     for row in rows:
         row["split"] = assignments[row["group"]]
@@ -164,11 +173,13 @@ def main() -> None:
         "accepted": dict(Counter(row["split"] for row in rows)),
         "groups": dict(Counter(assignments.values())),
         "split_basis": "casefolded_task_meta",
+        "representation": args.representation,
+        "feature_shape": [1, 16, 16] if args.representation == "gray16" else [3, 32, 32],
         "action_filter": "tap_with_pixel_coordinates_only",
         "exclusions": dict(reasons),
         "features_sha256": _file_sha256(args.features),
         "limitation": "Ordered mobile GUI observations are not independently verified action effects. "
-                      "16x16 grayscale features omit text and semantics; unsupported actions are excluded. "
+                      "Downsampled pixels omit readable text and semantics; unsupported actions are excluded. "
                       "No desktop transfer, safety, Jev parity, or live runtime loading claim.",
     }
     args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")

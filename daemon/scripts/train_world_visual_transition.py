@@ -17,8 +17,21 @@ from typing import Any
 import numpy as np
 
 
+def feature_shape(source_report: Path) -> tuple[int, int, int]:
+    report = json.loads(source_report.read_text(encoding="utf-8"))
+    shape = report.get("feature_shape", [1, 16, 16])
+    if (not isinstance(shape, list) or len(shape) != 3
+            or any(not isinstance(value, int) or isinstance(value, bool) for value in shape)
+            or not 1 <= shape[0] <= 4 or not 8 <= shape[1] <= 64
+            or not 8 <= shape[2] <= 64 or np.prod(shape) > 16384):
+        raise ValueError("Invalid bounded visual feature shape")
+    return tuple(shape)
+
+
 def load_features(path: Path, source_report: Path) -> dict[str, dict[str, np.ndarray]]:
     report = json.loads(source_report.read_text(encoding="utf-8"))
+    shape = feature_shape(source_report)
+    dimension = int(np.prod(shape))
     if hashlib.sha256(path.read_bytes()).hexdigest() != report.get("features_sha256"):
         raise ValueError("Visual features do not match the pinned source report")
     with np.load(path, allow_pickle=False) as data:
@@ -29,7 +42,7 @@ def load_features(path: Path, source_report: Path) -> dict[str, dict[str, np.nda
         groups = data["group"].astype(str)
         splits = data["split"].astype(str)
     count = len(states)
-    if (states.shape != (count, 256) or targets.shape != (count, 256)
+    if (states.shape != (count, dimension) or targets.shape != (count, dimension)
             or actions.shape != (count,) or coords.shape != (count, 2)
             or groups.shape != (count,) or splits.shape != (count,)
             or not np.all(np.isfinite(states)) or not np.all(np.isfinite(targets))
@@ -185,6 +198,10 @@ def main() -> None:
     else:
         rows = load_features(args.features, args.source_report)
         source_hash = hashlib.sha256(args.features.read_bytes()).hexdigest()
+    split_basis = ("recording" if recorded_store else
+                   json.loads(args.source_report.read_text(encoding="utf-8")).get("split_basis", "episode"))
+    channels, height, width = (1, 16, 16) if recorded_store else feature_shape(args.source_report)
+    dimension = channels * height * width
 
     import torch
     from torch import nn
@@ -199,18 +216,20 @@ def main() -> None:
                       if key != "groups"} for split, partition in rows.items()}
     if args.architecture == "spatial":
         model = nn.Sequential(
-            nn.Conv2d(11, 32, 3, padding=1), nn.GELU(),
+            nn.Conv2d(channels + 10, 32, 3, padding=1), nn.GELU(),
             nn.Conv2d(32, 32, 3, padding=1), nn.GELU(),
-            nn.Conv2d(32, 1, 3, padding=1),
+            nn.Conv2d(32, channels, 3, padding=1),
         ).to(device)
         nn.init.zeros_(model[-1].weight)
         nn.init.zeros_(model[-1].bias)
     elif args.architecture == "mlp":
-        model = nn.Sequential(nn.Linear(267, 256), nn.GELU(), nn.Linear(256, 256)).to(device)
+        hidden = min(512, max(256, dimension))
+        model = nn.Sequential(nn.Linear(dimension + 11, hidden), nn.GELU(),
+                              nn.Linear(hidden, dimension)).to(device)
         nn.init.zeros_(model[-1].weight)
         nn.init.zeros_(model[-1].bias)
     else:
-        model = nn.Linear(267, 256).to(device)
+        model = nn.Linear(dimension + 11, dimension).to(device)
         nn.init.zeros_(model.weight)
         nn.init.zeros_(model.bias)
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=0.02)
@@ -219,14 +238,15 @@ def main() -> None:
         action = (torch.zeros_like(partition["action"])
                   if ablate_action or args.train_without_action else partition["action"])
         if args.architecture == "spatial":
-            state_image = partition["state"].reshape(-1, 1, 16, 16)
-            y, x = torch.meshgrid(torch.arange(16, device=device),
-                                  torch.arange(16, device=device), indexing="ij")
-            cx = action[:, 9, None, None] * 15
-            cy = action[:, 10, None, None] * 15
-            locus = torch.exp(-((x - cx) ** 2 + (y - cy) ** 2) / 4.5).unsqueeze(1)
-            kind = action[:, :9, None, None].expand(-1, -1, 16, 16)
-            delta = model(torch.cat((state_image, locus, kind), dim=1)).reshape(-1, 256)
+            state_image = partition["state"].reshape(-1, channels, height, width)
+            y, x = torch.meshgrid(torch.arange(height, device=device),
+                                  torch.arange(width, device=device), indexing="ij")
+            cx = action[:, 9, None, None] * (width - 1)
+            cy = action[:, 10, None, None] * (height - 1)
+            radius = 4.5 * (min(height, width) / 16) ** 2
+            locus = torch.exp(-((x - cx) ** 2 + (y - cy) ** 2) / radius).unsqueeze(1)
+            kind = action[:, :9, None, None].expand(-1, -1, height, width)
+            delta = model(torch.cat((state_image, locus, kind), dim=1)).reshape(-1, dimension)
             return torch.clamp(partition["state"] + delta, 0, 1)
         return torch.clamp(
             partition["state"] + model(torch.cat((partition["state"], action), dim=1)), 0, 1
@@ -296,6 +316,8 @@ def main() -> None:
         "features_sha256": source_hash,
         "source_kind": "encrypted_local_recordings" if recorded_store else "pinned_feature_archive",
         "device": str(device), "architecture": args.architecture,
+        "feature_shape": [channels, height, width],
+        "split_basis": split_basis,
         "trained_without_action": args.train_without_action,
         "torch_version": torch.__version__, "cudnn_enabled": torch.backends.cudnn.enabled,
         "seed": args.seed, "selected_epoch": best_epoch,
@@ -303,11 +325,11 @@ def main() -> None:
         "rows": {split: len(partition["state"]) for split, partition in rows.items()},
         "groups": {split: len(set(partition["groups"])) for split, partition in rows.items()},
         "scores": scores,
-        "limitation": "16x16 grayscale images and mouse action type/coordinates only. "
+        "limitation": f"{channels}x{height}x{width} visual features and mouse action type/coordinates only. "
                       "Research model is not the live UiJepaPredictor. "
                       + ("Recording-disjoint, not environment-disjoint; action outcomes are observed, "
                          "not independently verified. " if recorded_store else
-                         "Episode-disjoint within one public dataset, not environment-disjoint. ")
+                         f"{split_basis}-disjoint within one public dataset, not environment-disjoint. ")
                       + "No safety, autonomy, Jev parity, or runtime loading claim.",
     }
     args.weights.parent.mkdir(parents=True, exist_ok=True)
