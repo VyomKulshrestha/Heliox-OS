@@ -163,6 +163,22 @@ against the public target expectation was 0.861 locally versus 0.445 for Jev.
 The sample is still small and synthetic; it does not establish parity, desktop
 transfer, or execution authority. See the [frozen comparison](../daemon/benchmarks/qwen_general_jev_comparison_v3.json).
 
+A separate, preselected frozen Qwen3.5-2B feature experiment tested whether a
+larger backbone alone repaired general decision transfer. Native Windows CUDA
+with driver 617.14 completed the pinned extraction after the WSL path again
+encountered an NVIDIA reset. Per-row license and token-length filters retained
+225 train, 60 calibration, 114 test, and 108 OOD examples. A regularized
+candidate head selected only on calibration data reached **59.6%** test top-1
+versus a **44.7%** uniform baseline, but just **45.4%** OOD top-1 versus
+**49.1%** uniform. Its OOD negative log-likelihood (1.056) beat uniform
+(1.153), yet OOD Noul balanced accuracy was only **45.6%** and choice top-1
+was **31.4%**. These mixed metrics do not support a general-purpose model or
+runtime promotion. The [held-out report](../daemon/benchmarks/qwen2b_frozen_general_v1.json)
+records the pinned source, selection, hashes, and per-kind results; weights
+remain local and ignored. A fresh matched Jev comparison could not run because
+the otherwise valid OpenRouter key received `403 RBAC: access denied` from the
+Decisions endpoint. This is an access limit, not a Jev result.
+
 An ordinal-loss ablation then reused the earlier 512-row run's exact public
 train/calibration/test/OOD selections and changed only the normalized
 expected-rank loss weight from 0 to 0.5. Held-out OOD top-1 moved from
