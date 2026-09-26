@@ -1053,6 +1053,23 @@ and one-call-history modes retain identical case IDs. No model has yet been
 trained or evaluated on this v2 split, so those counts are a preflight, not a
 new performance result.
 
+Further group analysis found that this v2 test's 61 selected violations come
+from only nine trajectories, with **48 from one trajectory**; its training
+sample also takes 108 of 256 violation examples from one group. An opt-in
+`diverse_trajectory_v3` split now includes the number of violation-bearing
+trajectories and within-split violation concentration in its deterministic
+label-only assignment objective. Its class-balanced train/calibration sampler
+round-robins trajectories, rather than drawing individual calls uniformly.
+The prior strategies and their frozen reports are unchanged. At the same seed,
+the v3 full test has 47 violations across 12 trajectories, with at most 15 in
+one; 1,024-token encoding retains all 47 violations and 686 calls. No-history
+and one-prior-call modes retain the same eligible test IDs. The v3 training
+sample still has 89/256 violations from one trajectory, so this improves the
+evaluation concentration more than training diversity. The
+[preflight report](../daemon/benchmarks/scope_group_diverse_preflight_v1.json)
+records the selection and limits. No model has been trained or evaluated on
+v3; it is not a performance claim.
+
 ## Reproduction and release boundary
 
 The offline probes need `onnx`, `onnxruntime`, `pyarrow`, `tokenizers`,

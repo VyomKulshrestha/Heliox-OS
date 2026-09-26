@@ -1,0 +1,37 @@
+{
+  "purpose": "label_only_group_diverse_scope_split_preflight_no_model_training",
+  "date_local": "2026-09-26",
+  "source": "dreadnode/scopejudge",
+  "revision": "b8b06a65a09e39a4fe1682ef56f48fd14ab74800",
+  "sha256": "63a176fde1933464dc1cbfe3d5adcae8d4991ab0f93368903276c55a74efb527",
+  "seed": 20260926,
+  "max_tokens": 1024,
+  "limits": {
+    "scope_train": 512,
+    "scope_calibration": 110,
+    "scope_test": 10000
+  },
+  "method": "4096 deterministic group assignments scored on normalized total-call count, violation count, violation-bearing-group count, and within-split violation concentration; opt-in class-balanced round-robin group sampling for train/calibration. No model predictions or call text enter selection.",
+  "diverse_trajectory_v3": {
+    "selected": {
+      "scope_train": {"rows": 512, "violations": 256, "violation_groups": 48, "largest_violation_group": 89},
+      "scope_calibration": {"rows": 110, "violations": 55, "violation_groups": 13, "largest_violation_group": 11},
+      "scope_test": {"rows": 697, "violations": 47, "violation_groups": 12, "largest_violation_group": 15}
+    },
+    "eligible_at_1024_tokens": {
+      "scope_train": {"rows": 506, "violations": 255, "violation_groups": 48},
+      "scope_calibration": {"rows": 107, "violations": 53, "violation_groups": 13},
+      "scope_test": {"rows": 686, "violations": 47, "violation_groups": 12}
+    },
+    "one_prior_call_and_no_history_test_ids_match": true,
+    "model_trained_or_evaluated": false
+  },
+  "balanced_trajectory_v2_reference": {
+    "selected_test_rows": 728,
+    "selected_test_violations": 61,
+    "selected_test_violation_groups": 9,
+    "largest_test_violation_group": 48,
+    "largest_training_violation_group": 108
+  },
+  "limitation": "A more diverse split does not itself improve the model. The v3 training sample remains concentrated in one violation trajectory, and its held-out negatives remain sparse and domain-specific. This is a data-selection preflight, not accuracy, safety, or Jev-parity evidence."
+}
