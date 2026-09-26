@@ -1,0 +1,56 @@
+{
+  "purpose": "native_windows_followup_to_incomplete_gpu_research_attempt",
+  "date_local": "2026-09-26",
+  "predecessor": "qwen_gpu_stability_attempt_v1.json",
+  "environment": {
+    "runtime": "native Windows Python 3.12 with PyTorch 2.6.0+cu124",
+    "gpu": "NVIDIA GeForce RTX 4060 Laptop GPU",
+    "windows_driver": "616.56"
+  },
+  "pre_gpu_import_failure": {
+    "observation": "An initial Python process exited with Windows application error 1000, access violation c0000005 in PyArrow's bundled MSVCP140.dll; no model inference or NVIDIA event occurred.",
+    "isolation": "Pre-importing sentencepiece before running the unchanged extraction module allowed a complete native Windows 2B smoke test and subsequent full-size checkpoint resume.",
+    "classification": "native_python_import_order_issue_not_gpu_evidence"
+  },
+  "frozen_2b_extraction": {
+    "selection_seed": 20260926,
+    "token_limit": 512,
+    "selected_rows": {
+      "train": 256,
+      "calibration": 64,
+      "test": 128,
+      "ood": 128
+    },
+    "eligible_rows": {
+      "train": 225,
+      "calibration": 60,
+      "test": 114,
+      "ood": 108
+    },
+    "checkpointed_rows": {
+      "train": 225,
+      "calibration": 60,
+      "test": 64,
+      "ood": 0
+    },
+    "verified_candidate_features": {
+      "train": 802,
+      "calibration": 213,
+      "test": 222
+    },
+    "checkpoint_sha256": {
+      "train": "f5ec0a1349385115464965bacfb130202e726a798d2b41c8deb661ebceb75e6b",
+      "calibration": "84ccf5f8104e9ad75510b86524f5dd9d12375e72f7620b7b4fad49b8bd65c107",
+      "test": "30d336ae2ab1321dc89b814c9bdf29711c76006c27b2bb95d9259b3d98a3975e"
+    },
+    "identity_validation": "All existing split checkpoints matched the pinned model, source manifest, selected row IDs, tokenization signature, feature shape, and finite-value checks.",
+    "artifact_directory": "ignored local .bench-state/qwen2b_frozen_general_v1",
+    "final_report_exists": false
+  },
+  "gpu_failure": {
+    "observation": "Native Windows model inference later failed with CUBLAS_STATUS_INTERNAL_ERROR during the test split.",
+    "windows_event": "Contemporaneous nvlddmkm event IDs 13 and 153 at 11:36:20-21 local time, including Graphics SM Warp Exception on GPC 2, TPC 3, SM 1.",
+    "implication": "WSL is not the sole cause of the longer-model GPU failures; the specific root cause remains unproven."
+  },
+  "result": "incomplete_no_full_heldout_metrics_no_jev_comparison_no_promoted_model"
+}
