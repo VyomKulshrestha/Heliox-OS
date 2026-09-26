@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from collections import Counter
 from pathlib import Path
 
@@ -50,3 +51,21 @@ def test_tracked_fresh_reservation_is_disjoint_from_fit_groups() -> None:
     assert pre_action["fresh_transfer_selection_sha256"] == sha256_file(fresh_path)
     assert pre_action["fresh_transfer_labels_opened"] is False
     assert pre_action["promotion"] == "none"
+
+
+def test_tracked_paired_transfer_uses_frozen_heads_and_exact_auc_differences() -> None:
+    benchmark = Path(__file__).resolve().parents[1] / "benchmarks"
+    paired = json.loads((benchmark / "agentnet_paired_fresh_transfer_v1.json").read_text(
+        encoding="utf-8"))
+    pre = json.loads((benchmark / "agentnet_preaction_dev_v1.json").read_text(encoding="utf-8"))
+    post = json.loads((benchmark / "agentnet_outcome_dev_v1.json").read_text(encoding="utf-8"))
+    assert paired["fresh_manifest_sha256"] == sha256_file(
+        benchmark / "agentnet_fresh_transfer_selection_v1.json")
+    assert paired["training"]["pre_action"]["head_sha256"] == pre["head_sha256"]
+    assert paired["training"]["post_action"]["head_sha256"] == post["head_sha256"]
+    for split in ("final", "ood"):
+        result = paired["results"][split]
+        assert math.isclose(result["post_minus_pre_auc"],
+                            result["post_action"]["default"]["auc"]
+                            - result["pre_action"]["default"]["auc"])
+    assert paired["promotion"] == "none"
