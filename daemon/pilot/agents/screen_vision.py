@@ -432,6 +432,17 @@ class ScreenVisionAgent:
         """Return screen context formatted for planner injection."""
         return self._context.summary()
 
+    def get_recent_text_context(self, *, max_age_seconds: float = 5.0) -> str:
+        """Return only a fresh, running screen summary for secondary review."""
+        current = self._context.current()
+        if not self._running or self._paused or current is None:
+            return ""
+        try:
+            age = (datetime.now(UTC) - datetime.fromisoformat(current.timestamp)).total_seconds()
+        except (TypeError, ValueError):
+            return ""
+        return self._context.summary() if 0 <= age <= max_age_seconds else ""
+
     def get_world_observation(self, *, max_age_seconds: float = 5.0) -> dict[str, Any] | None:
         """Return only a fresh in-memory visual feature for shadow prediction."""
         current = self._context.current()

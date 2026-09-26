@@ -1344,9 +1344,11 @@ async def test_proactive_companion_revises_plan_before_any_action_runs():
     class _Companion:
         def __init__(self):
             self.calls = 0
+            self.contexts = []
 
-        async def review(self, user_input, plan):
+        async def review(self, user_input, plan, *, screen_context=""):
             self.calls += 1
+            self.contexts.append(screen_context)
             if self.calls == 1:
                 return CompanionReview(
                     decision="REVISE",
@@ -1370,6 +1372,16 @@ async def test_proactive_companion_revises_plan_before_any_action_runs():
     server._verifier = _Verifier()
     companion = _Companion()
     server._execution_companion = companion
+
+    class _ScreenVision:
+        def get_context_for_planner(self):
+            return 'Currently viewing: Browser — "Requested page"'
+
+        def get_recent_text_context(self):
+            return self.get_context_for_planner()
+
+    server._screen_vision = _ScreenVision()
+    server._recent_companion_context_by_session["default"] = "Prior private follow-up"
     planned_inputs: list[str] = []
     original_planner = server._planner
 
@@ -1385,6 +1397,7 @@ async def test_proactive_companion_revises_plan_before_any_action_runs():
 
     assert result["status"] == "success"
     assert companion.calls == 2
+    assert companion.contexts == ['Currently viewing: Browser — "Requested page"'] * 2
     assert executor.calls == 1
     assert len(planned_inputs) == 2
     assert "[INDEPENDENT COMPANION REVIEW]" in planned_inputs[1]
@@ -1448,7 +1461,7 @@ async def test_mismatched_local_plan_revises_to_one_approved_truthful_result(
             return VerificationResult(passed=True, details=["Observed action verified"])
 
     class _Companion:
-        async def review(self, user_input, plan):
+        async def review(self, user_input, plan, *, screen_context=""):
             return CompanionReview(decision="CONTINUE", reason="Corrected plan matches the request.")
 
     server = _server_ready_for_handle_execute(_Executor(), plans[0])
@@ -1499,7 +1512,7 @@ async def test_companion_revision_preserves_mcp_approval_boundary():
         def __init__(self):
             self.calls = 0
 
-        async def review(self, user_input, plan):
+        async def review(self, user_input, plan, *, screen_context=""):
             self.calls += 1
             if self.calls == 1:
                 return CompanionReview(
