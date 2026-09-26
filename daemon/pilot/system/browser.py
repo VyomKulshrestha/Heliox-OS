@@ -3,19 +3,16 @@
 Navigate, click, type, extract data, execute JS, handle forms,
 manage tabs, and scrape web content programmatically.
 
-DOM-diff self-correction
-------------------------
-All mutating actions (click, type, select, fill_form) automatically:
+DOM-diff observation
+--------------------
+Browser actions can:
   1. Snapshot the DOM before the action
   2. Execute the action
   3. Snapshot the DOM after the action
-  4. Compute a DomDiff (change_score in [0.0, 1.0])
-  5. If change_score < MIN_CHANGE_SCORE, attempt self-correction:
-       - click: retry with JS element.click() (bypasses pointer-events:none)
-       - type:  retry with page.type() character-by-character
-       - select: retry with JS value assignment + change event dispatch
-       - fill_form: retry each failing field individually
-  6. Return the action result appended with a JSON diff summary
+  4. Return a DomDiff summary as evidence for later verification
+
+A small or absent DOM change never authorizes replaying a successful action:
+the effect may be external, delayed, or outside the page DOM.
 
 Set ``DOM_DIFF_ENABLED = False`` to disable (e.g. for performance testing).
 """
@@ -41,12 +38,6 @@ logger = logging.getLogger("pilot.system.browser")
 
 # Master switch — set to False to skip all DOM diffing
 DOM_DIFF_ENABLED: bool = True
-
-# Minimum change_score to consider a mutating action successful
-MIN_CHANGE_SCORE: float = 0.01
-
-# Max self-correction retries before giving up and returning the result anyway
-MAX_SELF_CORRECT_RETRIES: int = 2
 
 # Global browser instance for session persistence
 _browser_context: Any = None
@@ -278,11 +269,7 @@ async def browser_click(
     click_count: int = 1,
     timeout: int = 5000,
 ) -> str:
-    """Click an element by CSS selector, with DOM-diff self-correction.
-
-    If the DOM does not change after the click (change_score < MIN_CHANGE_SCORE),
-    retries using a JavaScript ``element.click()`` call which bypasses
-    ``pointer-events: none`` and overlapping elements.
+    """Click an element by CSS selector once and record its observed DOM diff.
 
     Examples: "#submit-btn", "button:has-text('Login')", "a[href='/about']"
     """
@@ -292,24 +279,6 @@ async def browser_click(
     await page.click(selector, button=button, click_count=click_count, timeout=timeout)
     await page.wait_for_timeout(300)
     after = await _snap(page)
-
-    if DOM_DIFF_ENABLED and before is not None and after is not None:
-        from pilot.system.dom_diff import diff_dom
-
-        diff = diff_dom(before, after)
-        retries = 0
-        while diff.change_score < MIN_CHANGE_SCORE and retries < MAX_SELF_CORRECT_RETRIES:
-            retries += 1
-            logger.info(
-                "browser_click: no DOM change (score=%.3f), self-correcting attempt %d/%d",
-                diff.change_score,
-                retries,
-                MAX_SELF_CORRECT_RETRIES,
-            )
-            await page.evaluate(f"document.querySelector('{selector}')?.click()")
-            await page.wait_for_timeout(400)
-            after = await _snap(page)
-            diff = diff_dom(before, after)
 
     return _append_diff(f"Clicked: {selector}", before, after, f"click:{selector}")
 
@@ -343,31 +312,6 @@ async def browser_click_text(text: str, exact: bool = False) -> str:
 
     await page.wait_for_timeout(300)
     after = await _snap(page)
-
-    if DOM_DIFF_ENABLED and before is not None and after is not None:
-        from pilot.system.dom_diff import diff_dom
-
-        diff = diff_dom(before, after)
-        retries = 0
-        while diff.change_score < MIN_CHANGE_SCORE and retries < MAX_SELF_CORRECT_RETRIES:
-            retries += 1
-            logger.info(
-                "browser_click_text: no DOM change (score=%.3f), self-correcting attempt %d/%d",
-                diff.change_score,
-                retries,
-                MAX_SELF_CORRECT_RETRIES,
-            )
-            escaped = matched_text.replace("'", "\\'")
-            await page.evaluate(
-                f"""
-                const els = [...document.querySelectorAll('*')];
-                const match = els.find(e => e.innerText && e.innerText.trim().includes('{escaped}'));
-                if (match) match.click();
-                """
-            )
-            await page.wait_for_timeout(400)
-            after = await _snap(page)
-            diff = diff_dom(before, after)
 
     output = (
         f"Clicked closest available option: {matched_text} (requested: {text})"
@@ -465,12 +409,7 @@ async def browser_type(
     clear_first: bool = True,
     press_enter: bool = False,
 ) -> str:
-    """Type text into an input field, with DOM-diff self-correction.
-
-    If the DOM does not change after fill(), retries using character-by-character
-    ``page.type()`` which fires individual keydown/keypress/keyup events and is
-    more compatible with custom input components.
-    """
+    """Type once into an input field and record its observed DOM diff."""
     page = await _get_page()
     before = await _snap(page)
 
@@ -483,75 +422,17 @@ async def browser_type(
     await page.wait_for_timeout(200)
     after = await _snap(page)
 
-    if DOM_DIFF_ENABLED and before is not None and after is not None:
-        from pilot.system.dom_diff import diff_dom
-
-        diff = diff_dom(before, after)
-        retries = 0
-        while diff.change_score < MIN_CHANGE_SCORE and retries < MAX_SELF_CORRECT_RETRIES:
-            retries += 1
-            logger.info(
-                "browser_type: no DOM change (score=%.3f), self-correcting attempt %d/%d — char-by-char",
-                diff.change_score,
-                retries,
-                MAX_SELF_CORRECT_RETRIES,
-            )
-            await page.click(selector)
-            if clear_first:
-                await page.keyboard.press("Control+a")
-                await page.keyboard.press("Delete")
-            await page.type(selector, text, delay=30)
-            if press_enter:
-                await page.press(selector, "Enter")
-            await page.wait_for_timeout(300)
-            after = await _snap(page)
-            diff = diff_dom(before, after)
-
     return _append_diff(f"Typed into {selector}: {text[:80]}", before, after, f"type:{selector}")
 
 
 async def browser_select(selector: str, value: str) -> str:
-    """Select an option from a dropdown, with DOM-diff self-correction.
-
-    If the DOM does not change after select_option(), retries by directly
-    setting the element's value via JavaScript and dispatching a 'change' event,
-    which works for custom select components that don't use native <select>.
-    """
+    """Select an option once and record its observed DOM diff."""
     page = await _get_page()
     before = await _snap(page)
 
     await page.select_option(selector, value)
     await page.wait_for_timeout(200)
     after = await _snap(page)
-
-    if DOM_DIFF_ENABLED and before is not None and after is not None:
-        from pilot.system.dom_diff import diff_dom
-
-        diff = diff_dom(before, after)
-        retries = 0
-        while diff.change_score < MIN_CHANGE_SCORE and retries < MAX_SELF_CORRECT_RETRIES:
-            retries += 1
-            logger.info(
-                "browser_select: no DOM change (score=%.3f), self-correcting attempt %d/%d — JS dispatch",
-                diff.change_score,
-                retries,
-                MAX_SELF_CORRECT_RETRIES,
-            )
-            escaped_val = value.replace("'", "\\'")
-            escaped_sel = selector.replace("'", "\\'")
-            await page.evaluate(
-                f"""
-                const el = document.querySelector('{escaped_sel}');
-                if (el) {{
-                    el.value = '{escaped_val}';
-                    el.dispatchEvent(new Event('change', {{ bubbles: true }}));
-                    el.dispatchEvent(new Event('input',  {{ bubbles: true }}));
-                }}
-                """
-            )
-            await page.wait_for_timeout(300)
-            after = await _snap(page)
-            diff = diff_dom(before, after)
 
     return _append_diff(f"Selected '{value}' in {selector}", before, after, f"select:{selector}")
 
@@ -820,36 +701,16 @@ async def browser_wait_navigation(timeout: int = 30000) -> str:
 
 
 async def browser_fill_form(fields: dict[str, str], submit_selector: str | None = None) -> str:
-    """Fill multiple form fields at once, with DOM-diff self-correction per field.
+    """Fill each form field once and optionally submit once.
 
     fields: {"#email": "user@example.com", "#password": "secret", ...}
-
-    Each field is filled individually. If a field produces no DOM change,
-    it is retried with character-by-character typing before moving on.
     """
     page = await _get_page()
     before_form = await _snap(page)
 
     for selector, value in fields.items():
-        field_before = await _snap(page)
         await page.fill(selector, value)
         await page.wait_for_timeout(150)
-        field_after = await _snap(page)
-
-        if DOM_DIFF_ENABLED and field_before is not None and field_after is not None:
-            from pilot.system.dom_diff import diff_dom
-
-            diff = diff_dom(field_before, field_after)
-            if diff.change_score < MIN_CHANGE_SCORE:
-                logger.info(
-                    "browser_fill_form: field %s produced no DOM change — retrying with type()",
-                    selector,
-                )
-                await page.click(selector)
-                await page.keyboard.press("Control+a")
-                await page.keyboard.press("Delete")
-                await page.type(selector, value, delay=25)
-                await page.wait_for_timeout(150)
 
     if submit_selector:
         await page.click(submit_selector)
