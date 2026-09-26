@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from pilot.agents.screen_vision import PAUSED_POLL_INTERVAL, ScreenVisionAgent
+from pilot.agents.screen_vision import ACTIVE_TASK_OCR_MAX_CHARS, PAUSED_POLL_INTERVAL, ScreenVisionAgent
 
 # Short timeout for fast tests
 TIMEOUT = 0.05
@@ -218,6 +218,47 @@ class TestStats:
         stats = a.get_stats()
         assert stats["capture_timeout_seconds"] == 5.0
         assert stats["max_consecutive_timeouts"] == 2
+
+
+@pytest.mark.asyncio
+async def test_active_task_ocr_is_bounded_and_not_cached(agent):
+    agent._running = True
+    with patch("pilot.system.vision.screen_ocr", new=AsyncMock(return_value="A" * 2000)) as ocr:
+        text = await agent.read_visible_text_now()
+
+    assert text == "A" * ACTIVE_TASK_OCR_MAX_CHARS
+    ocr.assert_awaited_once_with()
+    assert agent.get_context().current() is None
+
+
+@pytest.mark.asyncio
+async def test_active_task_ocr_unavailable_is_not_planner_text(agent):
+    agent._running = True
+    with patch("pilot.system.vision.screen_ocr", new=AsyncMock(return_value="[OCR unavailable on this system]")):
+        assert await agent.read_visible_text_now() == ""
+
+
+@pytest.mark.asyncio
+async def test_active_task_ocr_timeout_is_not_planner_text(agent):
+    agent._running = True
+    async def slow_ocr():
+        await asyncio.sleep(0.1)
+        return "stale result"
+
+    with (patch("pilot.system.vision.screen_ocr", new=slow_ocr),
+          patch("pilot.agents.screen_vision.ACTIVE_TASK_OCR_TIMEOUT_SECONDS", 0.01)):
+        assert await agent.read_visible_text_now() == ""
+
+
+@pytest.mark.asyncio
+async def test_active_task_ocr_respects_disabled_screen_vision(agent):
+    with patch("pilot.system.vision.screen_ocr", new=AsyncMock()) as ocr:
+        assert await agent.read_visible_text_now() == ""
+        agent._running = True
+        agent._paused = True
+        assert await agent.read_visible_text_now() == ""
+
+    ocr.assert_not_awaited()
 
 
 class TestConfigurability:

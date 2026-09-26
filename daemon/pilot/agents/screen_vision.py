@@ -42,6 +42,8 @@ logger = logging.getLogger("pilot.agents.screen_vision")
 
 MIN_CAPTURE_INTERVAL_SECONDS = 0.5
 MAX_CAPTURE_INTERVAL_SECONDS = 60.0
+ACTIVE_TASK_OCR_TIMEOUT_SECONDS = 12.0
+ACTIVE_TASK_OCR_MAX_CHARS = 1600
 
 
 def _world_embedding_from_frame(frame: Any) -> list[float]:
@@ -499,6 +501,25 @@ class ScreenVisionAgent:
         self._consecutive_timeouts = 0
         self._last_active_timestamp = time.time()
         return state
+
+    async def read_visible_text_now(self) -> str:
+        """Read bounded local OCR only when an active task explicitly requests it.
+
+        The periodic monitor never calls this method. OCR text is returned to
+        the active planner, not stored in the rolling screen context.
+        """
+        if not self._running or self._paused:
+            return ""
+        from pilot.system.vision import screen_ocr
+
+        try:
+            text = await asyncio.wait_for(screen_ocr(), timeout=ACTIVE_TASK_OCR_TIMEOUT_SECONDS)
+        except Exception:
+            logger.debug("Active-task OCR unavailable", exc_info=True)
+            return ""
+        if text.startswith("[OCR unavailable"):
+            return ""
+        return text.strip()[:ACTIVE_TASK_OCR_MAX_CHARS]
 
     def get_stats(self) -> dict[str, Any]:
         """Return vision agent statistics."""
