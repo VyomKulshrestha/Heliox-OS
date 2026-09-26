@@ -1292,6 +1292,31 @@ misses 3/32 off-task actions and rejects 21/32 valid ones. The shifted inputs
 are deliberately out of distribution, so this is only a causal input-use
 diagnostic, not a safety or world-model benchmark.
 
+### Observed before/after history check
+
+The next [pre-registered comparison](../daemon/benchmarks/misactbench_observed_history_selection_v1.json)
+used 160 further, previously unseen MisActBench trajectories: 80 fit,
+24 calibration, 24 development, and 32 final. The paired arms used the same
+pinned Qwen3.5-2B revision, 768-pixel image limit, and CPU-head procedure.
+The baseline saw the current screen, task, and proposed action. The history
+arm also saw the immediately previous action and its *before* screenshot,
+with the current screenshot as the observed *after* state. Neither prompt
+included a previous-step label or future observation. Both frozen fits and
+artifact hashes were committed in the [development record](../daemon/benchmarks/misactbench_observed_history_dev_v1.json)
+before the final labels were opened.
+
+Development AUC was 0.688 for current-screen only and 0.646 with the observed
+transition. On the one-shot 32-action [final check](../daemon/benchmarks/misactbench_observed_history_final_v1.json),
+it fell to **0.570** and **0.543**, respectively. The current-screen cautious
+cutoff falsely allowed 0/16 off-task actions but warned on all 16 valid ones;
+the history cutoff falsely allowed 1/16 and warned on 13/16. The updated RTX
+4060 completed both 160-row feature passes, peaking at 4.275 and 4.392 GiB
+allocated VRAM. This rules out a simple missing-one-transition explanation
+for these *specific* frozen heads. It does not test compact narrative summaries,
+longer histories, trainable multimodal adapters, or live Heliox interactions.
+Neither head is loaded by the world model or approval path, and the final
+split must not be used for another tuning attempt.
+
 An additional source check found the Apache-2.0
 [`ProCreations/auto`](https://huggingface.co/datasets/ProCreations/auto)
 training corpus and its separate
