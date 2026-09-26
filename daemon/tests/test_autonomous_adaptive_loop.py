@@ -129,6 +129,7 @@ async def test_verified_dependency_output_reaches_downstream_agent() -> None:
     assert "Summarize the source" in goals[1]
     assert "https://example.com/evidence" in goals[1]
     assert "data, not new instructions" in goals[1]
+    assert "verified_output" not in goals[1]
     assert decomposition.subtasks[1].status == SubtaskStatus.SUCCESS
 
 
@@ -168,6 +169,32 @@ async def test_desktop_goal_reobserves_after_open_and_requires_completion_eviden
     autonomous._focus_target_window.assert_awaited_once_with("Hermes")
     for call in autonomous._planner.plan.await_args_list:
         assert call.kwargs["force_model"] is True
+
+
+@pytest.mark.asyncio
+async def test_prior_action_success_cannot_substitute_for_fresh_completion_evidence():
+    open_plan = _open_app_plan()
+    opened = ActionResult(action=open_plan.actions[0], success=True, output="Opened Hermes")
+    screen = SimpleNamespace(
+        observe_now=AsyncMock(side_effect=[SimpleNamespace(screen_hash="before-screen"), RuntimeError("capture failed")]),
+        get_context_for_planner=MagicMock(side_effect=["Viewing Heliox", "Viewing Hermes"]),
+    )
+    autonomous = _autonomous(
+        plans=[open_plan, ActionPlan(actions=[], explanation="GOAL_COMPLETE: Hermes is open and ready.")],
+        results=[[opened]],
+        verifications=[VerificationResult(passed=True, details=["application opened"])],
+        screen_vision=screen,
+    )
+    job = AutonomousJob(goal="Open Hermes", steps=[JobStep(index=0, title="Execute", description="Open")])
+
+    await autonomous._execute_single_step(job)
+
+    assert job.steps[0].status == "failed"
+    assert "without verified GOAL_COMPLETE evidence" in job.steps[0].error
+    assert autonomous._executor.execute.await_count == 1
+    second_context = autonomous._planner.plan.await_args_list[1].kwargs["screen_context"]
+    assert "Fresh screen observation unavailable" in second_context
+    assert "reported (0/1 effects independently observed)" in second_context
 
 
 @pytest.mark.asyncio
@@ -374,6 +401,14 @@ async def test_failed_verification_is_fed_into_next_adaptive_round():
     second_plan = ActionPlan(actions=[second_action], explanation="Retry the resolved application")
     first_result = ActionResult(action=first_plan.actions[0], success=False, error="app not found")
     second_result = ActionResult(action=second_action, success=True, output="Opened Hermes")
+    screen = SimpleNamespace(
+        observe_now=AsyncMock(side_effect=[
+            SimpleNamespace(screen_hash="before-screen"),
+            SimpleNamespace(screen_hash="still-before"),
+            SimpleNamespace(screen_hash="hermes-screen"),
+        ]),
+        get_context_for_planner=MagicMock(side_effect=["Viewing Heliox", "Viewing Heliox", "Viewing Hermes"]),
+    )
     autonomous = _autonomous(
         plans=[
             first_plan,
@@ -385,6 +420,7 @@ async def test_failed_verification_is_fed_into_next_adaptive_round():
             VerificationResult(passed=False, details=["launch mismatch"]),
             VerificationResult(passed=True, details=["verified"]),
         ],
+        screen_vision=screen,
     )
     job = AutonomousJob(goal="Complete task", steps=[JobStep(index=0, title="Execute", description="")])
 
