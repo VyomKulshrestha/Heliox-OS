@@ -34,6 +34,7 @@
       "eval_correct_of_12": {
         "random_expected": 4.12,
         "literal_match_baseline": 4,
+        "metadata_rules_posthoc": 7,
         "qwen3_0_6b_frozen_zero_shot": 7,
         "qwen3_0_6b_frozen_head": 5,
         "qwen3_5_2b_frozen_zero_shot": 9
@@ -51,6 +52,7 @@
       "eval_correct_of_12": {
         "random_expected": 3,
         "literal_match_baseline": 12,
+        "metadata_rules_posthoc": 12,
         "qwen3_0_6b_frozen_zero_shot": 6,
         "qwen3_0_6b_frozen_head": 9,
         "qwen3_5_2b_frozen_zero_shot": 12
@@ -62,6 +64,33 @@
         "weights_sha256": "e59e2a0cf01d5abd26ec187b20ec27ae32a50e03f10de8704d14694e8f545550"
       },
       "finding": "The 2B model matches a literal color-name baseline, so 12/12 is not evidence of learned visual world dynamics or Jev-like reasoning. The trained 0.6B head improves over its frozen base but remains below literal matching."
+    },
+    {
+      "name": "new_seed_shape_holdout_exploratory",
+      "rows_sha256": "c10b94cf30c00cc5674aafea5685b58b98d1bc774cbf58693dc40fd6d1319a7d",
+      "seed_start": 12,
+      "requested_eval_groups": 40,
+      "skipped_noncontrastive_eval_groups": 1,
+      "train_tasks": ["click-link", "click-widget"],
+      "validation_tasks": ["click-test-2"],
+      "eval_tasks": ["click-shape"],
+      "rows": {"train": 36, "validation": 8, "eval": 358},
+      "groups": {"train": 8, "validation": 4, "eval": 39},
+      "eval_prompt_sha256": "a1f65f751c794e69d4a95a65b6ca918d1ee3840ac6da7dedf177234a3944e9e3",
+      "eval_correct_of_39": {
+        "random_expected": 11.65,
+        "literal_match_baseline": 23,
+        "metadata_rules_posthoc": 32,
+        "qwen3_0_6b_frozen_zero_shot": 14,
+        "qwen3_5_2b_frozen_zero_shot": 34
+      },
+      "paired_2b_vs_posthoc_rules": {
+        "both_correct": 27,
+        "model_only": 7,
+        "rules_only": 5,
+        "both_wrong": 0
+      },
+      "finding": "On new seeds with fixed frozen models and prompt, 2B substantially exceeds literal matching but is close to a simple task-specific metadata rule. The rule was constructed after inspecting these outcomes and is diagnostic, not a fair predeclared competitor. Neither result proves world-model dynamics."
     }
   ],
   "model_revisions": {
@@ -72,6 +101,7 @@
     "Synthetic one-step browser controls, not multi-step execution, real desktop transfer, physical-world prediction, safety, or Jev parity.",
     "Task families and representations were explored before these small holdouts; neither run is a preregistered independent benchmark.",
     "The color goal and control metadata expose exact matching names, as demonstrated by the 12/12 no-model baseline.",
+    "The new-seed shape task family was previously inspected, and the metadata-rule baseline was created after seeing its 2B failures.",
     "The selected contrastive groups do not estimate unbiased success on all generated MiniWoB episodes.",
     "No Jev responses were used as training labels; the reward head is research-only and is not integrated into Heliox's action authority."
   ],
