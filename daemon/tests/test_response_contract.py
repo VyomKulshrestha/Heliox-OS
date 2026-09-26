@@ -1,4 +1,12 @@
-from pilot.actions import Action, ActionPlan, ActionResult, ActionType, SystemInfoParams, VerificationResult
+from pilot.actions import (
+    Action,
+    ActionPlan,
+    ActionResult,
+    ActionType,
+    BrowserParams,
+    SystemInfoParams,
+    VerificationResult,
+)
 from pilot.response_contract import exact_labeled_finding_count, partial_failure_message, success_message
 
 
@@ -16,6 +24,50 @@ def test_success_message_reports_verified_execution_not_just_plan_intent():
     verification = VerificationResult(passed=True, details=["Action 0: VERIFIED"])
 
     assert success_message(plan, [result], verification, dry_run=False) == "Windows"
+
+
+def test_reported_browser_effect_is_not_called_independently_verified():
+    action = Action(
+        action_type=ActionType.BROWSER_CLICK_TEXT,
+        target="Submit",
+        parameters=BrowserParams(text="Submit"),
+    )
+    plan = ActionPlan(actions=[action], explanation="Submit the form.")
+    result = ActionResult(action=action, success=True, output="Clicked Submit")
+    reported = VerificationResult(passed=True, details=["Action 0: REPORTED — no independent postcondition"])
+
+    message = success_message(plan, [result], reported, dry_run=False)
+    assert message.startswith("Clicked Submit")
+    assert "1 action effect was reported successful but not independently verified" in message
+
+    observed = VerificationResult(passed=True, independently_observed_actions=[0])
+    assert success_message(plan, [result], observed, dry_run=False) == "Clicked Submit"
+
+
+def test_mixed_execution_results_avoid_verified_heading_for_unobserved_effect():
+    read = _action()
+    click = Action(action_type=ActionType.BROWSER_CLICK_TEXT, target="Submit",
+                   parameters=BrowserParams(text="Submit"))
+    plan = ActionPlan(actions=[read, click], explanation="Inspect and submit.")
+    results = [ActionResult(action=read, success=True, output="Windows"),
+               ActionResult(action=click, success=True, output="Clicked Submit")]
+
+    message = success_message(plan, results, VerificationResult(passed=True), dry_run=False)
+
+    assert message.startswith("Execution results:\n")
+    assert "not independently verified" in message
+
+
+def test_unobserved_exact_finding_does_not_use_verified_filler():
+    action = Action(action_type=ActionType.BROWSER_CLICK_TEXT, target="Submit",
+                    parameters=BrowserParams(text="Submit"))
+    plan = ActionPlan(actions=[action], raw_input="Return exactly one finding.")
+    result = ActionResult(action=action, success=True, output="")
+
+    message = success_message(plan, [result], VerificationResult(passed=True), dry_run=False)
+
+    assert message.startswith("1. Submit: Reported.")
+    assert "not independently verified" in message
 
 
 def test_dry_run_message_explicitly_says_no_changes_were_made():
