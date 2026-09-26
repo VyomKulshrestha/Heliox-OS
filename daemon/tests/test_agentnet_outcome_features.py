@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import sys
+from pathlib import Path
 
 import numpy as np
 
 from scripts import evaluate_agentnet_outcome_final as evaluate
+from scripts.diagnose_agentnet_outcome_shortcuts import selected_rows
 from scripts.extract_agentnet_outcome_features import PROMPT, save, selected_prompts, sha256_file
 from scripts.fit_agentnet_outcome_head import assess, labels_for
 
@@ -42,6 +44,25 @@ def test_feature_checkpoint_has_numeric_array_only(tmp_path) -> None:
         assert saved["signature"].item() == "pinned"
         assert saved["ids"].tolist() == ["task-a:0"]
         assert saved["features"].dtype == np.float16
+
+
+def test_shortcut_diagnostic_reads_transition_without_reflection(tmp_path) -> None:
+    source = tmp_path / "source.jsonl"
+    source.write_text(json.dumps({
+        "task_id": "task-a", "instruction": "Open the document",
+        "traj": [
+            {"index": 0, "value": {"observation": "Closed", "action": "Click Open",
+                                    "code": "click(2, 3)", "thought": "SECRET_THOUGHT",
+                                    "reflection": "SECRET_REFLECTION",
+                                    "last_step_correct": True}},
+            {"index": 1, "value": {"observation": "Visible",
+                                    "action": "SECRET_FUTURE_ACTION"}},
+        ],
+    }) + "\n", encoding="utf-8")
+    row = selected_rows(source, ["task-a:0"])["task-a:0"]
+    assert row == {"instruction": "Open the document", "before_observation": "Closed",
+                   "action": "Click Open", "code": "click(2, 3)",
+                   "next_observation": "Visible", "label": True}
 
 
 def test_outcome_assessment_counts_false_allowances_and_warnings() -> None:
@@ -92,3 +113,19 @@ def test_frozen_final_evaluator_accepts_pinned_synthetic_artifacts(tmp_path, mon
     result = json.loads(report.read_text(encoding="utf-8"))
     assert result["splits"]["final"]["default"]["false_allowances"] == 0
     assert result["splits"]["ood"]["default"]["false_warnings"] == 0
+
+
+def test_tracked_outcome_reports_preserve_frozen_provenance() -> None:
+    benchmark = Path(__file__).resolve().parents[1] / "benchmarks"
+    selection = benchmark / "agentnet_outcome_selection_v1.json"
+    dev = json.loads((benchmark / "agentnet_outcome_dev_v1.json").read_text(encoding="utf-8"))
+    final = json.loads((benchmark / "agentnet_outcome_final_v1.json").read_text(encoding="utf-8"))
+    shortcuts = json.loads((benchmark / "agentnet_outcome_shortcuts_v1.json").read_text(
+        encoding="utf-8"))
+    assert dev["selection_sha256"] == final["manifest_sha256"] == sha256_file(selection)
+    assert dev["features_sha256"] == final["feature_sha256"]
+    assert dev["head_sha256"] == final["artifact_sha256"]
+    assert shortcuts["manifest_sha256"] == final["manifest_sha256"]
+    assert dev["final_and_ood_labels_opened_for_model_or_threshold_selection"] is False
+    assert shortcuts["exploratory_after_final_labels_opened"] is True
+    assert dev["promotion"] == final["promotion"] == shortcuts["promotion"] == "none"
