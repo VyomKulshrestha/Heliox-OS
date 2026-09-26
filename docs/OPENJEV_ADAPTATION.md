@@ -1441,6 +1441,22 @@ still failed the TESS action-shuffle control and showed only a small,
 uncertain GUI-CC tap-location advantage. The local result does not transfer
 into a general world-model claim.
 
+A separate [browser accessibility-transition review](../daemon/benchmarks/webworld_a11y_transfer_v1.json)
+used the Apache-2.0 [Qwen/WebWorldData](https://huggingface.co/datasets/Qwen/WebWorldData)
+corpus and the updated CUDA device. The first 720-transition sample had an
+invalid held-out control: 81 trajectories shared the same hashed pre-action
+`about:blank` state across partitions. The sampler now excludes direct URL
+navigation from this in-page prediction task, keeps trajectories with identical
+pre-action features in the same partition, and the trainer rejects archives
+that leak such features. On the corrected 638-transition sample, a bound-target
+action head beat within-type action shuffles on the 103-row evaluation split,
+but did **not** consistently beat an action-type-only head across three seeds.
+The trajectory-clustered interval was negative for one seed and straddled zero
+for the other two. Hashed tree bags, only 31 held-out trajectories, and the lack
+of site-disjoint or same-state counterfactual evaluation rule out a transfer
+claim. The local features and weights remain ignored research artifacts; no
+Heliox runtime model was changed or promoted.
+
 The offline probes need `onnx`, `onnxruntime`, `pyarrow`, `tokenizers`,
 `huggingface_hub`, NumPy, SciPy, and scikit-learn. They use cached model/data
 snapshots and do not silently fetch a model during scoring. The Open-Jev data
