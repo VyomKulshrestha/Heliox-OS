@@ -1235,6 +1235,36 @@ turn an always-allow or always-reject action judge into a usable safety layer.
 The [calibration check](../daemon/scripts/check_misactbench_calibration.py)
 verifies group disjointness and chooses that cautious cutoff without test labels.
 
+### Frozen visual-feature head
+
+To test whether screenshots contain a learnable signal rather than rely on
+the generative model's always-reject answer, a separate study extracted
+Qwen3.5-2B's last-token representation from each image, instruction, and
+proposed action. Its [pre-registered split](../daemon/benchmarks/misactbench_visual_feature_selection_v1.json)
+uses one labeled action per trajectory: 128 fit, 32 calibration, 32
+development, and 64 final-test cases. The earlier inspected 16 visual-probe
+trajectories are excluded. The CPU logistic head and its regularization and
+cautious cutoff were fixed from fit/calibration before the final test;
+the [development report](../daemon/benchmarks/misactbench_visual_feature_dev_v1.json)
+was committed first.
+
+The one-shot 64-action [final report](../daemon/benchmarks/misactbench_visual_feature_final_v1.json)
+shows **0.759 AUC**. At the default cutoff the head falsely allowed **8/32**
+off-task actions and warned on **13/32** valid ones. The calibration-only
+cautious cutoff still allowed **3/32** off-task actions and warned on
+**21/32** valid ones. This is evidence of ranking signal, not an acceptable
+execution gate. The earlier text-only results used different splits, so
+these numbers are not a paired modality improvement claim.
+
+The 256-image extraction required only selected range-fetched screenshots,
+not the full archive. It hit a CUDA illegal instruction after checkpointing
+224 rows with contemporaneous `nvlddmkm` 13/153 events; an identity-checked
+resume finished the remaining rows. The local features and head stay in the
+ignored research directory. Nothing is loaded into Heliox, and the next
+research step is a paired text-versus-visual ablation with observed action
+history, followed by larger, separately held-out user-consented desktop
+validation before any promotion discussion.
+
 An additional source check found the Apache-2.0
 [`ProCreations/auto`](https://huggingface.co/datasets/ProCreations/auto)
 training corpus and its separate
