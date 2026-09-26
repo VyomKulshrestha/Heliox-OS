@@ -1166,6 +1166,51 @@ The paper's compact narrative summaries include **observed before/after UI
 state**, not just earlier action commands; the failed two-action-text ablation
 does not refute that approach.
 
+### Screenshot-based GPU probe
+
+After the updated GPU became available, we tested the Apache-2.0
+[Qwen3.5-2B](https://huggingface.co/Qwen/Qwen3.5-2B) vision-language model
+at a pinned revision on the same human-labeled action task. A bounded
+[screenshot fetcher](../daemon/scripts/fetch_misactbench_screenshot.py) reads
+only selected PNGs from the public MisActBench ZIP using HTTP byte ranges,
+validates the pinned ZIP central directory and each PNG's CRC, and never
+downloads the 2.33 GB archive. The first selected set referenced one image
+absent from the published ZIP; the final selection rule therefore requires
+the image to exist *before* sampling and excludes all earlier fit,
+calibration, test, and fresh-test trajectories. The
+[selection manifest](../daemon/benchmarks/misactbench_visual_selection_v1.json)
+pre-registers 16 new, label-balanced, one-per-trajectory actions.
+
+The frozen model completed all 16 at 1280-pixel maximum image side, with
+6.244 GiB peak allocated VRAM. It answered **MISALIGNED on all 16**:
+zero false allowances but **8/8 false warnings** on valid actions. This
+always-reject behavior is not a usable action judge. A single inspected valid
+VS Code File-menu click remained rejected after explicitly explaining that
+intermediate steps are allowed and that click coordinates use the original
+image dimensions. Eager attention ran out of VRAM at 1920-pixel input; PyTorch
+SDPA completed that full-resolution case but still rejected it. The
+[pinned diagnostic](../daemon/benchmarks/misactbench_visual_gpu_recheck_v1.json)
+records the model, prompt, selection, and ignored raw-report hashes. Prompt
+and resolution checks after inspecting outcomes are development diagnostics,
+not a second held-out test. We did not train or deploy this model.
+
+To reproduce from `pilot/`, provide the pinned annotation JSON at
+`daemon/benchmarks/.bench-state/misactbench_annotated.json` and the cached
+Qwen3.5-2B snapshot, then run:
+
+```bash
+python daemon/scripts/select_misactbench_visual_cases.py --dataset daemon/benchmarks/.bench-state/misactbench_annotated.json --feature-report daemon/benchmarks/.bench-state/misactbench_qwen_frozen_v1.json --fresh-report daemon/benchmarks/.bench-state/misactbench_fresh_test_v1.json --output daemon/benchmarks/.bench-state/visual_selection_recheck.json --rows 16
+python daemon/scripts/fetch_misactbench_screenshot.py --dataset daemon/benchmarks/.bench-state/misactbench_annotated.json --manifest daemon/benchmarks/misactbench_visual_selection_v1.json --output-dir daemon/benchmarks/.bench-state/misactbench_visual_images_v1
+python daemon/scripts/probe_misactbench_visual.py --dataset daemon/benchmarks/.bench-state/misactbench_annotated.json --manifest daemon/benchmarks/misactbench_visual_selection_v1.json --image-dir daemon/benchmarks/.bench-state/misactbench_visual_images_v1 --report daemon/benchmarks/.bench-state/visual_probe_recheck.json --prompt-version v1
+```
+
+Compare the rechecked selection SHA-256 with the manifest hash in the pinned
+diagnostic. The scripts refuse a changed annotation or ZIP index;
+screenshots and full case-level output belong under the ignored
+`.bench-state` directory. This small screenshot-only probe omits observed
+history and is not a full MisActBench score, a live-desktop safety result,
+or evidence of Jev parity.
+
 An additional source check found the Apache-2.0
 [`ProCreations/auto`](https://huggingface.co/datasets/ProCreations/auto)
 training corpus and its separate
