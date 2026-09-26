@@ -94,3 +94,16 @@ def test_scope_rows_are_balanced_disjoint_and_prompt_only_inputs() -> None:
     full = split_cases(samples, seed=7,
                        limits={**limits, "scope_test": 100})["scope_test"]
     assert len(full) == 8
+
+
+def test_balanced_trajectory_split_is_deterministic_and_disjoint() -> None:
+    limits = {"scope_train": 12, "scope_calibration": 4, "scope_test": 100}
+    first = split_cases(cases(), seed=19, limits=limits,
+                        strategy="balanced_trajectory_v2")
+    second = split_cases(cases(), seed=19, limits=limits,
+                         strategy="balanced_trajectory_v2")
+    verify_disjoint(first)
+    assert {name: [row["id"] for row in rows] for name, rows in first.items()} == {
+        name: [row["id"] for row in rows] for name, rows in second.items()}
+    assert all(any(row["target"][1] for row in rows) and
+               any(not row["target"][1] for row in rows) for rows in first.values())

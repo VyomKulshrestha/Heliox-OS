@@ -32,7 +32,7 @@ from benchmarks.general_decision import (  # noqa: E402
     probabilities,
     verify_disjoint,
 )
-from benchmarks.scopejudge_general import load_scope_parts, scope_metrics  # noqa: E402
+from benchmarks.scopejudge_general import SPLIT_STRATEGIES, load_scope_parts, scope_metrics  # noqa: E402
 from scripts.qwen_model_pin import MODEL, REVISION  # noqa: E402
 
 
@@ -357,7 +357,8 @@ def run(args: argparse.Namespace) -> dict:
                         "scope_test": args.scope_test_rows}
         scope_parts, scope_manifest = load_scope_parts(args.scopejudge_path, seed=args.seed,
                                                        limits=scope_limits,
-                                                       history_calls=args.scope_history_calls)
+                                                       history_calls=args.scope_history_calls,
+                                                       strategy=args.scope_split_strategy)
         rows.update(scope_parts)
     verify_disjoint(rows)
     print(json.dumps({"event": "data_selected", "counts": {name: len(part) for name, part in rows.items()},
@@ -546,6 +547,8 @@ def main() -> None:
     parser.add_argument("--scopejudge-path", type=Path, help="Pinned MIT ScopeJudge train.jsonl for multi-task study")
     parser.add_argument("--scope-history-calls", type=int, default=0,
                         help="Include up to this many calls from completed earlier trajectory steps")
+    parser.add_argument("--scope-split-strategy", choices=SPLIT_STRATEGIES,
+                        default="random_trajectory_v1")
     parser.add_argument("--scope-train-rows", type=int, default=512)
     parser.add_argument("--scope-calibration-rows", type=int, default=128)
     parser.add_argument("--scope-test-rows", type=int, default=128)
