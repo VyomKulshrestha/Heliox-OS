@@ -34,6 +34,13 @@ def test_pre_registered_visual_splits_are_group_disjoint() -> None:
     assert final["selection_sha256"] == report["manifest_sha256"]
     assert final["pre_final_development_report_sha256"] == hashlib.sha256(
         (root / "misactbench_visual_feature_dev_v1.json").read_bytes()).hexdigest()
+    control_dev = json.loads((root / "misactbench_text_control_dev_v1.json").read_text())
+    control_final = json.loads((root / "misactbench_text_control_final_v1.json").read_text())
+    assert control_dev["selection_sha256"] == final["selection_sha256"]
+    assert control_final["selection_sha256"] == final["selection_sha256"]
+    assert control_dev["final_split_opened_for_text_control"] is False
+    assert control_final["final_rows"] == final["final_rows"] == 64
+    assert control_final["promotion"] == "none"
 
 
 def test_feature_checkpoint_is_plain_numeric_data(tmp_path) -> None:

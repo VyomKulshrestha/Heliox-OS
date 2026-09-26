@@ -1,0 +1,27 @@
+{
+  "purpose": "paired_text_only_control_final_result",
+  "dataset": "osunlp/MisActBench",
+  "dataset_sha256": "b62c7eb4a6d39f91c7cecd95cf1c96c9ab887a85369b6c48fe402c9f5db8ea95",
+  "selection_sha256": "288fdb2be6398db1e3bd309b62ab2fd3cd793f5df73c555264c49de9b993aab3",
+  "pre_final_control_commit": "209ac5d",
+  "ignored_local_final_report_sha256": "1e2ac7fb1039bd28e62c82b53814d0642803c85810aa71438c7a548b10d7164f",
+  "model": "Qwen/Qwen3.5-2B frozen text-only final-token features plus a CPU logistic head",
+  "training_rows": 128,
+  "calibration_rows": 32,
+  "development_rows": 32,
+  "final_rows": 64,
+  "default_cutoff": {
+    "auc": 0.787109375,
+    "false_allowances_out_of_32": 10,
+    "false_warnings_out_of_32": 8
+  },
+  "calibration_only_cautious_cutoff": {
+    "auc": 0.787109375,
+    "false_allowances_out_of_32": 2,
+    "false_warnings_out_of_32": 18
+  },
+  "paired_visual_reference": "misactbench_visual_feature_final_v1.json",
+  "interpretation": "With the same frozen cases, prompt, backbone, head-fitting procedure, and calibration-only cutoffs, screenshots did not improve the cautious operating point: visual 3 false allowances and 21 false warnings versus text-only 2 and 18. This small retrospective comparison does not prove that visual evidence is useless or generalize to live desktops. Neither head is safe to promote.",
+  "gpu_stability": "The 256-case text-only extraction completed on RTX 4060 at 4.208 GiB peak allocated VRAM without a CUDA error; prior visual extraction did encounter a driver-associated CUDA fault.",
+  "promotion": "none"
+}
