@@ -1457,6 +1457,13 @@ of site-disjoint or same-state counterfactual evaluation rule out a transfer
 claim. The local features and weights remain ignored research artifacts; no
 Heliox runtime model was changed or promoted.
 
+A fresh, larger [2,271-transition CUDA recheck](../daemon/benchmarks/webworld_a11y_transfer_v2.json)
+used the same frozen model settings, the corrected split, and 122 held-out
+trajectories. Bound-target actions again beat within-type shuffles, but two of
+three seeds were worse than type-only actions on held-out weighted MSE. More
+rows alone did not validate this hashed-tree representation as a transferable
+action-conditioned world model, so the no-promotion decision stands.
+
 The offline probes need `onnx`, `onnxruntime`, `pyarrow`, `tokenizers`,
 `huggingface_hub`, NumPy, SciPy, and scikit-learn. They use cached model/data
 snapshots and do not silently fetch a model during scoring. The Open-Jev data

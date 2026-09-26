@@ -1,0 +1,50 @@
+{
+  "purpose": "research_only_browser_action_binding_scale_recheck",
+  "dataset": "Qwen/WebWorldData",
+  "dataset_revision": "e108c5f8e35445c9ddff71cde2a5b1fc4db4020c",
+  "declared_license": "apache-2.0",
+  "local_features_sha256": "c47d547e824cbdff88991225f7196b0152a6821ecbb6ccf159f6e1d33a600e68",
+  "local_source_report_sha256": "234d527310c4cf61a2a0884e359b309252bee36ea7c2c8248bab60d8feb7de7a",
+  "device": "NVIDIA GeForce RTX 4060 Laptop GPU; CUDA with PyTorch 2.6.0+cu124",
+  "sample": {
+    "sampled_trajectories": 1000,
+    "unparsed_trajectories": 211,
+    "direct_navigation_transitions_excluded": 352,
+    "retained_transitions": 2271,
+    "retained_trajectories": 789,
+    "state_connected_components": 771,
+    "split_basis": "trajectory_plus_identical_prestate_not_website",
+    "train_rows": 1580,
+    "validation_rows": 347,
+    "evaluation_rows": 344,
+    "evaluation_trajectories": 122
+  },
+  "evaluation": {
+    "unchanged_weighted_mse": 0.0018081911347692528,
+    "runs": [
+      {
+        "seed": 20260926,
+        "type_only_weighted_mse": 0.001606860688627936,
+        "bound_target_weighted_mse": 0.0016053281939435859,
+        "bound_target_within_type_shuffle_mean": 0.0016240196777068405,
+        "paired_type_minus_bound_95_cluster_interval": [-0.000007340246048289628, 0.000010056693825110388]
+      },
+      {
+        "seed": 123,
+        "type_only_weighted_mse": 0.0015821950544420591,
+        "bound_target_weighted_mse": 0.0015984577986059658,
+        "bound_target_within_type_shuffle_mean": 0.0016186184690239619,
+        "paired_type_minus_bound_95_cluster_interval": [-0.000030113477633388933, -0.0000022398321188500115]
+      },
+      {
+        "seed": 456,
+        "type_only_weighted_mse": 0.0015767124896640845,
+        "bound_target_weighted_mse": 0.001580002957784834,
+        "bound_target_within_type_shuffle_mean": 0.0016076646656400058,
+        "paired_type_minus_bound_95_cluster_interval": [-0.000017034472294413786, 0.000010406003083655201]
+      }
+    ]
+  },
+  "decision": "Do not promote. Larger data did not yield stable bound-target improvement over type-only actions; two of three evaluation seeds are worse.",
+  "limitations": "Hashed accessibility bags lose tree order and semantics. No site-disjoint transfer or verified same-state counterfactuals; no live desktop or Jev-parity evidence. Research weights are not loaded by Heliox."
+}
