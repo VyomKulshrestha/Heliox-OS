@@ -101,6 +101,39 @@ def bound_action(before: str, action: str) -> str:
     return f"{operation} target {target}" + (f" arguments {remaining}" if remaining else "")
 
 
+def bound_action_path(before: str, action: str) -> str:
+    """Add bounded ancestor roles and labels from the pre-action tree."""
+    flat = bound_action(before, action)
+    match = _FIRST_TARGET.match(action)
+    if flat == action or match is None:
+        return flat
+    lines = before.splitlines()
+    target = re.compile(r"^(\s*)\[" + re.escape(match.group(1)) + r"\]\s+.+$")
+    target_index = next((index for index, line in enumerate(lines) if target.match(line)), None)
+    if target_index is None:
+        return flat
+    node = target.match(lines[target_index])
+    assert node is not None
+    depth = len(node.group(1).expandtabs(4))
+    ancestry: list[str] = []
+    ancestor_count = 0
+    for line in reversed(lines[:target_index]):
+        parent = re.match(r"^(\s*)(?:\[[a-zA-Z]?\d+\]\s+)?([A-Za-z_]\w*).*", line)
+        if parent is None or len(parent.group(1).expandtabs(4)) >= depth:
+            continue
+        depth = len(parent.group(1).expandtabs(4))
+        rank = ancestor_count
+        ancestry.append(f"ancestor_{rank}_{parent.group(2).lower()}")
+        label = re.search(r"'([^']+)'", line)
+        if label is not None:
+            ancestry.extend(f"ancestor_{rank}_name_{word}"
+                            for word in re.findall(r"[a-z0-9]+", label.group(1).lower())[:3])
+        ancestor_count += 1
+        if ancestor_count >= 3:
+            break
+    return flat + (" hierarchy " + " ".join(ancestry) if ancestry else "")
+
+
 def _features(texts: list[str], *, dimension: int) -> np.ndarray:
     from sklearn.feature_extraction.text import HashingVectorizer
 
@@ -175,14 +208,17 @@ def _load_checkpoint(
         pages_done = int(data["pages_done"].item())
         if not 0 <= pages_done <= len(offsets):
             raise ValueError("Invalid WebWorld checkpoint progress")
+        if "action_path" not in data.files:
+            raise ValueError("WebWorld checkpoint predates path features; use a fresh checkpoint")
         arrays = {key: data[key].copy() for key in
-                  ("state", "target", "action_type", "action_bound", "group")}
+                  ("state", "target", "action_type", "action_bound", "action_path", "group")}
         exclusions = Counter(json.loads(str(data["exclusions"].item())))
         bound_rows = int(data["bound_rows"].item())
     count = len(arrays["group"])
     if (arrays["state"].shape != (count, 1024) or arrays["target"].shape != (count, 1024)
             or arrays["action_type"].shape != (count, 256)
             or arrays["action_bound"].shape != (count, 256)
+            or arrays["action_path"].shape != (count, 256)
             or not 0 <= bound_rows <= count):
         raise ValueError("Invalid WebWorld checkpoint features")
     return pages_done, arrays, exclusions, bound_rows
@@ -238,6 +274,7 @@ def main() -> None:
             "target": np.empty((0, 1024), dtype=np.float32),
             "action_type": np.empty((0, 256), dtype=np.float32),
             "action_bound": np.empty((0, 256), dtype=np.float32),
+            "action_path": np.empty((0, 256), dtype=np.float32),
             "group": np.empty(0, dtype=np.int32),
         }
     for page_index in range(pages_done, len(offsets)):
@@ -260,6 +297,7 @@ def main() -> None:
                            for before, action, after in transitions)
         if records:
             action_bound = [bound_action(row[1], row[2]) for row in records]
+            action_path = [bound_action_path(row[1], row[2]) for row in records]
             bound_rows += sum(bound != row[2] for bound, row in zip(action_bound, records))
             page_arrays = {
                 "state": _features([row[1] for row in records], dimension=1024),
@@ -268,6 +306,7 @@ def main() -> None:
                     [row[2].split("(", 1)[0].strip().lower() for row in records], dimension=256
                 ),
                 "action_bound": _features(action_bound, dimension=256),
+                "action_path": _features(action_path, dimension=256),
                 "group": np.asarray([row[0] for row in records], dtype=np.int32),
             }
             arrays = {key: np.concatenate((arrays[key], values)) for key, values in page_arrays.items()}
@@ -307,6 +346,7 @@ def main() -> None:
         "transition_rows": len(arrays["group"]), "trajectories": len(set(arrays["group"])),
         "state_connected_components": component_count,
         "bound_action_rows": bound_rows,
+        "path_augmented_rows": int(np.any(arrays["action_path"] != arrays["action_bound"], axis=1).sum()),
         "splits": dict(Counter(splits)),
         "exclusions": dict(exclusions),
         "features_sha256": hashlib.sha256(args.features.read_bytes()).hexdigest(),

@@ -25,15 +25,18 @@ def load_features(path: Path, source_report: Path) -> dict[str, dict[str, np.nda
         targets = data["target"].astype(np.float32)
         types = data["action_type"].astype(np.float32)
         bound = data["action_bound"].astype(np.float32)
+        path_actions = data["action_path"].astype(np.float32) if "action_path" in data.files else None
         groups = data["group"].astype(np.int64)
         splits = data["split"].astype(str)
     count = len(states)
     if (states.shape != (count, 1024) or targets.shape != (count, 1024)
             or types.shape != (count, 256) or bound.shape != (count, 256)
             or groups.shape != (count,) or splits.shape != (count,)
+            or (path_actions is not None and path_actions.shape != (count, 256))
             or set(splits) != {"train", "validation", "eval"}
             or not all(np.all(np.isfinite(array)) and np.all(array >= 0)
-                       for array in (states, targets, types, bound))):
+                       for array in (states, targets, types, bound)
+                       + ((path_actions,) if path_actions is not None else ()))):
         raise ValueError("Invalid bounded WebWorld features")
     clusters = _state_connected_labels(states, groups)
     result = {}
@@ -46,6 +49,8 @@ def load_features(path: Path, source_report: Path) -> dict[str, dict[str, np.nda
             "action_type": types[indices], "action_bound": bound[indices],
             "groups": groups[indices], "clusters": clusters[indices],
         }
+        if path_actions is not None:
+            result[split]["action_path"] = path_actions[indices]
     if any(group_sets[left] & group_sets[right] for left, right in
            (("train", "validation"), ("train", "eval"), ("validation", "eval"))):
         raise ValueError("Trajectory leaked across WebWorld partitions")
@@ -120,7 +125,8 @@ def main() -> None:
     torch.manual_seed(args.seed)
     results = {}
     per_row_errors: dict[str, dict[str, np.ndarray]] = {}
-    for action_key in ("action_type", "action_bound"):
+    action_keys = ("action_type", "action_bound") + (("action_path",) if "action_path" in rows["train"] else ())
+    for action_key in action_keys:
         torch.manual_seed(args.seed)
         model = nn.Sequential(
             nn.Linear(1280, 256), nn.GELU(), nn.Linear(256, 1024)
@@ -207,6 +213,20 @@ def main() -> None:
                 rows[split]["clusters"], seed=args.seed + (11 if split == "validation" else 12),
             ) for split in ("validation", "eval")
         },
+        "paired_type_vs_path": ({
+            split: clustered_advantage(
+                per_row_errors["action_type"][split],
+                per_row_errors["action_path"][split],
+                rows[split]["clusters"], seed=args.seed + (11 if split == "validation" else 12),
+            ) for split in ("validation", "eval")
+        } if "action_path" in action_keys else None),
+        "paired_bound_vs_path": ({
+            split: clustered_advantage(
+                per_row_errors["action_bound"][split],
+                per_row_errors["action_path"][split],
+                rows[split]["clusters"], seed=args.seed + (11 if split == "validation" else 12),
+            ) for split in ("validation", "eval")
+        } if "action_path" in action_keys else None),
         "paired_bootstrap_unit": "state_connected_trajectory_component",
         "limitation": "Hashed accessibility features, small sampled trajectories, no site-disjoint transfer. "
                       "Shuffling compares observed actions from other states, not verified same-state counterfactuals. "

@@ -14,15 +14,18 @@ from scripts.probe_webworld_transition import (
 )
 
 
-def _archive(tmp_path, *, leak: bool = False, state_leak: bool = False):
+def _archive(tmp_path, *, leak: bool = False, state_leak: bool = False,
+             with_path: bool = False):
     path = tmp_path / "features.npz"
     groups = np.array([1, 2, 3, 1 if leak else 4])
+    optional = {"action_path": np.eye(256, dtype=np.float32)[:4]} if with_path else {}
     np.savez_compressed(
         path, state=np.eye(1024, dtype=np.float32)[[0, 1, 2, 0 if state_leak else 3]],
         target=np.ones((4, 1024), dtype=np.float32),
         action_type=np.eye(256, dtype=np.float32)[:4],
         action_bound=np.eye(256, dtype=np.float32)[:4],
         group=groups, split=np.array(["train", "train", "validation", "eval"]),
+        **optional,
     )
     report = tmp_path / "source.json"
     report.write_text(json.dumps({"features_sha256": hashlib.sha256(path.read_bytes()).hexdigest()}))
@@ -43,6 +46,8 @@ def test_loader_rejects_trajectory_leakage_and_tampered_features(tmp_path) -> No
     path, report = _archive(tmp_path, state_leak=True)
     with pytest.raises(ValueError, match="pre-action feature leaked"):
         load_features(path, report)
+    path, report = _archive(tmp_path, with_path=True)
+    assert load_features(path, report)["train"]["action_path"].shape == (2, 256)
 
 
 def test_shuffle_keeps_action_types_and_metric_rewards_correct_target() -> None:
