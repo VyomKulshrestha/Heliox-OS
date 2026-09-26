@@ -122,6 +122,8 @@ def gradient_row(backbone, head, item: dict, *, brier_weight: float,
     with torch.no_grad():
         frozen_scores = torch.stack([scalar_score(backbone, head, ids)
                                      for ids in item["sequences"]]).float()
+    if not torch.isfinite(frozen_scores).all():
+        raise FloatingPointError(f"Nonfinite candidate scores for id={row['id']}")
     score_variables = frozen_scores.detach().requires_grad_(True)
     logits = decision_logits(row["kind"], score_variables)
     predicted = logits.softmax(-1)
@@ -139,6 +141,37 @@ def gradient_row(backbone, head, item: dict, *, brier_weight: float,
         except RuntimeError as exc:
             raise RuntimeError(f"Training failed for id={row['id']} candidate={candidate} tokens={len(ids)}") from exc
     return float(loss.detach().cpu())
+
+
+def train_group(backbone, head, optimizer, training_items: list[dict], group: list[int],
+                *, brier_weight: float, ordinal_weight: float,
+                max_retries: int = 2) -> tuple[list[float], int]:
+    """Retry a transient nonfinite group without skipping rows or stepping it twice."""
+    import torch
+
+    if not group or max_retries < 0:
+        raise ValueError("Training group and retry count must be valid")
+    parameters = [parameter for parameter in backbone.parameters() if parameter.requires_grad]
+    parameters += list(head.parameters())
+    for attempt in range(max_retries + 1):
+        optimizer.zero_grad(set_to_none=True)
+        try:
+            losses = [gradient_row(backbone, head, training_items[index],
+                                   brier_weight=brier_weight, ordinal_weight=ordinal_weight,
+                                   scale=len(group)) for index in group]
+            norm = torch.nn.utils.clip_grad_norm_(parameters, 1.0)
+            if not torch.isfinite(norm):
+                raise FloatingPointError("Nonfinite gradient norm")
+        except FloatingPointError as exc:
+            if attempt == max_retries:
+                ids = [training_items[index]["row"]["id"] for index in group]
+                raise FloatingPointError(
+                    f"Nonfinite training group after {attempt + 1} attempts: {ids}"
+                ) from exc
+            continue
+        optimizer.step()
+        return losses, attempt
+    raise AssertionError("Retry loop must either complete or raise")
 
 
 def fit_temperature(logits: list[np.ndarray], rows: list[dict]) -> float:
@@ -319,18 +352,13 @@ def run(args: argparse.Namespace) -> dict:
     started = time.monotonic()
     for start in range(start_position, len(order), args.accumulation):
         group = order[start:start + args.accumulation]
-        optimizer.zero_grad(set_to_none=True)
-        losses = [gradient_row(backbone, head, training_items[index],
-                               brier_weight=args.brier_weight, ordinal_weight=args.ordinal_weight,
-                               scale=len(group)) for index in group]
-        norm = torch.nn.utils.clip_grad_norm_(
-            [parameter for parameter in backbone.parameters() if parameter.requires_grad] + list(head.parameters()),
-            1.0,
+        losses, retries = train_group(
+            backbone, head, optimizer, training_items, group,
+            brier_weight=args.brier_weight, ordinal_weight=args.ordinal_weight,
         )
-        if not torch.isfinite(norm):
-            ids = [training_items[index]["row"]["id"] for index in group]
-            raise FloatingPointError(f"Nonfinite gradient after training rows {ids}")
-        optimizer.step()
+        if retries:
+            print(json.dumps({"event": "retried_nonfinite_group", "start": start,
+                              "retries": retries}), flush=True)
         done = start + len(group)
         elapsed = elapsed_before + time.monotonic() - started
         peak = max(prior_peak, torch.cuda.max_memory_allocated() / 1024**3)
