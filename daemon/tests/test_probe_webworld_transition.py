@@ -14,11 +14,11 @@ from scripts.probe_webworld_transition import (
 )
 
 
-def _archive(tmp_path, *, leak: bool = False):
+def _archive(tmp_path, *, leak: bool = False, state_leak: bool = False):
     path = tmp_path / "features.npz"
     groups = np.array([1, 2, 3, 1 if leak else 4])
     np.savez_compressed(
-        path, state=np.zeros((4, 1024), dtype=np.float32),
+        path, state=np.eye(1024, dtype=np.float32)[[0, 1, 2, 0 if state_leak else 3]],
         target=np.ones((4, 1024), dtype=np.float32),
         action_type=np.eye(256, dtype=np.float32)[:4],
         action_bound=np.eye(256, dtype=np.float32)[:4],
@@ -37,6 +37,9 @@ def test_loader_rejects_trajectory_leakage_and_tampered_features(tmp_path) -> No
         load_features(path, report)
     path, report = _archive(tmp_path, leak=True)
     with pytest.raises(ValueError, match="leaked"):
+        load_features(path, report)
+    path, report = _archive(tmp_path, state_leak=True)
+    with pytest.raises(ValueError, match="pre-action feature leaked"):
         load_features(path, report)
 
 

@@ -110,6 +110,40 @@ def _features(texts: list[str], *, dimension: int) -> np.ndarray:
     return vectorizer.transform(_NODE_ID.sub(" ", text) for text in texts).toarray().astype(np.float32)
 
 
+def _split_by_shared_state(states: np.ndarray, groups: np.ndarray, seed: int) -> tuple[np.ndarray, int]:
+    """Keep trajectories sharing an identical pre-action feature in one split."""
+    unique = sorted(set(groups.tolist()))
+    parent = {group: group for group in unique}
+
+    def root(group: int) -> int:
+        while parent[group] != group:
+            parent[group] = parent[parent[group]]
+            group = parent[group]
+        return group
+
+    seen: dict[bytes, int] = {}
+    for state, group in zip(states, groups):
+        key = state.tobytes()
+        if key in seen:
+            parent[root(group)] = root(seen[key])
+        else:
+            seen[key] = group
+    components: dict[int, list[int]] = {}
+    for group in unique:
+        components.setdefault(root(group), []).append(group)
+    if len(components) < 3:
+        raise ValueError("Fewer than three independent state-connected trajectory groups")
+    shuffled = list(components.values())
+    random.Random(seed).shuffle(shuffled)
+    train_end = min(len(shuffled) - 2, max(1, int(len(shuffled) * 0.7)))
+    validation_end = min(len(shuffled) - 1, max(train_end + 1, int(len(shuffled) * 0.85)))
+    assignments = {
+        group: ("train" if index < train_end else "validation" if index < validation_end else "eval")
+        for index, component in enumerate(shuffled) for group in component
+    }
+    return np.asarray([assignments[group] for group in groups]), len(components)
+
+
 def _save_checkpoint(
     path: Path, *, revision: str, total: int, offsets: list[int], pages_done: int,
     arrays: dict[str, np.ndarray], exclusions: Counter[str], bound_rows: int,
@@ -239,32 +273,35 @@ def main() -> None:
         print(json.dumps({"pages_done": page_index + 1, "total_pages": len(offsets)}), flush=True)
         if page_index + 1 < len(offsets):
             time.sleep(args.request_interval)
+    # A direct URL navigation from about:blank supplies no rendered-page state to
+    # predict from. Its target belongs to retrieval, not an in-page transition.
+    goto = _features(["goto"], dimension=256)[0]
+    keep = ~np.all(arrays["action_type"] == goto, axis=1)
+    exclusions["direct_navigation"] += int((~keep).sum())
+    arrays = {key: values[keep] for key, values in arrays.items()}
     if len(set(arrays["group"])) < 3:
-        raise ValueError("Fewer than three parsed trajectories")
+        raise ValueError("Fewer than three parsed in-page trajectories")
     if _read_json(metadata_url).get("sha") != revision:
         raise ValueError("Dataset revision changed during sampling")
 
-    groups = sorted(set(arrays["group"]))
-    rng.shuffle(groups)
-    train_end = min(len(groups) - 2, max(1, int(len(groups) * 0.7)))
-    validation_end = min(len(groups) - 1, max(train_end + 1, int(len(groups) * 0.85)))
-    assignments = {group: ("train" if index < train_end else
-                           "validation" if index < validation_end else "eval")
-                   for index, group in enumerate(groups)}
+    splits, component_count = _split_by_shared_state(
+        arrays["state"], arrays["group"], args.seed + 1
+    )
     args.features.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(
         args.features,
         **arrays,
-        split=np.asarray([assignments[group] for group in arrays["group"]]),
+        split=splits,
     )
     report = {
         "purpose": "research_only_bounded_accessibility_transition_sample",
         "dataset": DATASET, "revision": revision, "declared_license": "apache-2.0",
-        "split_basis": "whole_trajectory_not_website", "seed": args.seed,
+        "split_basis": "trajectory_plus_identical_prestate_not_website", "seed": args.seed,
         "pages": args.pages, "page_length": args.page_length, "offsets": offsets,
-        "transition_rows": len(arrays["group"]), "trajectories": len(groups),
+        "transition_rows": len(arrays["group"]), "trajectories": len(set(arrays["group"])),
+        "state_connected_components": component_count,
         "bound_action_rows": bound_rows,
-        "splits": dict(Counter(assignments[group] for group in arrays["group"])),
+        "splits": dict(Counter(splits)),
         "exclusions": dict(exclusions),
         "features_sha256": hashlib.sha256(args.features.read_bytes()).hexdigest(),
         "limitation": "The rows API is not commit-pinned; source SHA was checked before and after. "
