@@ -1,0 +1,42 @@
+{
+  "purpose": "pre_registered_unseen_visual_smoke_not_training",
+  "dataset": {
+    "dataset": "osunlp/MisActBench",
+    "sha256": "b62c7eb4a6d39f91c7cecd95cf1c96c9ab887a85369b6c48fe402c9f5db8ea95",
+    "license": "CC-BY-4.0",
+    "total_labeled_actions": 2264,
+    "eligible_text_only_actions": 2262,
+    "excluded_overlong": 2,
+    "selection": "text-only; one action per trajectory; label-balanced; frozen test groups excluded from fit/calibration",
+    "selected_rows": {
+      "scope_train": 256,
+      "scope_calibration": 64,
+      "scope_test": 96
+    },
+    "seed": 20260926
+  },
+  "feature_report_sha256": "bf60d0cb34816d13001180a3b46222c72c9e7ac53e90ff46a34ee5c8210a8837",
+  "fresh_report_sha256": "19ad6d2d4bf4b04837eab1d74a1ba42ad24c237e53a4c52a934bf52788c28c32",
+  "archive_central_sha256": "99ecd76098dc1a542febf8f7bd09d36c9ce9567b868f1f95cd7b6c46cc84e9bb",
+  "candidate_actions_with_screenshot": 108,
+  "seed": 20260928,
+  "case_ids": [
+    "087d90ec-0918-4521-b3c8-a48030c90719:1",
+    "0973bbb8-2a5d-4aab-a652-2c2b495e1ab9:1",
+    "0afaf5f6-d83a-4f37-b92a-4756c35ca5fa:1",
+    "2d1a36c2-dd77-4778-992c-912be3de0d21:1",
+    "38ce8304-ada7-4489-b928-ca71f0f0431f:1",
+    "588e2682-f2d8-422a-bed5-068ebaa07b44:4",
+    "59d4547f-1eef-4ca4-834b-e9f5fcb5a4e2:1",
+    "623864fc-4bd0-4592-a880-35b692347bd6:1",
+    "6e61d30f-0b07-4251-8197-161c57fbd79d:4",
+    "7bd9853b-c517-4848-bc8d-4b2e34833d9d:2",
+    "8f295267-864d-4d7a-96ea-8082c4991514:1",
+    "9632252a-0e51-4252-9ad4-6107b99920b5:2",
+    "c242d2b4-9166-4f2d-a07d-fcaa3b040f3f:1",
+    "d8bbb2fb-e1d5-423d-9ead-0e026439363b:1",
+    "f91382ea-e35e-41fc-9395-cf81f352fadb:3",
+    "fe52f924-8857-446f-9485-4c5883475ebc:1"
+  ],
+  "limitation": "Small balanced screenshot probe; not full-history MisActBench or live safety."
+}
