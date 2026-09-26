@@ -34,3 +34,21 @@ def test_world_observation_requires_fresh_running_capture_and_stays_private() ->
     agent.resume()
     state.timestamp = (datetime.now(UTC) - timedelta(minutes=1)).isoformat()
     assert agent.get_world_observation() is None
+
+
+def test_companion_text_context_requires_fresh_running_capture() -> None:
+    agent = ScreenVisionAgent()
+    state = ScreenState(
+        timestamp=datetime.now(UTC).isoformat(),
+        active_app="Browser",
+        active_window_title="Requested page",
+    )
+    agent.get_context().add(state)
+    assert agent.get_recent_text_context() == ""
+    agent._running = True
+    assert 'Browser — "Requested page"' in agent.get_recent_text_context()
+    agent.pause()
+    assert agent.get_recent_text_context() == ""
+    agent.resume()
+    state.timestamp = (datetime.now(UTC) - timedelta(minutes=1)).isoformat()
+    assert agent.get_recent_text_context() == ""

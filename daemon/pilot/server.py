@@ -2693,6 +2693,7 @@ class PilotServer:
         )
 
         for attempt in range(1 + self.MAX_RETRIES):
+            review_screen_context = ""
             # ── Cancel Token: check before each planning attempt ──
             if cancel_event.is_set():
                 logger.info("Execution cancelled before attempt %d", attempt + 1)
@@ -2730,6 +2731,7 @@ class PilotServer:
                 if self._screen_vision:
                     try:
                         _screen_ctx = self._screen_vision.get_context_for_planner()
+                        review_screen_context = self._screen_vision.get_recent_text_context()
                         await self._append_experience(
                             ExperienceEventType.OBSERVATION,
                             idempotency_key=(
@@ -2877,7 +2879,9 @@ class PilotServer:
                 if companion_review is None:
                     try:
                         companion_review = await self._await_execution_tracked(
-                            self._execution_companion.review(user_input, plan)
+                            self._execution_companion.review(
+                                user_input, plan, screen_context=review_screen_context
+                            )
                         )
                     except asyncio.CancelledError:
                         return await _phase_cancelled("companion review")

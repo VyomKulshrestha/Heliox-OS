@@ -188,6 +188,12 @@ barge-in. Only one voice speaks at once. Higher-priority speech preempts lower
 priority speech, duplicates are suppressed, and user speech takes ownership of
 the channel while the person is talking.
 
+Before interactive execution, the independent companion can review the plan
+against a fresh, bounded text summary of the current screen. This summary is
+untrusted observation, not an instruction or approval; stale captures and
+private learned-persona context are not passed through this review path. The
+normal permission, confirmation, and verification gates remain authoritative.
+
 The daemon coordinator covers autonomous completion, cognitive warnings,
 continuous voice, and frontend speech RPCs. Browser speech synthesis is a
 fallback, not a second narrator.
