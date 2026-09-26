@@ -128,7 +128,7 @@ def fit_head(rows: list[dict], data: tuple[np.ndarray, np.ndarray],
         raise ValueError("Penalty must be positive and finite")
     initial = np.zeros(data[0].shape[1] + 1, dtype=np.float64)
     result = minimize(loss_gradient, initial, args=(rows, data, penalty), jac=True,
-                      method="L-BFGS-B", options={"maxiter": 300, "ftol": 1e-9})
+                      method="L-BFGS-B", options={"maxiter": 1000, "ftol": 1e-9})
     if not result.success or not np.isfinite(result.x).all():
         raise RuntimeError(f"Decision-head optimization failed: {result.message}")
     return result.x, float(result.fun)
