@@ -123,6 +123,18 @@ def paired_outcome_diagnostic(
     }
 
 
+def paired_matching_loss(predicted, target):
+    """Cross-entropy for matching each of two actions to its observed outcome."""
+    import torch
+    from torch.nn import functional as F
+
+    if predicted.shape != target.shape or predicted.ndim != 3 or predicted.shape[1] != 2:
+        raise ValueError("Paired predictions and targets must have shape (pairs, 2, features)")
+    scores = -1000.0 * (predicted[:, :, None, :] - target[:, None, :, :]).square().mean(dim=-1)
+    labels = torch.arange(2, device=predicted.device).expand(len(predicted), -1)
+    return F.cross_entropy(scores.reshape(-1, 2), labels.reshape(-1))
+
+
 def clustered_advantage(
     type_errors: np.ndarray, bound_errors: np.ndarray, groups: np.ndarray, *, seed: int,
 ) -> dict[str, float | int]:
@@ -156,11 +168,17 @@ def main() -> None:
     parser.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
     parser.add_argument("--epochs", type=int, default=80)
     parser.add_argument("--permutations", type=int, default=30)
+    parser.add_argument("--branch-loss-weight", type=float, default=0.0,
+                        help="Optional paired-outcome training loss; model selection remains validation MSE")
     parser.add_argument("--seed", type=int, default=20260927)
     args = parser.parse_args()
-    if args.report.exists() or args.epochs < 1 or args.permutations < 1:
+    if (args.report.exists() or args.epochs < 1 or args.permutations < 1
+            or not np.isfinite(args.branch_loss_weight) or args.branch_loss_weight < 0):
         parser.error("Use a fresh report and positive epoch/permutation counts")
     rows = load_features(args.features, args.source_report)
+    training_pairs = feature_equivalent_action_pairs(rows["train"])
+    if args.branch_loss_weight and not len(training_pairs):
+        parser.error("Paired-outcome training requires feature-equivalent action pairs")
 
     import torch
     from torch import nn
@@ -198,6 +216,7 @@ def main() -> None:
 
         best_loss, best_epoch, best_weights = float("inf"), 0, None
         train = arrays["train"]
+        pair_indices = torch.as_tensor(training_pairs.reshape(-1), dtype=torch.long, device=device)
         for epoch in range(args.epochs):
             model.train()
             for indices in torch.randperm(len(train["state"]), device=device).split(32):
@@ -206,6 +225,14 @@ def main() -> None:
                 training_loss = loss(output, batch)
                 optimizer.zero_grad(set_to_none=True)
                 training_loss.backward()
+                optimizer.step()
+            if args.branch_loss_weight and action_key != "action_type":
+                pair_batch = {key: value[pair_indices] for key, value in train.items()}
+                pair_prediction = predict(pair_batch, pair_batch[action_key]).reshape(-1, 2, 1024)
+                pair_target = pair_batch["target"].reshape(-1, 2, 1024)
+                branch_loss = paired_matching_loss(pair_prediction, pair_target)
+                optimizer.zero_grad(set_to_none=True)
+                (args.branch_loss_weight * branch_loss).backward()
                 optimizer.step()
             model.eval()
             with torch.no_grad():
@@ -254,6 +281,8 @@ def main() -> None:
         "source_features_sha256": hashlib.sha256(args.features.read_bytes()).hexdigest(),
         "source_report_sha256": hashlib.sha256(args.source_report.read_bytes()).hexdigest(),
         "device": str(device), "seed": args.seed, "epochs": args.epochs,
+        "branch_loss_weight": args.branch_loss_weight,
+        "training_feature_equivalent_pairs": len(training_pairs),
         "action_permutations": args.permutations,
         "split_basis": "trajectory_plus_identical_prestate_not_website",
         "results": results,

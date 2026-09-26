@@ -1480,6 +1480,18 @@ and data as forthcoming when checked on 2026-09-26; this experiment does not
 claim to reproduce that model or its benchmark. No research weights are loaded
 by Heliox.
 
+A subsequent [CUDA branch-matching diagnostic](../daemon/benchmarks/webworld_branch_matching_v1.json)
+found 54 training, 13 validation, and 26 evaluation pairs with the same hashed
+pre-action feature and action type but different bound actions and observed
+outcomes. Type-only predictions tied every evaluation pair. Flat-target and
+ancestry-target heads distinguished some, but an added paired-outcome matching
+loss did not improve validation pair wins in any of three fixed seeds and
+increased held-out weighted MSE in all six matched target/path comparisons.
+Hashed-state equality can alias different raw screens or histories, so these
+are **feature-equivalent pairs**, not verified same-screen counterfactuals.
+This negative result leaves the live world model unchanged and unpromoted;
+more GPU time alone does not resolve the supervision gap.
+
 The offline probes need `onnx`, `onnxruntime`, `pyarrow`, `tokenizers`,
 `huggingface_hub`, NumPy, SciPy, and scikit-learn. They use cached model/data
 snapshots and do not silently fetch a model during scoring. The Open-Jev data
