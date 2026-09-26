@@ -1,0 +1,27 @@
+{
+  "purpose": "pre_final_paired_text_only_control",
+  "dataset": "osunlp/MisActBench",
+  "dataset_sha256": "b62c7eb4a6d39f91c7cecd95cf1c96c9ab887a85369b6c48fe402c9f5db8ea95",
+  "selection_sha256": "288fdb2be6398db1e3bd309b62ab2fd3cd793f5df73c555264c49de9b993aab3",
+  "model": "Qwen/Qwen3.5-2B frozen final-token features, same prompt and cases as visual experiment, screenshot tokens removed",
+  "frozen_feature_sha256": "d842d165b50cbd56c4847b287d365b9f60040e9b7ed59e6b543e0eb4abd7f47a",
+  "ignored_feature_report_sha256": "7a45d22bcfff24c558c8a751a60b517cc9d4ba68d937eb7cbaf5d4ee158e0aba",
+  "ignored_head_sha256": "f69c1cc0e9eb96358ff9b05ea573cba8ad509d34bbd9fca3bf82103f873bd696",
+  "ignored_fit_report_sha256": "5de8131dc1d3804de39944f700b721629947e5850baa9bf48e6b31a44e8819d9",
+  "training_rows": 128,
+  "calibration_rows": 32,
+  "development_rows": 32,
+  "regularization_C": 0.001,
+  "development_default": {
+    "auc": 0.76953125,
+    "false_allowances_out_of_16": 5,
+    "false_warnings_out_of_16": 3
+  },
+  "development_calibration_cautious": {
+    "auc": 0.76953125,
+    "false_allowances_out_of_16": 2,
+    "false_warnings_out_of_16": 10
+  },
+  "final_split_opened_for_text_control": false,
+  "limitation": "The visual final aggregate was known before this paired control was designed. The text control uses no final labels for model or threshold selection, but this is a retrospective ablation, not an independent prospective replication. No runtime promotion."
+}

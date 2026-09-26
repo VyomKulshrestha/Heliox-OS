@@ -70,7 +70,9 @@ def main() -> None:
     labels = np.asarray(labels, dtype=np.bool_)
     scores = ((matrix[final_indices] - mean) / scale) @ coefficient.T + intercept
     probabilities = 1 / (1 + np.exp(-np.clip(scores[:, 0], -40, 40)))
-    report = {"purpose": "one_shot_frozen_visual_action_final_test",
+    text_only = fitted.get("input_mode") == "text_only"
+    report = {"purpose": ("one_shot_frozen_text_action_final_test" if text_only
+                           else "one_shot_frozen_visual_action_final_test"),
               "dataset_sha256": DATASET_SHA256,
               "manifest_sha256": manifest_hash, "feature_sha256": feature_hash,
               "fit_report_sha256": hashlib.sha256(args.fit_report.read_bytes()).hexdigest(),
@@ -78,6 +80,8 @@ def main() -> None:
               "default": assess(labels, probabilities, 0.5),
               "calibration_cautious": assess(labels, probabilities, cautious),
               "limitation": "Public screenshot/action labels without observed history; not live desktop safety, Jev parity, or execution authority."}
+    if text_only:
+        report["input_mode"] = "text_only"
     args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({"default": report["default"],
                       "calibration_cautious": report["calibration_cautious"]}, indent=2))
