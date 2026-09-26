@@ -8,6 +8,7 @@ never executes image content.
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import hashlib
 import json
 import re
@@ -127,6 +128,8 @@ def main() -> None:
     selection.add_argument("--manifest", type=Path, help="Pre-registered case ID list")
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--list-first", type=int, default=0)
+    parser.add_argument("--progress-every", type=int, default=1)
+    parser.add_argument("--workers", type=int, default=1)
     args = parser.parse_args()
     if not args.case_id and not args.manifest and not args.list_first:
         parser.error("Choose --case-id, --manifest, or --list-first")
@@ -134,6 +137,10 @@ def main() -> None:
         parser.error("Output directory is required for extraction")
     if args.list_first < 0 or args.list_first > 10:
         parser.error("List between zero and ten names")
+    if args.progress_every < 1:
+        parser.error("Progress interval must be positive")
+    if not 1 <= args.workers <= 8:
+        parser.error("Use between one and eight bounded range workers")
     if hashlib.sha256(args.dataset.read_bytes()).hexdigest() != DATASET_SHA256:
         raise ValueError("MisActBench annotations differ from the pinned release")
     index = read_index()
@@ -143,13 +150,13 @@ def main() -> None:
     if args.manifest:
         manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
         case_ids = manifest["case_ids"]
-        if not 1 <= len(case_ids) <= 64 or len(set(case_ids)) != len(case_ids):
-            raise ValueError("Manifest must contain 1-64 unique cases")
+        if not 1 <= len(case_ids) <= 512 or len(set(case_ids)) != len(case_ids):
+            raise ValueError("Manifest must contain 1-512 unique cases")
     if case_ids:
         records = json.loads(args.dataset.read_text(encoding="utf-8"))
         output_dir = args.output_dir.resolve()
         output_dir.mkdir(parents=True, exist_ok=True)
-    for case_id in case_ids:
+    def fetch_case(case_id: str) -> dict:
         if not re.fullmatch(r"[0-9a-f-]+:[0-9]+", case_id):
             raise ValueError("Invalid case ID")
         trajectory_id, step_id = case_id.split(":", 1)
@@ -159,16 +166,28 @@ def main() -> None:
         name = record["screenshot_path"].removeprefix("MisActBench/")
         if name not in index:
             raise ValueError("Annotated screenshot is missing from archive")
-        content = member_bytes(name, index[name])
+        metadata = index[name]
         target = output_dir / (case_id.replace(":", "_") + ".png")
         if target.exists():
-            if target.read_bytes() != content:
-                raise FileExistsError("Existing screenshot differs from archive")
+            content = target.read_bytes()
+            if (len(content) != metadata["uncompressed"]
+                    or zlib.crc32(content) != metadata["crc32"]
+                    or not content.startswith(b"\x89PNG\r\n\x1a\n")):
+                raise FileExistsError("Existing screenshot fails pinned ZIP checks")
         else:
+            content = member_bytes(name, metadata)
             target.write_bytes(content)
-        print(json.dumps({"case_id": case_id, "member": name,
-                          "sha256": hashlib.sha256(content).hexdigest(),
-                          "bytes": len(content), "path": str(target)}), flush=True)
+        return {"case_id": case_id, "member": name,
+                "sha256": hashlib.sha256(content).hexdigest(),
+                "bytes": len(content), "path": str(target)}
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as executor:
+        results = executor.map(fetch_case, case_ids)
+        for position, result in enumerate(results, 1):
+            if args.progress_every == 1:
+                print(json.dumps(result), flush=True)
+            elif position % args.progress_every == 0 or position == len(case_ids):
+                print(json.dumps({"completed": position, "total": len(case_ids)}), flush=True)
 
 
 if __name__ == "__main__":
