@@ -77,7 +77,7 @@ def _pairs(record: dict) -> tuple[list[tuple[str, str, int, int, int]], Counter]
     return accepted, reasons
 
 
-def _feature(archive: zipfile.ZipFile, member: str) -> tuple[np.ndarray, int, int]:
+def _feature(archive: zipfile.ZipFile, member: str) -> tuple[np.ndarray, int, int, str]:
     info = archive.getinfo(member)
     if info.file_size > MAX_IMAGE_BYTES:
         raise ValueError("Image exceeds the bounded decode limit")
@@ -90,7 +90,8 @@ def _feature(archive: zipfile.ZipFile, member: str) -> tuple[np.ndarray, int, in
         if width <= 0 or height <= 0 or width * height > MAX_PIXELS:
             raise ValueError("Image dimensions exceed the bounded decode limit")
         frame = np.asarray(screenshot.convert("RGB").resize((64, 64)).convert("L"), dtype=np.float32)
-    return np.asarray(_world_embedding_from_frame(frame), dtype=np.float32), width, height
+    return (np.asarray(_world_embedding_from_frame(frame), dtype=np.float32), width, height,
+            hashlib.sha256(content).hexdigest())
 
 
 def _file_sha256(path: Path) -> str:
@@ -137,7 +138,7 @@ def import_pairs(jsonl: Path, image_zip: Path, *, max_trajectories: int,
             task_key = f"{task['domain'].strip().casefold()}\0{task['description'].strip().casefold()}"
             group = hashlib.sha256(task_key.encode("utf-8")).hexdigest()
             episode = hashlib.sha256(record["trajectory_id"].encode("utf-8")).hexdigest() if pairs else ""
-            cache: dict[str, tuple[np.ndarray, int, int]] = {}
+            cache: dict[str, tuple[np.ndarray, int, int, str]] = {}
             for before, after, action, x, y in pairs:
                 if len(rows) >= max_pairs:
                     break
@@ -145,8 +146,8 @@ def import_pairs(jsonl: Path, image_zip: Path, *, max_trajectories: int,
                     for member in (before, after):
                         if member not in cache:
                             cache[member] = _feature(archive, member)
-                    state, width, height = cache[before]
-                    target, next_width, next_height = cache[after]
+                    state, width, height, before_hash = cache[before]
+                    target, next_width, next_height, after_hash = cache[after]
                 except (KeyError, OSError, ValueError, zipfile.BadZipFile):
                     reasons["missing_or_invalid_image"] += 1
                     continue
@@ -155,7 +156,8 @@ def import_pairs(jsonl: Path, image_zip: Path, *, max_trajectories: int,
                     continue
                 rows.append({"group": group, "episode": episode,
                              "state": state, "target": target,
-                             "action": action, "coords": [x / width, y / height]})
+                             "action": action, "coords": [x / width, y / height],
+                             "image_hashes": (before_hash, after_hash)})
     return rows, reasons
 
 
@@ -203,6 +205,9 @@ def main() -> None:
         "split_basis": "exact_casefolded_task_domain_and_description",
         "source_filter": "result.safety_is_true",
         "distinct_trajectories": len({row["episode"] for row in rows}),
+        "sampled_images_sha256": hashlib.sha256("".join(
+            image_hash for row in rows for image_hash in row["image_hashes"]
+        ).encode("ascii")).hexdigest(),
         "exclusions": dict(reasons),
         "features_sha256": hashlib.sha256(args.features.read_bytes()).hexdigest(),
         "limitation": "Ordered observations are not independently verified action effects. "
