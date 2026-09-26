@@ -1436,6 +1436,10 @@ frozen candidate beat unchanged-screen and paired swapped-action controls on
 two fresh 20-pair light/dark captures of Heliox's own navigation UI. That is
 a narrow one-app result; no real desktop or unseen application was tested,
 and the weights remain incompatible with the live predictor and unpromoted.
+The [public-corpus recheck](../daemon/benchmarks/world_visual_public_transfer_v1.json)
+still failed the TESS action-shuffle control and showed only a small,
+uncertain GUI-CC tap-location advantage. The local result does not transfer
+into a general world-model claim.
 
 The offline probes need `onnx`, `onnxruntime`, `pyarrow`, `tokenizers`,
 `huggingface_hub`, NumPy, SciPy, and scikit-learn. They use cached model/data
