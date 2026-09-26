@@ -46,6 +46,11 @@ def load_features(path: Path, source_report: Path) -> dict[str, dict[str, np.nda
     if any(group_sets[left] & group_sets[right] for left, right in
            (("train", "validation"), ("train", "eval"), ("validation", "eval"))):
         raise ValueError("Trajectory leaked across WebWorld partitions")
+    state_sets = {split: {state.tobytes() for state in partition["state"]}
+                  for split, partition in result.items()}
+    if any(state_sets[left] & state_sets[right] for left, right in
+           (("train", "validation"), ("train", "eval"), ("validation", "eval"))):
+        raise ValueError("Identical pre-action feature leaked across WebWorld partitions")
     return result
 
 
@@ -190,7 +195,7 @@ def main() -> None:
         "source_report_sha256": hashlib.sha256(args.source_report.read_bytes()).hexdigest(),
         "device": str(device), "seed": args.seed, "epochs": args.epochs,
         "action_permutations": args.permutations,
-        "split_basis": "whole_trajectory_not_website",
+        "split_basis": "trajectory_plus_identical_prestate_not_website",
         "results": results,
         "paired_type_vs_bound": {
             split: clustered_advantage(

@@ -8,9 +8,11 @@ import numpy as np
 import pytest
 
 from scripts.sample_webworld_transitions import (
+    _features,
     _load_checkpoint,
     _read_json,
     _save_checkpoint,
+    _split_by_shared_state,
     bound_action,
     parse_trajectory,
 )
@@ -48,6 +50,20 @@ def test_malformed_trajectory_is_rejected_without_partial_rows() -> None:
              {"from": "human", "value": "no action marker"}, {"from": "gpt", "value": "Other"}]
 
     assert parse_trajectory(turns) == []
+
+
+def test_direct_navigation_type_is_distinct_from_in_page_action() -> None:
+    assert not np.array_equal(_features(["goto"], dimension=256)[0],
+                              _features(["click"], dimension=256)[0])
+
+
+def test_split_keeps_transitive_shared_states_together() -> None:
+    states = np.eye(1024, dtype=np.float32)[[0, 1, 1, 2, 2, 3, 4, 5]]
+    groups = np.array([1, 1, 2, 2, 3, 3, 4, 5])
+    splits, components = _split_by_shared_state(states, groups, 7)
+    assert components == 3
+    assert len(set(splits[:6])) == 1
+    assert set(splits) == {"train", "validation", "eval"}
 
 
 def test_checkpoint_resumes_only_the_same_revision_and_sample(tmp_path) -> None:
