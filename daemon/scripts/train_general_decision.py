@@ -291,6 +291,8 @@ def checkpoint_signature(args: argparse.Namespace, encoded: dict[str, list[dict]
                 "ordinal_weight": args.ordinal_weight}
     if args.prompt_style != "candidate_v1":
         identity["prompt_style"] = args.prompt_style
+    if getattr(args, "dtype", "bfloat16") != "bfloat16":
+        identity["dtype"] = args.dtype
     if getattr(args, "scope_group_weighting", "none") != "none":
         identity["scope_group_weighting"] = args.scope_group_weighting
     if row_weights is not None:
@@ -389,7 +391,8 @@ def run(args: argparse.Namespace) -> dict:
     path = snapshot_download(MODEL, revision=REVISION, local_files_only=True)
     tokenizer = AutoTokenizer.from_pretrained(path, local_files_only=True)
     base = AutoModelForCausalLM.from_pretrained(
-        path, local_files_only=True, dtype=torch.bfloat16,
+        path, local_files_only=True, dtype={"bfloat16": torch.bfloat16,
+                                            "float16": torch.float16}[args.dtype],
         device_map={"": 0}, attn_implementation=args.attention,
     )
     yes, no = (tokenizer.encode(word, add_special_tokens=False) for word in ("Yes", "No"))
@@ -493,7 +496,8 @@ def run(args: argparse.Namespace) -> dict:
                         bias=head.bias.detach().cpu().numpy(),
                         temperature=temperature, model_revision=REVISION,
                         max_length=args.max_length, lora_rank=args.lora_rank,
-                        attention_implementation=args.attention, prompt_style=args.prompt_style)
+                        attention_implementation=args.attention, prompt_style=args.prompt_style,
+                        model_dtype=args.dtype)
 
     report = {
         "model": MODEL, "revision": REVISION,
@@ -508,7 +512,7 @@ def run(args: argparse.Namespace) -> dict:
                    "calls_dropped": sum(item["history_calls_dropped"] for item in part)}
             for name, part in encoded.items() if name.startswith("scope_")
         },
-        "attention_implementation": args.attention,
+        "attention_implementation": args.attention, "model_dtype": args.dtype,
         "training_checkpoint_sha256": checkpoint_hash,
         "lora_rank": args.lora_rank, "accumulation": args.accumulation,
         "prompt_style": args.prompt_style,
@@ -560,6 +564,7 @@ def main() -> None:
     parser.add_argument("--max-length", type=int, default=512)
     parser.add_argument("--lora-rank", type=int, default=8)
     parser.add_argument("--attention", choices=("eager", "sdpa"), default="eager")
+    parser.add_argument("--dtype", choices=("bfloat16", "float16"), default="bfloat16")
     parser.add_argument("--accumulation", type=int, default=4)
     parser.add_argument("--lr", type=float, default=2e-5)
     parser.add_argument("--head-lr", type=float, default=5e-5)
