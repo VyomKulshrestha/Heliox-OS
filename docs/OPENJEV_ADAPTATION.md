@@ -1281,6 +1281,17 @@ head is promoted. The text-only GPU extraction completed all 256 cases at
 the earlier visual-run instability. The [MisActBench paper](https://arxiv.org/html/2602.08995)
 also finds observed history important; these heads still lack it.
 
+To distinguish an ignored-image failure from weak visual decision quality, a
+[frozen wrong-screenshot diagnostic](../daemon/benchmarks/misactbench_image_shift_diagnostic_v1.json)
+rotated screenshot pairings while holding instructions, actions, coordinate
+metadata, head weights, and threshold fixed. Correct-image final AUC was
+**0.759** and wrong-image AUC **0.587**; 27/64 default decisions changed.
+The head therefore responds to image content. That does **not** mean it
+grounds the action reliably: even with the correct image the cautious point
+misses 3/32 off-task actions and rejects 21/32 valid ones. The shifted inputs
+are deliberately out of distribution, so this is only a causal input-use
+diagnostic, not a safety or world-model benchmark.
+
 An additional source check found the Apache-2.0
 [`ProCreations/auto`](https://huggingface.co/datasets/ProCreations/auto)
 training corpus and its separate

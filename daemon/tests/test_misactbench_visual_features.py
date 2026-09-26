@@ -42,6 +42,10 @@ def test_pre_registered_visual_splits_are_group_disjoint() -> None:
     assert control_dev["final_split_opened_for_text_control"] is False
     assert control_final["final_rows"] == final["final_rows"] == 64
     assert control_final["promotion"] == "none"
+    shifted = json.loads((root / "misactbench_image_shift_diagnostic_v1.json").read_text())
+    assert shifted["selection_sha256"] == final["selection_sha256"]
+    assert shifted["final"]["correct_image_auc"] == final["default_cutoff"]["auc"]
+    assert shifted["promotion"] == "none"
 
 
 def test_feature_checkpoint_is_plain_numeric_data(tmp_path) -> None:
