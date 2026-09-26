@@ -761,6 +761,15 @@ forms, Enter-key actions, unavailable sessions, and explicit non-default tab
 targets remain unverified; executor success alone cannot train the learner.
 These checks establish only the stated browser state, not downstream web-app
 effects or general browser-task success.
+For a multi-action plan, RiskGate now carries each predicted UI and browser
+state into the next prediction rather than reusing the first observed screen.
+An optional UI-JEPA predictor keeps its next latent in memory for that rollout;
+the serialized trace omits the latent and labels later steps as predicted,
+not observed. Without loaded visual weights, the structured predictor drops
+the stale observed latent after the first step instead of pretending it is a
+new frame. This is speculative planning only: execution, post-action
+observation, deterministic risk, and approval remain separate. The research
+visual weights discussed above are still not promoted into this runtime path.
 An optional UI-JEPA artifact loads only when finite tensor shapes and its exact
 ordered `ActionType` vocabulary match the running build. Gating additionally
 requires at least 100 training samples, validation error no greater than 0.35,
