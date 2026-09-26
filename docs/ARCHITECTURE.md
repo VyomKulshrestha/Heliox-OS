@@ -413,7 +413,9 @@ screen context, asks the planner for only the next grounded action or tightly
 coupled pair, executes through the normal security path, and verifies the real
 environment before continuing. An empty plan is successful only when it
 contains an explicit completion claim backed by fresh evidence; exact-text
-goals are checked case-sensitively.
+goals are checked case-sensitively against freshly read editable content,
+not a matching window title or metadata description. If the target's editable
+content cannot be read, Heliox does not mark an exact-text goal complete.
 
 An optional recorded-workflow store observes successfully executed,
 single-action Heliox steps after the normal gates. With separate consent, a

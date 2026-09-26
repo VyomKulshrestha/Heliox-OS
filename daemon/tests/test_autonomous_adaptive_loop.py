@@ -15,6 +15,7 @@ from pilot.actions import (
     ShellCommandParams,
     SystemInfoParams,
     VerificationResult,
+    WindowParams,
 )
 from pilot.agents.autonomous import AutonomousExecutor, AutonomousJob, JobStep
 from pilot.agents.decomposer import Subtask, SubtaskStatus, TaskDecomposer, TaskDecomposition
@@ -257,11 +258,16 @@ async def test_action_success_without_goal_completion_is_not_reported_as_done():
 
 @pytest.mark.asyncio
 async def test_exact_text_completion_rejects_case_mismatch_and_replans():
+    focus = Action(
+        action_type=ActionType.WINDOW_FOCUS,
+        parameters=WindowParams(title="Notepad"),
+    )
     correction = Action(
         action_type=ActionType.KEYBOARD_TYPE,
         parameters=KeyboardParams(text="HELIOX AUTONOMY LIVE TEST"),
     )
-    correction_plan = ActionPlan(actions=[correction], explanation="Correct the case")
+    correction_plan = ActionPlan(actions=[focus, correction], explanation="Correct the case")
+    focused = ActionResult(action=focus, success=True, output="Focused Notepad")
     typed = ActionResult(action=correction, success=True, output="Typed exactly: HELIOX AUTONOMY LIVE TEST")
     screen = SimpleNamespace(
         observe_now=AsyncMock(
@@ -285,10 +291,11 @@ async def test_exact_text_completion_rejects_case_mismatch_and_replans():
             correction_plan,
             ActionPlan(actions=[], explanation="GOAL_COMPLETE: exact text is now visible"),
         ],
-        results=[[typed]],
+        results=[[focused, typed]],
         verifications=[VerificationResult(passed=True, details=["typed"])],
         screen_vision=screen,
     )
+    autonomous._read_target_window_text = AsyncMock(return_value="HELIOX AUTONOMY LIVE TEST")
     job = AutonomousJob(
         goal=("Open Notepad and type exactly HELIOX AUTONOMY LIVE TEST into the blank document. Do not save it."),
         steps=[JobStep(index=0, title="Execute", description="")],
@@ -301,6 +308,39 @@ async def test_exact_text_completion_rejects_case_mismatch_and_replans():
     assert autonomous._executor.execute.await_count == 1
     second_context = autonomous._planner.plan.await_args_list[1].kwargs["screen_context"]
     assert "completion claim rejected" in second_context
+
+
+@pytest.mark.asyncio
+async def test_window_title_cannot_prove_exact_text_was_typed():
+    open_plan = _open_app_plan()
+    opened = ActionResult(action=open_plan.actions[0], success=True, output="Opened Hermes")
+    screen = SimpleNamespace(
+        observe_now=AsyncMock(return_value=SimpleNamespace(
+            screen_hash="hermes-screen", active_app="Hermes",
+            active_window_title="SECRET - Hermes", description="SECRET is visible",
+        )),
+        get_context_for_planner=MagicMock(return_value="Viewing SECRET - Hermes"),
+    )
+    autonomous = _autonomous(
+        plans=[
+            open_plan,
+            ActionPlan(actions=[], explanation="GOAL_COMPLETE: SECRET is visible."),
+            ActionPlan(actions=[], explanation="No grounded next action"),
+        ],
+        results=[[opened]],
+        verifications=[VerificationResult(passed=True, details=["application opened"])],
+        screen_vision=screen,
+    )
+    job = AutonomousJob(
+        goal="Open Hermes and type exactly SECRET in Hermes",
+        steps=[JobStep(index=0, title="Execute", description="Open and type")],
+    )
+
+    await autonomous._execute_single_step(job)
+
+    assert job.steps[0].status == "failed"
+    assert autonomous._executor.execute.await_count == 1
+    assert "fresh editable content" in autonomous._planner.plan.await_args_list[2].kwargs["screen_context"]
 
 
 def test_keyboard_text_is_bound_to_opened_native_window():
