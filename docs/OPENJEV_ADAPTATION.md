@@ -203,6 +203,22 @@ than the trained adapter. The comparison cost $0.003250 in Jev API calls;
 responses were used only for aggregate evaluation, not fitting. The sample
 is synthetic and still cannot establish desktop performance or safety.
 
+A separate prompt-architecture ablation trained the same 512 public rows with
+the complete option list visible to each candidate, while preserving the
+original candidate-only prompt for frozen artifacts. No selected row exceeded
+768 tokens. On the identical 128-row OOD selection, the full-option model
+scored **71/128** versus **74/128** for the original, including **11/35 versus
+12/35** choice decisions; score expected-rank error was **1.209 versus
+1.181**. An independent artifact replay reproduced the new model's metrics.
+When only unordered choice alternatives were permuted, the original model's
+12/35 choice result was unchanged; the full-option model moved from 11/35 to
+12/35 but its choice NLL worsened. This does not establish useful improvement
+or permutation robustness. The variant remains local and disabled. See its
+[training](../daemon/benchmarks/qwen_general_full_options_v1.json),
+[replay](../daemon/benchmarks/qwen_general_full_options_replay_v1.json),
+[permutation](../daemon/benchmarks/qwen_general_full_options_permuted_v1.json),
+and [control permutation](../daemon/benchmarks/qwen_general_v1_permuted_control.json).
+
 The next planned multi-task run adds the
 [MIT-licensed ScopeJudge](https://github.com/dreadnode/scopejudge) expert labels
 to the public general questions, keeping complete security trajectories

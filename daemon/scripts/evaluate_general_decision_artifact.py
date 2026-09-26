@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import random
 import sys
 from pathlib import Path
 
@@ -16,6 +17,21 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from benchmarks.general_decision import DATASET_REVISION, load_split, metrics  # noqa: E402
 from scripts.score_general_decision import score_requests  # noqa: E402
+
+
+def permute_options(rows: list[dict], seed: int) -> list[dict]:
+    """Reorder choice alternatives and labels; preserve ordinal score order."""
+    rng = random.Random(seed)
+    result = []
+    for row in rows:
+        copy = dict(row)
+        if row["kind"] == "choice":
+            order = list(range(len(row["options"])))
+            rng.shuffle(order)
+            copy["options"] = [row["options"][index] for index in order]
+            copy["target"] = [row["target"][index] for index in order]
+        result.append(copy)
+    return result
 
 
 def prediction_metrics(rows: list[dict], predictions: list[dict]) -> dict:
@@ -42,6 +58,8 @@ def main() -> None:
     parser.add_argument("--split", choices=("test", "ood"), default="ood")
     parser.add_argument("--limit", type=int, default=128)
     parser.add_argument("--seed", type=int, default=20260927)
+    parser.add_argument("--permute-options-seed", type=int,
+                        help="Reorder choice alternatives and labels without changing row selection")
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--model-report", type=Path, required=True)
     parser.add_argument("--report", type=Path, required=True)
@@ -51,6 +69,8 @@ def main() -> None:
     rows, manifest = load_split(args.split, args.limit, args.seed)
     if len(rows) != args.limit:
         raise ValueError("Not enough licensed decisions")
+    if args.permute_options_seed is not None:
+        rows = permute_options(rows, args.permute_options_seed)
     payloads = [{"state": json.loads(row["state_json"]), "kind": row["kind"],
                  "question": row["question"], "options": row["options"]} for row in rows]
     predictions = score_requests(payloads, args.output_dir, args.model_report)
@@ -58,6 +78,7 @@ def main() -> None:
     report = {"purpose": "offline_frozen_artifact_comparison",
               "dataset_revision": DATASET_REVISION, "dataset_manifest": manifest,
               "split": args.split, "seed": args.seed, "rows": len(rows),
+              "permute_options_seed": args.permute_options_seed,
               "adapter_sha256": source_report["adapter_sha256"],
               "head_sha256": source_report["head_sha256"],
               "metrics": prediction_metrics(rows, predictions),
