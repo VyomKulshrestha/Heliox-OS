@@ -94,6 +94,17 @@ def metrics(predicted: np.ndarray, state: np.ndarray, target: np.ndarray) -> dic
     }
 
 
+def action_shuffle_diagnostic(correct: float, shuffled: list[float]) -> dict[str, float]:
+    """Positive advantage means the observed action beats shuffled controls."""
+    if not shuffled or not np.isfinite(correct) or not np.all(np.isfinite(shuffled)):
+        raise ValueError("Action-shuffle scores must be finite and nonempty")
+    return {
+        "weighted_mse_advantage": float(np.mean(shuffled) - correct),
+        "one_sided_permutation_p": float((1 + sum(score <= correct for score in shuffled))
+                                         / (len(shuffled) + 1)),
+    }
+
+
 def within_action_permutation(actions: np.ndarray, rng: np.random.Generator) -> np.ndarray:
     """Shuffle locations while preserving each row's action type."""
     permutation = np.arange(len(actions))
@@ -331,6 +342,15 @@ def main() -> None:
                     key: float(np.mean([score[key] for score in within_type_scores]))
                     for key in within_type_scores[0]
                 },
+            }
+            correct_error = scores[split]["trained"]["weighted_mse"]
+            scores[split]["action_shuffle_diagnostic"] = {
+                "whole_action": action_shuffle_diagnostic(
+                    correct_error, [score["weighted_mse"] for score in shuffled_scores]
+                ),
+                "location_same_action": action_shuffle_diagnostic(
+                    correct_error, [score["weighted_mse"] for score in within_type_scores]
+                ),
             }
             if counterfactual_pairs:
                 swapped = dict(arrays[split])
