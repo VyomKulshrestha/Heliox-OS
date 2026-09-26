@@ -11,6 +11,7 @@ from scripts.train_world_visual_transition import (
     feature_shape,
     load_features,
     load_recorded_features,
+    merge_recordings_with_shared_states,
     metrics,
     paired_counterfactual_permutation,
     within_action_permutation,
@@ -117,7 +118,7 @@ def test_private_samples_split_by_recording_without_plaintext_files() -> None:
                     "samples": [
                         {
                             "action_type": "mouse_click" if index % 2 else "mouse_move",
-                            "before": [0] * 256,
+                            "before": [group] * 256,
                             "after": [255] * 256,
                             "coords": [0.25, 0.75],
                             "post_observed": True,
@@ -137,10 +138,70 @@ def test_private_samples_split_by_recording_without_plaintext_files() -> None:
     assert np.all(rows["eval"]["target"] == 1)
 
 
+def test_private_recordings_with_same_pre_screen_stay_in_one_partition() -> None:
+    class Store:
+        def load_research_samples(self):
+            return [
+                {
+                    "workflow_id": f"recording-{group}",
+                    "samples": [
+                        {
+                            "action_type": "mouse_click",
+                            "before": [0 if group == 1 else group] * 256,
+                            "after": [255] * 256,
+                            "coords": [0.25, 0.75],
+                            "post_observed": True,
+                        }
+                        for _ in range(12)
+                    ],
+                }
+                for group in range(5)
+            ]
+
+    rows = load_recorded_features(Store(), seed=7)
+    states = {split: set(partition["state"][:, 0]) for split, partition in rows.items()}
+    assert all(states[left].isdisjoint(states[right]) for left, right in
+               (("train", "validation"), ("train", "eval"), ("validation", "eval")))
+    assert sorted(len(partition["state"]) for partition in rows.values()) == [12, 12, 36]
+
+
+def test_shared_pre_screen_merging_is_transitive() -> None:
+    def row(value: int):
+        before = np.full(256, value / 255, dtype=np.float32)
+        return before, before, 1, np.array([0.5, 0.5], dtype=np.float32)
+
+    merged = merge_recordings_with_shared_states([
+        ("first", [row(1)]),
+        ("bridge", [row(1), row(2)]),
+        ("third", [row(2)]),
+        ("separate", [row(3)]),
+    ])
+
+    assert sorted(len(rows) for _, rows in merged) == [1, 4]
+
+
+def test_private_recordings_reject_insufficient_independent_pre_screens() -> None:
+    class Store:
+        def load_research_samples(self):
+            return [
+                {
+                    "workflow_id": f"recording-{group}",
+                    "samples": [
+                        {"action_type": "mouse_click", "before": [0] * 256,
+                         "after": [255] * 256, "coords": [0.25, 0.75], "post_observed": True}
+                    ],
+                }
+                for group in range(4)
+            ]
+
+    with pytest.raises(ValueError, match="four independent"):
+        load_recorded_features(Store(), seed=7)
+
+
 def test_private_samples_require_four_independent_recordings() -> None:
     class Store:
         def load_research_samples(self):
             return [{"workflow_id": "one", "samples": []}]
 
-    with pytest.raises(ValueError, match="four separate"):
+    with pytest.raises(ValueError, match="four independent"):
         load_recorded_features(Store(), seed=7)

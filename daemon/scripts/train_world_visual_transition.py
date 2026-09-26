@@ -138,6 +138,36 @@ RECORDED_ACTION_IDS = {
 }
 
 
+def merge_recordings_with_shared_states(
+    groups: list[tuple[str, list[tuple[np.ndarray, np.ndarray, int, np.ndarray]]]],
+) -> list[tuple[str, list[tuple[np.ndarray, np.ndarray, int, np.ndarray]]]]:
+    """Keep entire recordings together when their quantized pre-screens match."""
+    parent = list(range(len(groups)))
+
+    def root(index: int) -> int:
+        while parent[index] != index:
+            parent[index] = parent[parent[index]]
+            index = parent[index]
+        return index
+
+    seen: dict[bytes, int] = {}
+    for index, (_, rows) in enumerate(groups):
+        for before, _, _, _ in rows:
+            key = before.tobytes()
+            if key in seen:
+                parent[root(index)] = root(seen[key])
+            else:
+                seen[key] = index
+
+    merged: dict[int, tuple[str, list[tuple[np.ndarray, np.ndarray, int, np.ndarray]]]] = {}
+    for index, (workflow_id, rows) in enumerate(groups):
+        leader = root(index)
+        if leader not in merged:
+            merged[leader] = (workflow_id, [])
+        merged[leader][1].extend(rows)
+    return list(merged.values())
+
+
 def load_recorded_features(store: Any, seed: int) -> dict[str, dict[str, np.ndarray]]:
     """Split decrypted consented samples by recording, never by adjacent frame."""
     recordings = store.load_research_samples()
@@ -162,8 +192,9 @@ def load_recorded_features(store: Any, seed: int) -> dict[str, dict[str, np.ndar
             rows.append((values[:256] / 255, values[256:512] / 255, action_id, values[512:]))
         if rows:
             groups.append((recording["workflow_id"], rows))
+    groups = merge_recordings_with_shared_states(groups)
     if len(groups) < 4:
-        raise ValueError("At least four separate visual recordings are needed for held-out evaluation")
+        raise ValueError("At least four independent visual recording groups are needed for held-out evaluation")
     rng = np.random.default_rng(seed)
     rng.shuffle(groups)
     train_end = max(2, int(len(groups) * 0.6))
@@ -228,7 +259,7 @@ def main() -> None:
         source_hash = hashlib.sha256(args.features.read_bytes()).hexdigest()
         source_metadata = json.loads(args.source_report.read_text(encoding="utf-8"))
         counterfactual_pairs = source_metadata.get("counterfactual_pairs") is True
-    split_basis = "recording" if recorded_store else source_metadata.get("split_basis", "episode")
+    split_basis = "recording_and_exact_pre_screen" if recorded_store else source_metadata.get("split_basis", "episode")
     source_context = ("consented local recordings" if recorded_store else
                       "generated local browser pages" if source_metadata.get("purpose")
                       == "research_only_controlled_browser_visual_transitions" else "one public dataset")
@@ -377,8 +408,9 @@ def main() -> None:
         "scores": scores,
         "limitation": f"{channels}x{height}x{width} visual features and mouse action type/coordinates only. "
                       "Research model is not the live UiJepaPredictor. "
-                      + ("Recording-disjoint, not environment-disjoint; action outcomes are observed, "
-                         "not independently verified. " if recorded_store else
+                      + ("Recording and exact pre-screen-disjoint, not environment-disjoint; "
+                         "matching coarse screens do not establish identical hidden state; "
+                         "action outcomes are observed, not independently verified. " if recorded_store else
                          f"{split_basis}-disjoint within {source_context}, not environment-disjoint. ")
                       + "No safety, autonomy, Jev parity, or runtime loading claim.",
     }
