@@ -479,6 +479,12 @@ still needs action-aligned observations, a compatible action vocabulary,
 environment-disjoint transfer, calibrated uncertainty, and consented live
 verification before promotion.
 
+After the GPU update, a fresh CUDA run on the same pinned features reproduced
+the failure: held-out weighted MSE was 0.10621454 with the correct action and
+0.10621420 with a shuffled action. This [bounded recheck](../daemon/benchmarks/world_visual_gpu_updated_check_v1.json)
+confirms the updated GPU can train the spatial model, not that the model learned
+action effects. It is not a new held-out dataset or a basis for promotion.
+
 To reproduce from `daemon`, use fresh ignored output names. On affected
 Windows Python 3.12 installations, the WMI import workaround described above
 is needed before Python can import CUDA PyTorch:
