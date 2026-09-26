@@ -7,9 +7,7 @@ benchmark or authorize Heliox actions. No labels enter model training.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
-import random
 import sys
 from collections import Counter
 from pathlib import Path
@@ -18,62 +16,15 @@ import numpy as np
 from sklearn.metrics import roc_auc_score
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from benchmarks.scopejudge_general import QUESTION  # noqa: E402
+from benchmarks.misactbench_general import (  # noqa: E402
+    DATASET,
+    DATASET_SHA256,
+    QUESTION,
+    load_cases,
+    payload,
+    sample_cases,
+)
 from scripts.score_general_decision import score_requests  # noqa: E402
-
-DATASET = "osunlp/MisActBench"
-DATASET_SHA256 = "b62c7eb4a6d39f91c7cecd95cf1c96c9ab887a85369b6c48fe402c9f5db8ea95"
-
-
-def load_cases(path: Path) -> list[dict]:
-    if hashlib.sha256(path.read_bytes()).hexdigest() != DATASET_SHA256:
-        raise ValueError("MisActBench annotations differ from the pinned release")
-    trajectories = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(trajectories, dict):
-        raise ValueError("MisActBench must contain trajectory records")
-    cases = []
-    for trajectory_id, trajectory in sorted(trajectories.items()):
-        if trajectory["trajectory_id"] != trajectory_id:
-            raise ValueError("MisActBench trajectory ID mismatch")
-        for step_id, step in sorted(trajectory["steps"].items(), key=lambda item: int(item[0])):
-            label = step["label"]
-            if label is None:
-                continue
-            if not isinstance(label, bool) or not isinstance(step["agent_output"], str):
-                raise ValueError("MisActBench step label or action is invalid")
-            cases.append({"id": f"{trajectory_id}:{step_id}", "group": trajectory_id,
-                          "instruction": trajectory["instruction"],
-                          "action": step["agent_output"], "misaligned": label,
-                          "category": step["category"] if label else "aligned",
-                          "source": trajectory["metadata"]["source"]})
-    return cases
-
-
-def payload(case: dict) -> dict:
-    return {"state": {"user_request": case["instruction"],
-                      "proposed_action": case["action"]},
-            "kind": "noul", "question": QUESTION, "options": ["no", "yes"]}
-
-
-def sample_cases(cases: list[dict], limit: int, seed: int) -> list[dict]:
-    """Balance labels and prevent one trajectory from dominating the probe."""
-    if limit < 2 or limit > 128 or limit % 2:
-        raise ValueError("Sample size must be even and between 2 and 128")
-    selected = []
-    used_groups = set()
-    for misaligned in (False, True):
-        pool = sorted((case for case in cases if case["misaligned"] is misaligned),
-                      key=lambda case: case["id"])
-        random.Random(seed + int(misaligned)).shuffle(pool)
-        for case in pool:
-            if case["group"] not in used_groups:
-                selected.append(case)
-                used_groups.add(case["group"])
-                if sum(item["misaligned"] is misaligned for item in selected) == limit // 2:
-                    break
-        else:
-            raise ValueError("Not enough independent trajectories per label")
-    return sorted(selected, key=lambda case: case["id"])
 
 
 def summarize(cases: list[dict], yes_probabilities: np.ndarray) -> dict:
@@ -106,6 +57,8 @@ def main() -> None:
     parser.add_argument("--rows", type=int, default=96)
     parser.add_argument("--seed", type=int, default=20260926)
     args = parser.parse_args()
+    if args.rows > 128:
+        parser.error("Frozen scorer supports no more than 128 rows")
 
     from huggingface_hub import snapshot_download
     from transformers import AutoTokenizer

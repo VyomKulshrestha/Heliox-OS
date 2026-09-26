@@ -32,6 +32,12 @@ from benchmarks.general_decision import (  # noqa: E402
     probabilities,
     verify_disjoint,
 )
+from benchmarks.misactbench_general import (  # noqa: E402
+    decision_row as misact_decision_row,
+)
+from benchmarks.misactbench_general import (
+    load_parts as load_misact_parts,
+)
 from benchmarks.scopejudge_general import (  # noqa: E402
     SPLIT_STRATEGIES,
     load_scope_parts,
@@ -351,8 +357,8 @@ def run(args: argparse.Namespace) -> dict:
     if (args.accumulation < 1 or args.max_length < 64 or args.lora_rank < 1
             or not math.isfinite(args.ordinal_weight) or args.ordinal_weight < 0):
         raise ValueError("Invalid training configuration")
-    if args.scope_group_weighting != "none" and args.scopejudge_path is None:
-        raise ValueError("Scope group weighting requires ScopeJudge training data")
+    if args.scope_group_weighting != "none" and not (args.scopejudge_path or args.misactbench_path):
+        raise ValueError("Scope group weighting requires action-label training data")
     checkpoint_path = args.output_dir / "checkpoint.pt"
     if args.resume:
         if not checkpoint_path.is_file() or args.report.exists():
@@ -372,24 +378,37 @@ def run(args: argparse.Namespace) -> dict:
         rows[split], manifests[split] = load_split(split, limit, args.seed + offset)
         if not rows[split]:
             raise ValueError(f"No licensed rows in {split}")
+    path = snapshot_download(MODEL, revision=REVISION, local_files_only=True)
+    tokenizer = AutoTokenizer.from_pretrained(path, local_files_only=True)
     scope_manifest = None
-    if args.scopejudge_path is not None:
+    auxiliary_name = None
+    if args.scopejudge_path is not None or args.misactbench_path is not None:
         scope_limits = {"scope_train": args.scope_train_rows,
                         "scope_calibration": args.scope_calibration_rows,
                         "scope_test": args.scope_test_rows}
-        scope_parts, scope_manifest = load_scope_parts(args.scopejudge_path, seed=args.seed,
-                                                       limits=scope_limits,
-                                                       history_calls=args.scope_history_calls,
-                                                       strategy=args.scope_split_strategy)
+        if args.scopejudge_path is not None:
+            auxiliary_name = "scopejudge"
+            scope_parts, scope_manifest = load_scope_parts(args.scopejudge_path, seed=args.seed,
+                                                           limits=scope_limits,
+                                                           history_calls=args.scope_history_calls,
+                                                           strategy=args.scope_split_strategy)
+        else:
+            auxiliary_name = "misactbench"
+            def is_eligible(case: dict) -> bool:
+                encoded, _ = encode_rows(tokenizer, [misact_decision_row(case)],
+                                         args.max_length, prompt_style=args.prompt_style)
+                return bool(encoded)
+
+            scope_parts, scope_manifest = load_misact_parts(
+                args.misactbench_path, seed=args.seed, limits=scope_limits,
+                eligible=is_eligible)
         rows.update(scope_parts)
     verify_disjoint(rows)
     print(json.dumps({"event": "data_selected", "counts": {name: len(part) for name, part in rows.items()},
                       "excluded_unverified_license": {name: entry["excluded_unverified_license"]
                                                      for name, entry in manifests.items()},
-                      "scopejudge": scope_manifest}), flush=True)
+                      "auxiliary": scope_manifest}), flush=True)
 
-    path = snapshot_download(MODEL, revision=REVISION, local_files_only=True)
-    tokenizer = AutoTokenizer.from_pretrained(path, local_files_only=True)
     base = AutoModelForCausalLM.from_pretrained(
         path, local_files_only=True, dtype={"bfloat16": torch.bfloat16,
                                             "float16": torch.float16}[args.dtype],
@@ -544,13 +563,13 @@ def run(args: argparse.Namespace) -> dict:
         "memory_note": ("PyTorch peak-allocation counter is unavailable with caching disabled"
                         if os.environ.get("PYTORCH_NO_CUDA_MEMORY_CACHING") == "1" else None),
         "elapsed_seconds": round(elapsed_before + time.monotonic() - started, 1),
-        "limitation": ("Public synthetic decisions plus expert-labeled security scope calls; "
+        "limitation": ("Public synthetic decisions plus human/expert-labeled actions; "
                        "not Jev parity or Heliox execution authority." if scope_manifest else
                        "Licensed public synthetic sample only; not proprietary Jev parity or Heliox execution authority."),
     }
     if scope_manifest:
         report.update({
-            "scopejudge": scope_manifest,
+            auxiliary_name: scope_manifest,
             "baseline_scope": (scope_metrics([item["row"] for item in encoded["scope_test"]],
                                              baseline_scope, 1.0)
                                if baseline_scope is not None else None),
@@ -586,6 +605,8 @@ def main() -> None:
                         help="Avoid repeated baseline inference after a saved training checkpoint")
     parser.add_argument("--seed", type=int, default=20260924)
     parser.add_argument("--scopejudge-path", type=Path, help="Pinned MIT ScopeJudge train.jsonl for multi-task study")
+    parser.add_argument("--misactbench-path", type=Path,
+                        help="Pinned CC BY 4.0 MisActBench annotations for text-only multi-task study")
     parser.add_argument("--scope-history-calls", type=int, default=0,
                         help="Include up to this many calls from completed earlier trajectory steps")
     parser.add_argument("--scope-group-weighting", choices=("none", "inverse_sqrt"), default="none",
@@ -598,14 +619,16 @@ def main() -> None:
     parser.add_argument("--output-dir", type=Path, default=root / "benchmarks/.bench-state/qwen_general_v1")
     parser.add_argument("--report", type=Path, default=root / "benchmarks/qwen_general_probe_v1.json")
     args = parser.parse_args()
+    if args.scopejudge_path is not None and args.misactbench_path is not None:
+        parser.error("Choose one action-label dataset per training run")
     if any(value < 1 for value in (args.train_rows, args.calibration_rows, args.test_rows,
                                    args.ood_rows, args.progress_every, args.checkpoint_every)):
         parser.error("Row limits and progress interval must be positive")
-    if args.scopejudge_path is not None and any(value < 2 for value in (
+    if (args.scopejudge_path is not None or args.misactbench_path is not None) and any(value < 2 for value in (
             args.scope_train_rows, args.scope_calibration_rows, args.scope_test_rows)):
-        parser.error("ScopeJudge row limits must be at least two")
+        parser.error("Action-label row limits must be at least two")
     if args.scope_history_calls < 0 or (args.scope_history_calls and args.scopejudge_path is None):
-        parser.error("Scope history requires a dataset path and a non-negative call count")
+        parser.error("Scope history requires ScopeJudge and a non-negative call count")
     report = run(args)
     print(json.dumps({key: report[key] for key in ("trained_test", "trained_ood", "peak_vram_gib")}, indent=2))
 
