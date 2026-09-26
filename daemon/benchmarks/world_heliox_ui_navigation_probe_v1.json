@@ -1,0 +1,40 @@
+{
+  "study": "exploratory local Heliox UI same-state navigation and appearance-shift probe",
+  "date": "2026-09-26",
+  "gpu": "NVIDIA GeForce RTX 4060 Laptop GPU",
+  "torch": "2.6.0+cu124",
+  "source": {
+    "transitions": 144,
+    "paired_groups": 72,
+    "fit_validation_eval_rows": [96, 24, 24],
+    "split_basis": "viewport_family",
+    "features_sha256": "f996b69c315c8dffb3b99dae049f9810b67af3247dd5086da085386ce39c4462",
+    "report_sha256": "300c3b70dd4d6e9347a1d22445167f8d1cf013e36d39b21cdac18643c161e340",
+    "capture_note": "Fresh headless browser storage; no daemon was listening. This set predates the collector's same-origin network restriction. Raw screenshots were not retained."
+  },
+  "same_theme_eval": {
+    "action_weighted_mse": 0.5782367357997015,
+    "matched_state_only_weighted_mse": 0.5863614474564954,
+    "paired_alternative_action_weighted_mse": 0.6076988092750782,
+    "unchanged_state_weighted_mse": 1.6580015190896027,
+    "action_report_sha256": "3e6b2afb4e134fb9c02f0f8f8731a46ab0a47381c7b2b375c1fc6900453c6d19",
+    "action_weights_sha256": "352464536038f597e8cca3a16ecf47f8ccebdc04473342041fa83889ca2b7d2a",
+    "state_only_report_sha256": "775c4a6aaa18ef820b9e056999fae1aaf568a15270acbe5428f9a97325c6cc79",
+    "state_only_weights_sha256": "9eba5fd52a1c9582ea192fc82adc0487c1d94d989cafb729275daf00173331e6"
+  },
+  "dark_theme_diagnostic": {
+    "target_rows": 16,
+    "target_paired_groups": 8,
+    "target_features_sha256": "8fcb1c4d9161feb53a38014587308b3aeaa4fa7608c81b793554d8bcc370204c",
+    "target_report_sha256": "56b299943f0f7cf0068ddd958f8509f5a171fbeff521c6a68d0499f4860c93a7",
+    "capture_note": "Fresh browser profile, same-origin HTTP only, daemon WebSocket blocked; dark theme unseen during model fit.",
+    "frozen_action_model_weighted_mse": 0.02910787330054306,
+    "frozen_state_only_model_weighted_mse": 0.029808820274477475,
+    "unchanged_state_weighted_mse": 0.005987894579073831,
+    "paired_alternative_action_weighted_mse": 0.02924316098794575,
+    "action_transfer_report_sha256": "6020850acfa080ca8c4cc475dd898f020f1948c6ccb45a237f8e5867b1572d42",
+    "state_only_transfer_report_sha256": "66f991d00374b7d5575bf8465850458d8060c2418e9ed7b6be5fe814240701aa"
+  },
+  "interpretation": "A small same-appearance action signal appears on held-out viewport families, but the frozen model is worse than unchanged-screen prediction on a 16-row dark-theme holdout. This does not establish appearance-robust action grounding, multi-step consistency, general desktop transfer, safety, or Jev parity. No weights were promoted to the live UiJepaPredictor.",
+  "resource_limit": "An initial 12-pair-per-family dark-theme run was stopped without saving an artifact when free system-disk space fell below 0.5 GiB. A guarded eight-pair-per-family rerun completed and supplied the 16-row dark evaluation above."
+}
