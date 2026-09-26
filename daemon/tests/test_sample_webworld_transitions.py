@@ -13,6 +13,7 @@ from scripts.sample_webworld_transitions import (
     _read_json,
     _save_checkpoint,
     _split_by_shared_state,
+    _state_connected_labels,
     bound_action,
     parse_trajectory,
 )
@@ -61,8 +62,10 @@ def test_split_keeps_transitive_shared_states_together() -> None:
     states = np.eye(1024, dtype=np.float32)[[0, 1, 1, 2, 2, 3, 4, 5]]
     groups = np.array([1, 1, 2, 2, 3, 3, 4, 5])
     splits, components = _split_by_shared_state(states, groups, 7)
+    labels = _state_connected_labels(states, groups)
     assert components == 3
     assert len(set(splits[:6])) == 1
+    assert len(set(labels[:6])) == 1
     assert set(splits) == {"train", "validation", "eval"}
 
 

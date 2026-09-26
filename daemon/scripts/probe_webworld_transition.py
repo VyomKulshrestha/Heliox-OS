@@ -13,6 +13,8 @@ from pathlib import Path
 
 import numpy as np
 
+from scripts.sample_webworld_transitions import _state_connected_labels
+
 
 def load_features(path: Path, source_report: Path) -> dict[str, dict[str, np.ndarray]]:
     metadata = json.loads(source_report.read_text(encoding="utf-8"))
@@ -33,6 +35,7 @@ def load_features(path: Path, source_report: Path) -> dict[str, dict[str, np.nda
             or not all(np.all(np.isfinite(array)) and np.all(array >= 0)
                        for array in (states, targets, types, bound))):
         raise ValueError("Invalid bounded WebWorld features")
+    clusters = _state_connected_labels(states, groups)
     result = {}
     group_sets = {}
     for split in ("train", "validation", "eval"):
@@ -41,7 +44,7 @@ def load_features(path: Path, source_report: Path) -> dict[str, dict[str, np.nda
         result[split] = {
             "state": states[indices], "target": targets[indices],
             "action_type": types[indices], "action_bound": bound[indices],
-            "groups": groups[indices],
+            "groups": groups[indices], "clusters": clusters[indices],
         }
     if any(group_sets[left] & group_sets[right] for left, right in
            (("train", "validation"), ("train", "eval"), ("validation", "eval"))):
@@ -72,7 +75,7 @@ def weighted_mse(predicted: np.ndarray, state: np.ndarray, target: np.ndarray) -
 def clustered_advantage(
     type_errors: np.ndarray, bound_errors: np.ndarray, groups: np.ndarray, *, seed: int,
 ) -> dict[str, float | int]:
-    """Bootstrap trajectories, not correlated steps, for a paired MSE gap."""
+    """Bootstrap state-connected trajectory components for a paired MSE gap."""
     if (type_errors.shape != bound_errors.shape or groups.shape != type_errors.shape
             or not len(groups)):
         raise ValueError("Paired errors and trajectory groups must align")
@@ -128,7 +131,7 @@ def main() -> None:
         arrays = {split: {
             key: torch.from_numpy(value).to(device)
             for key, value in partition.items()
-            if key != "groups"
+            if key not in {"groups", "clusters"}
         } for split, partition in rows.items()}
 
         def predict(partition, action, model=model):
@@ -201,9 +204,10 @@ def main() -> None:
             split: clustered_advantage(
                 per_row_errors["action_type"][split],
                 per_row_errors["action_bound"][split],
-                rows[split]["groups"], seed=args.seed + (11 if split == "validation" else 12),
+                rows[split]["clusters"], seed=args.seed + (11 if split == "validation" else 12),
             ) for split in ("validation", "eval")
         },
+        "paired_bootstrap_unit": "state_connected_trajectory_component",
         "limitation": "Hashed accessibility features, small sampled trajectories, no site-disjoint transfer. "
                       "Shuffling compares observed actions from other states, not verified same-state counterfactuals. "
                       "No runtime model, safety, autonomy, or Jev parity claim.",

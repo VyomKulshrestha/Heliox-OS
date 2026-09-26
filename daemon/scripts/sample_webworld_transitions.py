@@ -110,8 +110,8 @@ def _features(texts: list[str], *, dimension: int) -> np.ndarray:
     return vectorizer.transform(_NODE_ID.sub(" ", text) for text in texts).toarray().astype(np.float32)
 
 
-def _split_by_shared_state(states: np.ndarray, groups: np.ndarray, seed: int) -> tuple[np.ndarray, int]:
-    """Keep trajectories sharing an identical pre-action feature in one split."""
+def _state_connected_labels(states: np.ndarray, groups: np.ndarray) -> np.ndarray:
+    """Label whole trajectories connected by identical pre-action features."""
     unique = sorted(set(groups.tolist()))
     parent = {group: group for group in unique}
 
@@ -128,12 +128,18 @@ def _split_by_shared_state(states: np.ndarray, groups: np.ndarray, seed: int) ->
             parent[root(group)] = root(seen[key])
         else:
             seen[key] = group
-    components: dict[int, list[int]] = {}
-    for group in unique:
-        components.setdefault(root(group), []).append(group)
+    return np.asarray([root(group) for group in groups], dtype=np.int64)
+
+
+def _split_by_shared_state(states: np.ndarray, groups: np.ndarray, seed: int) -> tuple[np.ndarray, int]:
+    """Keep trajectories sharing an identical pre-action feature in one split."""
+    labels = _state_connected_labels(states, groups)
+    components: dict[int, set[int]] = {}
+    for group, label in sorted(zip(groups, labels), key=lambda pair: pair[0]):
+        components.setdefault(int(label), set()).add(int(group))
     if len(components) < 3:
         raise ValueError("Fewer than three independent state-connected trajectory groups")
-    shuffled = list(components.values())
+    shuffled = [sorted(component) for component in components.values()]
     random.Random(seed).shuffle(shuffled)
     train_end = min(len(shuffled) - 2, max(1, int(len(shuffled) * 0.7)))
     validation_end = min(len(shuffled) - 1, max(train_end + 1, int(len(shuffled) * 0.85)))

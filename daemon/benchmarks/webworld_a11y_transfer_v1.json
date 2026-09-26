@@ -19,6 +19,7 @@
     "evaluation_rows": 103
   },
   "evaluation": {
+    "paired_bootstrap_unit": "state_connected_trajectory_component",
     "unchanged_weighted_mse": 0.0011264053562248368,
     "runs": [
       {
