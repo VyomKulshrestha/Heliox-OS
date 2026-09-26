@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "purpose": "research_only_miniwob_counterfactual_visual_probe",
+  "source": {
+    "repository": "https://github.com/Farama-Foundation/MiniWoB-plusplus",
+    "commit": "33c3b4ddef8c6eb67c57a29663d844b1eda7e614",
+    "license": "MIT",
+    "features_sha256": "75d424a68d14d0d685b6888b2e9b59847513c96f3e5d1b293919353d87ea5557",
+    "collector": "python -m scripts.collect_miniwob_branches --train-tasks click-button,click-checkboxes,click-widget --validation-tasks click-option --eval-tasks click-test-2,click-button-sequence --samples-per-task 12 --max-candidates 8"
+  },
+  "split_basis": "task_family",
+  "rows": {"train": 64, "validation": 24, "eval": 48},
+  "counterfactual_groups": {"train": 32, "validation": 12, "eval": 24},
+  "skipped_train_groups_without_distinct_16x16_outcomes": 4,
+  "feature_shape": [1, 16, 16],
+  "hardware": {
+    "gpu": "NVIDIA GeForce RTX 4060 Laptop GPU",
+    "driver": "617.14",
+    "torch": "2.6.0+cu124",
+    "device": "cuda:0"
+  },
+  "metric": "weighted_mse_lower_is_better",
+  "runs": [
+    {
+      "name": "spatial_global_unscaled_seed_20260926",
+      "epochs_selected": 1,
+      "validation": {"unchanged": 0.000243776, "trained": 0.00026828, "paired_action_swap": 0.000268331},
+      "eval": {"unchanged": 0.549232, "trained": 0.541647, "paired_action_swap": 0.541647}
+    },
+    {
+      "name": "spatial_global_no_action_seed_20260926",
+      "epochs_selected": 1,
+      "validation": {"unchanged": 0.000243776, "trained": 0.0002593},
+      "eval": {"unchanged": 0.549232, "trained": 0.542894}
+    },
+    {
+      "name": "spatial_global_scale_power_1_seed_20260926",
+      "epochs_selected": 79,
+      "validation": {"unchanged": 0.000243776, "trained": 0.000176, "shuffled_action": 0.000182, "paired_action_swap": 0.000189},
+      "eval": {"unchanged": 0.549232, "trained": 0.476906, "no_action": 0.563458, "shuffled_action": 0.476227, "paired_action_swap": 0.47681}
+    },
+    {
+      "name": "spatial_global_scale_power_1_seed_20260927",
+      "epochs_selected": 27,
+      "validation": {"unchanged": 0.000243776, "trained": 0.000177, "shuffled_action": 0.000185, "paired_action_swap": 0.00019},
+      "eval": {"unchanged": 0.549232, "trained": 0.524094, "no_action": 0.543013, "shuffled_action": 0.523785, "paired_action_swap": 0.5241}
+    },
+    {
+      "name": "mlp_scale_power_1_seed_20260926",
+      "epochs_selected": 6,
+      "validation": {"unchanged": 0.000243776, "trained": 0.000076},
+      "eval": {"unchanged": 0.549232, "trained": 0.550295, "paired_action_swap": 0.550295}
+    }
+  ],
+  "finding": "Scaled spatial training improves held-out pixel error, but swapping paired actions does not reliably worsen held-out predictions; action-outcome grounding is not demonstrated. The MLP fits validation while worsening evaluation. Neither model is promoted to the Heliox runtime.",
+  "limitations": [
+    "Synthetic browser tasks, not real desktop autonomy or Jev parity.",
+    "Pairs were selected for distinct observed 16x16 next-screen features, so this is not an unbiased task-success estimate.",
+    "Exact reset means identical DOM, visible control coordinates, and modeled 16x16 pre-action features, not pixel-identical screenshot bytes.",
+    "Rewards are not modeled and can be absent for intermediate steps.",
+    "Eligible task families and training configurations were explored on this evaluation set; this is a diagnostic probe, not a preregistered final benchmark.",
+    "The train, validation, and eval tasks share one MiniWoB environment despite task-family disjointness."
+  ],
+  "promoted_to_runtime": false
+}
