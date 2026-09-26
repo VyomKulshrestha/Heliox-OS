@@ -1009,13 +1009,27 @@ We attempted a larger matched comparison on a fresh random-trajectory split.
 The no-history control completed 756 training rows after an identity-checked
 resume, but its 83.5% scope agreement on 711 held-out calls hid **19 false
 allowances among only 23 violations** (51.6% balanced accuracy). The
-one-prior-call arm has a finite, validated checkpoint at row 368/756 but **no
+one-prior-call arm has a finite, validated checkpoint at row 416/756 but **no
 held-out result**: native CUDA failed during training, an exact native resume
-hit a device-side assertion, and a WSL resume also failed. Windows logged
-`nvlddmkm` events around the faults. The trace does not establish whether a
-particular input, driver, or GPU fault is the root cause. We stopped further
-GPU retries and did not treat partial training as a comparison. See the
+hit a device-side assertion, and a WSL resume also failed. A subsequent
+native resume passed the earlier failing group with CUDA launch blocking and
+the caching allocator disabled, then failed after row 416 with fresh Windows
+`nvlddmkm` events. All 904 saved checkpoint tensors remain finite. The trace
+does not establish whether a particular input, PyTorch/CUDA path, driver, or
+GPU fault is the root cause; the no-caching setting is diagnostic, not a fix.
+We did not treat partial training as a comparison. See the
 [scaled-attempt report](../daemon/benchmarks/qwen_scope_history_scaled_attempt_v1.json).
+
+The Jev Decisions endpoint subsequently responded again. A new
+[matched public comparison](../daemon/benchmarks/qwen_scope_jev_matched_v1.json)
+preselected a label-balanced 46-call subset of the completed no-history
+control's 711 eligible held-out ScopeJudge calls, without inspecting either
+model's predictions for selection. On 23 out-of-scope calls the local control
+falsely allowed 19 while Jev falsely allowed four; on 23 in-scope calls the
+local control falsely warned once while Jev warned 12 times. They agreed on
+only 14/46 decisions. This is an evaluation-only, previously inspected public
+split, not a fresh blind safety benchmark, model-training input, Jev parity,
+or permission to execute. The history arm remains incomplete.
 
 The larger split also exposed a benchmark weakness: random trajectory
 assignment can put very few violation labels in the test partition. A new
