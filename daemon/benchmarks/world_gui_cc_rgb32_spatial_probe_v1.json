@@ -1,0 +1,45 @@
+{
+  "purpose": "exploratory_cuda_spatial_rgb32_action_grounding_probe",
+  "dataset": "minuzero/GUI-CC offline track",
+  "revision": "758a5bcf4093ba4111a2cc882632eb47423130d1",
+  "selection": "gui_cc_all_templates_exploratory_v1.json",
+  "selection_timing": "Spatial RGB32 run selected after earlier gray16 and RGB32 MLP results; evaluation rows already inspected",
+  "features_sha256": "1806987e51ee62738560ce49071131bc4fdd30493a5b2008098167e6bbb65fe4",
+  "feature_shape": [3, 32, 32],
+  "split_basis": "casefolded_task_meta",
+  "rows": {"train": 361, "validation": 75, "eval": 87},
+  "groups": {"train": 43, "validation": 9, "eval": 10},
+  "model": "residual spatial CNN, 80 maximum epochs, validation-selected checkpoint",
+  "device": "NVIDIA GeForce RTX 4060 Laptop GPU",
+  "action_permutations": 99,
+  "eval_weighted_mse": {
+    "unchanged_screen": 0.6808425457750209,
+    "correct_tap": 0.3159800021013484,
+    "shuffled_tap_location": 0.3159932178575557,
+    "matched_state_only": 0.3179412764863471
+  },
+  "tap_location_shuffle_diagnostic": {
+    "weighted_mse_advantage": 0.000013215756207274332,
+    "one_sided_shuffle_rank": 0.5
+  },
+  "positive_control": {
+    "source": "isolated generated headless browser pages with same-state paired actions",
+    "features_sha256": "caf21093fe12b66ce5d6d65dec2298850a96dbf6f2f929758c5d39245c0df2a2",
+    "correct_action_weighted_mse": 0.004221832087590671,
+    "shuffled_location_weighted_mse": 0.047451037009845425,
+    "paired_alternative_weighted_mse": 0.06598799236298267,
+    "location_shuffle_rank": 0.01,
+    "local_report_sha256": "d3b5a37d5631e5d3e8b51046e0a4c761f7a3299b32ab5ad308c07cbe42af6dab",
+    "local_weights_sha256": "9b840bafaee01fe218a13d0e9d3a774bf16315c992376a09283387de89740efd"
+  },
+  "local_report_sha256": {
+    "action": "b043b19f8b364dd1a29882b20141b79708b424cbb144b147ee7c1058f89ba896",
+    "state_only": "203e70c30dcd515cebca8cdcfac24bd2c56c83e0a88f9e3447c0b4f451ef4cf8"
+  },
+  "local_weights_sha256": {
+    "action": "542a5c8c1cdfd992869d4de43b759abbad630ec52dde5e4dfdf677a29ca62ab1",
+    "state_only": "78fc6069e3f9a4c1c71ee641f12b90c1ee394fccbdaee4b6e481e7a7263b1106"
+  },
+  "promotion": "none",
+  "interpretation": "Spatial RGB32 substantially lowers one-step screen error, but the correct tap is not meaningfully better than shuffled locations. The positive control confirms the same diagnostic detects real action effects on simple pages. The permutation rank is exploratory after prior evaluation inspection and is not a fresh-holdout significance claim. Neither result proves real desktop transfer, safety, multi-step simulation, or Jev parity."
+}

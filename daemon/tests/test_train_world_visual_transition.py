@@ -22,8 +22,8 @@ def test_action_shuffle_diagnostic_requires_observed_action_advantage() -> None:
     ignored = action_shuffle_diagnostic(0.3, [0.2, 0.3, 0.4])
 
     assert grounded["weighted_mse_advantage"] > 0
-    assert grounded["one_sided_permutation_p"] == 0.25
-    assert ignored["one_sided_permutation_p"] == 0.75
+    assert grounded["one_sided_shuffle_rank"] == 0.25
+    assert ignored["one_sided_shuffle_rank"] == 0.75
     with pytest.raises(ValueError, match="finite and nonempty"):
         action_shuffle_diagnostic(0.1, [float("nan")])
 
