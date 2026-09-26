@@ -1391,6 +1391,16 @@ VS Code outcomes. Paired bootstrap intervals for the post-minus-pre AUC
 difference exclude zero on these sampled groups; they do not generalize beyond
 this model-generated-label corpus. Neither head can authorize action.
 
+A calibration-selected [nonlinear prospective head](../daemon/benchmarks/agentnet_preaction_mlp_dev_v1.json)
+was also trained on the same frozen pre-action features using CUDA. Its
+development AUC was **0.715**, versus **0.719** for the logistic control. At
+the calibration-only cautious cutoff it missed 2/64 incorrect outcomes and
+warned on 52/64 correct outcomes; the logistic control missed 2/64 and warned
+on 57/64. That mixed tradeoff is not an improvement in reliable prospective
+execution judgment. No fresh final or domain-shift labels were used to tune
+this head, and it remains local and disabled. Simply adding a small nonlinear
+head did not close the gap created by the missing next observation.
+
 This gap matches the motivation for explicit expected-effect and observed-
 effect loops in [VeriGUI](https://aclanthology.org/2026.acl-long.1335/), and
 for multi-step contextual-consistency evaluation in
