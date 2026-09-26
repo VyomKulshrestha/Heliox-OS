@@ -78,3 +78,14 @@ def test_branch_pairs_require_identical_prestate_and_distinct_outcome(monkeypatc
     with pytest.raises(ValueError, match="exact measured state"):
         collector.collect_group(None, None, "task", "seed", 2)
     assert all(context.closed for context in contexts)
+
+
+def test_task_splits_reject_identical_modeled_prestates() -> None:
+    rows = [
+        {"split": split, "state": np.full(256, value, dtype=np.float32)}
+        for split, value in (("train", 0), ("validation", 1), ("eval", 2))
+    ]
+    collector.require_disjoint_prestates(rows)
+    rows[-1]["state"] = rows[0]["state"].copy()
+    with pytest.raises(ValueError, match="leaked across task splits"):
+        collector.require_disjoint_prestates(rows)

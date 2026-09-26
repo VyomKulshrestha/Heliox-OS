@@ -150,6 +150,14 @@ def collect_group(browser, assets: PinnedAssets, task: str, seed: str, max_candi
     return [], attempted
 
 
+def require_disjoint_prestates(rows: list[dict]) -> None:
+    states = {split: {row["state"].tobytes() for row in rows if row["split"] == split}
+              for split in ("train", "validation", "eval")}
+    if any(states[left] & states[right] for left, right in
+           (("train", "validation"), ("train", "eval"), ("validation", "eval"))):
+        raise ValueError("Identical modeled pre-action state leaked across task splits")
+
+
 def main() -> None:
     root = Path(__file__).resolve().parents[1] / "benchmarks/.bench-state"
     parser = argparse.ArgumentParser(description=__doc__)
@@ -196,6 +204,7 @@ def main() -> None:
             browser.close()
     if any(not any(row["split"] == split for row in rows) for split in tasks):
         raise ValueError("Each split needs at least one verified distinct-outcome branch")
+    require_disjoint_prestates(rows)
     args.features.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(
         args.features,
@@ -217,6 +226,7 @@ def main() -> None:
         "reset_identity": "identical visible control coordinates, task DOM, and 16x16 pre-action features; "
                           "full screenshot bytes may differ by rendering noise",
         "counterfactual_pairs": True, "split_basis": "task_family",
+        "cross_split_identical_prestates": 0,
         "rows": dict(Counter(row["split"] for row in rows)),
         "groups": {split: len({row["group"] for row in rows if row["split"] == split}) for split in tasks},
         "candidate_attempts": dict(attempted), "skipped_no_distinct_visual_outcomes": dict(skipped),
