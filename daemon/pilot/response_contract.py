@@ -10,7 +10,14 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 
-from pilot.actions import ActionPlan, ActionResult, VerificationResult
+from pilot.actions import (
+    READ_ONLY_ACTIONS,
+    ActionPlan,
+    ActionResult,
+    ActionType,
+    PermissionTier,
+    VerificationResult,
+)
 
 _NUMBER_WORDS = {
     "one": 1,
@@ -23,6 +30,11 @@ _NUMBER_WORDS = {
     "eight": 8,
     "nine": 9,
     "ten": 10,
+}
+_EFFECTFUL_READ_ONLY_CATALOG_ENTRIES = {
+    ActionType.OPEN_URL,
+    ActionType.OPEN_APPLICATION,
+    ActionType.NOTIFY,
 }
 
 
@@ -57,30 +69,48 @@ def success_message(
             else "Dry run completed; no changes were made."
         )
 
+    observed = set(verification.independently_observed_actions)
+    unverified_effects = sum(
+        result.success
+        and index not in observed
+        and (result.action.action_type not in READ_ONLY_ACTIONS
+             or result.action.action_type in _EFFECTFUL_READ_ONLY_CATALOG_ENTRIES)
+        and result.action.permission_tier > PermissionTier.READ_ONLY
+        for index, result in enumerate(results)
+    )
+    caveat = (
+        "\nNote: " + ("1 action effect was" if unverified_effects == 1
+                       else f"{unverified_effects} action effects were")
+        + " reported successful but not independently verified."
+        if unverified_effects else ""
+    )
+
     exact_count = exact_labeled_finding_count(plan)
     if exact_count is not None:
         sections = [section for result in results for section in _extract_labeled_sections(result.output)]
         if len(sections) == exact_count:
+            empty_finding = "Reported." if unverified_effects else "Verified."
             return "\n".join(
-                f"{index}. {label}: {content or 'Verified.'}"
+                f"{index}. {label}: {content or empty_finding}"
                 for index, (label, content) in enumerate(sections, start=1)
-            )
+            ) + caveat
 
     if exact_count is not None and exact_count == len(results):
         findings = []
+        empty_finding = "Reported." if unverified_effects else "Verified."
         for index, result in enumerate(results, start=1):
             label = _clean(result.action.target) or result.action.action_type.value.replace("_", " ").title()
             output = _matching_labeled_section(result.output, label)
-            findings.append(f"{index}. {label}: {output or 'Verified.'}")
-        return "\n".join(findings)
+            findings.append(f"{index}. {label}: {output or empty_finding}")
+        return "\n".join(findings) + caveat
 
-    verified_outputs = [
+    successful_outputs = [
         _bound(_clean(result.output), 1200) for result in results if result.success and _clean(result.output)
     ]
-    if len(results) == 1 and verified_outputs:
-        return verified_outputs[0]
+    if len(results) == 1 and successful_outputs:
+        return successful_outputs[0] + caveat
 
-    if verified_outputs:
+    if successful_outputs:
         lines = []
         for result in results:
             output = _bound(_clean(result.output), 500)
@@ -89,17 +119,18 @@ def success_message(
             label = _clean(result.action.target) or result.action.action_type.value.replace("_", " ").title()
             lines.append(f"- {label}: {output}")
         if lines:
-            return "Verified results:\n" + "\n".join(lines)
+            heading = "Execution results" if unverified_effects else "Verified results"
+            return heading + ":\n" + "\n".join(lines) + caveat
 
     count = len(results)
     noun = "action" if count == 1 else "actions"
     intent = _clean(plan.explanation)
-    prefix = f"Completed and verified {count} {noun}."
+    prefix = f"Completed {count} {noun}." if unverified_effects else f"Completed and verified {count} {noun}."
     if intent:
-        return f"{prefix} {intent}"
+        return f"{prefix} {intent}{caveat}"
     if verification.details:
-        return f"{prefix} {_clean(verification.details[0])}"
-    return prefix
+        return f"{prefix} {_clean(verification.details[0])}{caveat}"
+    return prefix + caveat
 
 
 def partial_failure_message(
