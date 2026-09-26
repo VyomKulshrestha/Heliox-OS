@@ -1,0 +1,33 @@
+{
+  "purpose": "exploratory_cuda_inverse_action_information_check",
+  "dataset": "minuzero/GUI-CC offline track",
+  "revision": "758a5bcf4093ba4111a2cc882632eb47423130d1",
+  "selection": "gui_cc_all_templates_exploratory_v1.json",
+  "selection_timing": "Both inverse comparisons were chosen after the forward-model action-shuffle failure and reuse already-inspected evaluation task groups",
+  "split_basis": "casefolded_task_meta",
+  "rows": {"train": 361, "validation": 75, "eval": 87},
+  "groups": {"train": 43, "validation": 9, "eval": 10},
+  "model": "matched 128-hidden-unit inverse MLPs, 60 maximum epochs, validation-selected checkpoint",
+  "device": "NVIDIA GeForce RTX 4060 Laptop GPU",
+  "seed": 20260926,
+  "all_actions_are_taps": true,
+  "eval_click_coordinate_mae": {
+    "rgb32_before_and_after": 0.24328872561454773,
+    "rgb32_before_only": 0.24033308029174805,
+    "rgb64_before_and_after": 0.26158273220062256,
+    "rgb64_before_only": 0.23622363805770874,
+    "center_coordinate_baseline": 0.25100231170654297
+  },
+  "features_sha256": {
+    "rgb32": "1806987e51ee62738560ce49071131bc4fdd30493a5b2008098167e6bbb65fe4",
+    "rgb64": "d458321592b7623bcc02498ce77065f1b80c1abcccba26619baa198be230d821"
+  },
+  "local_report_sha256": {
+    "rgb32_before_and_after": "52074ebf3b315668c510cd3706a9526c5c16f625603bc6b16973231e627b4856",
+    "rgb32_before_only": "deebc9d643a8076ea28ecb9943c79879edef738add90f27287a164711d98aa30",
+    "rgb64_before_and_after": "d6a3eec451b0ce42474373958f98d351ee7a0df4d596e7b9604a16dac00c6531",
+    "rgb64_before_only": "299263915185aa33c58f05b0e7eb7fa7bc7a05c0fe3cc053f74efb805f3f0a17"
+  },
+  "promotion": "none",
+  "interpretation": "Neither resolution shows an incremental inverse-action coordinate advantage over its separately fitted before-only control. Action-type accuracy is vacuous because all accepted examples are taps. This small flat MLP and already-inspected mobile subset cannot prove the screenshots lack action information, nor establish desktop transfer, multi-step simulation, safety, or Jev parity."
+}

@@ -550,6 +550,19 @@ exploratory probes; prior inspection of the GUI-CC evaluation rows prevents a
 fresh-holdout significance claim. Zeroing the action input produces a much
 worse score here, but that out-of-distribution ablation does not override the
 location-shuffle control. No weights were promoted to the live predictor.
+
+The [RGB32/RGB64 inverse-action check](../daemon/benchmarks/world_gui_cc_inverse_resolution_probe_v1.json)
+tests a narrower question: can a small model infer the tap coordinate from the
+before and after screens better than from the before screen alone? On the same
+already-inspected GUI-CC task split, held-out coordinate MAE was **0.2433**
+versus **0.2403** at 32×32 RGB, and **0.2616** versus **0.2362** at 64×64 RGB
+(before+after versus separately fitted before-only). A fixed center predictor
+scored **0.2510**. All accepted actions are taps, so 100% action-type accuracy
+is just the majority baseline. These exploratory results do not show an
+incremental transition signal for this flat inverse model; they do not prove
+the full-resolution screenshots contain no such signal. More pixels alone are
+not a supported route to promoting the current visual predictor.
+
 To reproduce the spatial comparison from `daemon`, use the pinned selection
 and fresh ignored output paths:
 
@@ -558,6 +571,12 @@ python -m scripts.import_gui_cc_ordered_transitions --root benchmarks/.bench-sta
 python -m scripts.train_world_visual_transition --device cuda --architecture spatial --disable-cudnn --action-permutations 99 --features benchmarks/.bench-state/gui_cc_rgb32_repro.npz --source-report benchmarks/.bench-state/gui_cc_rgb32_repro.json --report benchmarks/.bench-state/gui_cc_rgb32_spatial_repro.json --weights benchmarks/.bench-state/gui_cc_rgb32_spatial_repro.pt
 python -m scripts.train_world_visual_transition --device cuda --architecture spatial --disable-cudnn --train-without-action --features benchmarks/.bench-state/gui_cc_rgb32_repro.npz --source-report benchmarks/.bench-state/gui_cc_rgb32_repro.json --report benchmarks/.bench-state/gui_cc_rgb32_state_only_repro.json --weights benchmarks/.bench-state/gui_cc_rgb32_state_only_repro.pt
 ```
+
+For the inverse check, import the same selection with `--representation rgb64`
+and fresh local output paths, then run
+`python -m scripts.probe_world_visual_inverse` on each representation twice:
+once normally and once with `--train-without-after`. Both runs use the same
+source report and seed; no private or runtime model weights are produced.
 
 Reproduce from `daemon` with the downloaded pinned offline subset and **fresh**
 ignored output paths (the importer refuses to overwrite existing artifacts):
