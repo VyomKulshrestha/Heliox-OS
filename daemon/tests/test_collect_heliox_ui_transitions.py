@@ -1,12 +1,19 @@
 """Local Heliox UI transition collection stays isolated and feature-only."""
 
 import io
+from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 from PIL import Image
 
-from scripts.collect_heliox_ui_transitions import _features, validate_url
+from scripts.collect_heliox_ui_transitions import (
+    MIN_FREE_BYTES,
+    _features,
+    require_free_space,
+    validate_url,
+)
 
 
 @pytest.mark.parametrize("url", ["http://127.0.0.1:1420/", "http://localhost:5173/"])
@@ -37,3 +44,10 @@ def test_features_are_live_model_shape_and_do_not_write_screenshots() -> None:
     assert values.shape == (256,)
     assert values.dtype == np.float32
     assert np.all(values == 1)
+
+
+def test_collection_stops_before_disk_exhaustion(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("scripts.collect_heliox_ui_transitions.shutil.disk_usage",
+                        lambda _: SimpleNamespace(free=MIN_FREE_BYTES - 1))
+    with pytest.raises(RuntimeError, match="512 MiB"):
+        require_free_space(Path("."))

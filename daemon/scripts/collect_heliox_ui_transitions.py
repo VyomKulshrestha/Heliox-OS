@@ -11,6 +11,7 @@ import hashlib
 import io
 import json
 import random
+import shutil
 from collections import Counter
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -28,6 +29,7 @@ STABLE_STYLE = (
     "canvas, .titlebar-right { visibility: hidden !important } "
     "* { animation: none !important; transition: none !important }"
 )
+MIN_FREE_BYTES = 512 * 1024 * 1024
 
 
 def validate_url(url: str) -> str:
@@ -37,6 +39,11 @@ def validate_url(url: str) -> str:
     if parsed.username or parsed.password or parsed.query or parsed.fragment:
         raise ValueError("Heliox UI collector URL must not contain credentials or query data")
     return url
+
+
+def require_free_space(path: Path) -> None:
+    if shutil.disk_usage(path).free < MIN_FREE_BYTES:
+        raise RuntimeError("At least 512 MiB of free disk space is required for collection")
 
 
 def _features(page) -> np.ndarray:
@@ -97,6 +104,8 @@ def main() -> None:
         parser.error(str(exc))
     if args.samples_per_family < 2 or args.features.exists() or args.report.exists():
         parser.error("Use at least two samples per family and fresh output paths")
+    args.features.parent.mkdir(parents=True, exist_ok=True)
+    args.report.parent.mkdir(parents=True, exist_ok=True)
 
     rng = random.Random(args.seed)
     rows: list[dict] = []
@@ -108,9 +117,9 @@ def main() -> None:
                 context = browser.new_context(device_scale_factor=1, reduced_motion="reduce",
                                               color_scheme=theme, service_workers="block")
                 try:
-                    origin = urlsplit(args.url).netloc
-                    context.route("**/*", lambda route, origin=origin: route.continue_()
-                                  if urlsplit(route.request.url).netloc == origin else route.abort())
+                    context.route("**/*", lambda route: route.continue_()
+                                  if urlsplit(route.request.url).netloc == urlsplit(args.url).netloc
+                                  else route.abort())
                     context.add_init_script('''
                         localStorage.setItem("heliox_first_run_complete", "true");
                         const NativeWebSocket = window.WebSocket;
@@ -126,6 +135,7 @@ def main() -> None:
                     ''')
                     page = context.new_page()
                     for index in range(args.samples_per_family):
+                        require_free_space(args.features.parent)
                         width = base_width + rng.randint(-16, 16)
                         height = base_height + rng.randint(-16, 16)
                         rows.extend(_pair(page, args.url, family, index, width, height))
@@ -136,7 +146,6 @@ def main() -> None:
         finally:
             browser.close()
 
-    args.features.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(
         args.features,
         state=np.stack([row["state"] for row in rows]),
