@@ -107,8 +107,19 @@ def test_ordinal_metrics_report_expected_rank_error() -> None:
 def test_uniform_baseline_uses_no_labels_to_form_predictions() -> None:
     example = row("noul")
     assert uniform_baseline([example])["by_kind"]["noul"]["top1_accuracy"] == 0.0
+    assert uniform_baseline([example])["by_kind"]["noul"]["balanced_accuracy"] is None
     example["target"] = [1.0, 0.0]
     assert uniform_baseline([example])["by_kind"]["noul"]["top1_accuracy"] == 1.0
+
+
+def test_binary_metrics_expose_both_error_directions() -> None:
+    negative = row("noul")
+    negative["target"] = [1.0, 0.0]
+    positive = row("noul")
+    report = metrics([negative, positive], [np.array([0.0, 2.0]), np.array([1.0, 0.0])], 1.0)
+    assert report["by_kind"]["noul"]["confusion"] == {
+        "true_positive": 0, "true_negative": 0, "false_positive": 1, "false_negative": 1}
+    assert report["by_kind"]["noul"]["balanced_accuracy"] == 0.0
 
 
 def test_typed_answers_have_normalized_variable_option_probabilities() -> None:

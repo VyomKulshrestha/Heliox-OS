@@ -171,6 +171,8 @@ def metrics(rows: list[dict], logits: list[np.ndarray], temperature: float) -> d
         item = {
             "source": row["source"], "kind": row["kind"],
             "top1": int(np.argmax(target) == np.argmax(predicted)),
+            "gold_index": int(np.argmax(target)),
+            "predicted_index": int(np.argmax(predicted)),
             "nll": float(-target @ np.log(np.clip(predicted, 1e-12, 1.0))),
             "brier": float(np.mean((predicted - target) ** 2)),
         }
@@ -186,6 +188,17 @@ def metrics(rows: list[dict], logits: list[np.ndarray], temperature: float) -> d
                   "mean_brier": float(np.mean([item["brier"] for item in items]))}
         if all(item["kind"] == "score" for item in items):
             result["mean_rank_error"] = float(np.mean([item["rank_error"] for item in items]))
+        if all(item["kind"] == "noul" for item in items):
+            true_positive = sum(item["gold_index"] == 1 and item["predicted_index"] == 1 for item in items)
+            true_negative = sum(item["gold_index"] == 0 and item["predicted_index"] == 0 for item in items)
+            false_positive = sum(item["gold_index"] == 0 and item["predicted_index"] == 1 for item in items)
+            false_negative = sum(item["gold_index"] == 1 and item["predicted_index"] == 0 for item in items)
+            result["confusion"] = {"true_positive": true_positive, "true_negative": true_negative,
+                                   "false_positive": false_positive, "false_negative": false_negative}
+            positives = true_positive + false_negative
+            negatives = true_negative + false_positive
+            result["balanced_accuracy"] = (0.5 * (true_positive / positives + true_negative / negatives)
+                                           if positives and negatives else None)
         return result
 
     return {**aggregate(per_row),
