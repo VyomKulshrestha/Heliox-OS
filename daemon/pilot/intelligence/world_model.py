@@ -696,7 +696,9 @@ class HybridWorldModel:
         visual_updates = {
             key: deepcopy(value)
             for key, value in visual.predicted_state.ui.items()
-            if key not in current_state.ui or value != current_state.ui[key]
+            if key not in structured.predicted_state.ui
+            or key not in current_state.ui
+            or value != current_state.ui[key]
         }
         fused_state = WorldState(
             observed_at=structured.predicted_state.observed_at,

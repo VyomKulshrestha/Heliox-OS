@@ -107,6 +107,7 @@ def test_plan_rolls_visual_prediction_forward_without_reobserving(tmp_path, monk
     assert len(predictions) == 2
     assert all("ui_jepa" in prediction["sources"] for prediction in predictions)
     assert all("latent_embedding" not in prediction["predicted_state"]["ui"] for prediction in predictions)
+    assert all(prediction["predicted_state"]["ui"]["latent_source"] == "predicted" for prediction in predictions)
     assert [prediction["input_state_source"] for prediction in predictions] == ["observed", "predicted"]
     first_delta = predictions[0]["predicted_state"]["ui"]["latent_transition"]["delta_norm"]
     second_delta = predictions[1]["predicted_state"]["ui"]["latent_transition"]["delta_norm"]
