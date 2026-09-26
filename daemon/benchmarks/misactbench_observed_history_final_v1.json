@@ -1,0 +1,27 @@
+{
+  "purpose": "one_shot_paired_observed_history_final_test",
+  "dataset": "osunlp/MisActBench",
+  "dataset_sha256": "b62c7eb4a6d39f91c7cecd95cf1c96c9ab887a85369b6c48fe402c9f5db8ea95",
+  "license": "CC-BY-4.0",
+  "selection_sha256": "3b5c9d38e2fd0fbefbaf1d1430c37eefe58bfcf8d0d2d0fe7c1840c838f2b27f",
+  "pre_final_development_report_sha256": "bd0dcb7fda1a68826a499f88d0b395152e95c1b9740db94f7db4b8f8e19b38d8",
+  "final_rows": 32,
+  "current_screen": {
+    "ignored_final_report_sha256": "4da8de93c23a00fa93642a068baeb2cf08f146af30fba15d423df587ecebff86",
+    "auc": 0.5703125,
+    "default_false_allowances": 6,
+    "default_false_warnings": 8,
+    "cautious_false_allowances": 0,
+    "cautious_false_warnings": 16
+  },
+  "observed_history": {
+    "ignored_final_report_sha256": "9eef775a01c813a0834a84cd3326f2678a9dae308672a263c99d3e4f62fcb453",
+    "auc": 0.54296875,
+    "default_false_allowances": 8,
+    "default_false_warnings": 7,
+    "cautious_false_allowances": 1,
+    "cautious_false_warnings": 13
+  },
+  "promotion": "none",
+  "interpretation": "Adding one real before/after screen transition and previous action did not repair held-out action judgment. Both frozen heads have near-chance ranking on this small test and unusable false-allowance/warning tradeoffs. This is public replay evidence, not live desktop safety or Jev parity. Do not tune either head on this final split."
+}

@@ -45,3 +45,11 @@ def test_pre_final_history_report_pins_both_arms() -> None:
         PROMPT_HISTORY_V1.encode()).hexdigest()
     assert report["final_split_opened_for_model_or_threshold_selection"] is False
     assert report["promotion"] == "none"
+
+    final = json.loads((root / "misactbench_observed_history_final_v1.json").read_text())
+    assert final["selection_sha256"] == report["selection_sha256"]
+    assert final["pre_final_development_report_sha256"] == hashlib.sha256(
+        (root / "misactbench_observed_history_dev_v1.json").read_bytes()
+    ).hexdigest()
+    assert final["final_rows"] == SPLIT_ROWS["final"]
+    assert final["promotion"] == "none"
