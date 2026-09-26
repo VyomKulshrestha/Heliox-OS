@@ -14,6 +14,7 @@ from scripts.sample_webworld_transitions import (
     _save_checkpoint,
     _split_by_shared_state,
     _state_connected_labels,
+    _state_digests,
     bound_action,
     bound_action_path,
     parse_trajectory,
@@ -76,6 +77,14 @@ def test_direct_navigation_type_is_distinct_from_in_page_action() -> None:
                               _features(["click"], dimension=256)[0])
 
 
+def test_exact_state_identity_is_stable_without_storing_page_text() -> None:
+    digests = _state_digests(["Page A", "Page A", "Page B"])
+    assert digests.shape == (3, 32)
+    assert digests.dtype == np.uint8
+    assert np.array_equal(digests[0], digests[1])
+    assert not np.array_equal(digests[0], digests[2])
+
+
 def test_split_keeps_transitive_shared_states_together() -> None:
     states = np.eye(1024, dtype=np.float32)[[0, 1, 1, 2, 2, 3, 4, 5]]
     groups = np.array([1, 1, 2, 2, 3, 3, 4, 5])
@@ -95,6 +104,7 @@ def test_checkpoint_resumes_only_the_same_revision_and_sample(tmp_path) -> None:
         "action_type": np.zeros((1, 256), dtype=np.float32),
         "action_bound": np.zeros((1, 256), dtype=np.float32),
         "action_path": np.zeros((1, 256), dtype=np.float32),
+        "state_digest": _state_digests(["Page A"]),
         "group": np.array([7], dtype=np.int32),
     }
     _save_checkpoint(path, revision="a" * 40, total=100, offsets=[7, 50],

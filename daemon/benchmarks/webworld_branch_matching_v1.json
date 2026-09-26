@@ -36,5 +36,6 @@
   "array_order": "[original reconstruction objective, reconstruction plus paired matching loss]",
   "validation": "Paired-loss training did not improve the 13-pair validation win count for either action representation in any seed.",
   "decision": "Do not promote. Paired loss has inconsistent or negligible branch benefits and increases overall held-out weighted MSE in all six matched comparisons.",
+  "superseded_for_branch_interpretation_by": "webworld_exact_branch_matching_v2.json; exact raw-tree identities reduce evaluation pairs from 26 to 9",
   "limitations": "Same hashed accessibility state and type do not prove identical raw screen or history. Pairs may be dependent, the held-out branch subset is small, and splits are not site-disjoint. No live desktop, safety, autonomy, or Jev-parity evidence. Weights and full probe reports remain ignored local research artifacts."
 }

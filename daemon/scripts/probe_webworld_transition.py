@@ -28,6 +28,7 @@ def load_features(path: Path, source_report: Path) -> dict[str, dict[str, np.nda
         types = data["action_type"].astype(np.float32)
         bound = data["action_bound"].astype(np.float32)
         path_actions = data["action_path"].astype(np.float32) if "action_path" in data.files else None
+        state_digest = data["state_digest"].copy() if "state_digest" in data.files else None
         groups = data["group"].astype(np.int64)
         splits = data["split"].astype(str)
     count = len(states)
@@ -35,6 +36,8 @@ def load_features(path: Path, source_report: Path) -> dict[str, dict[str, np.nda
             or types.shape != (count, 256) or bound.shape != (count, 256)
             or groups.shape != (count,) or splits.shape != (count,)
             or (path_actions is not None and path_actions.shape != (count, 256))
+            or (state_digest is not None and (state_digest.shape != (count, 32)
+                                               or state_digest.dtype != np.uint8))
             or set(splits) != {"train", "validation", "eval"}
             or not all(np.all(np.isfinite(array)) and np.all(array >= 0)
                        for array in (states, targets, types, bound)
@@ -53,6 +56,8 @@ def load_features(path: Path, source_report: Path) -> dict[str, dict[str, np.nda
         }
         if path_actions is not None:
             result[split]["action_path"] = path_actions[indices]
+        if state_digest is not None:
+            result[split]["state_digest"] = state_digest[indices]
     if any(group_sets[left] & group_sets[right] for left, right in
            (("train", "validation"), ("train", "eval"), ("validation", "eval"))):
         raise ValueError("Trajectory leaked across WebWorld partitions")
@@ -82,11 +87,12 @@ def weighted_mse(predicted: np.ndarray, state: np.ndarray, target: np.ndarray) -
 def feature_equivalent_action_pairs(partition: dict[str, np.ndarray]) -> np.ndarray:
     """Find distinct observed outcomes for different actions from one feature state.
 
-    Equality here is only equality of hashed features, not proof that the raw
-    browser screens or histories were identical.
+    New archives compare digests of the exact raw accessibility tree. Older
+    archives fall back to feature equality; neither establishes shared history.
     """
     buckets: dict[tuple[bytes, bytes], list[int]] = defaultdict(list)
-    for index, (state, action_type) in enumerate(zip(partition["state"], partition["action_type"])):
+    identities = partition.get("state_digest", partition["state"])
+    for index, (state, action_type) in enumerate(zip(identities, partition["action_type"])):
         buckets[(state.tobytes(), action_type.tobytes())].append(index)
     pairs = [
         (left, right)
@@ -202,7 +208,7 @@ def main() -> None:
         arrays = {split: {
             key: torch.from_numpy(value).to(device)
             for key, value in partition.items()
-            if key not in {"groups", "clusters"}
+            if key not in {"groups", "clusters", "state_digest"}
         } for split, partition in rows.items()}
 
         def predict(partition, action, model=model):
@@ -285,6 +291,8 @@ def main() -> None:
         "training_feature_equivalent_pairs": len(training_pairs),
         "action_permutations": args.permutations,
         "split_basis": "trajectory_plus_identical_prestate_not_website",
+        "paired_state_basis": ("exact_raw_tree_sha256" if "state_digest" in rows["train"]
+                               else "hashed_accessibility_features"),
         "results": results,
         "feature_equivalent_paired_outcomes": paired_outcomes,
         "paired_type_vs_bound": {
@@ -310,8 +318,8 @@ def main() -> None:
         } if "action_path" in action_keys else None),
         "paired_bootstrap_unit": "state_connected_trajectory_component",
         "limitation": "Hashed accessibility features, small sampled trajectories, no site-disjoint transfer. "
-                      "Feature-equivalent pairs can alias different raw screens or histories; they are not "
-                      "verified same-state counterfactuals. Shuffling compares observed actions from other states. "
+                      "Feature-equivalent pairs are not verified same-history counterfactuals, and older "
+                      "archives may alias different raw screens. Shuffling compares actions from other states. "
                       "No runtime model, safety, autonomy, or Jev parity claim.",
     }
     args.report.parent.mkdir(parents=True, exist_ok=True)

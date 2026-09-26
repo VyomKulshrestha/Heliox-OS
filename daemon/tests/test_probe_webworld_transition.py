@@ -17,10 +17,12 @@ from scripts.probe_webworld_transition import (
 
 
 def _archive(tmp_path, *, leak: bool = False, state_leak: bool = False,
-             with_path: bool = False):
+             with_path: bool = False, with_digest: bool = False):
     path = tmp_path / "features.npz"
     groups = np.array([1, 2, 3, 1 if leak else 4])
     optional = {"action_path": np.eye(256, dtype=np.float32)[:4]} if with_path else {}
+    if with_digest:
+        optional["state_digest"] = np.arange(128, dtype=np.uint8).reshape(4, 32)
     np.savez_compressed(
         path, state=np.eye(1024, dtype=np.float32)[[0, 1, 2, 0 if state_leak else 3]],
         target=np.ones((4, 1024), dtype=np.float32),
@@ -50,6 +52,8 @@ def test_loader_rejects_trajectory_leakage_and_tampered_features(tmp_path) -> No
         load_features(path, report)
     path, report = _archive(tmp_path, with_path=True)
     assert load_features(path, report)["train"]["action_path"].shape == (2, 256)
+    path, report = _archive(tmp_path, with_digest=True)
+    assert load_features(path, report)["train"]["state_digest"].shape == (2, 32)
 
 
 def test_shuffle_keeps_action_types_and_metric_rewards_correct_target() -> None:
@@ -88,3 +92,16 @@ def test_feature_equivalent_pairs_reward_the_right_action_outcome() -> None:
     assert tied["ties"] == 2
     with pytest.raises(ValueError, match="outside"):
         paired_outcome_diagnostic(partition["target"], partition["target"], np.array([[0, 4]]))
+
+
+def test_exact_identity_excludes_hashed_state_aliases() -> None:
+    partition = {
+        "state": np.zeros((2, 2), dtype=np.float32),
+        "state_digest": np.array([[1, 0], [2, 0]], dtype=np.uint8),
+        "action_type": np.ones((2, 2), dtype=np.float32),
+        "action_bound": np.eye(2, dtype=np.float32),
+        "target": np.eye(2, dtype=np.float32),
+    }
+    assert feature_equivalent_action_pairs(partition).shape == (0, 2)
+    partition["state_digest"][1] = partition["state_digest"][0]
+    assert feature_equivalent_action_pairs(partition).tolist() == [[0, 1]]
