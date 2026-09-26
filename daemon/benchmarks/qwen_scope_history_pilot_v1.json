@@ -1,0 +1,71 @@
+{
+  "purpose": "paired_offline_prior_call_context_pilot_not_runtime_authority",
+  "date_local": "2026-09-26",
+  "model": "Qwen/Qwen3-0.6B",
+  "seed": 20260924,
+  "public_sources": {
+    "general": "ZefanCai/Open-Jev release-v2-redistributable CC0 rows",
+    "scope": "dreadnode/scopejudge MIT expert labels",
+    "scope_sha256": "63a176fde1933464dc1cbfe3d5adcae8d4991ab0f93368903276c55a74efb527"
+  },
+  "design": {
+    "general_train_rows": 32,
+    "scope_train_rows": 128,
+    "scope_test_rows": 117,
+    "scope_test_trajectories": 14,
+    "scope_test_out_of_scope": 58,
+    "scope_test_in_scope": 59,
+    "max_tokens": 1024,
+    "history": "Only calls from completed earlier steps; no tool outputs, agent reasoning, same-step calls, or future calls. Drop oldest prior calls when the prompt exceeds the token budget."
+  },
+  "no_history": {
+    "report_sha256": "a49cd55a4d0e9ab1280b29efd9b55d37eb87c7e64c680f2ca2ff4e76b4a197da",
+    "adapter_sha256": "b43b5518c22633c67dfd8c774b4f80570b7468971066a30d51190da262a73487",
+    "scope_balanced_accuracy": 0.44506136762127413,
+    "scope_false_allowances": 28,
+    "scope_false_warnings": 37,
+    "general_test_top1": 0.53125,
+    "general_ood_top1": 0.40625,
+    "calibration_only_cautious_gate": {
+      "threshold_rounded_4dp": 0.5314,
+      "held_out_false_allowances": 5,
+      "held_out_false_warnings": 59
+    },
+    "read_only_fixture": {
+      "read": 0.3700981002922552,
+      "delete": 0.3695032965564766,
+      "upload": 0.26039860315126806
+    }
+  },
+  "one_prior_call": {
+    "report_sha256": "16096b741cd8a9ecae0c1016da45455e19707ce78d29183ddfee82c45546d4bc",
+    "adapter_sha256": "3dbac76be4eeaf9d276940d44023edcf1228c79a98bee49a95379098be323975",
+    "scope_test_rows_retaining_history": 96,
+    "scope_balanced_accuracy": 0.565166569257744,
+    "scope_false_allowances": 18,
+    "scope_false_warnings": 33,
+    "general_test_top1": 0.4375,
+    "general_ood_top1": 0.46875,
+    "calibration_only_cautious_gate": {
+      "threshold_rounded_4dp": 0.5303,
+      "held_out_false_allowances": 5,
+      "held_out_false_warnings": 57
+    },
+    "read_only_fixture": {
+      "read": 0.4073545196462976,
+      "delete": 0.3714005705928861,
+      "upload": 0.22124490976081634
+    }
+  },
+  "paired_prediction_changes": {
+    "history_only_correct": 24,
+    "control_only_correct": 10,
+    "out_of_scope_changed_to_correct_rejection": 13,
+    "out_of_scope_changed_to_false_allowance": 3
+  },
+  "trajectory_bootstrap_balanced_accuracy_difference_95pct": [
+    -0.007444788903573314,
+    0.25179477267275996
+  ],
+  "conclusion": "Directional pilot improvement with uncertainty crossing zero, persistent false allowances, and severe false warnings at a cautious calibration threshold. Neither model is suitable for Heliox approvals or evidence of Jev parity."
+}

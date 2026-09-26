@@ -980,6 +980,31 @@ python -m scripts.train_world_multiturn_scope_semantic --scopejudge-path PATH/TO
 python -m scripts.inspect_world_multiturn_errors --scopejudge-path PATH/TO/train.jsonl
 ```
 
+### Pre-call history and post-driver GPU pilot
+
+The [ScopeJudge paper](https://arxiv.org/html/2607.07774) distinguishes the
+user's intent from the partial trajectory available before a proposed tool
+call. Our earlier scope adapter discarded that partial trajectory. The new
+opt-in research input includes only tool calls from **completed earlier
+steps**; it never includes tool outputs, agent reasoning, another call in the
+same step, or future calls. If a prompt exceeds its token budget, the encoder
+removes the oldest prior calls while preserving the current request and action.
+The default no-history path remains unchanged. This is untrusted research
+context, not a source of execution authority.
+
+After the GPU update, a 16-row CUDA training/evaluation smoke test completed.
+A matched 160-row pilot then compared no history with one prior call at a
+1,024-token limit. Both scored the same 117 eligible, trajectory-held-out
+ScopeJudge calls. The [frozen pilot report](../daemon/benchmarks/qwen_scope_history_pilot_v1.json)
+records source/artifact hashes and the paired results: balanced accuracy rose
+from 44.5% to 56.5%, and false allowances fell from 28 to 18, while 33 valid
+calls were still rejected. A trajectory-level bootstrap interval for the
+balanced-accuracy difference crosses zero. A cutoff selected solely from
+public calibration negatives still allowed five held-out violations and
+rejected 57 of 59 valid calls. The read-only fixture was ranked first, but its
+probability was only 40.7% in the history variant. These are pilot results,
+not safety, Jev-parity, or live-desktop evidence; neither adapter is promoted.
+
 ## Reproduction and release boundary
 
 The offline probes need `onnx`, `onnxruntime`, `pyarrow`, `tokenizers`,
