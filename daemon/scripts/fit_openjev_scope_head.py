@@ -8,6 +8,7 @@ not used until those parameters and their artifact have been saved.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -17,6 +18,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
 from sklearn.preprocessing import StandardScaler
 
+from benchmarks.scopejudge_general import scope_group_weights
 from scripts.extract_openjev_scope_features import sha256
 
 REGULARIZATION = (0.01, 0.1, 1.0, 10.0)
@@ -67,16 +69,25 @@ def metrics(labels: np.ndarray, probabilities: np.ndarray, threshold: float) -> 
             "false_warnings": int(np.sum(~predicted & positive))}
 
 
-def fit(parts: dict[str, dict], *, artifact: Path) -> dict:
+def fit(parts: dict[str, dict], *, artifact: Path,
+        group_weighting: str = "none") -> dict:
     train, calibration, test = (parts[name] for name in ("train", "calibration", "test"))
-    scaler = StandardScaler().fit(train["features"])
+    if group_weighting not in ("none", "inverse_sqrt"):
+        raise ValueError("Unknown scope group weighting mode")
+    weights = None
+    if group_weighting == "inverse_sqrt":
+        rows = [{"group_id": str(case_id).split(":", 1)[0],
+                 "target": [float(not label), float(label)]}
+                for case_id, label in zip(train["ids"], train["labels"], strict=True)]
+        weights = np.asarray(scope_group_weights(rows))
+    scaler = StandardScaler().fit(train["features"], sample_weight=weights)
     x_train = scaler.transform(train["features"])
     x_cal = scaler.transform(calibration["features"])
     trials = []
     for regularization in REGULARIZATION:
         classifier = LogisticRegression(C=regularization, class_weight="balanced",
                                         solver="liblinear", max_iter=1000)
-        classifier.fit(x_train, train["labels"])
+        classifier.fit(x_train, train["labels"], sample_weight=weights)
         probabilities = classifier.predict_proba(x_cal)[:, 1]
         trials.append((float(roc_auc_score(calibration["labels"], probabilities)),
                        regularization, classifier, probabilities))
@@ -90,7 +101,7 @@ def fit(parts: dict[str, dict], *, artifact: Path) -> dict:
                         threshold=threshold, regularization=selected_c)
     # The head and threshold are frozen before test predictions are computed.
     test_probabilities = classifier.predict_proba(scaler.transform(test["features"]))[:, 1]
-    return {"regularization_candidates": [{"c": c, "calibration_auc": score}
+    result = {"regularization_candidates": [{"c": c, "calibration_auc": score}
                                            for score, c, _, _ in trials],
             "selected_c": selected_c, "selected_calibration_auc": auc,
             "threshold_from_calibration_negatives": threshold,
@@ -102,6 +113,11 @@ def fit(parts: dict[str, dict], *, artifact: Path) -> dict:
                               "probability": float(probability)}
                              for case_id, gold, probability in zip(test["ids"], test["labels"],
                                                                     test_probabilities, strict=True)]}
+    if weights is not None:
+        result["group_weighting"] = group_weighting
+        result["train_weights_sha256"] = hashlib.sha256(
+            json.dumps(weights.tolist(), separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+    return result
 
 
 def main() -> None:
@@ -110,6 +126,7 @@ def main() -> None:
     parser.add_argument("--feature-dir", type=Path, default=root / "benchmarks/.bench-state/openjev_scope_features_v1")
     parser.add_argument("--artifact", type=Path, default=root / "benchmarks/.bench-state/openjev_scope_head_v1.npz")
     parser.add_argument("--report", type=Path, default=root / "benchmarks/openjev_2b_scope_head_v1.json")
+    parser.add_argument("--group-weighting", choices=("none", "inverse_sqrt"), default="none")
     args = parser.parse_args()
     if args.report.exists():
         raise FileExistsError("Evaluation report already exists")
@@ -117,7 +134,7 @@ def main() -> None:
     for split in ("train", "calibration", "test"):
         parts[split], metadata[split] = load_features(args.feature_dir, split)
     check_splits(parts, metadata)
-    result = fit(parts, artifact=args.artifact)
+    result = fit(parts, artifact=args.artifact, group_weighting=args.group_weighting)
     report = {"purpose": "research_only_frozen_backbone_scope_head",
               "source": metadata["train"]["source"], "scopejudge": metadata["train"]["scopejudge"],
               "features_sha256": {split: metadata[split]["features_sha256"] for split in metadata},

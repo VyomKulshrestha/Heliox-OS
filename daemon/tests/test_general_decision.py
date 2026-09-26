@@ -20,6 +20,7 @@ from benchmarks.general_decision import (
     validate_row,
     verify_disjoint,
 )
+from benchmarks.scopejudge_general import scope_group_weights
 from scripts.train_general_decision import checkpoint_signature, ordinal_penalty
 
 
@@ -164,6 +165,23 @@ def test_checkpoint_signature_binds_exact_tokenized_inputs() -> None:
     args.ordinal_weight = 0.0
     args.prompt_style = "full_options_v2"
     assert first != checkpoint_signature(args, encoded, {}, None)
+    args.prompt_style = "candidate_v1"
+    args.scope_group_weighting = "inverse_sqrt"
+    assert first != checkpoint_signature(args, encoded, {}, None)
+    assert checkpoint_signature(args, encoded, {}, None, [1.0, 0.5]) != checkpoint_signature(
+        args, encoded, {}, None, [1.0, 0.6])
+
+
+def test_scope_weights_reduce_group_dominance_without_changing_class_mass() -> None:
+    rows = ([{"group_id": "large", "target": [1.0, 0.0]}] * 9 +
+            [{"group_id": "small", "target": [1.0, 0.0]}] +
+            [{"group_id": "allowed", "target": [0.0, 1.0]}] * 4)
+    weights = scope_group_weights(rows)
+    assert sum(weights[:10]) == pytest.approx(10)
+    assert sum(weights[10:]) == pytest.approx(4)
+    assert sum(weights[:9]) / weights[9] == pytest.approx(3)
+    with pytest.raises(ValueError, match="both"):
+        scope_group_weights(rows[:10])
 
 
 def test_ordinal_penalty_respects_distance_and_option_count() -> None:

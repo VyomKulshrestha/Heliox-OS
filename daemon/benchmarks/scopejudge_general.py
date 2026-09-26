@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import random
+from collections import Counter
 from pathlib import Path
 
 import numpy as np
@@ -64,6 +66,27 @@ def balanced_cases(cases: list[ExternalCase], limit: int, seed: int, *,
             diverse.extend(chosen)
         return sorted(diverse, key=lambda case: case.case_id)
     return sorted((case for pool in classes for case in pool[:per_class]), key=lambda case: case.case_id)
+
+
+def scope_group_weights(rows: list[dict]) -> list[float]:
+    """Reduce repeated trajectory dominance while preserving each label's total mass."""
+    if not rows:
+        raise ValueError("Scope weighting needs eligible training rows")
+    keys = []
+    for row in rows:
+        label = row["target"][1]
+        if label not in (0.0, 1.0):
+            raise ValueError("Scope weighting requires binary expert labels")
+        keys.append((int(label), row["group_id"]))
+    counts = Counter(keys)
+    raw = [1 / math.sqrt(counts[key]) for key in keys]
+    label_counts = Counter(label for label, _ in keys)
+    if len(label_counts) != 2:
+        raise ValueError("Scope weighting requires both expert label classes")
+    totals = {label: sum(value for value, key in zip(raw, keys, strict=True)
+                         if key[0] == label) for label in label_counts}
+    return [value * label_counts[key[0]] / totals[key[0]]
+            for value, key in zip(raw, keys, strict=True)]
 
 
 def split_cases(cases: list[ExternalCase], *, seed: int,
