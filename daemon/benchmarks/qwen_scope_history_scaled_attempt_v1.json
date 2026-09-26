@@ -1,0 +1,67 @@
+{
+  "purpose": "offline_scaled_context_attempt_with_incomplete_history_arm",
+  "date_local": "2026-09-26",
+  "model": "Qwen/Qwen3-0.6B",
+  "seed": 20260926,
+  "max_tokens": 1024,
+  "public_sources": {
+    "general": "ZefanCai/Open-Jev release-v2-redistributable CC0 rows",
+    "scope": "dreadnode/scopejudge MIT expert labels",
+    "scope_sha256": "63a176fde1933464dc1cbfe3d5adcae8d4991ab0f93368903276c55a74efb527"
+  },
+  "selected": {
+    "general_train": 256,
+    "scope_train": 512,
+    "scope_calibration": 72,
+    "scope_test": 726,
+    "split": "random_trajectory_v1"
+  },
+  "no_history_control": {
+    "status": "complete_after_identity_checked_checkpoint_resume",
+    "report_sha256": "363bfaa4cdd1a5cd9746af7f540282d498810f35d8b4be182a022ad48524f46b",
+    "adapter_sha256": "59daf91841656fa2127d2fe5a39670e8f3ad6b3c1662cf22bfc800bed175e1a5",
+    "training_checkpoint_sha256": "c67e0d3906a973c34c954804a599cadc47d3ddaae7b75896be1cfd786de6c8f0",
+    "eligible_scope_test": 711,
+    "expert_out_of_scope": 23,
+    "scope_agreement": 0.8354430379746836,
+    "scope_balanced_accuracy": 0.5157355915065722,
+    "scope_false_allowances": 19,
+    "scope_false_warnings": 98,
+    "general_test_top1": 0.515625,
+    "general_ood_top1": 0.5390625,
+    "gpu_peak_allocated_gib": 5.236,
+    "diagnostics": [
+      "One non-finite training group was retried by the existing recovery path.",
+      "Native CUDA illegal instruction interrupted calibration after row 48; Windows logged nvlddmkm events 13 and 153. The same checkpoint resumed and finished."
+    ]
+  },
+  "one_prior_call": {
+    "status": "incomplete_no_held_out_metrics",
+    "last_checkpoint_row": 368,
+    "total_training_rows": 756,
+    "checkpoint_sha256": "4dc35392f9e9ef1546299f5eba856dd210f5635c1ef7eb5923964f713c2a5d40",
+    "checkpoint_tensors_finite": true,
+    "diagnostics": [
+      "Native CUDA illegal instruction interrupted training after the row-368 checkpoint; Windows logged nvlddmkm events 13 and 153.",
+      "An exact native resume failed in the next training group with a device-side assertion; a WSL CUDA resume failed in the same group with an illegal instruction.",
+      "The failing group contains both long scope prompts and a short general-decision prompt; the trace does not identify a root-cause input.",
+      "No test, OOD, or ScopeJudge metrics exist for this incomplete arm."
+    ]
+  },
+  "balanced_trajectory_v2_preflight": {
+    "selection": "Opt-in deterministic group search balances call and violation counts; it does not inspect model predictions.",
+    "scope_train_selected": 512,
+    "scope_calibration_selected": 110,
+    "scope_test_selected": 728,
+    "eligible_at_1024_tokens": {
+      "scope_train": 505,
+      "scope_calibration": 106,
+      "scope_test": 718,
+      "scope_test_violations": 60
+    },
+    "history_arm_eligible_ids_match_no_history": true,
+    "history_arm_scope_test_rows_retaining_history": 622,
+    "model_trained_or_evaluated_on_v2": false
+  },
+  "conclusion": "The larger context comparison has no completed history result. Overall control agreement hides 19/23 false allowances. The GPU update did not eliminate native or WSL faults. Neither arm is suitable for runtime approvals or evidence of Jev parity."
+}

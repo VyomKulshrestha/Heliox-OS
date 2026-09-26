@@ -1005,6 +1005,29 @@ rejected 57 of 59 valid calls. The read-only fixture was ranked first, but its
 probability was only 40.7% in the history variant. These are pilot results,
 not safety, Jev-parity, or live-desktop evidence; neither adapter is promoted.
 
+We attempted a larger matched comparison on a fresh random-trajectory split.
+The no-history control completed 756 training rows after an identity-checked
+resume, but its 83.5% scope agreement on 711 held-out calls hid **19 false
+allowances among only 23 violations** (51.6% balanced accuracy). The
+one-prior-call arm has a finite, validated checkpoint at row 368/756 but **no
+held-out result**: native CUDA failed during training, an exact native resume
+hit a device-side assertion, and a WSL resume also failed. Windows logged
+`nvlddmkm` events around the faults. The trace does not establish whether a
+particular input, driver, or GPU fault is the root cause. We stopped further
+GPU retries and did not treat partial training as a comparison. See the
+[scaled-attempt report](../daemon/benchmarks/qwen_scope_history_scaled_attempt_v1.json).
+
+The larger split also exposed a benchmark weakness: random trajectory
+assignment can put very few violation labels in the test partition. A new
+**opt-in** `balanced_trajectory_v2` strategy searches deterministic grouped
+assignments using only call counts and expert-label counts, never model
+predictions. It keeps trajectories disjoint and does not change the default
+split used by previous reports. With seed `20260926`, 1,024-token encoding
+retains 718 test calls and 60 violations (versus 711 and 23 above); no-history
+and one-call-history modes retain identical case IDs. No model has yet been
+trained or evaluated on this v2 split, so those counts are a preflight, not a
+new performance result.
+
 ## Reproduction and release boundary
 
 The offline probes need `onnx`, `onnxruntime`, `pyarrow`, `tokenizers`,
