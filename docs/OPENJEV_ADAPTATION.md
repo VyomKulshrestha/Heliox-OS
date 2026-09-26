@@ -202,6 +202,16 @@ establish Jev parity. All feature and weight files remain in ignored local
 benchmark state; an interrupted extraction must resume with matching rows,
 model revision, and tokenization.
 
+The subsequent [GPU stability attempt](../daemon/benchmarks/qwen_gpu_stability_attempt_v1.json)
+advanced the 0.6B checkpoint to 1,712/4,096 training rows and verified 128
+of 225 eligible 2B training feature rows. Both longer workloads then failed
+with CUDA errors and contemporaneous Windows `nvlddmkm` resets, while short
+CUDA stress and a small 2B extraction passed. Both checkpoints were checked
+against their saved identities; neither run has final held-out metrics or a
+Jev comparison. Resume only after the GPU execution path is stable. These
+observations do not distinguish a driver, hardware, WSL, power, or model-kernel
+fault.
+
 A label-blind [uniform-option baseline](../daemon/benchmarks/qwen_general_uniform_baseline_v2.json)
 on the 2,048-row run's held-out selections exposes a further weakness. On OOD
 Noul questions it selects the first option, "no", and gets **103/136 (75.7%)**
