@@ -1,0 +1,46 @@
+"""Fresh transfer selection never reuses a prior task group."""
+
+from __future__ import annotations
+
+import json
+from collections import Counter
+from pathlib import Path
+
+from scripts import select_agentnet_fresh_transfer as transfer
+from scripts.extract_agentnet_outcome_features import sha256_file
+
+
+def test_reserve_excludes_prior_groups_and_pairs_new_domains(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(transfer, "FRESH_SPLIT_ROWS", {"final": 2, "ood": 2})
+    candidates = [
+        {"id": f"{name}:0", "group": name, "domain": domain, "correct": correct}
+        for name, domain, correct in (
+            ("used", "Ubuntu", False),
+            ("normal-no", "Ubuntu", False), ("normal-yes", "Ubuntu", True),
+            ("vscode-no", "VScode", False), ("vscode-yes", "VScode", True),
+        )
+    ]
+    monkeypatch.setattr(transfer, "load_candidates",
+                        lambda _source: (candidates, Counter(groups=len(candidates))))
+    previous = {"source_sha256": transfer.SOURCE_SHA256,
+                "case_ids": ["used:0"], "ood_domain": "VScode",
+                "label_provenance": "synthetic_test"}
+    selected = transfer.reserve(tmp_path / "unused", previous, "previous-hash")
+    assert selected["previous_manifest_sha256"] == "previous-hash"
+    assert selected["splits"]["final"] == ["normal-no:0", "normal-yes:0"]
+    assert selected["splits"]["ood"] == ["vscode-no:0", "vscode-yes:0"]
+    assert "used:0" not in selected["case_ids"]
+
+
+def test_tracked_fresh_reservation_is_disjoint_from_fit_groups() -> None:
+    benchmark = Path(__file__).resolve().parents[1] / "benchmarks"
+    previous_path = benchmark / "agentnet_outcome_selection_v1.json"
+    previous = json.loads(previous_path.read_text(encoding="utf-8"))
+    fresh = json.loads((benchmark / "agentnet_fresh_transfer_selection_v1.json").read_text(
+        encoding="utf-8"))
+    previous_groups = {case_id.split(":", 1)[0] for case_id in previous["case_ids"]}
+    fresh_groups = [case_id.split(":", 1)[0] for case_id in fresh["case_ids"]]
+    assert fresh["previous_manifest_sha256"] == sha256_file(previous_path)
+    assert previous_groups.isdisjoint(fresh_groups)
+    assert len(fresh_groups) == len(set(fresh_groups)) == 256
+    assert {name: len(ids) for name, ids in fresh["splits"].items()} == fresh["split_rows"]
