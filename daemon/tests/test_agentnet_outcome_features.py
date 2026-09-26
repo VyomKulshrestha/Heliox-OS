@@ -7,6 +7,7 @@ import json
 import numpy as np
 
 from scripts.extract_agentnet_outcome_features import PROMPT, save, selected_prompts
+from scripts.fit_agentnet_outcome_head import assess, labels_for
 
 
 def test_selected_prompt_uses_only_task_transition_evidence(tmp_path) -> None:
@@ -29,6 +30,7 @@ def test_selected_prompt_uses_only_task_transition_evidence(tmp_path) -> None:
     assert all(secret not in text for secret in (
         "SECRET_THOUGHT", "SECRET_LABEL", "SECRET_FUTURE_ACTION"))
     assert "last_step_correct" not in PROMPT
+    assert labels_for(source, ["task-a:0"]).tolist() == [False]
 
 
 def test_feature_checkpoint_has_numeric_array_only(tmp_path) -> None:
@@ -38,3 +40,11 @@ def test_feature_checkpoint_has_numeric_array_only(tmp_path) -> None:
         assert saved["signature"].item() == "pinned"
         assert saved["ids"].tolist() == ["task-a:0"]
         assert saved["features"].dtype == np.float16
+
+
+def test_outcome_assessment_counts_false_allowances_and_warnings() -> None:
+    labels = np.asarray([True, True, False, False])
+    scores = np.asarray([0.9, 0.2, 0.8, 0.1])
+    report = assess(labels, scores, 0.5)
+    assert report == {"rows": 4, "auc": 0.75,
+                      "false_allowances": 1, "false_warnings": 1}
