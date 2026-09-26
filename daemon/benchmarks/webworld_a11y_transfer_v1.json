@@ -1,0 +1,49 @@
+{
+  "purpose": "research_only_browser_action_binding_transfer_review",
+  "dataset": "Qwen/WebWorldData",
+  "dataset_revision": "e108c5f8e35445c9ddff71cde2a5b1fc4db4020c",
+  "declared_license": "apache-2.0",
+  "local_features_sha256": "9feff67fa1a2063a22386edaba2ef50b3409fd4881bf209d6d0fa27fc05bc7ba",
+  "local_source_report_sha256": "29c28b1df8e22bca0587739581a3bfa6d99c4cb416b2d95b49f8e3ed822b1638",
+  "device": "NVIDIA GeForce RTX 4060 Laptop GPU; CUDA with PyTorch 2.6.0+cu124",
+  "sample": {
+    "sampled_trajectories": 250,
+    "unparsed_trajectories": 44,
+    "direct_navigation_transitions_excluded": 82,
+    "retained_transitions": 638,
+    "retained_trajectories": 206,
+    "state_connected_components": 204,
+    "split_basis": "trajectory_plus_identical_prestate_not_website",
+    "train_rows": 444,
+    "validation_rows": 91,
+    "evaluation_rows": 103
+  },
+  "evaluation": {
+    "unchanged_weighted_mse": 0.0011264053562248368,
+    "runs": [
+      {
+        "seed": 20260926,
+        "type_only_weighted_mse": 0.0010577116340063418,
+        "bound_target_weighted_mse": 0.0010551472913552333,
+        "bound_target_within_type_shuffle_mean": 0.0010866021517079842,
+        "paired_type_minus_bound_95_cluster_interval": [-0.00001399458786215991, 0.00002042396537375455]
+      },
+      {
+        "seed": 123,
+        "type_only_weighted_mse": 0.0010587976245094563,
+        "bound_target_weighted_mse": 0.001082275853709568,
+        "bound_target_within_type_shuffle_mean": 0.001112312023583233,
+        "paired_type_minus_bound_95_cluster_interval": [-0.00004345915467098358, -0.000001952093937504554]
+      },
+      {
+        "seed": 456,
+        "type_only_weighted_mse": 0.001071176113317483,
+        "bound_target_weighted_mse": 0.0010649218122080564,
+        "bound_target_within_type_shuffle_mean": 0.001083953904384824,
+        "paired_type_minus_bound_95_cluster_interval": [-0.000009337408573620133, 0.00002234821024669928]
+      }
+    ]
+  },
+  "decision": "Do not promote. Binding the pre-action target beats within-type action shuffles on this split, but is not a stable improvement over type-only actions across seeds; one trajectory-clustered interval is entirely negative.",
+  "limitations": "Hashed accessibility bags lose tree order and semantics. Only 31 evaluation trajectories, no site-disjoint transfer, no verified same-state counterfactuals, and no live desktop or Jev-parity evidence. Research weights are not loaded by Heliox."
+}
