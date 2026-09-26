@@ -1,0 +1,33 @@
+{
+  "purpose": "post_driver_update_gpu_recovery_and_limits",
+  "date_local": "2026-09-26",
+  "predecessor": "qwen_gpu_stability_attempt_v2.json",
+  "environment": {
+    "gpu": "NVIDIA GeForce RTX 4060 Laptop GPU",
+    "windows_driver": "617.14",
+    "native_runtime": "Windows Python 3.12, PyTorch 2.6.0+cu124",
+    "wsl_runtime": "Ubuntu with Windows-host GPU driver passthrough"
+  },
+  "observed_nvidia_events_local": [
+    {"time": "12:00:04", "ids": [13, 153], "context": "WSL frozen-2B resume"},
+    {"time": "12:07:06", "ids": [13, 153], "context": "WSL 0.6B adapter resume"},
+    {"time": "12:48:21", "ids": [153], "context": "native 0.6B adapter training"},
+    {"time": "12:55:38-12:55:39", "ids": [13, 153], "context": "native 0.6B adapter training"},
+    {"time": "12:57:25-12:57:26", "ids": [13, 153], "context": "native 0.6B calibration"}
+  ],
+  "frozen_2b": {
+    "wsl_result": "CUDA illegal instruction on the first resumed row",
+    "native_result": "completed after resuming validated existing checkpoints",
+    "completed_rows": {"train": 225, "calibration": 60, "test": 114, "ood": 108},
+    "report": "qwen2b_frozen_general_v1.json",
+    "peak_allocated_vram_gib": 3.569
+  },
+  "adapter_0_6b": {
+    "wsl_result": "resumed from 1712 to 1744 training rows, then reset",
+    "native_result": "completed 4096 training rows after checkpointed restarts; calibration initially reset at row 28 of 256",
+    "evaluation_recovery": "identity-checked atomic checkpoints completed all 256 calibration, 256 test, and 256 OOD rows on a later native run",
+    "report": "qwen_general_probe_v3.json",
+    "peak_allocated_vram_gib": 3.869
+  },
+  "conclusion": "Native execution and checkpointing enabled both research reports, but the driver update did not eliminate NVIDIA resets. The underlying fault is unproven; no model was promoted or granted execution authority."
+}
