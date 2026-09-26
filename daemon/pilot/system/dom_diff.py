@@ -627,9 +627,8 @@ async def assess_browser_action_target(action_type: str, action: Any) -> TargetA
 async def _attempt_action_on_clone(action_type: str, page: Any, params: Any) -> str | None:
     """Best-effort, real attempt at the action against a scratch clone page
     — deliberately NOT the production `pilot.system.browser` action
-    functions (those include a self-correction retry loop meant for the
-    real, once-only execution; a dry run only needs one honest attempt and
-    must never raise). Returns an error string on failure, None on
+    functions (a dry run only needs one bounded attempt and must never
+    raise). Returns an error string on failure, None on
     apparent success."""
     try:
         if action_type == "browser_fill_form":
