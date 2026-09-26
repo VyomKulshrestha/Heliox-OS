@@ -8,6 +8,7 @@ import pytest
 
 from scripts.train_world_visual_transition import (
     action_shuffle_diagnostic,
+    combine_training_features,
     feature_shape,
     load_features,
     load_recorded_features,
@@ -63,6 +64,28 @@ def test_rejects_episode_leakage_and_changed_source(tmp_path) -> None:
     report.write_text('{"features_sha256": "not-the-file"}', encoding="utf-8")
     with pytest.raises(ValueError, match="do not match"):
         load_features(features, report)
+
+
+def test_additional_source_keeps_primary_eval_and_rejects_screen_leakage(tmp_path) -> None:
+    features, report = _write_features(tmp_path)
+    primary = load_features(features, report)
+    for index, split in enumerate(("train", "validation", "eval")):
+        primary[split]["state"][:] = (index + 1) / 10
+    additional = {
+        split: {key: value.copy() for key, value in partition.items()}
+        for split, partition in primary.items()
+    }
+    for index, split in enumerate(("train", "validation", "eval")):
+        additional[split]["state"][:] = (index + 4) / 10
+    merged = combine_training_features(primary, additional)
+    assert len(merged["train"]["state"]) == 2
+    assert len(merged["validation"]["state"]) == 2
+    assert len(merged["eval"]["state"]) == 1
+    assert merged["train"]["groups"].tolist() == ["primary:a", "additional:a"]
+    assert np.array_equal(merged["eval"]["target"], primary["eval"]["target"])
+    additional["train"]["state"][:] = primary["eval"]["state"]
+    with pytest.raises(ValueError, match="pre-action screen leaked"):
+        combine_training_features(primary, additional)
 
 
 def test_rejects_feature_shape_mismatch(tmp_path) -> None:

@@ -72,6 +72,35 @@ def load_features(path: Path, source_report: Path) -> dict[str, dict[str, np.nda
     return result
 
 
+def combine_training_features(
+    primary: dict[str, dict[str, np.ndarray]],
+    additional: dict[str, dict[str, np.ndarray]],
+) -> dict[str, dict[str, np.ndarray]]:
+    """Add train/validation observations while retaining the primary eval set."""
+    if any(primary[split]["state"].shape[1:] != additional[split]["state"].shape[1:]
+           for split in ("train", "validation", "eval")):
+        raise ValueError("Additional visual features must match the primary feature shape")
+    merged = {}
+    for split in ("train", "validation", "eval"):
+        left = primary[split]
+        right = additional[split]
+        merged[split] = {
+            key: (np.concatenate((left[key], right[key]), axis=0)
+                  if split != "eval" else left[key].copy())
+            for key in ("state", "target", "action")
+        }
+        groups = [f"primary:{group}" for group in left["groups"]]
+        if split != "eval":
+            groups.extend(f"additional:{group}" for group in right["groups"])
+        merged[split]["groups"] = np.asarray(groups)
+    screens = {split: {state.tobytes() for state in merged[split]["state"]}
+               for split in merged}
+    if any(screens[left] & screens[right] for left, right in
+           (("train", "validation"), ("train", "eval"), ("validation", "eval"))):
+        raise ValueError("Identical pre-action screen leaked across visual partitions")
+    return merged
+
+
 def metrics(predicted: np.ndarray, state: np.ndarray, target: np.ndarray) -> dict[str, float]:
     error = (predicted - target) ** 2
     changed = np.abs(target - state) >= 0.02
@@ -225,6 +254,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--features", type=Path, default=state / "tess_visual_transitions_v1.npz")
     parser.add_argument("--source-report", type=Path, default=state / "tess_visual_transitions_v1.json")
+    parser.add_argument("--additional-features", type=Path,
+                        help="Add a second pinned archive to fit/validation only; keep primary eval isolated")
+    parser.add_argument("--additional-source-report", type=Path)
     parser.add_argument("--recorded-store", type=Path, help="Encrypted opt-in local workflow store")
     parser.add_argument("--report", type=Path, default=state / "tess_visual_model_v1.json")
     parser.add_argument("--weights", type=Path, default=state / "tess_visual_model_v1.pt")
@@ -234,12 +266,19 @@ def main() -> None:
                         default="linear")
     parser.add_argument("--train-without-action", action="store_true",
                         help="Fit a matched state-only baseline with action inputs zeroed")
+    parser.add_argument("--transition-scale-power", type=float, default=0.0,
+                        help="Normalize per-example loss by unchanged-screen error to this power (0..1)")
     parser.add_argument("--epochs", type=int, default=80)
     parser.add_argument("--action-permutations", type=int, default=10)
     parser.add_argument("--seed", type=int, default=20260926)
     args = parser.parse_args()
     if ((not args.recorded_store and (not args.features.is_file() or not args.source_report.is_file()))
             or (args.recorded_store and not args.recorded_store.is_file())
+            or bool(args.additional_features) != bool(args.additional_source_report)
+            or (args.additional_features and (args.recorded_store
+                 or not args.additional_features.is_file() or not args.additional_source_report.is_file()))
+            or not np.isfinite(args.transition_scale_power)
+            or not 0 <= args.transition_scale_power <= 1
             or args.report.exists() or args.weights.exists() or args.epochs < 1
             or args.action_permutations < 1):
         parser.error("Use existing pinned features, fresh outputs, and positive epochs")
@@ -260,7 +299,21 @@ def main() -> None:
         source_hash = hashlib.sha256(args.features.read_bytes()).hexdigest()
         source_metadata = json.loads(args.source_report.read_text(encoding="utf-8"))
         counterfactual_pairs = source_metadata.get("counterfactual_pairs") is True
+        additional_hash = None
+        additional_report_hash = None
+        if args.additional_features:
+            if feature_shape(args.source_report) != feature_shape(args.additional_source_report):
+                raise ValueError("Additional visual features must match the primary feature shape")
+            additional = load_features(args.additional_features, args.additional_source_report)
+            rows = combine_training_features(rows, additional)
+            additional_hash = hashlib.sha256(args.additional_features.read_bytes()).hexdigest()
+            additional_report_hash = hashlib.sha256(args.additional_source_report.read_bytes()).hexdigest()
+            additional_metadata = json.loads(args.additional_source_report.read_text(encoding="utf-8"))
+            counterfactual_pairs = (counterfactual_pairs
+                                    and additional_metadata.get("counterfactual_pairs") is True)
     split_basis = "recording_and_exact_pre_screen" if recorded_store else source_metadata.get("split_basis", "episode")
+    if args.additional_features:
+        split_basis += "_with_additional_fit_validation_source"
     source_context = ("consented local recordings" if recorded_store else
                       "generated local browser pages" if source_metadata.get("purpose")
                       == "research_only_controlled_browser_visual_transitions" else
@@ -301,6 +354,16 @@ def main() -> None:
         nn.init.zeros_(model.bias)
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=0.02)
 
+    def training_loss(predicted, partition):
+        state, target = partition["state"], partition["target"]
+        change = (target - state).abs() >= 0.02
+        weights = 1 + 4 * change
+        error = ((predicted - target) ** 2 * weights).mean(dim=1)
+        if args.transition_scale_power:
+            baseline = ((state - target) ** 2 * weights).mean(dim=1)
+            error = error / baseline.clamp_min(1e-4).pow(args.transition_scale_power)
+        return error.mean()
+
     def predict(partition: dict, *, ablate_action: bool = False):
         action = (torch.zeros_like(partition["action"])
                   if ablate_action or args.train_without_action else partition["action"])
@@ -329,8 +392,7 @@ def main() -> None:
         for indices in torch.randperm(len(train["state"]), device=device).split(64):
             batch = {key: value[indices] for key, value in train.items()}
             output = predict(batch)
-            change = (batch["target"] - batch["state"]).abs() >= 0.02
-            loss = ((output - batch["target"]) ** 2 * (1 + 4 * change)).mean()
+            loss = training_loss(output, batch)
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             optimizer.step()
@@ -338,8 +400,7 @@ def main() -> None:
         with torch.no_grad():
             validation = arrays["validation"]
             output = predict(validation)
-            change = (validation["target"] - validation["state"]).abs() >= 0.02
-            loss = ((output - validation["target"]) ** 2 * (1 + 4 * change)).mean().item()
+            loss = training_loss(output, validation).item()
         if loss < best_loss:
             best_loss, best_epoch = loss, epoch + 1
             best_weights = {key: value.detach().cpu().clone() for key, value in model.state_dict().items()}
@@ -401,12 +462,15 @@ def main() -> None:
     report = {
         "purpose": "research_only_observed_visual_world_transition_probe",
         "features_sha256": source_hash,
+        "additional_training_features_sha256": additional_hash if not recorded_store else None,
+        "additional_source_report_sha256": additional_report_hash if not recorded_store else None,
         "source_kind": "encrypted_local_recordings" if recorded_store else "pinned_feature_archive",
         "device": str(device), "architecture": args.architecture,
         "feature_shape": [channels, height, width],
         "split_basis": split_basis,
         "counterfactual_pairs": counterfactual_pairs,
         "trained_without_action": args.train_without_action,
+        "transition_scale_power": args.transition_scale_power,
         "torch_version": torch.__version__, "cudnn_enabled": torch.backends.cudnn.enabled,
         "seed": args.seed, "selected_epoch": best_epoch,
         "action_permutations": args.action_permutations,

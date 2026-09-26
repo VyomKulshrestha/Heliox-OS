@@ -92,9 +92,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--url", default="http://127.0.0.1:1420/")
     parser.add_argument("--samples-per-family", type=int, default=12)
+    parser.add_argument("--eval-samples-per-family", type=int,
+                        help="Override only the held-out viewport family's sample count")
     parser.add_argument("--seed", type=int, default=20260926)
+    parser.add_argument("--training-theme", choices=("light", "dark"), default="light",
+                        help="Browser color scheme for fit and validation viewport families")
     parser.add_argument("--eval-dark", action="store_true",
-                        help="Use a dark-theme evaluation family unseen during fitting")
+                        help="Use dark browser color scheme for the evaluation family")
     parser.add_argument("--features", type=Path, default=state / "heliox_ui_transitions_v1.npz")
     parser.add_argument("--report", type=Path, default=state / "heliox_ui_transitions_v1.json")
     args = parser.parse_args()
@@ -102,7 +106,9 @@ def main() -> None:
         validate_url(args.url)
     except ValueError as exc:
         parser.error(str(exc))
-    if args.samples_per_family < 2 or args.features.exists() or args.report.exists():
+    if (args.samples_per_family < 2
+            or (args.eval_samples_per_family is not None and args.eval_samples_per_family < 2)
+            or args.features.exists() or args.report.exists()):
         parser.error("Use at least two samples per family and fresh output paths")
     args.features.parent.mkdir(parents=True, exist_ok=True)
     args.report.parent.mkdir(parents=True, exist_ok=True)
@@ -113,7 +119,10 @@ def main() -> None:
         browser = playwright.chromium.launch(headless=True)
         try:
             for family, (base_width, base_height) in enumerate(VIEWPORTS):
-                theme = "dark" if args.eval_dark and family == 5 else "light"
+                theme = "dark" if args.eval_dark and family == 5 else args.training_theme
+                sample_count = (args.eval_samples_per_family
+                                if family == 5 and args.eval_samples_per_family is not None
+                                else args.samples_per_family)
                 context = browser.new_context(device_scale_factor=1, reduced_motion="reduce",
                                               color_scheme=theme, service_workers="block")
                 try:
@@ -134,7 +143,7 @@ def main() -> None:
                         };
                     ''')
                     page = context.new_page()
-                    for index in range(args.samples_per_family):
+                    for index in range(sample_count):
                         require_free_space(args.features.parent)
                         width = base_width + rng.randint(-16, 16)
                         height = base_height + rng.randint(-16, 16)
@@ -142,7 +151,7 @@ def main() -> None:
                 finally:
                     context.close()
                 print(json.dumps({"viewport_family": family,
-                                  "theme": theme, "completed": args.samples_per_family}), flush=True)
+                                  "theme": theme, "completed": sample_count}), flush=True)
         finally:
             browser.close()
 
@@ -160,8 +169,12 @@ def main() -> None:
         "feature_shape": [1, 16, 16],
         "seed": args.seed,
         "samples_per_family": args.samples_per_family,
+        "eval_samples_per_family": args.eval_samples_per_family or args.samples_per_family,
         "counterfactual_pairs": True,
-        "split_basis": "viewport_family_and_theme" if args.eval_dark else "viewport_family",
+        "split_basis": ("viewport_family_and_theme"
+                        if args.eval_dark and args.training_theme != "dark"
+                        else "viewport_family"),
+        "training_theme": args.training_theme,
         "eval_dark": args.eval_dark,
         "fit_layouts": [0, 1, 2, 3], "validation_layout": 4, "eval_layout": 5,
         "rows": dict(Counter(row["split"] for row in rows)),
@@ -172,7 +185,7 @@ def main() -> None:
         "features_sha256": hashlib.sha256(args.features.read_bytes()).hexdigest(),
         "limitation": "Fresh browser storage; decorative canvases and live header telemetry hidden "
                       "during capture. Two fixed Heliox navigation actions and held-out viewport "
-                      "layouts only; optional dark-theme evaluation is one additional shift. "
+                      "layouts only; color scheme is recorded for fit and evaluation. "
                       "No personal desktop recording, real OS action transfer, "
                       "safety, autonomy, or Jev parity claim.",
     }
