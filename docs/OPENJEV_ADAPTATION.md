@@ -174,8 +174,9 @@ the frozen control. The adapter remains local and disabled. See the
 [trial](../daemon/benchmarks/qwen_general_ordinal_v1_ablation.json), and
 [trial training report](../daemon/benchmarks/qwen_general_ordinal_v1.json).
 
-A 4,096-row continuation with the 2,048-row run's frozen held-out selections
-did not finish. It checkpointed 896/4,096 training rows, then encountered
+An earlier 4,096-row continuation with the 2,048-row run's frozen held-out
+selections did not finish on that attempt. It checkpointed 896/4,096 training
+rows, then encountered
 CUDA illegal-instruction and cuBLAS failures accompanied by Windows
 `nvlddmkm` event IDs 13 and 153; an intervening retry produced a non-finite
 gradient. The checkpoint's trainable weights, head, and optimizer tensors were
@@ -183,6 +184,23 @@ finite, but there are **no final test/OOD metrics or promoted weights** from
 this run. The [attempt record](../daemon/benchmarks/qwen_general_scale_attempt_v3.json)
 preserves the checkpoint hash and failure sequence. The event correlation
 does not prove whether the root cause is hardware, driver, power, or a kernel.
+
+The repository also provides a separate, unpromoted scaling experiment using
+frozen [Qwen3.5-2B](https://huggingface.co/Qwen/Qwen3.5-2B) features. It extracts
+candidate representations on the GPU with row-level checkpoints, fits a shared
+regularized decision head on CPU, selects regularization and temperature on
+calibration rows, then evaluates disjoint test and OOD rows. A matched Jev
+comparison can subsequently call Jev on those same public OOD rows; its
+responses are aggregated for evaluation only and never used as training
+labels. The implementation is in
+[`extract_general_frozen_features.py`](../daemon/scripts/extract_general_frozen_features.py),
+[`fit_general_frozen_head.py`](../daemon/scripts/fit_general_frozen_head.py), and
+[`compare_frozen_general_jev.py`](../daemon/scripts/compare_frozen_general_jev.py).
+This path is a reproducible research candidate, **not** a completed quality
+result or a Heliox runtime model. The small pipeline smoke test does not
+establish Jev parity. All feature and weight files remain in ignored local
+benchmark state; an interrupted extraction must resume with matching rows,
+model revision, and tokenization.
 
 A label-blind [uniform-option baseline](../daemon/benchmarks/qwen_general_uniform_baseline_v2.json)
 on the 2,048-row run's held-out selections exposes a further weakness. On OOD
