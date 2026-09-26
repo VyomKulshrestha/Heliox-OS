@@ -32,7 +32,12 @@ from benchmarks.general_decision import (  # noqa: E402
     probabilities,
     verify_disjoint,
 )
-from benchmarks.scopejudge_general import SPLIT_STRATEGIES, load_scope_parts, scope_metrics  # noqa: E402
+from benchmarks.scopejudge_general import (  # noqa: E402
+    SPLIT_STRATEGIES,
+    load_scope_parts,
+    scope_group_weights,
+    scope_metrics,
+)
 from scripts.qwen_model_pin import MODEL, REVISION  # noqa: E402
 
 
@@ -179,7 +184,7 @@ def evaluate_checkpointed(backbone, head, items: list[dict], label: str, *,
 
 
 def gradient_row(backbone, head, item: dict, *, brier_weight: float,
-                 ordinal_weight: float, scale: float) -> float:
+                 ordinal_weight: float, scale: float, weight: float = 1.0) -> float:
     """Exact two-pass gradient with O(1) candidate activation memory.
 
     First compute all scalar scores without autograd, differentiate the small
@@ -188,6 +193,8 @@ def gradient_row(backbone, head, item: dict, *, brier_weight: float,
     """
     import torch
 
+    if not math.isfinite(weight) or weight <= 0:
+        raise ValueError("Training row weight must be finite and positive")
     row = item["row"]
     target = torch.tensor(row["target"], dtype=torch.float32, device="cuda")
     with torch.no_grad():
@@ -208,20 +215,23 @@ def gradient_row(backbone, head, item: dict, *, brier_weight: float,
     score_gradient = torch.autograd.grad(loss, score_variables)[0].detach()
     for candidate, (ids, derivative) in enumerate(zip(item["sequences"], score_gradient, strict=True)):
         try:
-            (scalar_score(backbone, head, ids).float() * derivative / scale).backward()
+            (scalar_score(backbone, head, ids).float() * derivative * weight / scale).backward()
         except RuntimeError as exc:
             raise RuntimeError(f"Training failed for id={row['id']} candidate={candidate} tokens={len(ids)}") from exc
-    return float(loss.detach().cpu())
+    return float(loss.detach().cpu()) * weight
 
 
 def train_group(backbone, head, optimizer, training_items: list[dict], group: list[int],
                 *, brier_weight: float, ordinal_weight: float,
-                max_retries: int = 2) -> tuple[list[float], int]:
+                max_retries: int = 2,
+                row_weights: list[float] | None = None) -> tuple[list[float], int]:
     """Retry a transient nonfinite group without skipping rows or stepping it twice."""
     import torch
 
     if not group or max_retries < 0:
         raise ValueError("Training group and retry count must be valid")
+    if row_weights is not None and len(row_weights) != len(training_items):
+        raise ValueError("Training row weights must align with selected items")
     parameters = [parameter for parameter in backbone.parameters() if parameter.requires_grad]
     parameters += list(head.parameters())
     for attempt in range(max_retries + 1):
@@ -229,7 +239,9 @@ def train_group(backbone, head, optimizer, training_items: list[dict], group: li
         try:
             losses = [gradient_row(backbone, head, training_items[index],
                                    brier_weight=brier_weight, ordinal_weight=ordinal_weight,
-                                   scale=len(group)) for index in group]
+                                   scale=len(group),
+                                   weight=1.0 if row_weights is None else row_weights[index])
+                      for index in group]
             norm = torch.nn.utils.clip_grad_norm_(parameters, 1.0)
             if not torch.isfinite(norm):
                 raise FloatingPointError("Nonfinite gradient norm")
@@ -263,7 +275,8 @@ def fit_temperature(logits: list[np.ndarray], rows: list[dict]) -> float:
 
 
 def checkpoint_signature(args: argparse.Namespace, encoded: dict[str, list[dict]],
-                         manifests: dict, scope_manifest: dict | None) -> str:
+                         manifests: dict, scope_manifest: dict | None,
+                         row_weights: list[float] | None = None) -> str:
     token_ids = hashlib.sha256()
     for split, items in sorted(encoded.items()):
         for item in items:
@@ -278,6 +291,11 @@ def checkpoint_signature(args: argparse.Namespace, encoded: dict[str, list[dict]
                 "ordinal_weight": args.ordinal_weight}
     if args.prompt_style != "candidate_v1":
         identity["prompt_style"] = args.prompt_style
+    if getattr(args, "scope_group_weighting", "none") != "none":
+        identity["scope_group_weighting"] = args.scope_group_weighting
+    if row_weights is not None:
+        identity["row_weights_sha256"] = hashlib.sha256(
+            json.dumps(row_weights, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
     return hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
 
 
@@ -331,6 +349,8 @@ def run(args: argparse.Namespace) -> dict:
     if (args.accumulation < 1 or args.max_length < 64 or args.lora_rank < 1
             or not math.isfinite(args.ordinal_weight) or args.ordinal_weight < 0):
         raise ValueError("Invalid training configuration")
+    if args.scope_group_weighting != "none" and args.scopejudge_path is None:
+        raise ValueError("Scope group weighting requires ScopeJudge training data")
     checkpoint_path = args.output_dir / "checkpoint.pt"
     if args.resume:
         if not checkpoint_path.is_file() or args.report.exists():
@@ -401,7 +421,12 @@ def run(args: argparse.Namespace) -> dict:
             raise ValueError(f"All {split} rows exceed max_length={args.max_length}")
     print(json.dumps({"event": "tokenized", "kept": {name: len(part) for name, part in encoded.items()},
                       "overlong": overlong}), flush=True)
-    signature = checkpoint_signature(args, encoded, manifests, scope_manifest)
+    row_weights = None
+    if args.scope_group_weighting == "inverse_sqrt":
+        row_weights = ([1.0] * len(encoded["train"]) +
+                       scope_group_weights([item["row"] for item in encoded["scope_train"]]))
+    signature = checkpoint_signature(args, encoded, manifests, scope_manifest,
+                                     row_weights=row_weights)
 
     run_baseline = not (args.resume and args.skip_baseline_on_resume)
     baseline_test = evaluate(backbone, head, encoded["test"], "baseline_test") if run_baseline else None
@@ -429,6 +454,7 @@ def run(args: argparse.Namespace) -> dict:
         losses, retries = train_group(
             backbone, head, optimizer, training_items, group,
             brier_weight=args.brier_weight, ordinal_weight=args.ordinal_weight,
+            row_weights=row_weights,
         )
         if retries:
             print(json.dumps({"event": "retried_nonfinite_group", "start": start,
@@ -490,6 +516,9 @@ def run(args: argparse.Namespace) -> dict:
         "baseline_skipped_on_resume": not run_baseline,
         "learning_rates": {"adapter": args.lr, "head": args.head_lr},
         "brier_weight": args.brier_weight, "ordinal_weight": args.ordinal_weight,
+        "scope_group_weighting": args.scope_group_weighting,
+        "row_weights_sha256": (None if row_weights is None else hashlib.sha256(
+            json.dumps(row_weights, separators=(",", ":"), allow_nan=False).encode()).hexdigest()),
         "calibration_temperature": temperature,
         "baseline_test": (metrics([item["row"] for item in encoded["test"]], baseline_test, 1.0)
                           if baseline_test is not None else None),
@@ -547,6 +576,8 @@ def main() -> None:
     parser.add_argument("--scopejudge-path", type=Path, help="Pinned MIT ScopeJudge train.jsonl for multi-task study")
     parser.add_argument("--scope-history-calls", type=int, default=0,
                         help="Include up to this many calls from completed earlier trajectory steps")
+    parser.add_argument("--scope-group-weighting", choices=("none", "inverse_sqrt"), default="none",
+                        help="Optional label-normalized inverse-sqrt trajectory weighting")
     parser.add_argument("--scope-split-strategy", choices=SPLIT_STRATEGIES,
                         default="random_trajectory_v1")
     parser.add_argument("--scope-train-rows", type=int, default=512)
