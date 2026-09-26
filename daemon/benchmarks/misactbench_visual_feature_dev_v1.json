@@ -1,0 +1,39 @@
+{
+  "purpose": "pre_final_frozen_visual_feature_development_result",
+  "dataset": "osunlp/MisActBench",
+  "dataset_sha256": "b62c7eb4a6d39f91c7cecd95cf1c96c9ab887a85369b6c48fe402c9f5db8ea95",
+  "license": "CC-BY-4.0",
+  "model": "Qwen/Qwen3.5-2B",
+  "revision": "15852e8c16360a2fea060d615a32b45270f8a8fc",
+  "manifest_sha256": "288fdb2be6398db1e3bd309b62ab2fd3cd793f5df73c555264c49de9b993aab3",
+  "feature_prompt_sha256": "f3d4d476fe4e85c064f4655b1b480426eaa1e7018d8781aacf98456708de67a6",
+  "feature_sha256": "327ff2ae781c187af1bcb78e7e5d71e93568ba0df1187ea6f4130e706aaa96e0",
+  "ignored_feature_report_sha256": "a24fc7a49c69f519294e3496efd42d298f1f31c201838f389103c20f6063c370",
+  "ignored_fit_report_sha256": "2743ba1b418d19b3b13994364d982890d82fe81cd1d5211938606dab892d5b78",
+  "ignored_artifact_sha256": "f648642e9f7726faf0fae495fba02336ccb60c6d3a91217f34f5a6044fe88e52",
+  "feature_extraction": {
+    "rows": 256,
+    "dimension": 2048,
+    "image_max_side": 960,
+    "attention": "sdpa",
+    "initial_run": "CUDA illegal instruction after checkpointing 224/256 rows; contemporaneous Windows nvlddmkm events 13 and 153",
+    "identity_checked_resume": "completed remaining 32 rows",
+    "initial_peak_allocated_vram_gib": 4.326
+  },
+  "head": {
+    "fit_rows": 128,
+    "calibration_rows": 32,
+    "development_rows": 32,
+    "regularization_C": 0.001,
+    "calibration_auc": 0.73828125,
+    "development_auc": 0.79296875,
+    "development_default_false_allowances": 4,
+    "development_default_false_warnings": 3,
+    "development_cautious_false_allowances": 1,
+    "development_cautious_false_warnings": 12
+  },
+  "final_test_rows": 64,
+  "final_split_used_for_model_or_threshold_selection": false,
+  "promotion": "none",
+  "interpretation": "Visual features show exploratory ranking signal, but neither preselected operating point meets a strict false-allowance and valid-action usability bar. The final split is reserved for one post-freeze generalization check, not tuning or Heliox authority."
+}
