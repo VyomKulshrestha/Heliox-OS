@@ -507,10 +507,10 @@ class AutonomousExecutor:
                 step.completed_at = time.time()
                 await self._notify("autonomous_step_complete", job)
 
-    async def _observe_screen_context(self, target_window: str | None = None) -> tuple[str, bool]:
-        """Return context and whether it contains a fresh foreground observation."""
+    async def _observe_screen_context(self, target_window: str | None = None) -> tuple[str, str]:
+        """Return planner context and separate, freshly observed completion evidence."""
         if self._screen_vision is None:
-            return "No screen context available.", False
+            return "No screen context available.", ""
         observation = None
         try:
             observe_now = getattr(self._screen_vision, "observe_now", None)
@@ -522,12 +522,16 @@ class AutonomousExecutor:
             context = self._screen_vision.get_context_for_planner()
         except Exception:
             context = "No screen context available."
-        fresh = observation is not None and bool(
-            getattr(observation, "screen_hash", "")
-            or getattr(observation, "active_app", "")
-            or getattr(observation, "active_window_title", "")
-        )
-        if not fresh:
+        fresh_parts: list[str] = []
+        if observation is not None:
+            app = str(getattr(observation, "active_app", "") or "")
+            title = str(getattr(observation, "active_window_title", "") or "")
+            description = str(getattr(observation, "description", "") or "")
+            if app or title:
+                fresh_parts.append(f"Currently viewing: {app} — {title}")
+            if description:
+                fresh_parts.append(f"Content: {description}")
+        if not fresh_parts:
             context = f"Fresh screen observation unavailable. Previous context (not completion evidence): {context}"
         if observation is not None and getattr(observation, "screen_hash", ""):
             context += f"\nObservation fingerprint: {observation.screen_hash[:12]}"
@@ -537,10 +541,11 @@ class AutonomousExecutor:
                 context += (
                     f"\nTarget window: {target_window}\nFresh target editable text (case-sensitive): {target_text[:4000]}"
                 )
-                fresh = fresh or bool(target_text)
+                if target_text:
+                    fresh_parts.append(f"Target editable text (case-sensitive): {target_text[:4000]}")
             except Exception as error:
                 context += f"\nTarget window {target_window!r} could not be read in the background: {error}"
-        return context, fresh
+        return context, "\n".join(fresh_parts)
 
     async def _read_target_window_text(self, target: str) -> str:
         from pilot.system.window_mgr import window_read_text
@@ -668,7 +673,7 @@ class AutonomousExecutor:
                 step.rounds = round_index + 1
                 if target_window and not await self._focus_target_window(target_window):
                     progress.append(f"Could not re-focus target window {target_window!r}; re-observing the desktop.")
-                screen_ctx, has_fresh_screen_evidence = await self._observe_screen_context(target_window)
+                screen_ctx, fresh_evidence = await self._observe_screen_context(target_window)
                 directive = self._round_directive(goal, round_index, progress)
                 plan = await self._planner.plan(
                     goal,
@@ -682,8 +687,8 @@ class AutonomousExecutor:
 
                 if not plan.actions:
                     completion_claim = plan.explanation.strip().lower().startswith("goal_complete:")
-                    evidence_matches, mismatch = self._completion_evidence_matches_goal(goal, screen_ctx)
-                    if completion_claim and has_fresh_screen_evidence and evidence_matches:
+                    evidence_matches, mismatch = self._completion_evidence_matches_goal(goal, fresh_evidence)
+                    if completion_claim and fresh_evidence and evidence_matches:
                         step.status = "success"
                         if plan.explanation:
                             output_chunks.append(plan.explanation)
