@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -9,6 +10,7 @@ import numpy as np
 
 from scripts.extract_misactbench_visual_features import save
 from scripts.fit_misactbench_visual_head import assess
+from scripts.probe_misactbench_visual import PROMPT_V2
 from scripts.select_misactbench_visual_features import SPLIT_ROWS
 
 
@@ -24,6 +26,10 @@ def test_pre_registered_visual_splits_are_group_disjoint() -> None:
     assert {name: len(rows) for name, rows in manifest["splits"].items()} == SPLIT_ROWS
     assert len(ids) == len(set(groups)) == 256
     assert not old_groups.intersection(groups)
+    report = json.loads((root / "misactbench_visual_feature_dev_v1.json").read_text())
+    assert report["manifest_sha256"] == hashlib.sha256(
+        (root / "misactbench_visual_feature_selection_v1.json").read_bytes()).hexdigest()
+    assert report["feature_prompt_sha256"] == hashlib.sha256(PROMPT_V2.encode()).hexdigest()
 
 
 def test_feature_checkpoint_is_plain_numeric_data(tmp_path) -> None:
