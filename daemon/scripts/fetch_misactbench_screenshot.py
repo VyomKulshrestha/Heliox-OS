@@ -14,6 +14,8 @@ import json
 import re
 import struct
 import sys
+import time
+import urllib.error
 import urllib.request
 import zlib
 from pathlib import Path, PurePosixPath
@@ -31,14 +33,21 @@ def get_range(start: int, end: int, *, max_bytes: int) -> bytes:
     if not 0 <= start <= end < ARCHIVE_BYTES or end - start + 1 > max_bytes:
         raise ValueError("Requested ZIP range exceeds the bounded archive access")
     request = urllib.request.Request(URL, headers={"Range": f"bytes={start}-{end}"})
-    with urllib.request.urlopen(request, timeout=45) as response:
-        expected_range = f"bytes {start}-{end}/{ARCHIVE_BYTES}"
-        if response.status != 206 or response.headers.get("Content-Range") != expected_range:
-            raise ValueError("Archive server ignored or changed the requested byte range")
-        data = response.read(max_bytes + 1)
-    if len(data) != end - start + 1:
-        raise ValueError("Incomplete or oversized archive response")
-    return data
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(request, timeout=45) as response:
+                expected_range = f"bytes {start}-{end}/{ARCHIVE_BYTES}"
+                if response.status != 206 or response.headers.get("Content-Range") != expected_range:
+                    raise ValueError("Archive server ignored or changed the requested byte range")
+                data = response.read(max_bytes + 1)
+            if len(data) != end - start + 1:
+                raise ValueError("Incomplete or oversized archive response")
+            return data
+        except (TimeoutError, ConnectionError, urllib.error.URLError):
+            if attempt == 2:
+                raise
+            time.sleep(attempt + 1)
+    raise AssertionError("Unreachable range retry state")
 
 
 def parse_central(data: bytes, expected_entries: int) -> dict[str, dict]:
