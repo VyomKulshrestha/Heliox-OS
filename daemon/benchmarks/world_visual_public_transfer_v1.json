@@ -1,0 +1,32 @@
+{
+  "study": "exploratory public-corpus check of globally broadcast action coordinates",
+  "date": "2026-09-26",
+  "device": "NVIDIA GeForce RTX 4060 Laptop GPU",
+  "architecture": "spatial_global",
+  "tess_agentnet": {
+    "features_sha256": "221b0bc5b98023224770d84e6de603285789b8898da4d4a759770aeb0074214c",
+    "eval_rows": 151,
+    "weighted_mse": {
+      "correct_action": 0.109119347059921,
+      "shuffled_action": 0.107892327098676,
+      "shuffled_location_same_action": 0.108088079322502,
+      "unchanged_state": 0.14099680569305215
+    },
+    "report_sha256": "51e648263ed2750e08cf6de39372cd077872beee9073eee557bb3f45a7cd6fd1",
+    "weights_sha256": "b7a343dee5c32af58cf13cf0ad0e0e3bb0c1ef43395496f7827b89c435e91265"
+  },
+  "gui_cc_rgb32": {
+    "features_sha256": "1806987e51ee62738560ce49071131bc4fdd30493a5b2008098167e6bbb65fe4",
+    "eval_rows": 87,
+    "weighted_mse": {
+      "correct_action": 0.312841865784393,
+      "shuffled_action": 0.316666620400397,
+      "shuffled_location_same_action": 0.316264376502856,
+      "unchanged_state": 0.680842545775021
+    },
+    "location_shuffle_rank_30_permutations": 0.2903225806451613,
+    "report_sha256": "f3f2a04592377d702f8584c39da74ff89c9d743d340e44f3fedc91504ed6b5fe",
+    "weights_sha256": "12c1a75c2b8d8791cb9c9ce3ab80ac1ba5ce418b5d7097bb8e64ac9d435f10ec"
+  },
+  "interpretation": "On TESS, shuffling the action improves error. On already-inspected GUI-CC rows, the correct-action edge is small and its 30-permutation rank is weak. These tests do not reproduce the same-state paired alternatives available in the local UI collector. Neither corpus supports a general controllable world-model or Jev-parity claim, and no research weights are loaded into Heliox."
+}

@@ -699,6 +699,17 @@ layout family, and tiny dark error margin make this a bounded development
 check—not independent GUI transfer, a calibrated execution gate, or Jev parity.
 No learned weights were promoted.
 
+The same global-coordinate architecture was also trained on the existing
+pinned public corpora without changing their splits. On TESS AgentNet's 151
+evaluation rows, correct-action weighted MSE was **0.10912**, while shuffling
+valid actions improved it to **0.10789**. On 87 already-inspected GUI-CC RGB32
+rows, correct taps scored **0.31284** versus **0.31626** with locations
+shuffled, but the rank among 30 shuffles was only **0.29**. The
+[public-corpus check](../daemon/benchmarks/world_visual_public_transfer_v1.json)
+pins both local reports and weights. Thus the local paired-page gain does not
+establish broad action conditioning: the public data either fail or weakly
+support the action-shuffle control, and lack verified same-screen alternatives.
+
 To repeat with fresh ignored output paths, start the local Vite UI with
 `tauri-app/ui/node_modules/.bin/vite.cmd --host 127.0.0.1 --port 1420`, then
 from `daemon` run `python -m scripts.collect_heliox_ui_transitions --help`,
