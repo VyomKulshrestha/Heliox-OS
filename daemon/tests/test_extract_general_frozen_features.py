@@ -5,7 +5,11 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from scripts.extract_general_frozen_features import load_checkpoint, save_checkpoint
+from scripts.extract_general_frozen_features import (
+    load_checkpoint,
+    save_checkpoint,
+    verify_loaded_backbone,
+)
 
 
 def test_feature_checkpoint_round_trip_and_selection_guard(tmp_path) -> None:
@@ -27,3 +31,18 @@ def test_feature_checkpoint_round_trip_and_selection_guard(tmp_path) -> None:
         load_checkpoint(path, selected[::-1], signature="selection-a", feature_dim=3)
     with pytest.raises(ValueError, match="selected rows"):
         load_checkpoint(path, selected, signature="selection-a", feature_dim=4)
+
+
+def test_extraction_rejects_missing_or_meta_backbone_weights() -> None:
+    class Model:
+        def __init__(self, meta: bool):
+            self.meta = meta
+
+        def parameters(self):
+            return iter([type("Parameter", (), {"is_meta": self.meta})()])
+
+    verify_loaded_backbone(Model(False), {"missing_keys": []})
+    with pytest.raises(RuntimeError, match="missing weights"):
+        verify_loaded_backbone(Model(False), {"missing_keys": ["layer.weight"]})
+    with pytest.raises(RuntimeError, match="meta parameters"):
+        verify_loaded_backbone(Model(True), {"missing_keys": []})

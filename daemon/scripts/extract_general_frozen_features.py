@@ -55,6 +55,13 @@ def _signature(split: str, manifest: dict, token_hash: str, max_length: int) -> 
     return hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
 
 
+def verify_loaded_backbone(model, loading: dict) -> None:
+    if loading.get("missing_keys"):
+        raise RuntimeError(f"Frozen backbone has {len(loading['missing_keys'])} missing weights")
+    if any(parameter.is_meta for parameter in model.parameters()):
+        raise RuntimeError("Frozen backbone has unloaded meta parameters")
+
+
 def save_checkpoint(path: Path, features: list[np.ndarray], offsets: list[int],
                     ids: list[str], *, signature: str) -> None:
     matrix = np.stack(features).astype(np.float16) if features else np.empty((0, 0), np.float16)
@@ -161,11 +168,14 @@ def main() -> None:
         signatures[split] = _signature(split, manifests[split], token_hash, args.max_length)
     print(json.dumps({"event": "selected", "kept": {key: len(value) for key, value in encoded.items()},
                       "excluded_overlong": excluded}), flush=True)
-    base = AutoModelForCausalLM.from_pretrained(
+    base, loading = AutoModelForCausalLM.from_pretrained(
         path, local_files_only=True, dtype=torch.bfloat16, device_map={"": 0},
-        attn_implementation="eager",
+        attn_implementation="eager", output_loading_info=True,
     )
     model = base.model
+    verify_loaded_backbone(model, loading)
+    if next(model.parameters()).device.type != "cuda":
+        raise RuntimeError("Frozen backbone did not load on CUDA")
     model.requires_grad_(False)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     completed = {}
