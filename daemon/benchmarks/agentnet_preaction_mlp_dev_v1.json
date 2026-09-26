@@ -1,0 +1,41 @@
+{
+  "purpose": "calibration_selected_nonlinear_prospective_agentnet_development_check",
+  "source_repo": "xlangai/AgentNet",
+  "source_sha256": "8e24c5a5a1ef5a5113755b33ed12164fc37ce8fbbd35d1c7dba81bf950d53d00",
+  "fit_manifest_sha256": "7366b4c71f4b6c19f079714a15ab85fc739b54cbb152821bd02f00a9f12a7f04",
+  "frozen_preaction_features_sha256": "3234c98ebaae4169361ed4d4a498a3e41cf73bee1e678f701bdd314821b98f0e",
+  "model": "Qwen/Qwen3.5-2B",
+  "revision": "15852e8c16360a2fea060d615a32b45270f8a8fc",
+  "label_provenance": "model_generated_reflector_step_correct_not_human",
+  "candidate_hidden_sizes": [64, 128],
+  "candidate_seeds": [19, 41],
+  "epochs": 100,
+  "selection": "minimum_calibration_log_loss_only",
+  "selected_hidden": 64,
+  "selected_seed": 19,
+  "selected_calibration_log_loss": 0.6727123583089842,
+  "development_default": {
+    "rows": 128,
+    "auc": 0.71533203125,
+    "false_allowances": 23,
+    "false_warnings": 25
+  },
+  "development_calibration_cautious": {
+    "rows": 128,
+    "auc": 0.71533203125,
+    "false_allowances": 2,
+    "false_warnings": 52
+  },
+  "calibration_cautious_false_allowances": 0,
+  "artifact_sha256": "dc3475e2e40d4d0930e1b6823c0f6713ec0964bf51e715cad0c6f2223fe3991e",
+  "full_ignored_report_sha256": "c635d45c28ebcd03e27a481b4f02ecdd39288666955dabf80a52d82a43f5d015",
+  "linear_control": {
+    "development_auc": 0.719482421875,
+    "development_calibration_cautious_false_allowances": 2,
+    "development_calibration_cautious_false_warnings": 57,
+    "fit_report_sha256": "f229502144c9d7d4306d513ec5fb87b5236cd7b0848ff3eac6d486117d4cc5b8"
+  },
+  "final_and_ood_labels_opened_for_this_selection": false,
+  "promotion": "none",
+  "interpretation": "The small nonlinear head does not improve development AUC over the frozen logistic control. Its cautious tradeoff is mixed. Reflector labels are not human-adjudicated effect or authorization evidence; no weights are loaded by Heliox."
+}
