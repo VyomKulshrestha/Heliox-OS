@@ -6,6 +6,7 @@ import json
 import sys
 
 import numpy as np
+import pytest
 
 from scripts import evaluate_agentnet_paired_transfer as paired
 from scripts.extract_agentnet_outcome_features import save, sha256_file
@@ -79,3 +80,10 @@ def test_paired_transfer_evaluates_two_valid_frozen_views(tmp_path, monkeypatch)
     assert result["results"]["final"]["pre_action"]["default"]["auc"] == 1.0
     assert result["results"]["ood"]["post_action"]["default"]["false_allowances"] == 0
     assert result["promotion"] == "none"
+    frozen = json.loads(freeze.read_text(encoding="utf-8"))
+    frozen["head_sha256"] = "tampered"
+    freeze.write_text(json.dumps(frozen), encoding="utf-8")
+    monkeypatch.setattr(paired, "labels_for", lambda *_args: pytest.fail("labels opened early"))
+    monkeypatch.setattr(sys, "argv", [*args, "--report", str(tmp_path / "invalid.json")])
+    with pytest.raises(ValueError, match="frozen provenance"):
+        paired.main()
