@@ -90,6 +90,15 @@ def test_rejects_missing_image_and_out_of_bounds_coordinate(tmp_path):
     assert reasons["invalid_coordinate_or_size"] == 1
 
 
+def test_oversize_image_has_distinct_exclusion_reason(tmp_path):
+    root, _, selection = _dataset(tmp_path)
+    (root / "offline_data" / "001" / "step_000_after.png").write_bytes(b"x" * (4 * 1024 * 1024 + 1))
+    rows, reasons, _ = import_pairs(root, selection)
+    assert len(rows) == 5
+    assert reasons["oversize_image"] == 1
+    assert reasons["missing_or_invalid_image"] == 0
+
+
 def test_repeated_task_group_is_stable(tmp_path):
     root, _, selection = _dataset(tmp_path, duplicate_task=True)
     rows, _, _ = import_pairs(root, selection)

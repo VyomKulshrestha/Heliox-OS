@@ -421,12 +421,13 @@ python -m scripts.train_world_visual_transition --device cuda --architecture spa
 ```
 
 The [GUI-CC offline track](https://github.com/Fu-Fu-Fu-Fu/GUI-CC/blob/main/docs/offline.md)
-is a stronger *future evaluation* target: 500 mobile GUI trajectories and
+is a stronger *future full evaluation* target: 500 mobile GUI trajectories and
 4,905 transitions, with `initial.png` followed by numbered after-action
 screenshots, fixed reference actions, and autoregressive rollout scoring.
 Its [dataset card](https://huggingface.co/datasets/minuzero/GUI-CC) distinguishes
 the CC BY 4.0-derived offline track from online screenshots restricted to
-non-commercial research. No GUI-CC benchmark has been run here. The present
+non-commercial research. A bounded one-step research probe is recorded below;
+**the official GUI-CC multi-step benchmark has not been run**. The present
 16×16 grayscale predictor cannot return a legible full-resolution next screen
 or maintain long-horizon interface state, so its one-step pixel loss is not
 comparable to GUI-CC's contextual-consistency score. Promotion would need a
@@ -484,6 +485,55 @@ the failure: held-out weighted MSE was 0.10621454 with the correct action and
 0.10621420 with a shuffled action. This [bounded recheck](../daemon/benchmarks/world_visual_gpu_updated_check_v1.json)
 confirms the updated GPU can train the spatial model, not that the model learned
 action effects. It is not a new held-out dataset or a basis for promotion.
+
+### Ordered GUI-CC offline subset, after the GPU update
+
+`daemon/scripts/import_gui_cc_ordered_transitions.py` imports the pinned
+GUI-CC offline `initial → tap → after` sequence into the same 16×16 grayscale
+feature contract as the live screen observer. It verifies the frozen metadata
+hash, exact step order, image bounds, and tap coordinates; it excludes scroll,
+navigation, and long press rather than mislabeling them as taps. Raw mobile
+screenshots stay in an ignored local folder. Train/validation/evaluation split
+by exact casefolded task template, not adjacent frame. The first
+[frozen selection](../daemon/benchmarks/gui_cc_ordered_subset_selection_v1.json)
+was committed before image inspection or model scoring: 18 templates and
+141 accepted taps, split 101/23/17. The later
+[62-template expansion](../daemon/benchmarks/gui_cc_all_templates_exploratory_v1.json)
+was chosen **after** the first result; it is exploratory, not an independent
+confirmation. It has 523 accepted taps across 43/9/10 template groups and
+361/75/87 train/validation/evaluation rows. Four otherwise ordered pairs
+exceeded the 4 MiB image safety limit. Both imports use the dataset revision
+`758a5bcf4093ba4111a2cc882632eb47423130d1` and exclude unsupported actions.
+
+On the first held-out set, CUDA spatial-model weighted MSE was **0.588786**
+with the correct tap, **0.588574** with shuffled tap locations, and **0.565484**
+for a separately trained, same-architecture state-only baseline. The MLP and
+linear action models also failed to meaningfully beat shuffled taps. On the
+larger exploratory set, the spatial model scored **0.279375** correct tap,
+**0.279181** shuffled tap location, **0.281335** separately trained state-only,
+and **0.595941** unchanged screen. Thus more examples improved one-step
+prediction but still did **not** show that the model learned to use the action.
+The tiny edge over state-only on the expanded set is not a controllability
+result when shuffling the action slightly improves error. This illustrates
+the statistical-shortcut concern studied in
+[action-controllable world models](https://arxiv.org/abs/2608.04653);
+that paper does not validate Heliox's model. Full source, weight hashes, and
+scores are in the [bounded probe record](../daemon/benchmarks/world_gui_cc_ordered_probe_v1.json).
+Weights remain ignored local research artifacts, with **no promotion** to
+`UiJepaPredictor`. Mobile GUI pixels also do not establish desktop transfer,
+multi-step contextual consistency, safety, or Jev parity. The next necessary
+evidence is richer screen/action context plus independent same-state,
+different-action outcomes or consented desktop trajectories; adding an
+arbitrary action-sensitivity loss to this data would not prove causality.
+
+Reproduce from `daemon` with the downloaded pinned offline subset and **fresh**
+ignored output paths (the importer refuses to overwrite existing artifacts):
+
+```bash
+python -m scripts.import_gui_cc_ordered_transitions --root benchmarks/.bench-state/gui_cc_all_templates_exploratory_v1 --selection benchmarks/gui_cc_all_templates_exploratory_v1.json --features benchmarks/.bench-state/gui_cc_repro.npz --report benchmarks/.bench-state/gui_cc_repro.json
+python -m scripts.train_world_visual_transition --device cuda --architecture spatial --disable-cudnn --features benchmarks/.bench-state/gui_cc_repro.npz --source-report benchmarks/.bench-state/gui_cc_repro.json --report benchmarks/.bench-state/gui_cc_action_repro.json --weights benchmarks/.bench-state/gui_cc_action_repro.pt
+python -m scripts.train_world_visual_transition --device cuda --architecture spatial --disable-cudnn --train-without-action --features benchmarks/.bench-state/gui_cc_repro.npz --source-report benchmarks/.bench-state/gui_cc_repro.json --report benchmarks/.bench-state/gui_cc_state_only_repro.json --weights benchmarks/.bench-state/gui_cc_state_only_repro.pt
+```
 
 To reproduce from `daemon`, use fresh ignored output names. On affected
 Windows Python 3.12 installations, the WMI import workaround described above

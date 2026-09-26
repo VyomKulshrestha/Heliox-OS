@@ -1,0 +1,62 @@
+{
+  "purpose": "post_gpu_update_ordered_mobile_gui_action_grounding_probe",
+  "source": "minuzero/GUI-CC offline CC-BY-4.0 track",
+  "revision": "758a5bcf4093ba4111a2cc882632eb47423130d1",
+  "offline_samples_sha256": "8f7f54cde40ba2bdebffe30d55ba89796adf470be61dcbaa07295f8e48596313",
+  "device": "NVIDIA GeForce RTX 4060 Laptop GPU",
+  "torch_version": "2.6.0+cu124",
+  "feature_contract": "16x16 grayscale before/after; tap action ID and normalized pixel coordinate",
+  "evaluation": "Template-disjoint held-out one-step transitions; validation selects epoch; 20 shuffled-action permutations",
+  "pilot": {
+    "selection": "gui_cc_ordered_subset_selection_v1.json",
+    "sample_count": 18,
+    "rows": {"train": 101, "validation": 23, "eval": 17},
+    "groups": {"train": 12, "validation": 3, "eval": 3},
+    "features_sha256": "65274e621a0fdf1660963739c6e4e8a823469b335fb08e3b2900f64e6921b119",
+    "eval_weighted_mse": {
+      "unchanged_screen": 0.9234698947214537,
+      "spatial_correct_tap": 0.5887859968845488,
+      "spatial_shuffled_tap_location": 0.5885738609618076,
+      "matched_spatial_state_only": 0.5654841885730832,
+      "mlp_correct_tap": 0.6004351090296559,
+      "linear_correct_tap": 0.6348325832236772
+    },
+    "local_report_sha256": {
+      "spatial_action": "206621fd6b60c7fca407a5f54fb317ddef062b29649ffb50ddeff2b76d3d7564",
+      "spatial_state_only": "cf16080bc36a59f90e608c58f3018a10867cbb3e31fcb14987c1ed459fc9bfd9",
+      "mlp_action": "ea905c5357a11a0593ee0c0c5817d286cda1c227c0c6a075074e7fc901e4326b",
+      "linear_action": "6cc9ec04e2a35ae74af65dea4eb869f520c5a34be37e08ca2e6bf69d20279488"
+    },
+    "local_weights_sha256": {
+      "spatial_action": "c3adec3ac73844ddf1d577b729fa7f8585548553d9d38e7a78d43bbc45ba7c3f",
+      "spatial_state_only": "78ae6164df39082d7696796d54a172956acccd171cf7cb6ecb1b02596013ed91",
+      "mlp_action": "ee9f6f53a7eece86775eb9c8fd97a28d44e33fa5747b9f334fe9c2be74c97614",
+      "linear_action": "97e515279a15cd848b62b643d84d8ba5551d24e7058928470253b12b4d94c098"
+    }
+  },
+  "exploratory_expansion": {
+    "selection": "gui_cc_all_templates_exploratory_v1.json",
+    "selection_timing": "Chosen after pilot failure; not independent confirmation",
+    "sample_count": 62,
+    "rows": {"train": 361, "validation": 75, "eval": 87},
+    "groups": {"train": 43, "validation": 9, "eval": 10},
+    "exclusions": {"scroll": 62, "navigate_home": 62, "long_press": 3, "navigate_back": 2, "oversize_image": 4},
+    "features_sha256": "358f5307a91a1217dfe74041f826f5d03895c118b3c8955f343b92c1d7d36748",
+    "eval_weighted_mse": {
+      "unchanged_screen": 0.5959411319231861,
+      "spatial_correct_tap": 0.27937522096752987,
+      "spatial_shuffled_tap_location": 0.2791810853577594,
+      "matched_spatial_state_only": 0.2813350125147813
+    },
+    "local_report_sha256": {
+      "spatial_action": "d569e455668e8d7eaf5db4f4fda871a2d3ca9afa82081df7953fb9fb72afd952",
+      "spatial_state_only": "72bca2682c458f5600e2723aaf78142637d02500198101e0bbc003b25c32eeb1"
+    },
+    "local_weights_sha256": {
+      "spatial_action": "447524ad6589e4aa01b7b20f741b431a9ff5a4a7e3b68aa800b65671a41e9809",
+      "spatial_state_only": "2af73c107a31e14ed48f35a8a92fc8d0fe8a54cf6f68b15d15bf1402a69821d1"
+    }
+  },
+  "promotion": "none",
+  "interpretation": "Both action models beat unchanged-screen prediction, but shuffled tap locations slightly beat correct locations. The pilot matched state-only model also wins; the expanded action edge over state-only is too small and contradicted by the shuffle control. Neither study establishes action grounding, desktop transfer, official GUI-CC multi-step contextual consistency, safety, or Jev parity."
+}
