@@ -34,6 +34,8 @@ def main() -> None:
     parser.add_argument("--max-side", type=int, default=960)
     parser.add_argument("--checkpoint-every", type=int, default=16)
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--text-only", action="store_true",
+                        help="Paired ablation using identical cases and prompt but no image tokens")
     args = parser.parse_args()
     if (not 640 <= args.max_side <= 1280 or args.checkpoint_every < 1
             or args.report.exists() or (args.output.exists() and not args.resume)):
@@ -54,6 +56,8 @@ def main() -> None:
                 "prompt_sha256": hashlib.sha256(PROMPT_V2.encode()).hexdigest(),
                 "max_side": args.max_side, "attention": "sdpa",
                 "cases": list(zip(case_ids, image_hashes, strict=True))}
+    if args.text_only:
+        identity["text_only"] = True
     signature = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
     done_features = []
     if args.output.exists():
@@ -95,8 +99,10 @@ def main() -> None:
                                   action=trajectory["steps"][step_id]["agent_output"],
                                   original_size=f"{original[0]}x{original[1]}",
                                   displayed_size=f"{image.width}x{image.height}")
-        messages = [{"role": "user", "content": [
-            {"type": "image", "image": image}, {"type": "text", "text": prompt}]}]
+        content = [{"type": "text", "text": prompt}]
+        if not args.text_only:
+            content.insert(0, {"type": "image", "image": image})
+        messages = [{"role": "user", "content": content}]
         inputs = processor.apply_chat_template(
             messages, add_generation_prompt=True, tokenize=True,
             return_dict=True, return_tensors="pt").to(model.device)
@@ -116,7 +122,7 @@ def main() -> None:
               "feature_dim": len(done_features[0]),
               "features_sha256": hashlib.sha256(args.output.read_bytes()).hexdigest(),
               "peak_vram_gib": round(torch.cuda.max_memory_allocated() / 1024**3, 3),
-              "limitation": "Frozen public visual features; no trained weights, authority, or live desktop validation."}
+              "limitation": "Frozen public action features; no trained weights, authority, or live desktop validation."}
     args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({"rows": report["rows"], "feature_dim": report["feature_dim"]}))
 
