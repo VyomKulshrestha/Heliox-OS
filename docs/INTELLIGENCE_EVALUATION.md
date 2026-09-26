@@ -391,6 +391,35 @@ environment-disjoint evaluation exist.
 
 ### Observed visual transition GPU probe
 
+The [SATraj-OS dataset card](https://huggingface.co/datasets/AI45Research/SATraj-OS)
+describes an Apache-2.0 GUI trajectory corpus with ordered screenshot filenames
+and alternating screenshot/action messages. It is a **candidate** for a less
+ambiguous observed-action probe than TESS; its published first-step example
+alone does not establish that every record has a complete post-action
+observation, nor does the dataset license resolve privacy or rights questions
+for all depicted third-party interfaces. No SATraj-OS data or weights have been
+imported or promoted in this repository.
+
+`daemon/scripts/import_aligned_world_trajectories.py` accepts a local
+`trajectories.jsonl` and its `images.zip` for an offline, bounded research
+import. It requires an observed image, exactly one supported mouse action,
+and the immediately following numbered image; rejects missing, unsafe-labeled,
+oversized, or malformed records; retains only 16×16 grayscale features; and
+keeps identical task descriptions in the same train/validation/evaluation
+partition. A source JSONL hash, feature hash, and exclusion counts are
+recorded. The importer has synthetic contract tests but **has not been run on
+the public archive**, which is much larger than this bounded experiment.
+An ordered next screenshot is still not proof of a causal effect: app state can
+change asynchronously, and the reduced feature representation omits readable
+text and task history. If locally acquired under suitable data terms, use fresh
+ignored paths and compare correct-action, shuffled-action, and unchanged-screen
+baselines before claiming action conditioning:
+
+```bash
+python -m scripts.import_aligned_world_trajectories --jsonl /path/to/trajectories.jsonl --images /path/to/images.zip --features benchmarks/.bench-state/aligned_probe.npz --report benchmarks/.bench-state/aligned_probe.json
+python -m scripts.train_world_visual_transition --device cuda --architecture spatial --disable-cudnn --features benchmarks/.bench-state/aligned_probe.npz --source-report benchmarks/.bench-state/aligned_probe.json --report benchmarks/.bench-state/aligned_model.json --weights benchmarks/.bench-state/aligned_model.pt
+```
+
 `daemon/scripts/sample_world_visual_transitions.py` samples adjacent
 screen/action rows from the [TESS AgentNet dataset](https://huggingface.co/datasets/TESS-Computer/tess-agentnet),
 whose card declares MIT licensing and describes normalized mouse coordinates,
