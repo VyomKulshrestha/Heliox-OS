@@ -15,6 +15,7 @@ from scripts.sample_webworld_transitions import (
     _split_by_shared_state,
     _state_connected_labels,
     bound_action,
+    bound_action_path,
     parse_trajectory,
 )
 
@@ -43,6 +44,23 @@ def test_bind_action_uses_pre_action_node_not_a_numeric_id() -> None:
     assert bound_action(tree, "click('7')") == "click target button 'Checkout'"
     assert bound_action(tree, "fill([8], 'tea')") == "fill target textbox 'Search' arguments 'tea'"
     assert bound_action(tree, "click('99')") == "click('99')"
+
+
+def test_path_binding_adds_pre_action_ancestors_not_siblings() -> None:
+    tree = ("RootWebArea 'Shop'\n"
+            "  [1] navigation 'Main'\n"
+            "    [2] link 'Other'\n"
+            "  [3] dialog 'Cart'\n"
+            "    [4] list 'Items'\n"
+            "      [5] button 'Checkout'")
+    path = bound_action_path(tree, "click('5')")
+    assert path.startswith("click target button 'Checkout' hierarchy ")
+    assert "ancestor_0_list" in path
+    assert "ancestor_1_dialog" in path
+    assert "ancestor_2_rootwebarea" in path
+    assert "ancestor_0_name_items" in path
+    assert "navigation" not in path
+    assert bound_action_path(tree, "click('99')") == "click('99')"
 
 
 def test_malformed_trajectory_is_rejected_without_partial_rows() -> None:
@@ -76,6 +94,7 @@ def test_checkpoint_resumes_only_the_same_revision_and_sample(tmp_path) -> None:
         "target": np.ones((1, 1024), dtype=np.float32),
         "action_type": np.zeros((1, 256), dtype=np.float32),
         "action_bound": np.zeros((1, 256), dtype=np.float32),
+        "action_path": np.zeros((1, 256), dtype=np.float32),
         "group": np.array([7], dtype=np.int32),
     }
     _save_checkpoint(path, revision="a" * 40, total=100, offsets=[7, 50],
