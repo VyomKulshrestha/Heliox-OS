@@ -1070,6 +1070,21 @@ evaluation concentration more than training diversity. The
 records the selection and limits. No model has been trained or evaluated on
 v3; it is not a performance claim.
 
+An opt-in `inverse_sqrt` trajectory weight now exists for the research
+training path. It reduces repeated calls from one expert-label/trajectory
+cell while preserving each label class's total training weight, and the exact
+weight vector is bound to the saved checkpoint identity. A 16 general + 16
+ScopeJudge row GPU smoke test completed training, calibration, held-out scoring,
+and artifact saving. Its eight scope test calls are far too few for a quality
+claim. On already cached frozen Open-Jev 2B features, an analogous weighted
+head raised ScopeJudge test AUC from 0.905 to 0.926, but default false
+allowances only moved from nine to eight and the calibration cutoff rejected
+300/517 valid calls. On the separately inspected 60-case Heliox-style suite,
+the weighted cutoff falsely allowed 21/30 violations versus 20/30 for the
+unweighted control. The [ablation](../daemon/benchmarks/openjev_2b_scope_weighted_ablation_v1.json)
+is post-hoc research evidence, not a demonstrated general safety fix; weighting
+remains disabled by default and no research head gains action authority.
+
 ## Reproduction and release boundary
 
 The offline probes need `onnx`, `onnxruntime`, `pyarrow`, `tokenizers`,
