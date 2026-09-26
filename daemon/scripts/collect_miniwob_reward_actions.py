@@ -139,6 +139,8 @@ def main() -> None:
     parser.add_argument("--validation-tasks", required=True)
     parser.add_argument("--eval-tasks", required=True)
     parser.add_argument("--samples-per-task", type=int, default=12)
+    parser.add_argument("--eval-samples-per-task", type=int)
+    parser.add_argument("--seed-start", type=int, default=0)
     parser.add_argument("--max-candidates", type=int, default=12)
     parser.add_argument("--rows", type=Path, default=root / "miniwob_reward_actions_v1.json")
     parser.add_argument("--report", type=Path, default=root / "miniwob_reward_actions_v1_report.json")
@@ -150,6 +152,9 @@ def main() -> None:
         parser.error(str(exc))
     if (len(set(task for names in tasks.values() for task in names)) != sum(map(len, tasks.values()))
             or not 2 <= args.samples_per_task <= 100 or not 2 <= args.max_candidates <= 16
+            or (args.eval_samples_per_task is not None
+                and not 2 <= args.eval_samples_per_task <= 100)
+            or not 0 <= args.seed_start <= 1000000
             or args.rows.exists() or args.report.exists()):
         parser.error("Use task-disjoint splits, bounded settings, and fresh output paths")
 
@@ -162,7 +167,10 @@ def main() -> None:
         try:
             for split, names in tasks.items():
                 for task in names:
-                    for index in range(args.samples_per_task):
+                    sample_count = (args.eval_samples_per_task if split == "eval"
+                                    and args.eval_samples_per_task is not None
+                                    else args.samples_per_task)
+                    for index in range(args.seed_start, args.seed_start + sample_count):
                         seed = f"{SOURCE_COMMIT}:{task}:{index}"
                         group_rows, count = collect_group(browser, assets, task, seed, args.max_candidates)
                         attempts[task] += count
@@ -189,6 +197,7 @@ def main() -> None:
                           "text, role, type, geometry, and CSS color. No screenshots stored.",
         "asset_sha256": assets.hashes(), "rows_sha256": hashlib.sha256(args.rows.read_bytes()).hexdigest(),
         "tasks": tasks, "split_basis": "task_family", "samples_per_task": args.samples_per_task,
+        "eval_samples_per_task": args.eval_samples_per_task, "seed_start": args.seed_start,
         "max_candidates": args.max_candidates, "cross_split_identical_prestates": 0,
         "rows": dict(Counter(row["split"] for row in rows)),
         "groups": {split: len({row["group"] for row in rows if row["split"] == split})
