@@ -34,7 +34,11 @@ _CANDIDATES_JS = """viewport => {
     const style = getComputedStyle(element);
     const native = tag === 'button' || tag === 'select' || tag === 'a'
       || (tag === 'input' && (type === 'checkbox' || type === 'radio'));
-    if (!(native || role === 'button' || role === 'menuitem' || style.cursor === 'pointer')) continue;
+    const painted = element.childElementCount === 0
+      && style.backgroundColor !== 'rgba(0, 0, 0, 0)'
+      && style.backgroundColor !== 'transparent';
+    if (!(native || painted || role === 'button' || role === 'menuitem'
+          || style.cursor === 'pointer')) continue;
     const rect = element.getBoundingClientRect();
     if (rect.width < 2 || rect.height < 2) continue;
     const x = Math.round((rect.left + rect.right) / 2);
@@ -52,14 +56,36 @@ _CANDIDATES_JS = """viewport => {
       tag, type, role,
       width: Math.round(rect.width), height: Math.round(rect.height),
       background: style.backgroundColor, fill: style.fill,
+      declared_color: element.getAttribute('data-color')
+        || element.getAttribute('fill') || element.style.backgroundColor || '',
     });
   }
   return found;
 }"""
 
+_GOAL_JS = """() => {
+  const root = document.querySelector('#query');
+  if (!root) return '';
+  function describe(node) {
+    if (node.nodeType === Node.TEXT_NODE) return node.textContent;
+    if (node.nodeType !== Node.ELEMENT_NODE) return '';
+    const children = [...node.childNodes].map(describe).join('');
+    if (children.trim()) return children;
+    const visible = node.getAttribute('aria-label') || node.getAttribute('title')
+      || node.getAttribute('alt') || node.getAttribute('data-color')
+      || node.getAttribute('fill') || node.style.backgroundColor;
+    return visible ? `[${node.tagName.toLowerCase()} ${visible}]` : '';
+  }
+  return [...root.childNodes].map(describe).join('').replace(/\\s+/g, ' ').trim();
+}"""
+
 
 def candidate_actions(page) -> list[dict]:
     return page.evaluate(_CANDIDATES_JS, VIEWPORT)
+
+
+def goal_description(page) -> str:
+    return page.evaluate(_GOAL_JS)
 
 
 def collect_group(browser, assets: PinnedAssets, task: str, seed: str,
@@ -72,7 +98,7 @@ def collect_group(browser, assets: PinnedAssets, task: str, seed: str,
         try:
             candidates = candidate_actions(page)
             state = visual_feature(before_png)
-            goal = page.locator("#query").inner_text().strip()
+            goal = goal_description(page)
             identity = (before_dom, goal, candidates, state.tobytes())
             if reference is None:
                 reference = identity
@@ -159,6 +185,8 @@ def main() -> None:
     report = {
         "purpose": "research_only_goal_conditioned_first_action_rewards",
         "source_repo": SOURCE_REPO, "source_commit": SOURCE_COMMIT, "source_license": "MIT",
+        "representation": "Visible goal text plus inline element color; clickable or painted control "
+                          "text, role, type, geometry, and CSS color. No screenshots stored.",
         "asset_sha256": assets.hashes(), "rows_sha256": hashlib.sha256(args.rows.read_bytes()).hexdigest(),
         "tasks": tasks, "split_basis": "task_family", "samples_per_task": args.samples_per_task,
         "max_candidates": args.max_candidates, "cross_split_identical_prestates": 0,

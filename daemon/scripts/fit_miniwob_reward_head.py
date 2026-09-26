@@ -31,7 +31,7 @@ def candidate_prompts(rows: list[dict]) -> list[str]:
         options = [
             {"index": index, **{key: row["candidate"].get(key) for key in
                                 ("label", "tag", "type", "role", "width", "height",
-                                 "background", "fill")}}
+                                 "background", "fill", "declared_color")}}
             for index, row in enumerate(group)
         ]
         shared = ("Goal: " + group[0]["goal"] + "\nVisible controls: "
@@ -88,7 +88,7 @@ def main() -> None:
     parser.add_argument("--model-snapshot", type=Path, required=True)
     parser.add_argument("--weights", type=Path, default=root / "miniwob_reward_head_v1.npz")
     parser.add_argument("--report", type=Path, default=root / "miniwob_reward_head_v1.json")
-    parser.add_argument("--max-length", type=int, default=1024)
+    parser.add_argument("--max-length", type=int, default=1152)
     args = parser.parse_args()
     if (not args.rows.is_file() or not args.source_report.is_file()
             or args.model_snapshot.name != REVISION or not args.model_snapshot.is_dir()
