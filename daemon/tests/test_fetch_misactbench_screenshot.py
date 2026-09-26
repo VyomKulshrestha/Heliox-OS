@@ -49,6 +49,31 @@ def test_central_rejects_path_traversal_and_incomplete_data() -> None:
         fetch.parse_central(central[:20], 1)
 
 
+def test_range_retries_transient_read_timeout_only(monkeypatch) -> None:
+    attempts = []
+
+    class Response:
+        status = 206
+        headers = {"Content-Range": f"bytes 0-3/{fetch.ARCHIVE_BYTES}"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self, _size):
+            attempts.append("read")
+            if len(attempts) < 3:
+                raise TimeoutError("transient")
+            return b"test"
+
+    monkeypatch.setattr(fetch.urllib.request, "urlopen", lambda *_args, **_kwargs: Response())
+    monkeypatch.setattr(fetch.time, "sleep", lambda _seconds: None)
+    assert fetch.get_range(0, 3, max_bytes=4) == b"test"
+    assert len(attempts) == 3
+
+
 def test_visual_probe_pins_selected_cases_and_prompt() -> None:
     root = Path(__file__).resolve().parents[1] / "benchmarks"
     selection = root / "misactbench_visual_selection_v1.json"
