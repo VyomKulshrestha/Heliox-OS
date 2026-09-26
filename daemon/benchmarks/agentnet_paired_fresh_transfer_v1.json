@@ -1,0 +1,53 @@
+{
+  "purpose": "one_shot_paired_agentnet_prospective_observed_transfer",
+  "source_sha256": "8e24c5a5a1ef5a5113755b33ed12164fc37ce8fbbd35d1c7dba81bf950d53d00",
+  "fit_manifest_sha256": "7366b4c71f4b6c19f079714a15ab85fc739b54cbb152821bd02f00a9f12a7f04",
+  "fresh_manifest_sha256": "5e127576a1825728f58730d23e32887fcbd0c84cb33bf94cbd62d80e86ab217b",
+  "label_provenance": "model_generated_reflector_step_correct_not_human",
+  "fresh_task_groups": 256,
+  "training": {
+    "post_action": {
+      "fit_report_sha256": "d138e64ff5b5fbb624c6356079737a4ebd9ecced8e2ad8c4619cbb952bf17828",
+      "head_sha256": "1fc8e5d342c05432ab3ed3e346653739dfe7a84542f31fb2bfd315c8b761fb8e",
+      "cautious_threshold": 0.9442346562772956
+    },
+    "pre_action": {
+      "fit_report_sha256": "f229502144c9d7d4306d513ec5fb87b5236cd7b0848ff3eac6d486117d4cc5b8",
+      "head_sha256": "1545f5bd4f204a810085ce99e25274878b2df40de9822a18bcf68e328be0f53b",
+      "cautious_threshold": 0.8019672162150933
+    }
+  },
+  "fresh_features": {
+    "post_action_sha256": "fb1af5c005e6129f644f58d9080cbc4bb10bb1fc3c74b689ccdecd27ef1fa88d",
+    "pre_action_sha256": "81d14677b4657f8b3c98bc15e848f754baae40c5d17d8c4cbb18761c2cf7100c"
+  },
+  "results": {
+    "final": {
+      "post_action": {
+        "default": {"rows": 128, "auc": 0.84912109375, "false_allowances": 21, "false_warnings": 9},
+        "calibration_cautious": {"rows": 128, "auc": 0.84912109375, "false_allowances": 0, "false_warnings": 62}
+      },
+      "pre_action": {
+        "default": {"rows": 128, "auc": 0.70947265625, "false_allowances": 28, "false_warnings": 19},
+        "calibration_cautious": {"rows": 128, "auc": 0.70947265625, "false_allowances": 0, "false_warnings": 60}
+      },
+      "post_minus_pre_auc": 0.1396484375,
+      "post_minus_pre_auc_bootstrap_95pct": [0.044677734375, 0.23779296875]
+    },
+    "ood": {
+      "domain": "VScode",
+      "post_action": {
+        "default": {"rows": 128, "auc": 0.815673828125, "false_allowances": 21, "false_warnings": 10},
+        "calibration_cautious": {"rows": 128, "auc": 0.815673828125, "false_allowances": 0, "false_warnings": 61}
+      },
+      "pre_action": {
+        "default": {"rows": 128, "auc": 0.550537109375, "false_allowances": 42, "false_warnings": 20},
+        "calibration_cautious": {"rows": 128, "auc": 0.550537109375, "false_allowances": 5, "false_warnings": 61}
+      },
+      "post_minus_pre_auc": 0.26513671875,
+      "post_minus_pre_auc_bootstrap_95pct": [0.1562255859375, 0.36597900390624993]
+    }
+  },
+  "promotion": "none",
+  "interpretation": "The next observation materially helps this frozen head, especially under application shift. Prospective scoring remains unreliable, and the post-action cautious threshold rejects nearly every correct outcome. These are model-reflector labels, not human-verifiable action authority, live desktop validation, or Jev parity. Bootstrap intervals resample only this source corpus."
+}
