@@ -212,6 +212,15 @@ Jev comparison. Resume only after the GPU execution path is stable. These
 observations do not distinguish a driver, hardware, WSL, power, or model-kernel
 fault.
 
+The [native Windows follow-up](../daemon/benchmarks/qwen_gpu_stability_attempt_v2.json)
+used the same checkpoint and pinned selection outside WSL. It completed the
+225 eligible training and 60 calibration feature rows, then 64/114 test rows
+before another CUDA failure with a contemporaneous NVIDIA driver event. A
+separate Python DLL import crash was resolved by import order and is not GPU
+evidence. Since the model fault also occurs natively, WSL alone cannot explain
+it. The frozen head, complete held-out evaluation, and Jev comparison remain
+unrun; the validated partial feature files are local and ignored.
+
 A label-blind [uniform-option baseline](../daemon/benchmarks/qwen_general_uniform_baseline_v2.json)
 on the 2,048-row run's held-out selections exposes a further weakness. On OOD
 Noul questions it selects the first option, "no", and gets **103/136 (75.7%)**
