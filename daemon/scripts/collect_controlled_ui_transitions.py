@@ -110,11 +110,37 @@ def _collect(page, family: int, sample_index: int, rng: random.Random) -> dict:
     }
 
 
+def _collect_counterfactual_pair(page, family: int, sample_index: int, rng: random.Random) -> list[dict]:
+    """Execute both clicks from the same reset page, never from each other's result."""
+    positions = _positions(family, rng)
+    html = _page_html(family, positions)
+    group = hashlib.sha256(f"{family}:{sample_index}".encode("ascii")).hexdigest()
+    split = "train" if family < 4 else "validation" if family == 4 else "eval"
+    rows = []
+    for chosen, (x, y) in enumerate(positions):
+        page.set_content(html, wait_until="load")
+        before = _features(page.screenshot())
+        center_x, center_y = x + 57, y + 21
+        page.mouse.click(center_x, center_y)
+        if (page.locator(".panel:not([hidden])").count() != 1
+                or not page.locator(f"#panel-{chosen}").is_visible()):
+            raise ValueError("Browser state did not match the chosen counterfactual action")
+        rows.append({"state": before, "target": _features(page.screenshot()),
+                     "action": 1, "coords": (center_x / WIDTH, center_y / HEIGHT),
+                     "group": group, "split": split})
+    if not np.array_equal(rows[0]["state"], rows[1]["state"]):
+        raise ValueError("Counterfactual clicks did not start from the same observed state")
+    if np.array_equal(rows[0]["target"], rows[1]["target"]):
+        raise ValueError("Counterfactual clicks did not produce distinct observed states")
+    return rows
+
+
 def main() -> None:
     state = Path(__file__).resolve().parents[1] / "benchmarks/.bench-state"
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--samples-per-family", type=int, default=80)
     parser.add_argument("--seed", type=int, default=20260926)
+    parser.add_argument("--paired-counterfactuals", action="store_true")
     parser.add_argument("--features", type=Path, default=state / "controlled_ui_transitions_v1.npz")
     parser.add_argument("--report", type=Path, default=state / "controlled_ui_transitions_v1.json")
     args = parser.parse_args()
@@ -128,7 +154,10 @@ def main() -> None:
             page = browser.new_page(viewport={"width": WIDTH, "height": HEIGHT}, device_scale_factor=1)
             for family in range(len(FAMILIES)):
                 for index in range(args.samples_per_family):
-                    rows.append(_collect(page, family, index, rng))
+                    if args.paired_counterfactuals:
+                        rows.extend(_collect_counterfactual_pair(page, family, index, rng))
+                    else:
+                        rows.append(_collect(page, family, index, rng))
                 print(json.dumps({"family": family, "completed": args.samples_per_family}), flush=True)
         finally:
             browser.close()
@@ -145,6 +174,8 @@ def main() -> None:
     report = {
         "purpose": "research_only_controlled_browser_visual_transitions",
         "seed": args.seed, "samples_per_family": args.samples_per_family,
+        "counterfactual_pairs": args.paired_counterfactuals,
+        "split_basis": "layout_family",
         "fit_layouts": [0, 1, 2, 3], "validation_layout": 4, "eval_layout": 5,
         "rows": dict(Counter(row["split"] for row in rows)),
         "groups": {split: len({row["group"] for row in rows if row["split"] == split})

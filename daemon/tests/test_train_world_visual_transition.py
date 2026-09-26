@@ -11,6 +11,7 @@ from scripts.train_world_visual_transition import (
     load_features,
     load_recorded_features,
     metrics,
+    paired_counterfactual_permutation,
     within_action_permutation,
 )
 
@@ -74,6 +75,25 @@ def test_location_permutation_keeps_action_types() -> None:
     assert sorted(permutation.tolist()) == list(range(8))
     assert np.array_equal(actions[:, :9], actions[permutation, :9])
     assert not np.array_equal(actions[:, 9], actions[permutation, 9])
+
+
+def test_counterfactual_permutation_requires_same_state_distinct_outcomes() -> None:
+    actions = np.zeros((4, 11), dtype=np.float32)
+    actions[:, 1] = 1
+    actions[:, 9] = [0.25, 0.75, 0.25, 0.75]
+    partition = {
+        "groups": np.array(["a", "a", "b", "b"]),
+        "state": np.zeros((4, 256), dtype=np.float32),
+        "target": np.tile(np.array([[0], [1], [0], [1]], dtype=np.float32), (1, 256)),
+        "action": actions,
+    }
+    assert paired_counterfactual_permutation(partition).tolist() == [1, 0, 3, 2]
+    partition["action"][1, 1] = 0
+    partition["action"][1, 2] = 1
+    assert paired_counterfactual_permutation(partition).tolist() == [1, 0, 3, 2]
+    partition["state"][1, 0] = 0.5
+    with pytest.raises(ValueError, match="one state"):
+        paired_counterfactual_permutation(partition)
 
 
 def test_private_samples_split_by_recording_without_plaintext_files() -> None:

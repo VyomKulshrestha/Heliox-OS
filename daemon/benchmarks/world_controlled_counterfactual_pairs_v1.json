@@ -1,0 +1,51 @@
+{
+  "purpose": "same_observed_state_different_action_counterfactual_control",
+  "source": "isolated generated headless browser pages; no user desktop or remote site",
+  "model": "research-only residual spatial predictor on 1x16x16 grayscale features",
+  "device": "NVIDIA GeForce RTX 4060 Laptop GPU",
+  "protocol": "Reset each page before each of two verified clicks; require identical before features and distinct observed after features; hold out layout families; select epoch on validation only; compare correct action with the paired alternative and a separately trained state-only model",
+  "rows_per_seed": {"train": 160, "validation": 40, "eval": 40},
+  "groups_per_seed": {"train": 80, "validation": 20, "eval": 20},
+  "seeds": [
+    {
+      "seed": 20260926,
+      "features_sha256": "caf21093fe12b66ce5d6d65dec2298850a96dbf6f2f929758c5d39245c0df2a2",
+      "local_source_report_sha256": "1f36e86ad21b76ec0709eba400e41287e263ed9d18fd7bb53cffc266d7f1cc60",
+      "eval_weighted_mse": {
+        "unchanged_screen": 0.0573667932901968,
+        "correct_action": 0.004221832087590671,
+        "paired_alternative_action": 0.06598799236298267,
+        "matched_state_only": 0.014507481615453368
+      },
+      "local_model_report_sha256": {
+        "action": "e948763b79cae02e764f3d109e1be2c53330a736dc77ee885a55c62eccbf6ccf",
+        "state_only": "c156c42766b51bc51b7049ba5d39d2af7aa13b84d074943a4338c0ca8f13b735"
+      },
+      "local_weights_sha256": {
+        "action": "90e98428dd89409ab0452de53471759f2abd1d839333ab4d92b883b2454775dd",
+        "state_only": "d18cdd55f26e3b9b7fe05e0c3a45168c66f42d93358faacfde8c5f368f71de44"
+      }
+    },
+    {
+      "seed": 20260927,
+      "features_sha256": "6301a0969a7d8c82bc3e24613103db847f147b5ab390145b1303bfa7347320dc",
+      "local_source_report_sha256": "213ac466cd4a5cfce9353ffebbb08ade7e85af8dcfb1977ce3a75b7cdbedcd29",
+      "eval_weighted_mse": {
+        "unchanged_screen": 0.05808674338005535,
+        "correct_action": 0.004372404833799692,
+        "paired_alternative_action": 0.06580758201755048,
+        "matched_state_only": 0.014766571839694764
+      },
+      "local_model_report_sha256": {
+        "action": "cd97c1099d9bba79c34493ceba19a32f2eb71d7b5226609984022a102465229c",
+        "state_only": "9d3828d981e36594d1ba6f8d38481afee93938ab68e1615e813666701eefe782"
+      },
+      "local_weights_sha256": {
+        "action": "1b34366a1e3b040233ed736d572e0e9197b4735bc433f305682f773043577d60",
+        "state_only": "20897bd6f075091c1aa5637c8ad0c7c8a75552e158fe13f529ab2bba232e5567"
+      }
+    }
+  ],
+  "promotion": "none",
+  "interpretation": "The trainer can distinguish genuine paired action effects on simple generated pages across two seeds. This is a causal pipeline control, not evidence of general mobile/desktop GUI prediction, multi-step consistency, safety, or Jev parity. Public GUI-CC probes still fail action-location shuffling."
+}

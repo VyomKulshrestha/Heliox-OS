@@ -103,6 +103,22 @@ def within_action_permutation(actions: np.ndarray, rng: np.random.Generator) -> 
     return permutation
 
 
+def paired_counterfactual_permutation(partition: dict[str, np.ndarray]) -> np.ndarray:
+    """Swap actions only between observed alternatives to the exact same state."""
+    groups = partition["groups"]
+    permutation = np.arange(len(groups))
+    for group in np.unique(groups):
+        indices = np.flatnonzero(groups == group)
+        if (len(indices) != 2
+                or not np.array_equal(partition["state"][indices[0]], partition["state"][indices[1]])
+                or np.array_equal(partition["target"][indices[0]], partition["target"][indices[1]])
+                or np.array_equal(partition["action"][indices[0]],
+                                  partition["action"][indices[1]])):
+            raise ValueError("Counterfactual group must contain two distinct outcomes from one state")
+        permutation[indices] = indices[::-1]
+    return permutation
+
+
 RECORDED_ACTION_IDS = {
     "mouse_move": 0,
     "mouse_click": 1,
@@ -193,13 +209,18 @@ def main() -> None:
         recorded_store = RecordedWorkflowStore(args.recorded_store)
         source_hash = hashlib.sha256(args.recorded_store.read_bytes()).hexdigest()
         rows = load_recorded_features(recorded_store, args.seed)
+        counterfactual_pairs = False
         if hashlib.sha256(args.recorded_store.read_bytes()).hexdigest() != source_hash:
             raise RuntimeError("Recorded workflow store changed during feature loading; retry training")
     else:
         rows = load_features(args.features, args.source_report)
         source_hash = hashlib.sha256(args.features.read_bytes()).hexdigest()
-    split_basis = ("recording" if recorded_store else
-                   json.loads(args.source_report.read_text(encoding="utf-8")).get("split_basis", "episode"))
+        source_metadata = json.loads(args.source_report.read_text(encoding="utf-8"))
+        counterfactual_pairs = source_metadata.get("counterfactual_pairs") is True
+    split_basis = "recording" if recorded_store else source_metadata.get("split_basis", "episode")
+    source_context = ("consented local recordings" if recorded_store else
+                      "generated local browser pages" if source_metadata.get("purpose")
+                      == "research_only_controlled_browser_visual_transitions" else "one public dataset")
     channels, height, width = (1, 16, 16) if recorded_store else feature_shape(args.source_report)
     dimension = channels * height * width
 
@@ -311,6 +332,14 @@ def main() -> None:
                     for key in within_type_scores[0]
                 },
             }
+            if counterfactual_pairs:
+                swapped = dict(arrays[split])
+                swapped["action"] = arrays[split]["action"][
+                    paired_counterfactual_permutation(partition)
+                ]
+                scores[split]["paired_counterfactual_action"] = metrics(
+                    predict(swapped).cpu().numpy(), partition["state"], partition["target"]
+                )
     report = {
         "purpose": "research_only_observed_visual_world_transition_probe",
         "features_sha256": source_hash,
@@ -318,6 +347,7 @@ def main() -> None:
         "device": str(device), "architecture": args.architecture,
         "feature_shape": [channels, height, width],
         "split_basis": split_basis,
+        "counterfactual_pairs": counterfactual_pairs,
         "trained_without_action": args.train_without_action,
         "torch_version": torch.__version__, "cudnn_enabled": torch.backends.cudnn.enabled,
         "seed": args.seed, "selected_epoch": best_epoch,
@@ -329,7 +359,7 @@ def main() -> None:
                       "Research model is not the live UiJepaPredictor. "
                       + ("Recording-disjoint, not environment-disjoint; action outcomes are observed, "
                          "not independently verified. " if recorded_store else
-                         f"{split_basis}-disjoint within one public dataset, not environment-disjoint. ")
+                         f"{split_basis}-disjoint within {source_context}, not environment-disjoint. ")
                       + "No safety, autonomy, Jev parity, or runtime loading claim.",
     }
     args.weights.parent.mkdir(parents=True, exist_ok=True)
