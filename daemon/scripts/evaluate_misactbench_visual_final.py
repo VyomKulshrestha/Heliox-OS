@@ -70,18 +70,29 @@ def main() -> None:
     labels = np.asarray(labels, dtype=np.bool_)
     scores = ((matrix[final_indices] - mean) / scale) @ coefficient.T + intercept
     probabilities = 1 / (1 + np.exp(-np.clip(scores[:, 0], -40, 40)))
-    text_only = fitted.get("input_mode") == "text_only"
-    report = {"purpose": ("one_shot_frozen_text_action_final_test" if text_only
-                           else "one_shot_frozen_visual_action_final_test"),
+    mode = fitted.get("input_mode")
+    if mode not in (None, "text_only", "observed_history"):
+        raise ValueError("Unknown frozen feature input mode")
+    purpose = "one_shot_frozen_visual_action_final_test"
+    if mode == "text_only":
+        purpose = "one_shot_frozen_text_action_final_test"
+    if mode == "observed_history":
+        purpose = "one_shot_frozen_history_action_final_test"
+    report = {"purpose": purpose,
               "dataset_sha256": DATASET_SHA256,
               "manifest_sha256": manifest_hash, "feature_sha256": feature_hash,
               "fit_report_sha256": hashlib.sha256(args.fit_report.read_bytes()).hexdigest(),
               "artifact_sha256": artifact_hash,
               "default": assess(labels, probabilities, 0.5),
               "calibration_cautious": assess(labels, probabilities, cautious),
-              "limitation": "Public screenshot/action labels without observed history; not live desktop safety, Jev parity, or execution authority."}
-    if text_only:
-        report["input_mode"] = "text_only"
+              "limitation": (
+                  "Public screenshot/action labels with one observed prior action and screen transition; "
+                  "not live desktop safety, Jev parity, or execution authority."
+                  if mode == "observed_history" else
+                  "Public screenshot/action labels without observed history; "
+                  "not live desktop safety, Jev parity, or execution authority.")}
+    if mode:
+        report["input_mode"] = mode
     args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({"default": report["default"],
                       "calibration_cautious": report["calibration_cautious"]}, indent=2))

@@ -127,12 +127,16 @@ def main() -> None:
     selection.add_argument("--case-id", help="Annotated trajectory UUID:step index")
     selection.add_argument("--manifest", type=Path, help="Pre-registered case ID list")
     parser.add_argument("--output-dir", type=Path)
+    parser.add_argument("--prior-steps", action="store_true",
+                        help="Fetch the screenshot before each manifest action's preceding step")
     parser.add_argument("--list-first", type=int, default=0)
     parser.add_argument("--progress-every", type=int, default=1)
     parser.add_argument("--workers", type=int, default=1)
     args = parser.parse_args()
     if not args.case_id and not args.manifest and not args.list_first:
         parser.error("Choose --case-id, --manifest, or --list-first")
+    if args.prior_steps and not args.manifest:
+        parser.error("Prior-step extraction requires a manifest")
     if (args.case_id or args.manifest) and not args.output_dir:
         parser.error("Output directory is required for extraction")
     if args.list_first < 0 or args.list_first > 10:
@@ -152,6 +156,9 @@ def main() -> None:
         case_ids = manifest["case_ids"]
         if not 1 <= len(case_ids) <= 512 or len(set(case_ids)) != len(case_ids):
             raise ValueError("Manifest must contain 1-512 unique cases")
+        if args.prior_steps:
+            case_ids = [f"{trajectory_id}:{int(step_id) - 1}"
+                        for trajectory_id, step_id in (case_id.split(":", 1) for case_id in case_ids)]
     if case_ids:
         records = json.loads(args.dataset.read_text(encoding="utf-8"))
         output_dir = args.output_dir.resolve()
@@ -161,7 +168,7 @@ def main() -> None:
             raise ValueError("Invalid case ID")
         trajectory_id, step_id = case_id.split(":", 1)
         record = records[trajectory_id]["steps"][step_id]
-        if not isinstance(record["label"], bool):
+        if not args.prior_steps and not isinstance(record["label"], bool):
             raise ValueError("Case has no expert action label")
         name = record["screenshot_path"].removeprefix("MisActBench/")
         if name not in index:
