@@ -1,0 +1,43 @@
+{
+  "purpose": "pre_final_paired_observed_history_development_result",
+  "dataset": "osunlp/MisActBench",
+  "dataset_sha256": "b62c7eb4a6d39f91c7cecd95cf1c96c9ab887a85369b6c48fe402c9f5db8ea95",
+  "license": "CC-BY-4.0",
+  "model": "Qwen/Qwen3.5-2B",
+  "revision": "15852e8c16360a2fea060d615a32b45270f8a8fc",
+  "selection_sha256": "3b5c9d38e2fd0fbefbaf1d1430c37eefe58bfcf8d0d2d0fe7c1840c838f2b27f",
+  "split_rows": {"train": 80, "calibration": 24, "development": 24, "final": 32},
+  "image_max_side": 768,
+  "feature_dimension": 2048,
+  "head_regularization_C": 0.001,
+  "current_screen": {
+    "prompt_sha256": "f3d4d476fe4e85c064f4655b1b480426eaa1e7018d8781aacf98456708de67a6",
+    "feature_sha256": "0df8dcd4fda91da253794b7328ef9fd3c1764939f48339a30a3322cc8d34edf4",
+    "feature_report_sha256": "ef1eefda334baa8221f0d49baaa36d237f287decb5723a2c2a60b80133622671",
+    "head_sha256": "5c68c6b962b214a532bd65b6450ebfc5ad581e7c3ac08fbe32be3f9cd3ef99cd",
+    "head_development_report_sha256": "f550c428ed043a25bb989129256378c282680fe106aadb4826cb4b12466085b4",
+    "peak_allocated_vram_gib": 4.275,
+    "development_auc": 0.6875,
+    "development_default_false_allowances": 4,
+    "development_default_false_warnings": 5,
+    "development_cautious_false_allowances": 0,
+    "development_cautious_false_warnings": 12
+  },
+  "observed_history": {
+    "context": "previous action, its before screenshot, and the current after screenshot",
+    "prompt_sha256": "e1eb273b00e27ad8e745502a80fb02cf88487e578c670789eb42389f5d3e21ff",
+    "feature_sha256": "e7b97bf6e02318264e9f137e318e23f6b03ff741a7afddb318b2285fa6a20606",
+    "feature_report_sha256": "4a39ccb752bf606fa70f9314b08fe08d774313113edcae0ed671a5b0a915d6a4",
+    "head_sha256": "4e9eb5924ca7e9afdbec4fb4de01af54e208adbf546c5093e7ae1153ff4c9bb4",
+    "head_development_report_sha256": "13e238c021b0a81cb464b4ba50e75966bba3a9489295bdf319af3b0e",
+    "peak_allocated_vram_gib": 4.392,
+    "development_auc": 0.6458333333333334,
+    "development_default_false_allowances": 4,
+    "development_default_false_warnings": 4,
+    "development_cautious_false_allowances": 0,
+    "development_cautious_false_warnings": 12
+  },
+  "final_split_opened_for_model_or_threshold_selection": false,
+  "promotion": "none",
+  "interpretation": "One observed transition did not improve development ranking or cautious usability. This small public benchmark is not a live-desktop safety result or Jev parity test. Both frozen arms will receive one final-split check without retuning."
+}
