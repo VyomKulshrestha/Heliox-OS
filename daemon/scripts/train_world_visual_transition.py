@@ -230,7 +230,8 @@ def main() -> None:
     parser.add_argument("--weights", type=Path, default=state / "tess_visual_model_v1.pt")
     parser.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
     parser.add_argument("--disable-cudnn", action="store_true")
-    parser.add_argument("--architecture", choices=("linear", "mlp", "spatial"), default="linear")
+    parser.add_argument("--architecture", choices=("linear", "mlp", "spatial", "spatial_global"),
+                        default="linear")
     parser.add_argument("--train-without-action", action="store_true",
                         help="Fit a matched state-only baseline with action inputs zeroed")
     parser.add_argument("--epochs", type=int, default=80)
@@ -279,9 +280,10 @@ def main() -> None:
     device = torch.device("cuda:0" if args.device == "cuda" else "cpu")
     arrays = {split: {key: torch.from_numpy(value).to(device) for key, value in partition.items()
                       if key != "groups"} for split, partition in rows.items()}
-    if args.architecture == "spatial":
+    if args.architecture in {"spatial", "spatial_global"}:
         model = nn.Sequential(
-            nn.Conv2d(channels + 10, 32, 3, padding=1), nn.GELU(),
+            nn.Conv2d(channels + (12 if args.architecture == "spatial_global" else 10),
+                      32, 3, padding=1), nn.GELU(),
             nn.Conv2d(32, 32, 3, padding=1), nn.GELU(),
             nn.Conv2d(32, channels, 3, padding=1),
         ).to(device)
@@ -302,7 +304,7 @@ def main() -> None:
     def predict(partition: dict, *, ablate_action: bool = False):
         action = (torch.zeros_like(partition["action"])
                   if ablate_action or args.train_without_action else partition["action"])
-        if args.architecture == "spatial":
+        if args.architecture in {"spatial", "spatial_global"}:
             state_image = partition["state"].reshape(-1, channels, height, width)
             y, x = torch.meshgrid(torch.arange(height, device=device),
                                   torch.arange(width, device=device), indexing="ij")
@@ -311,7 +313,10 @@ def main() -> None:
             radius = 4.5 * (min(height, width) / 16) ** 2
             locus = torch.exp(-((x - cx) ** 2 + (y - cy) ** 2) / radius).unsqueeze(1)
             kind = action[:, :9, None, None].expand(-1, -1, height, width)
-            delta = model(torch.cat((state_image, locus, kind), dim=1)).reshape(-1, dimension)
+            inputs = [state_image, locus, kind]
+            if args.architecture == "spatial_global":
+                inputs.append(action[:, 9:11, None, None].expand(-1, -1, height, width))
+            delta = model(torch.cat(inputs, dim=1)).reshape(-1, dimension)
             return torch.clamp(partition["state"] + delta, 0, 1)
         return torch.clamp(
             partition["state"] + model(torch.cat((partition["state"], action), dim=1)), 0, 1
