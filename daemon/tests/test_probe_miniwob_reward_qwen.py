@@ -8,6 +8,7 @@ import pytest
 from scripts.collect_miniwob_branches import SOURCE_COMMIT, SOURCE_REPO
 from scripts.probe_miniwob_reward_qwen import (
     choose_literal_match,
+    choose_metadata_rules,
     evaluate,
     load_rows,
     parse_index,
@@ -55,6 +56,18 @@ def test_literal_baseline_matches_visible_name_without_model() -> None:
     assert choose_literal_match(prompt_for(rows)) == "1"
     rows[1]["candidate"]["label"] = "OTHER"
     assert choose_literal_match(prompt_for(rows)) == "0"
+
+
+def test_metadata_baseline_combines_type_color_and_relative_size() -> None:
+    rows = _rows()[:2]
+    rows[0]["goal"] = rows[1]["goal"] = "Click on a small blue letter"
+    rows[0]["candidate"] = {
+        "label": "5", "tag": "text", "declared_color": "blue", "height": 11,
+    }
+    rows[1]["candidate"] = {
+        "label": "D", "tag": "text", "declared_color": "blue", "height": 11,
+    }
+    assert choose_metadata_rules(prompt_for(rows)) == "1"
 
 
 def test_loader_requires_integrity_contrast_and_disjoint_prestates(tmp_path) -> None:
