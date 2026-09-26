@@ -1,0 +1,40 @@
+{
+  "purpose": "research_only_feature_equivalent_branch_diagnostic",
+  "dataset": "Qwen/WebWorldData",
+  "dataset_revision": "e108c5f8e35445c9ddff71cde2a5b1fc4db4020c",
+  "declared_license": "apache-2.0",
+  "local_features_sha256": "a556cf1ad88acac9e91fbb84ba3e5d6f0af1cd83420621aec648e0a4346f15e7",
+  "device": "NVIDIA GeForce RTX 4060 Laptop GPU; CUDA with PyTorch 2.6.0+cu124",
+  "protocol": "Fixed 2271-transition archive and splits; original validation weighted-MSE checkpoint selection; 80 epochs and 30 within-type permutations per seed. Compare zero paired loss with weight 0.1 on the same model and seed.",
+  "feature_equivalent_pairs": {"train": 54, "validation": 13, "eval": 26},
+  "evaluation": [
+    {
+      "seed": 20260926,
+      "type_only_pair_wins": 0,
+      "flat_pair_wins": [16, 16],
+      "flat_weighted_mse": [0.0016053281939435859, 0.00161197527464969],
+      "path_pair_wins": [16, 16],
+      "path_weighted_mse": [0.00160576791336607, 0.00161185201776082]
+    },
+    {
+      "seed": 123,
+      "type_only_pair_wins": 0,
+      "flat_pair_wins": [12, 14],
+      "flat_weighted_mse": [0.0015984577986059658, 0.00161549975227543],
+      "path_pair_wins": [16, 16],
+      "path_weighted_mse": [0.00158704718345207, 0.00159525587908441]
+    },
+    {
+      "seed": 456,
+      "type_only_pair_wins": 0,
+      "flat_pair_wins": [17, 17],
+      "flat_weighted_mse": [0.001580002957784834, 0.00158874739365691],
+      "path_pair_wins": [16, 18],
+      "path_weighted_mse": [0.00157667497156938, 0.00158472783150027]
+    }
+  ],
+  "array_order": "[original reconstruction objective, reconstruction plus paired matching loss]",
+  "validation": "Paired-loss training did not improve the 13-pair validation win count for either action representation in any seed.",
+  "decision": "Do not promote. Paired loss has inconsistent or negligible branch benefits and increases overall held-out weighted MSE in all six matched comparisons.",
+  "limitations": "Same hashed accessibility state and type do not prove identical raw screen or history. Pairs may be dependent, the held-out branch subset is small, and splits are not site-disjoint. No live desktop, safety, autonomy, or Jev-parity evidence. Weights and full probe reports remain ignored local research artifacts."
+}
