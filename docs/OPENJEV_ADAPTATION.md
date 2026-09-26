@@ -1031,6 +1031,17 @@ only 14/46 decisions. This is an evaluation-only, previously inspected public
 split, not a fresh blind safety benchmark, model-training input, Jev parity,
 or permission to execute. The history arm remains incomplete.
 
+Exploratory threshold checks on the completed no-history control did not find
+a usable safety/utility balance. Selecting a cutoff above every one of 36
+out-of-scope *calibration* probabilities allowed zero of 23 held-out
+violations, but rejected **674/688** valid calls. Choosing the cutoff that
+maximized balanced accuracy on the same 70 calibration calls still allowed
+**7/23** held-out violations and rejected **424/688** valid calls. Neither
+cutoff used held-out labels for its numeric choice, but this analysis followed
+earlier inspection of the split, so it is not fresh blind validation. Inputs,
+formulas, hashes, and counts are in the scaled-attempt report. Thresholding
+cannot make this adapter an approval authority.
+
 The larger split also exposed a benchmark weakness: random trajectory
 assignment can put very few violation labels in the test partition. A new
 **opt-in** `balanced_trajectory_v2` strategy searches deterministic grouped

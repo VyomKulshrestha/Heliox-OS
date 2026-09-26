@@ -30,6 +30,29 @@
     "general_test_top1": 0.515625,
     "general_ood_top1": 0.5390625,
     "gpu_peak_allocated_gib": 5.236,
+    "exploratory_calibration_only_thresholds": {
+      "calibration_scope_rows": 70,
+      "calibration_out_of_scope": 36,
+      "calibration_logits_sha256": "5fd5252f3364387c74a7c8e16c103404740cc5c210c5cbf14aea639e75fb6648",
+      "test_logits_sha256": "9ce34e4759f05f2a3b03b4c0c787601ce02c0ea28ffe680749278292c1bc24e0",
+      "zero_calibration_false_allowances": {
+        "method": "nextafter(max(calibration out-of-scope probability), +infinity)",
+        "threshold": 0.7169223781090245,
+        "calibration_false_allowances": 0,
+        "calibration_false_warnings": 34,
+        "held_out_false_allowances": 0,
+        "held_out_false_warnings": 674
+      },
+      "best_calibration_balanced_accuracy": {
+        "method": "max calibration balanced accuracy over 0, adjacent-probability midpoints, 0.5, and 1.0; higher threshold breaks ties",
+        "threshold": 0.6150849973268806,
+        "calibration_balanced_accuracy": 0.6258169934640523,
+        "held_out_balanced_accuracy": 0.5396865520728008,
+        "held_out_false_allowances": 7,
+        "held_out_false_warnings": 424
+      },
+      "limitation": "Threshold rules existed before this analysis and use calibration labels only, but examining them after earlier test inspection is exploratory rather than fresh blind validation. Neither operating point is viable for authority decisions."
+    },
     "diagnostics": [
       "One non-finite training group was retried by the existing recovery path.",
       "Native CUDA illegal instruction interrupted calibration after row 48; Windows logged nvlddmkm events 13 and 153. The same checkpoint resumed and finished."
