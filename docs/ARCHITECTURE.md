@@ -416,6 +416,14 @@ contains an explicit completion claim backed by fresh evidence; exact-text
 goals are checked case-sensitively against freshly read editable content,
 not a matching window title or metadata description. If the target's editable
 content cannot be read, Heliox does not mark an exact-text goal complete.
+After an interactive action, the active task may also request a fresh local OCR
+read (12-second timeout to cover a cold OCR model, at most 1,600 characters) to
+ground its next plan. Recognized text is untrusted screen data and may be sent
+to the selected model provider in that task's prompt; it is not stored in the
+periodic screen buffer or accepted as exact-text completion proof. The idle
+screen monitor does not run OCR, and a missing OCR backend is not installed
+during observation. Turning screen vision off also prevents active-task OCR
+and blocks subsequent autonomous desktop actions until it is enabled again.
 
 An optional recorded-workflow store observes successfully executed,
 single-action Heliox steps after the normal gates. With separate consent, a

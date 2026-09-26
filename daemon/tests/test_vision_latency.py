@@ -1,14 +1,28 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 import time
 from io import BytesIO
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from PIL import Image
 
 from pilot.system import vision
+
+
+@pytest.mark.asyncio
+async def test_missing_easyocr_does_not_install_packages(monkeypatch) -> None:
+    monkeypatch.setitem(sys.modules, "easyocr", None)
+    install = AsyncMock()
+    monkeypatch.setattr(vision, "run_command", install)
+
+    with pytest.raises(ModuleNotFoundError):
+        await vision._ocr_easyocr(b"", "eng")
+
+    install.assert_not_awaited()
 
 
 def test_resize_png_for_vision_bounds_largest_dimension() -> None:

@@ -146,6 +146,7 @@ async def test_desktop_goal_reobserves_after_open_and_requires_completion_eviden
             ]
         ),
         get_context_for_planner=MagicMock(side_effect=["Viewing Heliox", "Viewing Hermes"]),
+        read_visible_text_now=AsyncMock(return_value="Hermes home screen Ready"),
     )
     autonomous = _autonomous(
         plans=[
@@ -167,6 +168,8 @@ async def test_desktop_goal_reobserves_after_open_and_requires_completion_eviden
     assert autonomous._executor.execute.await_count == 1
     assert autonomous._verifier.verify.await_count == 1
     assert screen.observe_now.await_count == 2
+    screen.read_visible_text_now.assert_awaited_once()
+    assert "Fresh local OCR" in autonomous._planner.plan.await_args_list[1].kwargs["screen_context"]
     autonomous._focus_target_window.assert_awaited_once_with("Hermes")
     for call in autonomous._planner.plan.await_args_list:
         assert call.kwargs["force_model"] is True
@@ -199,6 +202,44 @@ async def test_prior_action_success_cannot_substitute_for_fresh_completion_evide
     second_context = autonomous._planner.plan.await_args_list[1].kwargs["screen_context"]
     assert "Fresh screen observation unavailable" in second_context
     assert "reported (0/1 effects independently observed)" in second_context
+
+
+@pytest.mark.asyncio
+async def test_disabled_screen_vision_is_not_restarted_by_autonomous_task():
+    screen = SimpleNamespace(
+        is_running=False,
+        observe_now=AsyncMock(),
+        get_context_for_planner=MagicMock(return_value="Stale Hermes context"),
+        read_visible_text_now=AsyncMock(),
+    )
+    autonomous = _autonomous(
+        plans=[ActionPlan(actions=[], explanation="GOAL_COMPLETE: Hermes is visible.")],
+        results=[],
+        verifications=[],
+        screen_vision=screen,
+    )
+    job = AutonomousJob(goal="Open Hermes", steps=[JobStep(index=0, title="Execute", description="")])
+
+    await autonomous._execute_single_step(job)
+
+    assert job.steps[0].status == "failed"
+    screen.observe_now.assert_not_awaited()
+    screen.read_visible_text_now.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_disabled_screen_vision_blocks_desktop_actions():
+    screen = SimpleNamespace(is_running=False, observe_now=AsyncMock())
+    autonomous = _autonomous(
+        plans=[_open_app_plan()], results=[], verifications=[], screen_vision=screen,
+    )
+    job = AutonomousJob(goal="Open Hermes", steps=[JobStep(index=0, title="Execute", description="")])
+
+    await autonomous._execute_single_step(job)
+
+    assert job.steps[0].status == "failed"
+    assert "not executed" in job.steps[0].error
+    autonomous._executor.execute.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -320,6 +361,7 @@ async def test_window_title_cannot_prove_exact_text_was_typed():
             active_window_title="SECRET - Hermes", description="SECRET is visible",
         )),
         get_context_for_planner=MagicMock(return_value="Viewing SECRET - Hermes"),
+        read_visible_text_now=AsyncMock(return_value="SECRET"),
     )
     autonomous = _autonomous(
         plans=[
@@ -340,6 +382,7 @@ async def test_window_title_cannot_prove_exact_text_was_typed():
 
     assert job.steps[0].status == "failed"
     assert autonomous._executor.execute.await_count == 1
+    assert "Fresh local OCR" in autonomous._planner.plan.await_args_list[1].kwargs["screen_context"]
     assert "fresh editable content" in autonomous._planner.plan.await_args_list[2].kwargs["screen_context"]
 
 
