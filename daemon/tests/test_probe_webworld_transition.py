@@ -31,7 +31,9 @@ def _archive(tmp_path, *, leak: bool = False, state_leak: bool = False):
 
 def test_loader_rejects_trajectory_leakage_and_tampered_features(tmp_path) -> None:
     path, report = _archive(tmp_path)
-    assert len(load_features(path, report)["eval"]["state"]) == 1
+    partition = load_features(path, report)
+    assert len(partition["eval"]["state"]) == 1
+    assert len(partition["eval"]["clusters"]) == 1
     report.write_text(json.dumps({"features_sha256": "0" * 64}))
     with pytest.raises(ValueError, match="does not match"):
         load_features(path, report)

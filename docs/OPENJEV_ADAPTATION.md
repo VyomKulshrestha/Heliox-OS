@@ -1459,7 +1459,8 @@ Heliox runtime model was changed or promoted.
 
 A fresh, larger [2,271-transition CUDA recheck](../daemon/benchmarks/webworld_a11y_transfer_v2.json)
 used the same frozen model settings, the corrected split, and 122 held-out
-trajectories. Bound-target actions again beat within-type shuffles, but two of
+trajectories (116 state-connected groups for uncertainty). Bound-target actions
+again beat within-type shuffles, but two of
 three seeds were worse than type-only actions on held-out weighted MSE. More
 rows alone did not validate this hashed-tree representation as a transferable
 action-conditioned world model, so the no-promotion decision stands.
