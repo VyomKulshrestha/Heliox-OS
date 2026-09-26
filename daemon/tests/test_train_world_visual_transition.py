@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 from scripts.train_world_visual_transition import (
+    feature_shape,
     load_features,
     load_recorded_features,
     metrics,
@@ -47,6 +48,20 @@ def test_rejects_episode_leakage_and_changed_source(tmp_path) -> None:
         load_features(features, report)
     report.write_text('{"features_sha256": "not-the-file"}', encoding="utf-8")
     with pytest.raises(ValueError, match="do not match"):
+        load_features(features, report)
+
+
+def test_rejects_feature_shape_mismatch(tmp_path) -> None:
+    features, report = _write_features(tmp_path)
+    source = json.loads(report.read_text(encoding="utf-8"))
+    source["feature_shape"] = [3, 32, 32]
+    report.write_text(json.dumps(source), encoding="utf-8")
+    assert feature_shape(report) == (3, 32, 32)
+    with pytest.raises(ValueError, match="Invalid visual transition"):
+        load_features(features, report)
+    source["feature_shape"] = [100, 32, 32]
+    report.write_text(json.dumps(source), encoding="utf-8")
+    with pytest.raises(ValueError, match="bounded visual feature shape"):
         load_features(features, report)
 
 

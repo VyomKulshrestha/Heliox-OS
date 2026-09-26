@@ -526,6 +526,18 @@ evidence is richer screen/action context plus independent same-state,
 different-action outcomes or consented desktop trajectories; adding an
 arbitrary action-sensitivity loss to this data would not prove causality.
 
+An exploratory [RGB32 ablation](../daemon/benchmarks/world_gui_cc_rgb32_probe_v1.json)
+kept the same 523 rows, task-group split, and source-image hashes but replaced
+the gray16 features with 32×32 RGB and used a globally connected residual MLP.
+On the already-inspected evaluation rows, weighted MSE was **0.482373** for
+correct taps, **0.481927** after shuffling tap locations, and **0.485522** for
+the separately trained matched state-only MLP. Richer pixels and global
+connectivity still did not establish action use. This ablation was selected
+after the gray16 result and is not a new holdout; it also has no runtime model
+or authorization effect. The trainer now validates bounded feature shapes so
+the same split and controls can compare representations without silently
+assuming a 256-value vector.
+
 Reproduce from `daemon` with the downloaded pinned offline subset and **fresh**
 ignored output paths (the importer refuses to overwrite existing artifacts):
 
