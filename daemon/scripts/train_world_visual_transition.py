@@ -95,13 +95,13 @@ def metrics(predicted: np.ndarray, state: np.ndarray, target: np.ndarray) -> dic
 
 
 def action_shuffle_diagnostic(correct: float, shuffled: list[float]) -> dict[str, float]:
-    """Positive advantage means the observed action beats shuffled controls."""
+    """Positive advantage beats shuffles; rank is descriptive, not a p-value."""
     if not shuffled or not np.isfinite(correct) or not np.all(np.isfinite(shuffled)):
         raise ValueError("Action-shuffle scores must be finite and nonempty")
     return {
         "weighted_mse_advantage": float(np.mean(shuffled) - correct),
-        "one_sided_permutation_p": float((1 + sum(score <= correct for score in shuffled))
-                                         / (len(shuffled) + 1)),
+        "one_sided_shuffle_rank": float((1 + sum(score <= correct for score in shuffled))
+                                        / (len(shuffled) + 1)),
     }
 
 

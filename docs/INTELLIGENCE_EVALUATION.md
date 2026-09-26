@@ -538,6 +538,27 @@ or authorization effect. The trainer now validates bounded feature shapes so
 the same split and controls can compare representations without silently
 assuming a 256-value vector.
 
+A further [RGB32 spatial CUDA probe](../daemon/benchmarks/world_gui_cc_rgb32_spatial_probe_v1.json)
+on those same, already-inspected rows lowered held-out weighted MSE to
+**0.315980** for correct taps, compared with **0.315993** for shuffled tap
+locations and **0.317941** for a matched state-only model. This is better
+one-step reconstruction, but almost no action-location advantage. The trainer
+now reports that advantage and a one-sided rank among 99 action shuffles:
+the GUI-CC location result was **0.50**, whereas the verified same-state
+controlled-page positive control was **0.01**. These ranks describe the
+exploratory probes; prior inspection of the GUI-CC evaluation rows prevents a
+fresh-holdout significance claim. Zeroing the action input produces a much
+worse score here, but that out-of-distribution ablation does not override the
+location-shuffle control. No weights were promoted to the live predictor.
+To reproduce the spatial comparison from `daemon`, use the pinned selection
+and fresh ignored output paths:
+
+```bash
+python -m scripts.import_gui_cc_ordered_transitions --root benchmarks/.bench-state/gui_cc_all_templates_exploratory_v1 --selection benchmarks/gui_cc_all_templates_exploratory_v1.json --representation rgb32 --features benchmarks/.bench-state/gui_cc_rgb32_repro.npz --report benchmarks/.bench-state/gui_cc_rgb32_repro.json
+python -m scripts.train_world_visual_transition --device cuda --architecture spatial --disable-cudnn --action-permutations 99 --features benchmarks/.bench-state/gui_cc_rgb32_repro.npz --source-report benchmarks/.bench-state/gui_cc_rgb32_repro.json --report benchmarks/.bench-state/gui_cc_rgb32_spatial_repro.json --weights benchmarks/.bench-state/gui_cc_rgb32_spatial_repro.pt
+python -m scripts.train_world_visual_transition --device cuda --architecture spatial --disable-cudnn --train-without-action --features benchmarks/.bench-state/gui_cc_rgb32_repro.npz --source-report benchmarks/.bench-state/gui_cc_rgb32_repro.json --report benchmarks/.bench-state/gui_cc_rgb32_state_only_repro.json --weights benchmarks/.bench-state/gui_cc_rgb32_state_only_repro.pt
+```
+
 Reproduce from `daemon` with the downloaded pinned offline subset and **fresh**
 ignored output paths (the importer refuses to overwrite existing artifacts):
 
