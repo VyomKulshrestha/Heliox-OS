@@ -107,6 +107,54 @@ def evaluate(backbone, head, items: list[dict], label: str = "") -> list[np.ndar
     return results
 
 
+def evaluate_checkpointed(backbone, head, items: list[dict], label: str, *,
+                          path: Path, signature: str, resume: bool,
+                          checkpoint_every: int) -> list[np.ndarray]:
+    """Resume public held-out scoring only when rows and trained weights match."""
+    if checkpoint_every < 1:
+        raise ValueError("Evaluation checkpoint interval must be positive")
+    ids = [item["row"]["id"] for item in items]
+    if path.exists():
+        if not resume:
+            raise FileExistsError(f"Evaluation checkpoint already exists: {path}")
+        saved = json.loads(path.read_text(encoding="utf-8"))
+        if (saved.get("schema_version") != 1 or saved.get("signature") != signature
+                or saved.get("ids") != ids):
+            raise ValueError(f"Evaluation checkpoint does not match {label}")
+        values = saved["logits"]
+        if len(values) > len(items):
+            raise ValueError(f"Evaluation checkpoint exceeds {label} rows")
+        results = [np.asarray(value, dtype=np.float64) for value in values]
+        if any(result.shape != (len(item["row"]["target"]),)
+               or not np.isfinite(result).all()
+               for result, item in zip(results, items, strict=False)):
+            raise ValueError(f"Evaluation checkpoint has invalid {label} logits")
+    else:
+        results = []
+    backbone.eval()
+    head.eval()
+    for index in range(len(results), len(items)):
+        item = items[index]
+        try:
+            results.append(score_row(backbone, head, item))
+        except RuntimeError as exc:
+            raise RuntimeError(f"{label} failed at row {index + 1}/{len(items)} "
+                               f"id={item['row']['id']} "
+                               f"tokens={max(len(ids) for ids in item['sequences'])}") from exc
+        completed = index + 1
+        if completed % checkpoint_every == 0 or completed == len(items):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = path.with_suffix(".tmp")
+            temporary.write_text(json.dumps({"schema_version": 1, "signature": signature,
+                                             "ids": ids,
+                                             "logits": [value.tolist() for value in results]}),
+                                 encoding="utf-8")
+            os.replace(temporary, path)
+            print(json.dumps({"event": "evaluation", "split": label,
+                              "rows": completed, "total": len(items)}), flush=True)
+    return results
+
+
 def gradient_row(backbone, head, item: dict, *, brier_weight: float,
                  ordinal_weight: float, scale: float) -> float:
     """Exact two-pass gradient with O(1) candidate activation memory.
@@ -372,11 +420,20 @@ def run(args: argparse.Namespace) -> dict:
                               "peak_vram_gib": round(peak, 3)}), flush=True)
 
     calibration_items = encoded["calibration"] + (encoded["scope_calibration"] if scope_manifest else [])
-    calibration_logits = evaluate(backbone, head, calibration_items, "calibration")
+    checkpoint_hash = hashlib.sha256(checkpoint_path.read_bytes()).hexdigest()
+
+    def held_out(part: str, items: list[dict]) -> list[np.ndarray]:
+        identity = hashlib.sha256(f"{signature}:{checkpoint_hash}:{part}".encode()).hexdigest()
+        return evaluate_checkpointed(
+            backbone, head, items, part, path=args.output_dir / f"evaluation_{part}.json",
+            signature=identity, resume=args.resume, checkpoint_every=args.checkpoint_every,
+        )
+
+    calibration_logits = held_out("calibration", calibration_items)
     temperature = fit_temperature(calibration_logits, [item["row"] for item in calibration_items])
-    test_logits = evaluate(backbone, head, encoded["test"], "trained_test")
-    ood_logits = evaluate(backbone, head, encoded["ood"], "trained_ood")
-    trained_scope = evaluate(backbone, head, encoded["scope_test"], "trained_scope") if scope_manifest else None
+    test_logits = held_out("trained_test", encoded["test"])
+    ood_logits = held_out("trained_ood", encoded["ood"])
+    trained_scope = held_out("trained_scope", encoded["scope_test"]) if scope_manifest else None
     args.output_dir.mkdir(parents=True, exist_ok=True)
     backbone.save_pretrained(args.output_dir / "adapter")
     np.savez_compressed(args.output_dir / "head.npz",
@@ -395,6 +452,7 @@ def run(args: argparse.Namespace) -> dict:
         "selected_rows": limits, "evaluated_rows": {name: len(part) for name, part in encoded.items()},
         "excluded_overlong": overlong, "max_length": args.max_length,
         "attention_implementation": args.attention,
+        "training_checkpoint_sha256": checkpoint_hash,
         "lora_rank": args.lora_rank, "accumulation": args.accumulation,
         "prompt_style": args.prompt_style,
         "checkpoint_every": args.checkpoint_every, "resumed": args.resume,
