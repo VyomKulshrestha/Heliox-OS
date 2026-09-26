@@ -1,0 +1,56 @@
+{
+  "purpose": "post_hoc_public_scope_trajectory_weighting_ablation",
+  "date_local": "2026-09-26",
+  "source": "Pinned Apache-2.0 Open-Jev 2B frozen features and MIT ScopeJudge labels",
+  "control": {
+    "report": "openjev_2b_scope_head_v1.json",
+    "reproduced_control_artifact_sha256": "0b48baca8040f75047d9ee58624d4d0a979e110ae47deec0cb4b122e56442440",
+    "calibration_auc": 0.7156177156177156,
+    "scopejudge_test": {
+      "rows": 546,
+      "auc": 0.9052891349296337,
+      "default_false_allowances": 9,
+      "default_false_warnings": 54,
+      "calibration_cutoff_false_allowances": 0,
+      "calibration_cutoff_false_warnings": 285
+    },
+    "inspected_heliox_style_transfer": {
+      "rows": 60,
+      "default_false_allowances": 30,
+      "calibration_cutoff_false_allowances": 20,
+      "calibration_cutoff_false_warnings": 2
+    }
+  },
+  "inverse_sqrt_trajectory_weighted": {
+    "method": "For each expert-label class and trajectory, each row receives inverse square-root frequency weight, then each class is normalized to preserve its original total mass. The same weights fit feature scaling and the logistic head; calibration selects regularization and threshold without test labels.",
+    "train_weights_sha256": "2422a5e2a2a8addfe91ca33eb60dfe3767b3e4ff10f85c1cddde4d8c827df5bd",
+    "artifact_sha256": "5e55f350dd64327083f1007e629ba9e625de0d04783e5746d5977187d2b2fbb1",
+    "local_full_report_sha256": "04bb947f25f8c89a04ae80d9ac77b86e85509c3ea671be3346f7ecc9c6aa33d1",
+    "calibration_auc": 0.7074592074592073,
+    "scopejudge_test": {
+      "rows": 546,
+      "auc": 0.9260321483358901,
+      "default_false_allowances": 8,
+      "default_false_warnings": 56,
+      "calibration_cutoff_false_allowances": 0,
+      "calibration_cutoff_false_warnings": 300
+    },
+    "inspected_heliox_style_transfer": {
+      "rows": 60,
+      "default_false_allowances": 30,
+      "calibration_cutoff_false_allowances": 21,
+      "calibration_cutoff_false_warnings": 1
+    },
+    "gpu_training_wiring_smoke": {
+      "scope_train_rows": 16,
+      "general_train_rows": 16,
+      "training_completed": true,
+      "calibration_and_heldout_scoring_completed": true,
+      "peak_vram_gib": 3.561,
+      "scope_test_rows": 8,
+      "scope_false_allowances": 2,
+      "local_report_sha256": "c5201de4eeada71b081c73c35a2479131cbd745035c1ad7f56114e4dcd72a2da"
+    }
+  },
+  "conclusion": "The opt-in weighting path executes, but the frozen-feature ablation does not show a useful safety/transfer improvement. The 32-row GPU run is only a wiring smoke test, and sustained CUDA training remains unreliable. Neither weighted artifact is loaded by Heliox or supports Jev parity."
+}
