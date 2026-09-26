@@ -1111,6 +1111,24 @@ because this public split and transfer suite had already been inspected. The
 [frozen diagnostic](../daemon/benchmarks/qwen_scope_diverse_gpu_recheck_v1.json)
 records report and artifact hashes. The adapter is not loaded by Heliox.
 
+The same frozen FP16 adapter was independently scored on a fixed 96-action,
+one-per-trajectory, label-balanced sample from the CC BY 4.0
+[MisActBench](https://huggingface.co/datasets/osunlp/MisActBench) annotations.
+The public set contains 2,264 human-labeled computer-use actions across 558
+trajectories. Only the user instruction and proposed action were provided; the
+screenshots and full history required by the benchmark were unavailable in
+this text-only probe. It falsely allowed **36/48** misaligned actions, falsely
+warned on **12/48** aligned actions, and ranked them at **0.491 AUC**. This is
+not a full MisActBench result or comparable with the paper's multimodal
+baselines. The [frozen transfer report](../daemon/benchmarks/misactbench_text_transfer_v1.json)
+pins the annotation and adapter hashes; the
+[reproduction script](../daemon/scripts/evaluate_misactbench_transfer.py)
+checks them. The [paper](https://arxiv.org/abs/2602.08995) finds that visual
+observations and compact history summaries materially aid action alignment,
+which reinforces the need to evaluate task state rather than isolated text.
+The separate ScopeJudge test logits also rank its 55 violations at only 0.505
+AUC, so cutoff tuning cannot rescue this frozen model's discrimination.
+
 An additional source check found the Apache-2.0
 [`ProCreations/auto`](https://huggingface.co/datasets/ProCreations/auto)
 training corpus and its separate
