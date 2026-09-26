@@ -19,10 +19,12 @@ QUESTION = "Is this exact proposed action directly authorized by the user's requ
 
 
 def decision_row(case: ExternalCase) -> dict:
+    state = {"user_request": case.request, "proposed_action": case.action}
+    if case.prior_actions:
+        state["previous_tool_calls"] = list(case.prior_actions)
     row = {"id": case.case_id, "group_id": "scopejudge:" + case.case_id.split(":", 1)[0],
            "source": "scopejudge-v1", "kind": "noul", "question": QUESTION,
-           "state_json": json.dumps({"user_request": case.request, "proposed_action": case.action},
-                                    ensure_ascii=False),
+           "state_json": json.dumps(state, ensure_ascii=False),
            "options": ["no", "yes"],
            "target": [0.0, 1.0] if case.in_scope else [1.0, 0.0],
            "metadata_json": json.dumps({"provenance": {"license": "MIT"}})}
@@ -68,15 +70,17 @@ def split_cases(cases: list[ExternalCase], *, seed: int,
     return parts
 
 
-def load_scope_parts(path: Path, *, seed: int, limits: dict[str, int]) -> tuple[dict[str, list[dict]], dict]:
+def load_scope_parts(path: Path, *, seed: int, limits: dict[str, int],
+                     history_calls: int = 0) -> tuple[dict[str, list[dict]], dict]:
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     if digest != DATASET_SHA256:
         raise ValueError("ScopeJudge dataset does not match the pinned public release")
-    cases = load_cases(path)
+    cases = load_cases(path, history_calls=history_calls)
     parts = split_cases(cases, seed=seed, limits=limits)
     return parts, {"dataset": DATASET, "revision": DATASET_REVISION,
                    "sha256": digest, "license": "MIT", "total_cases": len(cases),
                    "selected_rows": {name: len(rows) for name, rows in parts.items()},
+                   "history_calls": history_calls,
                    "selection": "trajectory-disjoint; balanced train/calibration; full test when limit covers split"}
 
 

@@ -29,9 +29,12 @@ class ExternalCase:
     request: str
     action: str
     in_scope: bool
+    prior_actions: tuple[str, ...] = ()
 
 
-def load_cases(path: Path) -> list[ExternalCase]:
+def load_cases(path: Path, *, history_calls: int = 0) -> list[ExternalCase]:
+    if history_calls < 0:
+        raise ValueError("history_calls must be non-negative")
     cases: list[ExternalCase] = []
     with path.open(encoding="utf-8") as handle:
         for line in handle:
@@ -40,11 +43,21 @@ def load_cases(path: Path) -> list[ExternalCase]:
             trajectory = json.loads(line)
             scope = trajectory["extra"]["scopejudge"]
             request = scope["user_intent"]
-            calls = {
-                (step["step_id"], call["tool_call_id"]): call
-                for step in trajectory["steps"]
-                for call in (step.get("tool_calls") or [])
-            }
+            calls = {}
+            history = {}
+            completed_actions: list[str] = []
+            for step in trajectory["steps"]:
+                step_calls = step.get("tool_calls") or []
+                prior = tuple(completed_actions[-history_calls:]) if history_calls else ()
+                for call in step_calls:
+                    key = (step["step_id"], call["tool_call_id"])
+                    calls[key] = call
+                    history[key] = prior
+                completed_actions.extend(
+                    call["function_name"] + " " + json.dumps(
+                        call["arguments"], sort_keys=True, ensure_ascii=False, separators=(",", ":")
+                    ) for call in step_calls
+                )
             for label in scope["labels"]:
                 if label["golden_label"] not in {"in_scope", "out_of_scope"}:
                     raise ValueError("Unknown expert scope label")
@@ -57,6 +70,7 @@ def load_cases(path: Path) -> list[ExternalCase]:
                     request=request,
                     action=action,
                     in_scope=label["golden_label"] == "in_scope",
+                    prior_actions=history[(label["step_id"], label["tool_call_id"])],
                 ))
     if len({case.case_id for case in cases}) != len(cases):
         raise ValueError("Duplicate external call ID")
