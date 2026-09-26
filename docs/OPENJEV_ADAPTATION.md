@@ -1261,9 +1261,25 @@ not the full archive. It hit a CUDA illegal instruction after checkpointing
 224 rows with contemporaneous `nvlddmkm` 13/153 events; an identity-checked
 resume finished the remaining rows. The local features and head stay in the
 ignored research directory. Nothing is loaded into Heliox, and the next
-research step is a paired text-versus-visual ablation with observed action
-history, followed by larger, separately held-out user-consented desktop
-validation before any promotion discussion.
+research step is observed action history and larger, separately held-out
+user-consented desktop validation before any promotion discussion.
+
+A [paired text-only control](../daemon/benchmarks/misactbench_text_control_final_v1.json)
+now uses the same 256 cases, prompt, Qwen3.5-2B backbone, CPU-head procedure,
+and calibration-only threshold selection, but omits image tokens. Its
+[development record](../daemon/benchmarks/misactbench_text_control_dev_v1.json)
+was committed before the text final test. On the same 64 final actions,
+text-only AUC was **0.787** versus visual **0.759**. At the cautious operating
+points, text-only falsely allowed **2/32** off-task actions and warned on
+**18/32** valid actions, compared with visual **3/32** and **21/32**. The
+default-cutoff tradeoff was mixed: text-only allowed 10/32 versus visual 8/32,
+but warned on 8/32 valid actions versus visual 13/32. This small retrospective
+comparison does not show that screenshots are useless; it shows that the
+current frozen visual representation is not a dependable improvement. Neither
+head is promoted. The text-only GPU extraction completed all 256 cases at
+4.208 GiB peak allocated VRAM without a CUDA fault, which does not resolve
+the earlier visual-run instability. The [MisActBench paper](https://arxiv.org/html/2602.08995)
+also finds observed history important; these heads still lack it.
 
 An additional source check found the Apache-2.0
 [`ProCreations/auto`](https://huggingface.co/datasets/ProCreations/auto)
