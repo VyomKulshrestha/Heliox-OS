@@ -586,6 +586,21 @@ effects, and competing external events are absent. Neither the paper's joint
 forward/inverse dynamics objective nor its larger multimodal backbone has been implemented
 here. Both trained artifacts remain ignored local research files.
 
+The collector now also has an opt-in `--paired-counterfactuals` mode. It
+resets the same local page, clicks each of its two controls separately, checks
+the selected DOM panel, requires identical before features and distinct after
+features, then stores the two observations under one group. The trainer can
+swap actions **only within such a verified pair**, a stronger counterfactual
+control than shuffling across unrelated screens. On two seeds with 160/40/40
+train/validation/evaluation rows each, correct-action held-out weighted MSE
+was **0.00422** and **0.00437**; giving each row its paired alternative action
+raised it to **0.06599** and **0.06581**. Separately trained state-only models
+scored **0.01451** and **0.01477**. The [paired evidence record](../daemon/benchmarks/world_controlled_counterfactual_pairs_v1.json)
+pins source, report, and weight hashes. This verifies action sensitivity for
+simple generated button effects across held-out layout families, **not**
+general GUI or desktop-world prediction. The public GUI-CC tests above still
+fail their action-shuffle control; no learned weights are promoted.
+
 An inverse probe tests whether these 16×16 features retain information about
 the executed action. On held-out controlled pages it reached 0.80 action-type
 accuracy versus a 0.50 majority baseline; click coordinate mean absolute
@@ -608,6 +623,9 @@ Reproduce from `daemon/` with fresh ignored paths:
 ```bash
 python -m scripts.collect_controlled_ui_transitions --samples-per-family 80 --seed 20260926 --features benchmarks/.bench-state/controlled_ui_repro.npz --report benchmarks/.bench-state/controlled_ui_repro.json
 python -m scripts.train_world_visual_transition --device cuda --architecture spatial --disable-cudnn --features benchmarks/.bench-state/controlled_ui_repro.npz --source-report benchmarks/.bench-state/controlled_ui_repro.json --report benchmarks/.bench-state/controlled_ui_model_repro.json --weights benchmarks/.bench-state/controlled_ui_model_repro.pt
+python -m scripts.collect_controlled_ui_transitions --paired-counterfactuals --samples-per-family 20 --seed 20260926 --features benchmarks/.bench-state/controlled_pairs_repro.npz --report benchmarks/.bench-state/controlled_pairs_repro.json
+python -m scripts.train_world_visual_transition --device cuda --architecture spatial --disable-cudnn --features benchmarks/.bench-state/controlled_pairs_repro.npz --source-report benchmarks/.bench-state/controlled_pairs_repro.json --report benchmarks/.bench-state/controlled_pairs_action_repro.json --weights benchmarks/.bench-state/controlled_pairs_action_repro.pt
+python -m scripts.train_world_visual_transition --device cuda --architecture spatial --disable-cudnn --train-without-action --features benchmarks/.bench-state/controlled_pairs_repro.npz --source-report benchmarks/.bench-state/controlled_pairs_repro.json --report benchmarks/.bench-state/controlled_pairs_state_only_repro.json --weights benchmarks/.bench-state/controlled_pairs_state_only_repro.pt
 ```
 
 The shipped structured predictor remains available without learned weights.
