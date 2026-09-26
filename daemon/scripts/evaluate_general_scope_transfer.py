@@ -77,15 +77,20 @@ def main() -> None:
         from scripts.train_general_decision import encode_rows
 
         limits = scope_limits(model_report)
-        parts, manifest = load_scope_parts(args.scopejudge_path,
-                                           seed=model_report["seed"], limits=limits)
-        if manifest != model_report["scopejudge"]:
+        expected_manifest = model_report["scopejudge"]
+        history_calls = expected_manifest.get("history_calls", 0)
+        parts, manifest = load_scope_parts(
+            args.scopejudge_path, seed=model_report["seed"], limits=limits,
+            history_calls=history_calls,
+            strategy=expected_manifest.get("split_strategy", "random_trajectory_v1"))
+        if manifest != {**expected_manifest, "history_calls": history_calls}:
             raise ValueError("Scope calibration source differs from the training report")
         tokenizer = AutoTokenizer.from_pretrained(
             snapshot_download(MODEL, revision=REVISION, local_files_only=True), local_files_only=True)
         encoded, overlong = encode_rows(
             tokenizer, parts["scope_calibration"], model_report["max_length"],
-            prompt_style=model_report.get("prompt_style", "candidate_v1"))
+            prompt_style=model_report.get("prompt_style", "candidate_v1"),
+            fit_history=history_calls > 0)
         selected = [item["row"] for item in encoded]
         if not selected:
             raise ValueError("No eligible scope calibration rows")
