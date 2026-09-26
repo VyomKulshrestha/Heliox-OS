@@ -432,10 +432,17 @@ def run(args: argparse.Namespace) -> dict:
                                      row_weights=row_weights)
 
     run_baseline = not (args.resume and args.skip_baseline_on_resume)
-    baseline_test = evaluate(backbone, head, encoded["test"], "baseline_test") if run_baseline else None
-    baseline_ood = evaluate(backbone, head, encoded["ood"], "baseline_ood") if run_baseline else None
-    baseline_scope = (evaluate(backbone, head, encoded["scope_test"], "baseline_scope")
-                      if run_baseline and scope_manifest else None)
+    def baseline(part: str) -> list[np.ndarray]:
+        identity = hashlib.sha256(f"{signature}:baseline:{part}".encode()).hexdigest()
+        return evaluate_checkpointed(
+            backbone, head, encoded[part], f"baseline_{part}",
+            path=args.output_dir / f"evaluation_baseline_{part}.json",
+            signature=identity, resume=args.resume, checkpoint_every=args.checkpoint_every,
+        )
+
+    baseline_test = baseline("test") if run_baseline else None
+    baseline_ood = baseline("ood") if run_baseline else None
+    baseline_scope = baseline("scope_test") if run_baseline and scope_manifest else None
     optimizer = torch.optim.AdamW([
         {"params": [parameter for parameter in backbone.parameters() if parameter.requires_grad], "lr": args.lr},
         {"params": head.parameters(), "lr": args.head_lr},
