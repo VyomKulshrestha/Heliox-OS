@@ -236,7 +236,8 @@ def test_ui_jepa_predicts_latent_transition_without_pixels(tmp_path) -> None:
     state = _state()
     state.ui["latent_embedding"] = [0.1, 0.2, 0.3]
 
-    prediction = UiJepaPredictor(weights).predict_optional(
+    predictor = UiJepaPredictor(weights)
+    prediction = predictor.predict_optional(
         state,
         _action_for_jepa(),
     )
@@ -247,6 +248,25 @@ def test_ui_jepa_predicts_latent_transition_without_pixels(tmp_path) -> None:
     assert prediction.expected_effects[0].operation == "predict_latent_transition"
     assert "latent_embedding" not in prediction.to_dict()["expected_effects"][0]["after"]
     assert "latent_embedding" not in prediction.to_dict()["predicted_state"]["ui"]
+    assert prediction.predicted_state.ui["latent_source"] == "predicted"
+    assert prediction.predicted_state.ui["latent_embedding"] != state.ui["latent_embedding"]
+    next_prediction = predictor.predict_optional(prediction.predicted_state, _action_for_jepa())
+    assert next_prediction is not None
+    assert next_prediction.predicted_state.ui["latent_embedding"] != prediction.predicted_state.ui["latent_embedding"]
+    assert state.ui["latent_embedding"] == [0.1, 0.2, 0.3]
+
+
+def test_structured_predictor_does_not_reuse_observed_latent_as_a_next_frame() -> None:
+    state = _state()
+    state.ui["latent_embedding"] = [0.1, 0.2, 0.3]
+    state.ui["latent_source"] = "observed"
+    state.ui["latent_transition"] = {"delta_norm": 1.0}
+
+    predicted = StructuredTransitionPredictor().predict(state, _action_for_jepa()).predicted_state
+
+    assert "latent_embedding" not in predicted.ui
+    assert "latent_source" not in predicted.ui
+    assert "latent_transition" not in predicted.ui
     assert state.ui["latent_embedding"] == [0.1, 0.2, 0.3]
 
 
@@ -320,6 +340,23 @@ def test_hybrid_model_fuses_visual_and_structured_predictions(tmp_path) -> None:
         "predict_latent_transition",
     }
     assert "latent_transition" in prediction.predicted_state.ui
+
+
+def test_visual_fusion_preserves_structured_window_transition(tmp_path) -> None:
+    weights = tmp_path / "ui_jepa.npz"
+    _write_jepa_weights(weights)
+    state = _state()
+    state.ui["latent_embedding"] = [0.1, 0.2, 0.3]
+    action = Action(
+        action_type=ActionType.WINDOW_FOCUS,
+        target="Editor",
+        parameters=EmptyParams(),
+    )
+
+    prediction = HybridWorldModel(visual=UiJepaPredictor(weights)).predict(state, action)
+
+    assert prediction.predicted_state.ui["active_window"] == "Editor"
+    assert prediction.predicted_state.ui["latent_source"] == "predicted"
 
 
 def test_historical_failure_risk_waits_for_repeated_real_outcomes() -> None:
