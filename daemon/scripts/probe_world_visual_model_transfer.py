@@ -20,6 +20,31 @@ from scripts.train_world_visual_transition import (
 )
 
 
+def paired_action_diagnostic(
+    correct: np.ndarray,
+    swapped: np.ndarray,
+    state: np.ndarray,
+    target: np.ndarray,
+    groups: np.ndarray,
+) -> dict[str, float | int]:
+    """Report whether the correct action wins within each observed pair."""
+    weights = 1 + 4 * (np.abs(target - state) >= 0.02)
+    correct_error = ((correct - target) ** 2 * weights).mean(axis=1)
+    swapped_error = ((swapped - target) ** 2 * weights).mean(axis=1)
+    advantages = []
+    for group in np.unique(groups):
+        indices = np.flatnonzero(groups == group)
+        if len(indices) != 2:
+            raise ValueError("Paired action diagnostic requires exactly two rows per group")
+        advantages.append(float((swapped_error[indices] - correct_error[indices]).mean()))
+    return {
+        "groups": len(advantages),
+        "correct_action_wins": sum(value > 0 for value in advantages),
+        "ties": sum(value == 0 for value in advantages),
+        "mean_weighted_mse_advantage": float(np.mean(advantages)),
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model-report", type=Path, required=True)
@@ -112,6 +137,11 @@ def main() -> None:
             "paired_alternative_action": metrics(swapped, partition["state"], partition["target"])
             if swapped is not None else None,
         },
+        "paired_action_diagnostic": (
+            paired_action_diagnostic(correct, swapped, partition["state"],
+                                     partition["target"], partition["groups"])
+            if swapped is not None else None
+        ),
         "limitation": "Frozen one-step model and target archive only; no runtime promotion, safety, "
                       "general desktop transfer, or Jev parity claim. Tiny target sets are descriptive only.",
     }
