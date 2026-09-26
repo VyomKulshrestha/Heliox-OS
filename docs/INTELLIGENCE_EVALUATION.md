@@ -406,7 +406,7 @@ import. It requires an observed image, exactly one supported mouse action,
 and the immediately following numbered image; rejects missing, unsafe-labeled,
 oversized, or malformed records; retains only 16×16 grayscale features; and
 keeps identical task descriptions in the same train/validation/evaluation
-partition. A source JSONL hash, feature hash, and exclusion counts are
+partition. A source JSONL hash, sampled-image digest, feature hash, and exclusion counts are
 recorded. The importer has synthetic contract tests but **has not been run on
 the public archive**, which is much larger than this bounded experiment.
 An ordered next screenshot is still not proof of a causal effect: app state can

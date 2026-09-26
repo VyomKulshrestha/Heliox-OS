@@ -65,6 +65,7 @@ def test_local_import_and_trainer_contract_are_episode_disjoint(tmp_path, monkey
                                   "--features", str(features), "--report", str(report),
                                   "--max-trajectories", "6"])
     main()
+    assert len(json.loads(report.read_text(encoding="utf-8"))["sampled_images_sha256"]) == 64
     partitions = load_features(features, report)
     assert sum(len(partition["state"]) for partition in partitions.values()) == 6
     assert set(partitions) == {"train", "validation", "eval"}
