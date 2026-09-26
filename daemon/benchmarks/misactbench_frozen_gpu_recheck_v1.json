@@ -1,0 +1,55 @@
+{
+  "purpose": "human_action_text_only_research_recheck",
+  "date_local": "2026-09-26",
+  "dataset": "osunlp/MisActBench",
+  "dataset_sha256": "b62c7eb4a6d39f91c7cecd95cf1c96c9ab887a85369b6c48fe402c9f5db8ea95",
+  "license": "CC-BY-4.0",
+  "hardware": {
+    "gpu": "NVIDIA GeForce RTX 4060 Laptop GPU",
+    "driver": "617.14",
+    "windows_pytorch": "2.6.0+cu124",
+    "wsl_pytorch": "2.6.0+cu124"
+  },
+  "lora_training": {
+    "status": "incomplete",
+    "first_attempt": "Abandoned after detecting that token filtering changed frozen test selection; checkpoint at 96/384 rows, with a Windows CUDA illegal-instruction event.",
+    "corrected_attempt": "Identical eligible-case filtering and trajectory-disjoint split; Windows CUDA illegal instruction after checkpoint row 16/384. WSL identity-checked resume reached checkpoint row 32/384, then failed with CUBLAS_STATUS_EXECUTION_FAILED.",
+    "system_events": "Windows nvlddmkm events 13 and 153 coincided with both Windows and WSL failures.",
+    "trained_artifact": null,
+    "held_out_metrics": null
+  },
+  "frozen_qwen3_0_6b_features": {
+    "train_rows": 256,
+    "calibration_rows": 64,
+    "inspected_test_rows": 96,
+    "gpu_extraction": "complete_without_fault",
+    "peak_allocated_vram_gib": 1.44,
+    "feature_report_sha256": "bf60d0cb34816d13001180a3b46222c72c9e7ac53e90ff46a34ee5c8210a8837",
+    "cpu_head_report_sha256": "038c0068d9c0fbc59275d25dc0584ebbe053823416e77e88b230f5d4dfdae289",
+    "inspected_test": {
+      "auc": 0.6649305555555555,
+      "default_false_allowances": 19,
+      "default_false_warnings": 16,
+      "calibration_threshold_false_allowances": 0,
+      "calibration_threshold_false_warnings": 48
+    },
+    "one_shot_additional_test": {
+      "rows": 64,
+      "source_report_sha256": "19ad6d2d4bf4b04837eab1d74a1ba42ad24c237e53a4c52a934bf52788c28c32",
+      "auc": 0.48828125,
+      "default_false_allowances": 17,
+      "default_false_warnings": 14,
+      "calibration_threshold_false_allowances": 0,
+      "calibration_threshold_false_warnings": 32
+    }
+  },
+  "two_prior_actions_ablation": {
+    "feature_report_sha256": "f4440d5b713577676e0fc3f9466e38b7a3b84f0c4dd3ac28ff93c678c1139dc7",
+    "cpu_head_report_sha256": "f70603fe8e83e9c4f62db930fc51af7b871cb18afb1faf22c43558c380154253",
+    "inspected_test_auc": 0.6336805555555556,
+    "default_false_allowances": 25,
+    "default_false_warnings": 10,
+    "interpretation": "History text did not improve this inspected test; not selected for runtime."
+  },
+  "conclusion": "The additional unseen-trajectory result is near chance and the cautious cutoff rejects every valid tested action. No research head is promoted, redistributed, or used to authorize Heliox actions. This is not Jev parity, full multimodal MisActBench, live desktop safety, or sustained GPU training stability."
+}

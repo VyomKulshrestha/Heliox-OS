@@ -1117,8 +1117,9 @@ one-per-trajectory, label-balanced sample from the CC BY 4.0
 The public set contains 2,264 human-labeled computer-use actions across 558
 trajectories. Only the user instruction and proposed action were provided; the
 screenshots and full history required by the benchmark were unavailable in
-this text-only probe. It falsely allowed **36/48** misaligned actions, falsely
-warned on **12/48** aligned actions, and ranked them at **0.491 AUC**. This is
+this text-only probe. Under the benchmark's broader action-alignment question,
+the adapter falsely allowed **46/48** misaligned actions, falsely warned on
+**0/48** aligned actions, and ranked them at **0.511 AUC**. This is
 not a full MisActBench result or comparable with the paper's multimodal
 baselines. The [frozen transfer report](../daemon/benchmarks/misactbench_text_transfer_v1.json)
 pins the annotation and adapter hashes; the
@@ -1128,6 +1129,42 @@ observations and compact history summaries materially aid action alignment,
 which reinforces the need to evaluate task state rather than isolated text.
 The separate ScopeJudge test logits also rank its 55 violations at only 0.505
 AUC, so cutoff tuning cannot rescue this frozen model's discrimination.
+
+### Human-action head and fresh trajectory check
+
+To test whether public human labels improve the representation, a separate
+research path selects 256 fit, 64 calibration, and 96 test actions with one
+action per trajectory. It filters by the model's token budget *before* selecting
+the frozen test groups; a first LoRA attempt was abandoned when an audit found
+that inconsistent filtering had changed the group selection. The corrected
+FP16 LoRA attempt stopped after 16 checkpointed rows on Windows and 32 after
+an identity-checked WSL resume. Both produced CUDA execution failures with
+`nvlddmkm` events 13/153. Neither produced a trained adapter or test metric.
+
+A lower-load frozen Qwen3-0.6B feature pass completed all 416 selected actions
+on the GPU. A CPU logistic head picked regularization on calibration labels
+alone. On the already inspected 96-action test, it reached 0.665 AUC and
+falsely allowed 19/48 off-task actions at the default cutoff. Two prior action
+texts reduced this test AUC to 0.634 and increased false allowances to 25/48;
+it was not selected. The no-history head was then frozen and evaluated once on
+64 **additional trajectories excluded from fit, calibration, and both earlier
+tests**. It ranked them at only **0.488 AUC**, falsely allowing **17/32**
+off-task actions and falsely warning on **14/32** aligned ones. Its
+calibration-derived cautious cutoff allowed none but rejected **all 32** valid
+actions. These results are in the
+[pinned diagnostic](../daemon/benchmarks/misactbench_frozen_gpu_recheck_v1.json),
+with checksums for the ignored local artifacts. The extra test invalidates a
+generalization claim from the first 96 cases. No head is enabled in Heliox.
+
+The reproducible experiment uses
+[`extract_misactbench_frozen_features.py`](../daemon/scripts/extract_misactbench_frozen_features.py),
+[`fit_misactbench_frozen_head.py`](../daemon/scripts/fit_misactbench_frozen_head.py),
+and [`evaluate_misactbench_fresh.py`](../daemon/scripts/evaluate_misactbench_fresh.py).
+It remains text-only: click coordinates, on-screen injections, and changed UI
+state may be impossible to interpret without the corresponding observation.
+The paper's compact narrative summaries include **observed before/after UI
+state**, not just earlier action commands; the failed two-action-text ablation
+does not refute that approach.
 
 An additional source check found the Apache-2.0
 [`ProCreations/auto`](https://huggingface.co/datasets/ProCreations/auto)
