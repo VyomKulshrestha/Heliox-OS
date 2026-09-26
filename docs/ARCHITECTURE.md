@@ -260,6 +260,10 @@ blocked, and failed work renders as an error; cancellation, interruption, and
 live replanning render as neutral system states. Complex cloud planning has a
 bounded 35-second generation budget, while deterministic local status paths do
 not wait for model-provider advisory work.
+For successful state-changing actions, terminal wording distinguishes a
+reported executor success from an independently observed postcondition.
+Unobserved effects retain a visible caveat rather than being called verified;
+read-only result data is not treated as a state-changing postcondition.
 
 ### 6. Hybrid world model
 

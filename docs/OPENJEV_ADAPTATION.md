@@ -1374,6 +1374,32 @@ or approval path. A consented, grouped live-desktop benchmark with human
 adjudication and materially lower false-allowance and false-warning rates is
 needed before any promotion discussion.
 
+A second, **fresh task-group transfer** check isolated the difference between
+prediction and verification. A prospective-only input omitted the next
+observation while retaining the same task, current observation, action, and
+command. Its separately frozen head reached only 0.719 AUC on development,
+versus 0.824 with the next observation. We then reserved 256 entirely unused
+task groups **before** extracting either view for transfer and compared the
+unchanged heads on the same 128 general and 128 VS Code actions. The
+[paired report](../daemon/benchmarks/agentnet_paired_fresh_transfer_v1.json)
+shows post-action versus pre-action AUC of **0.849 versus 0.709** on general
+tasks, and **0.816 versus 0.551** on VS Code. At the pre-action
+calibration-only cautious cutoff, VS Code still had **5/64** incorrect
+outcomes falsely allowed and **61/64** correct outcomes warned. The
+post-action cutoff allowed none in this sample but warned on **61/64** correct
+VS Code outcomes. Paired bootstrap intervals for the post-minus-pre AUC
+difference exclude zero on these sampled groups; they do not generalize beyond
+this model-generated-label corpus. Neither head can authorize action.
+
+This gap matches the motivation for explicit expected-effect and observed-
+effect loops in [VeriGUI](https://aclanthology.org/2026.acl-long.1335/), and
+for multi-step contextual-consistency evaluation in
+[GUI-CC](https://arxiv.org/abs/2609.00048). Those papers motivate a research
+direction; their results are not Heliox results. The immediate product-side
+correction is narrower: terminal responses now distinguish executor-reported
+effects from independently verified postconditions without changing policy,
+approvals, or the verifier.
+
 ## Reproduction and release boundary
 
 The offline probes need `onnx`, `onnxruntime`, `pyarrow`, `tokenizers`,
