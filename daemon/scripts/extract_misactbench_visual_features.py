@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import os
+import random
 import sys
 from pathlib import Path
 
@@ -36,6 +37,8 @@ def main() -> None:
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--text-only", action="store_true",
                         help="Paired ablation using identical cases and prompt but no image tokens")
+    parser.add_argument("--image-shift-seed", type=int,
+                        help="Diagnostic: pair each action with a different case's screenshot")
     args = parser.parse_args()
     if (not 640 <= args.max_side <= 1280 or args.checkpoint_every < 1
             or args.report.exists() or (args.output.exists() and not args.resume)):
@@ -46,9 +49,15 @@ def main() -> None:
     case_ids = manifest["case_ids"]
     if not 1 <= len(case_ids) <= 512 or len(set(case_ids)) != len(case_ids):
         raise ValueError("Feature manifest must contain 1-512 unique actions")
+    if args.image_shift_seed is not None and (args.text_only or len(case_ids) < 2):
+        parser.error("Image-shift diagnostics require at least two visual cases")
     trajectories = json.loads(args.dataset.read_text(encoding="utf-8"))
-    image_paths = [args.image_dir / (case_id.replace(":", "_") + ".png")
-                   for case_id in case_ids]
+    original_image_paths = [args.image_dir / (case_id.replace(":", "_") + ".png")
+                            for case_id in case_ids]
+    image_paths = original_image_paths
+    if args.image_shift_seed is not None:
+        shift = random.Random(args.image_shift_seed).randrange(1, len(case_ids))
+        image_paths = image_paths[shift:] + image_paths[:shift]
     image_hashes = [hashlib.sha256(path.read_bytes()).hexdigest() for path in image_paths]
     identity = {"model": MODEL, "revision": REVISION,
                 "dataset_sha256": DATASET_SHA256,
@@ -58,6 +67,10 @@ def main() -> None:
                 "cases": list(zip(case_ids, image_hashes, strict=True))}
     if args.text_only:
         identity["text_only"] = True
+    if args.image_shift_seed is not None:
+        identity["image_shift_seed"] = args.image_shift_seed
+        identity["image_shift_offset"] = shift
+        identity["original_coordinate_metadata_preserved"] = True
     signature = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
     done_features = []
     if args.output.exists():
@@ -95,10 +108,17 @@ def main() -> None:
             image = source.convert("RGB")
         original = image.size
         image.thumbnail((args.max_side, args.max_side))
+        displayed = image.size
+        if args.image_shift_seed is not None:
+            with Image.open(original_image_paths[index]) as source:
+                reference = source.convert("RGB")
+            original = reference.size
+            reference.thumbnail((args.max_side, args.max_side))
+            displayed = reference.size
         prompt = PROMPT_V2.format(instruction=trajectory["instruction"],
                                   action=trajectory["steps"][step_id]["agent_output"],
                                   original_size=f"{original[0]}x{original[1]}",
-                                  displayed_size=f"{image.width}x{image.height}")
+                                  displayed_size=f"{displayed[0]}x{displayed[1]}")
         content = [{"type": "text", "text": prompt}]
         if not args.text_only:
             content.insert(0, {"type": "image", "image": image})
