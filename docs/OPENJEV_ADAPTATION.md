@@ -1224,12 +1224,16 @@ That is evidence of **two completed runs**, not proof the earlier CUDA/
 The 16-action smoke head falsely allowed all eight off-task actions. The
 larger run's 64-action test went to the opposite extreme: **0/32 false
 allowances but 32/32 false warnings**; its aligned-action ranking AUC was
-only 0.600. Open-Jev held-out top-1 was 0.500 on 58 actions and 0.704 on
-27 OOD actions. Different seeds and sample sizes make the two runs' scores
-non-comparable. The [post-update GPU report](../daemon/benchmarks/qwen_misact_post_update_gpu_v1.json)
+only 0.600. A cutoff chosen from 32 calibration actions alone still falsely
+allowed **1/32** held-out off-task actions and warned on **27/32** valid ones;
+the calibration AUC was 0.703. Open-Jev held-out top-1 was 0.500 on 58
+actions and 0.704 on 27 OOD actions. Different seeds and sample sizes make
+the two runs' scores non-comparable. The [post-update GPU report](../daemon/benchmarks/qwen_misact_post_update_gpu_v1.json)
 pins raw local report and artifact hashes. The adapters remain ignored local
 research artifacts and are not loaded by Heliox. A completed GPU job cannot
 turn an always-allow or always-reject action judge into a usable safety layer.
+The [calibration check](../daemon/scripts/check_misactbench_calibration.py)
+verifies group disjointness and chooses that cautious cutoff without test labels.
 
 An additional source check found the Apache-2.0
 [`ProCreations/auto`](https://huggingface.co/datasets/ProCreations/auto)
