@@ -41,6 +41,7 @@ def load_features(path: Path, source_report: Path) -> dict[str, dict[str, np.nda
         result[split] = {
             "state": states[indices], "target": targets[indices],
             "action_type": types[indices], "action_bound": bound[indices],
+            "groups": groups[indices],
         }
     if any(group_sets[left] & group_sets[right] for left, right in
            (("train", "validation"), ("train", "eval"), ("validation", "eval"))):
@@ -61,6 +62,31 @@ def action_permutation(types: np.ndarray, rng: np.random.Generator) -> np.ndarra
 def weighted_mse(predicted: np.ndarray, state: np.ndarray, target: np.ndarray) -> float:
     weights = 1 + 4 * (np.abs(target - state) >= 0.01)
     return float((((predicted - target) ** 2) * weights).mean())
+
+
+def clustered_advantage(
+    type_errors: np.ndarray, bound_errors: np.ndarray, groups: np.ndarray, *, seed: int,
+) -> dict[str, float | int]:
+    """Bootstrap trajectories, not correlated steps, for a paired MSE gap."""
+    if (type_errors.shape != bound_errors.shape or groups.shape != type_errors.shape
+            or not len(groups)):
+        raise ValueError("Paired errors and trajectory groups must align")
+    unique = np.unique(groups)
+    indices = [np.flatnonzero(groups == group) for group in unique]
+    rng = np.random.default_rng(seed)
+    samples = []
+    difference = type_errors - bound_errors
+    for _ in range(1000):
+        selected = rng.integers(0, len(unique), size=len(unique))
+        sampled_rows = np.concatenate([indices[index] for index in selected])
+        samples.append(float(difference[sampled_rows].mean()))
+    lower, upper = np.quantile(samples, [0.025, 0.975])
+    return {
+        "groups": len(unique),
+        "type_minus_bound_weighted_mse": float(difference.mean()),
+        "cluster_bootstrap_95_low": float(lower),
+        "cluster_bootstrap_95_high": float(upper),
+    }
 
 
 def main() -> None:
@@ -85,6 +111,7 @@ def main() -> None:
     device = torch.device("cuda:0" if args.device == "cuda" else "cpu")
     torch.manual_seed(args.seed)
     results = {}
+    per_row_errors: dict[str, dict[str, np.ndarray]] = {}
     for action_key in ("action_type", "action_bound"):
         torch.manual_seed(args.seed)
         model = nn.Sequential(
@@ -96,6 +123,7 @@ def main() -> None:
         arrays = {split: {
             key: torch.from_numpy(value).to(device)
             for key, value in partition.items()
+            if key != "groups"
         } for split, partition in rows.items()}
 
         def predict(partition, action, model=model):
@@ -129,11 +157,14 @@ def main() -> None:
         model.load_state_dict(best_weights)
         model.eval()
         split_scores = {}
+        per_row_errors[action_key] = {}
         with torch.no_grad():
             for split in ("validation", "eval"):
                 partition, tensors = rows[split], arrays[split]
                 state, target = partition["state"], partition["target"]
                 correct = predict(tensors, tensors[action_key]).cpu().numpy()
+                weights = 1 + 4 * (np.abs(target - state) >= 0.01)
+                per_row_errors[action_key][split] = (((correct - target) ** 2) * weights).mean(axis=1)
                 rng = np.random.default_rng(args.seed + (1 if split == "validation" else 2))
                 shuffle_scores = []
                 for _ in range(args.permutations):
@@ -161,6 +192,13 @@ def main() -> None:
         "action_permutations": args.permutations,
         "split_basis": "whole_trajectory_not_website",
         "results": results,
+        "paired_type_vs_bound": {
+            split: clustered_advantage(
+                per_row_errors["action_type"][split],
+                per_row_errors["action_bound"][split],
+                rows[split]["groups"], seed=args.seed + (11 if split == "validation" else 12),
+            ) for split in ("validation", "eval")
+        },
         "limitation": "Hashed accessibility features, small sampled trajectories, no site-disjoint transfer. "
                       "Shuffling compares observed actions from other states, not verified same-state counterfactuals. "
                       "No runtime model, safety, autonomy, or Jev parity claim.",

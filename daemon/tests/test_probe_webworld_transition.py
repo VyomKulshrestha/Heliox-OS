@@ -6,7 +6,12 @@ import json
 import numpy as np
 import pytest
 
-from scripts.probe_webworld_transition import action_permutation, load_features, weighted_mse
+from scripts.probe_webworld_transition import (
+    action_permutation,
+    clustered_advantage,
+    load_features,
+    weighted_mse,
+)
 
 
 def _archive(tmp_path, *, leak: bool = False):
@@ -42,3 +47,14 @@ def test_shuffle_keeps_action_types_and_metric_rewards_correct_target() -> None:
     state = np.zeros((1, 4), dtype=np.float32)
     target = np.ones((1, 4), dtype=np.float32)
     assert weighted_mse(target, state, target) < weighted_mse(state, state, target)
+
+
+def test_clustered_advantage_resamples_whole_trajectories() -> None:
+    result = clustered_advantage(
+        np.array([0.2, 0.2, 0.3]), np.array([0.1, 0.1, 0.2]),
+        np.array([1, 1, 2]), seed=7,
+    )
+    assert result["groups"] == 2
+    assert result["cluster_bootstrap_95_low"] > 0
+    with pytest.raises(ValueError, match="align"):
+        clustered_advantage(np.array([0.1]), np.array([0.2, 0.3]), np.array([1]), seed=7)
