@@ -17,7 +17,10 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from benchmarks.general_decision import (  # noqa: E402
-    DATASET_REVISION, candidate_prompts, load_split, verify_disjoint,
+    DATASET_REVISION,
+    candidate_prompts,
+    load_split,
+    verify_disjoint,
 )
 
 MODEL = "Qwen/Qwen3.5-2B"
