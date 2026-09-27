@@ -405,7 +405,7 @@ def main() -> None:
         "reset_identity": f"identical visible control coordinates, task DOM, and {args.feature_size}x{args.feature_size} pre-action features; "
         "full screenshot bytes may differ by rendering noise",
         "counterfactual_pairs": True,
-        "split_basis": "task_family",
+        "split_basis": "task_page",
         "cross_split_identical_prestates": 0,
         "rows": dict(Counter(row["split"] for row in rows)),
         "groups": {split: len({row["group"] for row in rows if row["split"] == split}) for split in tasks},
