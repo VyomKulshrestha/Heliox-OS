@@ -3,7 +3,20 @@
 import numpy as np
 
 from scripts import probe_miniwob_multistep_qwen as probe
-from scripts.probe_miniwob_multistep_qwen import available_choices, navigation_baseline, rollout_prompt
+from scripts.probe_miniwob_multistep_qwen import (
+    available_choices,
+    navigation_baseline,
+    parse_action_index,
+    rollout_prompt,
+)
+
+
+def test_action_index_accepts_only_bare_or_prefixed_integer() -> None:
+    assert parse_action_index("1", 3) == 1
+    assert parse_action_index("Index: 1", 3) == 1
+    assert parse_action_index("index: 1.", 3) == 1
+    assert parse_action_index("1 or 2", 3) is None
+    assert parse_action_index("Index: 3", 3) is None
 
 
 def test_delayed_terminal_reward_is_checked_after_ui_settles(monkeypatch) -> None:
@@ -79,6 +92,23 @@ def test_navigation_baseline_explores_popup_with_hover() -> None:
     ]
     history = [{"label": "Menu", "x": 10, "y": 20, "gesture": "click"}]
     assert navigation_baseline('Find "Next".', controls, history) == "1"
+
+
+def test_navigation_baseline_follows_named_controls_before_submit() -> None:
+    controls = [
+        {"label": "Submit", "tag": "button", "x": 10, "y": 20, "gesture": "click"},
+        {"label": "orRz4", "tag": "input", "x": 30, "y": 40, "gesture": "click"},
+        {"label": "dVSD4kc", "tag": "input", "x": 50, "y": 60, "gesture": "click"},
+    ]
+    goal = "Select orRz4, dVSD4kc and click Submit."
+    assert navigation_baseline(goal, controls, []) == "1"
+    assert navigation_baseline(goal, controls, [
+        {"label": "orRz4", "x": 30, "y": 40, "gesture": "click"},
+    ]) == "2"
+    assert navigation_baseline(goal, controls, [
+        {"label": "orRz4", "x": 30, "y": 40, "gesture": "click"},
+        {"label": "dVSD4kc", "x": 50, "y": 60, "gesture": "click"},
+    ]) == "0"
 
 
 def test_navigation_baseline_matches_visible_icon_hint() -> None:

@@ -21,6 +21,11 @@ from scripts.collect_miniwob_reward_actions import candidate_actions, goal_descr
 from scripts.probe_miniwob_reward_qwen import MODEL_REVISIONS, parse_index
 
 
+def parse_action_index(answer: str, count: int) -> int | None:
+    """Accept a bare index or the model's unambiguous `Index: N` echo."""
+    return parse_index(re.sub(r"^\s*Index:\s*", "", answer, flags=re.IGNORECASE), count)
+
+
 def navigation_baseline(goal: str, controls: list[dict], history: list[dict]) -> str:
     """Exact visible target, otherwise explore an unvisited navigation control."""
     quoted = re.findall(r'"([^"]+)"', goal)
@@ -40,6 +45,16 @@ def navigation_baseline(goal: str, controls: list[dict], history: list[dict]) ->
                 if (control["gesture"] == "click"
                         and tokens[-1] in str(control.get("icon_hint", "")).casefold().split()):
                     return str(index)
+    mentioned = []
+    for index, control in enumerate(controls):
+        label = str(control["label"]).strip()
+        if not label or control["gesture"] != "click" or label.casefold() in clicked:
+            continue
+        match = re.search(r"(?<!\w)" + re.escape(label) + r"(?!\w)", goal, re.IGNORECASE)
+        if match:
+            mentioned.append((match.start(), index))
+    if mentioned:
+        return str(min(mentioned)[1])
     visited = {(row["label"], row["x"], row["y"], row["gesture"]) for row in history}
     for index, control in enumerate(controls):
         if (control.get("has_popup") == "true" and control["gesture"] == "hover"
@@ -115,7 +130,7 @@ def run_episode(browser, assets: PinnedAssets, task: str, seed: str, max_steps: 
             visible_history = [{key: value for key, value in row.items() if key != "state_sha256"}
                                for row in history]
             raw_choice = choose(goal, controls, visible_history)
-            choice = parse_index(raw_choice, len(controls))
+            choice = parse_action_index(raw_choice, len(controls))
             if choice is None:
                 stop_reason = "invalid_index"
                 invalid_output = raw_choice[:80]
