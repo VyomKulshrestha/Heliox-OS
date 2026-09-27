@@ -826,11 +826,15 @@ That gate **failed**: three of four requested task families yielded no
 verified distinct-outcome pairs, and on the 11 valid `click-button` pairs the
 model preferred the correct action only **4/11** times, with a negative mean
 margin. Its predicted pair separation was far below the observed separation.
+An ensuing training-source audit found that `click-button` was already a fit
+task for this frozen model. The prior report's **unseen-family** label for
+those 11 pairs is incorrect; the frozen report remains preserved with this
+explicit erratum.
 The [frozen result](../daemon/benchmarks/world_visual_delta_stopgrad_seed700_results_v1.json)
-therefore rejects broad unseen-family transfer; no claim is made for the three
-families without valid pairs.
+therefore fails its prospective gate; that collection cannot establish
+unseen-family transfer because the other three families had no valid pairs.
 An exploratory 64×64 follow-up used the same small objective on a separately
-collected public split. On 12 unseen `click-button` pairs, it reached **8/12**
+collected public split. On 12 `click-button` pairs, it reached **8/12**
 correct-action wins, but the mean margin still favored the wrong action and
 predicted pair effects remained far below observed effects. See the
 [resolution check](../daemon/benchmarks/world_visual_resolution64_exploratory_v1.json).
@@ -842,9 +846,29 @@ the paper-inspired model has no live loader. From `daemon/`, use
 `python -m scripts.train_world_visual_delta_latent --help` and
 `python -m scripts.probe_world_visual_delta_latent_transfer --help` to inspect
 the bounded GPU protocol. Hash checks reject mismatched source features or
-model weights. The failed unseen-family result blocks runtime promotion; the
+model weights. The failed transfer evidence blocks runtime promotion; the
 current 16×16 representation and one-step click-only supervision do not
 establish Jev-like multistep planning or general desktop transfer.
+
+The follow-up [branch coverage and transfer audit](../daemon/benchmarks/world_branch_transfer_seed700_results_v1.json)
+expanded valid evaluation coverage to 47 pairs across four families using
+painted-control and neutral-action candidates. Its frozen collection gate
+still failed because one reset was unstable. The old model won 27/47 pair
+rankings with a negative mean margin, far below its frozen transfer gate.
+Per-family observed pixel separation shows why the total is misleading:
+`click-color` and `click-dialog` supplied 23/23 wins but only about 0.00003 to
+0.00004 mean full-frame pair MSE, whereas the visibly divergent `click-test`
+family was 0/12 (about 0.217 pair MSE). The already-seen `click-button` family
+was 4/12. A matched two-seed 200 ms post-click delay left all four families'
+observed pair MSE unchanged, so that experimental collector option was removed.
+
+[Dream-RSI](https://arxiv.org/abs/2609.14858) motivates replaying recorded
+exploration to choose better experiments without repeatedly spending online
+evaluations; it leaves the underlying coding agent unchanged. Here replay
+informed data-coverage and scoring choices, **not** a claim that replay trained
+the Heliox world model or that its discovered policy transfers to live desktop
+tasks. The next model study needs task-disjoint, materially differentiable
+transitions and a fresh frozen evaluation before any promotion discussion.
 
 An opt-in local recorder can collect after/before 16×16 pairs around approved
 Heliox mouse actions. Its explicit offline trainer holds decrypted features

@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "purpose": "frozen_world_branch_coverage_and_model_transfer_audit",
+  "coverage_protocol": "world_branch_coverage_seed700_protocol_v1.json",
+  "transfer_protocol": "world_branch_transfer_seed700_protocol_v1.json",
+  "source_commit": "33c3b4ddef8c6eb67c57a29663d844b1eda7e614",
+  "features_sha256": "82697ec42e6d4fa7956420de29e2e5615b45bc4a250d24b26f8b6b10c7e8b5b9",
+  "collection_report_sha256": "944bd543c9c2a884024327fcbc96e5095a827a5db54b8d8f47a114fba81c7656",
+  "scoring_report_sha256": "31dee4906ea06106edb9b1fc7923f22e8c2d848e53aa4e3d18617fca027eef02",
+  "training_task_overlap": ["click-button"],
+  "coverage": {
+    "train_pairs": 12,
+    "validation_pairs": 12,
+    "eval_pairs": 47,
+    "eval_pairs_by_task": {"click-button": 12, "click-color": 12, "click-dialog": 11, "click-test": 12},
+    "excluded_unstable_eval_resets": 1,
+    "minimum_coverage_met": true,
+    "zero_unstable_resets_gate_met": false,
+    "overall_coverage_gate_met": false
+  },
+  "frozen_model": {
+    "correct_action_wins": 27,
+    "eval_pairs": 47,
+    "mean_latent_mse_advantage": -0.00003547716806543634,
+    "observed_pair_latent_mse": 0.03930484503507614,
+    "predicted_pair_latent_mse": 0.0000006175623639137484,
+    "minimum_correct_action_fraction_met": false,
+    "positive_mean_advantage_met": false,
+    "predicted_to_observed_pair_mse_ratio_met": false,
+    "overall_transfer_gate_met": false
+  },
+  "task_diagnostic": {
+    "click-button": {"train_task_name_overlap": true, "correct_action_wins": 4, "pairs": 12,
+                     "mean_observed_pair_pixel_mse": 0.10282302647829056},
+    "click-color": {"train_task_name_overlap": false, "correct_action_wins": 12, "pairs": 12,
+                    "mean_observed_pair_pixel_mse": 0.00003863076926791109},
+    "click-dialog": {"train_task_name_overlap": false, "correct_action_wins": 11, "pairs": 11,
+                     "mean_observed_pair_pixel_mse": 0.00002974624112539459},
+    "click-test": {"train_task_name_overlap": false, "correct_action_wins": 0, "pairs": 12,
+                   "mean_observed_pair_pixel_mse": 0.2174598127603531}
+  },
+  "settle_probe": {"delay_ms": 200, "matched_seeds_per_task": 2,
+                   "observed_pair_pixel_mse_changed": false,
+                   "decision": "Do not add a post-click delay to the collector"},
+  "erratum": "The prior seed-700 report called click-button an unseen task family. Hash-verified fit-source task lists show click-button in the model's training tasks. The previous report remains preserved; its unseen-family wording must not be used as evidence.",
+  "interpretation": "Aggregate 27/47 wins are misleading: 23 wins came from families whose alternative outcomes differ by only about 3-4e-5 full-frame pixel MSE, while the substantial-change click-test family was 0/12. The old model is rejected. Pixel MSE is a signal diagnostic, not a task-value or safety label.",
+  "limitations": "Synthetic one-step browser tasks only; no new model trained here, no real-desktop transfer, multistep planning, execution authority, physical-world validation, or Jev parity.",
+  "promoted_to_runtime": false
+}
