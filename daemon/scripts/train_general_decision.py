@@ -367,6 +367,10 @@ def load_checkpoint(path: Path, backbone, head, optimizer, *, signature: str,
 
 
 def run(args: argparse.Namespace) -> dict:
+    if args.initial_openjev:
+        from scripts.openjev_training_runtime import require_training_runtime
+
+        require_training_runtime()
     import torch
     from huggingface_hub import snapshot_download
     from peft import LoraConfig, PeftModel, get_peft_model, prepare_model_for_kbit_training
