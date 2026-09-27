@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "purpose": "frozen_unseen_family_delta_latent_confirmation",
+  "frozen_before_collection": true,
+  "model": {
+    "training_report_sha256": "8ce81c5b05795606c99ce04cdb1a7fff95c0f6b2a6354906dda8d1e745340fb5",
+    "weights_sha256": "f764ed2e6bd7e827e009d0a41900ece9f6a02d253ebc78839dbcfdbe845f18a5",
+    "inverse_weight": 1.0,
+    "reconstruction_weight": 1.0,
+    "pairwise_floor": 0.0001,
+    "stop_gradient_target": true,
+    "selected_epoch": 1
+  },
+  "collector": {
+    "source_commit": "33c3b4ddef8c6eb67c57a29663d844b1eda7e614",
+    "train_tasks": ["click-link"],
+    "validation_tasks": ["click-option"],
+    "eval_tasks": ["click-button", "click-color", "click-dialog", "click-test"],
+    "samples_per_task": 12,
+    "seed_start": 700,
+    "feature_size": 16,
+    "max_candidates": 8,
+    "selection": "first two candidate clicks with distinct observed next-screen features"
+  },
+  "gates": {
+    "minimum_eval_pairs": 30,
+    "minimum_correct_action_fraction": 0.8,
+    "minimum_mean_mse_advantage": 0.0,
+    "minimum_predicted_to_observed_pair_mse_ratio": 0.25,
+    "maximum_predicted_to_observed_pair_mse_ratio": 4.0,
+    "inverse_coordinate_mae_below_center_baseline": true
+  },
+  "interpretation": "Passing these one-step selected synthetic GUI gates would support further research, not Heliox runtime promotion, multistep desktop autonomy, safe execution, or Jev parity. Failed or insufficient data leaves the model research-only."
+}

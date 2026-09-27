@@ -126,6 +126,8 @@ def main() -> None:
     parser.add_argument("--weights", type=Path, default=state_dir / "visual_delta_latent_v1.pt")
     parser.add_argument("--inverse-weight", type=float, default=1.0)
     parser.add_argument("--reconstruction-weight", type=float, default=0.0)
+    parser.add_argument("--stop-gradient-target", action="store_true",
+                        help="Keep the forward objective from collapsing its own target representation")
     parser.add_argument("--pairwise-weight", type=float, default=1.0)
     parser.add_argument("--pairwise-floor", type=float, default=1e-4,
                         help="Numerical floor for normalized paired latent change")
@@ -180,9 +182,10 @@ def main() -> None:
     def objective(batch: dict[str, Any]) -> tuple[Any, Any, Any]:
         before = model.encode(batch["state"].reshape(-1, channels, height, width))
         after = model.encode(batch["target"].reshape(-1, channels, height, width))
+        forward_target = after.detach() if args.stop_gradient_target else after
         predicted = model(before, batch["action"])
-        forward_loss = ((predicted - after) ** 2).mean()
-        expected_change = after[0::2] - after[1::2]
+        forward_loss = ((predicted - forward_target) ** 2).mean()
+        expected_change = forward_target[0::2] - forward_target[1::2]
         predicted_change = predicted[0::2] - predicted[1::2]
         pair_loss = ((predicted_change - expected_change) ** 2).mean() / (
             (expected_change.detach() ** 2).mean() + args.pairwise_floor)
@@ -230,6 +233,7 @@ def main() -> None:
         "latent_dim": args.latent_dim,
         "inverse_weight": args.inverse_weight,
         "reconstruction_weight": args.reconstruction_weight,
+        "stop_gradient_target": args.stop_gradient_target,
         "pairwise_weight": args.pairwise_weight,
         "pairwise_floor": args.pairwise_floor,
         "selection": "lowest forward-plus-paired-plus-optional-reconstruction validation loss; inverse excluded",
