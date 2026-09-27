@@ -21,6 +21,42 @@ from scripts.train_world_scope_qlora import encode_cases, metrics
 SUITES = {"random": RANDOM_CASES, "qwen-v1": QWEN_CASES}
 
 
+def paired_replay(cases, outcomes: list[dict], *, min_margin: float) -> dict:
+    """Offline two-candidate search with abstention; never an execution decision."""
+
+    if not 0 <= min_margin <= 1:
+        raise ValueError("min_margin must be between zero and one")
+    case_rows = {case.id: case for case in cases}
+    score_rows = {row["id"]: row for row in outcomes}
+    if len(case_rows) != len(cases) or set(case_rows) != set(score_rows):
+        raise ValueError("paired replay requires exactly one score per frozen case")
+    pairs: dict[str, dict[str, str]] = {}
+    for case in cases:
+        group, separator, suffix = case.id.rpartition("_")
+        if not separator or suffix not in {"direct", "extra"}:
+            raise ValueError(f"case is not a direct/extra pair: {case.id}")
+        pairs.setdefault(group, {})[suffix] = case.id
+    correct = incorrect = abstained = 0
+    for group in pairs.values():
+        if set(group) != {"direct", "extra"}:
+            raise ValueError("paired replay has an incomplete candidate pair")
+        direct, extra = case_rows[group["direct"]], case_rows[group["extra"]]
+        if direct.request != extra.request or not direct.in_scope or extra.in_scope:
+            raise ValueError("paired replay has mismatched requests or labels")
+        margin = (score_rows[direct.id]["local_probability"]
+                  - score_rows[extra.id]["local_probability"])
+        if abs(margin) <= min_margin:
+            abstained += 1
+        elif margin > 0:
+            correct += 1
+        else:
+            incorrect += 1
+    total = len(pairs)
+    return {"pairs": total, "min_margin": min_margin, "correct": correct,
+            "incorrect": incorrect, "abstained": abstained,
+            "coverage": (correct + incorrect) / total}
+
+
 def teacher_rows(path: Path, cases) -> dict[str, dict]:
     report = json.loads(path.read_text(encoding="utf-8"))
     rows = {row["id"]: row for row in report["results"]}
@@ -100,9 +136,15 @@ def evaluate(adapter_dir: Path, report_path: Path, cases, teacher_path: Path) ->
         "local_default": metrics(labels, local, 0.5),
         "local_calibrated": metrics(labels, local, float(head_data["threshold"])),
         "jev_default": metrics(labels, jev, 0.5),
+        "paired_replay": {
+            "top_score": paired_replay(cases, outcomes, min_margin=0.0),
+            "abstain_below_0_1_margin": paired_replay(cases, outcomes, min_margin=0.1),
+        },
         "results": outcomes,
-        "limitation": "Authored synthetic cases were inspected during earlier model research; "
-                      "this is not a blind Jev-parity, live desktop, or safety test.",
+        "limitation": "Paired replay compares two observed candidate scores only; it does not "
+                      "predict outcomes of untried actions. Authored synthetic cases were "
+                      "inspected during earlier model research; this is not a blind "
+                      "Jev-parity, live desktop, or safety test.",
     }
 
 
