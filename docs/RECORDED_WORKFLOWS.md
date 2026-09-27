@@ -44,12 +44,17 @@ exits. Global hooks may miss elevated/UAC screens or fail silently; a manual
 workflow is therefore a draft, not a faithful or safe replay guarantee.
 
 The separate “16×16 before/after screen features” option is off by default
-even when action recording is on. It captures a fresh in-memory feature only
-around a single eligible **Heliox-executed** mouse action, after the normal
-action gates; manual desktop actions do not create visual training pairs. It does
-not write raw screenshots. A short settle interval follows the action; clicks
-outside the captured primary monitor and relative pointer moves are not used
-as visual training labels. Derived features **can still reveal screen
+even when action recording is on. It captures a fresh in-memory feature around
+a single eligible **Heliox-executed** mouse action, after the normal action
+gates. If both manual and visual recording are explicitly enabled, it also
+keeps only the latest quantized feature in memory while the hook runs, using
+it as the pre-action state for a manual click when it is fresh and predates
+the press. Unused frames are discarded, not written to disk. A short settle
+interval follows each action; rapid intervening actions, text entry, stale
+pre-frames, changed screen bounds, and clicks outside the captured primary
+monitor yield no manual visual pair and are counted as visual gaps. Manual
+drags, scrolls, and keyboard actions are recipe steps but not visual training
+pairs. Neither path writes raw screenshots. Derived features **can still reveal screen
 content**; they are encrypted with AES-256-GCM in the local recorded-workflow
 store, with the key held in the OS keyring. Without a working keyring, recording
 fails closed. The normal list/get RPCs and workflow prompts never expose the

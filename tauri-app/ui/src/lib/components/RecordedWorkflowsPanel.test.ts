@@ -53,4 +53,20 @@ describe("recorded workflow consent", () => {
       capture_manual: true, manual_consent: true,
     });
   });
+
+  it("explains rolling visual capture when both manual and visual options are selected", async () => {
+    render(RecordedWorkflowsPanel);
+    await screen.findByRole("button", { name: "Start recording" });
+    await fireEvent.input(screen.getByLabelText("Workflow name"), { target: { value: "Visual review" } });
+    await fireEvent.click(screen.getByLabelText(/I want Heliox to record actions/));
+    await fireEvent.click(screen.getByLabelText(/Also record my manual desktop actions/));
+    await fireEvent.click(screen.getByLabelText(/I consent to a temporary desktop-wide/));
+    await fireEvent.click(screen.getByLabelText(/Also capture local 16×16/));
+    expect(screen.getByText(/rolling in-memory feature supports manual clicks/)).toBeTruthy();
+    await fireEvent.click(screen.getByRole("button", { name: "Start recording" }));
+    expect(daemonMocks.call).toHaveBeenCalledWith("recorded_workflow_start", {
+      name: "Visual review", goal: "", consent: true, capture_visual: true,
+      capture_manual: true, manual_consent: true,
+    });
+  });
 });
