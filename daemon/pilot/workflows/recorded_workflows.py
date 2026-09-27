@@ -538,6 +538,7 @@ class RecordedWorkflowStore:
         if not save:
             return {"saved": False, **self.status()}
         record["schedule"] = None
+        record["feedback"] = []
         try:
             with self._records_lock:
                 records = self._read()
@@ -575,6 +576,7 @@ class RecordedWorkflowStore:
             "placeholders": [str(index) for index, step in enumerate(record["steps"])
                              if step["action_type"] == "manual_text"],
             "schedule": record.get("schedule"),
+            "feedback_count": len(record.get("feedback", [])),
         }
 
     def list(self) -> list[dict[str, Any]]:
@@ -587,6 +589,36 @@ class RecordedWorkflowStore:
                 if record["id"] == workflow_id:
                     return self._public(record)
         raise KeyError("Recorded workflow not found")
+
+    def record_feedback(
+        self, workflow_id: str, *, job_id: str, outcome: str, job_status: str
+    ) -> dict[str, Any]:
+        """Save explicit goal feedback separately from executor status."""
+        if outcome not in {"achieved", "partial", "not_achieved"}:
+            raise ValueError("Choose achieved, partial, or not_achieved")
+        if job_status not in {"success", "partial", "failed", "cancelled"}:
+            raise ValueError("Feedback requires a completed job")
+        if not job_id or len(job_id) > 80:
+            raise ValueError("Invalid job ID")
+        with self._records_lock:
+            records = self._read()
+            record = next((item for item in records if item["id"] == workflow_id), None)
+            if record is None:
+                raise KeyError("Recorded workflow not found")
+            feedback = record.setdefault("feedback", [])
+            if any(item["job_id"] == job_id for item in feedback):
+                raise ValueError("Feedback for this run was already saved")
+            if len(feedback) >= 50:
+                raise ValueError("Maximum of 50 feedback entries reached for this workflow")
+            feedback.append({
+                "job_id": job_id,
+                "reported_outcome": outcome,
+                "executor_status": job_status,
+                "source": "user",
+                "created_at": datetime.now(UTC).isoformat(),
+            })
+            self._write(records)
+            return self._public(record)
 
     def load_research_samples(self) -> list[dict[str, Any]]:
         """Decrypt local visual pairs for an explicit offline training command.

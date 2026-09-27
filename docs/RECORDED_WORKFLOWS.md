@@ -14,6 +14,13 @@ text placeholders cannot be scheduled unattended. Replay is an adaptive
 re-plan through Heliox's existing
 autonomous planner, permission gate, approval prompts, executor, and verifier;
 it is **not** a literal macro or a guarantee that a changed UI will work.
+After a submitted run finishes, the user may optionally rate whether the
+**goal** was achieved, partly achieved, or not achieved. This explicit label
+is stored encrypted with the workflow and kept separate from the executor's
+step status; an executor success does not imply goal success. Only a completed
+job launched for that workflow can be rated, and a run can be rated once.
+Deleting the workflow removes its ratings. Ratings are not automatically fed
+into the live planner, world model, or training pipeline.
 
 The Heliox-action recorder retains an allowlist of navigation, browser targeting,
 and mouse actions only after Heliox reports that the action actually executed

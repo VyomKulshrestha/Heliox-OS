@@ -168,6 +168,29 @@ def test_tampered_ciphertext_fails_closed(tmp_path) -> None:
     store = RecordedWorkflowStore(path, key_provider=lambda: b"k" * 32)
     with pytest.raises(RuntimeError, match="could not be decrypted"):
         store.prepare()
+
+
+@pytest.mark.asyncio
+async def test_explicit_goal_feedback_is_encrypted_and_distinct_from_job_status(tmp_path) -> None:
+    path = tmp_path / "recordings.enc"
+    store = RecordedWorkflowStore(path, key_provider=lambda: b"k" * 32)
+    store.start(name="Review", consent=True)
+    action = Action(action_type=ActionType.BROWSER_CLICK, parameters=BrowserParams(selector="#review"))
+    token = await store.before(action, single_action_batch=True)
+    await store.after(token, ActionResult(action=action, success=True))
+    workflow_id = store.stop(save=True)["id"]
+    with pytest.raises(ValueError, match="completed"):
+        store.record_feedback(workflow_id, job_id="job-1", outcome="not_achieved", job_status="running")
+    updated = store.record_feedback(
+        workflow_id, job_id="job-1", outcome="not_achieved", job_status="success"
+    )
+    assert updated["feedback_count"] == 1
+    assert store._read()[0]["feedback"][0]["reported_outcome"] == "not_achieved"
+    assert store._read()[0]["feedback"][0]["executor_status"] == "success"
+    assert b"not_achieved" not in path.read_bytes()
+    assert "not_achieved" not in str(store.get(workflow_id))
+    with pytest.raises(ValueError, match="already saved"):
+        store.record_feedback(workflow_id, job_id="job-1", outcome="achieved", job_status="success")
     assert store.status()["active"] is False
 
 
