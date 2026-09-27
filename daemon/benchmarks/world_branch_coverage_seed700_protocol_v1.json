@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "purpose": "prospective_pinned_miniwob_branch_coverage_recheck",
+  "frozen_at_utc": "2026-09-27 08:50:46 UTC",
+  "prior_result": "world_visual_delta_stopgrad_seed700_results_v1.json",
+  "prior_verified_eval_pairs": 11,
+  "collector_commit": "589eb40",
+  "source_commit": "33c3b4ddef8c6eb67c57a29663d844b1eda7e614",
+  "train_tasks": ["click-link"],
+  "validation_tasks": ["click-option"],
+  "eval_tasks": ["click-button", "click-color", "click-dialog", "click-test"],
+  "samples_per_task": 12,
+  "seed_start": 700,
+  "feature_size": 16,
+  "max_candidates": 8,
+  "acceptance": {
+    "minimum_verified_eval_pairs": 30,
+    "minimum_verified_pairs_per_eval_task": 5,
+    "unstable_resets_allowed": 0,
+    "exact_prestates_and_distinct_outcomes_required": true
+  },
+  "limitation": "Only synthetic browser transitions; better coverage does not establish model accuracy, desktop transfer, safety, or Jev parity."
+}
