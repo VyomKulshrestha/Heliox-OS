@@ -112,10 +112,11 @@ def visual_feature(png: bytes, size: int = 16) -> np.ndarray:
 
 
 def candidate_centers(page) -> list[tuple[float, float]]:
-    """Find visible standard controls and pointer affordances without task names."""
+    """Find visible controls, then bounded visual/neutral probes when controls are sparse."""
     return [
         tuple(point)
         for point in page.locator("#wrap *").evaluate_all("""nodes => {
+        const root = document.querySelector('#wrap');
         const semantic = 'button,input:not([type="hidden"]),select,a[href],'
             + '[role="button"],[role="tab"],[role="menuitem"],'
             + '[role="checkbox"],[role="radio"]';
@@ -126,18 +127,43 @@ def candidate_centers(page) -> list[tuple[float, float]]:
         ];
         const seen = new Set();
         const centers = [];
-        for (const node of candidates) {
+        const add = node => {
             const style = getComputedStyle(node);
             if (style.visibility !== 'visible' || style.display === 'none'
-                    || style.pointerEvents === 'none') continue;
+                    || style.pointerEvents === 'none') return;
             const rect = node.getBoundingClientRect();
             const x = Math.round((rect.left + rect.width / 2) * 1000) / 1000;
             const y = Math.round((rect.top + rect.height / 2) * 1000) / 1000;
-            if (!rect.width || !rect.height || x < 0 || x >= 320 || y < 0 || y >= 360) continue;
+            if (!rect.width || !rect.height || x < 0 || x >= 320 || y < 0 || y >= 360) return;
             const hit = document.elementFromPoint(x, y);
-            if (hit !== node && !node.contains(hit)) continue;
+            if (hit !== node && !node.contains(hit)) return;
             const key = `${x}:${y}`;
             if (!seen.has(key)) { seen.add(key); centers.push([x, y]); }
+        };
+        for (const node of candidates) add(node);
+        if (centers.length < 2 && root) {
+            for (const node of nodes) {
+                if (node.children.length) continue;
+                const style = getComputedStyle(node);
+                const painted = style.backgroundColor !== 'rgba(0, 0, 0, 0)'
+                    || (parseFloat(style.borderTopWidth) > 0 && style.borderTopStyle !== 'none');
+                if (painted) add(node);
+            }
+            const box = root.getBoundingClientRect();
+            for (const fy of [0.125, 0.375, 0.625, 0.875]) {
+                for (const fx of [0.125, 0.375, 0.625, 0.875]) {
+                    const x = Math.round((box.left + box.width * fx) * 1000) / 1000;
+                    const y = Math.round((box.top + box.height * fy) * 1000) / 1000;
+                    if (x < 0 || x >= 320 || y < 0 || y >= 360) continue;
+                    const hit = document.elementFromPoint(x, y);
+                    if (!hit || !root.contains(hit) || hit.closest(semantic)
+                            || getComputedStyle(hit).cursor === 'pointer') continue;
+                    if (centers.some(point => Math.hypot(point[0] - x, point[1] - y) < 8)) continue;
+                    const key = `${x}:${y}`;
+                    if (!seen.has(key)) { seen.add(key); centers.push([x, y]); }
+                    if (centers.length >= 16) return centers;
+                }
+            }
         }
         return centers;
     }""")
