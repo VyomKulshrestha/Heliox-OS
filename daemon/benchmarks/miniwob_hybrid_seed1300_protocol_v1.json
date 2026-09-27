@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "purpose": "frozen_unseen_seed_hybrid_world_model_check",
+  "frozen_code_commit": "4f0b28f1492bb2af24a6bd6a222561a8267d321a",
+  "source": {
+    "repo": "Farama-Foundation/MiniWoB-plusplus",
+    "commit": "33c3b4ddef8c6eb67c57a29663d844b1eda7e614",
+    "license": "MIT",
+    "collector": "python scripts/collect_miniwob_branches.py --train-tasks click-checkboxes --validation-tasks click-test-2 --eval-tasks click-button --samples-per-task 32 --seed-start 1300 --max-candidates 8 --feature-size 16",
+    "scored_split": "eval",
+    "scored_task": "click-button",
+    "minimum_verified_pairs": 24
+  },
+  "development_data": {
+    "visual_report_sha256": "abd4048226cd992ee22807c123e8bc2a54f984465ca2127353e4433f865fe327",
+    "visual_features_sha256": "f69d71f86fb3e0ccb4d139ec07160807bc9e91529d446bda84fe0d4d46c866f4",
+    "semantic_extraction_report_sha256": "4bec5800b72a9951b3172bef8cd1643cd6dd53726cdafcfde435b10fee90f64e",
+    "note": "The click-button task family was already inspected at seed 1100; seed 1300 is new, not a blind new-family test."
+  },
+  "frozen_models": {
+    "visual_only": {
+      "report_sha256": "b5845185cd8daf0fb11938b0f3cbd9bfaba9a5e5093062ba3d9da0b4a056d80c",
+      "weights_sha256": "704dfb2e2596744eb5aa1ca46bd10f07742bbff9de50346786dd18a5c1ae1564"
+    },
+    "visual_plus_frozen_qwen_0_6b": {
+      "report_sha256": "611e3f1662bf61df22ecce1c53e33348561d7ef7bb269018523d70928fba7c73",
+      "weights_sha256": "462068e8eb0a56063babc216bbd8b4c78de45a05ce423bd46b33dd2dca28e25e"
+    }
+  },
+  "evaluation": "Score both frozen checkpoints on the same new eval archive. Extract frozen Qwen features with the same pinned base and prompt, without fitting or threshold changes.",
+  "research_gate": {
+    "hybrid_correct_action_fraction_at_least": 0.75,
+    "hybrid_wins_over_visual_at_least": 5,
+    "hybrid_mean_mse_advantage_positive": true,
+    "hybrid_predicted_to_observed_pair_effect_ratio_between": [0.1, 10.0]
+  },
+  "promotion_gate": "Passing this synthetic one-step gate is insufficient for runtime use, real-desktop transfer, safety, autonomy, or Jev parity."
+}
