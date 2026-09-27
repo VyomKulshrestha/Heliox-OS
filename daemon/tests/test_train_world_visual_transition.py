@@ -18,6 +18,7 @@ from scripts.train_world_visual_transition import (
     metrics,
     paired_counterfactual_permutation,
     paired_group_indices,
+    pairwise_focused_loss,
     pairwise_transition_loss,
     within_action_permutation,
 )
@@ -166,6 +167,18 @@ def test_pairwise_loss_requires_action_specific_outcome_difference() -> None:
     assert ignored > 0
     with pytest.raises(ValueError, match="aligned action pairs"):
         pairwise_transition_loss(target[:1], target[:1])
+
+
+def test_focused_pairwise_loss_ignores_shared_background_and_empty_mask() -> None:
+    target = np.array([[0.0, 0.5, 0.5], [0.1, 0.5, 0.5]])
+    assert pairwise_focused_loss(target, target) == 0
+    ignored = np.array([[0.05, 0.5, 0.5], [0.05, 0.5, 0.5]])
+    assert pairwise_focused_loss(ignored, target) > 0
+    common_shift = target + np.array([0.0, 0.3, 0.3])
+    assert pairwise_focused_loss(common_shift, target) == 0
+    assert pairwise_focused_loss(np.zeros_like(target), np.zeros_like(target)) == 0
+    with pytest.raises(ValueError, match="aligned action pairs"):
+        pairwise_focused_loss(target[:1], target[:1])
 
 
 def test_private_samples_split_by_recording_without_plaintext_files() -> None:

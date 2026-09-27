@@ -46,6 +46,29 @@ def paired_action_diagnostic(
     }
 
 
+def paired_discriminative_diagnostic(
+    correct: np.ndarray, swapped: np.ndarray, target: np.ndarray, groups: np.ndarray
+) -> dict[str, float | int | None]:
+    """Compare actions on pixels where their observed outcomes differ."""
+    advantages = []
+    for group in np.unique(groups):
+        indices = np.flatnonzero(groups == group)
+        if len(indices) != 2:
+            raise ValueError("Discriminative diagnostic requires exactly two rows per group")
+        mask = np.abs(target[indices[0]] - target[indices[1]]) >= 0.02
+        if not np.any(mask):
+            continue
+        correct_error = ((correct[indices][:, mask] - target[indices][:, mask]) ** 2).mean()
+        swapped_error = ((swapped[indices][:, mask] - target[indices][:, mask]) ** 2).mean()
+        advantages.append(float(swapped_error - correct_error))
+    return {
+        "groups_with_distinct_pixels": len(advantages),
+        "correct_action_wins": sum(value > 0 for value in advantages),
+        "ties": sum(value == 0 for value in advantages),
+        "mean_mse_advantage": float(np.mean(advantages)) if advantages else None,
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model-report", type=Path, required=True)
@@ -158,6 +181,11 @@ def main() -> None:
         "paired_action_diagnostic": (
             paired_action_diagnostic(correct, swapped, partition["state"],
                                      partition["target"], partition["groups"])
+            if swapped is not None else None
+        ),
+        "paired_discriminative_diagnostic": (
+            paired_discriminative_diagnostic(correct, swapped, partition["target"],
+                                             partition["groups"])
             if swapped is not None else None
         ),
         "inverse_coordinate_diagnostic": inverse_diagnostic,

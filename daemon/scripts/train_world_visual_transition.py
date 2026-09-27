@@ -232,6 +232,18 @@ def pairwise_transition_loss(predicted, target):
     return (((observed - expected) ** 2).mean(axis=1) / scale).mean()
 
 
+def pairwise_focused_loss(predicted, target):
+    """Score only observed action-discriminative pixels within aligned pairs."""
+    if predicted.shape != target.shape or len(predicted) < 2 or len(predicted) % 2:
+        raise ValueError("Focused pairwise loss requires aligned action pairs")
+    expected = target[0::2] - target[1::2]
+    observed = predicted[0::2] - predicted[1::2]
+    mask = abs(expected) >= 0.02
+    signal = (expected ** 2 * mask).sum(axis=1)
+    error = ((observed - expected) ** 2 * mask).sum(axis=1)
+    return (error / (signal + 1e-6)).mean()
+
+
 RECORDED_ACTION_IDS = {
     "mouse_move": 0,
     "mouse_click": 1,
@@ -346,6 +358,8 @@ def main() -> None:
                         help="Normalize per-example loss by unchanged-screen error to this power (0..1)")
     parser.add_argument("--pairwise-loss-weight", type=float, default=0.0,
                         help="Fit distinct observed outcomes from matched counterfactual actions")
+    parser.add_argument("--pairwise-focus-weight", type=float, default=0.0,
+                        help="Fit observed action-discriminative pixels in verified pairs")
     parser.add_argument("--epochs", type=int, default=80)
     parser.add_argument("--action-permutations", type=int, default=10)
     parser.add_argument("--seed", type=int, default=20260926)
@@ -359,6 +373,8 @@ def main() -> None:
             or not 0 <= args.transition_scale_power <= 1
             or not np.isfinite(args.pairwise_loss_weight)
             or not 0 <= args.pairwise_loss_weight <= 10
+            or not np.isfinite(args.pairwise_focus_weight)
+            or not 0 <= args.pairwise_focus_weight <= 10
             or not np.isfinite(args.inverse_loss_weight)
             or not 0 <= args.inverse_loss_weight <= 10
             or (args.inverse_loss_weight and args.architecture != "spatial_joint")
@@ -394,7 +410,7 @@ def main() -> None:
             additional_metadata = json.loads(args.additional_source_report.read_text(encoding="utf-8"))
             counterfactual_pairs = (counterfactual_pairs
                                     and additional_metadata.get("counterfactual_pairs") is True)
-    if args.pairwise_loss_weight and not counterfactual_pairs:
+    if (args.pairwise_loss_weight or args.pairwise_focus_weight) and not counterfactual_pairs:
         parser.error("Pairwise loss requires verified counterfactual action pairs")
     split_basis = "recording_and_exact_pre_screen" if recorded_store else source_metadata.get("split_basis", "episode")
     if args.additional_features:
@@ -418,9 +434,10 @@ def main() -> None:
     device = torch.device("cuda:0" if args.device == "cuda" else "cpu")
     arrays = {split: {key: torch.from_numpy(value).to(device) for key, value in partition.items()
                       if key != "groups"} for split, partition in rows.items()}
+    paired_training = bool(args.pairwise_loss_weight or args.pairwise_focus_weight)
     pair_indices = ({split: torch.from_numpy(paired_group_indices(rows[split])).to(device)
                      for split in ("train", "validation")}
-                    if args.pairwise_loss_weight else {})
+                    if paired_training else {})
     if args.architecture == "spatial_joint":
         model = build_spatial_joint_model(nn, channels).to(device)
     elif args.architecture in {"spatial", "spatial_global"}:
@@ -460,6 +477,10 @@ def main() -> None:
             loss = loss + args.pairwise_loss_weight * pairwise_transition_loss(
                 predicted, partition["target"]
             )
+        if args.pairwise_focus_weight:
+            loss = loss + args.pairwise_focus_weight * pairwise_focused_loss(
+                predicted, partition["target"]
+            )
         return loss
 
     def predict(partition: dict, *, ablate_action: bool = False):
@@ -496,7 +517,7 @@ def main() -> None:
     for epoch in range(args.epochs):
         model.train()
         batches = (pair_indices["train"][torch.randperm(len(pair_indices["train"]), device=device)]
-                   .split(32) if args.pairwise_loss_weight else
+                   .split(32) if paired_training else
                    torch.randperm(len(train["state"]), device=device).split(64))
         for selected in batches:
             indices = selected.reshape(-1)
@@ -511,7 +532,7 @@ def main() -> None:
         model.eval()
         with torch.no_grad():
             validation = arrays["validation"]
-            if args.pairwise_loss_weight:
+            if paired_training:
                 indices = pair_indices["validation"].reshape(-1)
                 validation = {key: value[indices] for key, value in validation.items()}
             output = predict(validation)
@@ -600,6 +621,7 @@ def main() -> None:
         "trained_without_action": args.train_without_action,
         "transition_scale_power": args.transition_scale_power,
         "pairwise_loss_weight": args.pairwise_loss_weight,
+        "pairwise_focus_weight": args.pairwise_focus_weight,
         "inverse_loss_weight": args.inverse_loss_weight,
         "validation_inverse_mse": (float(inverse_loss(arrays["validation"]).item())
                                    if args.architecture == "spatial_joint" else None),
