@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "purpose": "preregistered_frozen_seed200_miniwob_action_transfer_check",
-  "status": "candidate_and_protocol_frozen_before_seed200_collection",
+  "status": "candidate_frozen_before_collection; denominator corrected before_model_scoring",
   "source_repo": "Farama-Foundation/MiniWoB-plusplus",
   "source_commit": "33c3b4ddef8c6eb67c57a29663d844b1eda7e614",
   "collector": "scripts.collect_miniwob_branches",
@@ -26,10 +26,11 @@
     "weights_sha256": "4fbc451e17332d31ae1c6ca23aabd6011aaceedc27da56e54aa9692fb8f4b304"
   },
   "frozen_success_criteria": {
-    "correct_click_wins_on_discriminative_pixels": "at least 20 of 24 eval pairs",
-    "correct_click_wins_on_whole_frame": "at least 18 of 24 eval pairs",
+    "correct_click_wins_on_discriminative_pixels": "at least 83.33 percent of eligible eval pairs",
+    "correct_click_wins_on_whole_frame": "at least 75 percent of eval pairs",
     "mean_advantage": "positive on both metrics",
     "relative_control": "selected candidate must beat the forward-only control on discriminative-pixel wins"
   },
+  "denominator_amendment": "The initial 24-pair wording mistakenly counted one eval family; the two specified eval families allow up to 48 pairs. Four seeds had no distinct outcome, yielding 44 observed pairs. The 20/24 and 18/24 thresholds were converted to the same proportions before scoring any model on seed 200.",
   "limitations": "This is same-task-family new-seed transfer, not a new environment, real desktop, safety, or Jev-parity test."
 }
