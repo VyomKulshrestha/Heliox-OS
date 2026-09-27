@@ -17,12 +17,62 @@ import numpy as np
 from sklearn.metrics import roc_auc_score
 
 from benchmarks.jev_scope_qwen_v1_holdout import CASES as HELIOX_CASES
+from benchmarks.jev_scope_suite import jev_request
 from scripts.evaluate_openjev_checkpoint import scopejudge_cases
 from scripts.evaluate_qwen_instruct_scope import MODEL_ID, MODEL_REVISION, SYSTEM_PROMPT, messages
 from scripts.train_world_scope_semantic import metrics
 from scripts.train_world_tool_scope_semantic import DATASET_HASHES, DATASET_REVISION, load_cases, split_validation
 
 DOMAINS = ("tbac", "scope")
+OPENJEV_REPO = "ZefanCai/Open-Jev-2B"
+OPENJEV_REVISION = "0c7aa498b1627be8da4acf34c863ff0ee0a92785"
+OPENJEV_ADAPTER_SHA256 = "2d23935b1a7380db444abac572c04646918ba794e59002d1588236182a3ca18f"
+OPENJEV_HEAD_SHA256 = "3532cd576c58d5ad5bf17c3e9f2df4be8c70e08c07fa6bb7fa673dcd7b401f2a"
+OPENJEV_SCOPE_PROMPT_TEMPLATE = (
+    "Context:\n{state}\n\nQuestion: {instructions}\nYes means: {yes}"
+    "\nNo means: {no}\nIs the answer to this question yes? Answer Yes or No."
+)
+
+
+def openjev_scope_prompt(case) -> str:
+    """Match the released Open-Jev Noul candidate interface, not an instruction-chat shortcut."""
+    request = jev_request(case)
+    definition = request["questions"]["in_scope"]
+    criteria = definition["criteria"]
+    return OPENJEV_SCOPE_PROMPT_TEMPLATE.format(
+        state=json.dumps(request["state"], ensure_ascii=False, sort_keys=True),
+        instructions=definition["instructions"], yes=criteria["true"], no=criteria["false"])
+
+
+def openjev_checkpoint_paths() -> tuple[Path, Path]:
+    """Use only the hash-pinned public release; never fetch Jev API outputs."""
+    from huggingface_hub import hf_hub_download
+
+    def pinned(filename: str, expected: str) -> Path:
+        path = Path(hf_hub_download(OPENJEV_REPO, filename, revision=OPENJEV_REVISION,
+                                    local_files_only=True))
+        if hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+            raise ValueError(f"Open-Jev release checksum mismatch: {filename}")
+        return path
+
+    adapter = pinned("package/checkpoint/adapter/adapter_model.safetensors",
+                     OPENJEV_ADAPTER_SHA256)
+    head = pinned("package/checkpoint/head.pt", OPENJEV_HEAD_SHA256)
+    return adapter.parent, head
+
+
+def verify_openjev_adapter(backbone, adapter_dir: Path) -> None:
+    """Fail if an older PEFT version silently skips any released LoRA tensor."""
+    from peft import get_peft_model_state_dict
+    from safetensors.torch import load_file
+
+    released = load_file(str(adapter_dir / "adapter_model.safetensors"), device="cpu")
+    loaded = get_peft_model_state_dict(backbone)
+    if released.keys() != loaded.keys() or any(
+        not released[key].equal(loaded[key].detach().cpu().to(released[key].dtype))
+        for key in released
+    ):
+        raise RuntimeError("Open-Jev adapter tensors did not load exactly")
 
 
 def load_partitions(dataset_dir: Path, scopejudge_path: Path) -> tuple[dict, dict]:
@@ -46,13 +96,15 @@ def load_partitions(dataset_dir: Path, scopejudge_path: Path) -> tuple[dict, dic
              **scope, "heliox": tuple(HELIOX_CASES)}, manifests["scope_train"])
 
 
-def encode_cases(tokenizer, cases: dict, max_length: int) -> tuple[dict, dict]:
+def encode_cases(tokenizer, cases: dict, max_length: int, *, openjev_prompt: bool = False) -> tuple[dict, dict]:
     encoded, excluded = {}, {}
     for name, part in cases.items():
         rows, overlong = [], 0
         for case in part:
+            content = ([{"role": "user", "content": openjev_scope_prompt(case)}]
+                       if openjev_prompt else messages(case.request, case.action))
             prompt = tokenizer.apply_chat_template(
-                messages(case.request, case.action), tokenize=False,
+                content, tokenize=False,
                 add_generation_prompt=True, enable_thinking=False)
             ids = tokenizer(prompt, truncation=False)["input_ids"]
             if len(ids) > max_length:
@@ -95,13 +147,15 @@ def main() -> None:
     parser.add_argument("--adapter-dir", type=Path, default=state / "world_scope_qlora_v1")
     parser.add_argument("--report", type=Path, default=state / "world_scope_qlora_v1.json")
     parser.add_argument("--smoke", action="store_true", help="Train four examples without writing an adapter")
+    parser.add_argument("--initial-openjev", action="store_true",
+                        help="Warm-start from the hash-pinned public Open-Jev adapter and head")
     args = parser.parse_args()
     if args.max_length < 128 or args.epochs < 1 or args.adapter_dir.exists() or args.report.exists():
         parser.error("Use max-length >=128, epochs >=1, and fresh artifact/report paths")
     cases, scope_manifest = load_partitions(args.dataset_dir, args.scopejudge_path)
 
     import torch
-    from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+    from peft import LoraConfig, PeftModel, get_peft_model, prepare_model_for_kbit_training
     from transformers import AutoTokenizer, BitsAndBytesConfig, Qwen3_5ForCausalLM
 
     if not torch.cuda.is_available() or torch.cuda.mem_get_info()[0] < 5 * 1024**3:
@@ -109,7 +163,8 @@ def main() -> None:
     torch.manual_seed(20260925)
     tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, revision=MODEL_REVISION,
                                                local_files_only=True)
-    rows, excluded = encode_cases(tokenizer, cases, args.max_length)
+    rows, excluded = encode_cases(tokenizer, cases, args.max_length,
+                                  openjev_prompt=args.initial_openjev)
     config = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4",
                                bnb_4bit_use_double_quant=True,
                                bnb_4bit_compute_dtype=torch.bfloat16)
@@ -122,10 +177,18 @@ def main() -> None:
     model = prepare_model_for_kbit_training(
         model, use_gradient_checkpointing=True,
         gradient_checkpointing_kwargs={"use_reentrant": False})
-    backbone = get_peft_model(model.model, LoraConfig(
-        r=8, lora_alpha=16, lora_dropout=0.05, target_modules="all-linear"))
+    checkpoint_head = None
+    if args.initial_openjev:
+        adapter_dir, checkpoint_head = openjev_checkpoint_paths()
+        backbone = PeftModel.from_pretrained(model.model, adapter_dir, is_trainable=True)
+        verify_openjev_adapter(backbone, adapter_dir)
+    else:
+        backbone = get_peft_model(model.model, LoraConfig(
+            r=8, lora_alpha=16, lora_dropout=0.05, target_modules="all-linear"))
     text_config = getattr(model.config, "text_config", model.config)
     head = torch.nn.Linear(text_config.hidden_size, 1).to("cuda", dtype=torch.float32)
+    if checkpoint_head is not None:
+        head.load_state_dict(torch.load(checkpoint_head, map_location="cpu", weights_only=True))
     trainable = ([parameter for parameter in backbone.parameters() if parameter.requires_grad]
                  + list(head.parameters()))
     optimizer = torch.optim.AdamW(trainable, lr=2e-4)
@@ -220,7 +283,13 @@ def main() -> None:
     report = {
         "purpose": "research_only_qlora_world_task_state_adapter",
         "model": MODEL_ID, "revision": MODEL_REVISION,
-        "prompt_sha256": hashlib.sha256(SYSTEM_PROMPT.encode()).hexdigest(),
+        "prompt_sha256": hashlib.sha256((OPENJEV_SCOPE_PROMPT_TEMPLATE if args.initial_openjev
+                                          else SYSTEM_PROMPT).encode()).hexdigest(),
+        "backbone_quantization": "NF4 double quantization with bfloat16 compute",
+        "initial_checkpoint": ({"repo": OPENJEV_REPO, "revision": OPENJEV_REVISION,
+                                "adapter_sha256": OPENJEV_ADAPTER_SHA256,
+                                "head_sha256": OPENJEV_HEAD_SHA256}
+                               if args.initial_openjev else None),
         "tbac": {"url": "https://github.com/outshift-open/tbac-research-datasets",
                  "revision": DATASET_REVISION, "sha256": DATASET_HASHES},
         "scopejudge": scope_manifest, "max_length": args.max_length,
