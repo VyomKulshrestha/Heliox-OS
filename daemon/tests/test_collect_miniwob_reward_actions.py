@@ -2,8 +2,41 @@
 
 import numpy as np
 import pytest
+from playwright.sync_api import sync_playwright
 
 from scripts import collect_miniwob_reward_actions as collector
+
+
+def test_visible_candidates_include_tabs_and_popup_hints_without_hidden_targets() -> None:
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        try:
+            page = browser.new_page(viewport={"width": 320, "height": 360})
+            page.set_content("""
+                <div id="query">Click the <span class="ui-icon-stop"></span> icon.</div>
+                <div id="area">
+                  <div role="tab" style="width:100px;height:30px">Section 1</div>
+                  <ul role="menu" style="cursor:pointer;width:100px;height:30px">
+                    <li role="menuitem" aria-haspopup="true"
+                        style="cursor:pointer;width:100px;height:30px">
+                      Playback<span hidden>Hidden target</span>
+                      <span class="ui-icon ui-icon-play"></span>
+                    </li>
+                  </ul>
+                  <button aria-disabled="true">Disabled</button>
+                </div>
+            """)
+            candidates = collector.candidate_actions(page)
+            assert any(row["role"] == "tab" and row["label"] == "Section 1"
+                       for row in candidates)
+            assert any(row["role"] == "menuitem" and row["has_popup"] == "true"
+                       and row["icon_hint"] == "ui-icon ui-icon-play"
+                       and "Hidden target" not in row["label"] for row in candidates)
+            assert all(row["role"] != "menu" and row["label"] != "Disabled"
+                       for row in candidates)
+            assert "ui-icon-stop" in collector.goal_description(page)
+        finally:
+            browser.close()
 
 
 class _Context:

@@ -32,13 +32,14 @@ _CANDIDATES_JS = """viewport => {
     const type = (element.getAttribute('type') || '').toLowerCase();
     const role = (element.getAttribute('role') || '').toLowerCase();
     const style = getComputedStyle(element);
+    if (element.closest('[aria-disabled="true"]')) continue;
     const native = tag === 'button' || tag === 'select' || tag === 'a'
       || (tag === 'input' && (type === 'checkbox' || type === 'radio'));
     const painted = element.childElementCount === 0
       && style.backgroundColor !== 'rgba(0, 0, 0, 0)'
       && style.backgroundColor !== 'transparent';
-    if (!(native || painted || role === 'button' || role === 'menuitem'
-          || style.cursor === 'pointer')) continue;
+    if (!(native || painted || role === 'button' || role === 'menuitem' || role === 'tab'
+          || (style.cursor === 'pointer' && role !== 'menu' && tag !== 'ul'))) continue;
     const rect = element.getBoundingClientRect();
     if (rect.width < 2 || rect.height < 2) continue;
     const x = Math.round((rect.left + rect.right) / 2);
@@ -47,9 +48,11 @@ _CANDIDATES_JS = """viewport => {
     const center = `${x}:${y}`;
     if (centers.has(center)) continue;
     centers.add(center);
+    const icon = element.matches('svg,[class*="icon"]')
+      ? element : element.querySelector('svg,[class*="icon"]');
     const label = element.getAttribute('aria-label')
       || element.closest('label')?.textContent
-      || element.textContent || element.getAttribute('value')
+      || element.innerText || element.getAttribute('value')
       || element.getAttribute('data-color') || '';
     found.push({
       x, y, label: label.trim().replace(/\\s+/g, ' ').slice(0, 120),
@@ -58,6 +61,12 @@ _CANDIDATES_JS = """viewport => {
       background: style.backgroundColor, fill: style.fill,
       declared_color: element.getAttribute('data-color')
         || element.getAttribute('fill') || element.style.backgroundColor || '',
+      icon_hint: (icon?.getAttribute('aria-label') || icon?.getAttribute('title')
+        || icon?.getAttribute('class') || '').slice(0, 120),
+      has_popup: element.getAttribute('aria-haspopup')
+        || element.querySelector('[aria-haspopup]')?.getAttribute('aria-haspopup') || '',
+      expanded: element.getAttribute('aria-expanded') || '',
+      selected: element.getAttribute('aria-selected') || '',
     });
   }
   return found;
@@ -73,7 +82,8 @@ _GOAL_JS = """() => {
     if (children.trim()) return children;
     const visible = node.getAttribute('aria-label') || node.getAttribute('title')
       || node.getAttribute('alt') || node.getAttribute('data-color')
-      || node.getAttribute('fill') || node.style.backgroundColor;
+      || node.getAttribute('fill') || node.style.backgroundColor
+      || (node.matches('svg,[class*="icon"]') ? node.getAttribute('class') : '');
     return visible ? `[${node.tagName.toLowerCase()} ${visible}]` : '';
   }
   return [...root.childNodes].map(describe).join('').replace(/\\s+/g, ' ').trim();
@@ -193,8 +203,9 @@ def main() -> None:
     report = {
         "purpose": "research_only_goal_conditioned_first_action_rewards",
         "source_repo": SOURCE_REPO, "source_commit": SOURCE_COMMIT, "source_license": "MIT",
-        "representation": "Visible goal text plus inline element color; clickable or painted control "
-                          "text, role, type, geometry, and CSS color. No screenshots stored.",
+        "representation": "Visible goal text plus inline visual hints; clickable or painted control "
+                          "text, role, type, geometry, CSS color, icon, and accessibility state. "
+                          "No screenshots stored.",
         "asset_sha256": assets.hashes(), "rows_sha256": hashlib.sha256(args.rows.read_bytes()).hexdigest(),
         "tasks": tasks, "split_basis": "task_family", "samples_per_task": args.samples_per_task,
         "eval_samples_per_task": args.eval_samples_per_task, "seed_start": args.seed_start,
