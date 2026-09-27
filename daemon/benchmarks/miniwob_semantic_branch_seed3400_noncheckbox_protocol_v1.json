@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "purpose": "prospective_frozen_checkpoint_noncheckbox_variant_probe",
+  "selection_note": "After the seed-3200 checkbox retest, this frozen checkpoint is evaluated on two related but previously unscored non-checkbox page variants at fresh seed 3400. Parent tab/collapsible pages were present in training or validation, so this is not independent task-family generalization.",
+  "source_repo": "Farama-Foundation/MiniWoB-plusplus",
+  "source_commit": "33c3b4ddef8c6eb67c57a29663d844b1eda7e614",
+  "collector": "scripts.collect_miniwob_branches",
+  "train_tasks": ["click-checkboxes"],
+  "validation_tasks": ["click-checkboxes-soft"],
+  "eval_tasks": ["click-collapsible-2-nodelay", "click-tab-2-medium"],
+  "samples_per_task": 12,
+  "seed_start": 3400,
+  "feature_size": 16,
+  "max_candidates": 12,
+  "nonterminal_only": true,
+  "require_semantic_difference": true,
+  "frozen_action_weights_sha256": "7699ad35cde834702c7a14a347af505abeaf068c725d7eef40a535fe152e1e9b",
+  "frozen_state_only_weights_sha256": "79d6520fa33eecb9717a52b222930f9551b431bbf20baa38cedb741d238eb03b",
+  "minimum_groups_per_eval_page": 8,
+  "success_criterion": "For each evaluation page, correct action wins at least 70 percent of paired comparisons and weighted MSE beats both the frozen state-only model and unchanged-screen baseline. Missing page coverage fails the gate.",
+  "promotion": "none; synthetic related-page transfer cannot establish real desktop dynamics, safety, or Jev parity"
+}
