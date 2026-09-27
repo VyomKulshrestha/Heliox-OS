@@ -1444,7 +1444,7 @@ into a general world-model claim.
 A later [paired-outcome matching ablation](../daemon/benchmarks/world_visual_delta_matching_exploratory_v1.json)
 added an opt-in, two-way outcome loss to the 16×16 visual-delta trainer. On
 the same inspected 48-pair evaluation, action ranking fell from 42/48 to
-30/48; on the reused unseen `click-button` archive, it fell from 4/11 to
+30/48; on the reused `click-button` archive, it fell from 4/11 to
 3/11. The latter is not a fresh holdout. The objective cannot recover task
 text or hidden browser state absent from these features, so these weights
 remain research-only and unpromoted.
