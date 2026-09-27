@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "purpose": "material_change_world_model_probe_and_terminal_shortcut_audit",
+  "protocols": [
+    "world_material_branch_seed1000_protocol_v1.json",
+    "world_material_branch_seed1100_protocol_v1.json"
+  ],
+  "candidate_report_sha256": "096c67912d25b0fbf149ad9550808c550853a31d6edfbdb9c4511f474bcc1c97",
+  "candidate_weights_sha256": "cce9f7056ed42daf58bd8885258fbf49f70f7cd9f975ab140738f0929fa75ca4",
+  "no_action_report_sha256": "e7b9afaa141f2ac58a6a0ec8f908476b894f889085bb7307817bd6f8f5ce996e",
+  "no_action_weights_sha256": "2cd82bdba92fffd54c9bc8912ecd31b14f838e23c1cc06937cd227014560c4e9",
+  "seed1000": {
+    "features_sha256": "0a7bf525ae918035b5c50a6de4261fc0942b80beee67bf18d21a43ac812ff24c",
+    "collection_report_sha256": "4440ef80cca6783048ea588280fd1a5ebbda572c146a37b92251a32edb8d9cee",
+    "candidate_score_report_sha256": "dc493b9ee1efe2b45c887ad2dddfc394642e9216c2c7e868aa92fe430cd918aa",
+    "no_action_score_report_sha256": "f15e835c8f0fd7487a3ca0b57392d28ed2226e519d09660eec3ed0ab5d05e7ee",
+    "verified_eval_pairs": 24,
+    "unstable_resets": 0,
+    "correct_action_wins": 24,
+    "mean_weighted_mse_advantage": 0.12412788960010902,
+    "candidate_weighted_mse": 0.2033811049247135,
+    "no_action_control_weighted_mse": 0.3807632446870273,
+    "unchanged_screen_weighted_mse": 0.5280541251239448
+  },
+  "seed1100_frozen_transfer": {
+    "features_sha256": "92015b0e8ed8d4919eec7b6b5ce6e5e330cbf624b7cf29bdde6cf01b220c4eab",
+    "collection_report_sha256": "8ebbdbd6fdda26ff6d696999d4111e4b27d34b16a6186fc91ad1538edaa7ba9e",
+    "candidate_score_report_sha256": "d72be16bc79252b723e8ee9e6247fca42c317bc555c0664b54989db92c3a3657",
+    "no_action_score_report_sha256": "a23c3d4c0cbca3cfc19193c514366c5853a3ffe5c9e78b02ff15a11d88c8a8d7",
+    "verified_eval_pairs": 24,
+    "unstable_resets": 0,
+    "correct_action_wins": 24,
+    "mean_weighted_mse_advantage": 0.12530898974705693,
+    "correct_action_wins_by_task": {"click-test": 8, "click-scroll-list": 8, "click-shades": 8},
+    "candidate_weighted_mse": 0.2003766229958177,
+    "no_action_control_weighted_mse": 0.3785396953079811,
+    "unchanged_screen_weighted_mse": 0.5253513539564291,
+    "numeric_protocol_gates_met": true
+  },
+  "terminal_shortcut_audit": {
+    "visual_review": "Representative target pairs from all three evaluation families show one dark MiniWoB terminal overlay and one active task page. This was discovered after scoring; the 24/24 result primarily measures a synthetic terminal-state distinction.",
+    "nonterminal_probe_collection_report_sha256": "1220f09094ba13da197c873afdc7e92bf437ade21e0b4880d980b0a41bf69b18",
+    "nonterminal_probe_candidate_report_sha256": "eb8be463f027b12e5796c29d815f88c94dd3987a5fa918a6e16c4af9b8a5b3ed",
+    "nonterminal_only_eval_pairs": 4,
+    "nonterminal_eval_pairs_by_task": {"click-test": 2, "click-scroll-list": 0, "click-shades": 2},
+    "nonterminal_correct_action_wins": 2,
+    "nonterminal_mean_weighted_mse_advantage": -0.0035692291294253664,
+    "nonterminal_candidate_weighted_mse": 0.14803633753967915,
+    "nonterminal_unchanged_screen_weighted_mse": 0.0002778074774134609,
+    "interpretation": "Four pairs are too few to establish general nonterminal performance, but they directly refute treating terminal-overlay ranking as learned general UI dynamics."
+  },
+  "decision": "Do not promote weights. The numeric gates passed on selected public tasks but the visual shortcut and nonterminal diagnostic fail the intended world-model claim.",
+  "limitations": "Synthetic one-step 16x16 grayscale MiniWoB tasks chosen after pilot scans; not a representative desktop distribution, multistep workflow, safe action authorization, or Jev parity.",
+  "promoted_to_runtime": false
+}
