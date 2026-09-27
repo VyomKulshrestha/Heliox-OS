@@ -870,6 +870,17 @@ the Heliox world model or that its discovered policy transfers to live desktop
 tasks. The next model study needs task-disjoint, materially differentiable
 transitions and a fresh frozen evaluation before any promotion discussion.
 
+A separate [observed-outcome ranker study](../daemon/benchmarks/miniwob_reward_ranker_result_v1.md)
+fit a paired head on frozen Qwen3-0.6B features from public MiniWoB tasks.
+Its corrected single-row CUDA evaluation won **21/33** opposing-reward pairs,
+versus **19/33** for randomized first and **33/33** for either simple
+goal-text policy. One prelisted evaluation page supplied no eligible pairs.
+An attempted padded feature extractor was rejected after substantial
+batch-versus-single embedding disagreement; the held-out pages were already
+seen before the corrected extraction, so this is exploratory rather than an
+independent model win. The coverage and performance gate failed; no ranker
+weights were loaded into Heliox.
+
 That targeted [material-change study](../daemon/benchmarks/world_material_branch_results_v1.json)
 used three training, one validation, and three evaluation MiniWoB families
 selected after a two-seed exploratory signal scan. An action-conditioned
