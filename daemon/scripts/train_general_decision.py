@@ -312,6 +312,8 @@ def checkpoint_signature(args: argparse.Namespace, encoded: dict[str, list[dict]
         identity["initial_openjev"] = [OPENJEV_REVISION, OPENJEV_ADAPTER_SHA256, OPENJEV_HEAD_SHA256]
     if getattr(args, "scope_group_weighting", "none") != "none":
         identity["scope_group_weighting"] = args.scope_group_weighting
+    if getattr(args, "scope_row_weight", 1.0) != 1.0:
+        identity["scope_row_weight"] = args.scope_row_weight
     if row_weights is not None:
         identity["row_weights_sha256"] = hashlib.sha256(
             json.dumps(row_weights, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
@@ -490,9 +492,12 @@ def run(args: argparse.Namespace) -> dict:
     print(json.dumps({"event": "tokenized", "kept": {name: len(part) for name, part in encoded.items()},
                       "overlong": overlong}), flush=True)
     row_weights = None
-    if args.scope_group_weighting == "inverse_sqrt":
+    if scope_manifest and (args.scope_group_weighting == "inverse_sqrt" or args.scope_row_weight != 1.0):
+        scope_weights = (scope_group_weights([item["row"] for item in encoded["scope_train"]])
+                         if args.scope_group_weighting == "inverse_sqrt" else
+                         [1.0] * len(encoded["scope_train"]))
         row_weights = ([1.0] * len(encoded["train"]) +
-                       scope_group_weights([item["row"] for item in encoded["scope_train"]]))
+                       [weight * args.scope_row_weight for weight in scope_weights])
     signature = checkpoint_signature(args, encoded, manifests, scope_manifest,
                                      row_weights=row_weights)
 
@@ -599,6 +604,7 @@ def run(args: argparse.Namespace) -> dict:
         "learning_rates": {"adapter": args.lr, "head": args.head_lr},
         "brier_weight": args.brier_weight, "ordinal_weight": args.ordinal_weight,
         "scope_group_weighting": args.scope_group_weighting,
+        "scope_row_weight": args.scope_row_weight,
         "row_weights_sha256": (None if row_weights is None else hashlib.sha256(
             json.dumps(row_weights, separators=(",", ":"), allow_nan=False).encode()).hexdigest()),
         "calibration_temperature": temperature,
@@ -665,6 +671,8 @@ def main() -> None:
                         help="Include up to this many calls from completed earlier trajectory steps")
     parser.add_argument("--scope-group-weighting", choices=("none", "inverse_sqrt"), default="none",
                         help="Optional label-normalized inverse-sqrt trajectory weighting")
+    parser.add_argument("--scope-row-weight", type=float, default=1.0,
+                        help="Relative training loss weight for each action-label row")
     parser.add_argument("--scope-split-strategy", choices=SPLIT_STRATEGIES,
                         default="random_trajectory_v1")
     parser.add_argument("--scope-train-rows", type=int, default=512)
@@ -683,6 +691,10 @@ def main() -> None:
         parser.error("Action-label row limits must be at least two")
     if args.scope_history_calls < 0 or (args.scope_history_calls and args.scopejudge_path is None):
         parser.error("Scope history requires ScopeJudge and a non-negative call count")
+    if not math.isfinite(args.scope_row_weight) or args.scope_row_weight <= 0:
+        parser.error("Scope row weight must be finite and positive")
+    if args.scope_row_weight != 1.0 and args.scopejudge_path is None and args.misactbench_path is None:
+        parser.error("Scope row weight requires an action-label dataset")
     report = run(args)
     print(json.dumps({key: report[key] for key in ("trained_test", "trained_ood", "peak_vram_gib")}, indent=2))
 
