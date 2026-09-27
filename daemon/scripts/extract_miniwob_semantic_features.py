@@ -52,6 +52,35 @@ def prompt_for(row: dict) -> str:
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 
+def checkpoint_identity(archive: Path, visual: Path, source_report: Path,
+                        max_length: int) -> str:
+    payload = [sha256(path) for path in (archive, visual, source_report)] + [
+        MODEL, REVISION, PROMPT_VERSION, max_length, "single-row",
+    ]
+    return hashlib.sha256(json.dumps(payload).encode()).hexdigest()
+
+
+def load_checkpoint(path: Path, identity: str, total: int) -> list[np.ndarray]:
+    if not path.exists():
+        return []
+    with np.load(path, allow_pickle=False) as saved:
+        if str(saved["identity"]) != identity:
+            raise ValueError("Feature checkpoint identity mismatch")
+        matrix = saved["features"]
+    if (matrix.ndim != 2 or matrix.dtype != np.float16 or not np.isfinite(matrix).all()
+        or len(matrix) > total):
+        raise ValueError("Invalid feature checkpoint contents")
+    return list(matrix)
+
+
+def save_checkpoint(path: Path, identity: str, vectors: list[np.ndarray]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    with temporary.open("wb") as handle:
+        np.savez_compressed(handle, identity=identity, features=np.stack(vectors))
+    os.replace(temporary, path)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--semantic-archive", type=Path, required=True)
@@ -60,8 +89,11 @@ def main() -> None:
     parser.add_argument("--features", type=Path, required=True)
     parser.add_argument("--report", type=Path, required=True)
     parser.add_argument("--max-length", type=int, default=768)
+    parser.add_argument("--checkpoint", type=Path)
     args = parser.parse_args()
     if (args.features.exists() or args.report.exists()
+            or (args.checkpoint is not None and args.checkpoint.resolve() in
+                {args.features.resolve(), args.report.resolve()})
             or not 128 <= args.max_length <= 1024):
         parser.error("Use fresh outputs and a bounded token length")
     rows = aligned_rows(args.semantic_archive, args.visual_features, args.source_report)
@@ -88,14 +120,25 @@ def main() -> None:
     if loading.get("missing_keys"):
         raise RuntimeError("Frozen Qwen load left missing weights")
     model = base.model.eval()
-    vectors = []
+    identity = checkpoint_identity(args.semantic_archive, args.visual_features,
+                                   args.source_report, args.max_length)
+    vectors = (load_checkpoint(args.checkpoint, identity, len(token_rows))
+               if args.checkpoint else [])
+    if vectors:
+        print(json.dumps({"resumed": len(vectors), "total": len(token_rows)}), flush=True)
     with torch.inference_mode():
-        for index, tokens in enumerate(token_rows, 1):
-            ids = torch.tensor([tokens], dtype=torch.long, device="cuda:0")
+        for index in range(len(vectors), len(token_rows)):
+            ids = torch.tensor([token_rows[index]], dtype=torch.long, device="cuda:0")
             hidden = model(input_ids=ids, use_cache=False, return_dict=True).last_hidden_state
-            vectors.append(hidden[0, -1].float().cpu().numpy().astype(np.float16))
-            if index % 64 == 0 or index == len(token_rows):
-                print(json.dumps({"extracted": index, "total": len(token_rows)}), flush=True)
+            selected = hidden[0, -1]
+            if not torch.isfinite(selected).all():
+                raise FloatingPointError("Nonfinite frozen semantic embedding")
+            vectors.append(selected.float().cpu().numpy().astype(np.float16))
+            count = index + 1
+            if count % 64 == 0 or count == len(token_rows):
+                if args.checkpoint:
+                    save_checkpoint(args.checkpoint, identity, vectors)
+                print(json.dumps({"extracted": count, "total": len(token_rows)}), flush=True)
     matrix = np.stack(vectors)
     args.features.parent.mkdir(parents=True, exist_ok=True)
     with args.features.open("wb") as handle:
@@ -109,6 +152,7 @@ def main() -> None:
               "semantic_archive_sha256": sha256(args.semantic_archive),
               "model": MODEL, "revision": REVISION, "prompt_version": PROMPT_VERSION,
               "max_length": args.max_length, "max_observed_tokens": max(map(len, token_rows)),
+              "batch_size": 1,
               "rows": len(rows), "feature_dim": matrix.shape[1],
               "feature_sha256": sha256(args.features),
               "peak_vram_gib": torch.cuda.max_memory_allocated() / 1024**3,
