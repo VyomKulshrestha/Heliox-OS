@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "purpose": "new_seed_index_contract_retest_result",
+  "protocol_sha256": "95742e77cf5a82750a9aa7c8a8cfa3664e2e8cacfc524fb7154e0b2ac8fd71d5",
+  "local_report_sha256": "741bb0a39ec038022266a080c214e16694075f4b9c5e0a9fb6173c9f1d494396",
+  "completed_pairs": 12,
+  "task_scores": {
+    "click-checkboxes": {"baseline": 4, "model": 2},
+    "click-option": {"baseline": 4, "model": 2},
+    "click-button-sequence": {"baseline": 3, "model": 3}
+  },
+  "total": {"baseline": 11, "model": 7},
+  "invalid_index_count": 0,
+  "finding": "Explicit per-step zero-based bounds removed the observed invalid-index pattern, but the model still chose incorrect goal controls in several checkbox and option episodes.",
+  "research_gate_pass": false,
+  "promoted_to_runtime": false,
+  "limitation": "Prompt was revised after inspecting seed-1400 failures. New seeds are not blind task families; no Jev parity or real-desktop transfer."
+}

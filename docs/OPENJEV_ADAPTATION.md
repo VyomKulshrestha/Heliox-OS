@@ -1585,3 +1585,14 @@ protocol's 0.1 floor. The [protocol](../daemon/benchmarks/miniwob_hybrid_seed130
 and [result](../daemon/benchmarks/miniwob_hybrid_seed1300_results_v1.json)
 pin the artifact hashes and failed gates. This rules out promotion of these
 checkpoints, not the broader possibility of a stronger multimodal world model.
+
+An installed, local Qwen3 8B model was also tested on paired multi-step
+MiniWoB episodes, without downloading a new model. The [first frozen run](../daemon/benchmarks/miniwob_qwen8b_local_result_v1.json)
+completed 8/12 tasks versus 12/12 for the simple navigation baseline; four
+invalid indices followed the first button in a sequence. A general prompt
+clarification made the current zero-based index range explicit. On [new
+seeds](../daemon/benchmarks/miniwob_qwen8b_index_retest_result_v1.json),
+invalid indices dropped to zero and the sequence task tied the baseline at
+3/4, but total model success was 7/12 versus 11/12. These are small synthetic
+task-family retests, not a production or Jev comparison. Neither the 8B
+policy nor the latent checkpoints is enabled in Heliox.
