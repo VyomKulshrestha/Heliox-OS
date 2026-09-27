@@ -160,6 +160,7 @@ def test_navigation_baseline_matches_visible_icon_hint() -> None:
 def test_model_prompt_contains_visible_controls_not_rewards() -> None:
     prompt = rollout_prompt('Find "target".', [{"label": "target", "tag": "a"}], [])
     assert '"label":"target"' in prompt
+    assert "indices 0 through 0" in prompt
     assert "reward" not in prompt
 
 
