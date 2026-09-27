@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "purpose": "prospective_nonterminal_semantic_branch_world_model_probe",
+  "source_repo": "Farama-Foundation/MiniWoB-plusplus",
+  "source_commit": "33c3b4ddef8c6eb67c57a29663d844b1eda7e614",
+  "selection_note": "A two-seed exploratory scout at seed 2200 exposed focus-only visual pairs. These page names and the seed 3000 range were fixed before collecting or scoring this probe. Related page variants across splits mean this is targeted transfer, not an independent task-family benchmark.",
+  "collector": "scripts.collect_miniwob_branches",
+  "train_tasks": ["click-checkboxes", "click-collapsible-2"],
+  "validation_tasks": ["click-tab-2", "click-checkboxes-soft"],
+  "eval_tasks": ["click-tab", "click-collapsible", "click-checkboxes-transfer"],
+  "samples_per_task": 20,
+  "seed_start": 3000,
+  "feature_size": 16,
+  "max_candidates": 12,
+  "nonterminal_only": true,
+  "require_semantic_difference": true,
+  "minimum_groups": {"train": 20, "validation": 10, "eval": 20},
+  "candidate": {"architecture": "spatial_global", "epochs": 30, "seed": 20260927, "action_permutations": 99},
+  "controls": ["matched_state_only_model", "unchanged_screen", "within_pair_action_shuffle"],
+  "success_criterion": "On held-out eval pairs, action-conditioned prediction must beat the matched state-only model on weighted visual error and rank the observed action above its paired alternative in at least 70 percent of pairs; otherwise reject this candidate.",
+  "promotion": "none; synthetic browser branch success would not demonstrate real desktop transfer, live Heliox safety, or Jev parity"
+}
