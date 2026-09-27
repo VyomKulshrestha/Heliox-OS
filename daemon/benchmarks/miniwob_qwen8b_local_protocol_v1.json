@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "purpose": "frozen_local_8b_multistep_gui_comparison",
+  "code_commit": "71dd4c6",
+  "source": {
+    "repository": "Farama-Foundation/MiniWoB-plusplus",
+    "commit": "33c3b4ddef8c6eb67c57a29663d844b1eda7e614",
+    "license": "MIT"
+  },
+  "model": {
+    "name": "qwen3:8b",
+    "ollama_digest": "500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41",
+    "local_only": true,
+    "reason": "Already installed; avoids a multi-gigabyte download on a nearly full disk."
+  },
+  "command": "python scripts/probe_miniwob_multistep_qwen.py --tasks click-checkboxes,click-option,click-button-sequence --samples-per-task 4 --seed-start 1400 --max-steps 12 --ollama-model qwen3:8b --report benchmarks/.bench-state/miniwob_qwen8b_seed1400_v1.json",
+  "comparison": "Paired independent resets; model versus the existing navigation baseline, same visible goal and controls; task terminal reward exactly 1.",
+  "research_gate": {
+    "completed_pairs_at_least": 12,
+    "model_successes_at_least_baseline": true,
+    "invalid_index_count": 0
+  },
+  "promotion_gate": "Even a research pass is not Jev parity, real-desktop transfer, safety, or permission to replace the live Heliox planner."
+}
