@@ -197,13 +197,17 @@ def visible_semantics(page, point: tuple[float, float] | None = None) -> dict[st
             text: root?.innerText || '',
             controls: items,
             target: control?.getAttribute('aria-label') || control?.innerText
-                || control?.getAttribute('title') || control?.tagName || ''
+                || control?.getAttribute('title') || control?.tagName || '',
+            target_kind: control?.tagName?.toLowerCase() === 'input'
+                ? (control.getAttribute('type') || 'text').toLowerCase()
+                : (control?.getAttribute('role') || control?.tagName || '').toLowerCase()
         };
     }""", list(point) if point is not None else None)
     rendered = " ".join(result["text"].split())
     controls = "\n".join(result["controls"])
     return {"text": (rendered + "\nControls:\n" + controls)[:MAX_SEMANTIC_CHARS],
-            "target": " ".join(result["target"].split())[:160]}
+            "target": " ".join(result["target"].split())[:160],
+            "target_kind": " ".join(result["target_kind"].split())[:40]}
 
 
 def _reset(browser, assets: PinnedAssets, task: str, seed: str):
@@ -260,6 +264,7 @@ def collect_group(
             if before_semantics is not None:
                 row.update({"state_text": before_semantics["text"],
                             "action_label": before_semantics["target"],
+                            "action_kind": before_semantics.get("target_kind", ""),
                             "target_text": visible_semantics(page)["text"]})
             rows.append(row)
         finally:
@@ -381,7 +386,7 @@ def main() -> None:
         args.semantic_archive.parent.mkdir(parents=True, exist_ok=True)
         content = "".join(json.dumps({key: row[key] for key in (
             "group", "split", "task", "coords", "done", "reward", "state_text",
-            "action_label", "target_text")}, ensure_ascii=False) + "\n" for row in rows)
+            "action_label", "action_kind", "target_text")}, ensure_ascii=False) + "\n" for row in rows)
         args.semantic_archive.write_text(content, encoding="utf-8")
         semantic_sha256 = hashlib.sha256(args.semantic_archive.read_bytes()).hexdigest()
     termination_by_group = {}

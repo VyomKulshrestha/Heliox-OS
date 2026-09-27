@@ -56,8 +56,22 @@ def test_visible_semantics_excludes_hidden_text_and_bounds_control_label() -> No
         """)
         result = collector.visible_semantics(page, (30, 20))
         assert result["target"] == "Save item"
+        assert result["target_kind"] == "button"
         assert "Save" in result["text"]
         assert "hidden source" not in result["text"]
+
+
+def test_visible_semantics_distinguishes_unlabeled_input_types() -> None:
+    with sync_playwright() as playwright, playwright.chromium.launch(headless=True) as browser:
+        page = browser.new_page(viewport=collector.VIEWPORT)
+        page.set_content("""
+            <div id="wrap">
+              <input type="text" style="position:absolute;left:10px;top:10px;width:60px" />
+              <input type="checkbox" style="position:absolute;left:10px;top:70px" />
+            </div>
+        """)
+        assert collector.visible_semantics(page, (30, 20))["target_kind"] == "text"
+        assert collector.visible_semantics(page, (15, 75))["target_kind"] == "checkbox"
 
 
 def test_visual_feature_resolution_is_bounded_and_default_is_unchanged() -> None:

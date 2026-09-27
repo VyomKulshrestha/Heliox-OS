@@ -41,6 +41,15 @@ def select_action(policy: str, rows: list[dict[str, Any]]) -> int:
         goal = re.split(r"[.!?](?:\s|$)", visible_text, maxsplit=1)[0]
         scores = [_goal_score(goal, row["action_label"]) for row in rows]
         return max(range(len(rows)), key=lambda index: scores[index])
+    if policy == "goal_grounded":
+        visible_text = rows[0]["state_text"].split("\nControls:", 1)[0]
+        goal = re.split(r"[.!?](?:\s|$)", visible_text, maxsplit=1)[0]
+        scores = []
+        for row in rows:
+            label_phrase, label_overlap = _goal_score(goal, row["action_label"])
+            kind_phrase, kind_overlap = _goal_score(goal, row.get("action_kind", ""))
+            scores.append((label_phrase, kind_phrase, label_overlap, kind_overlap))
+        return max(range(len(rows)), key=lambda index: scores[index])
     raise ValueError(f"Unknown replay policy: {policy}")
 
 
@@ -98,7 +107,7 @@ def run(archive: Path, seed: int) -> dict[str, Any]:
     branches, skipped = load_branches(archive, seed)
     if not branches["validation"] or not branches["eval"]:
         raise ValueError("At least one fully observed reward-contrast group is required in validation and eval")
-    policies = ("first", "last", "goal_match")
+    policies = ("first", "last", "goal_match", "goal_grounded")
     validation = {policy: evaluate(branches["validation"], policy) for policy in policies}
     # Select without seeing eval rewards; ties favor the simpler fixed baseline.
     selected = max(policies, key=lambda policy: validation[policy]["wins"])
