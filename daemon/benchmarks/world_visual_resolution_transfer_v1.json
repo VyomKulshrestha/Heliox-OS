@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "purpose": "research_only_resolution_and_fresh_seed_action_grounding_test",
+  "source": {
+    "repository": "https://github.com/Farama-Foundation/MiniWoB-plusplus",
+    "commit": "33c3b4ddef8c6eb67c57a29663d844b1eda7e614",
+    "split": "disjoint task families; fresh seed range 100-123",
+    "training_rows": 124,
+    "validation_rows": 48,
+    "original_evaluation_rows": 96,
+    "fresh_evaluation_rows": 48,
+    "fresh_evaluation_pairs": 24,
+    "same_selected_pairs_at_16_and_64": true,
+    "features_sha256": {
+      "train_64": "1111914a3079aa0878eca8fa62f74f15ce3fc89b6696ffb86c0807c334f43999",
+      "fresh_16": "8fc8379206786dd5c208360058a31048a4f0fd6f60264efdd3aae813e6699444",
+      "fresh_64": "9b7d2f923fda0c4b8d889f2ec32ab3dbd257c3f3b4d594769e05b7d101e61fb3"
+    }
+  },
+  "protocol": {
+    "architecture": "spatial_global",
+    "epochs": 80,
+    "seed": 20260927,
+    "transition_scale_power": 1.0,
+    "device": "cuda:0",
+    "selection": "lowest combined validation objective; fresh seeds were not used to select checkpoints",
+    "score": "changed-pixel-weighted MSE; lower is better; paired alternative is an independently observed action from the same reset state"
+  },
+  "fresh_seed_results": [
+    {
+      "resolution": 16,
+      "pairwise_loss_weight": 0.0,
+      "correct_action_weighted_mse": 0.47125535557027826,
+      "paired_alternative_weighted_mse": 0.47124028911561466,
+      "correct_action_wins_of_24": 13
+    },
+    {
+      "resolution": 16,
+      "pairwise_loss_weight": 1.0,
+      "correct_action_weighted_mse": 0.5431317130803388,
+      "paired_alternative_weighted_mse": 0.5431215716647327,
+      "correct_action_wins_of_24": 10,
+      "ties": 1
+    },
+    {
+      "resolution": 64,
+      "pairwise_loss_weight": 0.0,
+      "correct_action_weighted_mse": 0.41251834166406304,
+      "paired_alternative_weighted_mse": 0.41145932868553753,
+      "correct_action_wins_of_24": 11
+    },
+    {
+      "resolution": 64,
+      "pairwise_loss_weight": 1.0,
+      "correct_action_weighted_mse": 0.5532207224300346,
+      "paired_alternative_weighted_mse": 0.5532237135273367,
+      "correct_action_wins_of_24": 14
+    }
+  ],
+  "finding": "Higher resolution improved absolute pixel prediction for the default objective but not reliable action grounding: swapped actions still beat correct actions. The 64x64 pairwise model's 0.000002991 weighted-MSE advantage is too small to support promotion.",
+  "limitations": [
+    "Selected click pairs and a 24-pair fresh-seed evaluation do not estimate general task success.",
+    "The action-grounding comparison is descriptive after exploratory objective and resolution changes, not an untouched model-selection benchmark.",
+    "Research weights are neither loaded by the daemon nor authorized to gate actions; no real desktop transfer or Jev parity has been shown."
+  ],
+  "promoted_to_runtime": false
+}
