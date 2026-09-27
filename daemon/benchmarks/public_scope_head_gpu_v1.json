@@ -1,0 +1,63 @@
+{
+  "purpose": "unpromoted_public_scope_label_research_only",
+  "method": "L2-regularized logistic head over frozen Qwen features; train-only normalization",
+  "device": "NVIDIA GeForce RTX 4060 Laptop GPU",
+  "representation": {
+    "model": "Qwen/Qwen3.5-2B",
+    "revision": "15852e8c16360a2fea060d615a32b45270f8a8fc"
+  },
+  "source": {
+    "dataset": "dreadnode/scopejudge",
+    "dataset_url": "https://huggingface.co/datasets/dreadnode/scopejudge",
+    "paper_url": "https://arxiv.org/html/2607.07774v2",
+    "revision": "b8b06a65a09e39a4fe1682ef56f48fd14ab74800",
+    "sha256": "63a176fde1933464dc1cbfe3d5adcae8d4991ab0f93368903276c55a74efb527",
+    "license": "MIT",
+    "selection": "trajectory-disjoint; balanced train/calibration; full test when limit covers split"
+  },
+  "source_report_sha256": "2fe8cc1c44a07e1e1690203d0d5aa62ef4353293383349daaaeb848b0c40c57b",
+  "training_script": "scripts/train_public_scope_head.py",
+  "training_script_sha256": "2a6917d13f51c83bd94feaeac448c1b3ab900aec9ad134550e19fe1cf5f552bb",
+  "feature_cache_sha256": {
+    "scope_train": "e0358a8506b0e5bab9b21d7c24e5f12acb57a354137651f3cf0bbf06b1030681",
+    "scope_calibration": "89a29fd0c40cb6a6102e719262f04b45f5c115a64862a79d3f57adb2d4d4c2df",
+    "scope_test": "c5c75cc210955a1df37366950adc6b44d27112f959cd1bdfb98b92e0713e4699"
+  },
+  "artifact_sha256": "597edb4bbcad1848aaf2d7326bfc025bc762f8aeda0ef44c2dc13159495a804c",
+  "rows": {
+    "scope_train": 507,
+    "scope_calibration": 74,
+    "scope_test": 587
+  },
+  "calibration_l2_auc": {
+    "0.001": 0.8326023391812865,
+    "0.01": 0.8399122807017544,
+    "0.1": 0.8801169590643274,
+    "1.0": 0.9473684210526316
+  },
+  "selected_l2": 1.0,
+  "calibration_threshold": 0.8231595754623413,
+  "calibration_metrics": {
+    "auc": 0.9473684210526316,
+    "balanced_accuracy": 0.8055555555555556,
+    "false_allowances": 0,
+    "false_warnings": 14,
+    "brier": 0.1254635566463153
+  },
+  "test_default_threshold_metrics": {
+    "auc": 0.8545915214435792,
+    "balanced_accuracy": 0.7861203806698801,
+    "false_allowances": 7,
+    "false_warnings": 104,
+    "brier": 0.12020110064195634
+  },
+  "test_calibrated_threshold_metrics": {
+    "auc": 0.8545915214435792,
+    "balanced_accuracy": 0.7545111852675812,
+    "false_allowances": 4,
+    "false_warnings": 197,
+    "brier": 0.12020110064195634
+  },
+  "decision": "Not promoted: the cautious threshold still made 4 false allowances on 29 expert-labeled out-of-scope calls, while producing 197 false warnings. The benchmark is offensive-security-specific and this public test partition has informed prior adaptive experiments; it is not a blind desktop-agent acceptance test.",
+  "limitation": "Research on public expert-labeled offensive-security trajectories only. It does not establish broad desktop-agent scope understanding, live approval behavior, execution authorization, or production safety."
+}
