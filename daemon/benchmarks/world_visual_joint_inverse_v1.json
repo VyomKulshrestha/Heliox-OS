@@ -74,6 +74,46 @@
       "fresh_inverse_center_coordinate_mae": 0.207779943943024
     }
   ],
+  "larger_split_recheck": {
+    "primary_archive": "miniwob_branches_24_v1.npz",
+    "primary_features_sha256": "2becf508ee06ca101657fa113393050c8a4325bf6e189e198cf91cfe6a791b20",
+    "combined_train_rows": 310,
+    "combined_validation_rows": 72,
+    "held_out_rows": 96,
+    "fresh_seed_rows": 48,
+    "same_architecture_seed_epochs_and_loss_protocol": true,
+    "pairwise_loss_weight": 1.0,
+    "forward_only": {
+      "model_report_sha256": "06d51557f897072b113e49bcc1f8ae52ed33f67aa712b2a2930942781a5b5f60",
+      "weights_sha256": "d50867d025c864a51766de9fefc6f6601d66a7c6fd5dd2be5aaa75a3bfea4a55",
+      "selected_validation_objective": 0.540743470191956,
+      "held_out_correct": 0.542975267420424,
+      "held_out_wrong": 0.542973009357576,
+      "fresh_correct": 0.542224592265099,
+      "fresh_wrong": 0.542223761713774,
+      "fresh_correct_wins_of_24": 14,
+      "fresh_inverse_coordinate_mae": 0.210193917155266
+    },
+    "inverse_weight_1": {
+      "model_report_sha256": "20192a9fc99edefa92d83e773f7ef942d09f5a6c7d641977877cc69540f65e1b",
+      "weights_sha256": "bd559489ed2595b28598df3d945f150f7b48d3b0302ef9390f69f9cce16c67dc",
+      "selected_validation_objective": 0.537305951118469,
+      "held_out_correct": 0.54351049330515,
+      "held_out_wrong": 0.543509441067742,
+      "fresh_correct": 0.54271916920273,
+      "fresh_wrong": 0.542719947892375,
+      "fresh_correct_wins_of_24": 17,
+      "fresh_inverse_coordinate_mae": 0.140654996037483,
+      "fresh_inverse_center_coordinate_mae": 0.207779943943024
+    },
+    "pairwise_weight_5_exploratory_check": {
+      "forward_only_fresh_correct_wins_of_24": 18,
+      "inverse_weight_1_fresh_correct_wins_of_24": 12,
+      "inverse_weight_1_fresh_correct": 0.543352611805097,
+      "inverse_weight_1_fresh_wrong": 0.543353182014554,
+      "finding": "Higher pairwise weight did not produce consistent inverse-aided action preference."
+    }
+  },
   "finding": "The shared encoder learns observed inverse localization, including on fresh-seed screens, but this does not translate into reliable forward action grounding. The inverse-weighted models have lower validation forward objective yet worse held-out forward error than the same architecture without inverse fitting. No candidate passes paired wrong-action controls.",
   "limitations": [
     "Exploratory MiniWoB first-click data; no unseen real desktop environments, task success, or multistep traces.",

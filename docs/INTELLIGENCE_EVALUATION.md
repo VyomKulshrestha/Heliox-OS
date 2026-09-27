@@ -767,7 +767,9 @@ between forward next-screen prediction and inverse observed-click localization.
 On the same MiniWoB split and GPU seed, inverse fitting reduced fresh-seed
 coordinate error to 0.135 from the 0.208 center baseline, but the forward
 model still did not reliably favor the correct click over a paired wrong click
-(14/24 fresh pairs with inverse weight 1). It is **not** promoted to runtime.
+(14/24 fresh pairs in the first split; 17/24 after adding the larger training
+split, but the mean margin remained below one-millionth weighted MSE).
+It is **not** promoted to runtime.
 The matched controls, source hashes, and limitations are in
 [`world_visual_joint_inverse_v1.json`](../daemon/benchmarks/world_visual_joint_inverse_v1.json).
 Use `--architecture spatial_joint --inverse-loss-weight 1` with the visual
