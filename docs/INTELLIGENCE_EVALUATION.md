@@ -762,6 +762,18 @@ action understanding or joint forward/inverse training. Reproduce with
 `python -m scripts.probe_world_visual_inverse --help`; keep resulting weights
 and reports in ignored `.bench-state` paths.
 
+A separate opt-in `spatial_joint` research model shares a visual encoder
+between forward next-screen prediction and inverse observed-click localization.
+On the same MiniWoB split and GPU seed, inverse fitting reduced fresh-seed
+coordinate error to 0.135 from the 0.208 center baseline, but the forward
+model still did not reliably favor the correct click over a paired wrong click
+(14/24 fresh pairs with inverse weight 1). It is **not** promoted to runtime.
+The matched controls, source hashes, and limitations are in
+[`world_visual_joint_inverse_v1.json`](../daemon/benchmarks/world_visual_joint_inverse_v1.json).
+Use `--architecture spatial_joint --inverse-loss-weight 1` with the visual
+trainer to reproduce the research mode; weight 0 is the matched forward-only
+control. Checkpoint selection remains forward-validation-only.
+
 An opt-in local recorder can collect after/before 16×16 pairs around approved
 Heliox mouse actions. Its explicit offline trainer holds decrypted features
 in memory, splits by whole recording, evaluates unchanged and shuffled-action
