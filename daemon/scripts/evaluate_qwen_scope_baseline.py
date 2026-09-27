@@ -10,10 +10,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from benchmarks.jev_scope_qwen_v1_holdout import CASES  # noqa: E402
 from benchmarks.scope_semantic_head import SemanticScopeHead  # noqa: E402
+from scripts.jev_output_policy import block_jev_output_use  # noqa: E402
 from scripts.train_scope_decision_challenge import _metrics, _rows  # noqa: E402
 
 
 def main() -> None:
+    block_jev_output_use()
     root = Path(__file__).resolve().parents[1]
     teacher_path = root / "benchmarks/jev_scope_qwen_v1_teacher.json"
     baseline_path = root / "benchmarks/scope_semantic_candidate_v5.npz"

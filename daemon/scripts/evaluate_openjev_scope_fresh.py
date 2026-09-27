@@ -15,10 +15,12 @@ from benchmarks.jev_scope_openjev_v1_holdout import CASES  # noqa: E402
 from benchmarks.scope_candidate_encoder import HIDDEN_SIZE, MAX_LENGTH, CandidateEncoder  # noqa: E402
 from benchmarks.scope_nli_features import REVISION  # noqa: E402
 from benchmarks.scope_semantic_head import SemanticScopeHead, guarded_probabilities  # noqa: E402
+from scripts.jev_output_policy import block_jev_output_use  # noqa: E402
 from scripts.train_scope_decision_challenge import _metrics, _rows  # noqa: E402
 
 
 def evaluate(candidate: Path, teacher_path: Path, output: Path) -> dict:
+    block_jev_output_use()
     teacher = _rows(teacher_path, CASES)
     with np.load(candidate, allow_pickle=False) as data:
         if (str(data["version"]) != "openjev-style-scope-v1"
@@ -51,6 +53,7 @@ def evaluate(candidate: Path, teacher_path: Path, output: Path) -> dict:
 
 
 def main() -> None:
+    block_jev_output_use()
     root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--candidate", type=Path, default=root / "benchmarks/openjev_scope_candidate_v1.npz")

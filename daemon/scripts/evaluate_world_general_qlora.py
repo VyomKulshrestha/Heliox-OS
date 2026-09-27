@@ -16,10 +16,12 @@ import numpy as np
 from benchmarks.general_decision import load_split, metrics
 from scripts.evaluate_qwen_instruct_scope import MODEL_ID, MODEL_REVISION
 from scripts.evaluate_world_scope_qlora import artifact_metadata
+from scripts.jev_output_policy import block_jev_output_use
 from scripts.train_general_decision import encode_rows, score_row
 
 
 def selected_rows(reference: dict) -> tuple[list[dict], dict]:
+    block_jev_output_use()
     rows, manifest = load_split("ood", 384, 20260929)
     rows = [row for row in rows if row["kind"] != "score" or len(row["options"]) <= 10][:128]
     digest = hashlib.sha256("\n".join(row["id"] for row in rows).encode()).hexdigest()
@@ -30,6 +32,7 @@ def selected_rows(reference: dict) -> tuple[list[dict], dict]:
 
 
 def evaluate(adapter_dir: Path, training_report: Path, reference_path: Path) -> dict:
+    block_jev_output_use()
     import torch
     from peft import PeftModel
     from transformers import AutoTokenizer, BitsAndBytesConfig, Qwen3_5ForCausalLM
@@ -77,6 +80,7 @@ def evaluate(adapter_dir: Path, training_report: Path, reference_path: Path) -> 
 
 
 def main() -> None:
+    block_jev_output_use()
     root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--adapter-dir", type=Path, required=True)
