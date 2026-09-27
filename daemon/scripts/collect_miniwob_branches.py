@@ -29,8 +29,11 @@ SOURCE_COMMIT = "33c3b4ddef8c6eb67c57a29663d844b1eda7e614"
 VIRTUAL_ORIGIN = "https://miniwob.local"
 MAX_ASSET_BYTES = 2 * 1024 * 1024
 VIEWPORT = {"width": 320, "height": 360}
-CONTROLS = '#wrap button, #wrap input[type="checkbox"], #wrap input[type="radio"], #wrap select'
 STABLE_STYLE = "#timer-countdown,#reward-avg,#episode-id,#click-track-canvas{visibility:hidden!important}"
+
+
+class UnstableResetError(ValueError):
+    """A candidate branch does not match its independently reset prestate."""
 
 
 def parse_tasks(value: str) -> tuple[str, ...]:
@@ -106,6 +109,39 @@ def visual_feature(png: bytes, size: int = 16) -> np.ndarray:
     return np.asarray(values, dtype=np.float32)
 
 
+def candidate_centers(page) -> list[tuple[float, float]]:
+    """Find visible standard controls and pointer affordances without task names."""
+    return [
+        tuple(point)
+        for point in page.locator("#wrap *").evaluate_all("""nodes => {
+        const semantic = 'button,input:not([type="hidden"]),select,a[href],'
+            + '[role="button"],[role="tab"],[role="menuitem"],'
+            + '[role="checkbox"],[role="radio"]';
+        const candidates = [
+            ...nodes.filter(node => node.matches(semantic)),
+            ...nodes.filter(node => getComputedStyle(node).cursor === 'pointer'
+                && !node.matches(semantic) && !node.closest(semantic)),
+        ];
+        const seen = new Set();
+        const centers = [];
+        for (const node of candidates) {
+            const style = getComputedStyle(node);
+            if (style.visibility !== 'visible' || style.display === 'none'
+                    || style.pointerEvents === 'none') continue;
+            const rect = node.getBoundingClientRect();
+            const x = Math.round((rect.left + rect.width / 2) * 1000) / 1000;
+            const y = Math.round((rect.top + rect.height / 2) * 1000) / 1000;
+            if (!rect.width || !rect.height || x < 0 || x >= 320 || y < 0 || y >= 360) continue;
+            const hit = document.elementFromPoint(x, y);
+            if (hit !== node && !node.contains(hit)) continue;
+            const key = `${x}:${y}`;
+            if (!seen.has(key)) { seen.add(key); centers.push([x, y]); }
+        }
+        return centers;
+    }""")
+    ]
+
+
 def _reset(browser, assets: PinnedAssets, task: str, seed: str):
     context = browser.new_context(viewport=VIEWPORT, device_scale_factor=1)
     context.route("**/*", assets.route)
@@ -117,15 +153,7 @@ def _reset(browser, assets: PinnedAssets, task: str, seed: str):
     page.evaluate("seed => { Math.seedrandom(seed); core.EPISODE_MAX_TIME = 60000; }", seed)
     page.locator("#sync-task-cover").click(timeout=5000)
     page.add_style_tag(content=STABLE_STYLE)
-    controls = page.locator(CONTROLS)
-    candidates = []
-    for index in range(controls.count()):
-        control = controls.nth(index)
-        box = control.bounding_box()
-        if box and box["width"] > 0 and box["height"] > 0 and control.is_visible():
-            x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
-            if 0 <= x < VIEWPORT["width"] and 0 <= y < VIEWPORT["height"]:
-                candidates.append((round(x, 3), round(y, 3)))
+    candidates = candidate_centers(page)
     before_png = page.screenshot(animations="disabled")
     before_dom = page.locator("#wrap").inner_html()
     return context, page, candidates, before_png, before_dom
@@ -148,7 +176,7 @@ def collect_group(
                 or reference[1] != before_dom
                 or not np.array_equal(reference[2], before_feature)
             ):
-                raise ValueError("Independent MiniWoB branches did not reset to one exact measured state")
+                raise UnstableResetError("Independent MiniWoB branches did not reset to one exact measured state")
             if candidate_index >= len(candidates):
                 break
             x, y = candidates[candidate_index]
@@ -215,6 +243,7 @@ def main() -> None:
     rows = []
     attempted = Counter()
     skipped = Counter()
+    unstable = Counter()
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
         try:
@@ -222,7 +251,13 @@ def main() -> None:
                 for task in names:
                     for index in range(args.seed_start, args.seed_start + args.samples_per_task):
                         seed = f"{SOURCE_COMMIT}:{task}:{index}"
-                        pair, count = collect_group(browser, assets, task, seed, args.max_candidates, args.feature_size)
+                        try:
+                            pair, count = collect_group(
+                                browser, assets, task, seed, args.max_candidates, args.feature_size
+                            )
+                        except UnstableResetError:
+                            unstable[split] += 1
+                            continue
                         attempted[split] += count
                         if not pair:
                             skipped[split] += 1
@@ -276,6 +311,7 @@ def main() -> None:
         "groups": {split: len({row["group"] for row in rows if row["split"] == split}) for split in tasks},
         "candidate_attempts": dict(attempted),
         "skipped_no_distinct_visual_outcomes": dict(skipped),
+        "skipped_unstable_reset": dict(unstable),
         "reward_observed": {
             split: dict(Counter(str(row["reward"]) for row in rows if row["split"] == split)) for split in tasks
         },
