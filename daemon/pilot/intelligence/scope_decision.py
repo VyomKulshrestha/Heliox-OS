@@ -16,7 +16,7 @@ import numpy as np
 from scipy.sparse import csr_matrix, hstack
 from sklearn.feature_extraction.text import HashingVectorizer
 
-MODEL_VERSION = "scope-decision-v1"
+MODEL_VERSION = "scope-decision-v2"
 HASH_DIM = 2048
 _VECTORIZER = HashingVectorizer(
     n_features=HASH_DIM,
@@ -134,9 +134,9 @@ class LocalScopeDecisionHead:
     def __init__(self, weights_path: str | Path | None = None) -> None:
         self._weights: np.ndarray | None = None
         self._intercept = 0.0
-        path = (
-            Path(weights_path) if weights_path is not None else Path(__file__).with_name("scope_decision_weights.npz")
-        )
+        if weights_path is None:
+            return
+        path = Path(weights_path)
         try:
             with np.load(path, allow_pickle=False) as data:
                 weights = np.asarray(data["weights"], dtype=np.float64)

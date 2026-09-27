@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from pilot.intelligence.scope_decision import (
     FEATURE_COUNT,
@@ -12,7 +12,6 @@ from pilot.intelligence.scope_decision import (
     apply_target_guard,
     feature_matrix,
 )
-from scripts.train_scope_decision import train
 
 
 def test_feature_layout_is_fixed_and_finite():
@@ -29,6 +28,13 @@ def test_missing_or_malformed_weights_abstain(tmp_path):
     corrupt = tmp_path / "corrupt.npz"
     corrupt.write_bytes(b"not a zip archive")
     assert LocalScopeDecisionHead(corrupt).predict("read", "read") is None
+
+
+def test_default_head_does_not_load_bundled_output_derived_weights():
+    assert not LocalScopeDecisionHead().available
+
+    legacy = Path(__file__).resolve().parents[1] / "pilot" / "intelligence" / "scope_decision_weights.npz"
+    assert not LocalScopeDecisionHead(legacy).available
 
 
 def test_numeric_weights_return_typed_probability_without_approving_anything(tmp_path):
@@ -49,12 +55,8 @@ def test_named_target_mismatch_only_reduces_probability():
     assert apply_target_guard("Check Heliox and Ferrum", "Check Heliox", 0.9) == 0.9
 
 
-def test_training_uses_only_authored_train_split():
-    report_path = Path(__file__).resolve().parents[1] / "benchmarks" / "jev_scope_teacher.json"
-    coefficients, intercept, metrics = train(json.loads(report_path.read_text(encoding="utf-8")))
+def test_retired_trainer_refuses_to_fit_type_safe_outputs():
+    from scripts.train_scope_decision import main
 
-    assert coefficients.shape == (FEATURE_COUNT,)
-    assert np.all(np.isfinite(coefficients)) and np.isfinite(intercept)
-    assert metrics["train_cases"] == 36
-    assert metrics["development"]["cases"] == 24
-    assert metrics["final"]["cases"] == 12
+    with pytest.raises(SystemExit, match="Disabled: this historical trainer"):
+        main()
