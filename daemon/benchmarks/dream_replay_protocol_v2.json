@@ -1,0 +1,20 @@
+{
+  "purpose": "research_only_control_grounding_replay_recheck",
+  "paper": "https://arxiv.org/abs/2609.14858",
+  "source_repo": "Farama-Foundation/MiniWoB-plusplus",
+  "source_commit": "33c3b4ddef8c6eb67c57a29663d844b1eda7e614",
+  "collector": "scripts/collect_miniwob_branches.py",
+  "evaluator": "scripts/evaluate_dream_replay.py",
+  "change_from_v1": "Save generic clicked-control DOM kind in the public synthetic semantic archive; compare a kind-aware goal policy against fixed and label-only policies",
+  "train_tasks": ["click-checkboxes"],
+  "validation_tasks": ["click-test-2", "click-widget"],
+  "eval_tasks": ["click-button", "click-link", "click-color", "click-shape"],
+  "seed_start": 6800,
+  "samples_per_task": 20,
+  "max_candidates": 12,
+  "presentation_seed": 20260927,
+  "selection_rule": "Most rewarded selections on validation; ties prefer first, last, goal_match, then goal_grounded",
+  "eligible_group": "Exactly two independently reset actions with the same visible prestate, both terminal rewards observed, and opposite rewards",
+  "success_criterion": "At least 10 eligible eval groups across at least two task pages; selected policy exceeds fixed-first success rate by at least 0.10 with no task-page regression",
+  "limits": "One-step synthetic branch replay only. No unobserved branches or long-horizon exploration are simulated. This does not validate desktop transfer, Jev parity, or runtime promotion."
+}

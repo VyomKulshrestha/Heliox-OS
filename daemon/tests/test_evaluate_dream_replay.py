@@ -29,6 +29,28 @@ def test_goal_match_uses_instruction_not_later_visible_distractors():
     assert select_action("goal_match", rows) == 1
 
 
+def test_grounded_policy_distinguishes_unlabeled_input_types():
+    rows = [
+        _row("eval", "g", "task", "INPUT", -1),
+        _row("eval", "g", "task", "INPUT", 1),
+    ]
+    for row in rows:
+        row["state_text"] = 'Click on a "checkbox" widget.\nControls:\ninput'
+    rows[0]["action_kind"] = "text"
+    rows[1]["action_kind"] = "checkbox"
+    assert select_action("goal_grounded", rows) == 1
+
+
+def test_grounded_policy_prefers_specific_label_over_shared_control_kind():
+    rows = [
+        _row("eval", "g", "task", "no", -1),
+        _row("eval", "g", "task", "previous", 1),
+    ]
+    for row in rows:
+        row["action_kind"] = "button"
+    assert select_action("goal_grounded", rows) == 1
+
+
 def test_replay_selects_on_validation_only_and_counts_observed_rewards(tmp_path):
     rows = [
         _row("validation", "v", "task-v", "no", -1),
