@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "purpose": "exploratory_domain_disjoint_office_transition_probe",
+  "dataset": "cua-lite/GUI-360",
+  "revision": "c6195ff35021eebb35b1335893c2b6aa824aeadf",
+  "upstream_dataset": "vyokky/GUI-360",
+  "upstream_revision_at_selection": "1c46362efaae836c601004e77b98a1aba89a530f",
+  "selection_note": "Shard ordinals were chosen after inspecting the source schema and a few public viewer rows, but before downloading these three shards or scoring any model. This is an exploratory Office-domain transfer test, not an untouched benchmark.",
+  "shards": [
+    {
+      "path": "desktop/use/train/use/shard-00000-of-00363.parquet",
+      "sha256": "a152b7d3a93df98ddbe03c177e607649b952b233244ac8532ffb9fd443caa6d0",
+      "expected_domain": "excel",
+      "split": "train"
+    },
+    {
+      "path": "desktop/use/train/use/shard-00110-of-00363.parquet",
+      "sha256": "e36fb546c01fc2d8c737d67c41f522dfba2574f9563f67445d900374da535262",
+      "expected_domain": "word",
+      "split": "validation"
+    },
+    {
+      "path": "desktop/use/train/use/shard-00320-of-00363.parquet",
+      "sha256": "a6a79e41327d0a166da029f197bc79bf6c107cf5f5670727fca00b74bb547f00",
+      "expected_domain": "ppt",
+      "split": "eval"
+    }
+  ],
+  "representation": "rgb32",
+  "action_filter": "one_computer_click_per_tool_call_with_following_screenshot_and_later_action",
+  "split_basis": "source_application_domain_and_trajectory_id",
+  "candidate": {
+    "architecture": "spatial_global",
+    "epochs": 30,
+    "seed": 20260927,
+    "action_permutations": 99
+  },
+  "controls": [
+    "matched_no_action_model",
+    "unchanged_screen",
+    "within_action_location_shuffle"
+  ],
+  "minimum_rows_per_split": 20,
+  "promotion": "none; a single shard per domain and non-interventional trajectories cannot establish live desktop dynamics or Jev parity"
+}
