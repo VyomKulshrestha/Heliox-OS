@@ -7,12 +7,46 @@ import hashlib
 import json
 from pathlib import Path
 
+import numpy as np
+
 from scripts.train_world_visual_delta_latent import (
     attach_semantic_features,
     build_delta_latent_model,
     score_model,
 )
 from scripts.train_world_visual_transition import feature_shape, load_features
+
+
+def training_task_names(model_report: dict, source_reports: tuple[Path | None, Path | None]) -> set[str] | None:
+    fields = ("source_report_sha256", "additional_source_report_sha256")
+    if all(path is None for path in source_reports):
+        return None
+    if any(bool(path) != bool(model_report.get(field))
+           for path, field in zip(source_reports, fields, strict=True)):
+        raise ValueError("Provide every source report used to fit the frozen model")
+    tasks = set()
+    for path, field in zip(source_reports, fields, strict=True):
+        assert path is not None
+        if hashlib.sha256(path.read_bytes()).hexdigest() != model_report[field]:
+            raise ValueError("Training source report checksum mismatch")
+        source = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(source.get("tasks"), dict):
+            raise ValueError("Training source report has no task-split provenance")
+        tasks.update(task for split in ("train", "validation")
+                     for task in source["tasks"].get(split, []))
+    return tasks
+
+
+def task_masks(features_path: Path, split: str, expected_rows: int) -> dict[str, np.ndarray]:
+    with np.load(features_path, allow_pickle=False) as data:
+        if "task" not in data.files:
+            return {}
+        tasks = data["task"].astype(str)
+        selected = data["split"].astype(str) == split
+    if len(tasks) != len(selected) or int(selected.sum()) != expected_rows:
+        raise ValueError("Task labels do not align with the verified visual split")
+    names = tasks[selected]
+    return {name: names == name for name in sorted(set(names))}
 
 
 def main() -> None:
@@ -23,6 +57,10 @@ def main() -> None:
     parser.add_argument("--target-report", type=Path, required=True)
     parser.add_argument("--target-semantic-features", type=Path)
     parser.add_argument("--target-semantic-report", type=Path)
+    parser.add_argument("--training-source-report", type=Path,
+                        help="Hash-verified primary training archive report for task-overlap audit")
+    parser.add_argument("--additional-training-source-report", type=Path,
+                        help="Hash-verified additional training archive report for task-overlap audit")
     parser.add_argument("--split", choices=("train", "validation", "eval"), default="eval")
     parser.add_argument("--report", type=Path, required=True)
     parser.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
@@ -52,6 +90,9 @@ def main() -> None:
             args.target_semantic_features, args.target_semantic_report)
         if actual_dim != semantic_dim:
             raise ValueError("Frozen model and target semantic dimensions differ")
+    fit_tasks = training_task_names(
+        model_report, (args.training_source_report, args.additional_training_source_report))
+    masks = task_masks(args.target_features, args.split, len(rows[args.split]["state"]))
 
     import torch
     from torch import nn
@@ -62,6 +103,9 @@ def main() -> None:
     model = build_delta_latent_model(nn, torch, shape, model_report["latent_dim"], semantic_dim)
     model.load_state_dict(torch.load(args.weights, map_location="cpu", weights_only=True))
     model = model.to(device).eval()
+    by_task = {name: score_model(
+        model, {key: value[mask] for key, value in rows[args.split].items()}, shape, torch, device)
+        for name, mask in masks.items()}
     report = {
         "purpose": "research_only_frozen_delta_latent_split_probe",
         "model_report_sha256": hashlib.sha256(args.model_report.read_bytes()).hexdigest(),
@@ -79,6 +123,9 @@ def main() -> None:
         "target_groups": len(set(rows[args.split]["groups"])),
         "device": str(device),
         "scores": score_model(model, rows[args.split], shape, torch, device),
+        "scores_by_task": by_task,
+        "training_task_names": sorted(fit_tasks) if fit_tasks is not None else None,
+        "exact_task_name_overlap": (sorted(set(masks) & fit_tasks) if fit_tasks is not None else None),
         "limitation": "Frozen one-step latent model on selected public GUI pairs only. "
                       "No real desktop, multistep task, runtime promotion, safety, or Jev parity claim.",
     }
