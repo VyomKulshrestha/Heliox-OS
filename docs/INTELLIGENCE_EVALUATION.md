@@ -780,6 +780,18 @@ Use `--architecture spatial_joint --inverse-loss-weight 1` with the visual
 trainer to reproduce the research mode; weight 0 is the matched forward-only
 control. Checkpoint selection remains forward-validation-only.
 
+Because paired outcomes differ on very few pixels, an optional
+`--pairwise-focus-weight` research loss fits only the pixels where independently
+observed paired outcomes disagree. The candidate and pass gate were
+[frozen before new seed-200 collection](../daemon/benchmarks/world_visual_focus_seed200_protocol_v1.json).
+On those 44 new-seed pairs, inverse-assisted training preferred the correct
+click on 42/44 action-differentiating regions, versus 36/44 for the matched
+forward-only model. It still preferred the correct click on only 24/44 whole
+frames, and its mean whole-frame margin favored the wrong action. The
+[frozen result](../daemon/benchmarks/world_visual_focus_seed200_results_v1.json)
+fails the overall gate; no weights are enabled in Heliox. This is a useful
+representation diagnostic, not a Jev-equivalent world model.
+
 An opt-in local recorder can collect after/before 16×16 pairs around approved
 Heliox mouse actions. Its explicit offline trainer holds decrypted features
 in memory, splits by whole recording, evaluates unchanged and shuffled-action

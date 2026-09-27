@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "purpose": "frozen_seed200_miniwob_action_transfer_result",
+  "protocol": "world_visual_focus_seed200_protocol_v1.json",
+  "protocol_sha256": "3cd37ae1d436b4cc5400dd82f8590da07ba065d1a22e235163c003202e28fbd6",
+  "source": {
+    "feature_archive_sha256": "dd2c11f99a779a6bc5c41feed40065ab402b94a4d1a4d9d5a17930ebe2875fae",
+    "collection_report_sha256": "9de69a4f6ae651c2d4e59fecefe4570107c27c991b0974021418e2d20569c262",
+    "seed_start": 200,
+    "eval_groups": 44,
+    "skipped_no_distinct_outcome": 4,
+    "source_commit": "33c3b4ddef8c6eb67c57a29663d844b1eda7e614"
+  },
+  "model_results": [
+    {
+      "model": "matched_forward_only",
+      "inverse_loss_weight": 0.0,
+      "pairwise_focus_weight": 1.0,
+      "weights_sha256": "4fbc451e17332d31ae1c6ca23aabd6011aaceedc27da56e54aa9692fb8f4b304",
+      "transfer_report_sha256": "1fb9820139aae58185a5beccfc2ee5d40364bbb43b244a99fd184906b6a0045f",
+      "discriminative_pixel_correct_wins_of_44": 36,
+      "discriminative_pixel_mean_mse_advantage": 0.00143024199695157,
+      "whole_frame_correct_wins_of_44": 22,
+      "whole_frame_mean_weighted_mse_advantage": 0.0000334192475574381,
+      "whole_frame_correct_weighted_mse": 0.435694076887191,
+      "whole_frame_wrong_weighted_mse": 0.435727496134749
+    },
+    {
+      "model": "selected_inverse_assisted",
+      "inverse_loss_weight": 1.0,
+      "pairwise_focus_weight": 1.0,
+      "weights_sha256": "4ea8a8fbd33a3cead6804900daeed541db4fca26dcd6cfafd03d0943acfaad74",
+      "transfer_report_sha256": "417e5b5709fef0e21cdbadc481d1f5ba23bba8b628f222eb44701377c2ceb01f",
+      "discriminative_pixel_correct_wins_of_44": 42,
+      "discriminative_pixel_mean_mse_advantage": 0.00116025991684926,
+      "whole_frame_correct_wins_of_44": 24,
+      "whole_frame_mean_weighted_mse_advantage": -0.0000361631867223581,
+      "whole_frame_correct_weighted_mse": 0.497065488411404,
+      "whole_frame_wrong_weighted_mse": 0.497029325224681,
+      "observed_inverse_coordinate_mae": 0.137734606862068
+    }
+  ],
+  "gate": {
+    "discriminative_pixel_threshold": "at least 37 of 44, positive mean advantage, and more wins than control",
+    "discriminative_pixel_passed": true,
+    "whole_frame_threshold": "at least 33 of 44 and positive mean advantage",
+    "whole_frame_passed": false,
+    "overall_passed": false
+  },
+  "finding": "The general focused loss exposes a transferable action-specific signal, and inverse assistance improves win count on the sparse discriminative pixels. It does not establish reliable next-screen prediction: the selected model fails the preregistered whole-frame gate, and its mean whole-frame advantage favors the wrong action.",
+  "limitations": [
+    "Same task families with a new seed range; not an unseen environment or user desktop.",
+    "Seed-100 exploratory results informed candidate selection, so only seed 200 was frozen before this transfer score.",
+    "The 44 evaluated groups are selected for visually distinct outcomes; four attempted eval seeds were skipped under the pinned collector rule.",
+    "Neither action-difference accuracy nor inverse after-screen localization proves agent task success, safe execution, or Jev parity."
+  ],
+  "promoted_to_runtime": false
+}
