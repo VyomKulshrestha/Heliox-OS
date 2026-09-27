@@ -226,6 +226,7 @@ def _reset(browser, assets: PinnedAssets, task: str, seed: str):
 def collect_group(
     browser, assets: PinnedAssets, task: str, seed: str, max_candidates: int, feature_size: int = 16,
     include_semantics: bool = False, nonterminal_only: bool = False,
+    require_semantic_difference: bool = False,
 ) -> tuple[list[dict], int]:
     reference: tuple[list[tuple[float, float]], str, np.ndarray] | None = None
     rows = []
@@ -245,7 +246,7 @@ def collect_group(
             if candidate_index >= len(candidates):
                 break
             x, y = candidates[candidate_index]
-            before_semantics = visible_semantics(page, (x, y)) if include_semantics else None
+            before_semantics = visible_semantics(page, (x, y)) if (include_semantics or require_semantic_difference) else None
             page.mouse.click(x, y)
             outcome = page.evaluate("({done: WOB_DONE_GLOBAL, reward: WOB_RAW_REWARD_GLOBAL})")
             attempted += 1
@@ -265,7 +266,9 @@ def collect_group(
             context.close()
     for left in range(len(rows)):
         for right in range(left + 1, len(rows)):
-            if not np.array_equal(rows[left]["target"], rows[right]["target"]):
+            if (not np.array_equal(rows[left]["target"], rows[right]["target"])
+                and (not require_semantic_difference
+                     or rows[left]["target_text"] != rows[right]["target_text"])):
                 return [rows[left], rows[right]], attempted
     return [], attempted
 
@@ -294,6 +297,8 @@ def main() -> None:
     parser.add_argument("--max-candidates", type=int, default=8)
     parser.add_argument("--nonterminal-only", action="store_true",
                         help="Keep only action pairs whose two outcomes remain on the task page")
+    parser.add_argument("--require-semantic-difference", action="store_true",
+                        help="Reject pairs differing only in screenshot pixels, such as focus outlines")
     parser.add_argument("--features", type=Path, default=root / "miniwob_branches_v1.npz")
     parser.add_argument("--report", type=Path, default=root / "miniwob_branches_v1.json")
     parser.add_argument("--semantic-archive", type=Path,
@@ -333,6 +338,7 @@ def main() -> None:
                                 browser, assets, task, seed, args.max_candidates, args.feature_size,
                                 include_semantics=args.semantic_archive is not None,
                                 nonterminal_only=args.nonterminal_only,
+                                require_semantic_difference=args.require_semantic_difference,
                             )
                         except UnstableResetError:
                             unstable[split] += 1
@@ -393,7 +399,9 @@ def main() -> None:
         "feature_shape": [1, args.feature_size, args.feature_size],
         "max_candidates": args.max_candidates,
         "nonterminal_only": args.nonterminal_only,
-        "selection": f"first two candidate clicks with distinct observed {args.feature_size}x{args.feature_size} next-screen features",
+        "require_semantic_difference": args.require_semantic_difference,
+        "selection": f"first two candidate clicks with distinct observed {args.feature_size}x{args.feature_size} next-screen features"
+        + (" and distinct visible task text/control states" if args.require_semantic_difference else ""),
         "reset_identity": f"identical visible control coordinates, task DOM, and {args.feature_size}x{args.feature_size} pre-action features; "
         "full screenshot bytes may differ by rendering noise",
         "counterfactual_pairs": True,

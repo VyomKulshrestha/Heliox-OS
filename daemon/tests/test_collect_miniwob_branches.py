@@ -169,6 +169,24 @@ def test_nonterminal_only_excludes_terminal_overlay_branches(monkeypatch) -> Non
     assert [row["coords"][0] for row in pair] == [30 / 320, 50 / 320]
 
 
+def test_semantic_difference_rejects_focus_only_visual_branches(monkeypatch) -> None:
+    monkeypatch.setattr(collector, "_reset", lambda *_args: (
+        _Context(), _Page(), [(10, 20), (30, 40), (50, 60)], b"before", "same DOM"))
+    monkeypatch.setattr(
+        collector, "visual_feature", lambda png, size=16: np.full(size * size, png[0], dtype=np.float32)
+    )
+    monkeypatch.setattr(collector, "visible_semantics", lambda page, point=None: {
+        "text": "changed" if point is None and page.x == 50 else "same",
+        "target": "click",
+    })
+    pair, attempted = collector.collect_group(
+        None, None, "task", "seed", 3, require_semantic_difference=True
+    )
+    assert attempted == 3
+    assert [row["coords"][0] for row in pair] == [10 / 320, 50 / 320]
+    assert pair[0]["target_text"] != pair[1]["target_text"]
+
+
 def test_task_splits_reject_identical_modeled_prestates() -> None:
     rows = [
         {"split": split, "state": np.full(256, value, dtype=np.float32)}
