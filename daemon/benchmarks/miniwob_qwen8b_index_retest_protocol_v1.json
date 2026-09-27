@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "purpose": "new_seed_index_contract_retest",
+  "code_commit": "319923a",
+  "source_commit": "33c3b4ddef8c6eb67c57a29663d844b1eda7e614",
+  "model": "qwen3:8b",
+  "ollama_digest": "500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41",
+  "command": "python scripts/probe_miniwob_multistep_qwen.py --tasks click-checkboxes,click-option,click-button-sequence --samples-per-task 4 --seed-start 1500 --max-steps 12 --ollama-model qwen3:8b --report benchmarks/.bench-state/miniwob_qwen8b_seed1500_v1.json",
+  "research_gate": {
+    "completed_pairs": 12,
+    "invalid_index_count": 0,
+    "model_successes_at_least_baseline": true
+  },
+  "limitation": "The prompt was revised after inspecting seed-1400 failures. Seed 1500 is new but task families are not blind. A pass is not Jev parity or live desktop proof."
+}
