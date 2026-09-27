@@ -1574,8 +1574,8 @@ Jev outputs.
 
 The separate [Open-Jev 2B public-label baseline](OPENJEV_PUBLIC_GENERAL_RESULT_V2.md)
 is a frozen, group-disjoint evaluation of that published checkpoint. On its
-fresh 128-row public split, binary accuracy was 90.0%, choice accuracy 60.5%,
-and ordinal mean rank error 0.207. This is not a Heliox model or a live-task
+fresh split it beat an equal-probability, label-blind baseline for binary,
+choice, and ordinal decisions. This is not a Heliox model or a live-task
 result; the report contains no hosted-model output comparison.
 
 For offline verification with the pinned base already in the Hugging Face

@@ -19,7 +19,7 @@ except ImportError:
 
 import numpy as np
 
-from benchmarks.general_decision import DATASET_REVISION, load_split, metrics
+from benchmarks.general_decision import DATASET_REVISION, load_split, metrics, uniform_baseline
 from scripts.train_general_decision import encode_rows, evaluate_checkpointed
 from scripts.train_world_scope_qlora import (
     OPENJEV_ADAPTER_SHA256,
@@ -126,6 +126,8 @@ def summarize_checkpoints(protocol_path: Path, output_dir: Path) -> dict:
         "backbone": "Qwen3.5-2B NF4; quantized outputs are not the released bf16 outputs",
         "temperature": 1.0,
         "archived": scored["archived"], "fresh": scored["fresh"],
+        "uniform_baseline": {"archived": uniform_baseline(archived)["by_kind"],
+                             "fresh": uniform_baseline(fresh)["by_kind"]},
         "archived_ids_sha256": protocol["archived_ids_sha256"],
         "limitation": "Public synthetic rows only; no desktop transfer or execution-authority evidence.",
     }
@@ -203,6 +205,8 @@ def run(protocol_path: Path, output_dir: Path, *, resume: bool) -> dict:
         "backbone": "Qwen3.5-2B NF4; quantized outputs are not the released bf16 outputs",
         "temperature": 1.0,
         "archived": scored["archived"], "fresh": scored["fresh"],
+        "uniform_baseline": {"archived": uniform_baseline(archived)["by_kind"],
+                             "fresh": uniform_baseline(fresh)["by_kind"]},
         "archived_ids_sha256": protocol["archived_ids_sha256"],
         "limitation": "Public synthetic rows only; no desktop transfer or execution-authority evidence.",
     }

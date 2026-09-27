@@ -21,11 +21,16 @@ use outputs from a hosted proprietary model.
 
 ## Public-label results
 
-| Decision kind | Archived rows / result | Fresh rows / result |
-| --- | --- | --- |
-| Binary (`noul`) | 67 / 86.6% accuracy | 70 / 90.0% accuracy |
-| Choice | 35 / 71.4% accuracy | 38 / 60.5% accuracy |
-| Ordinal score | 26 / 0.139 mean rank error | 20 / 0.207 mean rank error |
+Fresh-set comparison with an equal-probability, label-blind baseline:
+
+| Decision kind | Open-Jev result | Uniform baseline | Rows |
+| --- | --- | --- | ---: |
+| Binary (`noul`) | 90.0% accuracy; 80.4% balanced accuracy | 80.0%; 50.0% balanced | 70 |
+| Choice | 60.5% accuracy | 23.7% accuracy | 38 |
+| Ordinal score | 0.207 mean rank error | 1.250 mean rank error | 20 |
+
+The archived split also beat that same baseline: binary 86.6% vs 79.1%,
+choice 71.4% vs 28.6%, and ordinal rank error 0.139 vs 0.923 (lower is better).
 
 The weakest fresh category is choice selection. The result supports continuing
 offline work on choice transfer, but does not establish quality on real Heliox
@@ -34,7 +39,7 @@ execution. No weights were trained or promoted by this evaluation; approvals
 and deterministic execution gates remain unchanged.
 
 The complete local report and resumable logits are under the ignored path
-`daemon/benchmarks/.bench-state/released_openjev_general_public_v2/` and are
+`daemon/benchmarks/.bench-state/released_openjev_general_public_v3/` and are
 not committed.
 
 ## Reproduction
