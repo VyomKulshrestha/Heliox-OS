@@ -225,7 +225,7 @@ def _reset(browser, assets: PinnedAssets, task: str, seed: str):
 
 def collect_group(
     browser, assets: PinnedAssets, task: str, seed: str, max_candidates: int, feature_size: int = 16,
-    include_semantics: bool = False,
+    include_semantics: bool = False, nonterminal_only: bool = False,
 ) -> tuple[list[dict], int]:
     reference: tuple[list[tuple[float, float]], str, np.ndarray] | None = None
     rows = []
@@ -248,16 +248,19 @@ def collect_group(
             before_semantics = visible_semantics(page, (x, y)) if include_semantics else None
             page.mouse.click(x, y)
             outcome = page.evaluate("({done: WOB_DONE_GLOBAL, reward: WOB_RAW_REWARD_GLOBAL})")
+            attempted += 1
+            if nonterminal_only and outcome["done"]:
+                continue
             row = {"state": before_feature,
                    "target": visual_feature(page.screenshot(animations="disabled"), feature_size),
                    "coords": (x / VIEWPORT["width"], y / VIEWPORT["height"]),
+                   "done": bool(outcome["done"]),
                    "reward": float(outcome["reward"]) if outcome["done"] else None}
             if before_semantics is not None:
                 row.update({"state_text": before_semantics["text"],
                             "action_label": before_semantics["target"],
                             "target_text": visible_semantics(page)["text"]})
             rows.append(row)
-            attempted += 1
         finally:
             context.close()
     for left in range(len(rows)):
@@ -289,6 +292,8 @@ def main() -> None:
     parser.add_argument("--seed-start", type=int, default=0)
     parser.add_argument("--feature-size", type=int, choices=(16, 64), default=16)
     parser.add_argument("--max-candidates", type=int, default=8)
+    parser.add_argument("--nonterminal-only", action="store_true",
+                        help="Keep only action pairs whose two outcomes remain on the task page")
     parser.add_argument("--features", type=Path, default=root / "miniwob_branches_v1.npz")
     parser.add_argument("--report", type=Path, default=root / "miniwob_branches_v1.json")
     parser.add_argument("--semantic-archive", type=Path,
@@ -327,6 +332,7 @@ def main() -> None:
                             pair, count = collect_group(
                                 browser, assets, task, seed, args.max_candidates, args.feature_size,
                                 include_semantics=args.semantic_archive is not None,
+                                nonterminal_only=args.nonterminal_only,
                             )
                         except UnstableResetError:
                             unstable[split] += 1
@@ -359,6 +365,7 @@ def main() -> None:
         target=np.stack([row["target"] for row in rows]),
         action=np.ones(len(rows), dtype=np.int16),
         coords=np.asarray([row["coords"] for row in rows], dtype=np.float32),
+        done=np.asarray([row["done"] for row in rows], dtype=np.bool_),
         group=np.asarray([row["group"] for row in rows]),
         split=np.asarray([row["split"] for row in rows]),
         task=np.asarray([row["task"] for row in rows]),
@@ -367,10 +374,13 @@ def main() -> None:
     if args.semantic_archive is not None:
         args.semantic_archive.parent.mkdir(parents=True, exist_ok=True)
         content = "".join(json.dumps({key: row[key] for key in (
-            "group", "split", "task", "coords", "reward", "state_text",
+            "group", "split", "task", "coords", "done", "reward", "state_text",
             "action_label", "target_text")}, ensure_ascii=False) + "\n" for row in rows)
         args.semantic_archive.write_text(content, encoding="utf-8")
         semantic_sha256 = hashlib.sha256(args.semantic_archive.read_bytes()).hexdigest()
+    termination_by_group = {}
+    for row in rows:
+        termination_by_group.setdefault((row["split"], row["group"]), set()).add(row["done"])
     report = {
         "purpose": "research_only_miniwob_visual_branch_transitions",
         "source_repo": SOURCE_REPO,
@@ -382,6 +392,7 @@ def main() -> None:
         "seed_start": args.seed_start,
         "feature_shape": [1, args.feature_size, args.feature_size],
         "max_candidates": args.max_candidates,
+        "nonterminal_only": args.nonterminal_only,
         "selection": f"first two candidate clicks with distinct observed {args.feature_size}x{args.feature_size} next-screen features",
         "reset_identity": f"identical visible control coordinates, task DOM, and {args.feature_size}x{args.feature_size} pre-action features; "
         "full screenshot bytes may differ by rendering noise",
@@ -395,6 +406,13 @@ def main() -> None:
         "skipped_unstable_reset": dict(unstable),
         "reward_observed": {
             split: dict(Counter(str(row["reward"]) for row in rows if row["split"] == split)) for split in tasks
+        },
+        "terminal_outcome_rows": {
+            split: sum(row["done"] for row in rows if row["split"] == split) for split in tasks
+        },
+        "mixed_terminal_pairs": {
+            split: sum(len(states) == 2 for (name, _), states in termination_by_group.items()
+                       if name == split) for split in tasks
         },
         "features_sha256": hashlib.sha256(args.features.read_bytes()).hexdigest(),
         "semantic_archive_sha256": semantic_sha256,
