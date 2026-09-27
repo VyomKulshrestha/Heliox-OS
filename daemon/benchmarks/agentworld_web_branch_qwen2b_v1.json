@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "purpose": "research_only_independent_visible_branch_diagnostic",
+  "source": {
+    "dataset": "Qwen/AgentWorldBench",
+    "revision": "6b8d28437042434dcdd168434227ca0de408c5ba",
+    "license": "Apache-2.0",
+    "web_test_jsonl_sha256": "2e9f35fe5d43e97b9f213599195c718b73e906b92a8108210c9d2cc8d6b27501",
+    "test_rows": 200,
+    "exact_visible_state_groups": 211,
+    "eligible_groups_after_complete_page_filter": 14,
+    "navigation_groups": 12,
+    "non_navigation_groups": 2
+  },
+  "candidate": {
+    "model": "Qwen/Qwen3.5-2B",
+    "revision": "15852e8c16360a2fea060d615a32b45270f8a8fc",
+    "device": "cuda:0",
+    "method": "Zero-shot two-way action/outcome matching from bounded visible-state and semantic outcome-diff summaries. Each case is scored in both candidate orders; first-token A/B log-odds are differenced to reduce position bias.",
+    "max_input_tokens": 1536,
+    "scored": 14,
+    "correct": 7,
+    "navigation_correct": 5,
+    "navigation_count": 12,
+    "non_navigation_correct": 2,
+    "non_navigation_count": 2,
+    "local_full_report_sha256": "b03a4d28859af6f754fafa84b46901ff07abea6980f7f25ff752760b5cd5fecc"
+  },
+  "finding": "The candidate did not beat the 7/14 balanced-label chance baseline overall. The tiny non-navigation slice is uninterpretable. The earlier unmirrored pass chose A for every case, showing a strong position bias.",
+  "limitations": [
+    "Exact visible state does not prove equal hidden browser or server state; these are observational branches, not controlled counterfactuals.",
+    "The public test set was evaluation-only and was not used for fitting or calibration.",
+    "The deterministic eligibility filter leaves mostly direct navigation, not a representative browser or desktop task sample.",
+    "Semantic outcome summaries are truncated and do not test full next-state generation or multi-step success.",
+    "This does not measure Heliox runtime performance, safety, autonomy, or Jev parity. No weights are promoted."
+  ],
+  "promoted_to_runtime": false
+}
