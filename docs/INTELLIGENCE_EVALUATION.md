@@ -65,6 +65,26 @@ in earlier adaptive experiments. See the
 [trainer](../daemon/scripts/train_public_scope_head.py). It is not a blind
 desktop-agent acceptance test, live approval evidence, or a permission gate.
 
+## Independent cowork-agent trajectory benchmark
+
+[ActBench](https://github.com/ZJUICSR/ActBench) is a promising separate
+evaluation for Heliox's tool-using and multi-agent behavior. Its MIT-licensed
+repository describes 300 matched benign/adversarial pairs (600 cases) and
+scores utility and realized prohibited effects from execution trajectories,
+not final answers alone; see its [paper](https://arxiv.org/abs/2608.09476).
+This can test prompt-injection resistance, tool-scope escalation, and whether
+multi-step execution preserves the intended task boundary. It is not a direct
+desktop-vision, voice, or world-model benchmark, and its trajectory-level
+outcomes are not per-action scope labels for training the scope head.
+
+Use only the repository's MIT-covered benchmark code and task fixtures unless
+the separate [Hugging Face trajectory dataset](https://huggingface.co/datasets/ZJUICSR/ActBench)
+license is independently verified. That dataset's license metadata could not
+be verified during this review, so its trajectories are not approved here for
+training or redistribution. ActBench has not yet been integrated with or run
+against Heliox; a Heliox adapter and isolated mock-service execution are still
+needed before reporting benchmark results.
+
 ## Local MCP
 
 The local stdio bridge follows an explicit asynchronous handle model:
