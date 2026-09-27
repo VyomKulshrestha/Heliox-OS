@@ -8,7 +8,11 @@ import json
 import numpy as np
 import pytest
 
-from scripts.probe_world_visual_delta_latent_transfer import task_masks, training_task_names
+from scripts.probe_world_visual_delta_latent_transfer import (
+    observed_pair_signal,
+    task_masks,
+    training_task_names,
+)
 
 
 def test_training_task_names_verifies_every_fit_source(tmp_path) -> None:
@@ -41,3 +45,17 @@ def test_task_masks_align_with_split_rows(tmp_path) -> None:
     assert masks["a"].tolist() == [True, False, True, False]
     with pytest.raises(ValueError, match="align"):
         task_masks(path, "eval", 3)
+
+
+def test_observed_pair_signal_uses_pixels_not_model_latents() -> None:
+    rows = {
+        "state": np.zeros((4, 2), dtype=np.float32),
+        "target": np.asarray([[0, 0], [1, 0], [0, 0], [0, 0.2]], dtype=np.float32),
+        "action": np.asarray([[1, 0], [0, 1], [1, 0], [0, 1]], dtype=np.float32),
+        "groups": np.asarray(["a", "a", "b", "b"]),
+    }
+    signal = observed_pair_signal(rows)
+    assert signal["groups"] == 2
+    assert signal["max_pixel_mse"] == pytest.approx(0.5)
+    assert signal["min_pixel_mse"] == pytest.approx(0.02)
+    assert signal["mean_pixel_mse"] == pytest.approx(0.26)

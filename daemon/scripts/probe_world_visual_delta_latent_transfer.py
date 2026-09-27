@@ -14,7 +14,7 @@ from scripts.train_world_visual_delta_latent import (
     build_delta_latent_model,
     score_model,
 )
-from scripts.train_world_visual_transition import feature_shape, load_features
+from scripts.train_world_visual_transition import feature_shape, load_features, paired_group_indices
 
 
 def training_task_names(model_report: dict, source_reports: tuple[Path | None, Path | None]) -> set[str] | None:
@@ -47,6 +47,19 @@ def task_masks(features_path: Path, split: str, expected_rows: int) -> dict[str,
         raise ValueError("Task labels do not align with the verified visual split")
     names = tasks[selected]
     return {name: names == name for name in sorted(set(names))}
+
+
+def observed_pair_signal(rows: dict[str, np.ndarray]) -> dict[str, float | int]:
+    """Measure action-dependent screen signal independently of model latents."""
+    pairs = paired_group_indices(rows)
+    targets = rows["target"]
+    separation = ((targets[pairs[:, 0]] - targets[pairs[:, 1]]) ** 2).mean(axis=1)
+    return {
+        "groups": len(pairs),
+        "mean_pixel_mse": float(separation.mean()),
+        "min_pixel_mse": float(separation.min()),
+        "max_pixel_mse": float(separation.max()),
+    }
 
 
 def main() -> None:
@@ -103,9 +116,11 @@ def main() -> None:
     model = build_delta_latent_model(nn, torch, shape, model_report["latent_dim"], semantic_dim)
     model.load_state_dict(torch.load(args.weights, map_location="cpu", weights_only=True))
     model = model.to(device).eval()
-    by_task = {name: score_model(
-        model, {key: value[mask] for key, value in rows[args.split].items()}, shape, torch, device)
-        for name, mask in masks.items()}
+    by_task = {}
+    for name, mask in masks.items():
+        task_rows = {key: value[mask] for key, value in rows[args.split].items()}
+        by_task[name] = score_model(model, task_rows, shape, torch, device)
+        by_task[name]["observed_pair_signal"] = observed_pair_signal(task_rows)
     report = {
         "purpose": "research_only_frozen_delta_latent_split_probe",
         "model_report_sha256": hashlib.sha256(args.model_report.read_bytes()).hexdigest(),
@@ -123,6 +138,7 @@ def main() -> None:
         "target_groups": len(set(rows[args.split]["groups"])),
         "device": str(device),
         "scores": score_model(model, rows[args.split], shape, torch, device),
+        "observed_pair_signal": observed_pair_signal(rows[args.split]),
         "scores_by_task": by_task,
         "training_task_names": sorted(fit_tasks) if fit_tasks is not None else None,
         "exact_task_name_overlap": (sorted(set(masks) & fit_tasks) if fit_tasks is not None else None),
