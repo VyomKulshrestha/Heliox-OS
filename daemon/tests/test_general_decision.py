@@ -21,7 +21,7 @@ from benchmarks.general_decision import (
     verify_disjoint,
 )
 from benchmarks.scopejudge_general import scope_group_weights
-from scripts.train_general_decision import checkpoint_signature, ordinal_penalty
+from scripts.train_general_decision import checkpoint_signature, ordinal_penalty, training_row_weights
 
 
 def row(kind: str = "choice") -> dict:
@@ -193,6 +193,16 @@ def test_scope_weights_reduce_group_dominance_without_changing_class_mass() -> N
     assert sum(weights[:9]) / weights[9] == pytest.approx(3)
     with pytest.raises(ValueError, match="both"):
         scope_group_weights(rows[:10])
+
+
+def test_scope_loss_weight_only_scales_action_rows() -> None:
+    general = [{"row": row()}] * 2
+    scope = [{"row": {"group_id": "a", "target": [1.0, 0.0]}},
+             {"row": {"group_id": "b", "target": [0.0, 1.0]}}]
+    assert training_row_weights(general, scope, group_weighting="none", scope_row_weight=1.0) is None
+    assert training_row_weights(general, scope, group_weighting="none", scope_row_weight=0.25) == [
+        1.0, 1.0, 0.25, 0.25]
+    assert training_row_weights(general, [], group_weighting="none", scope_row_weight=0.25) is None
 
 
 def test_ordinal_penalty_respects_distance_and_option_count() -> None:
