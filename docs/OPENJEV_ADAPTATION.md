@@ -1622,3 +1622,9 @@ sites. A six-row smoke collection aligned with the existing frozen Qwen3-0.6B
 extractor and completed on CUDA (414 maximum prompt tokens, 1.445 GiB peak
 model allocation). That verifies the feature path, not its predictive quality;
 no private desktop text was saved or uploaded.
+The subsequent [prospective semantic-action test](../daemon/benchmarks/infiniteweb_semantic_transfer_results_v1.md)
+also failed on two fresh sites. Frozen Qwen3-0.6B features improved validation
+fit, but their GPU ridge next-screen predictor had worse absolute error than
+coordinate-only and state-only baselines on both held-out sites. It won only
+2/4 paired comparisons on one site. This leaves the semantic/action-conditioned
+research line unpromoted; the live rule-based authority boundary is unchanged.
