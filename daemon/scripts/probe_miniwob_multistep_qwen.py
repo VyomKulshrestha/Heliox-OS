@@ -13,6 +13,7 @@ import os
 import re
 from pathlib import Path
 from typing import Callable
+from urllib.request import Request, urlopen
 
 from playwright.sync_api import sync_playwright
 
@@ -24,6 +25,44 @@ from scripts.probe_miniwob_reward_qwen import MODEL_REVISIONS, parse_index
 def parse_action_index(answer: str, count: int) -> int | None:
     """Accept a bare index or the model's unambiguous `Index: N` echo."""
     return parse_index(re.sub(r"^\s*Index:\s*", "", answer, flags=re.IGNORECASE), count)
+
+
+def ollama_json(path: str, payload: dict | None = None) -> dict:
+    """Talk only to the local Ollama daemon; no cloud model or private desktop data."""
+    request = Request(
+        "http://127.0.0.1:11434/api/" + path,
+        data=json.dumps(payload).encode() if payload is not None else None,
+        headers={"Content-Type": "application/json"},
+    )
+    with urlopen(request, timeout=120) as response:
+        result = json.load(response)
+    if not isinstance(result, dict):
+        raise ValueError("Invalid Ollama response")
+    return result
+
+
+def ollama_model_digest(name: str) -> str:
+    models = ollama_json("tags").get("models", [])
+    for model in models:
+        if model.get("name") == name and re.fullmatch(r"[0-9a-f]{64}", model.get("digest", "")):
+            return model["digest"]
+    raise ValueError("Requested local Ollama model is not installed with a valid digest")
+
+
+def choose_ollama(goal: str, controls: list[dict], history: list[dict],
+                  model: str, max_prompt_tokens: int, prompt_lengths: list[int]) -> str:
+    result = ollama_json("generate", {
+        "model": model, "prompt": rollout_prompt(goal, controls, history),
+        "stream": False, "think": False,
+        "options": {"num_ctx": max_prompt_tokens, "num_predict": 12, "temperature": 0},
+    })
+    tokens = result.get("prompt_eval_count")
+    if not isinstance(tokens, int) or tokens > max_prompt_tokens:
+        raise ValueError("Ollama prompt token count exceeded the research limit")
+    if result.get("model") != model or not isinstance(result.get("response"), str):
+        raise ValueError("Invalid Ollama model response")
+    prompt_lengths.append(tokens)
+    return result["response"].strip()
 
 
 def navigation_baseline(goal: str, controls: list[dict], history: list[dict]) -> str:
@@ -181,7 +220,9 @@ def main() -> None:
     parser.add_argument("--seed-start", type=int, default=0)
     parser.add_argument("--max-steps", type=int, default=12)
     parser.add_argument("--max-prompt-tokens", type=int, default=3072)
-    parser.add_argument("--model-snapshot", type=Path, required=True)
+    model_source = parser.add_mutually_exclusive_group(required=True)
+    model_source.add_argument("--model-snapshot", type=Path)
+    model_source.add_argument("--ollama-model", type=str)
     parser.add_argument("--report", type=Path, default=root / "miniwob_multistep_qwen_v1.json")
     args = parser.parse_args()
     from scripts.collect_miniwob_branches import parse_tasks
@@ -190,43 +231,58 @@ def main() -> None:
     if (not 1 <= args.samples_per_task <= 100 or not 0 <= args.seed_start <= 1000000
             or not 1 <= args.max_steps <= 20
             or not 256 <= args.max_prompt_tokens <= 4096
-            or args.model_snapshot.name not in MODEL_REVISIONS
-            or not args.model_snapshot.is_dir() or args.report.exists()
+            or (args.model_snapshot is not None and (
+                args.model_snapshot.name not in MODEL_REVISIONS
+                or not args.model_snapshot.is_dir()))
+            or (args.ollama_model is not None and not re.fullmatch(r"[A-Za-z0-9_.:/-]+", args.ollama_model))
+            or args.report.exists()
             or args.report.with_suffix(args.report.suffix + ".tmp").exists()):
         parser.error("Use bounded tasks, an existing pinned model snapshot, and a fresh report")
 
-    os.environ["HF_HUB_OFFLINE"] = "1"
-    os.environ["TRANSFORMERS_OFFLINE"] = "1"
-    import torch
-    from transformers import AutoModelForCausalLM, AutoTokenizer
-    from transformers.utils import logging as transformers_logging
-
-    transformers_logging.disable_progress_bar()
-    if not torch.cuda.is_available():
-        raise RuntimeError("CUDA is required for this probe")
-    model = AutoModelForCausalLM.from_pretrained(
-        args.model_snapshot, local_files_only=True, torch_dtype="auto",
-        device_map="cuda:0", attn_implementation="eager",
-    ).eval()
-    tokenizer = AutoTokenizer.from_pretrained(args.model_snapshot, local_files_only=True)
     prompt_lengths: list[int] = []
+    if args.ollama_model is not None:
+        model_name = args.ollama_model
+        revision = ollama_model_digest(model_name)
+        device = "local_ollama"
 
-    def choose_model(goal: str, controls: list[dict], history: list[dict]) -> str:
-        encoded = tokenizer.apply_chat_template(
-            [{"role": "user", "content": rollout_prompt(goal, controls, history)}],
-            tokenize=True, add_generation_prompt=True, enable_thinking=False,
-            return_tensors="pt", return_dict=True,
-        ).to("cuda:0")
-        prompt_tokens = int(encoded["input_ids"].shape[1])
-        if prompt_tokens > args.max_prompt_tokens:
-            raise ValueError(f"Multi-step prompt exceeds {args.max_prompt_tokens} tokens")
-        prompt_lengths.append(prompt_tokens)
-        with torch.inference_mode():
-            generated = model.generate(**encoded, max_new_tokens=12, do_sample=False,
-                                       pad_token_id=tokenizer.eos_token_id)
-            torch.cuda.synchronize()
-        return tokenizer.decode(generated[0, encoded["input_ids"].shape[1]:],
-                                skip_special_tokens=True).strip()
+        def choose_model(goal: str, controls: list[dict], history: list[dict]) -> str:
+            return choose_ollama(goal, controls, history, model_name,
+                                 args.max_prompt_tokens, prompt_lengths)
+    else:
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        os.environ["TRANSFORMERS_OFFLINE"] = "1"
+        import torch
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+        from transformers.utils import logging as transformers_logging
+
+        transformers_logging.disable_progress_bar()
+        if not torch.cuda.is_available():
+            raise RuntimeError("CUDA is required for this probe")
+        model = AutoModelForCausalLM.from_pretrained(
+            args.model_snapshot, local_files_only=True, torch_dtype="auto",
+            device_map="cuda:0", attn_implementation="eager",
+        ).eval()
+        tokenizer = AutoTokenizer.from_pretrained(args.model_snapshot, local_files_only=True)
+        model_name = MODEL_REVISIONS[args.model_snapshot.name]
+        revision = args.model_snapshot.name
+        device = "cuda:0"
+
+        def choose_model(goal: str, controls: list[dict], history: list[dict]) -> str:
+            encoded = tokenizer.apply_chat_template(
+                [{"role": "user", "content": rollout_prompt(goal, controls, history)}],
+                tokenize=True, add_generation_prompt=True, enable_thinking=False,
+                return_tensors="pt", return_dict=True,
+            ).to("cuda:0")
+            prompt_tokens = int(encoded["input_ids"].shape[1])
+            if prompt_tokens > args.max_prompt_tokens:
+                raise ValueError(f"Multi-step prompt exceeds {args.max_prompt_tokens} tokens")
+            prompt_lengths.append(prompt_tokens)
+            with torch.inference_mode():
+                generated = model.generate(**encoded, max_new_tokens=12, do_sample=False,
+                                           pad_token_id=tokenizer.eos_token_id)
+                torch.cuda.synchronize()
+            return tokenizer.decode(generated[0, encoded["input_ids"].shape[1]:],
+                                    skip_special_tokens=True).strip()
 
     assets = PinnedAssets(SOURCE_COMMIT)
     results = []
@@ -237,8 +293,8 @@ def main() -> None:
             "complete": complete,
             "source_repo": SOURCE_REPO, "source_commit": SOURCE_COMMIT,
             "source_license": "MIT", "asset_sha256": assets.hashes(),
-            "model": MODEL_REVISIONS[args.model_snapshot.name],
-            "revision": args.model_snapshot.name, "device": "cuda:0",
+            "model": model_name,
+            "revision": revision, "device": device,
             "tasks": tasks, "seed_start": args.seed_start,
             "samples_per_task": args.samples_per_task, "max_steps": args.max_steps,
             "max_prompt_tokens": args.max_prompt_tokens,

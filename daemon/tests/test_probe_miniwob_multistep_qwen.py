@@ -19,6 +19,42 @@ def test_action_index_accepts_only_bare_or_prefixed_integer() -> None:
     assert parse_action_index("Index: 3", 3) is None
 
 
+def test_ollama_model_must_be_installed_and_digest_pinned(monkeypatch) -> None:
+    monkeypatch.setattr(probe, "ollama_json", lambda _path: {"models": [
+        {"name": "qwen3:8b", "digest": "a" * 64},
+    ]})
+    assert probe.ollama_model_digest("qwen3:8b") == "a" * 64
+    try:
+        probe.ollama_model_digest("missing:8b")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("An uninstalled model cannot be selected")
+
+
+def test_ollama_choice_rejects_wrong_model_and_overlong_prompt(monkeypatch) -> None:
+    captured = []
+
+    def reply(_path, payload):
+        captured.append(payload)
+        return {"model": "qwen3:8b", "response": "Index: 1", "prompt_eval_count": 40}
+
+    monkeypatch.setattr(probe, "ollama_json", reply)
+    lengths = []
+    assert probe.choose_ollama("Choose", [{"label": "A"}, {"label": "B"}], [],
+                               "qwen3:8b", 256, lengths) == "Index: 1"
+    assert lengths == [40]
+    assert captured[0]["stream"] is False and captured[0]["think"] is False
+    monkeypatch.setattr(probe, "ollama_json", lambda *_args: {
+        "model": "qwen3:8b", "response": "1", "prompt_eval_count": 257})
+    try:
+        probe.choose_ollama("Choose", [], [], "qwen3:8b", 256, lengths)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("An overlong prompt must fail closed")
+
+
 def test_delayed_terminal_reward_is_checked_after_ui_settles(monkeypatch) -> None:
     class Page:
         def __init__(self) -> None:
