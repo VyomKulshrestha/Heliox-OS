@@ -5,8 +5,25 @@ import io
 import numpy as np
 import pytest
 from PIL import Image
+from playwright.sync_api import sync_playwright
 
 from scripts import collect_miniwob_branches as collector
+
+
+def test_candidate_centers_include_visible_pointer_affordances() -> None:
+    with sync_playwright() as playwright, playwright.chromium.launch(headless=True) as browser:
+        page = browser.new_page(viewport=collector.VIEWPORT)
+        page.set_content("""
+            <div id="wrap">
+              <button style="position:absolute;left:10px;top:10px;width:40px;height:20px">
+                <span style="cursor:pointer">Native</span>
+              </button>
+              <span style="position:absolute;left:80px;top:10px;width:40px;height:20px;cursor:pointer">Custom</span>
+              <span style="position:absolute;left:140px;top:10px;width:40px;height:20px">Static</span>
+              <span style="display:none;cursor:pointer">Hidden</span>
+            </div>
+        """)
+        assert collector.candidate_centers(page) == [(30.0, 20.0), (100.0, 20.0)]
 
 
 def test_visual_feature_resolution_is_bounded_and_default_is_unchanged() -> None:
@@ -88,7 +105,7 @@ def test_branch_pairs_require_identical_prestate_and_distinct_outcome(monkeypatc
         return context, _Page(), [(10, 20), (30, 40)], bytes([len(contexts)]), "same DOM"
 
     monkeypatch.setattr(collector, "_reset", changed_reset)
-    with pytest.raises(ValueError, match="exact measured state"):
+    with pytest.raises(collector.UnstableResetError, match="exact measured state"):
         collector.collect_group(None, None, "task", "seed", 2)
     assert all(context.closed for context in contexts)
 
