@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "purpose": "prospective_cross_site_visual_action_transfer",
+  "source_dataset": "WhiteFlamesCN/InfiniteWeb-Dataset",
+  "source_revision": "84e294fc432abca78b89388ed3c98ca778177a1f",
+  "source_license": "MIT",
+  "collector_commit": "e71f494",
+  "selection_note": "Sites were chosen by topical diversity and bounded manifest size after an exploratory run on four different sites. No action outcomes from the sites below were inspected before this protocol.",
+  "train_sites": ["17_personal_travel_phot", "281_fishing_tackle_shop_", "350_online_florist_shop_", "306_conference_event_inf"],
+  "validation_sites": ["445_tour_booking_website", "198_wedding_and_event_ph"],
+  "eval_sites": ["262_fitness_coaching_and", "333_local_ice_cream_shop"],
+  "max_pages_per_site": 6,
+  "max_candidates_per_page": 10,
+  "feature_shape": [1, 16, 16],
+  "model": {
+    "architecture": "spatial_global",
+    "device": "cuda",
+    "epochs": 80,
+    "seed": 20260927,
+    "action_permutations": 10,
+    "action_pairwise_focus_weight": 0.001,
+    "state_only_pairwise_focus_weight": 0.0
+  },
+  "minimum_coverage": {
+    "train_groups": 8,
+    "validation_groups": 4,
+    "eval_groups_per_site": 2
+  },
+  "success_criterion": "On each held-out site, the action model must beat both its paired alternative action and a separately fitted state-only model in weighted error, with at least 70 percent paired-action wins. A missing coverage threshold or either site failing is an overall failure.",
+  "promotion": "none; generated websites and one-step 16x16 features cannot establish real desktop, safety, autonomous execution, or Jev parity"
+}
