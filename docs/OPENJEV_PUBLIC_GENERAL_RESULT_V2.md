@@ -32,6 +32,27 @@ Fresh-set comparison with an equal-probability, label-blind baseline:
 The archived split also beat that same baseline: binary 86.6% vs 79.1%,
 choice 71.4% vs 28.6%, and ordinal rank error 0.139 vs 0.923 (lower is better).
 
+## Fixed-temperature sensitivity (not a Heliox calibration)
+
+The report above uses temperature 1.0. As a sensitivity check only, the same
+NF4 logits were rescored at the checkpoint card's published temperature
+(1.518796342858676, fitted upstream on a separate 512-row calibration set;
+see the [checkpoint card](https://huggingface.co/ZefanCai/Open-Jev-2B)). No
+temperature was fit on these OOD rows, and this value was not selected for
+Heliox.
+
+Top-1 choices did not change. Binary and choice NLL/Brier improved on both
+small OOD samples, but ordinal calibration worsened on both:
+
+| OOD sample | Score NLL (T=1 → published T) | Score Brier | Mean rank error |
+| --- | ---: | ---: | ---: |
+| Archived (26 score rows) | 0.176 → 0.207 | 0.0118 → 0.0148 | 0.139 → 0.175 |
+| Fresh (20 score rows) | 0.274 → 0.284 | 0.0146 → 0.0155 | 0.207 → 0.275 |
+
+This mixed result argues against treating one global temperature as a universal
+calibration improvement. The small samples and quantized backbone make this a
+diagnostic only; the main report remains at T=1 and no runtime setting changes.
+
 The weakest fresh category is choice selection. The result supports continuing
 offline work on choice transfer, but does not establish quality on real Heliox
 tasks, desktop transfer, latency under an interactive workload, or safe
