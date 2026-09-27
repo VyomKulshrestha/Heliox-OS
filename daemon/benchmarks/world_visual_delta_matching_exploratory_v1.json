@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "purpose": "exploratory_paired_outcome_matching_ablation",
+  "source": "Farama-Foundation/MiniWoB-plusplus",
+  "feature_shape": [1, 16, 16],
+  "training_pairs": 244,
+  "validation_pairs": 48,
+  "primary_eval_pairs": 48,
+  "method": "Stop-gradient target, reconstruction, and equal-weight forward, paired-difference, and two-way outcome-matching losses; CUDA training with seed 20260927.",
+  "candidate": {
+    "selected_epoch": 74,
+    "weights_sha256": "e88ac5bf485d24eff34609946c19e80e5e45cd1ce68e1de8e6c64e14f79fc4f7",
+    "training_report_sha256": "eee077b26964151509a5938ee6af26b5fe4f88bdf86613f1555b167864f681ef",
+    "primary_eval_action_wins": 30,
+    "primary_eval_groups": 48,
+    "reused_unseen_click_button_action_wins": 3,
+    "reused_unseen_click_button_groups": 11,
+    "reused_unseen_click_button_mean_mse_advantage": -9.091136234928854e-7
+  },
+  "previous_stop_gradient_control": {
+    "primary_eval_action_wins": 42,
+    "primary_eval_groups": 48,
+    "frozen_unseen_click_button_action_wins": 4,
+    "frozen_unseen_click_button_groups": 11
+  },
+  "finding": "The added matching objective reduced action ranking on the already inspected primary evaluation and on a reused click-button archive. It is not a successful fix.",
+  "limitations": [
+    "The candidate was developed after inspecting prior failures, and the reused click-button archive is exploratory rather than fresh preregistered evidence.",
+    "Both candidates failed the earlier unseen-family acceptance gate; this comparison cannot establish cross-task transfer.",
+    "Features discard page text, task instruction, and hidden browser state. Visible-state equality is not a complete causal state.",
+    "No weights are shipped or loaded by Heliox. This is not real-desktop, safety, autonomy, or Jev-parity evidence."
+  ],
+  "promoted_to_runtime": false
+}

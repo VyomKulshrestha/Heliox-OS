@@ -1441,6 +1441,14 @@ still failed the TESS action-shuffle control and showed only a small,
 uncertain GUI-CC tap-location advantage. The local result does not transfer
 into a general world-model claim.
 
+A later [paired-outcome matching ablation](../daemon/benchmarks/world_visual_delta_matching_exploratory_v1.json)
+added an opt-in, two-way outcome loss to the 16×16 visual-delta trainer. On
+the same inspected 48-pair evaluation, action ranking fell from 42/48 to
+30/48; on the reused unseen `click-button` archive, it fell from 4/11 to
+3/11. The latter is not a fresh holdout. The objective cannot recover task
+text or hidden browser state absent from these features, so these weights
+remain research-only and unpromoted.
+
 A separate [browser accessibility-transition review](../daemon/benchmarks/webworld_a11y_transfer_v1.json)
 used the Apache-2.0 [Qwen/WebWorldData](https://huggingface.co/datasets/Qwen/WebWorldData)
 corpus and the updated CUDA device. The first 720-transition sample had an

@@ -26,7 +26,8 @@ def test_pair_ranking_uses_independent_groups() -> None:
 
 def test_delta_inverse_receives_shared_encoder_gradient() -> None:
     code = (
-        "import torch; from scripts.train_world_visual_delta_latent import build_delta_latent_model; "
+        "import torch; from scripts.train_world_visual_delta_latent import "
+        "build_delta_latent_model,paired_matching_loss; "
         "model=build_delta_latent_model(torch.nn,torch,(1,16,16),64); "
         "before=model.encode(torch.rand(2,1,16,16)); "
         "after=model.encode(torch.rand(2,1,16,16)); "
@@ -35,6 +36,9 @@ def test_delta_inverse_receives_shared_encoder_gradient() -> None:
         "coords=model.inverse(before,after); "
         "assert coords.shape==(2,2); "
         "assert model.reconstruction_head(before).shape==(2,256); "
+        "pair=torch.tensor([[1.,0.],[0.,1.]],requires_grad=True); "
+        "assert paired_matching_loss(pair,pair.detach(),torch,1e-8,1)<"
+        "paired_matching_loss(pair.flip(0),pair.detach(),torch,1e-8,1); "
         "coords.sum().backward(); "
         "assert model.encoder[0].weight.grad.abs().sum()>0"
     )

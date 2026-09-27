@@ -86,6 +86,20 @@ def pair_ranking(
     }
 
 
+def paired_matching_loss(predicted: Any, target: Any, torch: Any,
+                         floor: float, temperature: float) -> Any:
+    """Match each predicted outcome to its observed branch, not the sibling branch."""
+    if predicted.shape != target.shape or predicted.ndim != 2 or len(predicted) % 2:
+        raise ValueError("Matching requires aligned two-outcome groups")
+    predictions = predicted.reshape(-1, 2, predicted.shape[1])
+    outcomes = target.reshape(-1, 2, target.shape[1])
+    squared = ((predictions[:, :, None] - outcomes[:, None]) ** 2).mean(dim=-1)
+    separation = ((outcomes[:, 0] - outcomes[:, 1]) ** 2).mean(dim=-1)
+    logits = -squared / separation.clamp_min(floor)[:, None, None] / temperature
+    labels = torch.arange(2, device=predicted.device).expand(len(predictions), 2).reshape(-1)
+    return torch.nn.functional.cross_entropy(logits.reshape(-1, 2), labels)
+
+
 def score_model(model: Any, rows: dict[str, np.ndarray], shape: tuple[int, int, int], torch: Any,
                 device: Any) -> dict[str, Any]:
     """Report latent separation and inverse localization on verified action pairs."""
@@ -131,6 +145,9 @@ def main() -> None:
     parser.add_argument("--pairwise-weight", type=float, default=1.0)
     parser.add_argument("--pairwise-floor", type=float, default=1e-4,
                         help="Numerical floor for normalized paired latent change")
+    parser.add_argument("--matching-weight", type=float, default=0.0)
+    parser.add_argument("--matching-floor", type=float, default=1e-8)
+    parser.add_argument("--matching-temperature", type=float, default=1.0)
     parser.add_argument("--latent-dim", type=int, default=64)
     parser.add_argument("--epochs", type=int, default=80)
     parser.add_argument("--seed", type=int, default=20260927)
@@ -147,6 +164,13 @@ def main() -> None:
             or not np.isfinite(args.pairwise_weight) or not 0 <= args.pairwise_weight <= 10
             or not np.isfinite(args.pairwise_floor) or not 1e-12 <= args.pairwise_floor <= 1e-2):
         parser.error("Use verified sources, fresh outputs, and bounded training settings")
+    if (not np.isfinite(args.matching_weight) or not 0 <= args.matching_weight <= 10
+            or not np.isfinite(args.matching_floor) or not 1e-12 <= args.matching_floor <= 1e-2
+            or not np.isfinite(args.matching_temperature)
+            or not 0.1 <= args.matching_temperature <= 10
+            or (args.matching_weight and (not args.stop_gradient_target
+                 or args.reconstruction_weight == 0))):
+        parser.error("Matching requires bounded settings, a fixed target, and reconstruction")
     shape = feature_shape(args.source_report)
     rows = load_features(args.features, args.source_report)
     source = json.loads(args.source_report.read_text(encoding="utf-8"))
@@ -189,12 +213,16 @@ def main() -> None:
         predicted_change = predicted[0::2] - predicted[1::2]
         pair_loss = ((predicted_change - expected_change) ** 2).mean() / (
             (expected_change.detach() ** 2).mean() + args.pairwise_floor)
+        matching_loss = (paired_matching_loss(predicted, forward_target, torch,
+                         args.matching_floor, args.matching_temperature)
+                         if args.matching_weight else forward_loss.new_zeros(()))
         inverse_loss = ((model.inverse(before, after) - batch["action"][:, 9:11]) ** 2).mean()
         reconstruction_loss = (
             ((model.reconstruction_head(before) - batch["state"]) ** 2).mean()
             + ((model.reconstruction_head(after) - batch["target"]) ** 2).mean()
         ) / 2
         return (forward_loss + args.pairwise_weight * pair_loss
+                + args.matching_weight * matching_loss
                 + args.reconstruction_weight * reconstruction_loss), inverse_loss, forward_loss
 
     best_score, best_epoch, best_weights = float("inf"), 0, None
@@ -236,7 +264,10 @@ def main() -> None:
         "stop_gradient_target": args.stop_gradient_target,
         "pairwise_weight": args.pairwise_weight,
         "pairwise_floor": args.pairwise_floor,
-        "selection": "lowest forward-plus-paired-plus-optional-reconstruction validation loss; inverse excluded",
+        "matching_weight": args.matching_weight,
+        "matching_floor": args.matching_floor,
+        "matching_temperature": args.matching_temperature,
+        "selection": "lowest forward-plus-paired-plus-matching-plus-reconstruction validation loss; inverse excluded",
         "selected_validation_loss": best_score,
         "selected_epoch": best_epoch,
         "seed": args.seed,
