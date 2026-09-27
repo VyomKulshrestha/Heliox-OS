@@ -26,6 +26,23 @@ def test_candidate_centers_include_visible_pointer_affordances() -> None:
         assert collector.candidate_centers(page) == [(30.0, 20.0), (100.0, 20.0)]
 
 
+def test_sparse_controls_add_painted_targets_and_neutral_probes() -> None:
+    with sync_playwright() as playwright, playwright.chromium.launch(headless=True) as browser:
+        page = browser.new_page(viewport=collector.VIEWPORT)
+        page.set_content("""
+            <style>body { margin: 0 }</style>
+            <div id="wrap" style="position:relative;width:320px;height:360px">
+              <button style="position:absolute;left:10px;top:10px;width:40px;height:20px">Go</button>
+              <div style="position:absolute;left:80px;top:10px;width:50px;height:50px;
+                          background:red"></div>
+            </div>
+        """)
+        centers = collector.candidate_centers(page)
+        assert centers[0] == (30.0, 20.0)
+        assert (105.0, 35.0) in centers
+        assert (40.0, 45.0) in centers
+
+
 def test_visible_semantics_excludes_hidden_text_and_bounds_control_label() -> None:
     with sync_playwright() as playwright, playwright.chromium.launch(headless=True) as browser:
         page = browser.new_page(viewport=collector.VIEWPORT)
