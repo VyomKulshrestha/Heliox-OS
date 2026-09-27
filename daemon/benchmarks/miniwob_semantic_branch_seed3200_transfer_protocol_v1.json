@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "purpose": "prospective_frozen_checkpoint_checkbox_variant_retest",
+  "selection_note": "The pairwise-focus weight of 0.001 was chosen after inspecting seed 3000 evaluation results. This retest freezes that checkpoint before collecting seed 3200. It is a same-family replication with one newly evaluated page variant, not a blind general benchmark.",
+  "source_repo": "Farama-Foundation/MiniWoB-plusplus",
+  "source_commit": "33c3b4ddef8c6eb67c57a29663d844b1eda7e614",
+  "collector": "scripts.collect_miniwob_branches",
+  "train_tasks": ["click-checkboxes"],
+  "validation_tasks": ["click-checkboxes-soft"],
+  "eval_tasks": ["click-checkboxes-large", "click-checkboxes-transfer"],
+  "samples_per_task": 20,
+  "seed_start": 3200,
+  "feature_size": 16,
+  "max_candidates": 12,
+  "nonterminal_only": true,
+  "require_semantic_difference": true,
+  "frozen_checkpoint": {
+    "model_report_sha256": "c0b71cf959b7d320940e4b9ad220ec5225b5b288442e0e445957e64db5d86447",
+    "weights_sha256": "7699ad35cde834702c7a14a347af505abeaf068c725d7eef40a535fe152e1e9b"
+  },
+  "matched_state_only_checkpoint": {
+    "model_report_sha256": "ff8e72a0d8a134deeab890bff591e0894b93b397b40b0fe8ef53ce83521436ab",
+    "weights_sha256": "79d6520fa33eecb9717a52b222930f9551b431bbf20baa38cedb741d238eb03b"
+  },
+  "minimum_groups_per_eval_page": 10,
+  "success_criterion": "On each qualifying evaluation page, the frozen action model must beat both its paired-action swap and the frozen state-only model in weighted error, with the correct action winning at least 70 percent of pairs. Missing page coverage is a failed coverage gate, not a success.",
+  "promotion": "none; this is synthetic same-family seed/page transfer, not real desktop, safety, or Jev-parity evidence"
+}
