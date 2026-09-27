@@ -279,9 +279,11 @@ uncertainty, evidence, sources, and model version. It combines:
 
 The optional JEPA path stays unavailable when compatible weights are not
 staged. Its exact ordered action vocabulary and finite tensor shapes must match
-the running build before it loads. It remains shadow-only unless the artifact
-also records sufficient samples, bounded validation error, and gating
-validation. Offline evaluation pairs predictions with observed outcomes and
+the running build before it loads. Legacy action-type-only artifacts stay
+shadow-only: click gating additionally requires a versioned two-coordinate
+geometry head and fresh screen bounds. Non-pointer predictions remain shadow-only.
+The artifact also needs sufficient samples, bounded validation error, and
+gating validation. Offline evaluation pairs predictions with observed outcomes and
 reports risk calibration, false negatives, transition fidelity, uncertainty,
 and latency. Learned evidence may interrupt or add confirmation but can never
 remove a deterministic warning or grant authority.
