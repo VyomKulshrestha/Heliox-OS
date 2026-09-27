@@ -2,7 +2,8 @@
 
 Task assets are fetched from a pinned MIT-licensed source revision into memory
 and served to an isolated headless browser. No screenshot bytes or task source
-are persisted; the output contains only bounded visual features and provenance.
+are persisted. An opt-in archive can also save bounded visible text for public
+synthetic tasks; it never observes the user's desktop.
 """
 
 from __future__ import annotations
@@ -30,6 +31,7 @@ VIRTUAL_ORIGIN = "https://miniwob.local"
 MAX_ASSET_BYTES = 2 * 1024 * 1024
 VIEWPORT = {"width": 320, "height": 360}
 STABLE_STYLE = "#timer-countdown,#reward-avg,#episode-id,#click-track-canvas{visibility:hidden!important}"
+MAX_SEMANTIC_CHARS = 4096
 
 
 class UnstableResetError(ValueError):
@@ -142,6 +144,42 @@ def candidate_centers(page) -> list[tuple[float, float]]:
     ]
 
 
+def visible_semantics(page, point: tuple[float, float] | None = None) -> dict[str, str]:
+    """Capture bounded rendered text/control state, never HTML source."""
+    result = page.evaluate("""point => {
+        const root = document.querySelector('#wrap');
+        const hit = point ? document.elementFromPoint(point[0], point[1]) : null;
+        const control = hit?.closest('button,a,input,select,[role]') || hit;
+        const items = [...(root?.querySelectorAll('*') || [])].filter(node => {
+            const style = getComputedStyle(node);
+            const box = node.getBoundingClientRect();
+            return box.width && box.height && style.display !== 'none'
+                && style.visibility === 'visible'
+                && (node.matches('button,input:not([type="hidden"]),select,a,[role],[tabindex]')
+                    || style.cursor === 'pointer');
+        }).slice(0, 80).map(node => {
+            const style = getComputedStyle(node);
+            const box = node.getBoundingClientRect();
+            const name = node.getAttribute('aria-label') || node.innerText
+                || node.getAttribute('title') || '';
+            return [node.tagName.toLowerCase(), name.replace(/\\s+/g, ' ').slice(0, 80),
+                node.getAttribute('role') || '', Boolean(node.checked), Boolean(node.disabled),
+                Boolean(node.selected), Math.round(box.x), Math.round(box.y),
+                style.backgroundColor, style.color, style.borderColor].join('|');
+        });
+        return {
+            text: root?.innerText || '',
+            controls: items,
+            target: control?.getAttribute('aria-label') || control?.innerText
+                || control?.getAttribute('title') || control?.tagName || ''
+        };
+    }""", list(point) if point is not None else None)
+    rendered = " ".join(result["text"].split())
+    controls = "\n".join(result["controls"])
+    return {"text": (rendered + "\nControls:\n" + controls)[:MAX_SEMANTIC_CHARS],
+            "target": " ".join(result["target"].split())[:160]}
+
+
 def _reset(browser, assets: PinnedAssets, task: str, seed: str):
     context = browser.new_context(viewport=VIEWPORT, device_scale_factor=1)
     context.route("**/*", assets.route)
@@ -160,7 +198,8 @@ def _reset(browser, assets: PinnedAssets, task: str, seed: str):
 
 
 def collect_group(
-    browser, assets: PinnedAssets, task: str, seed: str, max_candidates: int, feature_size: int = 16
+    browser, assets: PinnedAssets, task: str, seed: str, max_candidates: int, feature_size: int = 16,
+    include_semantics: bool = False,
 ) -> tuple[list[dict], int]:
     reference: tuple[list[tuple[float, float]], str, np.ndarray] | None = None
     rows = []
@@ -180,16 +219,18 @@ def collect_group(
             if candidate_index >= len(candidates):
                 break
             x, y = candidates[candidate_index]
+            before_semantics = visible_semantics(page, (x, y)) if include_semantics else None
             page.mouse.click(x, y)
             outcome = page.evaluate("({done: WOB_DONE_GLOBAL, reward: WOB_RAW_REWARD_GLOBAL})")
-            rows.append(
-                {
-                    "state": before_feature,
-                    "target": visual_feature(page.screenshot(animations="disabled"), feature_size),
-                    "coords": (x / VIEWPORT["width"], y / VIEWPORT["height"]),
-                    "reward": float(outcome["reward"]) if outcome["done"] else None,
-                }
-            )
+            row = {"state": before_feature,
+                   "target": visual_feature(page.screenshot(animations="disabled"), feature_size),
+                   "coords": (x / VIEWPORT["width"], y / VIEWPORT["height"]),
+                   "reward": float(outcome["reward"]) if outcome["done"] else None}
+            if before_semantics is not None:
+                row.update({"state_text": before_semantics["text"],
+                            "action_label": before_semantics["target"],
+                            "target_text": visible_semantics(page)["text"]})
+            rows.append(row)
             attempted += 1
         finally:
             context.close()
@@ -224,6 +265,8 @@ def main() -> None:
     parser.add_argument("--max-candidates", type=int, default=8)
     parser.add_argument("--features", type=Path, default=root / "miniwob_branches_v1.npz")
     parser.add_argument("--report", type=Path, default=root / "miniwob_branches_v1.json")
+    parser.add_argument("--semantic-archive", type=Path,
+                        help="Opt-in local JSONL of bounded public-task visible text and actions")
     args = parser.parse_args()
     try:
         tasks = {split: parse_tasks(getattr(args, f"{split}_tasks")) for split in ("train", "validation", "eval")}
@@ -236,6 +279,9 @@ def main() -> None:
         or not 2 <= args.max_candidates <= 16
         or args.features.exists()
         or args.report.exists()
+        or (args.semantic_archive is not None
+            and (args.semantic_archive.exists() or args.semantic_archive.suffix != ".jsonl"
+                 or args.semantic_archive.resolve() in (args.features.resolve(), args.report.resolve())))
     ):
         parser.error("Use task-disjoint splits, bounded settings, and fresh output paths")
 
@@ -253,7 +299,8 @@ def main() -> None:
                         seed = f"{SOURCE_COMMIT}:{task}:{index}"
                         try:
                             pair, count = collect_group(
-                                browser, assets, task, seed, args.max_candidates, args.feature_size
+                                browser, assets, task, seed, args.max_candidates, args.feature_size,
+                                include_semantics=args.semantic_archive is not None,
                             )
                         except UnstableResetError:
                             unstable[split] += 1
@@ -290,6 +337,14 @@ def main() -> None:
         split=np.asarray([row["split"] for row in rows]),
         task=np.asarray([row["task"] for row in rows]),
     )
+    semantic_sha256 = None
+    if args.semantic_archive is not None:
+        args.semantic_archive.parent.mkdir(parents=True, exist_ok=True)
+        content = "".join(json.dumps({key: row[key] for key in (
+            "group", "split", "task", "coords", "reward", "state_text",
+            "action_label", "target_text")}, ensure_ascii=False) + "\n" for row in rows)
+        args.semantic_archive.write_text(content, encoding="utf-8")
+        semantic_sha256 = hashlib.sha256(args.semantic_archive.read_bytes()).hexdigest()
     report = {
         "purpose": "research_only_miniwob_visual_branch_transitions",
         "source_repo": SOURCE_REPO,
@@ -316,9 +371,11 @@ def main() -> None:
             split: dict(Counter(str(row["reward"]) for row in rows if row["split"] == split)) for split in tasks
         },
         "features_sha256": hashlib.sha256(args.features.read_bytes()).hexdigest(),
+        "semantic_archive_sha256": semantic_sha256,
         "limitation": "Synthetic browser tasks, selected for visually distinct observed outcomes. "
-        "Only click location is modeled; reward labels are counted but not trained on. "
-        "No real desktop transfer, Jev parity, autonomy, or execution authority.",
+        "The optional visible-text/control archive is local research data, not a trained model. "
+        "Reward labels are counted but not trained on. No real desktop transfer, Jev parity, "
+        "autonomy, or execution authority.",
     }
     args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report, indent=2), flush=True)

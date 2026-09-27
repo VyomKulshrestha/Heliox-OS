@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "purpose": "research_only_controlled_semantic_branch_collection_smoke",
+  "source": "Farama-Foundation/MiniWoB-plusplus",
+  "source_commit": "33c3b4ddef8c6eb67c57a29663d844b1eda7e614",
+  "source_license": "MIT",
+  "samples_per_task": 8,
+  "seed_start": 1000,
+  "control": "Independent browser resets require identical control coordinates, inner HTML, and pre-action visual features before alternative clicks.",
+  "archive": "Opt-in ignored local JSONL of bounded rendered text and interactive-control state; no screenshot bytes, HTML source, or user-desktop data are saved.",
+  "task_results": {
+    "click-button": {"pairs": 8, "distinct_semantic_outcomes": 0},
+    "click-option": {"pairs": 8, "distinct_semantic_outcomes": 8},
+    "click-button-sequence": {"pairs": 7, "distinct_semantic_outcomes": 0},
+    "click-checkboxes": {"pairs": 8, "distinct_semantic_outcomes": 8},
+    "click-widget": {"pairs": 7, "distinct_semantic_outcomes": 7},
+    "click-test-2": {"pairs": 6, "distinct_semantic_outcomes": 0}
+  },
+  "local_report_sha256": {
+    "first_three_tasks": "556fe3d40f3c56ea4d41fd07e29b7be9905bc9f35867c9905b3dd72835d7595f",
+    "second_three_tasks": "26c41338fc8ae234d7e641fad852ced36a20d6676f36bd81f768c308eacbc37b"
+  },
+  "finding": "Adding generic rendered-control state distinguished branch outcomes in three of six small synthetic task families. It still missed all observed visual differences in three others, so it must complement rather than replace vision.",
+  "limitations": [
+    "This is collection coverage, not trained-model performance.",
+    "Each family has only 6–8 selected pairs, and the selection requires distinct visual outcomes.",
+    "No real-desktop transfer, task success, Jev parity, safety, or autonomy is established."
+  ],
+  "promoted_to_runtime": false
+}
