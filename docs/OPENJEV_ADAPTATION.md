@@ -1449,6 +1449,15 @@ the same inspected 48-pair evaluation, action ranking fell from 42/48 to
 text or hidden browser state absent from these features, so these weights
 remain research-only and unpromoted.
 
+A separate [AgentWorldBench web branch diagnostic](../daemon/benchmarks/agentworld_web_branch_qwen2b_v1.json)
+used the cached Qwen3.5-2B on its public evaluation split without fitting.
+Only 14 of 211 exact visible-state groups retained two complete, visibly
+different outcomes; 12 were direct navigation. Mirrored A/B scoring removed a
+strong position bias, but the model matched just 7/14 outcomes (5/12
+navigation, 2/2 other). This is not better than the balanced-label baseline
+overall, and neither exact visible state nor a two-case non-navigation slice
+supports a causal or general-transfer claim. No checkpoint is promoted.
+
 A separate [browser accessibility-transition review](../daemon/benchmarks/webworld_a11y_transfer_v1.json)
 used the Apache-2.0 [Qwen/WebWorldData](https://huggingface.co/datasets/Qwen/WebWorldData)
 corpus and the updated CUDA device. The first 720-transition sample had an
