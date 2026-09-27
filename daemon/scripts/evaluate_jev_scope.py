@@ -28,6 +28,7 @@ from benchmarks.jev_scope_semantic_v4_holdout import CASES as SEMANTIC_V4_CASES 
 from benchmarks.jev_scope_stress import CASES as STRESS_CASES  # noqa: E402
 from benchmarks.jev_scope_suite import CASES, ScopeCase, jev_request  # noqa: E402
 from benchmarks.jev_scope_unseen_final import CASES as UNSEEN_CASES  # noqa: E402
+from scripts.jev_output_policy import block_jev_output_use  # noqa: E402
 
 ENDPOINT = "https://openrouter.ai/api/alpha/decisions"
 
@@ -48,6 +49,7 @@ def evaluate(
     *, key: str, repeats: int, limit: int | None = None, case_ids: set[str] | None = None,
     cases: tuple[ScopeCase, ...] = CASES,
 ) -> dict[str, object]:
+    block_jev_output_use()
     results: list[dict[str, object]] = []
     total_cost = 0.0
     selected = [case for case in cases if case_ids is None or case.id in case_ids]
@@ -103,6 +105,8 @@ def evaluate(
 
 
 def main() -> None:
+    block_jev_output_use()
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--env-file", type=Path, help="Optional .env path; only OPENROUTER_API_KEY is read")
     parser.add_argument("--repeats", type=int, default=1)

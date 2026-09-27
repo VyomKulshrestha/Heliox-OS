@@ -127,6 +127,11 @@ def train(root: Path, cache: Path, candidate: Path, metrics_path: Path) -> dict:
 
 
 def main() -> None:
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from scripts.jev_output_policy import block_jev_output_use
+    block_jev_output_use()
+
     root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cache", type=Path, default=root / "benchmarks/scope_semantic_features_v5.npz")

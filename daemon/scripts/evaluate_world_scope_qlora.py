@@ -10,10 +10,12 @@ import argparse
 import hashlib
 import json
 import math
+import sys
 from pathlib import Path
 
 import numpy as np
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from benchmarks.jev_scope_qwen_v1_holdout import CASES as QWEN_CASES
 from benchmarks.jev_scope_random_final import CASES as RANDOM_CASES
 from scripts.evaluate_qwen_instruct_scope import MODEL_ID, MODEL_REVISION
@@ -154,6 +156,11 @@ def evaluate(adapter_dir: Path, report_path: Path, cases, teacher_path: Path) ->
 
 
 def main() -> None:
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from scripts.jev_output_policy import block_jev_output_use
+    block_jev_output_use()
+
     root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--suite", choices=tuple(SUITES), default="random")

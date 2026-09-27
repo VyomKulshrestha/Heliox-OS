@@ -33,68 +33,37 @@ one, verify its license, provenance, subject-disjoint split, channel mapping,
 and whether it includes the idle/no-control evidence needed to estimate false
 activation. Classifier accuracy alone is not a product acceptance gate.
 
-## Jev-inspired local scope decision
+## Scope-advisory research and current state
 
-[Jev on OpenRouter](https://openrouter.ai/docs/guides/community/jev) answers
-typed questions with probabilities, not prose or action plans. Heliox used its
-`noul` primitive as a *teacher* for one narrow question: whether a proposed
-action is within the user's request. This is separate from the hybrid world
-model, which predicts action effects. It is not a copy of Jev or an Instinct-
-class general agent.
+The earlier Jev-based scope experiments are historical research, not a
+repeatable training recipe or evidence of a current model. Under the current
+[TypeSafe Master Customer Agreement, section 2.3(b)](https://typesafe.ai/legal/mca),
+using provider outputs to distill, imitate, or develop a similar or competing
+service requires written authorization. Until that authorization is verified,
+do not make new Jev calls or reuse those outputs for training, tuning,
+benchmark comparisons, or product development. The detailed
+[historical study](JEV_SCOPE_STUDY.md) is retained for audit and is not a
+current product claim.
 
-The original [72-case study](../daemon/benchmarks/jev_scope_teacher.json)
-trained the shipped, numeric-only v1 head. It scored 12/12 on its small final
-synthetic split, but that result did not establish Jev-level generalization.
-Its 18 repeated calls on six selected cases are
-[retained separately](../daemon/benchmarks/jev_scope_repeat.json).
+The runtime no longer loads the historical output-derived scope checkpoint;
+the old v1 artifact is incompatible with the current model version, and
+`scripts/train_scope_decision.py` is a refusal-only entry point. Existing
+deterministic safety rules, user confirmations, and the companion review remain
+authoritative. The scope advisory cannot grant permission or replace those
+controls.
 
-The subsequent challenge used **634 successful live Jev calls** in total:
-616 distinct authored request/action pairs plus those 18 repeats. Total
-reported API cost was **$0.009855**. The 616 pairs span the original suite,
-[challenge](../daemon/benchmarks/jev_scope_challenge.py),
-[augmentation](../daemon/benchmarks/jev_scope_augmentation.py),
-[stress](../daemon/benchmarks/jev_scope_stress.py),
-[fresh](../daemon/benchmarks/jev_scope_fresh_final.py),
-[seeded random](../daemon/benchmarks/jev_scope_random_final.py), and
-[third unseen](../daemon/benchmarks/jev_scope_unseen_final.py) suites. Jev
-matched the independently authored binary labels on 615/616 distinct pairs;
-the one disagreement is retained, not silently relabeled.
-
-| Frozen experimental candidate | New unseen pairs | Agreement with Jev | Too-permissive / false warnings |
-| --- | ---: | ---: | ---: |
-| v5 on [fresh](../daemon/benchmarks/scope_decision_fresh_metrics.json) | 100 | 92/100 | 4 / 4 |
-| v6 on [seeded random](../daemon/benchmarks/scope_decision_random_metrics.json) | 100 | 92/100 | 4 / 4 |
-| v7 on [third unseen](../daemon/benchmarks/scope_decision_unseen_metrics.json) | 100 | 91/100 | 5 / 4 |
-
-The v7 [numeric-only candidate](../daemon/benchmarks/scope_decision_candidate.npz)
-(SHA-256 `6c7238fa140b02d77d2eb7b2a809402317ffd2e01014bd18932b9a95c78c9b5c`)
-was trained on 516 already-inspected pairs. Request-grouped five-fold
-development evaluation was 499/516 (96.7%), but the third unseen set fell to
-91%. The candidate therefore **was not promoted**. The shipped v1 weights and
-runtime path are unchanged. More synthetic tuning against inspected failures
-would not make a credible parity claim. This narrow local classifier is not a
-Jev replacement, a general agent, or a safety certification.
-
-The shipped local head only adds an advisory `WARN` on a strong disagreement
-over a describable side-effect action. It never approves, blocks, bypasses
-the full companion review, or changes permissions. Unknown actions abstain.
-No real screen data or private user task was sent to Jev, and the OpenRouter
-key is absent from the results and weights.
-
-To reproduce the frozen candidate and third unseen score (from `daemon/`):
-
-```bash
-python scripts/train_scope_decision_cv.py --include-fresh --include-random
-python scripts/evaluate_scope_candidate.py --suite unseen --teacher benchmarks/jev_scope_unseen_teacher.json --output benchmarks/scope_decision_unseen_metrics.json
-python -m pytest tests/test_jev_scope_suite.py tests/test_scope_decision.py tests/test_scope_decision_experiment.py tests/test_execution_companion.py -q
-```
-
-These commands are offline; repeating live Jev calls is opt-in and paid via
-`scripts/evaluate_jev_scope.py --suite unseen --env-file ../.env`. Before any
-promotion, collect consented, de-identified real plan/action examples, freeze
-environment-disjoint test sets, measure false assurances and false warnings,
-and review provider privacy and licensing terms. Jev's probability on a
-synthetic authorization question is not itself permission to execute.
+An independent GPU experiment used only the MIT-licensed
+[ScopeJudge dataset](https://huggingface.co/datasets/dreadnode/scopejudge) and
+frozen Qwen3.5-2B features. On its 587-row trajectory-disjoint public test
+partition, the default threshold had AUC 0.855, 7 false allowances, and 104
+false warnings. A threshold selected to produce zero false allowances on the
+74-row calibration split still produced 4 false allowances and 197 false
+warnings on test. The result is **not promoted**: ScopeJudge covers offensive
+security, not everyday desktop tasks, and this partition was already examined
+in earlier adaptive experiments. See the
+[full hashed result](../daemon/benchmarks/public_scope_head_gpu_v1.json) and
+[trainer](../daemon/scripts/train_public_scope_head.py). It is not a blind
+desktop-agent acceptance test, live approval evidence, or a permission gate.
 
 ## Local MCP
 

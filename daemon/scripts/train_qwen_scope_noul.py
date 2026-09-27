@@ -239,6 +239,11 @@ def run(root: Path, output_dir: Path, report_path: Path) -> dict:
 
 
 def main() -> None:
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from scripts.jev_output_policy import block_jev_output_use
+    block_jev_output_use()
+
     root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path, default=root / "benchmarks/.bench-state/qwen_scope_v1")

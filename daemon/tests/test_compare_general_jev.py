@@ -6,6 +6,7 @@ import json
 import sys
 
 import httpx
+import pytest
 
 from scripts import compare_general_jev as comparison
 from scripts.compare_general_jev import compare, decision_request, public_payload
@@ -43,67 +44,24 @@ def test_compare_typed_predictions_without_teacher_training() -> None:
     assert result["score"]["score_gap"] > 0
 
 
-def test_transient_transport_failure_retries_without_changing_request(monkeypatch) -> None:
+def test_provider_query_is_blocked_before_http_request() -> None:
     calls = []
 
     class Client:
-        def post(self, _endpoint, *, headers, json):
-            calls.append((headers, json))
-            if len(calls) == 1:
-                raise httpx.ConnectError("temporary DNS failure")
-            return type("Response", (), {
-                "status_code": 200,
-                "raise_for_status": lambda self: None,
-                "json": lambda self: {"answers": {"decision": {"noul": 0.9}}},
-            })()
+        def post(self, *_args, **_kwargs):
+            calls.append("request")
 
-    monkeypatch.setattr(comparison.time, "sleep", lambda _seconds: None)
-    answer, cost, model = comparison.query_jev(Client(), "test-key", row("noul", ["no", "yes"], [0, 1]))
-    assert answer == {"noul": 0.9}
-    assert cost == 0 and model == ""
-    assert len(calls) == 2 and calls[0] == calls[1]
-    assert "target" not in json.dumps(calls[0][1])
+    with pytest.raises(SystemExit, match="Disabled pending verified written TypeSafe authorization"):
+        comparison.query_jev(Client(), "test-key", row("noul", ["no", "yes"], [0, 1]))
+    assert calls == []
 
 
-def test_hosted_preflight_precedes_gpu_scoring(tmp_path, monkeypatch) -> None:
+def test_jev_comparison_cli_fails_closed_before_network_or_scoring(monkeypatch) -> None:
     events = []
-    rows = [dict(row("noul", ["no", "yes"], [0, 1]), id=f"row-{index}", source="public")
-            for index in range(2)]
-    model_report = tmp_path / "model.json"
-    model_report.write_text(json.dumps({"adapter_sha256": "frozen"}), encoding="utf-8")
-    report = tmp_path / "comparison.json"
+    monkeypatch.setattr(comparison, "query_jev", lambda *_args: events.append("provider"))
+    monkeypatch.setattr(comparison, "score_requests", lambda *_args: events.append("scoring"))
+    monkeypatch.setattr(sys, "argv", ["compare_general_jev", "--help"])
 
-    class Client:
-        def __init__(self, **_kwargs):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            pass
-
-    monkeypatch.setattr(comparison.httpx, "Client", Client)
-    monkeypatch.setattr(comparison, "load_split", lambda *_args: (rows, {"selected_rows": 2}))
-    monkeypatch.setattr(comparison, "_key", lambda _path: "test-key")
-
-    def query(_client, _key, item):
-        events.append(f"jev:{item['id']}")
-        return {"noul": 0.9}, 0.01, "jev-test"
-
-    def score(payloads, _output, _model_report):
-        events.append("local")
-        assert len(payloads) == 2
-        return [{"answer": {"yes_probability": 0.8}} for _ in payloads]
-
-    monkeypatch.setattr(comparison, "query_jev", query)
-    monkeypatch.setattr(comparison, "score_requests", score)
-    monkeypatch.setattr(sys, "argv", [
-        "compare_general_jev", "--limit", "2", "--model-report", str(model_report),
-        "--report", str(report),
-    ])
-    comparison.main()
-    assert events == ["jev:row-0", "local", "jev:row-1"]
-    saved = json.loads(report.read_text(encoding="utf-8"))
-    assert saved["calls"] == 2
-    assert saved["uniform_baseline"]["noul"]["top1_accuracy"] == 0.0
+    with pytest.raises(SystemExit, match="Disabled pending verified written TypeSafe authorization"):
+        comparison.main()
+    assert events == []
