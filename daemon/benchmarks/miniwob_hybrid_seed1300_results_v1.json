@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "purpose": "frozen_new_seed_hybrid_world_model_result",
+  "protocol_sha256": "9f8d8c61b221eb556a806617f76d2ec662741e37779d043e0245fb5daf7045a4",
+  "artifacts": {
+    "collection_report_sha256": "14ad3885a2565c8eda0270943df013c573a0ec1a1dea7990f1e3dc0ae8085eaa",
+    "visual_features_sha256": "fe6484f904b3b9bf4f07b60703487f4f9596b9908f97f2f169bdef7163a54a32",
+    "semantic_extraction_report_sha256": "d262dbe52d6ee43bc529ce35f7a9b33d7c388c71210b546ef3acfc149c778e85",
+    "visual_score_report_sha256": "89f1cbf03ca4659b4b51c6f70e470c07eed4c4d63025583f19126b7c5688bc11",
+    "hybrid_score_report_sha256": "7f6d8affdc46c7cfb072a4fdf110a0e2e9735d1a1de801ec79a6ec0b749f3f50"
+  },
+  "evaluation": {
+    "task": "click-button",
+    "new_seed_start": 1300,
+    "verified_eval_pairs": 32,
+    "development_group_overlap": 0,
+    "note": "The task family was already inspected at seed 1100, so this is not a blind new-family test."
+  },
+  "visual_only": {
+    "correct_action_wins": 22,
+    "mean_mse_advantage": -0.00000084240673459135,
+    "predicted_to_observed_pair_effect_ratio": 0.00000247550062581844
+  },
+  "visual_plus_frozen_qwen_0_6b": {
+    "correct_action_wins": 20,
+    "mean_mse_advantage": 0.0386801378645032,
+    "predicted_to_observed_pair_effect_ratio": 0.0174125204102389
+  },
+  "gate": {
+    "minimum_verified_pairs": true,
+    "hybrid_correct_action_fraction_at_least_0_75": false,
+    "hybrid_wins_over_visual_at_least_5": false,
+    "hybrid_mean_mse_advantage_positive": true,
+    "hybrid_pair_effect_ratio_between_0_1_and_10": false,
+    "overall_pass": false
+  },
+  "decision": "Do not promote either checkpoint into Heliox. This selected synthetic one-step probe does not establish real desktop transfer, multistep execution, safety, or Jev parity."
+}
