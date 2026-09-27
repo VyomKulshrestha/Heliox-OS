@@ -2,6 +2,8 @@
 
 import hashlib
 import json
+import subprocess
+import sys
 
 import numpy as np
 import pytest
@@ -19,6 +21,27 @@ from scripts.train_world_visual_transition import (
     pairwise_transition_loss,
     within_action_permutation,
 )
+
+
+def test_joint_model_shares_encoder_with_inverse_prediction() -> None:
+    # The unit-test process intentionally blocks torch; exercise the optional GPU
+    # research dependency in a fresh interpreter when it is installed.
+    code = (
+        "import torch; from scripts.train_world_visual_transition import build_spatial_joint_model; "
+        "model = build_spatial_joint_model(torch.nn, 1); "
+        "state = torch.rand(2, 1, 16, 16); target = torch.rand(2, 1, 16, 16); "
+        "planes = torch.rand(2, 12, 16, 16); "
+        "assert model(state, planes).shape == state.shape; "
+        "inverse = model.inverse(state, target); "
+        "assert inverse.shape == (2, 2); "
+        "assert torch.all((inverse >= 0) & (inverse <= 1)); "
+        "inverse.sum().backward(); "
+        "assert model.encoder[0].weight.grad.abs().sum() > 0"
+    )
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    if "No module named 'torch'" in result.stderr:
+        pytest.skip("Optional torch research dependency is not installed")
+    assert result.returncode == 0, result.stderr
 
 
 def test_action_shuffle_diagnostic_requires_observed_action_advantage() -> None:

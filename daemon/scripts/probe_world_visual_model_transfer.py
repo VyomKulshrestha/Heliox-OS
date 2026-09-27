@@ -13,6 +13,7 @@ from pathlib import Path
 import numpy as np
 
 from scripts.train_world_visual_transition import (
+    build_spatial_joint_model,
     feature_shape,
     load_features,
     metrics,
@@ -75,7 +76,9 @@ def main() -> None:
         raise RuntimeError("CUDA is required for this transfer probe")
     device = torch.device("cuda:0" if args.device == "cuda" else "cpu")
     architecture = model_report["architecture"]
-    if architecture in {"spatial", "spatial_global"}:
+    if architecture == "spatial_joint":
+        model = build_spatial_joint_model(nn, channels)
+    elif architecture in {"spatial", "spatial_global"}:
         model = nn.Sequential(
             nn.Conv2d(channels + (12 if architecture == "spatial_global" else 10),
                       32, 3, padding=1), nn.GELU(),
@@ -98,7 +101,7 @@ def main() -> None:
     def predict(actions):
         if model_report["trained_without_action"]:
             actions = torch.zeros_like(actions)
-        if architecture in {"spatial", "spatial_global"}:
+        if architecture in {"spatial", "spatial_global", "spatial_joint"}:
             y, x = torch.meshgrid(torch.arange(height, device=device),
                                   torch.arange(width, device=device), indexing="ij")
             cx = actions[:, 9, None, None] * (width - 1)
@@ -107,15 +110,30 @@ def main() -> None:
             locus = torch.exp(-((x - cx) ** 2 + (y - cy) ** 2) / radius).unsqueeze(1)
             kind = actions[:, :9, None, None].expand(-1, -1, height, width)
             inputs = [state.reshape(-1, channels, height, width), locus, kind]
-            if architecture == "spatial_global":
+            if architecture in {"spatial_global", "spatial_joint"}:
                 inputs.append(actions[:, 9:11, None, None].expand(-1, -1, height, width))
-            delta = model(torch.cat(inputs, dim=1)).reshape(-1, dimension)
+            delta = (model(inputs[0], torch.cat(inputs[1:], dim=1))
+                     if architecture == "spatial_joint" else
+                     model(torch.cat(inputs, dim=1))).reshape(-1, dimension)
         else:
             delta = model(torch.cat((state, actions), dim=1))
         return torch.clamp(state + delta, 0, 1).cpu().numpy()
 
     with torch.no_grad():
         correct = predict(action)
+        inverse_diagnostic = None
+        if architecture == "spatial_joint":
+            target = torch.from_numpy(partition["target"]).to(device)
+            before = state.reshape(-1, channels, height, width)
+            after = target.reshape(-1, channels, height, width)
+            expected = action[:, 9:11]
+            inverse_diagnostic = {
+                "observed_before_after_coordinate_mae": float(
+                    (model.inverse(before, after) - expected).abs().mean().item()),
+                "before_only_coordinate_mae": float(
+                    (model.inverse(before, before) - expected).abs().mean().item()),
+                "center_coordinate_mae": float((0.5 - expected).abs().mean().item()),
+            }
         swapped = None
         if json.loads(args.target_report.read_text(encoding="utf-8")).get("counterfactual_pairs") is True:
             indices = paired_counterfactual_permutation(partition)
@@ -142,6 +160,7 @@ def main() -> None:
                                      partition["target"], partition["groups"])
             if swapped is not None else None
         ),
+        "inverse_coordinate_diagnostic": inverse_diagnostic,
         "limitation": "Frozen one-step model and target archive only; no runtime promotion, safety, "
                       "general desktop transfer, or Jev parity claim. Tiny target sets are descriptive only.",
     }
