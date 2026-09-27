@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "purpose": "research_only_shared_encoder_forward_inverse_control",
+  "source": {
+    "primary_archive": "miniwob_branches_v1.npz",
+    "primary_features_sha256": "75d424a68d14d0d685b6888b2e9b59847513c96f3e5d1b293919353d87ea5557",
+    "additional_archive": "miniwob_diverse_12_v1.npz",
+    "additional_training_features_sha256": "28fd3c368f1f2b46836d416b41bc92e5d1b9ef89eccf1a27f2b1527b994ce1ee",
+    "fresh_seed_archive": "miniwob_branches_seed100_v1.npz",
+    "fresh_seed_features_sha256": "8fc8379206786dd5c208360058a31048a4f0fd6f60264efdd3aae813e6699444",
+    "combined_train_rows": 250,
+    "combined_validation_rows": 48,
+    "held_out_rows": 48,
+    "fresh_seed_rows": 48,
+    "repository": "https://github.com/Farama-Foundation/MiniWoB-plusplus",
+    "source_commit": "33c3b4ddef8c6eb67c57a29663d844b1eda7e614"
+  },
+  "protocol": {
+    "architecture": "spatial_joint",
+    "shared_encoder": "two 32-channel convolutions used by both the forward and inverse heads",
+    "inverse_target": "normalized observed action coordinates from before and after features",
+    "selection": "lowest forward-only validation objective; inverse loss affects fitting but not checkpoint selection",
+    "feature_shape": [1, 16, 16],
+    "seed": 20260927,
+    "epochs": 80,
+    "pairwise_loss_weight": 1.0,
+    "transition_scale_power": 1.0,
+    "device": "cuda:0",
+    "paired_action_metric": "changed-pixel-weighted MSE; correct action should be lower than paired wrong action",
+    "inverse_metric": "normalized coordinate mean absolute error; lower is better"
+  },
+  "matched_runs": [
+    {
+      "inverse_loss_weight": 0.0,
+      "model_report_sha256": "a535f8ba7e2d9c5a25dd22936ff6de5f64be41ff87231c5e6d6ef760670a8268",
+      "weights_sha256": "921c338403a412a460c631a38f13b1e86f63a1e685bb845d87b4dad42ad140bf",
+      "selected_validation_objective": 0.591082572937012,
+      "held_out_correct": 0.541572839449829,
+      "held_out_wrong": 0.541572711020552,
+      "held_out_correct_wins_of_24": 11,
+      "held_out_inverse_coordinate_mae": 0.205756545066833,
+      "fresh_correct": 0.540446317405532,
+      "fresh_wrong": 0.540448096585439,
+      "fresh_correct_wins_of_24": 15,
+      "fresh_inverse_coordinate_mae": 0.209677934646606
+    },
+    {
+      "inverse_loss_weight": 0.1,
+      "model_report_sha256": "22a68b6a1b91075394c78214407b37e15f1e989ec7b1678730f5a9d2f66382cd",
+      "weights_sha256": "674298780194d515a3d87108a9c63fb7651b5a66b40786d1a63a403f87f27ce5",
+      "selected_validation_objective": 0.56186705827713,
+      "held_out_correct": 0.544343838697059,
+      "held_out_wrong": 0.544342486834112,
+      "held_out_inverse_coordinate_mae": 0.142013162374496,
+      "fresh_correct": 0.543221604182137,
+      "fresh_wrong": 0.54322227091745,
+      "fresh_correct_wins_of_24": 14,
+      "fresh_inverse_coordinate_mae": 0.138188570737839
+    },
+    {
+      "inverse_loss_weight": 1.0,
+      "model_report_sha256": "deae27465a2d2f3f7154b545eea36eb65f90f84dc268e67004ba97ea16c5b79a",
+      "weights_sha256": "07bcd0c82150e4b36b4747f53818b5e1724c24e0af872d725d455be821bfc4e6",
+      "selected_validation_objective": 0.559055328369141,
+      "held_out_correct": 0.545055750541149,
+      "held_out_wrong": 0.545054386411517,
+      "held_out_correct_wins_of_24": 8,
+      "held_out_inverse_coordinate_mae": 0.138431578874588,
+      "fresh_correct": 0.543931856307302,
+      "fresh_wrong": 0.543932481024407,
+      "fresh_correct_wins_of_24": 14,
+      "fresh_inverse_coordinate_mae": 0.134961739182472,
+      "fresh_inverse_before_only_coordinate_mae": 0.166076242923737,
+      "fresh_inverse_center_coordinate_mae": 0.207779943943024
+    }
+  ],
+  "finding": "The shared encoder learns observed inverse localization, including on fresh-seed screens, but this does not translate into reliable forward action grounding. The inverse-weighted models have lower validation forward objective yet worse held-out forward error than the same architecture without inverse fitting. No candidate passes paired wrong-action controls.",
+  "limitations": [
+    "Exploratory MiniWoB first-click data; no unseen real desktop environments, task success, or multistep traces.",
+    "All selected rows are clicks, so action-type accuracy is uninformative; inverse results measure coordinate recovery only.",
+    "The held-out task families were inspected in earlier experiments, so this is not an untouched preregistered benchmark.",
+    "A before/after inverse probe observes the outcome and is not a forward planning capability.",
+    "Weights are ignored research artifacts and are not loaded into the live UiJepaPredictor. No Jev parity or safety claim."
+  ],
+  "promoted_to_runtime": false
+}
