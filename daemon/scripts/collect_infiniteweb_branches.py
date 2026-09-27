@@ -153,6 +153,19 @@ def semantic_state(page) -> str:
     return json.dumps(result, sort_keys=True)[:MAX_SEMANTIC_CHARS]
 
 
+def action_label(page, point: tuple[float, float]) -> str:
+    label = page.evaluate(
+        """([x, y]) => {
+        const hit = document.elementFromPoint(x, y);
+        const control = hit?.closest('a,button,input,select,[role]') || hit;
+        return control?.getAttribute('aria-label') || control?.getAttribute('title')
+            || control?.innerText || control?.getAttribute('value') || '';
+    }""",
+        list(point),
+    )
+    return " ".join(str(label).split())[:160]
+
+
 def reset(browser, assets: PinnedSiteAssets, path: str, limit: int):
     context = browser.new_context(
         viewport=VIEWPORT, device_scale_factor=1, service_workers="block", accept_downloads=False
@@ -188,6 +201,7 @@ def collect_page(browser, assets: PinnedSiteAssets, path: str, limit: int) -> tu
                 break
             x, y = candidates[index]
             try:
+                label = action_label(page, (x, y))
                 page.mouse.click(x, y)
                 page.wait_for_load_state("load", timeout=3000)
                 page.wait_for_timeout(150)
@@ -209,6 +223,9 @@ def collect_page(browser, assets: PinnedSiteAssets, path: str, limit: int) -> tu
                         "state": before,
                         "target": after,
                         "coords": (x / VIEWPORT["width"], y / VIEWPORT["height"]),
+                        "state_text": before_semantic[:2048],
+                        "action_label": label,
+                        "target_text": after_semantic[:2048],
                         "semantic": after_semantic,
                     }
                 )
@@ -232,6 +249,9 @@ def main() -> None:
     parser.add_argument("--max-candidates", type=int, default=12)
     parser.add_argument("--features", type=Path, default=root / "infiniteweb_branches_v1.npz")
     parser.add_argument("--report", type=Path, default=root / "infiniteweb_branches_v1.json")
+    parser.add_argument(
+        "--semantic-archive", type=Path, help="Opt-in local JSONL of bounded visible text on public generated sites"
+    )
     args = parser.parse_args()
     try:
         sites = {split: parse_sites(getattr(args, f"{split}_sites")) for split in ("train", "validation", "eval")}
@@ -245,6 +265,14 @@ def main() -> None:
         or args.features.exists()
         or args.report.exists()
         or args.features.resolve() == args.report.resolve()
+        or (
+            args.semantic_archive is not None
+            and (
+                args.semantic_archive.exists()
+                or args.semantic_archive.suffix != ".jsonl"
+                or args.semantic_archive.resolve() in (args.features.resolve(), args.report.resolve())
+            )
+        )
     ):
         parser.error("Use site-disjoint splits, bounded limits, and fresh output paths")
 
@@ -293,6 +321,22 @@ def main() -> None:
         split=np.asarray([row["split"] for row in rows]),
         task=np.asarray([row["task"] for row in rows]),
     )
+    semantic_sha256 = None
+    if args.semantic_archive is not None:
+        args.semantic_archive.parent.mkdir(parents=True, exist_ok=True)
+        content = "".join(
+            json.dumps(
+                {
+                    key: row[key]
+                    for key in ("group", "split", "task", "coords", "state_text", "action_label", "target_text")
+                },
+                ensure_ascii=False,
+            )
+            + "\n"
+            for row in rows
+        )
+        args.semantic_archive.write_text(content, encoding="utf-8")
+        semantic_sha256 = hashlib.sha256(args.semantic_archive.read_bytes()).hexdigest()
     report = {
         "purpose": "research_only_infiniteweb_visual_branch_transitions",
         "source_dataset": DATASET,
@@ -313,6 +357,7 @@ def main() -> None:
         "candidate_attempts": dict(attempts),
         "skipped_pages": dict(skipped),
         "features_sha256": hashlib.sha256(args.features.read_bytes()).hexdigest(),
+        "semantic_archive_sha256": semantic_sha256,
         "limitation": "Generated browser websites, not a desktop task distribution. Candidate clicks are selected "
         "for semantically and visually distinct observed outcomes. No reward, task success, or task terminal "
         "state was measured. "

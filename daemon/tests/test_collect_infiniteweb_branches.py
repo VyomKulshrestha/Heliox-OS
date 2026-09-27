@@ -45,6 +45,8 @@ def test_collect_page_requires_two_distinct_outcomes_from_exact_resets() -> None
     assert np.array_equal(pair[0]["state"], pair[1]["state"])
     assert not np.array_equal(pair[0]["target"], pair[1]["target"])
     assert pair[0]["semantic"] != pair[1]["semantic"]
+    assert {row["action_label"] for row in pair} == {"A", "B"}
+    assert all(len(row["state_text"]) <= 2048 and len(row["target_text"]) <= 2048 for row in pair)
 
 
 def test_focus_only_changes_are_not_collected_as_semantic_outcomes() -> None:
