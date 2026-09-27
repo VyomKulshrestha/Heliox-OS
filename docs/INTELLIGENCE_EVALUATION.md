@@ -622,9 +622,10 @@ simple, causally verified button toggles. It does **not** rescue the failed
 public-trajectory result, establish transfer to real desktop applications,
 or justify loading these weights into Heliox. The controlled pages have only
 two controls and one predictable effect; task context, text, menus, delayed
-effects, and competing external events are absent. Neither the paper's joint
-forward/inverse dynamics objective nor its larger multimodal backbone has been implemented
-here. Both trained artifacts remain ignored local research files.
+effects, and competing external events are absent. These button-toggle
+checkpoints do not implement the paper's joint forward/inverse dynamics
+objective or its larger multimodal backbone. Both trained artifacts remain
+ignored local research files.
 
 The collector now also has an opt-in `--paired-counterfactuals` mode. It
 resets the same local page, clicks each of its two controls separately, checks
@@ -792,6 +793,50 @@ frames, and its mean whole-frame margin favored the wrong action. The
 [frozen result](../daemon/benchmarks/world_visual_focus_seed200_results_v1.json)
 fails the overall gate; no weights are enabled in Heliox. This is a useful
 representation diagnostic, not a Jev-equivalent world model.
+
+A further research-only probe, inspired by the latent-displacement inverse
+objective in [Delta-JEPA](https://arxiv.org/html/2606.31232v1), predicts a
+small next-screen latent and decodes observed click coordinates from the
+before/after latent difference. It is a **small local adaptation**, not an
+implementation or reproduction of that paper's model. A matched variant adds
+an observation-reconstruction loss to discourage latent collapse. The probe
+added 182 verified counterfactual training pairs from eight more MiniWoB task
+families, kept the original 48-pair task-family eval isolated, and scored
+frozen weights on two previously collected seed archives plus the additional
+archive's excluded eval family. On the retained primary eval, the unanchored
+model preferred the correct action on **23/48** pairs and the reconstruction
+variant on **28/48**; both had a **negative mean correct-action advantage**.
+The reconstruction variant reached 30/44 on the reused seed-200 archive but
+predicted pair separation was only about **0.02%** of observed separation in
+latent MSE. The cause was a self-targeting forward loss: the encoder could
+shrink the target representation instead of learning the transition. Stopping
+gradients through the forward target produced **42/48** on the primary eval,
+**22/24** on reused seed 100, **38/44** on reused seed 200, and **21/22** on
+the excluded eval family, each with a positive mean latent-MSE advantage.
+An untrained, zero-initialized forward head tied all primary-eval pairs; the
+improvement was learned, but remains exploratory. The selected checkpoint
+was at epoch 1, so it is especially important not to infer robust planning.
+These comparisons are not a new preregistered confirmation or task-success
+benchmark. Hashes, controls, and transfer results are in
+[`world_visual_delta_latent_exploratory_v1.json`](../daemon/benchmarks/world_visual_delta_latent_exploratory_v1.json).
+Before collecting new data, the candidate and a minimum 30-pair, 80%-win,
+positive-margin unseen-family gate were frozen in
+[`world_visual_delta_stopgrad_seed700_protocol_v1.json`](../daemon/benchmarks/world_visual_delta_stopgrad_seed700_protocol_v1.json).
+That gate **failed**: three of four requested task families yielded no
+verified distinct-outcome pairs, and on the 11 valid `click-button` pairs the
+model preferred the correct action only **4/11** times, with a negative mean
+margin. Its predicted pair separation was far below the observed separation.
+The [frozen result](../daemon/benchmarks/world_visual_delta_stopgrad_seed700_results_v1.json)
+therefore rejects broad unseen-family transfer; no claim is made for the three
+families without valid pairs.
+The public browser-feature archives and weights remain ignored local files;
+the paper-inspired model has no live loader. From `daemon/`, use
+`python -m scripts.train_world_visual_delta_latent --help` and
+`python -m scripts.probe_world_visual_delta_latent_transfer --help` to inspect
+the bounded GPU protocol. Hash checks reject mismatched source features or
+model weights. The failed unseen-family result blocks runtime promotion; the
+current 16×16 representation and one-step click-only supervision do not
+establish Jev-like multistep planning or general desktop transfer.
 
 An opt-in local recorder can collect after/before 16×16 pairs around approved
 Heliox mouse actions. Its explicit offline trainer holds decrypted features

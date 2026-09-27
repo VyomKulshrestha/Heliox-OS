@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "purpose": "frozen_unseen_family_delta_latent_result",
+  "protocol": "world_visual_delta_stopgrad_seed700_protocol_v1.json",
+  "protocol_sha256": "5f192cc7868a6633429dcac3cee073f51735335f82185b23998e70497c131d8b",
+  "source": {
+    "source_commit": "33c3b4ddef8c6eb67c57a29663d844b1eda7e614",
+    "features_sha256": "f7f10fb6f6529af21f28273c0b8e96d68b3b511b5f4d5e277d89995d4f35b030",
+    "collection_report_sha256": "d76b9550f6e5bb3f34aeb5c7aa7519b033741563f4089daecfc501ccfb6d09db",
+    "seed_start": 700,
+    "requested_eval_pairs": 48,
+    "verified_eval_pairs": 11,
+    "skipped_no_distinct_visual_outcomes": 37,
+    "observed_eval_pairs_by_task": {
+      "click-button": 11,
+      "click-color": 0,
+      "click-dialog": 0,
+      "click-test": 0
+    }
+  },
+  "frozen_model": {
+    "training_report_sha256": "8ce81c5b05795606c99ce04cdb1a7fff95c0f6b2a6354906dda8d1e745340fb5",
+    "weights_sha256": "f764ed2e6bd7e827e009d0a41900ece9f6a02d253ebc78839dbcfdbe845f18a5",
+    "probe_report_sha256": "01c7a0b703e4df5e94c363a40465d9333624f95d2ad49fd077ee2eae46ecca2a",
+    "correct_action_wins": 4,
+    "groups": 11,
+    "mean_mse_advantage": -9.128485213626515e-6,
+    "paired_target_latent_mse": 0.04466984421014786,
+    "paired_predicted_latent_mse": 1.4286379723671416e-7,
+    "inverse_coordinate_mae": 0.23416569828987122,
+    "center_coordinate_mae": 0.33255332708358765
+  },
+  "gate": {
+    "minimum_eval_pairs": 30,
+    "enough_pairs": false,
+    "minimum_correct_action_fraction": 0.8,
+    "correct_action_fraction_passed": false,
+    "positive_mean_mse_advantage": false,
+    "predicted_to_observed_pair_mse_ratio_within_0_25_to_4": false,
+    "inverse_coordinate_mae_below_center": true,
+    "overall_passed": false
+  },
+  "finding": "The stop-gradient candidate improved exploratory paired-action transfer on previously investigated task families, but the frozen unseen-family check failed. Three requested families produced no verified distinct-outcome pairs, and the 11 click-button pairs had below-chance action ranking, negative mean margin, and a predicted latent pair effect far smaller than the observed effect.",
+  "limitations": [
+    "Only the click-button family contributed scored pairs; no result can be inferred for the other three families.",
+    "The collector selects visibly distinct 16x16 outcomes and does not measure general task success.",
+    "This is one-step public browser research, not real desktop, multistep, physical-world, safety, or Jev-parity evidence."
+  ],
+  "promoted_to_runtime": false
+}

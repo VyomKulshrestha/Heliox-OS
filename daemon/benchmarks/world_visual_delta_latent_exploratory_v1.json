@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "purpose": "exploratory_delta_latent_miniwob_transfer",
+  "status": "exploratory_improvement_failed_frozen_unseen_family",
+  "source": {
+    "dataset": "Farama-Foundation/MiniWoB-plusplus",
+    "source_commit": "33c3b4ddef8c6eb67c57a29663d844b1eda7e614",
+    "feature_shape": [1, 16, 16],
+    "primary_features_sha256": "2becf508ee06ca101657fa113393050c8a4325bf6e189e198cf91cfe6a791b20",
+    "primary_report_sha256": "f0c76a880f8203f976dded6915be6ecb024c26945cd73114b07f445476d1af08",
+    "additional_features_sha256": "17d4c78c0cb96e7eef798d12b849aba8801e3ba7e0ad89bdfdfa795ee667051b",
+    "additional_report_sha256": "d6827635a86402f691d2e540d4c72123602241cfc196945c4538c1cd15001849",
+    "combined_train_pairs": 244,
+    "combined_validation_pairs": 48,
+    "retained_primary_eval_pairs": 48
+  },
+  "models": [
+    {
+      "name": "delta_inverse_without_reconstruction",
+      "inverse_weight": 1.0,
+      "reconstruction_weight": 0.0,
+      "weights_sha256": "4ad3acc74e92c7c1b148981fb9af508c11f8ff86c507e2173f0ec4667bd85594",
+      "training_report_sha256": "a6900705bd8441dba15e0580f5fe0fee3c5cfe1a372af81e5a3a8a94f2972022",
+      "primary_eval": {
+        "correct_action_wins": 23,
+        "groups": 48,
+        "mean_mse_advantage": -1.11991009058935e-8,
+        "paired_target_latent_mse": 1.64407356351148e-6,
+        "paired_predicted_latent_mse": 1.30993837998972e-8
+      },
+      "transfer": {
+        "seed100": {"wins": 12, "groups": 24, "mean_mse_advantage": -4.32620860616832e-8, "report_sha256": "72cd215a3fa104f430fdc530f0f9f36348dc93d27f688decb91c839a252633a4"},
+        "seed200": {"wins": 17, "groups": 44, "mean_mse_advantage": -5.39128615690226e-8, "report_sha256": "c07ebc9bfdf041dd91aa0199dc89e7854e790912c97a301edfcfe3772cc96a70"},
+        "excluded_additional_eval_family": {"wins": 14, "groups": 22, "mean_mse_advantage": 5.59149074516344e-9, "report_sha256": "0e2f0e89d224c3ed31763a333123ca7d35d545f31fd29510f8442d6cf32e9cd5"}
+      }
+    },
+    {
+      "name": "delta_inverse_with_observation_reconstruction",
+      "inverse_weight": 1.0,
+      "reconstruction_weight": 1.0,
+      "weights_sha256": "7d706f726994f102027d897c8f435b70b1e72fc458ca95757d87364191eb7ed0",
+      "training_report_sha256": "a93080c7a855612627381c0a33ec9b4952a9c5237bca5ef35ab3120b562d9c23",
+      "primary_eval": {
+        "correct_action_wins": 28,
+        "groups": 48,
+        "mean_mse_advantage": -2.02223115290205e-8,
+        "paired_target_latent_mse": 4.69661972601898e-5,
+        "paired_predicted_latent_mse": 5.72641134510832e-9
+      },
+      "transfer": {
+        "seed100": {"wins": 17, "ties": 2, "groups": 24, "mean_mse_advantage": 2.71102180704474e-8, "report_sha256": "3cbd343197a7c73c579535e2d6637635cabafd44e7ce8379f32faab5f8559f6b"},
+        "seed200": {"wins": 30, "groups": 44, "mean_mse_advantage": 1.04218171062795e-8, "report_sha256": "f9757216f6b8b946932c91c14139e1365076a11e3d0db03248e7e42045b73160"},
+        "excluded_additional_eval_family": {"wins": 14, "ties": 1, "groups": 22, "mean_mse_advantage": 1.63246030834588e-9, "report_sha256": "6de9ef0f1fa11de3ec14cdf9b4837a73e89acb29c3d65b225c3b558bad7ab037"}
+      }
+    },
+    {
+      "name": "delta_inverse_reconstruction_stop_gradient_target",
+      "inverse_weight": 1.0,
+      "reconstruction_weight": 1.0,
+      "stop_gradient_target": true,
+      "pairwise_floor": 0.0001,
+      "selected_epoch": 1,
+      "weights_sha256": "f764ed2e6bd7e827e009d0a41900ece9f6a02d253ebc78839dbcfdbe845f18a5",
+      "training_report_sha256": "8ce81c5b05795606c99ce04cdb1a7fff95c0f6b2a6354906dda8d1e745340fb5",
+      "primary_eval": {
+        "correct_action_wins": 42,
+        "groups": 48,
+        "mean_mse_advantage": 1.16880983114243e-7,
+        "paired_target_latent_mse": 4.78141316762049e-7,
+        "paired_predicted_latent_mse": 4.08525124839798e-7
+      },
+      "transfer": {
+        "seed100": {"wins": 22, "groups": 24, "mean_mse_advantage": 1.14824312428633e-7, "report_sha256": "2e0f97f1f5b808c7547019dd6c16d72beb401cbfe93db3c17bc71dc1ee154148"},
+        "seed200": {"wins": 38, "groups": 44, "mean_mse_advantage": 1.19272788817232e-7, "report_sha256": "0e246d9835d1bd4dfff107ecf6997371383aff621c24edd55070ebc78361893d"},
+        "excluded_additional_eval_family": {"wins": 21, "groups": 22, "mean_mse_advantage": 9.89741899750449e-8, "report_sha256": "2bba1ee01c33dbf08980c7eb089de8336c56e24730b531d3d676c8bd9d7ea965"}
+      }
+    }
+  ],
+  "interpretation": "Reconstruction alone failed, but stopping gradients through the forward target prevented a collapsed self-target and improved selected synthetic-task action ranking. A separately frozen unseen-family protocol then failed: 4/11 click-button wins, negative margin, and 37/48 requested pairs absent. This remains research-only.",
+  "limitations": [
+    "The candidate and comparisons were exploratory; seed100 and seed200 archives were previously used in research and are not new preregistered confirmation.",
+    "The new seed700 protocol was committed before collection, but only one of four requested unseen families yielded verified pairs and the model failed on that family.",
+    "Paired examples were selected for distinct observed 16x16 outcomes; this is not an unbiased task-success estimate.",
+    "All scores are one-step synthetic browser observations, not real desktop tasks, Jev parity, safety, or autonomy evidence.",
+    "The model has no runtime loader, and deterministic risk and approval boundaries remain unchanged."
+  ],
+  "promoted_to_runtime": false
+}
