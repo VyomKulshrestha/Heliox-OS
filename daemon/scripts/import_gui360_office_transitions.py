@@ -254,7 +254,7 @@ def main() -> None:
         "representation": representation, "split_basis": protocol["split_basis"],
         **audit,
         "features_sha256": _file_sha256(args.features),
-        "limitation": "One non-interventional shard per Office domain. No same-state action alternatives, "
+        "limitation": "One non-interventional shard per Office domain. No verified same-state action interventions, "
                       "live desktop transfer, execution authority, or Jev parity is established.",
     }
     args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
