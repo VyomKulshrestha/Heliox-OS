@@ -21,6 +21,30 @@ from scripts.train_world_visual_transition import (
 )
 
 
+def task_masks(features_path: Path, expected_rows: int) -> dict[str, np.ndarray]:
+    """Align optional task labels with the held-out visual rows."""
+    with np.load(features_path, allow_pickle=False) as data:
+        if "task" not in data.files:
+            return {}
+        selected = data["split"].astype(str) == "eval"
+        tasks = data["task"].astype(str)
+    if len(tasks) != len(selected) or int(selected.sum()) != expected_rows:
+        raise ValueError("Task labels do not align with evaluation rows")
+    names = tasks[selected]
+    return {name: names == name for name in sorted(set(names))}
+
+
+def observed_pair_signal(target: np.ndarray, groups: np.ndarray) -> dict[str, float | int]:
+    """Report observed screen separation without reference to model predictions."""
+    separation = []
+    for group in np.unique(groups):
+        indices = np.flatnonzero(groups == group)
+        if len(indices) != 2:
+            raise ValueError("Observed pair signal requires exactly two rows per group")
+        separation.append(float(((target[indices[0]] - target[indices[1]]) ** 2).mean()))
+    return {"groups": len(separation), "mean_pixel_mse": float(np.mean(separation))}
+
+
 def paired_action_diagnostic(
     correct: np.ndarray,
     swapped: np.ndarray,
@@ -162,6 +186,18 @@ def main() -> None:
             indices = paired_counterfactual_permutation(partition)
             swapped = predict(action[indices])
         ablated = predict(torch.zeros_like(action))
+    by_task = {}
+    if swapped is not None:
+        for name, mask in task_masks(args.target_features, len(partition["state"])).items():
+            target = partition["target"][mask]
+            groups = partition["groups"][mask]
+            by_task[name] = {
+                "observed_pair_signal": observed_pair_signal(target, groups),
+                "paired_action_diagnostic": paired_action_diagnostic(
+                    correct[mask], swapped[mask], partition["state"][mask], target, groups),
+                "paired_discriminative_diagnostic": paired_discriminative_diagnostic(
+                    correct[mask], swapped[mask], target, groups),
+            }
     report = {
         "purpose": "research_only_frozen_visual_model_transfer_probe",
         "model_report_sha256": hashlib.sha256(args.model_report.read_bytes()).hexdigest(),
@@ -188,6 +224,11 @@ def main() -> None:
                                              partition["groups"])
             if swapped is not None else None
         ),
+        "observed_pair_signal": (
+            observed_pair_signal(partition["target"], partition["groups"])
+            if swapped is not None else None
+        ),
+        "paired_diagnostics_by_task": by_task,
         "inverse_coordinate_diagnostic": inverse_diagnostic,
         "limitation": "Frozen one-step model and target archive only; no runtime promotion, safety, "
                       "general desktop transfer, or Jev parity claim. Tiny target sets are descriptive only.",
