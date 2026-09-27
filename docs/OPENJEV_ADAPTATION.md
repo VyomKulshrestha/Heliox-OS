@@ -1575,3 +1575,13 @@ least-privilege execution boundaries. Promotion requires a fresh, consented
 and de-identified desktop workload, grouped held-out validation, calibrated
 uncertainty, a strict false-allowance gate, and a runtime latency/resource
 check. Public synthetic accuracy or Jev agreement alone is not authorization.
+
+The pinned MiniWoB hybrid visual/semantic offline probe did not pass its
+preregistered new-seed gate. On 32 selected `click-button` branch pairs at
+seed 1300, the frozen visual-only model selected the correct action 22 times;
+the frozen visual-plus-Qwen-0.6B model selected it 20 times. The hybrid's
+predicted branch effect was only 0.0174 of the observed effect, below the
+protocol's 0.1 floor. The [protocol](../daemon/benchmarks/miniwob_hybrid_seed1300_protocol_v1.json)
+and [result](../daemon/benchmarks/miniwob_hybrid_seed1300_results_v1.json)
+pin the artifact hashes and failed gates. This rules out promotion of these
+checkpoints, not the broader possibility of a stronger multimodal world model.
