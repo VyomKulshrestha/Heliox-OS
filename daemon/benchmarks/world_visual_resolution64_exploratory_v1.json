@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "purpose": "exploratory_64x64_delta_latent_resolution_check",
+  "source": {
+    "dataset": "Farama-Foundation/MiniWoB-plusplus",
+    "source_commit": "33c3b4ddef8c6eb67c57a29663d844b1eda7e614",
+    "seed_start": 900,
+    "feature_shape": [1, 64, 64],
+    "train_families": 8,
+    "train_pairs": 93,
+    "validation_pairs": 12,
+    "eval_family": "click-button",
+    "eval_pairs": 12,
+    "features_sha256": "701860e51cd06c850951486e7a4098268442c538bfa671d670224753a93e036b",
+    "collection_report_sha256": "9f6d35067bbccb5e052dbc01b3ce71660856131ff149f3341eaff13b450e52c0"
+  },
+  "model": {
+    "architecture": "delta_inverse_reconstruction_stop_gradient_target",
+    "training_report_sha256": "7a350fed88c4463fe65d5fe68be9e2d69da71a7ad395675ab93a39040f89d0c0",
+    "weights_sha256": "80a4ea89348ed614e71dda2f222057d39392974d838b570442d1c352d6814955",
+    "selected_epoch": 7,
+    "eval_correct_action_wins": 8,
+    "eval_groups": 12,
+    "eval_mean_mse_advantage": -1.3428895423809687e-5,
+    "eval_paired_target_latent_mse": 0.0827273428440094,
+    "eval_paired_predicted_latent_mse": 3.03325293771195e-8,
+    "eval_inverse_coordinate_mae": 0.1818537563085556,
+    "eval_center_coordinate_mae": 0.306339830160141
+  },
+  "finding": "More spatial detail did not restore reliable unseen-family forward prediction. Correct-action wins were 8/12 but the mean margin favored the wrong action, and predicted pair effects were far smaller than observed effects.",
+  "limitations": [
+    "This is exploratory and was collected after the failed frozen 16x16 unseen-family result.",
+    "The 64x64 and 16x16 studies differ in seeds and training sample counts, so their win-count difference is not a controlled estimate of resolution effect.",
+    "Only selected one-step public browser click pairs were evaluated; no real desktop, multistep, autonomy, safety, or Jev-parity claim."
+  ],
+  "promoted_to_runtime": false
+}
