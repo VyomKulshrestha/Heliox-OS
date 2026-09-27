@@ -44,6 +44,8 @@ from benchmarks.scopejudge_general import (  # noqa: E402
     scope_group_weights,
     scope_metrics,
 )
+from scripts.evaluate_qwen_instruct_scope import MODEL_ID as OPENJEV_BASE_MODEL  # noqa: E402
+from scripts.evaluate_qwen_instruct_scope import MODEL_REVISION as OPENJEV_BASE_REVISION  # noqa: E402
 from scripts.qwen_model_pin import MODEL, REVISION  # noqa: E402
 
 
@@ -288,7 +290,8 @@ def checkpoint_signature(args: argparse.Namespace, encoded: dict[str, list[dict]
         for item in items:
             token_ids.update(json.dumps([split, item["row"]["id"], item["sequences"]],
                                         separators=(",", ":")).encode())
-    identity = {"model_revision": REVISION, "dataset_revision": DATASET_REVISION,
+    identity = {"model_revision": (OPENJEV_BASE_REVISION if getattr(args, "initial_openjev", False)
+                                    else REVISION), "dataset_revision": DATASET_REVISION,
                 "manifests": manifests, "scope_manifest": scope_manifest,
                 "token_ids_sha256": token_ids.hexdigest(),
                 "seed": args.seed, "max_length": args.max_length, "lora_rank": args.lora_rank,
@@ -299,6 +302,14 @@ def checkpoint_signature(args: argparse.Namespace, encoded: dict[str, list[dict]
         identity["prompt_style"] = args.prompt_style
     if getattr(args, "dtype", "bfloat16") != "bfloat16":
         identity["dtype"] = args.dtype
+    if getattr(args, "initial_openjev", False):
+        from scripts.train_world_scope_qlora import (
+            OPENJEV_ADAPTER_SHA256,
+            OPENJEV_HEAD_SHA256,
+            OPENJEV_REVISION,
+        )
+
+        identity["initial_openjev"] = [OPENJEV_REVISION, OPENJEV_ADAPTER_SHA256, OPENJEV_HEAD_SHA256]
     if getattr(args, "scope_group_weighting", "none") != "none":
         identity["scope_group_weighting"] = args.scope_group_weighting
     if row_weights is not None:
@@ -347,9 +358,9 @@ def load_checkpoint(path: Path, backbone, head, optimizer, *, signature: str,
 def run(args: argparse.Namespace) -> dict:
     import torch
     from huggingface_hub import snapshot_download
-    from peft import LoraConfig, get_peft_model
+    from peft import LoraConfig, PeftModel, get_peft_model, prepare_model_for_kbit_training
     from torch import nn
-    from transformers import AutoModelForCausalLM, AutoTokenizer
+    from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, Qwen3_5ForCausalLM
     from transformers.utils import logging as transformers_logging
 
     if not torch.cuda.is_available() or torch.cuda.mem_get_info()[0] < 4 * 1024**3:
@@ -378,7 +389,9 @@ def run(args: argparse.Namespace) -> dict:
         rows[split], manifests[split] = load_split(split, limit, args.seed + offset)
         if not rows[split]:
             raise ValueError(f"No licensed rows in {split}")
-    path = snapshot_download(MODEL, revision=REVISION, local_files_only=True)
+    model_name = OPENJEV_BASE_MODEL if args.initial_openjev else MODEL
+    model_revision = OPENJEV_BASE_REVISION if args.initial_openjev else REVISION
+    path = snapshot_download(model_name, revision=model_revision, local_files_only=True)
     tokenizer = AutoTokenizer.from_pretrained(path, local_files_only=True)
     scope_manifest = None
     auxiliary_name = None
@@ -409,30 +422,63 @@ def run(args: argparse.Namespace) -> dict:
                                                      for name, entry in manifests.items()},
                       "auxiliary": scope_manifest}), flush=True)
 
-    base = AutoModelForCausalLM.from_pretrained(
-        path, local_files_only=True, dtype={"bfloat16": torch.bfloat16,
-                                            "float16": torch.float16}[args.dtype],
-        device_map={"": 0}, attn_implementation=args.attention,
-    )
-    yes, no = (tokenizer.encode(word, add_special_tokens=False) for word in ("Yes", "No"))
-    if len(yes) != 1 or len(no) != 1:
-        raise ValueError("Yes and No must each be one token")
-    initial = (base.get_output_embeddings().weight[yes[0]] -
-               base.get_output_embeddings().weight[no[0]]).detach().float().clone()
-    backbone = base.model
-    del base
-    backbone.requires_grad_(False)
-    backbone.config.use_cache = False
-    backbone = get_peft_model(backbone, LoraConfig(
-        r=args.lora_rank, lora_alpha=2 * args.lora_rank,
-        target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
-        lora_dropout=0.0, bias="none",
-    ))
-    head = nn.Linear(initial.numel(), 1, dtype=torch.float32, device="cuda")
-    with torch.no_grad():
-        head.weight.copy_(initial[None, :])
-        head.bias.zero_()
-    del initial
+    if args.initial_openjev:
+        from scripts.train_world_scope_qlora import (
+            OPENJEV_ADAPTER_SHA256,
+            OPENJEV_HEAD_SHA256,
+            OPENJEV_REPO,
+            OPENJEV_REVISION,
+            openjev_checkpoint_paths,
+            verify_openjev_adapter,
+        )
+
+        adapter_dir, head_path = openjev_checkpoint_paths()
+        released_rank = json.loads((adapter_dir / "adapter_config.json").read_text(encoding="utf-8"))["r"]
+        if args.lora_rank != released_rank:
+            raise ValueError("LoRA rank must match the pinned Open-Jev checkpoint")
+        dtype = {"bfloat16": torch.bfloat16, "float16": torch.float16}[args.dtype]
+        base = Qwen3_5ForCausalLM.from_pretrained(
+            path, local_files_only=True, dtype=dtype, device_map={"": 0},
+            attn_implementation=args.attention,
+            quantization_config=BitsAndBytesConfig(
+                load_in_4bit=True, bnb_4bit_quant_type="nf4",
+                bnb_4bit_use_double_quant=True, bnb_4bit_compute_dtype=dtype),
+        )
+        base = prepare_model_for_kbit_training(
+            base, use_gradient_checkpointing=True,
+            gradient_checkpointing_kwargs={"use_reentrant": False},
+        )
+        backbone = PeftModel.from_pretrained(base.model, adapter_dir, is_trainable=True)
+        verify_openjev_adapter(backbone, adapter_dir)
+        text_config = getattr(base.config, "text_config", base.config)
+        head = nn.Linear(text_config.hidden_size, 1, dtype=torch.float32, device="cuda")
+        head.load_state_dict(torch.load(head_path, map_location="cpu", weights_only=True))
+        del base
+    else:
+        base = AutoModelForCausalLM.from_pretrained(
+            path, local_files_only=True, dtype={"bfloat16": torch.bfloat16,
+                                                "float16": torch.float16}[args.dtype],
+            device_map={"": 0}, attn_implementation=args.attention,
+        )
+        yes, no = (tokenizer.encode(word, add_special_tokens=False) for word in ("Yes", "No"))
+        if len(yes) != 1 or len(no) != 1:
+            raise ValueError("Yes and No must each be one token")
+        initial = (base.get_output_embeddings().weight[yes[0]] -
+                   base.get_output_embeddings().weight[no[0]]).detach().float().clone()
+        backbone = base.model
+        del base
+        backbone.requires_grad_(False)
+        backbone.config.use_cache = False
+        backbone = get_peft_model(backbone, LoraConfig(
+            r=args.lora_rank, lora_alpha=2 * args.lora_rank,
+            target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
+            lora_dropout=0.0, bias="none",
+        ))
+        head = nn.Linear(initial.numel(), 1, dtype=torch.float32, device="cuda")
+        with torch.no_grad():
+            head.weight.copy_(initial[None, :])
+            head.bias.zero_()
+        del initial
 
     encoded, overlong = {}, {}
     for split, selected in rows.items():
@@ -520,13 +566,13 @@ def run(args: argparse.Namespace) -> dict:
     np.savez_compressed(args.output_dir / "head.npz",
                         weights=head.weight.detach().cpu().numpy(),
                         bias=head.bias.detach().cpu().numpy(),
-                        temperature=temperature, model_revision=REVISION,
+                        temperature=temperature, model_revision=model_revision,
                         max_length=args.max_length, lora_rank=args.lora_rank,
                         attention_implementation=args.attention, prompt_style=args.prompt_style,
                         model_dtype=args.dtype)
 
     report = {
-        "model": MODEL, "revision": REVISION,
+        "model": model_name, "revision": model_revision,
         "diagnostic_environment": {name: os.environ.get(name) for name in (
             "HF_HUB_OFFLINE", "CUDA_LAUNCH_BLOCKING", "PYTORCH_NO_CUDA_MEMORY_CACHING")},
         "dataset": DATASET, "dataset_revision": DATASET_REVISION, "dataset_config": DATASET_CONFIG,
@@ -542,6 +588,12 @@ def run(args: argparse.Namespace) -> dict:
         "training_checkpoint_sha256": checkpoint_hash,
         "lora_rank": args.lora_rank, "accumulation": args.accumulation,
         "prompt_style": args.prompt_style,
+        "initial_checkpoint": ({"repo": OPENJEV_REPO,
+                                "revision": OPENJEV_REVISION,
+                                "adapter_sha256": OPENJEV_ADAPTER_SHA256,
+                                "head_sha256": OPENJEV_HEAD_SHA256}
+                               if args.initial_openjev else None),
+        "backbone_quantization": "NF4 double quantization" if args.initial_openjev else None,
         "checkpoint_every": args.checkpoint_every, "resumed": args.resume,
         "baseline_skipped_on_resume": not run_baseline,
         "learning_rates": {"adapter": args.lr, "head": args.head_lr},
@@ -589,6 +641,8 @@ def main() -> None:
     parser.add_argument("--ood-rows", type=int, default=128)
     parser.add_argument("--max-length", type=int, default=512)
     parser.add_argument("--lora-rank", type=int, default=8)
+    parser.add_argument("--initial-openjev", action="store_true",
+                        help="Warm-start a 4-bit joint decision model from pinned Open-Jev weights")
     parser.add_argument("--attention", choices=("eager", "sdpa"), default="eager")
     parser.add_argument("--dtype", choices=("bfloat16", "float16"), default="bfloat16")
     parser.add_argument("--accumulation", type=int, default=4)
