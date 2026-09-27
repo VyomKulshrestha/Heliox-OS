@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "purpose": "prospective_research_iteration_no_execution_authority",
+  "frozen_at_utc": "2026-09-27 07:59:23 UTC",
+  "research_basis": [
+    "https://arxiv.org/abs/2609.14858",
+    "https://arxiv.org/abs/2405.05160",
+    "https://arxiv.org/abs/1911.08731"
+  ],
+  "hypothesis": "Reducing the binary scope-task contribution may preserve general choice performance while retaining some scope discrimination; calibration-only abstention may reduce false allowances at a measurable coverage cost.",
+  "training": {
+    "base": "Qwen/Qwen3.5-2B",
+    "initial_checkpoint": "ZefanCai/Open-Jev-2B@0c7aa498b1627be8da4acf34c863ff0ee0a92785",
+    "seed": 20260927,
+    "public_decision_train_rows": 128,
+    "scopejudge_train_rows": 64,
+    "public_and_scope_calibration_rows_each": 32,
+    "public_test_ood_scope_test_rows_each": 64,
+    "scope_row_weight": 0.25,
+    "max_input_tokens": 1024,
+    "precision": "NF4 with bfloat16 compute",
+    "jev_api_responses_as_labels": false
+  },
+  "evaluations": {
+    "same_run_baseline": "compare by decision kind and scope false allowances/false warnings",
+    "public_scope_calibration": "derive cautious allow threshold from calibration negatives only; report coverage loss",
+    "fresh_public_ood": {
+      "selection_seed": 20261002,
+      "rows": 128,
+      "selected_ids_sha256": "55df78882e5cd1627ea7f018760cedf6b147c141f28807c0033d39d27284eee2",
+      "dataset_sha256": "ba8cb3f95b9121aa73e4b997ac9c350e2ec4dddb972cb5c3086da911f0deb9ef",
+      "overlap_with_previously_inspected_seed_20261001": 2
+    },
+    "authored_heliox_scope": "diagnostic only; previously inspected"
+  },
+  "retention_gate": "Retain as research candidate only if fresh OOD choice accuracy is at least 0.70, cautious ScopeJudge false allowances at most 1, and cautious in-scope recall at least 0.50. Otherwise preserve the earlier checkpoint and log the failed hypothesis.",
+  "promotion_rule": "No automatic runtime promotion. Public and synthetic tests cannot establish live desktop safety or Jev parity."
+}

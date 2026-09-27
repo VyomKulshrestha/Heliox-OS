@@ -178,6 +178,9 @@ def test_checkpoint_signature_binds_exact_tokenized_inputs() -> None:
     assert first != checkpoint_signature(args, encoded, {}, None)
     assert checkpoint_signature(args, encoded, {}, None, [1.0, 0.5]) != checkpoint_signature(
         args, encoded, {}, None, [1.0, 0.6])
+    weighted = checkpoint_signature(args, encoded, {}, None, [1.0, 0.25])
+    args.scope_row_weight = 0.25
+    assert weighted != checkpoint_signature(args, encoded, {}, None, [1.0, 0.25])
 
 
 def test_scope_weights_reduce_group_dominance_without_changing_class_mass() -> None:
