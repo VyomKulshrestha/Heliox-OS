@@ -14,6 +14,7 @@ import logging
 import math
 import os
 import threading
+import time
 import uuid
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
@@ -35,6 +36,8 @@ MAX_STEPS = 200
 MAX_SAMPLES = 200
 MAX_WORKFLOWS = 50
 VISUAL_SETTLE_SECONDS = 0.15
+MANUAL_VISUAL_INTERVAL_SECONDS = 0.2
+MANUAL_PRE_MAX_AGE_SECONDS = 0.75
 MIN_REPEAT_SECONDS = 300
 MAX_REPEAT_SECONDS = 365 * 24 * 60 * 60
 
@@ -137,6 +140,11 @@ class RecordedWorkflowStore:
         self._records_lock = threading.RLock()
         self._saving = False
         self._manual_suppression = 0
+        self._manual_visual_task: asyncio.Task[None] | None = None
+        self._manual_post_tasks: set[asyncio.Task[None]] = set()
+        self._manual_visual_loop: asyncio.AbstractEventLoop | None = None
+        self._manual_feature: tuple[float, list[int], tuple[int, int, int, int]] | None = None
+        self._manual_event_generation = 0
 
     def _encryption_key(self) -> bytes:
         with self._key_lock:
@@ -211,7 +219,10 @@ class RecordedWorkflowStore:
                 "samples": [],
                 "omitted_actions": 0,
                 "overlap_warning": False,
+                "visual_gaps": 0,
             }
+            self._manual_feature = None
+            self._manual_event_generation = 0
         return self.status()
 
     def status(self) -> dict[str, Any]:
@@ -225,7 +236,74 @@ class RecordedWorkflowStore:
                 "step_count": len(session["steps"]) if session else 0,
                 "sample_count": len(session["samples"]) if session else 0,
                 "omitted_actions": session["omitted_actions"] if session else 0,
+                "visual_gaps": session["visual_gaps"] if session else 0,
             }
+
+    def start_manual_visual_capture(self) -> None:
+        """Keep only the latest quantized feature while both opt-ins are active."""
+        with self._session_lock:
+            session = self._active
+            if not session or not session["capture_manual"] or not session["capture_visual"]:
+                return
+            if self._manual_visual_task is not None:
+                raise RuntimeError("Manual visual capture is already active")
+            self._manual_visual_loop = asyncio.get_running_loop()
+            self._manual_visual_task = self._manual_visual_loop.create_task(self._sample_manual_visual())
+
+    async def _sample_manual_visual(self) -> None:
+        warned = False
+        try:
+            while True:
+                try:
+                    feature = await self._capture_feature() if self._capture_feature else None
+                    values = _feature_bytes(feature) if feature else None
+                    bounds = tuple(feature.get(key) for key in ("left", "top", "width", "height")) if feature else ()
+                    if (values is not None and len(bounds) == 4
+                        and all(isinstance(value, int) and not isinstance(value, bool) for value in bounds)
+                        and bounds[2] > 0 and bounds[3] > 0):
+                        with self._session_lock:
+                            if self._active is not None and not self._manual_suppression:
+                                self._manual_feature = (time.monotonic(), values, bounds)
+                    warned = False
+                except Exception:
+                    if not warned:
+                        logger.warning("Manual visual feature capture failed", exc_info=True)
+                        warned = True
+                await asyncio.sleep(MANUAL_VISUAL_INTERVAL_SECONDS)
+        except asyncio.CancelledError:
+            raise
+        finally:
+            with self._session_lock:
+                self._manual_feature = None
+
+    async def stop_manual_visual_capture(self, *, save: bool) -> None:
+        task = self._manual_visual_task
+        self._manual_visual_task = None
+        self._manual_visual_loop = None
+        if task is not None:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        pending = set(self._manual_post_tasks)
+        if save and pending:
+            done, pending = await asyncio.wait(pending, timeout=3)
+        for item in pending:
+            item.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+        with self._session_lock:
+            self._manual_feature = None
+
+    def manual_press_feature(self, pressed_at: float) -> tuple[int, list[int], tuple[int, int, int, int]] | None:
+        """Snapshot the rolling pre-feature at mouse-down, without persisting it."""
+        with self._session_lock:
+            session = self._active
+            feature = self._manual_feature
+            if (session is None or not session["capture_manual"] or not session["capture_visual"]
+                or self._manual_visual_loop is None or self._manual_suppression or feature is None
+                or not feature[0] <= pressed_at
+                or pressed_at - feature[0] > MANUAL_PRE_MAX_AGE_SECONDS):
+                return None
+            return self._manual_event_generation, feature[1], feature[2]
 
     @contextmanager
     def suppress_manual_during_heliox_action(self):
@@ -234,19 +312,28 @@ class RecordedWorkflowStore:
             self._manual_suppression += 1
             if self._active is not None and self._active["capture_manual"]:
                 self._active["overlap_warning"] = True
+            self._manual_feature = None
+            self._manual_event_generation += 1
         try:
             yield
         finally:
             with self._session_lock:
                 self._manual_suppression -= 1
+                self._manual_feature = None
+                self._manual_event_generation += 1
 
     def record_manual_event(self, event: str, **values: Any) -> None:
         """Called by the opt-in OS hook. No typed characters are accepted."""
+        candidate = None
         with self._session_lock:
             session = self._active
             if (not session or not session["capture_manual"] or self._manual_suppression
                 or (self._allow_manual_event is not None and not self._allow_manual_event())):
+                self._manual_feature = None
                 return
+            self._manual_event_generation += 1
+            generation = self._manual_event_generation
+            self._manual_feature = None
             if event == "text":
                 # One placeholder per text-entry burst, never a length or value.
                 if session["steps"] and session["steps"][-1]["action_type"] == "manual_text":
@@ -294,6 +381,63 @@ class RecordedWorkflowStore:
             else:
                 step["source"] = "manual"
                 session["steps"].append(step)
+                if event == "click" and button in {"left", "right"} and self._manual_visual_loop is not None:
+                    feature = values.get("press_feature")
+                    if (isinstance(feature, tuple) and len(feature) == 3
+                        and feature[0] == generation - 1):
+                        candidate = (session["id"], generation, len(session["steps"]) - 1,
+                                     feature[1], feature[2], x, y, button)
+                    else:
+                        session["visual_gaps"] += 1
+        if candidate is not None and self._manual_visual_loop is not None:
+            self._manual_visual_loop.call_soon_threadsafe(self._schedule_manual_post, candidate)
+
+    def _schedule_manual_post(self, candidate: tuple[Any, ...]) -> None:
+        task = asyncio.create_task(self._capture_manual_post(candidate))
+        self._manual_post_tasks.add(task)
+        task.add_done_callback(self._manual_post_tasks.discard)
+
+    async def _capture_manual_post(self, candidate: tuple[Any, ...]) -> None:
+        session_id, generation, step_index, before, bounds, x, y, button = candidate
+        try:
+            await asyncio.sleep(VISUAL_SETTLE_SECONDS)
+            with self._session_lock:
+                if (self._active is None or self._active["id"] != session_id
+                    or self._manual_event_generation != generation or self._manual_suppression):
+                    if self._active is not None and self._active["id"] == session_id:
+                        self._active["visual_gaps"] += 1
+                    return
+            feature = await self._capture_feature() if self._capture_feature else None
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("Manual post-action visual feature capture failed", exc_info=True)
+            feature = None
+        after = _feature_bytes(feature) if feature else None
+        left, top, width, height = bounds
+        valid = (after is not None and feature is not None
+                 and tuple(feature.get(key) for key in ("left", "top", "width", "height")) == bounds
+                 and left <= x < left + width and top <= y < top + height)
+        with self._session_lock:
+            session = self._active
+            if session is None or session["id"] != session_id:
+                return
+            if not valid or self._manual_event_generation != generation or self._manual_suppression:
+                session["visual_gaps"] += 1
+                return
+            if len(session["samples"]) < MAX_SAMPLES:
+                session["samples"].append({
+                    "step_index": step_index,
+                    "action_type": "mouse_click" if button == "left" else "mouse_right_click",
+                    "coords": [(x - left) / width, (y - top) / height],
+                    "before": before,
+                    "after": after,
+                    "post_observed": True,
+                    "independently_verified": False,
+                    "source": "manual",
+                })
+            else:
+                session["visual_gaps"] += 1
 
     def mark_manual_gap(self) -> None:
         """A dead OS hook makes the resulting recipe incomplete, not trustworthy."""
@@ -382,6 +526,7 @@ class RecordedWorkflowStore:
                 raise ValueError("No replayable actions were captured; nothing was saved")
             self._active = None
             self._saving = save
+            self._manual_feature = None
             record = {key: value for key, value in session.items() if key not in {"capture_visual", "capture_manual"}}
         if not save:
             return {"saved": False, **self.status()}
@@ -413,6 +558,7 @@ class RecordedWorkflowStore:
             "step_count": len(record["steps"]),
             "sample_count": len(record["samples"]),
             "omitted_actions": record["omitted_actions"],
+            "visual_gaps": record.get("visual_gaps", 0),
             "incomplete": bool(record["omitted_actions"]),
             "overlap_warning": bool(record.get("overlap_warning", False)),
             "needs_review": bool(record["omitted_actions"] or record.get("overlap_warning")) or any(

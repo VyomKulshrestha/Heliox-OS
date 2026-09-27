@@ -44,6 +44,21 @@ def test_manual_hook_ignores_heliox_foreground(tmp_path) -> None:
     store.stop(save=False)
 
 
+def test_manual_hook_keeps_press_time_feature_until_click_release(tmp_path, monkeypatch) -> None:
+    store = RecordedWorkflowStore(tmp_path / "recordings.enc", key_provider=lambda: b"k" * 32)
+    store.start(name="Desktop task", consent=True, capture_manual=True, manual_consent=True)
+    observed = []
+    token = (0, [128] * 256, (0, 0, 100, 100))
+    monkeypatch.setattr(store, "manual_press_feature", lambda _pressed_at: token)
+    monkeypatch.setattr(store, "record_manual_event", lambda event, **values: observed.append((event, values)))
+    hook = ManualWorkflowHook(store, ignore_foreground=lambda: False)
+    button = SimpleNamespace(name="left")
+    hook._on_click(10, 20, button, True)
+    hook._on_click(10, 20, button, False)
+    assert observed == [("click", {"x": 10, "y": 20, "button": "left", "press_feature": token})]
+    store.stop(save=False)
+
+
 def test_manual_hook_lifecycle_uses_temporary_listeners(tmp_path, monkeypatch) -> None:
     class Listener:
         def __init__(self, **_callbacks):

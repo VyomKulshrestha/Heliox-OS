@@ -36,7 +36,7 @@ class ManualWorkflowHook:
         self._ignore_foreground = ignore_foreground
         self._keyboard: Any = None
         self._mouse: Any = None
-        self._pressed: tuple[int, int, str, float] | None = None
+        self._pressed: tuple[int, int, str, float, object | None] | None = None
         self._modifiers: set[str] = set()
 
     def start(self) -> None:
@@ -105,7 +105,10 @@ class ManualWorkflowHook:
             return
         button_name = str(getattr(button, "name", "") or "").lower()
         if pressed:
-            self._pressed = (x, y, button_name, time.monotonic()) if isinstance(x, int) and isinstance(y, int) else None
+            pressed_at = time.monotonic()
+            self._pressed = (
+                x, y, button_name, pressed_at, self._store.manual_press_feature(pressed_at)
+            ) if isinstance(x, int) and isinstance(y, int) else None
             return
         origin = self._pressed
         self._pressed = None
@@ -122,7 +125,9 @@ class ManualWorkflowHook:
                 duration=time.monotonic() - origin[3],
             )
         else:
-            self._store.record_manual_event("click", x=origin[0], y=origin[1], button=button_name)
+            self._store.record_manual_event(
+                "click", x=origin[0], y=origin[1], button=button_name, press_feature=origin[4]
+            )
 
     def _on_scroll(self, x: object, y: object, dx: object, dy: object) -> None:
         if self._ignore_foreground():

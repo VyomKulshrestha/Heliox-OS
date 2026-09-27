@@ -8420,6 +8420,8 @@ def handle_tool(tool_name, params):
         if self._manual_workflow_hook is not None:
             self._manual_workflow_hook.stop()
             self._manual_workflow_hook = None
+        if self._recorded_workflows is not None:
+            await self._recorded_workflows.stop_manual_visual_capture(save=False)
         for pending in self._pending_confirms.values():
             pending.event.set()
         self._pending_confirms.clear()
@@ -9967,6 +9969,8 @@ def handle_tool(tool_name, params):
                     self._recorded_workflows.stop(save=False)
                     raise
                 self._manual_workflow_hook = hook
+                if capture_visual:
+                    self._recorded_workflows.start_manual_visual_capture()
             return {"status": "ok", **session}
         except (ValueError, RuntimeError) as exc:
             return {"status": "error", "message": str(exc)}
@@ -9978,6 +9982,9 @@ def handle_tool(tool_name, params):
                     self._recorded_workflows.mark_manual_gap()
                 self._manual_workflow_hook.stop()
                 self._manual_workflow_hook = None
+            await self._recorded_workflows.stop_manual_visual_capture(
+                save=_validated_bool(params, "save", False)
+            )
             result = await asyncio.to_thread(
                 self._recorded_workflows.stop, save=_validated_bool(params, "save", False)
             )

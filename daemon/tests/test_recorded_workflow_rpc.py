@@ -1,5 +1,7 @@
 """Recorder RPCs preserve consent and guarded autonomous replay."""
 
+import asyncio
+import time
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -111,3 +113,41 @@ async def test_manual_hook_failure_leaves_recording_off(tmp_path, monkeypatch) -
     )
     assert result["status"] == "error"
     assert server._recorded_workflows.status()["active"] is False
+
+
+@pytest.mark.asyncio
+async def test_manual_visual_rpc_starts_and_stops_rolling_capture(tmp_path, monkeypatch) -> None:
+    captures = 0
+
+    async def capture() -> dict:
+        nonlocal captures
+        captures += 1
+        return {"embedding": [0.5] * 256, "left": 0, "top": 0,
+                "width": 100, "height": 100}
+
+    monkeypatch.setattr(ManualWorkflowHook, "start", lambda self: None)
+    monkeypatch.setattr(ManualWorkflowHook, "stop", lambda self: None)
+    monkeypatch.setattr(ManualWorkflowHook, "healthy", lambda self: True)
+    server = PilotServer(PilotConfig())
+    server._recorded_workflows = RecordedWorkflowStore(
+        tmp_path / "recordings.enc", key_provider=lambda: b"k" * 32, capture_feature=capture
+    )
+    started = await server._handle_recorded_workflow_start({
+        "name": "Manual visual", "consent": True, "capture_manual": True,
+        "manual_consent": True, "capture_visual": True,
+    }, None)
+    assert started["status"] == "ok"
+    for _ in range(50):
+        if captures:
+            break
+        await asyncio.sleep(0.01)
+    assert captures > 0
+    press_feature = server._recorded_workflows.manual_press_feature(time.monotonic())
+    assert press_feature is not None
+    server._recorded_workflows.record_manual_event(
+        "click", x=25, y=75, button="left", press_feature=press_feature
+    )
+    saved = await server._handle_recorded_workflow_stop({"save": True}, None)
+    assert saved["status"] == "ok"
+    assert saved["sample_count"] == 1
+    assert server._recorded_workflows._manual_visual_task is None
