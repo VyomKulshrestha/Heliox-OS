@@ -717,6 +717,15 @@ confirms the training path runs, not that the model understands the action.
 The [updated-GPU recheck](../daemon/benchmarks/world_visual_updated_gpu_recheck_v2.json)
 pins the ignored local report and weight hashes; no weights were promoted.
 
+The [resolution and fresh-seed MiniWoB comparison](../daemon/benchmarks/world_visual_resolution_transfer_v1.json)
+tested 16×16 and 64×64 captures on identical selected click pairs, with
+task-family splits and 24 new-seed evaluation pairs. At 64×64, the default
+model's correct-action weighted MSE was 0.412518, but swapping in the paired
+alternative improved it to 0.411459. The pairwise-trained model narrowly
+favored correct actions, 0.553221 versus 0.553224, only a 0.000003 gap.
+Resolution improves pixel fit but does not establish transferable action
+grounding. All of these GPU weights remain research-only.
+
 To repeat with fresh ignored output paths, start the local Vite UI with
 `tauri-app/ui/node_modules/.bin/vite.cmd --host 127.0.0.1 --port 1420`, then
 from `daemon` run `python -m scripts.collect_heliox_ui_transitions --help`,
@@ -779,9 +788,12 @@ observation, deterministic risk, and approval remain separate. The research
 visual weights discussed above are still not promoted into this runtime path.
 An optional UI-JEPA artifact loads only when finite tensor shapes and its exact
 ordered `ActionType` vocabulary match the running build. Gating additionally
-requires at least 100 training samples, validation error no greater than 0.35,
-and an explicit validated-for-gating designation. Otherwise it is unavailable
-or shadow-only.
+requires a versioned click-geometry head, at least 100 training samples,
+validation error no greater than 0.35, and an explicit validated-for-gating
+designation. It abstains on unresolved `(0,0)` click targets, missing or
+out-of-bounds screen coordinates, and relative coordinates. Only explicit
+pointer actions can receive learned gating evidence; non-pointer visual
+predictions remain shadow-only. No reviewed geometry artifact is staged.
 
 Offline world-model trials report Brier score, calibration error, risk false
 negatives, transition-match coverage and mean, high-uncertainty rate, and
