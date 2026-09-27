@@ -1642,3 +1642,12 @@ to link labels; the new DOM-kind feature provided no held-out lift. The probe
 uses no private desktop data and trains no weights. It does not reproduce
 Dream-RSI's long-horizon loop or establish Jev parity, desktop transfer, or
 any grounds for live-model promotion.
+
+The published Open-Jev 2B checkpoint was also evaluated on a fresh,
+group-disjoint public OOD set and compared with live Jev on the same 128 rows.
+The checkpoint scored 90.0% binary, 60.5% choice, and 0.207 ordinal mean
+absolute error against the public labels; Jev scored 84.3%, 42.1%, and 0.343.
+Choice agreement was only 39.5%, so this is not Jev parity: the local model
+outperformed Jev on these labels while often choosing differently. The run
+used an NF4-quantized Open-Jev release, not Heliox-trained weights; Jev outputs
+were evaluation-only. See the [frozen protocol and detailed result](RELEASED_OPENJEV_GENERAL_RESULT_V1.md).

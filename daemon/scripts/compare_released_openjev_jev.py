@@ -41,6 +41,23 @@ def local_predictions(rows: list[dict], checkpoint: dict, *, signature: str) -> 
     return predictions
 
 
+def compare_by_source(rows: list[dict], local: list[dict], jev: list[dict]) -> dict:
+    """Expose source-level transfer gaps without changing the frozen aggregate."""
+    if len(rows) != len(local) or len(rows) != len(jev):
+        raise ValueError("Rows, local predictions, and Jev replies must align")
+    sources = sorted({row["source"] for row in rows})
+    return {
+        source: compare(
+            [row for row in rows if row["source"] == source],
+            [prediction for row, prediction in zip(rows, local, strict=True)
+             if row["source"] == source],
+            [answer for row, answer in zip(rows, jev, strict=True)
+             if row["source"] == source],
+        )
+        for source in sources
+    }
+
+
 def save_progress(path: Path, *, signature: str, replies: list[dict], versions: list[str], cost: float) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(".tmp")
@@ -115,6 +132,7 @@ def run(protocol_path: Path, model_dir: Path, reference_path: Path, env_file: Pa
         "released_report_sha256": hashlib.sha256((model_dir / "report.json").read_bytes()).hexdigest(),
         "jev_models": sorted(set(versions)), "calls": len(replies), "cost_usd": cost,
         "comparison": compare(rows, local, replies),
+        "comparison_by_source": compare_by_source(rows, local, replies),
         "limitation": "Public synthetic OOD decisions only; this cannot establish model parity, "
                       "desktop transfer, or execution authority.",
     }

@@ -6,7 +6,12 @@ import json
 
 import pytest
 
-from scripts.compare_released_openjev_jev import load_progress, local_predictions, save_progress
+from scripts.compare_released_openjev_jev import (
+    compare_by_source,
+    load_progress,
+    local_predictions,
+    save_progress,
+)
 
 
 def test_local_logits_require_exact_selection() -> None:
@@ -34,3 +39,29 @@ def test_resume_checkpoint_rejects_wrong_identity(tmp_path) -> None:
     path.write_text(json.dumps(payload), encoding="utf-8")
     with pytest.raises(ValueError, match="checkpoint"):
         load_progress(path, signature="original", total=2)
+
+
+def test_source_comparison_keeps_each_row_paired() -> None:
+    rows = [
+        {"source": "alpha", "kind": "choice", "options": ["read", "delete"],
+         "target": [1, 0]},
+        {"source": "beta", "kind": "noul", "target": [0, 1]},
+    ]
+    local = [
+        {"answer": {"choice": "read"}},
+        {"answer": {"yes_probability": 0.9}},
+    ]
+    jev = [
+        {"choice": "option_1"},
+        {"noul": 0.9},
+    ]
+
+    result = compare_by_source(rows, local, jev)
+
+    assert result["alpha"]["choice"] == {
+        "rows": 1, "agreement": 0.0, "local_gold": 1.0, "jev_gold": 0.0,
+    }
+    assert result["beta"]["noul"]["agreement"] == 1.0
+    assert result["beta"]["noul"]["local_gold"] == 1.0
+    with pytest.raises(ValueError, match="align"):
+        compare_by_source(rows, local[:1], jev)
