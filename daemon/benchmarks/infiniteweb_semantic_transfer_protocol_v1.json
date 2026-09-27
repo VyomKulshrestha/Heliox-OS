@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "purpose": "prospective_frozen_semantic_action_cross_site_probe",
+  "source_dataset": "WhiteFlamesCN/InfiniteWeb-Dataset",
+  "source_revision": "84e294fc432abca78b89388ed3c98ca778177a1f",
+  "selection_note": "Training/validation site families were already inspected in visual-only research. The two evaluation sites below had not been collected or scored before this protocol.",
+  "train_sites": ["17_personal_travel_phot", "281_fishing_tackle_shop_", "350_online_florist_shop_", "306_conference_event_inf"],
+  "validation_sites": ["445_tour_booking_website", "198_wedding_and_event_ph"],
+  "eval_sites": ["418_butoh_dance_workshop", "39_independent_music_la"],
+  "max_pages_per_site": 6,
+  "max_candidates_per_page": 10,
+  "feature_shape": [1, 16, 16],
+  "frozen_text_encoder": "Qwen/Qwen3-0.6B@c1899de289a04d12100db370d81485cdf75e47ca",
+  "max_prompt_tokens": 1024,
+  "model": {
+    "design": "GPU ridge regression on next-image delta with train-only 16-dimensional semantic PCA; compare state-only, state-plus-click-coordinates, and state-plus-click-coordinates-plus-frozen-semantic inputs",
+    "pca_dimensions": 16,
+    "ridge_lambdas": [0.1, 1.0, 10.0],
+    "regularization_selection": "lowest validation weighted MSE separately per model; evaluation never used for selection",
+    "device": "cuda"
+  },
+  "minimum_coverage": {"train_groups": 20, "validation_groups": 4, "eval_groups_per_site": 2},
+  "success_criterion": "On each held-out site, the semantic model has at least 75 percent paired correct-action wins and at least 1 percent lower weighted MSE than both coordinate-only and state-only models, and beats its swapped-action control. Missing coverage or either site failing is an overall failure.",
+  "promotion": "none; synthetic one-step generated-site performance is not real-desktop transfer, Jev parity, or safety authorization"
+}
