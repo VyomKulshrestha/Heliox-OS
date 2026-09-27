@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "purpose": "research_only_linear_action_geometry_feasibility_check",
+  "source_features_sha256": "2becf508ee06ca101657fa113393050c8a4325bf6e189e198cf91cfe6a791b20",
+  "local_report_sha256": "af4156c46eb8f899aa4c250ab97b872ef5eac1647e88f7a0832fabbc27463137",
+  "local_weights_sha256": "669ccf7198da4bdc204b8ccc3ff2dd4924e8eca874279b7620a5b4b0a52c4ec9",
+  "protocol": {
+    "architecture": "linear residual pixel predictor, not the live UiJepaPredictor",
+    "device": "cuda:0",
+    "train_rows": 124,
+    "validation_rows": 48,
+    "held_out_task_family_rows": 96,
+    "epochs": 80,
+    "selected_epoch": 18,
+    "transition_scale_power": 1.0,
+    "seed": 20260927
+  },
+  "held_out_weighted_mse": {
+    "unchanged_screen": 0.5488126748505902,
+    "correct_action": 0.584080697279792,
+    "paired_alternative_action": 0.5840807063182927
+  },
+  "finding": "The simple state-plus-action linear predictor underperforms the unchanged-screen baseline and barely distinguishes paired click outcomes. A versioned geometry input contract alone cannot make this a useful trained world model.",
+  "promoted_to_runtime": false
+}

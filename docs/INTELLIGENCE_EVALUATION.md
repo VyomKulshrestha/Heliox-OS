@@ -725,6 +725,11 @@ alternative improved it to 0.411459. The pairwise-trained model narrowly
 favored correct actions, 0.553221 versus 0.553224, only a 0.000003 gap.
 Resolution improves pixel fit but does not establish transferable action
 grounding. All of these GPU weights remain research-only.
+An additional [linear geometry feasibility check](../daemon/benchmarks/world_visual_linear_feasibility_v1.json)
+scored 0.584081 correct-action weighted MSE versus 0.548813 for simply leaving
+the held-out screen unchanged. It is not the live artifact format, but rejects
+the shortcut of treating coordinate inputs plus a small linear fit as a
+validated world model.
 
 To repeat with fresh ignored output paths, start the local Vite UI with
 `tauri-app/ui/node_modules/.bin/vite.cmd --host 127.0.0.1 --port 1420`, then
