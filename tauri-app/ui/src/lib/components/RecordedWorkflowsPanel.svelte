@@ -19,6 +19,7 @@
     needs_review: boolean;
     overlap_warning: boolean;
     placeholders: string[];
+    feedback_count: number;
     schedule: { next_run_at: string; repeat_seconds: number } | null;
   }
   interface RecordingStatus {
@@ -51,6 +52,11 @@
   let repeat = $state<Record<string, string>>({});
   let reviewed = $state<Record<string, boolean>>({});
   let textValues = $state<Record<string, Record<string, string>>>({});
+  let lastRun = $state<{ workflowId: string; jobId: string; status: string; feedbackSaved: boolean } | null>(null);
+
+  function runFinished(status: string): boolean {
+    return ["success", "partial", "failed", "cancelled"].includes(status);
+  }
 
   function textReady(workflow: Workflow): boolean {
     return (workflow.placeholders ?? []).every((key) => (textValues[workflow.id]?.[key] ?? "").trim().length > 0);
@@ -58,7 +64,10 @@
 
   onMount(() => {
     void refresh();
-    const timer = window.setInterval(() => { if (recording.active) void refreshStatus(); }, 4000);
+    const timer = window.setInterval(() => {
+      if (recording.active) void refreshStatus();
+      if (lastRun && !runFinished(lastRun.status)) void refreshRunStatus();
+    }, 4000);
     return () => window.clearInterval(timer);
   });
 
@@ -84,6 +93,19 @@
         "Saved workflows unavailable",
       ) as DaemonStatusResult & { workflows: Workflow[] };
       workflows = result.workflows ?? [];
+    } catch (cause) { error = message(cause); }
+  }
+
+  async function refreshRunStatus() {
+    if (!lastRun) return;
+    try {
+      const result = (await call("autonomous_job", { job_id: lastRun.jobId })) as {
+        job_id?: string; status?: string; error?: string;
+      };
+      if (result.error) throw new Error(result.error);
+      if (result.job_id === lastRun?.jobId && result.status) {
+        lastRun = { ...lastRun, status: result.status };
+      }
     } catch (cause) { error = message(cause); }
   }
 
@@ -123,12 +145,30 @@
     if (busy || workflow.incomplete || !textReady(workflow)) return;
     busy = true; error = ""; notice = "";
     try {
-      requireResultStatus((await call("recorded_workflow_run", {
+      const result = requireResultStatus((await call("recorded_workflow_run", {
         workflow_id: workflow.id, reviewed: reviewed[workflow.id] === true,
         text_values: textValues[workflow.id] ?? {},
-      })) as DaemonStatusResult, "submitted", "Could not run workflow");
+      })) as DaemonStatusResult & { job?: { job_id: string; status: string } },
+      "submitted", "Could not run workflow");
+      if (!result.job?.job_id) throw new Error("The workflow run did not return a job ID");
+      lastRun = { workflowId: workflow.id, jobId: result.job.job_id,
+        status: result.job.status, feedbackSaved: false };
       textValues[workflow.id] = {};
       notice = `${workflow.name} submitted through Heliox's normal approvals and verification.`;
+    } catch (cause) { error = message(cause); }
+    finally { busy = false; }
+  }
+
+  async function saveFeedback(workflow: Workflow, outcome: "achieved" | "partial" | "not_achieved") {
+    if (busy || !lastRun || lastRun.workflowId !== workflow.id || !runFinished(lastRun.status)) return;
+    busy = true; error = ""; notice = "";
+    try {
+      requireOkResult((await call("recorded_workflow_feedback", {
+        workflow_id: workflow.id, job_id: lastRun.jobId, outcome,
+      })) as DaemonStatusResult, "Could not save outcome feedback");
+      lastRun = { ...lastRun, feedbackSaved: true };
+      notice = "Your goal-outcome rating was saved locally. It is separate from the executor status.";
+      await refresh();
     } catch (cause) { error = message(cause); }
     finally { busy = false; }
   }
@@ -228,7 +268,7 @@
     <div class="saved-list">
       {#each workflows as workflow (workflow.id)}
         <details class="workflow">
-          <summary><strong>{workflow.name}</strong><span>{workflow.step_count} steps · {workflow.sample_count} private samples</span></summary>
+          <summary><strong>{workflow.name}</strong><span>{workflow.step_count} steps · {workflow.sample_count} private samples{workflow.feedback_count ? ` · ${workflow.feedback_count} goal ratings` : ""}</span></summary>
           <p class="goal">Goal: {workflow.goal}</p>
           {#if workflow.visual_gaps}<p class="warning">{workflow.visual_gaps} manual clicks have no reliable visual pair. Their recipe steps remain, but they were excluded from local visual training.</p>{/if}
           {#if workflow.incomplete}<p class="warning">{workflow.omitted_actions} actions were excluded (for example Heliox-entered text, shortcuts, scripts, or parallel actions). This draft cannot run or schedule; those steps need a parameterized workflow.</p>{/if}
@@ -249,6 +289,23 @@
             {#if workflow.schedule}<button class="secondary" disabled={busy} onclick={() => void unschedule(workflow)}>Remove schedule</button>{/if}
             <button class="danger" disabled={busy} onclick={() => void remove(workflow)}>Delete</button>
           </div>
+          {#if lastRun?.workflowId === workflow.id}
+            <div class="run-feedback">
+              <p>Executor status: {lastRun.status}. This does not prove your goal was achieved.</p>
+              {#if !runFinished(lastRun.status)}
+                <button class="secondary" disabled={busy} onclick={() => void refreshRunStatus()}>Check run status</button>
+              {:else if lastRun.feedbackSaved}
+                <p>Goal-outcome rating saved locally.</p>
+              {:else}
+                <p>Did this run achieve your goal? Your answer is optional and stored locally with this workflow.</p>
+                <div class="actions" role="group" aria-label="Rate this run's goal outcome">
+                  <button class="secondary" disabled={busy} onclick={() => void saveFeedback(workflow, "achieved")}>Achieved</button>
+                  <button class="secondary" disabled={busy} onclick={() => void saveFeedback(workflow, "partial")}>Partly achieved</button>
+                  <button class="secondary" disabled={busy} onclick={() => void saveFeedback(workflow, "not_achieved")}>Not achieved</button>
+                </div>
+              {/if}
+            </div>
+          {/if}
           {#if !workflow.schedule && !(workflow.placeholders ?? []).length}
             <div class="schedule-form">
               <p>Times use your local timezone. The daemon must be running to dispatch a scheduled task.</p>
@@ -272,6 +329,7 @@
   .state { border: 1px solid var(--border); border-radius: 999px; padding: 5px 10px; white-space: nowrap; }
   .state.live { color: var(--accent); border-color: currentColor; }
   .setup, .active-box, .workflow { display: grid; gap: 12px; border: 1px solid var(--border); border-radius: 12px; padding: 16px; background: var(--bg-secondary); }
+  .run-feedback { display: grid; gap: 8px; border-top: 1px solid var(--border); padding-top: 12px; }
   label { display: grid; gap: 6px; font-size: 13px; }
   input:not([type="checkbox"]), select { min-width: 0; width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-primary); color: var(--text-primary); font: inherit; }
   .check { display: flex; align-items: start; gap: 8px; line-height: 1.5; }

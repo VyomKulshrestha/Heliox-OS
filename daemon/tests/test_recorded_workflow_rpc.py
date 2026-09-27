@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from pilot.actions import Action, ActionResult, ActionType, BrowserParams
+from pilot.agents.autonomous import JobStatus
 from pilot.config import PilotConfig
 from pilot.security.rpc_identity import RpcClientRole, rpc_method_allowed
 from pilot.server import PilotServer
@@ -16,6 +17,8 @@ from pilot.workflows.recorded_workflows import RecordedWorkflowStore
 
 class _Job:
     job_id = "job-1"
+    status = JobStatus.QUEUED
+    completed_at = 0.0
 
     def to_dict(self) -> dict:
         return {"job_id": self.job_id}
@@ -24,10 +27,14 @@ class _Job:
 class _Autonomous:
     def __init__(self) -> None:
         self.submitted = []
+        self.job = _Job()
 
     async def submit(self, prompt: str, **kwargs) -> _Job:
         self.submitted.append((prompt, kwargs))
-        return _Job()
+        return self.job
+
+    def get_job(self, job_id: str) -> _Job | None:
+        return self.job if job_id == self.job.job_id else None
 
 
 @pytest.mark.asyncio
@@ -151,3 +158,28 @@ async def test_manual_visual_rpc_starts_and_stops_rolling_capture(tmp_path, monk
     assert saved["status"] == "ok"
     assert saved["sample_count"] == 1
     assert server._recorded_workflows._manual_visual_task is None
+
+
+@pytest.mark.asyncio
+async def test_feedback_requires_matching_completed_workflow_job(tmp_path) -> None:
+    server = PilotServer(PilotConfig())
+    server._recorded_workflows = RecordedWorkflowStore(
+        tmp_path / "recordings.enc", key_provider=lambda: b"k" * 32
+    )
+    server._autonomous = _Autonomous()
+    assert not rpc_method_allowed(RpcClientRole.MCP_LOCAL, "recorded_workflow_feedback")
+    server._recorded_workflows.start(name="Review", consent=True)
+    action = Action(action_type=ActionType.BROWSER_CLICK, parameters=BrowserParams(selector="#review"))
+    token = await server._recorded_workflows.before(action, single_action_batch=True)
+    await server._recorded_workflows.after(token, ActionResult(action=action, success=True))
+    workflow_id = server._recorded_workflows.stop(save=True)["id"]
+    await server._handle_recorded_workflow_run({"workflow_id": workflow_id}, None)
+    params = {"workflow_id": workflow_id, "job_id": "job-1", "outcome": "not_achieved"}
+    assert (await server._handle_recorded_workflow_feedback(params, None))["status"] == "error"
+    server._autonomous.job.status = JobStatus.SUCCESS
+    server._autonomous.job.completed_at = time.time()
+    assert (await server._handle_recorded_workflow_feedback({**params, "job_id": "other"}, None))["status"] == "error"
+    saved = await server._handle_recorded_workflow_feedback(params, None)
+    assert saved["status"] == "ok"
+    assert saved["workflow"]["feedback_count"] == 1
+    assert (await server._handle_recorded_workflow_feedback(params, None))["status"] == "error"

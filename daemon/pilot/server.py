@@ -593,6 +593,7 @@ class PilotServer:
         self._recorded_workflows: Any = None
         self._manual_workflow_hook: Any = None
         self._recorded_workflow_scheduler: asyncio.Task[None] | None = None
+        self._recorded_workflow_jobs: dict[str, str] = {}
         self._reflector: Any = None
         self._multi_agent: Any = None
         self._background: Any = None
@@ -1437,6 +1438,7 @@ class PilotServer:
             "recorded_workflow_get": self._handle_recorded_workflow_get,
             "recorded_workflow_delete": self._handle_recorded_workflow_delete,
             "recorded_workflow_run": self._handle_recorded_workflow_run,
+            "recorded_workflow_feedback": self._handle_recorded_workflow_feedback,
             "recorded_workflow_schedule": self._handle_recorded_workflow_schedule,
             "recorded_workflow_unschedule": self._handle_recorded_workflow_unschedule,
             "voice_gesture_workflow_list": self._handle_voice_gesture_workflow_list,
@@ -10014,6 +10016,11 @@ def handle_tool(tool_name, params):
         except (KeyError, ValueError, RuntimeError) as exc:
             return {"status": "error", "message": str(exc)}
 
+    def _remember_recorded_workflow_job(self, job_id: str, workflow_id: str) -> None:
+        self._recorded_workflow_jobs[job_id] = workflow_id
+        while len(self._recorded_workflow_jobs) > 100:
+            self._recorded_workflow_jobs.pop(next(iter(self._recorded_workflow_jobs)))
+
     async def _handle_recorded_workflow_run(self, params: dict, ws: ServerConnection) -> dict:
         from pilot.workflows.recorded_workflows import workflow_prompt
 
@@ -10037,7 +10044,32 @@ def handle_tool(tool_name, params):
                 source="recorded_workflow",
                 session_id=f"recorded:{workflow['id']}",
             )
+            self._remember_recorded_workflow_job(job.job_id, workflow["id"])
             return {"status": "submitted", "job": job.to_dict()}
+        except (KeyError, ValueError, RuntimeError) as exc:
+            return {"status": "error", "message": str(exc)}
+
+    async def _handle_recorded_workflow_feedback(self, params: dict, ws: ServerConnection) -> dict:
+        workflow_id = str(params.get("workflow_id", ""))
+        job_id = str(params.get("job_id", ""))
+        if self._autonomous is None or self._recorded_workflow_jobs.get(job_id) != workflow_id:
+            return {"status": "error", "message": "Recorded workflow run not found"}
+        job = self._autonomous.get_job(job_id)
+        job_status = str(getattr(job.status, "value", job.status)) if job is not None else ""
+        if job is None or not job.completed_at or job_status not in {
+            "success", "partial", "failed", "cancelled"
+        }:
+            return {"status": "error", "message": "Wait for the workflow run to finish"}
+        try:
+            workflow = await asyncio.to_thread(
+                self._recorded_workflows.record_feedback,
+                workflow_id,
+                job_id=job_id,
+                outcome=str(params.get("outcome", "")),
+                job_status=job_status,
+            )
+            self._recorded_workflow_jobs.pop(job_id, None)
+            return {"status": "ok", "workflow": workflow}
         except (KeyError, ValueError, RuntimeError) as exc:
             return {"status": "error", "message": str(exc)}
 
@@ -10080,6 +10112,7 @@ def handle_tool(tool_name, params):
                                 source="recorded_workflow_schedule",
                                 session_id=f"recorded:{workflow['id']}",
                             )
+                            self._remember_recorded_workflow_job(job.job_id, workflow["id"])
                             await self._broadcast_notification(
                                 "recorded_workflow_dispatched",
                                 {"workflow_id": workflow["id"], "name": workflow["name"], "job_id": job.job_id},
