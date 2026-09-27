@@ -3093,7 +3093,9 @@ class PilotServer:
                     await emit.thought(
                         "confirmation",
                         (
-                            "World model predicted a risky outcome — execution is paused..."
+                            "World-model assessment is unavailable — execution is paused..."
+                            if world_model_interrupt and risk_assessment.model_version == "evaluation-error"
+                            else "World model predicted a risky outcome — execution is paused..."
                             if world_model_interrupt
                             else "Dangerous action detected — awaiting user approval..."
                         ),
@@ -3104,8 +3106,10 @@ class PilotServer:
                 if world_model_interrupt:
                     reason_text = "; ".join(risk_assessment.reasons) or "predicted outcome crossed the safety threshold"
                     world_model_reason = (
-                        f"World model paused this plan at {risk_assessment.world_model_score:.0%} predicted risk: "
-                        f"{reason_text}"
+                        f"World-model assessment unavailable: {reason_text}"
+                        if risk_assessment.model_version == "evaluation-error"
+                        else f"World model paused this plan at {risk_assessment.world_model_score:.0%} "
+                             f"predicted risk: {reason_text}"
                     )
                 elif mcp_requires_visible_approval:
                     world_model_reason = (

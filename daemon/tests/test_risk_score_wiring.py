@@ -82,10 +82,24 @@ def test_gate_never_lowers_risk_below_heuristic():
     assert risk_score(plan, config) >= base
 
 
-def test_gate_evaluation_error_falls_back_to_heuristic_risk():
+def test_gate_evaluation_error_escalates_state_changing_plan():
     config = PilotConfig()
     config.gateway.risk_gate_enabled = True
     plan = _plan(ActionType.FILE_DELETE, target="/tmp/scratch.txt")
 
     with patch("pilot.security.risk_gate.get_risk_gate", side_effect=RuntimeError("boom")):
-        assert risk_score(plan, config) == heuristic_risk(plan)
+        assessment = assess_plan_risk(plan, config)
+    assert assessment.world_model_score == 1.0
+    assert assessment.requires_confirmation
+    assert assessment.model_version == "evaluation-error"
+    assert "unavailable" in assessment.reasons[0]
+
+
+def test_gate_evaluation_error_does_not_escalate_read_only_plan():
+    config = PilotConfig()
+    plan = _plan(ActionType.SYSTEM_INFO)
+    with patch("pilot.security.risk_gate.get_risk_gate", side_effect=RuntimeError("boom")):
+        assessment = assess_plan_risk(plan, config)
+    assert assessment.world_model_score == 0.0
+    assert not assessment.requires_confirmation
+    assert assessment.model_version == "evaluation-error"
