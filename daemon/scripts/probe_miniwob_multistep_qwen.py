@@ -121,7 +121,8 @@ def rollout_prompt(goal: str, controls: list[dict], history: list[dict]) -> str:
     return ("Choose one currently visible control to advance the goal. "
             "You may need to reveal a hidden target first. Use prior actions to avoid loops. "
             "Hovering a control with has_popup=true can reveal nested options without selecting it. "
-            "Return only an integer index.\nGoal: " + goal
+            "Indices restart from zero after every action. Return only one of the current "
+            f"zero-based indices 0 through {len(visible) - 1}; do not reuse an old index.\nGoal: " + goal
             + "\nVisible controls: " + json.dumps(visible, ensure_ascii=False, separators=(",", ":"))
             + "\nRecent actions: " + json.dumps(recent, ensure_ascii=False, separators=(",", ":"))
             + "\nIndex:")
