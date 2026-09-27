@@ -829,6 +829,14 @@ margin. Its predicted pair separation was far below the observed separation.
 The [frozen result](../daemon/benchmarks/world_visual_delta_stopgrad_seed700_results_v1.json)
 therefore rejects broad unseen-family transfer; no claim is made for the three
 families without valid pairs.
+An exploratory 64×64 follow-up used the same small objective on a separately
+collected public split. On 12 unseen `click-button` pairs, it reached **8/12**
+correct-action wins, but the mean margin still favored the wrong action and
+predicted pair effects remained far below observed effects. See the
+[resolution check](../daemon/benchmarks/world_visual_resolution64_exploratory_v1.json).
+Because seeds and sample counts differ from the 16×16 run, this is not a
+controlled estimate of resolution's effect; it only shows that this larger
+feature grid did not solve the failure in that run.
 The public browser-feature archives and weights remain ignored local files;
 the paper-inspired model has no live loader. From `daemon/`, use
 `python -m scripts.train_world_visual_delta_latent --help` and
