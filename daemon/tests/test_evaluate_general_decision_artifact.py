@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
-from scripts.evaluate_general_decision_artifact import permute_options, prediction_metrics
+from scripts.evaluate_general_decision_artifact import load_partial, permute_options, prediction_metrics
 
 
 def test_prediction_metrics_includes_ordinal_rank_error() -> None:
@@ -39,3 +41,17 @@ def test_option_permutation_preserves_labels_and_binary_order() -> None:
     assert first[1] == rows[1]
     assert first[2] == rows[2]
     assert rows[0]["options"] == ["a", "b", "c", "d"]
+
+
+def test_frozen_partial_cache_requires_exact_identity_and_explicit_resume(tmp_path) -> None:
+    path = tmp_path / "evaluation.partial.json"
+    assert load_partial(path, signature="pinned", ids=["a", "b"], resume=True) == []
+    path.write_text(json.dumps({"schema_version": 1, "signature": "pinned",
+                                "ids": ["a", "b"], "predictions": [{"answer": {}}]}))
+    with pytest.raises(FileExistsError):
+        load_partial(path, signature="pinned", ids=["a", "b"], resume=False)
+    assert len(load_partial(path, signature="pinned", ids=["a", "b"], resume=True)) == 1
+    with pytest.raises(ValueError, match="does not match"):
+        load_partial(path, signature="other", ids=["a", "b"], resume=True)
+    with pytest.raises(ValueError, match="does not match"):
+        load_partial(path, signature="pinned", ids=["b", "a"], resume=True)

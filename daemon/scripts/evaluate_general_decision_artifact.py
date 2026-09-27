@@ -7,7 +7,9 @@ controlled comparisons of research artifacts with different training losses.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
 import random
 import sys
 from pathlib import Path
@@ -53,6 +55,19 @@ def prediction_metrics(rows: list[dict], predictions: list[dict]) -> dict:
     return metrics(rows, logits, 1.0)
 
 
+def load_partial(path: Path, *, signature: str, ids: list[str], resume: bool) -> list[dict]:
+    if not path.exists():
+        return []
+    if not resume:
+        raise FileExistsError(f"Frozen evaluation cache already exists: {path}; pass --resume")
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    if (saved.get("schema_version") != 1 or saved.get("signature") != signature
+            or saved.get("ids") != ids or not isinstance(saved.get("predictions"), list)
+            or len(saved["predictions"]) > len(ids)):
+        raise ValueError("Frozen evaluation cache does not match selected rows or artifact")
+    return saved["predictions"]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--split", choices=("test", "ood"), default="ood")
@@ -63,6 +78,7 @@ def main() -> None:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--model-report", type=Path, required=True)
     parser.add_argument("--report", type=Path, required=True)
+    parser.add_argument("--resume", action="store_true", help="Resume matching per-row GPU scoring cache")
     args = parser.parse_args()
     if not 1 <= args.limit <= 128:
         parser.error("--limit must be 1-128")
@@ -73,8 +89,31 @@ def main() -> None:
         rows = permute_options(rows, args.permute_options_seed)
     payloads = [{"state": json.loads(row["state_json"]), "kind": row["kind"],
                  "question": row["question"], "options": row["options"]} for row in rows]
-    predictions = score_requests(payloads, args.output_dir, args.model_report)
     source_report = json.loads(args.model_report.read_text(encoding="utf-8"))
+    ids = [row["id"] for row in rows]
+    identity = {"split": args.split, "seed": args.seed, "ids": ids,
+                "dataset_sha256": manifest["sha256"],
+                "permute_options_seed": args.permute_options_seed,
+                "adapter_sha256": source_report["adapter_sha256"],
+                "head_sha256": source_report["head_sha256"]}
+    signature = hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    cache = args.report.with_suffix(".partial.json")
+    predictions = load_partial(cache, signature=signature, ids=ids, resume=args.resume)
+    start = len(predictions)
+
+    def save(index: int, prediction: dict) -> None:
+        if start + index != len(predictions):
+            raise ValueError("Frozen predictions arrived out of order")
+        predictions.append(prediction)
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        temporary = cache.with_suffix(".tmp")
+        temporary.write_text(json.dumps({"schema_version": 1, "signature": signature,
+                                         "ids": ids, "predictions": predictions}, allow_nan=False),
+                             encoding="utf-8")
+        os.replace(temporary, cache)
+
+    if start < len(payloads):
+        score_requests(payloads[start:], args.output_dir, args.model_report, on_prediction=save)
     report = {"purpose": "offline_frozen_artifact_comparison",
               "dataset_revision": DATASET_REVISION, "dataset_manifest": manifest,
               "split": args.split, "seed": args.seed, "rows": len(rows),

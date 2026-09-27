@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 # On Windows, importing PyArrow before SentencePiece can fault in the latter's
@@ -70,7 +71,8 @@ def verify_artifact(output_dir: Path, report_path: Path) -> tuple[dict, Path]:
     return report, head
 
 
-def score_requests(payloads: list[dict], output_dir: Path, report_path: Path) -> list[dict]:
+def score_requests(payloads: list[dict], output_dir: Path, report_path: Path,
+                   *, on_prediction: Callable[[int, dict], None] | None = None) -> list[dict]:
     rows = prepare_requests(payloads)
     import torch
     from huggingface_hub import snapshot_download
@@ -130,11 +132,16 @@ def score_requests(payloads: list[dict], output_dir: Path, report_path: Path) ->
         head.bias.copy_(torch.from_numpy(bias).to("cuda"))
     backbone.eval()
     head.eval()
-    return [{"research_only": True, "execution_authority": False,
-             "model": model_name, "revision": model_revision,
-             "answer": format_answer(row["kind"], row["options"],
-                                     score_row(backbone, head, item), temperature)}
-            for row, item in zip(rows, encoded, strict=True)]
+    predictions = []
+    for index, (row, item) in enumerate(zip(rows, encoded, strict=True)):
+        prediction = {"research_only": True, "execution_authority": False,
+                      "model": model_name, "revision": model_revision,
+                      "answer": format_answer(row["kind"], row["options"],
+                                              score_row(backbone, head, item), temperature)}
+        predictions.append(prediction)
+        if on_prediction is not None:
+            on_prediction(index, prediction)
+    return predictions
 
 
 def score(payload: dict, output_dir: Path, report_path: Path) -> dict:
