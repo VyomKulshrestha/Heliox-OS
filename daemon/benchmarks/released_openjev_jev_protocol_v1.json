@@ -1,9 +1,0 @@
-{
-  "schema_version": 1,
-  "purpose": "fresh_public_ood_released_openjev_vs_jev",
-  "selection_protocol_sha256": "848867205d019c0080310dfcff69cce8486a80cb55dfb39ee3718d0d69bea15a",
-  "max_calls": 128,
-  "checkpoint_every": 1,
-  "label_use": "Jev replies are evaluation only; never fitting, calibration, training, or execution labels.",
-  "decision_rule": "Report agreement and public gold results by kind without choosing a threshold or promoting a runtime artifact."
-}
