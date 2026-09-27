@@ -47,6 +47,7 @@ def test_task_masks_align_with_eval_rows(tmp_path) -> None:
     np.savez(path, split=np.asarray(["train", "eval", "eval", "eval", "eval"]),
              task=np.asarray(["train", "a", "a", "b", "b"]))
     assert task_masks(path, 4)["b"].tolist() == [False, False, True, True]
+    assert task_masks(path, 1, "train")["train"].tolist() == [True]
     with pytest.raises(ValueError, match="align"):
         task_masks(path, 3)
 

@@ -21,12 +21,12 @@ from scripts.train_world_visual_transition import (
 )
 
 
-def task_masks(features_path: Path, expected_rows: int) -> dict[str, np.ndarray]:
-    """Align optional task labels with the held-out visual rows."""
+def task_masks(features_path: Path, expected_rows: int, split: str = "eval") -> dict[str, np.ndarray]:
+    """Align optional task labels with the selected visual rows."""
     with np.load(features_path, allow_pickle=False) as data:
         if "task" not in data.files:
             return {}
-        selected = data["split"].astype(str) == "eval"
+        selected = data["split"].astype(str) == split
         tasks = data["task"].astype(str)
     if len(tasks) != len(selected) or int(selected.sum()) != expected_rows:
         raise ValueError("Task labels do not align with evaluation rows")
@@ -101,6 +101,7 @@ def main() -> None:
     parser.add_argument("--target-report", type=Path, required=True)
     parser.add_argument("--report", type=Path, required=True)
     parser.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
+    parser.add_argument("--split", choices=("train", "validation", "eval"), default="eval")
     args = parser.parse_args()
     if args.report.exists():
         parser.error("Use a fresh output report path")
@@ -112,7 +113,7 @@ def main() -> None:
     if model_report.get("source_kind") != "pinned_feature_archive":
         raise ValueError("Only frozen non-private research artifacts are supported")
     rows = load_features(args.target_features, args.target_report)
-    partition = rows["eval"]
+    partition = rows[args.split]
     channels, height, width = target_shape
     dimension = channels * height * width
 
@@ -188,7 +189,7 @@ def main() -> None:
         ablated = predict(torch.zeros_like(action))
     by_task = {}
     if swapped is not None:
-        for name, mask in task_masks(args.target_features, len(partition["state"])).items():
+        for name, mask in task_masks(args.target_features, len(partition["state"]), args.split).items():
             target = partition["target"][mask]
             groups = partition["groups"][mask]
             by_task[name] = {
@@ -203,6 +204,7 @@ def main() -> None:
         "model_report_sha256": hashlib.sha256(args.model_report.read_bytes()).hexdigest(),
         "weights_sha256": hashlib.sha256(args.weights.read_bytes()).hexdigest(),
         "target_features_sha256": hashlib.sha256(args.target_features.read_bytes()).hexdigest(),
+        "target_split": args.split,
         "target_rows": len(partition["state"]),
         "target_groups": len(set(partition["groups"])),
         "architecture": architecture,
