@@ -18,7 +18,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from benchmarks.general_decision import DATASET_REVISION, load_split, metrics  # noqa: E402
-from scripts.score_general_decision import score_requests  # noqa: E402
+from scripts.score_general_decision import score_requests, verify_artifact  # noqa: E402
 
 
 def permute_options(rows: list[dict], seed: int) -> list[dict]:
@@ -89,7 +89,7 @@ def main() -> None:
         rows = permute_options(rows, args.permute_options_seed)
     payloads = [{"state": json.loads(row["state_json"]), "kind": row["kind"],
                  "question": row["question"], "options": row["options"]} for row in rows]
-    source_report = json.loads(args.model_report.read_text(encoding="utf-8"))
+    source_report, _ = verify_artifact(args.output_dir, args.model_report)
     ids = [row["id"] for row in rows]
     identity = {"split": args.split, "seed": args.seed, "ids": ids,
                 "dataset_sha256": manifest["sha256"],
