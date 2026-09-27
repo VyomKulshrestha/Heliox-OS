@@ -2,6 +2,12 @@
 
 Status: **research only; no new decision model is enabled in Heliox**.
 
+The separate [visual world-model branch probe](../daemon/benchmarks/miniwob_semantic_branch_seed3200_results_v1.md)
+found action grounding on synthetic checkbox variants, but its
+[non-checkbox follow-up](../daemon/benchmarks/miniwob_semantic_branch_seed3400_results_v1.md)
+failed the tab coverage gate. Neither result promotes a runtime model or
+establishes Jev-like decision behavior.
+
 ## What Open-Jev actually trains
 
 [Open-Jev](https://github.com/Zefan-Cai/Open-Jev) is an independent
