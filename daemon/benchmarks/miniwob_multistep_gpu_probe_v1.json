@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "purpose": "research_only_multistep_gui_action_probe",
+  "source": {
+    "repository": "https://github.com/Farama-Foundation/MiniWoB-plusplus",
+    "commit": "33c3b4ddef8c6eb67c57a29663d844b1eda7e614",
+    "license": "MIT",
+    "environment": "isolated headless Chromium with pinned task assets"
+  },
+  "protocol": {
+    "script": "daemon/scripts/probe_miniwob_multistep_qwen.py",
+    "policy_observation": "visible goal, visible control text and metadata, and six recent actions; no screenshot pixels to the text model",
+    "action_space": "visible control click or popup hover",
+    "success": "task terminal and raw reward exactly 1",
+    "reset_check": "independent model and baseline episodes start with the same DOM, visible controls, and 16x16 visual-feature hash",
+    "max_steps": 12,
+    "reporting": "atomic checkpoint after each completed paired episode"
+  },
+  "hardware": {
+    "gpu": "NVIDIA GeForce RTX 4060 Laptop GPU",
+    "driver": "617.14",
+    "torch": "2.6.0+cu124",
+    "transformers": "5.2.0",
+    "device": "cuda:0"
+  },
+  "runs": [
+    {
+      "name": "qwen3_0_6b_corrected_six_family",
+      "model": "Qwen/Qwen3-0.6B",
+      "revision": "c1899de289a04d12100db370d81485cdf75e47ca",
+      "seed_range": "75-79 per task",
+      "complete": true,
+      "pairs": 30,
+      "local_report_sha256": "99ddeec185997ea24bcf0ed1f7b2bbd921656e72e028b89b06e73443b9bc3d25",
+      "scores": {
+        "click-menu-2": {"baseline": 5, "model": 1},
+        "click-tab-2-hard": {"baseline": 5, "model": 0},
+        "click-collapsible-2": {"baseline": 5, "model": 3},
+        "click-button-sequence": {"baseline": 4, "model": 4},
+        "click-checkboxes": {"baseline": 5, "model": 0},
+        "click-option": {"baseline": 5, "model": 3}
+      },
+      "total": {"baseline": 29, "model": 11}
+    },
+    {
+      "name": "qwen3_5_2b_navigation_previous_protocol",
+      "model": "Qwen/Qwen3.5-2B",
+      "revision": "15852e8c16360a2fea060d615a32b45270f8a8fc",
+      "seed_range": "22-26 per task",
+      "complete": true,
+      "pairs": 15,
+      "local_report_sha256": "64fe0ecdda4453ab5e5400513fa62914ed8f8d92b55ff6fac60030d7d780d86d",
+      "scores": {
+        "click-menu-2": {"baseline": 5, "model": 5},
+        "click-tab-2-hard": {"baseline": 5, "model": 5},
+        "click-collapsible-2": {"baseline": 5, "model": 5}
+      },
+      "caveat": "Earlier probe revision did not re-read delayed terminal reward after settling and used strict bare-index parsing. It produced successful terminal rewards but is not protocol-identical to the corrected six-family run."
+    },
+    {
+      "name": "qwen3_5_2b_interrupted_attempts",
+      "model": "Qwen/Qwen3.5-2B",
+      "complete": false,
+      "checkpointed_pairs": [5, 2],
+      "local_report_sha256": [
+        "d89e3d42779cee50598b43e9b54f83e3d44f3b42df760fb3903d8736a3233f4e",
+        "8c806b9741bd8345878e594f299edef24b78e23ec71819aeb5c1e9eb1e2037a4"
+      ],
+      "failure": "CUDA illegal-instruction errors during Transformers Qwen3.5 attention fallback; Windows logged nvlddmkm IDs 13 and 153 at matching times. A small CUDA tensor still succeeded afterward. Root trigger not established; incomplete runs are not scored as full evaluations."
+    }
+  ],
+  "finding": "The corrected local 0.6B text model completes some synthetic multi-step tasks but trails a simple goal-order baseline on five of six task families. The 2B model finished one smaller navigation-only run without exceeding the baseline, then repeatedly crashed the GPU driver path on wider attempts. Neither result supports Jev parity or live desktop promotion.",
+  "limitations": [
+    "These are seed holdouts within task families that were explored during probe development, not independent task-family or preregistered evaluations.",
+    "The baseline and model share a heuristic action filter that can exclude revisiting a control, so this is not an unbiased measure of general web automation.",
+    "The model sees structured controls and goal text, not screen pixels; the 16x16 visual hash is only a reset check.",
+    "No real Heliox desktop task, safety gate, approval path, physical action, or Jev behavior was validated.",
+    "Local raw episode reports are ignored research artifacts and are not shipped with this summary."
+  ],
+  "promoted_to_runtime": false
+}
