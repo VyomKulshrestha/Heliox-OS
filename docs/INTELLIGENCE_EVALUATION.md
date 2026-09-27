@@ -870,6 +870,25 @@ the Heliox world model or that its discovered policy transfers to live desktop
 tasks. The next model study needs task-disjoint, materially differentiable
 transitions and a fresh frozen evaluation before any promotion discussion.
 
+That targeted [material-change study](../daemon/benchmarks/world_material_branch_results_v1.json)
+used three training, one validation, and three evaluation MiniWoB families
+selected after a two-seed exploratory signal scan. An action-conditioned
+spatial model trained on CUDA ranked the correct branch **24/24** times on
+seed 1000 and repeated **24/24** with unchanged weights on predeclared fresh
+seed 1100. Its fresh-seed weighted error was 0.200 versus 0.379 for the
+matched no-action model and 0.525 for the unchanged screen. All three selected
+evaluation families had positive action margins and stable resets.
+
+Visual review then exposed a shortcut: representative pairs contrast the
+MiniWoB dark terminal overlay with an active task page. The high score is
+therefore evidence of synthetic terminal-state discrimination, **not** a
+general transition model. The collector now records termination metadata and
+has an opt-in `--nonterminal-only` check. On a small new two-seed nonterminal
+probe, only four evaluation pairs remained, the frozen model won **2/4**, and
+its weighted error was 0.148 versus 0.00028 for leaving the screen unchanged.
+The numeric protocol gates passed, but this external-validity failure blocks
+promotion. No research weights were connected to Heliox's live world model.
+
 An opt-in local recorder can collect after/before 16×16 pairs around approved
 Heliox mouse actions. Its explicit offline trainer holds decrypted features
 in memory, splits by whole recording, evaluates unchanged and shuffled-action
