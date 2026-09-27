@@ -2,7 +2,7 @@
 
 Task assets are fetched from a pinned MIT-licensed source revision into memory
 and served to an isolated headless browser. No screenshot bytes or task source
-are persisted; the output contains only 16x16 visual features and provenance.
+are persisted; the output contains only bounded visual features and provenance.
 """
 
 from __future__ import annotations
@@ -84,10 +84,13 @@ class PinnedAssets:
         return {path: hashlib.sha256(data).hexdigest() for path, data in sorted(self._cache.items())}
 
 
-def visual_feature(png: bytes) -> np.ndarray:
+def visual_feature(png: bytes, size: int = 16) -> np.ndarray:
+    if size not in (16, 64):
+        raise ValueError("Visual research features must be 16x16 or 64x64")
     with Image.open(io.BytesIO(png)) as image:
         frame = image.convert("RGB").resize((64, 64)).convert("L")
-        values = _world_embedding_from_frame(frame)
+        values = (_world_embedding_from_frame(frame) if size == 16
+                  else np.asarray(frame, dtype=np.float32).reshape(-1) / 255.0)
     return np.asarray(values, dtype=np.float32)
 
 
@@ -116,14 +119,15 @@ def _reset(browser, assets: PinnedAssets, task: str, seed: str):
     return context, page, candidates, before_png, before_dom
 
 
-def collect_group(browser, assets: PinnedAssets, task: str, seed: str, max_candidates: int) -> tuple[list[dict], int]:
+def collect_group(browser, assets: PinnedAssets, task: str, seed: str, max_candidates: int,
+                  feature_size: int = 16) -> tuple[list[dict], int]:
     reference: tuple[list[tuple[float, float]], str, np.ndarray] | None = None
     rows = []
     attempted = 0
     for candidate_index in range(max_candidates):
         context, page, candidates, before_png, before_dom = _reset(browser, assets, task, seed)
         try:
-            before_feature = visual_feature(before_png)
+            before_feature = visual_feature(before_png, feature_size)
             if reference is None:
                 reference = (candidates, before_dom, before_feature)
             elif (reference[0] != candidates or reference[1] != before_dom
@@ -136,7 +140,7 @@ def collect_group(browser, assets: PinnedAssets, task: str, seed: str, max_candi
             outcome = page.evaluate("({done: WOB_DONE_GLOBAL, reward: WOB_RAW_REWARD_GLOBAL})")
             rows.append({
                 "state": before_feature,
-                "target": visual_feature(page.screenshot(animations="disabled")),
+                "target": visual_feature(page.screenshot(animations="disabled"), feature_size),
                 "coords": (x / VIEWPORT["width"], y / VIEWPORT["height"]),
                 "reward": float(outcome["reward"]) if outcome["done"] else None,
             })
@@ -165,6 +169,8 @@ def main() -> None:
     parser.add_argument("--validation-tasks", required=True)
     parser.add_argument("--eval-tasks", required=True)
     parser.add_argument("--samples-per-task", type=int, default=12)
+    parser.add_argument("--seed-start", type=int, default=0)
+    parser.add_argument("--feature-size", type=int, choices=(16, 64), default=16)
     parser.add_argument("--max-candidates", type=int, default=8)
     parser.add_argument("--features", type=Path, default=root / "miniwob_branches_v1.npz")
     parser.add_argument("--report", type=Path, default=root / "miniwob_branches_v1.json")
@@ -175,7 +181,9 @@ def main() -> None:
     except ValueError as exc:
         parser.error(str(exc))
     if (len(set(task for names in tasks.values() for task in names)) != sum(map(len, tasks.values()))
-            or not 2 <= args.samples_per_task <= 100 or not 2 <= args.max_candidates <= 16
+            or not 2 <= args.samples_per_task <= 100
+            or not 0 <= args.seed_start <= 1000000
+            or not 2 <= args.max_candidates <= 16
             or args.features.exists() or args.report.exists()):
         parser.error("Use task-disjoint splits, bounded settings, and fresh output paths")
 
@@ -188,9 +196,10 @@ def main() -> None:
         try:
             for split, names in tasks.items():
                 for task in names:
-                    for index in range(args.samples_per_task):
+                    for index in range(args.seed_start, args.seed_start + args.samples_per_task):
                         seed = f"{SOURCE_COMMIT}:{task}:{index}"
-                        pair, count = collect_group(browser, assets, task, seed, args.max_candidates)
+                        pair, count = collect_group(browser, assets, task, seed,
+                                                    args.max_candidates, args.feature_size)
                         attempted[split] += count
                         if not pair:
                             skipped[split] += 1
@@ -221,9 +230,11 @@ def main() -> None:
         "source_repo": SOURCE_REPO, "source_commit": SOURCE_COMMIT,
         "source_license": "MIT", "asset_sha256": assets.hashes(),
         "tasks": tasks, "samples_per_task": args.samples_per_task,
+        "seed_start": args.seed_start,
+        "feature_shape": [1, args.feature_size, args.feature_size],
         "max_candidates": args.max_candidates,
-        "selection": "first two candidate clicks with distinct observed 16x16 next-screen features",
-        "reset_identity": "identical visible control coordinates, task DOM, and 16x16 pre-action features; "
+        "selection": f"first two candidate clicks with distinct observed {args.feature_size}x{args.feature_size} next-screen features",
+        "reset_identity": f"identical visible control coordinates, task DOM, and {args.feature_size}x{args.feature_size} pre-action features; "
                           "full screenshot bytes may differ by rendering noise",
         "counterfactual_pairs": True, "split_basis": "task_family",
         "cross_split_identical_prestates": 0,
