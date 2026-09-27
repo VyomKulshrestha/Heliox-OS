@@ -1,5 +1,7 @@
 """Opt-in recordings stay local, encrypted, bounded, and non-authoritative."""
 
+import asyncio
+import time
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -217,3 +219,99 @@ def test_manual_events_suppressed_during_heliox_actions_and_approval(tmp_path) -
     saved = store.stop(save=True)
     assert saved["step_count"] == 1
     assert saved["overlap_warning"] is True
+
+
+@pytest.mark.asyncio
+async def test_manual_click_visual_pair_is_opt_in_encrypted_and_thread_safe(tmp_path) -> None:
+    captures = 0
+
+    async def capture() -> dict:
+        nonlocal captures
+        captures += 1
+        return {
+            "embedding": [min(captures / 10, 1)] * 256,
+            "left": 0, "top": 0, "width": 100, "height": 100,
+        }
+
+    store = RecordedWorkflowStore(
+        tmp_path / "recordings.enc", key_provider=lambda: b"k" * 32, capture_feature=capture
+    )
+    store.start(name="Manual visual", consent=True, capture_manual=True, manual_consent=True,
+                capture_visual=True)
+    store.start_manual_visual_capture()
+    for _ in range(50):
+        if captures:
+            break
+        await asyncio.sleep(0.01)
+    assert captures > 0
+    press_feature = store.manual_press_feature(time.monotonic())
+    assert press_feature is not None
+    await asyncio.to_thread(
+        store.record_manual_event, "click", x=25, y=75, button="left", press_feature=press_feature
+    )
+    await store.stop_manual_visual_capture(save=True)
+    saved = store.stop(save=True)
+    assert saved["sample_count"] == 1
+    assert saved["visual_gaps"] == 0
+    assert "before" not in str(saved)
+    assert b"before" not in store.path.read_bytes()
+    sample = store.load_research_samples()[0]["samples"][0]
+    assert sample["source"] == "manual"
+    assert sample["coords"] == [0.25, 0.75]
+    assert sample["before"] == [26] * 256
+
+
+@pytest.mark.asyncio
+async def test_manual_visual_pair_drops_stale_and_interrupted_clicks(tmp_path) -> None:
+    captures = 0
+
+    async def capture() -> dict:
+        nonlocal captures
+        captures += 1
+        return {"embedding": [0.5] * 256, "left": 0, "top": 0,
+                "width": 100, "height": 100}
+
+    store = RecordedWorkflowStore(
+        tmp_path / "recordings.enc", key_provider=lambda: b"k" * 32, capture_feature=capture
+    )
+    store.start(name="Interrupted", consent=True, capture_manual=True, manual_consent=True,
+                capture_visual=True)
+    store.start_manual_visual_capture()
+    for _ in range(50):
+        if captures:
+            break
+        await asyncio.sleep(0.01)
+    assert store.manual_press_feature(time.monotonic() - 5) is None
+    store.record_manual_event("click", x=10, y=20, button="left", press_feature=None)
+    for _ in range(50):
+        if captures > 1:
+            break
+        await asyncio.sleep(0.01)
+    press_feature = store.manual_press_feature(time.monotonic())
+    assert press_feature is not None
+    store.record_manual_event("click", x=10, y=20, button="left", press_feature=press_feature)
+    store.record_manual_event("text")
+    await store.stop_manual_visual_capture(save=True)
+    saved = store.stop(save=True)
+    assert saved["sample_count"] == 0
+    assert saved["visual_gaps"] >= 2
+
+
+@pytest.mark.asyncio
+async def test_manual_visual_sampler_never_starts_without_both_opt_ins(tmp_path) -> None:
+    captures = 0
+
+    async def capture() -> dict:
+        nonlocal captures
+        captures += 1
+        return {"embedding": [0.5] * 256}
+
+    store = RecordedWorkflowStore(
+        tmp_path / "recordings.enc", key_provider=lambda: b"k" * 32, capture_feature=capture
+    )
+    store.start(name="No visual", consent=True, capture_manual=True, manual_consent=True)
+    store.start_manual_visual_capture()
+    await asyncio.sleep(0.05)
+    assert captures == 0
+    await store.stop_manual_visual_capture(save=False)
+    store.stop(save=False)
