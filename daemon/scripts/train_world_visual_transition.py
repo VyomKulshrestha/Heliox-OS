@@ -17,6 +17,62 @@ from typing import Any
 import numpy as np
 
 
+def build_spatial_joint_model(nn: Any, channels: int) -> Any:
+    """Share visual features between next-screen and observed-action prediction."""
+    import torch
+
+    class SpatialJoint(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.encoder = nn.Sequential(
+                nn.Conv2d(channels, 32, 3, padding=1),
+                nn.GELU(),
+                nn.Conv2d(32, 32, 3, padding=1),
+                nn.GELU(),
+            )
+            self.forward_head = nn.Sequential(
+                nn.Conv2d(44, 32, 3, padding=1),
+                nn.GELU(),
+                nn.Conv2d(32, channels, 3, padding=1),
+            )
+            self.inverse_head = nn.Sequential(
+                nn.Conv2d(66, 32, 3, padding=1),
+                nn.GELU(),
+                nn.Conv2d(32, 16, 3, padding=1),
+                nn.GELU(),
+                nn.AdaptiveAvgPool2d((4, 4)),
+                nn.Flatten(),
+                nn.Linear(16 * 4 * 4, 2),
+                nn.Sigmoid(),
+            )
+            nn.init.zeros_(self.forward_head[-1].weight)
+            nn.init.zeros_(self.forward_head[-1].bias)
+
+        def forward(self, state: Any, action_planes: Any) -> Any:
+            return self.forward_head(torch.cat((self.encoder(state), action_planes), dim=1))
+
+        def inverse(self, state: Any, target: Any) -> Any:
+            height, width = state.shape[-2:]
+            y, x = torch.meshgrid(
+                torch.linspace(0, 1, height, device=state.device),
+                torch.linspace(0, 1, width, device=state.device),
+                indexing="ij",
+            )
+            coordinates = torch.stack((x, y)).expand(len(state), -1, -1, -1)
+            return self.inverse_head(
+                torch.cat(
+                    (
+                        self.encoder(state),
+                        self.encoder(target),
+                        coordinates,
+                    ),
+                    dim=1,
+                )
+            )
+
+    return SpatialJoint()
+
+
 def feature_shape(source_report: Path) -> tuple[int, int, int]:
     report = json.loads(source_report.read_text(encoding="utf-8"))
     shape = report.get("feature_shape", [1, 16, 16])
@@ -279,8 +335,11 @@ def main() -> None:
     parser.add_argument("--weights", type=Path, default=state / "tess_visual_model_v1.pt")
     parser.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
     parser.add_argument("--disable-cudnn", action="store_true")
-    parser.add_argument("--architecture", choices=("linear", "mlp", "spatial", "spatial_global"),
+    parser.add_argument("--architecture", choices=("linear", "mlp", "spatial", "spatial_global",
+                                                   "spatial_joint"),
                         default="linear")
+    parser.add_argument("--inverse-loss-weight", type=float, default=0.0,
+                        help="Train a shared visual encoder to recover observed action coordinates")
     parser.add_argument("--train-without-action", action="store_true",
                         help="Fit a matched state-only baseline with action inputs zeroed")
     parser.add_argument("--transition-scale-power", type=float, default=0.0,
@@ -300,6 +359,9 @@ def main() -> None:
             or not 0 <= args.transition_scale_power <= 1
             or not np.isfinite(args.pairwise_loss_weight)
             or not 0 <= args.pairwise_loss_weight <= 10
+            or not np.isfinite(args.inverse_loss_weight)
+            or not 0 <= args.inverse_loss_weight <= 10
+            or (args.inverse_loss_weight and args.architecture != "spatial_joint")
             or args.report.exists() or args.weights.exists() or args.epochs < 1
             or args.action_permutations < 1):
         parser.error("Use existing pinned features, fresh outputs, and positive epochs")
@@ -359,7 +421,9 @@ def main() -> None:
     pair_indices = ({split: torch.from_numpy(paired_group_indices(rows[split])).to(device)
                      for split in ("train", "validation")}
                     if args.pairwise_loss_weight else {})
-    if args.architecture in {"spatial", "spatial_global"}:
+    if args.architecture == "spatial_joint":
+        model = build_spatial_joint_model(nn, channels).to(device)
+    elif args.architecture in {"spatial", "spatial_global"}:
         model = nn.Sequential(
             nn.Conv2d(channels + (12 if args.architecture == "spatial_global" else 10),
                       32, 3, padding=1), nn.GELU(),
@@ -401,7 +465,7 @@ def main() -> None:
     def predict(partition: dict, *, ablate_action: bool = False):
         action = (torch.zeros_like(partition["action"])
                   if ablate_action or args.train_without_action else partition["action"])
-        if args.architecture in {"spatial", "spatial_global"}:
+        if args.architecture in {"spatial", "spatial_global", "spatial_joint"}:
             state_image = partition["state"].reshape(-1, channels, height, width)
             y, x = torch.meshgrid(torch.arange(height, device=device),
                                   torch.arange(width, device=device), indexing="ij")
@@ -411,9 +475,11 @@ def main() -> None:
             locus = torch.exp(-((x - cx) ** 2 + (y - cy) ** 2) / radius).unsqueeze(1)
             kind = action[:, :9, None, None].expand(-1, -1, height, width)
             inputs = [state_image, locus, kind]
-            if args.architecture == "spatial_global":
+            if args.architecture in {"spatial_global", "spatial_joint"}:
                 inputs.append(action[:, 9:11, None, None].expand(-1, -1, height, width))
-            delta = model(torch.cat(inputs, dim=1)).reshape(-1, dimension)
+            delta = (model(state_image, torch.cat(inputs[1:], dim=1))
+                     if args.architecture == "spatial_joint" else
+                     model(torch.cat(inputs, dim=1))).reshape(-1, dimension)
             return torch.clamp(partition["state"] + delta, 0, 1)
         return torch.clamp(
             partition["state"] + model(torch.cat((partition["state"], action), dim=1)), 0, 1
@@ -421,6 +487,12 @@ def main() -> None:
 
     best_loss, best_epoch, best_weights = float("inf"), 0, None
     train = arrays["train"]
+
+    def inverse_loss(partition: dict) -> Any:
+        state = partition["state"].reshape(-1, channels, height, width)
+        target = partition["target"].reshape(-1, channels, height, width)
+        return ((model.inverse(state, target) - partition["action"][:, 9:11]) ** 2).mean()
+
     for epoch in range(args.epochs):
         model.train()
         batches = (pair_indices["train"][torch.randperm(len(pair_indices["train"]), device=device)]
@@ -431,6 +503,8 @@ def main() -> None:
             batch = {key: value[indices] for key, value in train.items()}
             output = predict(batch)
             loss = objective(output, batch)
+            if args.inverse_loss_weight:
+                loss = loss + args.inverse_loss_weight * inverse_loss(batch)
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             optimizer.step()
@@ -449,9 +523,22 @@ def main() -> None:
     model.load_state_dict(best_weights)
     model.eval()
     scores = {}
+    inverse_scores = {}
     with torch.no_grad():
         for split in ("validation", "eval"):
             partition = rows[split]
+            if args.architecture == "spatial_joint":
+                observed = arrays[split]
+                state = observed["state"].reshape(-1, channels, height, width)
+                target = observed["target"].reshape(-1, channels, height, width)
+                expected = observed["action"][:, 9:11]
+                inverse_scores[split] = {
+                    "observed_before_after_coordinate_mae": float(
+                        (model.inverse(state, target) - expected).abs().mean().item()),
+                    "before_only_coordinate_mae": float(
+                        (model.inverse(state, state) - expected).abs().mean().item()),
+                    "center_coordinate_mae": float((0.5 - expected).abs().mean().item()),
+                }
             shuffled_scores = []
             within_type_scores = []
             rng = np.random.default_rng(args.seed + (1 if split == "validation" else 2))
@@ -513,6 +600,9 @@ def main() -> None:
         "trained_without_action": args.train_without_action,
         "transition_scale_power": args.transition_scale_power,
         "pairwise_loss_weight": args.pairwise_loss_weight,
+        "inverse_loss_weight": args.inverse_loss_weight,
+        "validation_inverse_mse": (float(inverse_loss(arrays["validation"]).item())
+                                   if args.architecture == "spatial_joint" else None),
         "selected_validation_objective": best_loss,
         "torch_version": torch.__version__, "cudnn_enabled": torch.backends.cudnn.enabled,
         "seed": args.seed, "selected_epoch": best_epoch,
@@ -520,6 +610,7 @@ def main() -> None:
         "rows": {split: len(partition["state"]) for split, partition in rows.items()},
         "groups": {split: len(set(partition["groups"])) for split, partition in rows.items()},
         "scores": scores,
+        "inverse_coordinate_diagnostic": inverse_scores if inverse_scores else None,
         "limitation": f"{channels}x{height}x{width} visual features and mouse action type/coordinates only. "
                       "Research model is not the live UiJepaPredictor. "
                       + ("Recording and exact pre-screen-disjoint, not environment-disjoint; "
