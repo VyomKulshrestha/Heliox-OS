@@ -17,8 +17,7 @@ def _plan(*types: ActionType) -> ActionPlan:
 
 
 def _snapshot() -> OsSnapshot:
-    return OsSnapshot(proc_count=100, disk_usage_fraction=0.5,
-                      memory_usage_fraction=0.5, disk_path="/")
+    return OsSnapshot(proc_count=100, disk_usage_fraction=0.5, memory_usage_fraction=0.5, disk_path="/")
 
 
 def test_one_visual_observation_per_plan_and_no_latent_export(monkeypatch) -> None:
@@ -72,8 +71,7 @@ def test_observed_frame_reaches_shadow_predictor_without_approval_power(tmp_path
 
     prediction = gate.last_evaluation["predictions"][0]
     assert "ui_jepa" in prediction["sources"]
-    assert any(effect["operation"] == "predict_latent_transition"
-               for effect in prediction["expected_effects"])
+    assert any(effect["operation"] == "predict_latent_transition" for effect in prediction["expected_effects"])
     assert "latent_embedding" not in prediction["predicted_state"]["ui"]
     assert risk == 0.0
 
@@ -133,9 +131,7 @@ def test_mouse_geometry_reaches_world_prediction_without_leaking_pixels(tmp_path
     )
     gate = RiskGate(weights_path="/nonexistent.npz")
     gate._world_model = HybridWorldModel(visual=UiJepaPredictor(weights))
-    gate.set_ui_observation_provider(lambda: {
-        "latent_embedding": [0.5] * 256, "screen_bounds": (0, 0, 100, 100)
-    })
+    gate.set_ui_observation_provider(lambda: {"latent_embedding": [0.5] * 256, "screen_bounds": (0, 0, 100, 100)})
     transitions = []
     for x, y in ((20, 20), (80, 80)):
         plan = ActionPlan(

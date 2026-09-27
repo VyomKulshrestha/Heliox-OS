@@ -20,7 +20,8 @@ def test_frame_feature_is_bounded_and_uses_current_pixels() -> None:
 def test_world_observation_requires_fresh_running_capture_and_stays_private() -> None:
     agent = ScreenVisionAgent()
     state = ScreenState(
-        timestamp=datetime.now(UTC).isoformat(), world_embedding=[0.5] * 256,
+        timestamp=datetime.now(UTC).isoformat(),
+        world_embedding=[0.5] * 256,
         screen_bounds=(10, 20, 1920, 1080),
     )
     agent.get_context().add(state)

@@ -23,9 +23,7 @@ def test_visual_feature_resolution_is_bounded_and_default_is_unchanged() -> None
 
 def test_tasks_and_assets_are_bounded_to_the_pinned_virtual_origin() -> None:
     assert collector.parse_tasks("click-button, click-widget") == ("click-button", "click-widget")
-    assert collector.asset_path(
-        "https://miniwob.local/miniwob/html/core/core.js"
-    ) == "miniwob/html/core/core.js"
+    assert collector.asset_path("https://miniwob.local/miniwob/html/core/core.js") == "miniwob/html/core/core.js"
     for tasks in ("", "click-button,click-button", "../secret", "click_button"):
         with pytest.raises(ValueError):
             collector.parse_tasks(tasks)

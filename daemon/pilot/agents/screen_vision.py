@@ -337,6 +337,7 @@ class ScreenVisionAgent:
 
         import numpy as np
         from PIL import Image
+
         if sys.platform == "win32":
             from mss.windows import MSS
         elif sys.platform == "darwin":
@@ -353,9 +354,7 @@ class ScreenVisionAgent:
             pil_img = pil_img.resize((64, 64)).convert("L")
             current_frame = np.array(pil_img, dtype=np.float32)
             self._current_world_embedding = _world_embedding_from_frame(current_frame)
-            self._current_screen_bounds = (
-                monitor["left"], monitor["top"], monitor["width"], monitor["height"]
-            )
+            self._current_screen_bounds = (monitor["left"], monitor["top"], monitor["width"], monitor["height"])
 
             if getattr(self, "_last_frame_array", None) is None:
                 self._last_frame_array = current_frame
@@ -495,8 +494,10 @@ class ScreenVisionAgent:
                 return None
             return {
                 "embedding": feature,
-                "left": monitor["left"], "top": monitor["top"],
-                "width": monitor["width"], "height": monitor["height"],
+                "left": monitor["left"],
+                "top": monitor["top"],
+                "width": monitor["width"],
+                "height": monitor["height"],
             }
 
     async def observe_now(self) -> ScreenState:

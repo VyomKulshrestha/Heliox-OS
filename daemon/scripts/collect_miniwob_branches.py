@@ -35,8 +35,10 @@ STABLE_STYLE = "#timer-countdown,#reward-avg,#episode-id,#click-track-canvas{vis
 
 def parse_tasks(value: str) -> tuple[str, ...]:
     tasks = tuple(part.strip() for part in value.split(",") if part.strip())
-    if not tasks or len(set(tasks)) != len(tasks) or any(
-        re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", task) is None for task in tasks
+    if (
+        not tasks
+        or len(set(tasks)) != len(tasks)
+        or any(re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", task) is None for task in tasks)
     ):
         raise ValueError("Tasks must be unique comma-separated MiniWoB page names")
     return tasks
@@ -44,12 +46,20 @@ def parse_tasks(value: str) -> tuple[str, ...]:
 
 def asset_path(url: str) -> str:
     parsed = urlsplit(url)
-    if (parsed.scheme != "https" or parsed.netloc != "miniwob.local"
-            or parsed.query or parsed.fragment or "%" in parsed.path):
+    if (
+        parsed.scheme != "https"
+        or parsed.netloc != "miniwob.local"
+        or parsed.query
+        or parsed.fragment
+        or "%" in parsed.path
+    ):
         raise ValueError("Only pinned MiniWoB virtual-origin assets are allowed")
     path = parsed.path.removeprefix("/")
-    if (not path.startswith("miniwob/html/") or ".." in path.split("/")
-            or re.fullmatch(r"[A-Za-z0-9_./-]+", path) is None):
+    if (
+        not path.startswith("miniwob/html/")
+        or ".." in path.split("/")
+        or re.fullmatch(r"[A-Za-z0-9_./-]+", path) is None
+    ):
         raise ValueError("Invalid MiniWoB asset path")
     return path
 
@@ -77,8 +87,7 @@ class PinnedAssets:
         except (OSError, ValueError):
             route.abort()
             return
-        route.fulfill(status=200, body=data,
-                      content_type=mimetypes.guess_type(path)[0] or "application/octet-stream")
+        route.fulfill(status=200, body=data, content_type=mimetypes.guess_type(path)[0] or "application/octet-stream")
 
     def hashes(self) -> dict[str, str]:
         return {path: hashlib.sha256(data).hexdigest() for path, data in sorted(self._cache.items())}
@@ -89,8 +98,11 @@ def visual_feature(png: bytes, size: int = 16) -> np.ndarray:
         raise ValueError("Visual research features must be 16x16 or 64x64")
     with Image.open(io.BytesIO(png)) as image:
         frame = image.convert("RGB").resize((64, 64)).convert("L")
-        values = (_world_embedding_from_frame(frame) if size == 16
-                  else np.asarray(frame, dtype=np.float32).reshape(-1) / 255.0)
+        values = (
+            _world_embedding_from_frame(frame)
+            if size == 16
+            else np.asarray(frame, dtype=np.float32).reshape(-1) / 255.0
+        )
     return np.asarray(values, dtype=np.float32)
 
 
@@ -119,8 +131,9 @@ def _reset(browser, assets: PinnedAssets, task: str, seed: str):
     return context, page, candidates, before_png, before_dom
 
 
-def collect_group(browser, assets: PinnedAssets, task: str, seed: str, max_candidates: int,
-                  feature_size: int = 16) -> tuple[list[dict], int]:
+def collect_group(
+    browser, assets: PinnedAssets, task: str, seed: str, max_candidates: int, feature_size: int = 16
+) -> tuple[list[dict], int]:
     reference: tuple[list[tuple[float, float]], str, np.ndarray] | None = None
     rows = []
     attempted = 0
@@ -130,20 +143,25 @@ def collect_group(browser, assets: PinnedAssets, task: str, seed: str, max_candi
             before_feature = visual_feature(before_png, feature_size)
             if reference is None:
                 reference = (candidates, before_dom, before_feature)
-            elif (reference[0] != candidates or reference[1] != before_dom
-                  or not np.array_equal(reference[2], before_feature)):
+            elif (
+                reference[0] != candidates
+                or reference[1] != before_dom
+                or not np.array_equal(reference[2], before_feature)
+            ):
                 raise ValueError("Independent MiniWoB branches did not reset to one exact measured state")
             if candidate_index >= len(candidates):
                 break
             x, y = candidates[candidate_index]
             page.mouse.click(x, y)
             outcome = page.evaluate("({done: WOB_DONE_GLOBAL, reward: WOB_RAW_REWARD_GLOBAL})")
-            rows.append({
-                "state": before_feature,
-                "target": visual_feature(page.screenshot(animations="disabled"), feature_size),
-                "coords": (x / VIEWPORT["width"], y / VIEWPORT["height"]),
-                "reward": float(outcome["reward"]) if outcome["done"] else None,
-            })
+            rows.append(
+                {
+                    "state": before_feature,
+                    "target": visual_feature(page.screenshot(animations="disabled"), feature_size),
+                    "coords": (x / VIEWPORT["width"], y / VIEWPORT["height"]),
+                    "reward": float(outcome["reward"]) if outcome["done"] else None,
+                }
+            )
             attempted += 1
         finally:
             context.close()
@@ -155,10 +173,14 @@ def collect_group(browser, assets: PinnedAssets, task: str, seed: str, max_candi
 
 
 def require_disjoint_prestates(rows: list[dict]) -> None:
-    states = {split: {row["state"].tobytes() for row in rows if row["split"] == split}
-              for split in ("train", "validation", "eval")}
-    if any(states[left] & states[right] for left, right in
-           (("train", "validation"), ("train", "eval"), ("validation", "eval"))):
+    states = {
+        split: {row["state"].tobytes() for row in rows if row["split"] == split}
+        for split in ("train", "validation", "eval")
+    }
+    if any(
+        states[left] & states[right]
+        for left, right in (("train", "validation"), ("train", "eval"), ("validation", "eval"))
+    ):
         raise ValueError("Identical modeled pre-action state leaked across task splits")
 
 
@@ -176,15 +198,17 @@ def main() -> None:
     parser.add_argument("--report", type=Path, default=root / "miniwob_branches_v1.json")
     args = parser.parse_args()
     try:
-        tasks = {split: parse_tasks(getattr(args, f"{split}_tasks"))
-                 for split in ("train", "validation", "eval")}
+        tasks = {split: parse_tasks(getattr(args, f"{split}_tasks")) for split in ("train", "validation", "eval")}
     except ValueError as exc:
         parser.error(str(exc))
-    if (len(set(task for names in tasks.values() for task in names)) != sum(map(len, tasks.values()))
-            or not 2 <= args.samples_per_task <= 100
-            or not 0 <= args.seed_start <= 1000000
-            or not 2 <= args.max_candidates <= 16
-            or args.features.exists() or args.report.exists()):
+    if (
+        len(set(task for names in tasks.values() for task in names)) != sum(map(len, tasks.values()))
+        or not 2 <= args.samples_per_task <= 100
+        or not 0 <= args.seed_start <= 1000000
+        or not 2 <= args.max_candidates <= 16
+        or args.features.exists()
+        or args.report.exists()
+    ):
         parser.error("Use task-disjoint splits, bounded settings, and fresh output paths")
 
     assets = PinnedAssets(SOURCE_COMMIT)
@@ -198,17 +222,23 @@ def main() -> None:
                 for task in names:
                     for index in range(args.seed_start, args.seed_start + args.samples_per_task):
                         seed = f"{SOURCE_COMMIT}:{task}:{index}"
-                        pair, count = collect_group(browser, assets, task, seed,
-                                                    args.max_candidates, args.feature_size)
+                        pair, count = collect_group(browser, assets, task, seed, args.max_candidates, args.feature_size)
                         attempted[split] += count
                         if not pair:
                             skipped[split] += 1
                             continue
                         group = hashlib.sha256(seed.encode("utf-8")).hexdigest()
                         rows.extend({**row, "group": group, "split": split, "task": task} for row in pair)
-                    print(json.dumps({"task": task, "split": split,
-                                      "groups": len({row["group"] for row in rows if row["task"] == task})}),
-                          flush=True)
+                    print(
+                        json.dumps(
+                            {
+                                "task": task,
+                                "split": split,
+                                "groups": len({row["group"] for row in rows if row["task"] == task}),
+                            }
+                        ),
+                        flush=True,
+                    )
         finally:
             browser.close()
     if any(not any(row["split"] == split for row in rows) for split in tasks):
@@ -227,26 +257,32 @@ def main() -> None:
     )
     report = {
         "purpose": "research_only_miniwob_visual_branch_transitions",
-        "source_repo": SOURCE_REPO, "source_commit": SOURCE_COMMIT,
-        "source_license": "MIT", "asset_sha256": assets.hashes(),
-        "tasks": tasks, "samples_per_task": args.samples_per_task,
+        "source_repo": SOURCE_REPO,
+        "source_commit": SOURCE_COMMIT,
+        "source_license": "MIT",
+        "asset_sha256": assets.hashes(),
+        "tasks": tasks,
+        "samples_per_task": args.samples_per_task,
         "seed_start": args.seed_start,
         "feature_shape": [1, args.feature_size, args.feature_size],
         "max_candidates": args.max_candidates,
         "selection": f"first two candidate clicks with distinct observed {args.feature_size}x{args.feature_size} next-screen features",
         "reset_identity": f"identical visible control coordinates, task DOM, and {args.feature_size}x{args.feature_size} pre-action features; "
-                          "full screenshot bytes may differ by rendering noise",
-        "counterfactual_pairs": True, "split_basis": "task_family",
+        "full screenshot bytes may differ by rendering noise",
+        "counterfactual_pairs": True,
+        "split_basis": "task_family",
         "cross_split_identical_prestates": 0,
         "rows": dict(Counter(row["split"] for row in rows)),
         "groups": {split: len({row["group"] for row in rows if row["split"] == split}) for split in tasks},
-        "candidate_attempts": dict(attempted), "skipped_no_distinct_visual_outcomes": dict(skipped),
-        "reward_observed": {split: dict(Counter(str(row["reward"]) for row in rows if row["split"] == split))
-                            for split in tasks},
+        "candidate_attempts": dict(attempted),
+        "skipped_no_distinct_visual_outcomes": dict(skipped),
+        "reward_observed": {
+            split: dict(Counter(str(row["reward"]) for row in rows if row["split"] == split)) for split in tasks
+        },
         "features_sha256": hashlib.sha256(args.features.read_bytes()).hexdigest(),
         "limitation": "Synthetic browser tasks, selected for visually distinct observed outcomes. "
-                      "Only click location is modeled; reward labels are counted but not trained on. "
-                      "No real desktop transfer, Jev parity, autonomy, or execution authority.",
+        "Only click location is modeled; reward labels are counted but not trained on. "
+        "No real desktop transfer, Jev parity, autonomy, or execution authority.",
     }
     args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report, indent=2), flush=True)
