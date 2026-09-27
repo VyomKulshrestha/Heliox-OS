@@ -7,7 +7,11 @@ import hashlib
 import json
 from pathlib import Path
 
-from scripts.train_world_visual_delta_latent import build_delta_latent_model, score_model
+from scripts.train_world_visual_delta_latent import (
+    attach_semantic_features,
+    build_delta_latent_model,
+    score_model,
+)
 from scripts.train_world_visual_transition import feature_shape, load_features
 
 
@@ -17,6 +21,8 @@ def main() -> None:
     parser.add_argument("--weights", type=Path, required=True)
     parser.add_argument("--target-features", type=Path, required=True)
     parser.add_argument("--target-report", type=Path, required=True)
+    parser.add_argument("--target-semantic-features", type=Path)
+    parser.add_argument("--target-semantic-report", type=Path)
     parser.add_argument("--split", choices=("train", "validation", "eval"), default="eval")
     parser.add_argument("--report", type=Path, required=True)
     parser.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
@@ -26,6 +32,10 @@ def main() -> None:
     model_report = json.loads(args.model_report.read_text(encoding="utf-8"))
     if model_report.get("purpose") != "research_only_delta_inverse_visual_latent_transition":
         raise ValueError("Expected a delta-latent research report")
+    semantic_dim = int(model_report.get("semantic_dim") or 0)
+    if (bool(args.target_semantic_features) != bool(args.target_semantic_report)
+            or bool(semantic_dim) != bool(args.target_semantic_features)):
+        raise ValueError("Target semantic features are required exactly for semantic models")
     weights_hash = hashlib.sha256(args.weights.read_bytes()).hexdigest()
     if weights_hash != model_report.get("weights_sha256"):
         raise ValueError("Weights do not match the pinned model report")
@@ -36,6 +46,12 @@ def main() -> None:
     if source.get("counterfactual_pairs") is not True:
         raise ValueError("Transfer scoring requires verified action pairs")
     rows = load_features(args.target_features, args.target_report)
+    if semantic_dim:
+        actual_dim = attach_semantic_features(
+            rows, args.target_features, args.target_report,
+            args.target_semantic_features, args.target_semantic_report)
+        if actual_dim != semantic_dim:
+            raise ValueError("Frozen model and target semantic dimensions differ")
 
     import torch
     from torch import nn
@@ -43,7 +59,7 @@ def main() -> None:
     if args.device == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA is required for this transfer probe")
     device = torch.device("cuda:0" if args.device == "cuda" else "cpu")
-    model = build_delta_latent_model(nn, torch, shape, model_report["latent_dim"])
+    model = build_delta_latent_model(nn, torch, shape, model_report["latent_dim"], semantic_dim)
     model.load_state_dict(torch.load(args.weights, map_location="cpu", weights_only=True))
     model = model.to(device).eval()
     report = {
@@ -52,6 +68,12 @@ def main() -> None:
         "weights_sha256": weights_hash,
         "target_features_sha256": hashlib.sha256(args.target_features.read_bytes()).hexdigest(),
         "target_report_sha256": hashlib.sha256(args.target_report.read_bytes()).hexdigest(),
+        "target_semantic_features_sha256": (
+            hashlib.sha256(args.target_semantic_features.read_bytes()).hexdigest()
+            if args.target_semantic_features else None),
+        "target_semantic_report_sha256": (
+            hashlib.sha256(args.target_semantic_report.read_bytes()).hexdigest()
+            if args.target_semantic_report else None),
         "target_split": args.split,
         "target_rows": len(rows[args.split]["state"]),
         "target_groups": len(set(rows[args.split]["groups"])),

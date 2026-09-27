@@ -23,13 +23,20 @@ from scripts.train_world_visual_transition import (
 )
 
 
-def build_delta_latent_model(nn: Any, torch: Any, shape: tuple[int, int, int], latent_dim: int) -> Any:
+def build_delta_latent_model(nn: Any, torch: Any, shape: tuple[int, int, int], latent_dim: int,
+                             semantic_dim: int = 0) -> Any:
     """Predict latent effects; decode the action from observed latent displacement."""
     channels, height, width = shape
 
     class DeltaLatent(nn.Module):
         def __init__(self) -> None:
             super().__init__()
+            self.semantic_projection = (nn.Sequential(
+                nn.Linear(semantic_dim, 32), nn.LayerNorm(32), nn.GELU())
+                if semantic_dim else None)
+            if semantic_dim:
+                self.register_buffer("semantic_mean", torch.zeros(semantic_dim))
+                self.register_buffer("semantic_scale", torch.ones(semantic_dim))
             self.encoder = nn.Sequential(
                 nn.Conv2d(channels, 32, 3, padding=1), nn.GELU(),
                 nn.Conv2d(32, 32, 3, stride=2, padding=1), nn.GELU(),
@@ -37,7 +44,7 @@ def build_delta_latent_model(nn: Any, torch: Any, shape: tuple[int, int, int], l
                 nn.Linear(32 * 4 * 4, latent_dim),
             )
             self.forward_head = nn.Sequential(
-                nn.Linear(latent_dim + 11, 128), nn.GELU(),
+                nn.Linear(latent_dim + 11 + (32 if semantic_dim else 0), 128), nn.GELU(),
                 nn.Linear(128, latent_dim),
             )
             self.inverse_head = nn.Sequential(
@@ -53,8 +60,14 @@ def build_delta_latent_model(nn: Any, torch: Any, shape: tuple[int, int, int], l
         def encode(self, image: Any) -> Any:
             return self.encoder(image)
 
-        def forward(self, before_latent: Any, action: Any) -> Any:
-            return before_latent + self.forward_head(torch.cat((before_latent, action), dim=1))
+        def forward(self, before_latent: Any, action: Any, semantic: Any = None) -> Any:
+            parts = [before_latent, action]
+            if self.semantic_projection is not None:
+                if semantic is None:
+                    raise ValueError("Semantic features are required for this model")
+                normalized = ((semantic - self.semantic_mean) / self.semantic_scale).clamp(-5, 5)
+                parts.append(self.semantic_projection(normalized))
+            return before_latent + self.forward_head(torch.cat(parts, dim=1))
 
         def inverse(self, before_latent: Any, after_latent: Any) -> Any:
             return self.inverse_head(after_latent - before_latent)
@@ -100,6 +113,34 @@ def paired_matching_loss(predicted: Any, target: Any, torch: Any,
     return torch.nn.functional.cross_entropy(logits.reshape(-1, 2), labels)
 
 
+def attach_semantic_features(rows: dict, visual_path: Path, source_report: Path,
+                             features_path: Path, feature_report: Path) -> int:
+    """Verify frozen feature identity and align every semantic row to its visual row."""
+    manifest = json.loads(feature_report.read_text(encoding="utf-8"))
+    def digest(path: Path) -> str:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    if (digest(features_path) != manifest.get("feature_sha256")
+            or digest(visual_path) != manifest.get("visual_features_sha256")
+            or digest(source_report) != manifest.get("source_report_sha256")):
+        raise ValueError("Frozen semantic features do not match the visual source")
+    with np.load(features_path, allow_pickle=False) as data:
+        features = data["features"].astype(np.float32)
+        groups, splits, coords = (data[name] for name in ("group", "split", "coords"))
+        if (features.ndim != 2 or features.shape[1] != manifest.get("feature_dim")
+                or len(features) != manifest.get("rows") or len(groups) != len(features)
+                or len(splits) != len(features) or coords.shape != (len(features), 2)
+                or not np.isfinite(features).all()):
+            raise ValueError("Invalid frozen semantic feature matrix")
+        for split in ("train", "validation", "eval"):
+            mask = splits == split
+            selected = rows[split]
+            if (not np.array_equal(groups[mask].astype(str), selected["groups"])
+                    or not np.allclose(coords[mask], selected["action"][:, 9:11], atol=1e-6)):
+                raise ValueError(f"Frozen semantic {split} rows are misaligned")
+            selected["semantic"] = features[mask].copy()
+    return int(features.shape[1])
+
+
 def score_model(model: Any, rows: dict[str, np.ndarray], shape: tuple[int, int, int], torch: Any,
                 device: Any) -> dict[str, Any]:
     """Report latent separation and inverse localization on verified action pairs."""
@@ -108,11 +149,13 @@ def score_model(model: Any, rows: dict[str, np.ndarray], shape: tuple[int, int, 
     state = torch.from_numpy(rows["state"]).to(device).reshape(-1, channels, height, width)
     target = torch.from_numpy(rows["target"]).to(device).reshape(-1, channels, height, width)
     action = torch.from_numpy(rows["action"]).to(device)
+    semantic = torch.from_numpy(rows["semantic"]).to(device) if "semantic" in rows else None
     with torch.no_grad():
         before = model.encode(state)
         after = model.encode(target)
-        correct = model(before, action)
-        wrong = model(before, action[permutation])
+        correct = model(before, action, semantic)
+        wrong = model(before, action[permutation],
+                      semantic[permutation] if semantic is not None else None)
         inverse = model.inverse(before, after)
         pair_indices = paired_group_indices(rows)
         target_distance = ((after[pair_indices[:, 0]] - after[pair_indices[:, 1]]) ** 2).mean(dim=1)
@@ -136,6 +179,8 @@ def main() -> None:
     parser.add_argument("--source-report", type=Path, required=True)
     parser.add_argument("--additional-features", type=Path)
     parser.add_argument("--additional-source-report", type=Path)
+    parser.add_argument("--semantic-features", type=Path)
+    parser.add_argument("--semantic-source-report", type=Path)
     parser.add_argument("--report", type=Path, default=state_dir / "visual_delta_latent_v1.json")
     parser.add_argument("--weights", type=Path, default=state_dir / "visual_delta_latent_v1.pt")
     parser.add_argument("--inverse-weight", type=float, default=1.0)
@@ -155,6 +200,8 @@ def main() -> None:
     args = parser.parse_args()
     if (not args.features.is_file() or not args.source_report.is_file()
             or bool(args.additional_features) != bool(args.additional_source_report)
+            or bool(args.semantic_features) != bool(args.semantic_source_report)
+            or (args.semantic_features and args.additional_features)
             or (args.additional_features and (not args.additional_features.is_file()
                  or not args.additional_source_report.is_file()))
             or args.report.exists() or args.weights.exists()
@@ -187,6 +234,12 @@ def main() -> None:
             rows, load_features(args.additional_features, args.additional_source_report))
         additional_hash = hashlib.sha256(args.additional_features.read_bytes()).hexdigest()
 
+    semantic_dim = 0
+    if args.semantic_features:
+        semantic_dim = attach_semantic_features(
+            rows, args.features, args.source_report,
+            args.semantic_features, args.semantic_source_report)
+
     import torch
     from torch import nn
 
@@ -194,7 +247,12 @@ def main() -> None:
         raise RuntimeError("CUDA is required for this run")
     torch.manual_seed(args.seed)
     device = torch.device("cuda:0" if args.device == "cuda" else "cpu")
-    model = build_delta_latent_model(nn, torch, shape, args.latent_dim).to(device)
+    model = build_delta_latent_model(nn, torch, shape, args.latent_dim, semantic_dim).to(device)
+    if semantic_dim:
+        semantic_train = torch.from_numpy(rows["train"]["semantic"]).to(device)
+        with torch.no_grad():
+            model.semantic_mean.copy_(semantic_train.mean(dim=0))
+            model.semantic_scale.copy_(semantic_train.std(dim=0).clamp_min(0.05))
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=0.02)
     train = {key: torch.from_numpy(value).to(device) for key, value in rows["train"].items() if key != "groups"}
     validation = {key: torch.from_numpy(value).to(device)
@@ -207,7 +265,7 @@ def main() -> None:
         before = model.encode(batch["state"].reshape(-1, channels, height, width))
         after = model.encode(batch["target"].reshape(-1, channels, height, width))
         forward_target = after.detach() if args.stop_gradient_target else after
-        predicted = model(before, batch["action"])
+        predicted = model(before, batch["action"], batch.get("semantic"))
         forward_loss = ((predicted - forward_target) ** 2).mean()
         expected_change = forward_target[0::2] - forward_target[1::2]
         predicted_change = predicted[0::2] - predicted[1::2]
@@ -257,6 +315,13 @@ def main() -> None:
         "additional_source_report_sha256": (
             hashlib.sha256(args.additional_source_report.read_bytes()).hexdigest()
             if args.additional_source_report else None),
+        "semantic_features_sha256": (
+            hashlib.sha256(args.semantic_features.read_bytes()).hexdigest()
+            if args.semantic_features else None),
+        "semantic_source_report_sha256": (
+            hashlib.sha256(args.semantic_source_report.read_bytes()).hexdigest()
+            if args.semantic_source_report else None),
+        "semantic_dim": semantic_dim,
         "feature_shape": list(shape),
         "latent_dim": args.latent_dim,
         "inverse_weight": args.inverse_weight,
