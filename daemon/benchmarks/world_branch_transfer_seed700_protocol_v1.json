@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "purpose": "frozen_model_transfer_on_better_covered_unseen_miniwob_families",
+  "frozen_at_utc": "2026-09-27 08:54:57 UTC",
+  "model_report_sha256": "8ce81c5b05795606c99ce04cdb1a7fff95c0f6b2a6354906dda8d1e745340fb5",
+  "model_weights_sha256": "f764ed2e6bd7e827e009d0a41900ece9f6a02d253ebc78839dbcfdbe845f18a5",
+  "target_features_sha256": "82697ec42e6d4fa7956420de29e2e5615b45bc4a250d24b26f8b6b10c7e8b5b9",
+  "target_report_sha256": "944bd543c9c2a884024327fcbc96e5095a827a5db54b8d8f47a114fba81c7656",
+  "target_split": "eval",
+  "verified_pairs": 47,
+  "excluded_unstable_resets": 1,
+  "gates": {
+    "minimum_correct_action_fraction": 0.8,
+    "minimum_mean_mse_advantage": 0.0,
+    "minimum_predicted_to_observed_pair_mse_ratio": 0.25,
+    "maximum_predicted_to_observed_pair_mse_ratio": 4.0,
+    "inverse_coordinate_mae_below_center_baseline": true
+  },
+  "interpretation": "This is a frozen old model on improved public synthetic coverage, not a newly trained model. Passing would support more research only; failing retains the unpromoted status."
+}
