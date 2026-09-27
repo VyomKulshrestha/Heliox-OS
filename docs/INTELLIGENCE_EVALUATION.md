@@ -889,6 +889,41 @@ its weighted error was 0.148 versus 0.00028 for leaving the screen unchanged.
 The numeric protocol gates passed, but this external-validity failure blocks
 promotion. No research weights were connected to Heliox's live world model.
 
+An exploratory, application-disjoint [GUI-360 Office protocol](../daemon/benchmarks/gui360_office_nonterminal_protocol_v1.json)
+then tested nonterminal desktop transitions instead of synthetic terminal
+overlays. The [original GUI-360 dataset](https://huggingface.co/datasets/vyokky/GUI-360)
+and [processed Office shards](https://huggingface.co/datasets/cua-lite/GUI-360)
+provided 105 Excel training clicks, 111 Word validation clicks, and 123
+PowerPoint evaluation clicks. The importer requires one aligned computer click,
+a following screenshot, and a later action; it rejects mixed application
+splits, duplicate trajectory IDs, and identical pre-action screens across
+splits. The source images remain in the ignored local benchmark directory.
+This is an observational, one-shard-per-application probe, not a controlled
+counterfactual dataset or a representative live Heliox test.
+
+On the held-out PowerPoint rows, the action-conditioned spatial model's
+weighted error was **0.06429** versus **0.08183** for leaving the screen
+unchanged. But a matched model trained without actions scored **0.06377**,
+and shuffling click locations gave the action model **0.06447** with a 0.23
+one-sided shuffle rank. It therefore failed the action-grounding control;
+the apparent screen-prediction gain cannot be attributed to learning the
+effect of the click. The [frozen result summary](../daemon/benchmarks/gui360_office_probe_v1.json)
+records source, feature, report, and weight hashes. No weights were promoted.
+The [Computer-Using World Model paper](https://arxiv.org/html/2602.17365v1)
+motivates separating semantic action effects from visual realization, but
+that approach has not been implemented or validated in Heliox.
+
+To reproduce from `daemon/` with the optional `pyarrow` package, download
+only the three protocol-listed files from the pinned `cua-lite/GUI-360`
+revision into an ignored local directory,
+verify their hashes, then use fresh ignored output paths:
+
+```bash
+python -m scripts.import_gui360_office_transitions --root benchmarks/.bench-state/gui360_office_v1 --protocol benchmarks/gui360_office_nonterminal_protocol_v1.json --features benchmarks/.bench-state/gui360_office_v1_features.npz --report benchmarks/.bench-state/gui360_office_v1_import.json
+python -m scripts.train_world_visual_transition --features benchmarks/.bench-state/gui360_office_v1_features.npz --source-report benchmarks/.bench-state/gui360_office_v1_import.json --report benchmarks/.bench-state/gui360_office_v1_candidate_cudnn.json --weights benchmarks/.bench-state/gui360_office_v1_candidate_cudnn.pt --architecture spatial_global --epochs 30 --seed 20260927 --action-permutations 99 --device cuda
+python -m scripts.train_world_visual_transition --features benchmarks/.bench-state/gui360_office_v1_features.npz --source-report benchmarks/.bench-state/gui360_office_v1_import.json --report benchmarks/.bench-state/gui360_office_v1_state_only.json --weights benchmarks/.bench-state/gui360_office_v1_state_only.pt --architecture spatial_global --train-without-action --epochs 30 --seed 20260927 --action-permutations 1 --device cuda
+```
+
 An opt-in local recorder can collect before/after 16×16 pairs around approved
 Heliox mouse actions and consented manual clicks. Manual capture keeps only a
 rolling in-memory pre-feature while both manual and visual options are enabled;

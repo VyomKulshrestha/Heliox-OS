@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "purpose": "exploratory_offline_office_world_model_transfer",
+  "protocol_sha256": "814310e8cf533766552f1e4daee8aeb7503e9c27647626b854371c6d89a960da",
+  "dataset": "cua-lite/GUI-360",
+  "revision": "c6195ff35021eebb35b1335893c2b6aa824aeadf",
+  "split": {
+    "train": "Excel",
+    "validation": "Word",
+    "eval": "PowerPoint"
+  },
+  "nonterminal_click_rows": {
+    "train": 105,
+    "validation": 111,
+    "eval": 123
+  },
+  "feature_shape": [3, 32, 32],
+  "features_sha256": "cc47d344accd97d2c8e2fd2d426e76112e80697779b0cc984d49fd05ef201a7e",
+  "import_report_sha256": "93d1a383283466088cc54c658feaae7f023f5ae253af2418a6fc9e6b0dc09c32",
+  "architecture": "spatial_global",
+  "epochs": 30,
+  "seed": 20260927,
+  "device": "cuda:0",
+  "cudnn_enabled": true,
+  "candidate_report_sha256": "fd80a08d80c75753ae47c87b42938c0cd33a62f8b7d4106abbe691485d7245e9",
+  "candidate_weights_sha256": "080c2f154db0b2dc5e73db6294eb15ce2c7beff8e852a5bb5069f2ec22f058b6",
+  "state_only_report_sha256": "3b5b0c0ecb602d8a70cb221cc7f770cea4ab706c76958d24258538e156645a02",
+  "state_only_weights_sha256": "ef4441b8e0cff02a9c0ec485337b4b434e6a8d7239fbf171fdb06315510b686b",
+  "eval_weighted_mse": {
+    "unchanged_screen": 0.08182915463185475,
+    "action_conditioned": 0.06428857964419708,
+    "matched_state_only": 0.06376714548434965,
+    "shuffled_click_location": 0.06446558912857026
+  },
+  "eval_click_shuffle_rank": 0.23,
+  "verdict": "failed_action_grounding_control_no_promotion",
+  "limitations": [
+    "Only one observational shard per Office application; no interventional same-state counterfactuals.",
+    "The state-only model slightly outperformed the action-conditioned model on held-out PowerPoint.",
+    "Click-location shuffling barely changed the action-conditioned score and did not pass a 0.05 rank threshold.",
+    "No live Heliox desktop evaluation, Jev parity, execution authority, or runtime model promotion."
+  ]
+}
