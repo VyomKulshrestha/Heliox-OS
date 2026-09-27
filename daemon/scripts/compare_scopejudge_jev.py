@@ -19,6 +19,7 @@ from benchmarks.general_decision import probabilities
 from benchmarks.scopejudge_general import load_scope_parts, scope_metrics
 from scripts.compare_general_jev import query_jev
 from scripts.evaluate_jev_scope import _key
+from scripts.jev_output_policy import block_jev_output_use
 
 
 def load_matched_rows(dataset: Path, model_report: Path, evaluation: Path,
@@ -91,6 +92,7 @@ def summarize(labels: list[bool], local: list[float], jev: list[float]) -> dict:
 
 
 def main() -> None:
+    block_jev_output_use()
     root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset", type=Path, required=True)

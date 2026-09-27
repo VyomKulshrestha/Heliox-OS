@@ -20,6 +20,7 @@ from benchmarks.general_decision import format_answer, metrics, uniform_baseline
 from scripts.compare_general_jev import _key, compare, query_jev  # noqa: E402
 from scripts.extract_general_frozen_features import MODEL, REVISION  # noqa: E402
 from scripts.fit_general_frozen_head import load_experiment, logits_for_rows  # noqa: E402
+from scripts.jev_output_policy import block_jev_output_use  # noqa: E402
 
 
 def compatible_indices(rows: list[dict], limit: int) -> list[int]:
@@ -48,6 +49,7 @@ def local_predictions(rows: list[dict], features: tuple[np.ndarray, np.ndarray],
 
 def run(extraction_report: Path, feature_dir: Path, fit_report: Path,
         weight_path: Path, env_file: Path, output: Path, limit: int) -> dict:
+    block_jev_output_use()
     if output.exists():
         raise FileExistsError("Comparison report already exists")
     selection, rows, features = load_experiment(extraction_report, feature_dir)
@@ -107,6 +109,7 @@ def run(extraction_report: Path, feature_dir: Path, fit_report: Path,
 
 
 def main() -> None:
+    block_jev_output_use()
     root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--extraction-report", type=Path,

@@ -13,10 +13,12 @@ from pathlib import Path
 
 from scripts.evaluate_general_decision_artifact import prediction_metrics
 from scripts.evaluate_world_general_qlora import selected_rows
+from scripts.jev_output_policy import block_jev_output_use
 from scripts.score_general_decision import score_requests, verify_artifact
 
 
 def main() -> None:
+    block_jev_output_use()
     root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path, required=True)

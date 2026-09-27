@@ -2,6 +2,17 @@
 
 Status: **research only; no new decision model is enabled in Heliox**.
 
+> **Compliance hold (2026-09-27):** This historical study contains TypeSafe
+> Jev outputs and output-based comparisons. TypeSafe's current
+> [Master Customer Agreement, section 2.3(b)](https://typesafe.ai/legal/mca)
+> restricts using Services or outputs to distill/train imitation models or
+> develop similar or competing products without written authorization. No
+> verified written authorization is recorded here. Treat every Jev-labeled
+> cache and archived comparison as quarantined: do not call, load, train from,
+> tune on, compare against, or use those outputs for product decisions. The
+> first-party Jev-output CLIs fail closed; this banner supersedes the historical
+> experiment narratives below. This is a compliance boundary, not legal advice.
+
 The separate [visual world-model branch probe](../daemon/benchmarks/miniwob_semantic_branch_seed3200_results_v1.md)
 found action grounding on synthetic checkbox variants, but its
 [non-checkbox follow-up](../daemon/benchmarks/miniwob_semantic_branch_seed3400_results_v1.md)
@@ -22,9 +33,12 @@ temperature; grouped test and OOD splits are not training inputs. See the
 [training design](https://github.com/Zefan-Cai/Open-Jev/blob/main/docs/multidomain-training.md)
 and [public dataset card](https://huggingface.co/datasets/ZefanCai/Open-Jev).
 
-This is materially different from Heliox's production scope head, which uses
-fixed numeric features. It also requires a capable backbone and diverse,
-well-separated supervision; copying the scalar formula alone is not enough.
+This differs from Heliox's earlier fixed-numeric-feature scope experiments.
+The historical learned scope head is not loaded by default, and its legacy
+checkpoint is unavailable under the current model version; see the current
+[scope-advisory status](INTELLIGENCE_EVALUATION.md#scope-advisory-research-and-current-state).
+Open-Jev also requires a capable backbone and diverse, well-separated
+supervision; copying the scalar formula alone is not enough.
 
 ## Bounded local probes
 
