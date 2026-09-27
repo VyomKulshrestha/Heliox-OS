@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 from pathlib import Path
 
 import numpy as np
@@ -28,8 +29,12 @@ def paired_replay(cases, outcomes: list[dict], *, min_margin: float) -> dict:
         raise ValueError("min_margin must be between zero and one")
     case_rows = {case.id: case for case in cases}
     score_rows = {row["id"]: row for row in outcomes}
-    if len(case_rows) != len(cases) or set(case_rows) != set(score_rows):
+    if (len(case_rows) != len(cases) or len(score_rows) != len(outcomes)
+            or set(case_rows) != set(score_rows)):
         raise ValueError("paired replay requires exactly one score per frozen case")
+    if any(not math.isfinite(row["local_probability"])
+           or not 0 <= row["local_probability"] <= 1 for row in outcomes):
+        raise ValueError("paired replay requires finite probability scores")
     pairs: dict[str, dict[str, str]] = {}
     for case in cases:
         group, separator, suffix = case.id.rpartition("_")

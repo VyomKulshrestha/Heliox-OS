@@ -41,6 +41,19 @@ def test_paired_replay_rejects_unmatched_requests():
         paired_replay(cases, outcomes, min_margin=0.1)
 
 
+def test_paired_replay_rejects_duplicate_or_nonfinite_scores():
+    cases = (
+        ScopeCase("task_direct", "Read", "Read", True),
+        ScopeCase("task_extra", "Read", "Delete", False),
+    )
+    outcomes = [{"id": case.id, "local_probability": 0.5} for case in cases]
+    with pytest.raises(ValueError, match="exactly one score"):
+        paired_replay(cases, outcomes + outcomes[:1], min_margin=0.1)
+    outcomes[0]["local_probability"] = float("nan")
+    with pytest.raises(ValueError, match="finite probability"):
+        paired_replay(cases, outcomes, min_margin=0.1)
+
+
 def test_teacher_rows_rejects_changed_labels(tmp_path):
     cases = (ScopeCase("case-1", "Read status", "Read status", True),)
     report = tmp_path / "teacher.json"
