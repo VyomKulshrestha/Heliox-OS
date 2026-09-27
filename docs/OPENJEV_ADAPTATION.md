@@ -1560,11 +1560,23 @@ The last command checks the separately shipped OS-transition model; it does
 not test or enable the research scope head.
 
 OpenRouter's [distillation guidance](https://openrouter.ai/docs/cookbook/evaluate-and-optimize/distillation)
-requires checking model-provider permission before using outputs for training.
-The Jev Decisions API did not establish such permission in the material we
-reviewed. The trained adapter is kept local and must not be redistributed or
-promoted until TypeSafe/OpenRouter terms for this use are confirmed. The
-Apache-2.0 license of Qwen's base does not resolve the Jev-output question.
+requires explicit model-provider permission. Its [Jev model page](https://openrouter.ai/typesafe/jev-1.13)
+identifies TypeSafe as the provider. TypeSafe's published
+[terms](https://typesafe.ai/terms-and-conditions) prohibit using Jev interface
+outputs to distill or imitate the model, develop a similar or competing
+product, or publish Jev benchmarks. No written exception or explicit
+distillation permission for Heliox was found. Accordingly, do not make further
+Jev calls for model development, train on Jev outputs, or publish Jev
+performance comparisons unless the provider grants written permission. The
+Apache-2.0 license of Open-Jev/Qwen weights and independently licensed public
+data remains a separate, usable research path; it does not grant rights to
+Jev outputs.
+
+The separate [Open-Jev 2B public-label baseline](OPENJEV_PUBLIC_GENERAL_RESULT_V2.md)
+is a frozen, group-disjoint evaluation of that published checkpoint. On its
+fresh 128-row public split, binary accuracy was 90.0%, choice accuracy 60.5%,
+and ordinal mean rank error 0.207. This is not a Heliox model or a live-task
+result; the report contains no hosted-model output comparison.
 
 For offline verification with the pinned base already in the Hugging Face
 cache:

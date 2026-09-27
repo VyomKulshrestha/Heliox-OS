@@ -1,0 +1,17 @@
+{
+  "schema_version": 2,
+  "purpose": "frozen_released_openjev_general_decision_baseline_against_public_labels",
+  "released_checkpoint": "ZefanCai/Open-Jev-2B@0c7aa498b1627be8da4acf34c863ff0ee0a92785",
+  "dataset_revision": "c67699e13d0ae25e35b77165a4b6b079bedc8aba",
+  "archived_seed": 20260929,
+  "archived_pool": 384,
+  "archived_rows": 128,
+  "archived_ids_sha256": "51281960c0049591ad0c241bcd8159feefd73b2fe87e4bd262bc3216f3941d13",
+  "fresh_seed": 20261003,
+  "fresh_pool": 512,
+  "fresh_rows": 128,
+  "max_length": 1024,
+  "checkpoint_every": 8,
+  "selection_rule": "Recreate the first 128 licensed public OOD records (excluding ordinal questions with more than 10 options) from the pinned archived seed and verify their row-ID hash. Select the fresh 128 from the pinned fresh seed, excluding every archived group and repeated groups within the fresh selection.",
+  "promotion_rule": "No automatic promotion; evaluate only against public dataset labels and retain execution authority in deterministic gates."
+}
