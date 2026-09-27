@@ -1602,3 +1602,17 @@ invalid indices dropped to zero and the sequence task tied the baseline at
 3/4, but total model success was 7/12 versus 11/12. These are small synthetic
 task-family retests, not a production or Jev comparison. Neither the 8B
 policy nor the latent checkpoints is enabled in Heliox.
+
+The [InfiniteWeb paper](https://arxiv.org/abs/2601.04126) and
+[MIT-licensed generated-site dataset](https://huggingface.co/datasets/WhiteFlamesCN/InfiniteWeb-Dataset)
+offer independently resettable, multi-page localStorage applications beyond
+MiniWoB's terminal click tasks. A new research-only collector pins the dataset
+revision, blocks external browser requests, stores only 16×16 features, and
+splits by site. Its [prospectively frozen cross-site test](../daemon/benchmarks/infiniteweb_site_transfer_results_v1.md)
+met coverage but **failed** the per-site action-transfer gate: fitness was
+3/5 paired wins, and on the ice-cream site the state-only model beat the
+action model. The pooled average cannot override either failure. These
+generated websites also cannot validate the opt-in desktop recorder or justify
+loading research weights in the live `UiJepaPredictor`. The next test must
+encode control meaning, freeze it before new-site evaluation, and preserve
+state-only and swapped-action controls.
