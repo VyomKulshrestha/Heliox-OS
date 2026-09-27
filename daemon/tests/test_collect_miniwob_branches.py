@@ -130,6 +130,7 @@ def test_branch_pairs_require_identical_prestate_and_distinct_outcome(monkeypatc
     assert len(pair) == 2
     assert np.array_equal(pair[0]["state"], pair[1]["state"])
     assert not np.array_equal(pair[0]["target"], pair[1]["target"])
+    assert [row["done"] for row in pair] == [True, True]
     assert [row["reward"] for row in pair] == [1, -1]
     assert all(context.closed for context in contexts)
 
@@ -148,6 +149,24 @@ def test_branch_pairs_require_identical_prestate_and_distinct_outcome(monkeypatc
     with pytest.raises(collector.UnstableResetError, match="exact measured state"):
         collector.collect_group(None, None, "task", "seed", 2)
     assert all(context.closed for context in contexts)
+
+
+def test_nonterminal_only_excludes_terminal_overlay_branches(monkeypatch) -> None:
+    class MixedPage(_Page):
+        def evaluate(self, _script: str) -> dict:
+            return {"done": self.x == 10, "reward": -1 if self.x == 10 else None}
+
+    monkeypatch.setattr(collector, "_reset", lambda *_args: (
+        _Context(), MixedPage(), [(10, 20), (30, 40), (50, 60)], b"before", "same DOM"))
+    monkeypatch.setattr(
+        collector, "visual_feature", lambda png, size=16: np.full(size * size, png[0], dtype=np.float32)
+    )
+    pair, attempted = collector.collect_group(
+        None, None, "task", "seed", 3, nonterminal_only=True)
+    assert attempted == 3
+    assert len(pair) == 2
+    assert all(row["done"] is False for row in pair)
+    assert [row["coords"][0] for row in pair] == [30 / 320, 50 / 320]
 
 
 def test_task_splits_reject_identical_modeled_prestates() -> None:
