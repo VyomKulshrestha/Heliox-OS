@@ -1616,3 +1616,9 @@ generated websites also cannot validate the opt-in desktop recorder or justify
 loading research weights in the live `UiJepaPredictor`. The next test must
 encode control meaning, freeze it before new-site evaluation, and preserve
 state-only and swapped-action controls.
+The collector now also supports an **off-by-default**, local semantic archive
+of bounded visible text and clicked-control labels for these public generated
+sites. A six-row smoke collection aligned with the existing frozen Qwen3-0.6B
+extractor and completed on CUDA (414 maximum prompt tokens, 1.445 GiB peak
+model allocation). That verifies the feature path, not its predictive quality;
+no private desktop text was saved or uploaded.
