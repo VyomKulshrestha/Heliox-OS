@@ -10,8 +10,11 @@ Status: **research only; no new decision model is enabled in Heliox**.
 > verified written authorization is recorded here. Treat every Jev-labeled
 > cache and archived comparison as quarantined: do not call, load, train from,
 > tune on, compare against, or use those outputs for product decisions. The
-> first-party Jev-output CLIs fail closed; this banner supersedes the historical
-> experiment narratives below. This is a compliance boundary, not legal advice.
+> same agreement's section 2.3(f) also prohibits publishing benchmarks or
+> performance information about the Services; keep this historical record
+> local and do not push or republish it. The first-party Jev-output CLIs fail
+> closed; this banner supersedes the historical experiment narratives below.
+> This is a compliance boundary, not legal advice.
 
 The separate [visual world-model branch probe](../daemon/benchmarks/miniwob_semantic_branch_seed3200_results_v1.md)
 found action grounding on synthetic checkbox variants, but its
