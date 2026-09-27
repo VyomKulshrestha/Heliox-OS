@@ -1458,6 +1458,14 @@ navigation, 2/2 other). This is not better than the balanced-label baseline
 overall, and neither exact visible state nor a two-case non-navigation slice
 supports a causal or general-transfer claim. No checkpoint is promoted.
 
+The pinned MiniWoB collector now offers an opt-in, local semantic archive of
+rendered text and generic interactive-control state alongside its visual
+features. A [six-family smoke check](../daemon/benchmarks/miniwob_semantic_branch_smoke_v1.json)
+found distinct semantic outcomes in three families but none in the other
+three, despite verified visual differences. This supports a hybrid input
+research direction; it is collection coverage, not a trained or deployed
+world model. The archive never observes the user's desktop.
+
 A separate [browser accessibility-transition review](../daemon/benchmarks/webworld_a11y_transfer_v1.json)
 used the Apache-2.0 [Qwen/WebWorldData](https://huggingface.co/datasets/Qwen/WebWorldData)
 corpus and the updated CUDA device. The first 720-transition sample had an

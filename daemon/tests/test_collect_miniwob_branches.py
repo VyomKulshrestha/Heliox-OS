@@ -26,6 +26,23 @@ def test_candidate_centers_include_visible_pointer_affordances() -> None:
         assert collector.candidate_centers(page) == [(30.0, 20.0), (100.0, 20.0)]
 
 
+def test_visible_semantics_excludes_hidden_text_and_bounds_control_label() -> None:
+    with sync_playwright() as playwright, playwright.chromium.launch(headless=True) as browser:
+        page = browser.new_page(viewport=collector.VIEWPORT)
+        page.set_content("""
+            <div id="wrap">
+              <button aria-label="Save item" style="position:absolute;left:10px;top:10px">
+                Save
+              </button>
+              <span style="display:none">hidden source</span>
+            </div>
+        """)
+        result = collector.visible_semantics(page, (30, 20))
+        assert result["target"] == "Save item"
+        assert "Save" in result["text"]
+        assert "hidden source" not in result["text"]
+
+
 def test_visual_feature_resolution_is_bounded_and_default_is_unchanged() -> None:
     image = Image.fromarray(np.full((64, 64), 128, dtype=np.uint8), mode="L")
     stream = io.BytesIO()
@@ -98,6 +115,12 @@ def test_branch_pairs_require_identical_prestate_and_distinct_outcome(monkeypatc
     assert not np.array_equal(pair[0]["target"], pair[1]["target"])
     assert [row["reward"] for row in pair] == [1, -1]
     assert all(context.closed for context in contexts)
+
+    monkeypatch.setattr(collector, "visible_semantics", lambda page, point=None: {
+        "text": "after" if point is None else "before", "target": "click"})
+    pair, _ = collector.collect_group(None, None, "task", "seed", 2, include_semantics=True)
+    assert all(row["state_text"] == "before" and row["target_text"] == "after"
+               and row["action_label"] == "click" for row in pair)
 
     def changed_reset(*_args):
         context = _Context()
