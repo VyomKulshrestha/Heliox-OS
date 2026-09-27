@@ -3,7 +3,10 @@
 import numpy as np
 import pytest
 
-from scripts.probe_world_visual_model_transfer import paired_action_diagnostic
+from scripts.probe_world_visual_model_transfer import (
+    paired_action_diagnostic,
+    paired_discriminative_diagnostic,
+)
 
 
 def test_paired_action_diagnostic_counts_groups_not_rows() -> None:
@@ -23,3 +26,15 @@ def test_paired_action_diagnostic_counts_groups_not_rows() -> None:
     with pytest.raises(ValueError, match="exactly two"):
         paired_action_diagnostic(correct, swapped, state, target,
                                  np.array(["a", "a", "a", "b"]))
+
+
+def test_discriminative_diagnostic_skips_pairs_without_distinct_pixels() -> None:
+    target = np.array([[1, 0], [0, 1], [0, 0], [0.001, 0]], dtype=np.float32)
+    correct = target.copy()
+    swapped = target[[1, 0, 3, 2]]
+    result = paired_discriminative_diagnostic(
+        correct, swapped, target, np.array(["a", "a", "b", "b"])
+    )
+    assert result["groups_with_distinct_pixels"] == 1
+    assert result["correct_action_wins"] == 1
+    assert result["mean_mse_advantage"] > 0
