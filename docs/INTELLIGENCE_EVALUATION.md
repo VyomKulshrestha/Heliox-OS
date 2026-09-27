@@ -778,7 +778,8 @@ The matched controls, source hashes, and limitations are in
 [`world_visual_joint_inverse_v1.json`](../daemon/benchmarks/world_visual_joint_inverse_v1.json).
 Use `--architecture spatial_joint --inverse-loss-weight 1` with the visual
 trainer to reproduce the research mode; weight 0 is the matched forward-only
-control. Checkpoint selection remains forward-validation-only.
+control. Checkpoint selection uses the forward-side validation objective
+(including paired-outcome loss), without the inverse loss.
 
 Because paired outcomes differ on very few pixels, an optional
 `--pairwise-focus-weight` research loss fits only the pixels where independently

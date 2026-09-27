@@ -19,7 +19,7 @@
     "architecture": "spatial_joint",
     "shared_encoder": "two 32-channel convolutions used by both the forward and inverse heads",
     "inverse_target": "normalized observed action coordinates from before and after features",
-    "selection": "lowest forward-only validation objective; inverse loss affects fitting but not checkpoint selection",
+    "selection": "lowest forward-side validation objective including paired-outcome loss; inverse loss affects fitting but not checkpoint selection",
     "feature_shape": [1, 16, 16],
     "seed": 20260927,
     "epochs": 80,
