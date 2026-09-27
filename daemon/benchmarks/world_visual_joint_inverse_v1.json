@@ -114,6 +114,18 @@
       "finding": "Higher pairwise weight did not produce consistent inverse-aided action preference."
     }
   },
+  "representation_diagnostic": {
+    "split": "48 held-out paired groups from the same seeded MiniWoB families at both resolutions",
+    "paired_outcome_mean_absolute_difference_median": {
+      "16x16": 0.00104788970,
+      "64x64": 0.00125182
+    },
+    "pixels_with_paired_outcome_difference_at_least_0_02_median": {
+      "16x16_of_256": 5.5,
+      "64x64_of_4096": 67.5
+    },
+    "interpretation": "Correct-versus-wrong action outcomes occupy a tiny fraction of the screen representation. Whole-frame prediction losses can improve while mostly ignoring the action-specific effect; simply increasing to 64x64 did not remove this sparsity."
+  },
   "finding": "The shared encoder learns observed inverse localization, including on fresh-seed screens, but this does not translate into reliable forward action grounding. The inverse-weighted models have lower validation forward objective yet worse held-out forward error than the same architecture without inverse fitting. No candidate passes paired wrong-action controls.",
   "limitations": [
     "Exploratory MiniWoB first-click data; no unseen real desktop environments, task success, or multistep traces.",

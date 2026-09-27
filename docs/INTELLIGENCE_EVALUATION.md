@@ -770,6 +770,10 @@ model still did not reliably favor the correct click over a paired wrong click
 (14/24 fresh pairs in the first split; 17/24 after adding the larger training
 split, but the mean margin remained below one-millionth weighted MSE).
 It is **not** promoted to runtime.
+In the paired holdout, the median action-specific difference spans only 5.5
+of 256 features at 16×16, or 67.5 of 4096 at 64×64; whole-frame loss is
+dominated by shared screen changes. More inverse fitting or resolution alone
+does not repair that representation bottleneck.
 The matched controls, source hashes, and limitations are in
 [`world_visual_joint_inverse_v1.json`](../daemon/benchmarks/world_visual_joint_inverse_v1.json).
 Use `--architecture spatial_joint --inverse-loss-weight 1` with the visual
