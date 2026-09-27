@@ -73,6 +73,7 @@ class ScreenState:
     # In-memory only. A 16x16 frame can still reveal screen content, so it is
     # never included in to_dict(), logs, planner context, or persisted state.
     world_embedding: list[float] = field(default_factory=list, repr=False)
+    screen_bounds: tuple[int, int, int, int] | None = field(default=None, repr=False)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -180,6 +181,7 @@ class ScreenVisionAgent:
         self._visual_delta_threshold: float = 100.0  # Raised to ignore minor UI noise
         self._last_frame_array = None
         self._current_world_embedding: list[float] = []
+        self._current_screen_bounds: tuple[int, int, int, int] | None = None
 
     def set_interval(self, interval_seconds: float) -> None:
         """Update the capture cadence while keeping it inside safe bounds."""
@@ -282,6 +284,7 @@ class ScreenVisionAgent:
         async with self._capture_lock:
             previous_hash = self._last_hash
             self._current_world_embedding = []
+            self._current_screen_bounds = None
             screen_hash = await self._capture_screenshot_hash()
 
             # The screenshot helper updates _last_hash while computing frame deltas.
@@ -296,6 +299,7 @@ class ScreenVisionAgent:
             screen_hash=screen_hash,
             changed_from_last=changed,
             world_embedding=list(self._current_world_embedding),
+            screen_bounds=self._current_screen_bounds,
         )
 
         # Optional metadata-only description; raw pixels are not sent to a model.
@@ -349,6 +353,9 @@ class ScreenVisionAgent:
             pil_img = pil_img.resize((64, 64)).convert("L")
             current_frame = np.array(pil_img, dtype=np.float32)
             self._current_world_embedding = _world_embedding_from_frame(current_frame)
+            self._current_screen_bounds = (
+                monitor["left"], monitor["top"], monitor["width"], monitor["height"]
+            )
 
             if getattr(self, "_last_frame_array", None) is None:
                 self._last_frame_array = current_frame
@@ -456,10 +463,13 @@ class ScreenVisionAgent:
             return None
         if not 0 <= age <= max_age_seconds:
             return None
-        return {
+        observation = {
             "latent_embedding": list(current.world_embedding),
             "screen_observed_at": current.timestamp,
         }
+        if current.screen_bounds is not None:
+            observation["screen_bounds"] = current.screen_bounds
+        return observation
 
     async def capture_world_feature_now(self) -> dict[str, Any] | None:
         """Capture a fresh feature in memory for an explicitly enabled recorder.

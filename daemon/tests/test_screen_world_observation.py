@@ -19,14 +19,19 @@ def test_frame_feature_is_bounded_and_uses_current_pixels() -> None:
 
 def test_world_observation_requires_fresh_running_capture_and_stays_private() -> None:
     agent = ScreenVisionAgent()
-    state = ScreenState(timestamp=datetime.now(UTC).isoformat(), world_embedding=[0.5] * 256)
+    state = ScreenState(
+        timestamp=datetime.now(UTC).isoformat(), world_embedding=[0.5] * 256,
+        screen_bounds=(10, 20, 1920, 1080),
+    )
     agent.get_context().add(state)
     assert agent.get_world_observation() is None
     agent._running = True
     observation = agent.get_world_observation()
     assert observation is not None
     assert observation["latent_embedding"] == [0.5] * 256
+    assert observation["screen_bounds"] == (10, 20, 1920, 1080)
     assert "world_embedding" not in state.to_dict()
+    assert "screen_bounds" not in state.to_dict()
     observation["latent_embedding"][0] = 0.9
     assert state.world_embedding[0] == 0.5
     agent.pause()

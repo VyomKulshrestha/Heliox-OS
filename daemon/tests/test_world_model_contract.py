@@ -7,6 +7,7 @@ from pilot.actions import (
     DownloadParams,
     EmptyParams,
     FileParams,
+    MouseParams,
     ProcessParams,
     ServiceParams,
     ShellCommandParams,
@@ -194,24 +195,30 @@ def _write_jepa_weights(
     action_types: list[str] | None = None,
     training_samples: int = 128,
     validation_error: float = 0.2,
+    geometry: bool = False,
 ) -> None:
     import numpy as np
 
     action_count = len(tuple(ActionType))
-    np.savez(
-        path,
-        state_weight=np.eye(3, dtype=np.float32),
-        action_weight=np.full((action_count, 3), 0.2, dtype=np.float32),
-        bias=np.zeros(3, dtype=np.float32),
-        action_types=np.array(
+    payload = {
+        "state_weight": np.eye(3, dtype=np.float32),
+        "action_weight": np.full((action_count, 3), 0.2, dtype=np.float32),
+        "bias": np.zeros(3, dtype=np.float32),
+        "action_types": np.array(
             action_types or [action_type.value for action_type in ActionType],
             dtype=np.str_,
         ),
-        model_version=np.array("ui-jepa-test-v1"),
-        training_samples=np.array(training_samples),
-        validation_error=np.array(validation_error),
-        validated_for_gating=np.array(validated),
-    )
+        "model_version": np.array("ui-jepa-test-v1"),
+        "training_samples": np.array(training_samples),
+        "validation_error": np.array(validation_error),
+        "validated_for_gating": np.array(validated),
+    }
+    if geometry:
+        payload["action_geometry_version"] = np.array(UiJepaPredictor.ACTION_GEOMETRY_VERSION)
+        payload["action_geometry_weight"] = np.array(
+            [[0.5, 0.0, 0.0], [0.0, 0.5, 0.0]], dtype=np.float32
+        )
+    np.savez(path, **payload)
 
 
 def test_ui_jepa_is_honestly_unavailable_without_weights(tmp_path) -> None:
@@ -305,6 +312,7 @@ def test_ui_jepa_gating_requires_quality_metadata(tmp_path) -> None:
         validated=True,
         training_samples=20,
         validation_error=0.8,
+        geometry=True,
     )
 
     predictor = UiJepaPredictor(weights)
@@ -317,12 +325,64 @@ def test_ui_jepa_gating_requires_quality_metadata(tmp_path) -> None:
 
 def test_ui_jepa_gating_accepts_bound_validated_artifact(tmp_path) -> None:
     weights = tmp_path / "ui_jepa.npz"
-    _write_jepa_weights(weights, validated=True)
+    _write_jepa_weights(weights, validated=True, geometry=True)
 
     predictor = UiJepaPredictor(weights)
 
     assert predictor.validated_for_gating is True
     assert predictor.status()["gating_rejection_reasons"] == []
+    assert predictor.status()["gating_action_types"] == [
+        "mouse_click", "mouse_double_click", "mouse_right_click"
+    ]
+
+
+def test_legacy_action_type_only_artifact_cannot_gate_clicks(tmp_path) -> None:
+    weights = tmp_path / "ui_jepa.npz"
+    _write_jepa_weights(weights, validated=True)
+    predictor = UiJepaPredictor(weights)
+
+    assert predictor.is_loaded is True
+    assert predictor.validated_for_gating is False
+    assert "cannot distinguish click locations" in predictor.status()["gating_rejection_reasons"][0]
+
+
+def test_geometry_bound_predictor_distinguishes_click_targets(tmp_path) -> None:
+    weights = tmp_path / "ui_jepa.npz"
+    _write_jepa_weights(weights, validated=True, geometry=True)
+    predictor = UiJepaPredictor(weights)
+    state = _state()
+    state.ui.update(latent_embedding=[0.1, 0.2, 0.3], screen_bounds=(0, 0, 100, 100))
+    left = Action(action_type=ActionType.MOUSE_CLICK, parameters=MouseParams(x=25, y=25))
+    right = Action(action_type=ActionType.MOUSE_CLICK, parameters=MouseParams(x=75, y=75))
+
+    first = predictor.predict_optional(state, left)
+    second = predictor.predict_optional(state, right)
+    assert first is not None and second is not None
+    assert first.predicted_state.ui["latent_embedding"] != second.predicted_state.ui["latent_embedding"]
+    assert predictor.predict_optional(_state(), left) is None
+    assert predictor.predict_optional(state, Action(
+        action_type=ActionType.MOUSE_CLICK, parameters=MouseParams(x=150, y=25)
+    )) is None
+    assert predictor.predict_optional(state, Action(
+        action_type=ActionType.MOUSE_CLICK, parameters=MouseParams(x=0, y=0)
+    )) is None
+    browser = predictor.predict_optional(state, _action_for_jepa())
+    assert browser is not None and browser.risk_evidence == ()
+
+
+def test_geometry_artifact_requires_exact_feature_contract(tmp_path) -> None:
+    import numpy as np
+
+    weights = tmp_path / "ui_jepa.npz"
+    _write_jepa_weights(weights, geometry=True)
+    with np.load(weights, allow_pickle=False) as data:
+        payload = {key: data[key] for key in data.files}
+    payload["action_geometry_version"] = np.array("unknown-feature-v1")
+    np.savez(weights, **payload)
+
+    predictor = UiJepaPredictor(weights)
+    assert predictor.is_loaded is False
+    assert "geometry version" in predictor.status()["load_error"]
 
 
 def test_hybrid_model_fuses_visual_and_structured_predictions(tmp_path) -> None:

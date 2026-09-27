@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 import numpy as np
 
-from pilot.actions import ActionType
+from pilot.actions import ActionType, MouseParams
 
 if TYPE_CHECKING:
     from pilot.actions import Action
@@ -486,11 +486,18 @@ class UiJepaPredictor:
 
     MIN_GATING_SAMPLES = 100
     MAX_GATING_VALIDATION_ERROR = 0.35
+    ACTION_GEOMETRY_VERSION = "screen-point-v1"
+    POINTER_ACTIONS = {
+        ActionType.MOUSE_CLICK,
+        ActionType.MOUSE_DOUBLE_CLICK,
+        ActionType.MOUSE_RIGHT_CLICK,
+    }
 
     def __init__(self, weights_path: str | Path | None = None) -> None:
         self._weights_path = Path(weights_path) if weights_path else Path(__file__).with_name("ui_jepa_weights.npz")
         self._state_weight: np.ndarray | None = None
         self._action_weight: np.ndarray | None = None
+        self._action_geometry_weight: np.ndarray | None = None
         self._bias: np.ndarray | None = None
         self._model_version = "ui-jepa-unavailable"
         self._training_samples = 0
@@ -518,6 +525,11 @@ class UiJepaPredictor:
             "validation_error": self._validation_error,
             "validated_for_gating": self._validated_for_gating,
             "action_vocabulary_bound": self._action_vocabulary_bound,
+            "action_geometry_bound": self._action_geometry_weight is not None,
+            "gating_action_types": (
+                sorted(action.value for action in self.POINTER_ACTIONS)
+                if self._validated_for_gating else []
+            ),
             "latent_dimension": latent_dim,
             "mode": "gating" if self._validated_for_gating else "shadow",
             "load_error": self._load_error,
@@ -529,6 +541,7 @@ class UiJepaPredictor:
             with np.load(self._weights_path, allow_pickle=False) as data:
                 state_weight = data["state_weight"]
                 action_weight = data["action_weight"]
+                geometry_weight = data["action_geometry_weight"] if "action_geometry_weight" in data.files else None
                 bias = data["bias"]
                 expected_actions = tuple(action_type.value for action_type in ActionType)
                 stored_actions = (
@@ -549,8 +562,21 @@ class UiJepaPredictor:
                 ):
                     self._load_error = "artifact tensor shapes or values are invalid"
                     return
+                if geometry_weight is not None:
+                    geometry_version = (
+                        str(data["action_geometry_version"].item())
+                        if "action_geometry_version" in data.files else ""
+                    )
+                    if (geometry_version != self.ACTION_GEOMETRY_VERSION
+                            or geometry_weight.shape != (2, state_weight.shape[0])
+                            or not np.all(np.isfinite(geometry_weight))):
+                        self._load_error = "artifact action geometry version, shape, or values are invalid"
+                        return
                 self._state_weight = state_weight.astype(np.float32)
                 self._action_weight = action_weight.astype(np.float32)
+                self._action_geometry_weight = (
+                    geometry_weight.astype(np.float32) if geometry_weight is not None else None
+                )
                 self._bias = bias.astype(np.float32)
                 self._model_version = (
                     str(data["model_version"].item())[:120] if "model_version" in data.files else "ui-jepa-unversioned"
@@ -572,6 +598,8 @@ class UiJepaPredictor:
                 reasons: list[str] = []
                 if not requested_gating:
                     reasons.append("artifact is designated for shadow evaluation")
+                if self._action_geometry_weight is None:
+                    reasons.append("artifact cannot distinguish click locations for gating")
                 if self._training_samples < self.MIN_GATING_SAMPLES:
                     reasons.append(f"training sample count is below {self.MIN_GATING_SAMPLES}")
                 if self._validation_error is None:
@@ -600,7 +628,28 @@ class UiJepaPredictor:
             return None
 
         action_index = tuple(ActionType).index(candidate_action.action_type)
-        predicted_latent = np.tanh(state @ self._state_weight + self._action_weight[action_index] + self._bias)
+        action_offset = self._action_weight[action_index].copy()
+        geometry_used = False
+        if candidate_action.action_type in self.POINTER_ACTIONS and self._action_geometry_weight is not None:
+            if not isinstance(candidate_action.parameters, MouseParams) or candidate_action.parameters.relative:
+                return None
+            # Zero/zero is an executor sentinel for a detected target, not a screen point.
+            if (candidate_action.use_previous_output
+                    or (candidate_action.action_type == ActionType.MOUSE_CLICK
+                        and candidate_action.parameters.x == candidate_action.parameters.y == 0)):
+                return None
+            bounds = current_state.ui.get("screen_bounds")
+            if (not isinstance(bounds, (tuple, list)) or len(bounds) != 4
+                    or any(not isinstance(value, (int, float)) or not np.isfinite(value) for value in bounds)
+                    or bounds[2] <= 0 or bounds[3] <= 0):
+                return None
+            x = (candidate_action.parameters.x - bounds[0]) / bounds[2]
+            y = (candidate_action.parameters.y - bounds[1]) / bounds[3]
+            if not 0 <= x <= 1 or not 0 <= y <= 1:
+                return None
+            action_offset += np.asarray((x, y), dtype=np.float32) @ self._action_geometry_weight
+            geometry_used = True
+        predicted_latent = np.tanh(state @ self._state_weight + action_offset + self._bias)
         delta_norm = float(np.linalg.norm(predicted_latent - state))
         state_norm = float(np.linalg.norm(state))
         predicted_norm = float(np.linalg.norm(predicted_latent))
@@ -629,7 +678,7 @@ class UiJepaPredictor:
             browser=deepcopy(current_state.browser),
         )
         risk_evidence: tuple[RiskEvidence, ...] = ()
-        if self._validated_for_gating and delta_norm >= 1.0:
+        if self._validated_for_gating and geometry_used and delta_norm >= 1.0:
             risk_evidence = (
                 RiskEvidence(
                     "ui_jepa",
