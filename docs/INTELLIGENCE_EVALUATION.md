@@ -889,8 +889,11 @@ its weighted error was 0.148 versus 0.00028 for leaving the screen unchanged.
 The numeric protocol gates passed, but this external-validity failure blocks
 promotion. No research weights were connected to Heliox's live world model.
 
-An opt-in local recorder can collect after/before 16×16 pairs around approved
-Heliox mouse actions. Its explicit offline trainer holds decrypted features
+An opt-in local recorder can collect before/after 16×16 pairs around approved
+Heliox mouse actions and consented manual clicks. Manual capture keeps only a
+rolling in-memory pre-feature while both manual and visual options are enabled;
+stale or interrupted pairs are excluded. Its explicit offline trainer holds
+decrypted features
 in memory, splits by whole recording, evaluates unchanged and shuffled-action
 controls, and encrypts its derived weights. Recording is off by default; no
 real-desktop dataset or promotion result is claimed yet. See
