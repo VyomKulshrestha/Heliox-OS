@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "purpose": "research_only_task_disjoint_terminal_reward_ranker",
+  "source_repo": "Farama-Foundation/MiniWoB-plusplus",
+  "source_commit": "33c3b4ddef8c6eb67c57a29663d844b1eda7e614",
+  "collector": "scripts.collect_miniwob_branches",
+  "seed_start": 7200,
+  "samples_per_task": 30,
+  "max_candidates": 12,
+  "train_tasks": ["click-button", "click-link", "click-color", "click-shape"],
+  "validation_tasks": ["click-test-2", "click-widget"],
+  "eval_tasks": ["click-test-transfer", "click-shades", "click-tab"],
+  "feature_model": "Qwen/Qwen3-0.6B",
+  "feature_revision": "c1899de289a04d12100db370d81485cdf75e47ca",
+  "feature_prompt_version": "miniwob_visible_action_v1",
+  "feature_max_length": 1024,
+  "feature_batch_size": 1,
+  "candidate_penalties": [0.001, 0.01, 0.1, 1.0, 10.0],
+  "minimum_contrast_pairs": {"train": 30, "validation": 10, "eval": 15},
+  "minimum_eval_pairs_per_task": 5,
+  "success_criterion": "The validation-selected ranker must beat randomized-first, goal-match, and goal-grounded policies on every qualifying evaluation task, with at least five observed reward-contrast pairs per task. No task may regress against any baseline.",
+  "promotion": "none; synthetic one-step replay is not real desktop behavior, a live model, execution authority, or Jev parity"
+}
