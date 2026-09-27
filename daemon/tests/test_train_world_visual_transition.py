@@ -15,6 +15,8 @@ from scripts.train_world_visual_transition import (
     merge_recordings_with_shared_states,
     metrics,
     paired_counterfactual_permutation,
+    paired_group_indices,
+    pairwise_transition_loss,
     within_action_permutation,
 )
 
@@ -124,12 +126,23 @@ def test_counterfactual_permutation_requires_same_state_distinct_outcomes() -> N
         "action": actions,
     }
     assert paired_counterfactual_permutation(partition).tolist() == [1, 0, 3, 2]
+    assert paired_group_indices(partition).tolist() == [[0, 1], [2, 3]]
     partition["action"][1, 1] = 0
     partition["action"][1, 2] = 1
     assert paired_counterfactual_permutation(partition).tolist() == [1, 0, 3, 2]
     partition["state"][1, 0] = 0.5
     with pytest.raises(ValueError, match="one state"):
         paired_counterfactual_permutation(partition)
+
+
+def test_pairwise_loss_requires_action_specific_outcome_difference() -> None:
+    target = np.array([[0.0, 1.0], [1.0, 0.0]])
+    matched = pairwise_transition_loss(target, target)
+    ignored = pairwise_transition_loss(np.full_like(target, 0.5), target)
+    assert matched == 0
+    assert ignored > 0
+    with pytest.raises(ValueError, match="aligned action pairs"):
+        pairwise_transition_loss(target[:1], target[:1])
 
 
 def test_private_samples_split_by_recording_without_plaintext_files() -> None:

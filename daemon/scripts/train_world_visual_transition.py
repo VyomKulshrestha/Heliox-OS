@@ -159,6 +159,23 @@ def paired_counterfactual_permutation(partition: dict[str, np.ndarray]) -> np.nd
     return permutation
 
 
+def paired_group_indices(partition: dict[str, np.ndarray]) -> np.ndarray:
+    """Return verified alternatives side by side for action-specific training."""
+    permutation = paired_counterfactual_permutation(partition)
+    first = np.flatnonzero(np.arange(len(permutation)) < permutation)
+    return np.column_stack((first, permutation[first]))
+
+
+def pairwise_transition_loss(predicted, target):
+    """Penalize failure to distinguish observed outcomes from one prestate."""
+    if predicted.shape != target.shape or len(predicted) < 2 or len(predicted) % 2:
+        raise ValueError("Pairwise transition loss requires aligned action pairs")
+    expected = target[0::2] - target[1::2]
+    observed = predicted[0::2] - predicted[1::2]
+    scale = (expected ** 2).mean(axis=1) + 1e-4
+    return (((observed - expected) ** 2).mean(axis=1) / scale).mean()
+
+
 RECORDED_ACTION_IDS = {
     "mouse_move": 0,
     "mouse_click": 1,
@@ -268,6 +285,8 @@ def main() -> None:
                         help="Fit a matched state-only baseline with action inputs zeroed")
     parser.add_argument("--transition-scale-power", type=float, default=0.0,
                         help="Normalize per-example loss by unchanged-screen error to this power (0..1)")
+    parser.add_argument("--pairwise-loss-weight", type=float, default=0.0,
+                        help="Fit distinct observed outcomes from matched counterfactual actions")
     parser.add_argument("--epochs", type=int, default=80)
     parser.add_argument("--action-permutations", type=int, default=10)
     parser.add_argument("--seed", type=int, default=20260926)
@@ -279,6 +298,8 @@ def main() -> None:
                  or not args.additional_features.is_file() or not args.additional_source_report.is_file()))
             or not np.isfinite(args.transition_scale_power)
             or not 0 <= args.transition_scale_power <= 1
+            or not np.isfinite(args.pairwise_loss_weight)
+            or not 0 <= args.pairwise_loss_weight <= 10
             or args.report.exists() or args.weights.exists() or args.epochs < 1
             or args.action_permutations < 1):
         parser.error("Use existing pinned features, fresh outputs, and positive epochs")
@@ -311,6 +332,8 @@ def main() -> None:
             additional_metadata = json.loads(args.additional_source_report.read_text(encoding="utf-8"))
             counterfactual_pairs = (counterfactual_pairs
                                     and additional_metadata.get("counterfactual_pairs") is True)
+    if args.pairwise_loss_weight and not counterfactual_pairs:
+        parser.error("Pairwise loss requires verified counterfactual action pairs")
     split_basis = "recording_and_exact_pre_screen" if recorded_store else source_metadata.get("split_basis", "episode")
     if args.additional_features:
         split_basis += "_with_additional_fit_validation_source"
@@ -333,6 +356,9 @@ def main() -> None:
     device = torch.device("cuda:0" if args.device == "cuda" else "cpu")
     arrays = {split: {key: torch.from_numpy(value).to(device) for key, value in partition.items()
                       if key != "groups"} for split, partition in rows.items()}
+    pair_indices = ({split: torch.from_numpy(paired_group_indices(rows[split])).to(device)
+                     for split in ("train", "validation")}
+                    if args.pairwise_loss_weight else {})
     if args.architecture in {"spatial", "spatial_global"}:
         model = nn.Sequential(
             nn.Conv2d(channels + (12 if args.architecture == "spatial_global" else 10),
@@ -364,6 +390,14 @@ def main() -> None:
             error = error / baseline.clamp_min(1e-4).pow(args.transition_scale_power)
         return error.mean()
 
+    def objective(predicted, partition):
+        loss = training_loss(predicted, partition)
+        if args.pairwise_loss_weight:
+            loss = loss + args.pairwise_loss_weight * pairwise_transition_loss(
+                predicted, partition["target"]
+            )
+        return loss
+
     def predict(partition: dict, *, ablate_action: bool = False):
         action = (torch.zeros_like(partition["action"])
                   if ablate_action or args.train_without_action else partition["action"])
@@ -389,18 +423,25 @@ def main() -> None:
     train = arrays["train"]
     for epoch in range(args.epochs):
         model.train()
-        for indices in torch.randperm(len(train["state"]), device=device).split(64):
+        batches = (pair_indices["train"][torch.randperm(len(pair_indices["train"]), device=device)]
+                   .split(32) if args.pairwise_loss_weight else
+                   torch.randperm(len(train["state"]), device=device).split(64))
+        for selected in batches:
+            indices = selected.reshape(-1)
             batch = {key: value[indices] for key, value in train.items()}
             output = predict(batch)
-            loss = training_loss(output, batch)
+            loss = objective(output, batch)
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             optimizer.step()
         model.eval()
         with torch.no_grad():
             validation = arrays["validation"]
+            if args.pairwise_loss_weight:
+                indices = pair_indices["validation"].reshape(-1)
+                validation = {key: value[indices] for key, value in validation.items()}
             output = predict(validation)
-            loss = training_loss(output, validation).item()
+            loss = objective(output, validation).item()
         if loss < best_loss:
             best_loss, best_epoch = loss, epoch + 1
             best_weights = {key: value.detach().cpu().clone() for key, value in model.state_dict().items()}
@@ -471,6 +512,8 @@ def main() -> None:
         "counterfactual_pairs": counterfactual_pairs,
         "trained_without_action": args.train_without_action,
         "transition_scale_power": args.transition_scale_power,
+        "pairwise_loss_weight": args.pairwise_loss_weight,
+        "selected_validation_objective": best_loss,
         "torch_version": torch.__version__, "cudnn_enabled": torch.backends.cudnn.enabled,
         "seed": args.seed, "selected_epoch": best_epoch,
         "action_permutations": args.action_permutations,
