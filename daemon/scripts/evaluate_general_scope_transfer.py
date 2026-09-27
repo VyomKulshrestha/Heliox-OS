@@ -119,6 +119,11 @@ def main() -> None:
         "false_allowances": int(np.sum(predicted & ~gold)),
         "false_warnings": int(np.sum(~predicted & gold)),
         "mean_absolute_probability_gap": float(np.mean(abs(probabilities - teacher))),
+        "results": [{"id": case.id, "gold_in_scope": case.in_scope,
+                     "local_probability": float(local_probability),
+                     "jev_probability": float(jev_probability)}
+                    for case, local_probability, jev_probability
+                    in zip(CASES, probabilities, teacher, strict=True)],
         "limitation": "Previously inspected synthetic scope suite; no fresh Jev calls or live desktop proof.",
     }
     if calibration is not None:
