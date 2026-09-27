@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "purpose": "prospective_local_research_comparison_no_execution_authority",
+  "frozen_at_utc": "2026-09-27 07:30:53 UTC",
+  "training": {
+    "base": "Qwen/Qwen3.5-2B",
+    "initial_checkpoint": "ZefanCai/Open-Jev-2B@0c7aa498b1627be8da4acf34c863ff0ee0a92785",
+    "public_decision_train_rows": 128,
+    "scopejudge_train_rows": 128,
+    "max_input_tokens": 1024,
+    "precision": "NF4 with bfloat16 compute",
+    "jev_api_responses_as_labels": false
+  },
+  "evaluations": {
+    "same_run_public_test_and_ood": "compare baseline and trained by kind; report exclusion counts",
+    "same_run_scopejudge_test": "compare baseline and trained false allowances and false warnings",
+    "archived_jev_ood": {
+      "reference": "qwen_general_jev_comparison_v4.json",
+      "selected_ids_sha256": "51281960c0049591ad0c241bcd8159feefd73b2fe87e4bd262bc3216f3941d13",
+      "comparison_only": true
+    },
+    "fresh_public_ood": {
+      "split": "ood",
+      "selection_seed": 20261001,
+      "rows": 128,
+      "selected_ids_sha256": "5b5e4e7bc941582a02e97fc578233723ef76d85c6401d4994324bebdacde1767",
+      "dataset_sha256": "ba8cb3f95b9121aa73e4b997ac9c350e2ec4dddb972cb5c3086da911f0deb9ef",
+      "overlap_with_archived_jev_selection": 3
+    },
+    "heliox_authored_scope": "diagnostic only because examples were previously inspected"
+  },
+  "promotion_rule": "No runtime promotion from these synthetic or public-data tests. Require prospective task and desktop verification, safety review, and explicit authorization."
+}
