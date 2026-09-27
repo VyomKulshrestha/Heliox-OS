@@ -193,6 +193,11 @@ def main() -> None:
             target = partition["target"][mask]
             groups = partition["groups"][mask]
             by_task[name] = {
+                "scores": {
+                    "unchanged_state": metrics(partition["state"][mask], partition["state"][mask], target),
+                    "correct_action": metrics(correct[mask], partition["state"][mask], target),
+                    "paired_alternative_action": metrics(swapped[mask], partition["state"][mask], target),
+                },
                 "observed_pair_signal": observed_pair_signal(target, groups),
                 "paired_action_diagnostic": paired_action_diagnostic(
                     correct[mask], swapped[mask], partition["state"][mask], target, groups),
