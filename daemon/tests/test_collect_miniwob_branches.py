@@ -1,9 +1,24 @@
 """MiniWoB branch collection refuses unsafe assets and unmatched resets."""
 
+import io
+
 import numpy as np
 import pytest
+from PIL import Image
 
 from scripts import collect_miniwob_branches as collector
+
+
+def test_visual_feature_resolution_is_bounded_and_default_is_unchanged() -> None:
+    image = Image.fromarray(np.full((64, 64), 128, dtype=np.uint8), mode="L")
+    stream = io.BytesIO()
+    image.save(stream, format="PNG")
+    png = stream.getvalue()
+    assert collector.visual_feature(png).shape == (256,)
+    assert collector.visual_feature(png, 64).shape == (4096,)
+    assert np.allclose(collector.visual_feature(png, 64), 128 / 255)
+    with pytest.raises(ValueError, match="16x16 or 64x64"):
+        collector.visual_feature(png, 32)
 
 
 def test_tasks_and_assets_are_bounded_to_the_pinned_virtual_origin() -> None:
@@ -59,7 +74,7 @@ def test_branch_pairs_require_identical_prestate_and_distinct_outcome(monkeypatc
 
     monkeypatch.setattr(collector, "_reset", reset)
     monkeypatch.setattr(
-        collector, "visual_feature", lambda png: np.full(256, png[0], dtype=np.float32)
+        collector, "visual_feature", lambda png, size=16: np.full(size * size, png[0], dtype=np.float32)
     )
     pair, attempted = collector.collect_group(None, None, "task", "seed", 2)
     assert attempted == 2
