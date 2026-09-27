@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "purpose": "preregistered_frozen_seed200_miniwob_action_transfer_check",
+  "status": "candidate_and_protocol_frozen_before_seed200_collection",
+  "source_repo": "Farama-Foundation/MiniWoB-plusplus",
+  "source_commit": "33c3b4ddef8c6eb67c57a29663d844b1eda7e614",
+  "collector": "scripts.collect_miniwob_branches",
+  "seed_start": 200,
+  "samples_per_task": 24,
+  "feature_size": 16,
+  "max_candidates": 8,
+  "tasks": {
+    "train": ["click-button", "click-checkboxes", "click-widget"],
+    "validation": ["click-option"],
+    "eval": ["click-test-2", "click-button-sequence"]
+  },
+  "selected_candidate": {
+    "architecture": "spatial_joint",
+    "inverse_loss_weight": 1.0,
+    "pairwise_focus_weight": 1.0,
+    "model_report_sha256": "265d1417cdfb823287b10064213ff459409b45296715f0f030fd9dc6b33294f5",
+    "weights_sha256": "4ea8a8fbd33a3cead6804900daeed541db4fca26dcd6cfafd03d0943acfaad74"
+  },
+  "matched_forward_only_control": {
+    "model_report_sha256": "fc4ce5e076589c3a14ecdc4d373170a19c8bbb194dcd8f6caedc3da392d17ed4",
+    "weights_sha256": "4fbc451e17332d31ae1c6ca23aabd6011aaceedc27da56e54aa9692fb8f4b304"
+  },
+  "frozen_success_criteria": {
+    "correct_click_wins_on_discriminative_pixels": "at least 20 of 24 eval pairs",
+    "correct_click_wins_on_whole_frame": "at least 18 of 24 eval pairs",
+    "mean_advantage": "positive on both metrics",
+    "relative_control": "selected candidate must beat the forward-only control on discriminative-pixel wins"
+  },
+  "limitations": "This is same-task-family new-seed transfer, not a new environment, real desktop, safety, or Jev-parity test."
+}
