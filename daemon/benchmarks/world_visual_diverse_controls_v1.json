@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "purpose": "research_only_diverse_ui_controls_and_inverse_dynamics_diagnostic",
+  "source": {
+    "repository": "https://github.com/Farama-Foundation/MiniWoB-plusplus",
+    "commit": "33c3b4ddef8c6eb67c57a29663d844b1eda7e614",
+    "additional_archive_sha256": "28fd3c368f1f2b46836d416b41bc92e5d1b9ef89eccf1a27f2b1527b994ce1ee",
+    "additional_report_sha256": "56469c8292de8d4618a5f129bdb8c026981f263f843dda55f41fff7d86c42719",
+    "additional_train_families": [
+      "click-checkboxes-large", "click-checkboxes-soft", "click-checkboxes-transfer",
+      "click-test-transfer", "click-link", "click-shape", "click-menu", "click-tab"
+    ],
+    "additional_verified_train_groups": 93,
+    "additional_skipped_unstable_train_resets": 2,
+    "combined_training_rows": 310,
+    "combined_validation_rows": 72,
+    "original_held_out_rows": 96,
+    "fresh_seed_held_out_rows": 48
+  },
+  "protocol": {
+    "architecture": "spatial_global",
+    "feature_shape": [1, 16, 16],
+    "seed": 20260927,
+    "epochs": 80,
+    "transition_scale_power": 1.0,
+    "device": "cuda:0",
+    "selection": "lowest combined validation objective; held-out task-family and fresh-seed rows not used for checkpoint selection",
+    "metric": "changed-pixel-weighted MSE; lower is better"
+  },
+  "forward_runs": [
+    {
+      "pairwise_loss_weight": 0.0,
+      "report_sha256": "7bb9b047e9f075a5071245b3facc9cf54259e4d186e69dcf978e6047330d8d74",
+      "weights_sha256": "c9aa63a61964f6915398fa35422616a9188a5b1cab3c2f23d6ef3b9743d52c28",
+      "held_out_correct": 0.3892407597672765,
+      "held_out_paired_wrong_click": 0.3877775757322661,
+      "fresh_correct": 0.3722221167082885,
+      "fresh_paired_wrong_click": 0.370858928181109,
+      "fresh_correct_click_wins_of_24": 10
+    },
+    {
+      "pairwise_loss_weight": 1.0,
+      "report_sha256": "4bb2bf22e4f54ecf356c2ce86afbfde27b8a85234dcd2aa3553fedb4c4d1c82e",
+      "weights_sha256": "07f58e85d9680f3040740a2c0cf546061c0549fd409c1bf192df15b02b3156a5",
+      "held_out_correct": 0.5431006845067224,
+      "held_out_paired_wrong_click": 0.5431029134864894,
+      "fresh_correct": 0.5423950850509371,
+      "fresh_paired_wrong_click": 0.5423969744652273,
+      "fresh_correct_click_wins_of_24": 18,
+      "fresh_ties": 1
+    }
+  ],
+  "inverse_diagnostic": {
+    "source": "original 124-train-row archive, not the expanded archive",
+    "source_features_sha256": {
+      "16x16": "2becf508ee06ca101657fa113393050c8a4325bf6e189e198cf91cfe6a791b20",
+      "64x64": "1111914a3079aa0878eca8fa62f74f15ce3fc89b6696ffb86c0807c334f43999"
+    },
+    "input": "observed before/after screen features to predict normalized click coordinates",
+    "action_type_baseline": "all selected rows are clicks, so 100% action-type accuracy is uninformative",
+    "held_out_coordinate_mae": {
+      "16x16_before_and_after": 0.1704879254102707,
+      "16x16_before_only": 0.1800047904253006,
+      "64x64_before_and_after": 0.18046815693378448,
+      "64x64_before_only": 0.19771981239318848
+    }
+  },
+  "finding": "General pointer-affordance extraction adds four previously missed task families. More varied training lowers pixel error but does not produce robust action grounding: the default model still prefers paired wrong clicks, and the pairwise model's positive fresh-seed mean advantage is only 0.000001889 weighted MSE. Observed after-screens modestly improve inverse localization; resolution alone does not solve it.",
+  "research_context": [
+    "https://arxiv.org/abs/2602.17365",
+    "https://github.com/xyliugo/gui-state-transition-pretraining"
+  ],
+  "limitations": [
+    "MiniWoB selected first-click pairs are not representative real desktop trajectories or multi-step task success.",
+    "Additional task families and the original held-out families were inspected during prior exploratory work; this is not an untouched preregistered benchmark.",
+    "The published state-transition pretraining recipe uses substantially larger data and a multimodal backbone; its results cannot be attributed to this small grayscale model.",
+    "No research weight is loaded by the live predictor or authorized to gate actions; no Jev parity, independent safety, or real desktop transfer is established."
+  ],
+  "promoted_to_runtime": false
+}

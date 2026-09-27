@@ -731,6 +731,19 @@ the held-out screen unchanged. It is not the live artifact format, but rejects
 the shortcut of treating coordinate inputs plus a small linear fit as a
 validated world model.
 
+Following the action-transition emphasis in the
+[Computer-Using World Model paper](https://arxiv.org/abs/2602.17365) and
+[State Transition Pretraining code](https://github.com/xyliugo/gui-state-transition-pretraining),
+the [diverse-controls probe](../daemon/benchmarks/world_visual_diverse_controls_v1.json)
+expanded MiniWoB collection from native form controls to visible pointer
+affordances, adding four task families and 93 verified training pairs. A
+CUDA fit lowered held-out pixel error but still scored a wrong paired click
+better than the correct one (0.387778 versus 0.389241 weighted MSE). A
+pairwise objective reversed that ordering only by about 0.000002 on fresh
+seeds, too small for promotion. Inverse localization gained only modestly
+from the after-screen, and all sampled actions had the same click type.
+This remains small synthetic evidence, not a reproduction of either paper.
+
 To repeat with fresh ignored output paths, start the local Vite UI with
 `tauri-app/ui/node_modules/.bin/vite.cmd --host 127.0.0.1 --port 1420`, then
 from `daemon` run `python -m scripts.collect_heliox_ui_transitions --help`,
