@@ -1628,3 +1628,17 @@ fit, but their GPU ridge next-screen predictor had worse absolute error than
 coordinate-only and state-only baselines on both held-out sites. It won only
 2/4 paired comparisons on one site. This leaves the semantic/action-conditioned
 research line unpromoted; the live rule-based authority boundary is unchanged.
+
+The [Dream-RSI paper](https://arxiv.org/abs/2609.14858) addresses a different
+problem: improving an exploration policy by replaying **observed** branches of
+past discovery trees, not training a screenshot model or simulating unseen
+actions. A bounded [Heliox exact-branch replay probe](../daemon/benchmarks/dream_replay_results_v1.md)
+tested this principle on public, independently reset MiniWoB clicks. Its first
+adequately covered frozen run failed to improve over fixed-first (11/23 versus
+10/23). A second, task-disjoint run selected a generic control-grounded policy
+on validation and reached 30/40 versus 24/40 fixed-first on held-out pairs.
+However, the label-only policy also reached 30/40, and the gain was confined
+to link labels; the new DOM-kind feature provided no held-out lift. The probe
+uses no private desktop data and trains no weights. It does not reproduce
+Dream-RSI's long-horizon loop or establish Jev parity, desktop transfer, or
+any grounds for live-model promotion.
