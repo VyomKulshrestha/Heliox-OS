@@ -245,15 +245,20 @@ class RecordedWorkflowStore:
             session = self._active
             if not session or not session["capture_manual"] or not session["capture_visual"]:
                 return
-            if self._manual_visual_task is not None:
+            if self._manual_visual_task is not None and not self._manual_visual_task.done():
                 raise RuntimeError("Manual visual capture is already active")
             self._manual_visual_loop = asyncio.get_running_loop()
-            self._manual_visual_task = self._manual_visual_loop.create_task(self._sample_manual_visual())
+            self._manual_visual_task = self._manual_visual_loop.create_task(
+                self._sample_manual_visual(session["id"])
+            )
 
-    async def _sample_manual_visual(self) -> None:
+    async def _sample_manual_visual(self, session_id: str) -> None:
         warned = False
         try:
             while True:
+                with self._session_lock:
+                    if self._active is None or self._active["id"] != session_id:
+                        return
                 try:
                     feature = await self._capture_feature() if self._capture_feature else None
                     values = _feature_bytes(feature) if feature else None
@@ -262,7 +267,8 @@ class RecordedWorkflowStore:
                         and all(isinstance(value, int) and not isinstance(value, bool) for value in bounds)
                         and bounds[2] > 0 and bounds[3] > 0):
                         with self._session_lock:
-                            if self._active is not None and not self._manual_suppression:
+                            if (self._active is not None and self._active["id"] == session_id
+                                and not self._manual_suppression):
                                 self._manual_feature = (time.monotonic(), values, bounds)
                     warned = False
                 except Exception:
@@ -274,7 +280,8 @@ class RecordedWorkflowStore:
             raise
         finally:
             with self._session_lock:
-                self._manual_feature = None
+                if self._active is None or self._active["id"] == session_id:
+                    self._manual_feature = None
 
     async def stop_manual_visual_capture(self, *, save: bool) -> None:
         task = self._manual_visual_task

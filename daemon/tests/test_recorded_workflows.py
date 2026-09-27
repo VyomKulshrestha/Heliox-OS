@@ -315,3 +315,34 @@ async def test_manual_visual_sampler_never_starts_without_both_opt_ins(tmp_path)
     assert captures == 0
     await store.stop_manual_visual_capture(save=False)
     store.stop(save=False)
+
+
+@pytest.mark.asyncio
+async def test_manual_visual_sampler_cannot_cross_recording_sessions(tmp_path) -> None:
+    captures = 0
+
+    async def capture() -> dict:
+        nonlocal captures
+        captures += 1
+        return {"embedding": [0.5] * 256, "left": 0, "top": 0,
+                "width": 100, "height": 100}
+
+    store = RecordedWorkflowStore(
+        tmp_path / "recordings.enc", key_provider=lambda: b"k" * 32, capture_feature=capture
+    )
+    store.start(name="First", consent=True, capture_manual=True, manual_consent=True, capture_visual=True)
+    store.start_manual_visual_capture()
+    for _ in range(50):
+        if captures:
+            break
+        await asyncio.sleep(0.01)
+    store.stop(save=False)
+    await asyncio.wait_for(store._manual_visual_task, timeout=2)
+    count_after_stop = captures
+    store.start(name="Second", consent=True, capture_manual=True, manual_consent=True,
+                capture_visual=True)
+    await asyncio.sleep(0.25)
+    assert captures == count_after_stop
+    store.start_manual_visual_capture()
+    await store.stop_manual_visual_capture(save=False)
+    store.stop(save=False)
