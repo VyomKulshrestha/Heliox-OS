@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "purpose": "research_only_action_grounding_objective_test",
+  "source": {
+    "repository": "https://github.com/Farama-Foundation/MiniWoB-plusplus",
+    "commit": "33c3b4ddef8c6eb67c57a29663d844b1eda7e614",
+    "feature_archive_sha256": "75d424a68d14d0d685b6888b2e9b59847513c96f3e5d1b293919353d87ea5557",
+    "split": "task_family",
+    "pairs": {"train": 32, "validation": 12, "eval": 24}
+  },
+  "hardware": {
+    "gpu": "NVIDIA GeForce RTX 4060 Laptop GPU",
+    "device": "cuda:0",
+    "torch": "2.6.0+cu124"
+  },
+  "protocol": {
+    "architecture": "spatial_global",
+    "seed": 20260927,
+    "epochs": 80,
+    "transition_scale_power": 1.0,
+    "action_permutations": 20,
+    "pairwise_objective": "Relative squared error between predicted and observed differences for two actions from one verified prestate",
+    "selection": "Lowest combined validation objective; evaluation not used for checkpoint selection"
+  },
+  "runs": [
+    {
+      "name": "original_objective_recheck",
+      "pairwise_loss_weight": 0.0,
+      "selected_epoch": 27,
+      "local_report_sha256": "5ae96be0c059a134547c9d3fecd4ef4acc87de2bc59c4373317ac406f12b88da",
+      "local_weights_sha256": "4faf2102b112f29af4b40f02ef1cec71463ad309762141c8d7fbf72cc56035a8",
+      "eval_weighted_mse": {
+        "correct_action": 0.5240939569937507,
+        "paired_alternative": 0.5240997556403185,
+        "no_action": 0.5430127293068224
+      },
+      "eval_correct_action_wins_of_24_pairs": 12
+    },
+    {
+      "name": "pairwise_objective",
+      "pairwise_loss_weight": 1.0,
+      "selected_epoch": 77,
+      "local_report_sha256": "e89ed7c07cff722d03c001e493639fde11c2aab45074310f4fcf1c16b58615b2",
+      "local_weights_sha256": "aec4dd5b5fa8b478cb6e623848691571ae716d5a4b51b519829315611da381e2",
+      "validation_weighted_mse": {
+        "correct_action": 0.00014927717628936,
+        "paired_alternative": 0.000159991487474024
+      },
+      "eval_weighted_mse": {
+        "correct_action": 0.544752907355717,
+        "paired_alternative": 0.5447487164074378,
+        "no_action": 0.5444159295484085
+      },
+      "eval_correct_action_wins_of_24_pairs": 13
+    }
+  ],
+  "finding": "Pairwise supervision improved validation but did not establish held-out action grounding: paired action swaps slightly outperform correct actions, and evaluation pixel error worsens relative to the original objective. The default objective rerun reproduced the earlier correct-action and swap scores exactly.",
+  "research_context": [
+    "https://arxiv.org/abs/2506.09985",
+    "https://www.ecva.net/papers/eccv_2024/papers_ECCV/papers/03523.pdf"
+  ],
+  "limitations": [
+    "This 16x16 grayscale, 136-row selected synthetic archive is unlike the large-scale visual pretraining in the cited work; their results do not transfer to this implementation by citation alone.",
+    "Pairs were selected for distinct visual outcomes, so this is not an unbiased task-success estimate.",
+    "Task-family evaluation was previously inspected. The opt-in loss and weight are exploratory, not a preregistered model selection result.",
+    "No live Heliox model, execution authority, safety gate, real desktop transfer, or Jev parity is established."
+  ],
+  "promoted_to_runtime": false
+}
