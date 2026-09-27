@@ -323,8 +323,10 @@ class StructuredTransitionPredictor:
                     )
                 )
                 path = destination
-            operation = "move_destination" if action_type == ActionType.FILE_MOVE else (
-                action_type.value.removeprefix("file_").removeprefix("download_")
+            operation = (
+                "move_destination"
+                if action_type == ActionType.FILE_MOVE
+                else (action_type.value.removeprefix("file_").removeprefix("download_"))
             )
             effects.append(
                 ExpectedEffect(
@@ -527,8 +529,7 @@ class UiJepaPredictor:
             "action_vocabulary_bound": self._action_vocabulary_bound,
             "action_geometry_bound": self._action_geometry_weight is not None,
             "gating_action_types": (
-                sorted(action.value for action in self.POINTER_ACTIONS)
-                if self._validated_for_gating else []
+                sorted(action.value for action in self.POINTER_ACTIONS) if self._validated_for_gating else []
             ),
             "latent_dimension": latent_dim,
             "mode": "gating" if self._validated_for_gating else "shadow",
@@ -564,12 +565,13 @@ class UiJepaPredictor:
                     return
                 if geometry_weight is not None:
                     geometry_version = (
-                        str(data["action_geometry_version"].item())
-                        if "action_geometry_version" in data.files else ""
+                        str(data["action_geometry_version"].item()) if "action_geometry_version" in data.files else ""
                     )
-                    if (geometry_version != self.ACTION_GEOMETRY_VERSION
-                            or geometry_weight.shape != (2, state_weight.shape[0])
-                            or not np.all(np.isfinite(geometry_weight))):
+                    if (
+                        geometry_version != self.ACTION_GEOMETRY_VERSION
+                        or geometry_weight.shape != (2, state_weight.shape[0])
+                        or not np.all(np.isfinite(geometry_weight))
+                    ):
                         self._load_error = "artifact action geometry version, shape, or values are invalid"
                         return
                 self._state_weight = state_weight.astype(np.float32)
@@ -634,14 +636,19 @@ class UiJepaPredictor:
             if not isinstance(candidate_action.parameters, MouseParams) or candidate_action.parameters.relative:
                 return None
             # Zero/zero is an executor sentinel for a detected target, not a screen point.
-            if (candidate_action.use_previous_output
-                    or (candidate_action.action_type == ActionType.MOUSE_CLICK
-                        and candidate_action.parameters.x == candidate_action.parameters.y == 0)):
+            if candidate_action.use_previous_output or (
+                candidate_action.action_type == ActionType.MOUSE_CLICK
+                and candidate_action.parameters.x == candidate_action.parameters.y == 0
+            ):
                 return None
             bounds = current_state.ui.get("screen_bounds")
-            if (not isinstance(bounds, (tuple, list)) or len(bounds) != 4
-                    or any(not isinstance(value, (int, float)) or not np.isfinite(value) for value in bounds)
-                    or bounds[2] <= 0 or bounds[3] <= 0):
+            if (
+                not isinstance(bounds, (tuple, list))
+                or len(bounds) != 4
+                or any(not isinstance(value, (int, float)) or not np.isfinite(value) for value in bounds)
+                or bounds[2] <= 0
+                or bounds[3] <= 0
+            ):
                 return None
             x = (candidate_action.parameters.x - bounds[0]) / bounds[2]
             y = (candidate_action.parameters.y - bounds[1]) / bounds[3]
@@ -745,9 +752,7 @@ class HybridWorldModel:
         visual_updates = {
             key: deepcopy(value)
             for key, value in visual.predicted_state.ui.items()
-            if key not in structured.predicted_state.ui
-            or key not in current_state.ui
-            or value != current_state.ui[key]
+            if key not in structured.predicted_state.ui or key not in current_state.ui or value != current_state.ui[key]
         }
         fused_state = WorldState(
             observed_at=structured.predicted_state.observed_at,

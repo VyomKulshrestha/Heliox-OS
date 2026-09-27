@@ -89,32 +89,49 @@ def test_file_delete_predicts_absence_and_irreversible_evidence() -> None:
 
 
 def test_file_copy_and_move_predict_distinct_source_destination_effects() -> None:
-    copy = Action(action_type=ActionType.FILE_COPY, target="source.txt",
-                  parameters=FileParams(path="source.txt", destination="copy.txt"))
-    move = Action(action_type=ActionType.FILE_MOVE, target="source.txt",
-                  parameters=FileParams(path="source.txt", destination="moved.txt"))
+    copy = Action(
+        action_type=ActionType.FILE_COPY,
+        target="source.txt",
+        parameters=FileParams(path="source.txt", destination="copy.txt"),
+    )
+    move = Action(
+        action_type=ActionType.FILE_MOVE,
+        target="source.txt",
+        parameters=FileParams(path="source.txt", destination="moved.txt"),
+    )
 
-    copy_effects = [effect for effect in StructuredTransitionPredictor().predict(_state(), copy).expected_effects
-                    if effect.domain == EffectDomain.FILESYSTEM]
-    move_effects = [effect for effect in StructuredTransitionPredictor().predict(_state(), move).expected_effects
-                    if effect.domain == EffectDomain.FILESYSTEM]
+    copy_effects = [
+        effect
+        for effect in StructuredTransitionPredictor().predict(_state(), copy).expected_effects
+        if effect.domain == EffectDomain.FILESYSTEM
+    ]
+    move_effects = [
+        effect
+        for effect in StructuredTransitionPredictor().predict(_state(), move).expected_effects
+        if effect.domain == EffectDomain.FILESYSTEM
+    ]
 
-    assert [(effect.target, effect.after) for effect in copy_effects] == [
-        ("copy.txt", "present_or_updated")]
+    assert [(effect.target, effect.after) for effect in copy_effects] == [("copy.txt", "present_or_updated")]
     assert [(effect.target, effect.after) for effect in move_effects] == [
-        ("source.txt", "absent"), ("moved.txt", "present_or_updated")]
+        ("source.txt", "absent"),
+        ("moved.txt", "present_or_updated"),
+    ]
 
 
 def test_download_predicts_output_file_not_source_url() -> None:
-    action = Action(action_type=ActionType.DOWNLOAD_FILE, target="https://example.invalid/file",
-                    parameters=DownloadParams(url="https://example.invalid/file",
-                                              output_path="downloaded.bin"))
+    action = Action(
+        action_type=ActionType.DOWNLOAD_FILE,
+        target="https://example.invalid/file",
+        parameters=DownloadParams(url="https://example.invalid/file", output_path="downloaded.bin"),
+    )
 
-    effects = [effect for effect in StructuredTransitionPredictor().predict(_state(), action).expected_effects
-               if effect.domain == EffectDomain.FILESYSTEM]
+    effects = [
+        effect
+        for effect in StructuredTransitionPredictor().predict(_state(), action).expected_effects
+        if effect.domain == EffectDomain.FILESYSTEM
+    ]
 
-    assert [(effect.target, effect.after) for effect in effects] == [
-        ("downloaded.bin", "present_or_updated")]
+    assert [(effect.target, effect.after) for effect in effects] == [("downloaded.bin", "present_or_updated")]
 
 
 def test_process_and_service_effects_are_both_exposed() -> None:
@@ -135,16 +152,17 @@ def test_process_and_service_effects_are_both_exposed() -> None:
 
 
 def test_one_shot_command_does_not_claim_known_persistent_process_count() -> None:
-    action = Action(action_type=ActionType.SHELL_COMMAND, target="",
-                    parameters=ShellCommandParams(command="echo ready"))
+    action = Action(
+        action_type=ActionType.SHELL_COMMAND, target="", parameters=ShellCommandParams(command="echo ready")
+    )
 
     prediction = StructuredTransitionPredictor().predict(_state(), action)
-    process_effects = [effect for effect in prediction.expected_effects
-                       if effect.domain == EffectDomain.PROCESS]
+    process_effects = [effect for effect in prediction.expected_effects if effect.domain == EffectDomain.PROCESS]
 
     assert prediction.predicted_state.system["process_count"] == "requires_observation"
     assert [(effect.operation, effect.before, effect.after) for effect in process_effects] == [
-        ("run_transient", 100, "requires_observation")]
+        ("run_transient", 100, "requires_observation")
+    ]
 
 
 def test_unmodeled_read_action_is_honest_about_observation() -> None:
@@ -215,9 +233,7 @@ def _write_jepa_weights(
     }
     if geometry:
         payload["action_geometry_version"] = np.array(UiJepaPredictor.ACTION_GEOMETRY_VERSION)
-        payload["action_geometry_weight"] = np.array(
-            [[0.5, 0.0, 0.0], [0.0, 0.5, 0.0]], dtype=np.float32
-        )
+        payload["action_geometry_weight"] = np.array([[0.5, 0.0, 0.0], [0.0, 0.5, 0.0]], dtype=np.float32)
     np.savez(path, **payload)
 
 
@@ -331,9 +347,7 @@ def test_ui_jepa_gating_accepts_bound_validated_artifact(tmp_path) -> None:
 
     assert predictor.validated_for_gating is True
     assert predictor.status()["gating_rejection_reasons"] == []
-    assert predictor.status()["gating_action_types"] == [
-        "mouse_click", "mouse_double_click", "mouse_right_click"
-    ]
+    assert predictor.status()["gating_action_types"] == ["mouse_click", "mouse_double_click", "mouse_right_click"]
 
 
 def test_legacy_action_type_only_artifact_cannot_gate_clicks(tmp_path) -> None:
@@ -360,12 +374,16 @@ def test_geometry_bound_predictor_distinguishes_click_targets(tmp_path) -> None:
     assert first is not None and second is not None
     assert first.predicted_state.ui["latent_embedding"] != second.predicted_state.ui["latent_embedding"]
     assert predictor.predict_optional(_state(), left) is None
-    assert predictor.predict_optional(state, Action(
-        action_type=ActionType.MOUSE_CLICK, parameters=MouseParams(x=150, y=25)
-    )) is None
-    assert predictor.predict_optional(state, Action(
-        action_type=ActionType.MOUSE_CLICK, parameters=MouseParams(x=0, y=0)
-    )) is None
+    assert (
+        predictor.predict_optional(
+            state, Action(action_type=ActionType.MOUSE_CLICK, parameters=MouseParams(x=150, y=25))
+        )
+        is None
+    )
+    assert (
+        predictor.predict_optional(state, Action(action_type=ActionType.MOUSE_CLICK, parameters=MouseParams(x=0, y=0)))
+        is None
+    )
     browser = predictor.predict_optional(state, _action_for_jepa())
     assert browser is not None and browser.risk_evidence == ()
 
