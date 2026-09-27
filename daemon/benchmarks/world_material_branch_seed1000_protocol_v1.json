@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "purpose": "prospective_material_change_action_conditioning_probe",
+  "selection_note": "Families were selected after exploratory two-seed 900 signal scans. Seed 1000 outcomes and model scores were not inspected before this protocol was committed. This is a targeted public-task study, not an unbiased task-family sample.",
+  "collector": "scripts.collect_miniwob_branches",
+  "source_commit": "33c3b4ddef8c6eb67c57a29663d844b1eda7e614",
+  "train_tasks": ["click-button", "click-collapsible", "click-collapsible-nodelay"],
+  "validation_tasks": ["click-pie-nodelay"],
+  "eval_tasks": ["click-test", "click-scroll-list", "click-shades"],
+  "samples_per_task": 8,
+  "seed_start": 1000,
+  "feature_size": 16,
+  "max_candidates": 8,
+  "candidate": {
+    "architecture": "spatial_global",
+    "pairwise_focus_weight": 1.0,
+    "epochs": 30,
+    "seed": 20260927
+  },
+  "matched_control": "Same architecture, data, epochs, and seed with --train-without-action",
+  "collection_gate": {
+    "minimum_eval_pairs_per_task": 5,
+    "unstable_resets_allowed": 0,
+    "minimum_mean_observed_pair_pixel_mse_per_eval_task": 0.01
+  },
+  "model_gate": {
+    "minimum_whole_frame_correct_action_fraction": 0.75,
+    "positive_mean_whole_frame_margin": true,
+    "candidate_beats_no_action_control_on_eval_weighted_mse": true,
+    "candidate_beats_unchanged_state_on_eval_weighted_mse": true
+  },
+  "limitation": "Public synthetic one-step screenshots; task families were chosen from an exploratory scan. Passing only supports more research and never promotes weights to the live world model or action authority."
+}
