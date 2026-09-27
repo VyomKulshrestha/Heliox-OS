@@ -12,6 +12,8 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from benchmarks.general_decision import PROMPT_STYLES, format_answer, validate_decision  # noqa: E402
+from scripts.evaluate_qwen_instruct_scope import MODEL_ID as OPENJEV_BASE_MODEL  # noqa: E402
+from scripts.evaluate_qwen_instruct_scope import MODEL_REVISION as OPENJEV_BASE_REVISION  # noqa: E402
 from scripts.qwen_model_pin import MODEL, REVISION  # noqa: E402
 from scripts.train_general_decision import encode_rows, score_row  # noqa: E402
 
@@ -37,8 +39,23 @@ def verify_artifact(output_dir: Path, report_path: Path) -> tuple[dict, Path]:
     report = json.loads(report_path.read_text(encoding="utf-8"))
     adapter = output_dir / "adapter"
     head = output_dir / "head.npz"
-    if report["model"] != MODEL or report["revision"] != REVISION:
+    identity = report.get("model"), report.get("revision")
+    if identity not in {(MODEL, REVISION), (OPENJEV_BASE_MODEL, OPENJEV_BASE_REVISION)}:
         raise ValueError("Research report does not match the pinned base model")
+    if identity == (OPENJEV_BASE_MODEL, OPENJEV_BASE_REVISION):
+        from scripts.train_world_scope_qlora import (
+            OPENJEV_ADAPTER_SHA256,
+            OPENJEV_HEAD_SHA256,
+            OPENJEV_REPO,
+            OPENJEV_REVISION,
+        )
+
+        expected = {"repo": OPENJEV_REPO, "revision": OPENJEV_REVISION,
+                    "adapter_sha256": OPENJEV_ADAPTER_SHA256,
+                    "head_sha256": OPENJEV_HEAD_SHA256}
+        if (report.get("backbone_quantization") != "NF4 double quantization"
+                or report.get("initial_checkpoint") != expected):
+            raise ValueError("Open-Jev research report is missing its pinned warm start")
     for path, key in ((adapter / "adapter_model.safetensors", "adapter_sha256"),
                       (head, "head_sha256")):
         if hashlib.sha256(path.read_bytes()).hexdigest() != report[key]:
@@ -52,15 +69,16 @@ def score_requests(payloads: list[dict], output_dir: Path, report_path: Path) ->
     from huggingface_hub import snapshot_download
     from peft import PeftModel
     from torch import nn
-    from transformers import AutoModelForCausalLM, AutoTokenizer
+    from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, Qwen3_5ForCausalLM
     from transformers.utils import logging as transformers_logging
 
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is required for this research adapter")
     transformers_logging.disable_progress_bar()
     report, head_path = verify_artifact(output_dir, report_path)
+    model_name, model_revision = report["model"], report["revision"]
     with np.load(head_path, allow_pickle=False) as saved:
-        if str(saved["model_revision"]) != REVISION:
+        if str(saved["model_revision"]) != model_revision:
             raise ValueError("Head model revision mismatch")
         max_length = int(saved["max_length"])
         temperature = float(saved["temperature"])
@@ -78,16 +96,25 @@ def score_requests(payloads: list[dict], output_dir: Path, report_path: Path) ->
     if model_dtype not in ("bfloat16", "float16") or model_dtype != report.get("model_dtype", "bfloat16"):
         raise ValueError("Head precision differs from research report")
 
-    model_path = snapshot_download(MODEL, revision=REVISION, local_files_only=True)
+    model_path = snapshot_download(model_name, revision=model_revision, local_files_only=True)
     tokenizer = AutoTokenizer.from_pretrained(model_path, local_files_only=True)
     encoded, overlong = encode_rows(tokenizer, rows, max_length, prompt_style=prompt_style)
     if overlong:
         raise ValueError("Decision exceeds the trained token limit; input was not truncated")
-    base = AutoModelForCausalLM.from_pretrained(
-        model_path, local_files_only=True,
-        dtype={"bfloat16": torch.bfloat16, "float16": torch.float16}[model_dtype],
-        device_map={"": 0}, attn_implementation=attention,
-    )
+    dtype = {"bfloat16": torch.bfloat16, "float16": torch.float16}[model_dtype]
+    if model_name == OPENJEV_BASE_MODEL:
+        base = Qwen3_5ForCausalLM.from_pretrained(
+            model_path, local_files_only=True, dtype=dtype,
+            device_map={"": 0}, attn_implementation=attention,
+            quantization_config=BitsAndBytesConfig(
+                load_in_4bit=True, bnb_4bit_quant_type="nf4",
+                bnb_4bit_use_double_quant=True, bnb_4bit_compute_dtype=dtype),
+        )
+    else:
+        base = AutoModelForCausalLM.from_pretrained(
+            model_path, local_files_only=True, dtype=dtype,
+            device_map={"": 0}, attn_implementation=attention,
+        )
     backbone = PeftModel.from_pretrained(base.model, output_dir / "adapter", is_trainable=False)
     del base
     head = nn.Linear(weights.shape[1], 1, dtype=torch.float32, device="cuda")
@@ -97,7 +124,7 @@ def score_requests(payloads: list[dict], output_dir: Path, report_path: Path) ->
     backbone.eval()
     head.eval()
     return [{"research_only": True, "execution_authority": False,
-             "model": MODEL, "revision": REVISION,
+             "model": model_name, "revision": model_revision,
              "answer": format_answer(row["kind"], row["options"],
                                      score_row(backbone, head, item), temperature)}
             for row, item in zip(rows, encoded, strict=True)]

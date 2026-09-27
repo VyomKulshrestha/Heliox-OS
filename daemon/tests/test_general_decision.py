@@ -170,6 +170,10 @@ def test_checkpoint_signature_binds_exact_tokenized_inputs() -> None:
     assert first != checkpoint_signature(args, encoded, {}, None)
     args.dtype = "bfloat16"
     assert first == checkpoint_signature(args, encoded, {}, None)
+    args.initial_openjev = True
+    assert first != checkpoint_signature(args, encoded, {}, None)
+    args.initial_openjev = False
+    assert first == checkpoint_signature(args, encoded, {}, None)
     args.scope_group_weighting = "inverse_sqrt"
     assert first != checkpoint_signature(args, encoded, {}, None)
     assert checkpoint_signature(args, encoded, {}, None, [1.0, 0.5]) != checkpoint_signature(

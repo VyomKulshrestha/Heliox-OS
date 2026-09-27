@@ -16,7 +16,21 @@ from scripts.evaluate_general_scope_transfer import (
     classification_metrics,
     scope_limits,
 )
-from scripts.score_general_decision import MODEL, REVISION, prepare_request, prepare_requests, verify_artifact
+from scripts.score_general_decision import (
+    MODEL,
+    OPENJEV_BASE_MODEL,
+    OPENJEV_BASE_REVISION,
+    REVISION,
+    prepare_request,
+    prepare_requests,
+    verify_artifact,
+)
+from scripts.train_world_scope_qlora import (
+    OPENJEV_ADAPTER_SHA256,
+    OPENJEV_HEAD_SHA256,
+    OPENJEV_REPO,
+    OPENJEV_REVISION,
+)
 
 
 def test_prepare_request_keeps_only_declared_input_fields() -> None:
@@ -54,6 +68,29 @@ def test_artifact_hashes_must_match_frozen_report(tmp_path: Path) -> None:
     head.write_bytes(b"changed")
     with pytest.raises(ValueError, match="checksum mismatch"):
         verify_artifact(output_dir, report_path)
+
+
+def test_joint_openjev_artifact_requires_pinned_source(tmp_path: Path) -> None:
+    adapter = tmp_path / "adapter"
+    adapter.mkdir()
+    weights = adapter / "adapter_model.safetensors"
+    weights.write_bytes(b"joint-adapter")
+    head = tmp_path / "head.npz"
+    head.write_bytes(b"joint-head")
+    report = {"model": OPENJEV_BASE_MODEL, "revision": OPENJEV_BASE_REVISION,
+              "adapter_sha256": hashlib.sha256(weights.read_bytes()).hexdigest(),
+              "head_sha256": hashlib.sha256(head.read_bytes()).hexdigest(),
+              "backbone_quantization": "NF4 double quantization",
+              "initial_checkpoint": {"repo": OPENJEV_REPO, "revision": OPENJEV_REVISION,
+                                     "adapter_sha256": OPENJEV_ADAPTER_SHA256,
+                                     "head_sha256": OPENJEV_HEAD_SHA256}}
+    report_path = tmp_path / "report.json"
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    assert verify_artifact(tmp_path, report_path)[1] == head
+    report["initial_checkpoint"]["revision"] = "wrong"
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(ValueError, match="pinned warm start"):
+        verify_artifact(tmp_path, report_path)
 
 
 def test_scope_transfer_payload_contains_only_request_and_action() -> None:
