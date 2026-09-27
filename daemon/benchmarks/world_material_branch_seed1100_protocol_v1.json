@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "purpose": "fresh_seed_transfer_of_frozen_material_change_model",
+  "prior_protocol": "world_material_branch_seed1000_protocol_v1.json",
+  "source_commit": "33c3b4ddef8c6eb67c57a29663d844b1eda7e614",
+  "train_tasks": ["click-button", "click-collapsible", "click-collapsible-nodelay"],
+  "validation_tasks": ["click-pie-nodelay"],
+  "eval_tasks": ["click-test", "click-scroll-list", "click-shades"],
+  "samples_per_task": 8,
+  "seed_start": 1100,
+  "feature_size": 16,
+  "max_candidates": 8,
+  "frozen_candidate": {
+    "report_sha256": "096c67912d25b0fbf149ad9550808c550853a31d6edfbdb9c4511f474bcc1c97",
+    "weights_sha256": "cce9f7056ed42daf58bd8885258fbf49f70f7cd9f975ab140738f0929fa75ca4"
+  },
+  "frozen_no_action_control": {
+    "report_sha256": "e7b9afaa141f2ac58a6a0ec8f908476b894f889085bb7307817bd6f8f5ce996e",
+    "weights_sha256": "2cd82bdba92fffd54c9bc8912ecd31b14f838e23c1cc06937cd227014560c4e9"
+  },
+  "collection_gate": {
+    "minimum_eval_pairs_per_task": 5,
+    "unstable_resets_allowed": 0,
+    "minimum_mean_observed_pair_pixel_mse_per_eval_task": 0.01
+  },
+  "model_gate": {
+    "minimum_whole_frame_correct_action_fraction": 0.75,
+    "minimum_whole_frame_correct_action_fraction_per_task": 0.75,
+    "positive_mean_whole_frame_margin": true,
+    "candidate_beats_no_action_control_on_eval_weighted_mse": true,
+    "candidate_beats_unchanged_state_on_eval_weighted_mse": true
+  },
+  "limitation": "This is a new-seed check on the same selected synthetic task families, not independent application transfer or multi-step control. Passing only permits further research, never runtime promotion."
+}
