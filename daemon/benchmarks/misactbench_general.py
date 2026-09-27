@@ -79,6 +79,27 @@ def sample_cases(cases: list[dict], limit: int, seed: int) -> list[dict]:
     return sorted(selected, key=lambda case: case["id"])
 
 
+def split_cases(cases: list[dict], *, seed: int, limits: dict[str, int]) -> dict[str, list[dict]]:
+    """Allocate balanced, trajectory-disjoint test, calibration, and train rows."""
+    if set(limits) != {"scope_train", "scope_calibration", "scope_test"}:
+        raise ValueError("MisActBench requires train, calibration, and test limits")
+    test = sample_cases(cases, limits["scope_test"], seed)
+    test_groups = {case["group"] for case in test}
+    remaining = [case for case in cases if case["group"] not in test_groups]
+
+    calibration = sample_cases(remaining, limits["scope_calibration"], seed + 1)
+    calibration_groups = {case["group"] for case in calibration}
+    remaining = [case for case in remaining if case["group"] not in calibration_groups]
+
+    train = sample_cases(remaining, limits["scope_train"], seed + 2)
+    parts = {"scope_train": train, "scope_calibration": calibration, "scope_test": test}
+    group_sets = [{case["group"] for case in rows} for rows in parts.values()]
+    if any(left & right for index, left in enumerate(group_sets)
+           for right in group_sets[index + 1:]):
+        raise ValueError("MisActBench trajectory leaked across splits")
+    return parts
+
+
 def decision_row(case: dict, *, history_calls: int = 0) -> dict:
     request = payload(case, history_calls=history_calls)
     row = {"id": "misactbench:" + case["id"],
@@ -102,24 +123,16 @@ def load_parts(path: Path, *, seed: int, limits: dict[str, int],
         raise ValueError("MisActBench requires train, calibration, and test limits")
     all_cases = load_cases(path)
     cases = [case for case in all_cases if eligible is None or eligible(case)]
-    test = sample_cases(cases, limits["scope_test"], seed)
-    test_groups = {case["group"] for case in test}
-    remaining = [case for case in cases if case["group"] not in test_groups]
-    groups = sorted({case["group"] for case in remaining})
-    random.Random(seed).shuffle(groups)
-    train_groups = set(groups[:round(len(groups) * 0.75)])
-    pools = {"scope_train": [case for case in remaining if case["group"] in train_groups],
-             "scope_calibration": [case for case in remaining if case["group"] not in train_groups],
-             "scope_test": test}
-    parts = {name: [decision_row(case, history_calls=history_calls) for case in (
-        selected if name == "scope_test" else sample_cases(selected, limits[name], seed + index + 1))]
-             for index, (name, selected) in enumerate(pools.items())}
+    selected = split_cases(cases, seed=seed, limits=limits)
+    parts = {name: [decision_row(case, history_calls=history_calls) for case in rows]
+             for name, rows in selected.items()}
     verify_disjoint(parts)
     manifest = {"dataset": DATASET, "sha256": DATASET_SHA256, "license": LICENSE,
                 "total_labeled_actions": len(all_cases),
                 "eligible_text_only_actions": len(cases),
                 "excluded_overlong": len(all_cases) - len(cases),
-                "selection": "text-only; one action per trajectory; label-balanced; frozen test groups excluded from fit/calibration",
+                "selection": ("text-only; one action per trajectory; balanced labels; "
+                              "test groups excluded before calibration, then train groups"),
                 "selected_rows": {name: len(rows) for name, rows in parts.items()},
                 "seed": seed}
     if history_calls:
