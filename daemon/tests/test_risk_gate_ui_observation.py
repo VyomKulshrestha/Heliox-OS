@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from pilot.actions import Action, ActionPlan, ActionType, BrowserParams, EmptyParams
+from pilot.actions import Action, ActionPlan, ActionType, BrowserParams, EmptyParams, MouseParams
 from pilot.config import PilotConfig
 from pilot.intelligence.world_model import HybridWorldModel, UiJepaPredictor
 from pilot.security.risk_gate import RiskGate
@@ -113,6 +113,41 @@ def test_plan_rolls_visual_prediction_forward_without_reobserving(tmp_path, monk
     second_delta = predictions[1]["predicted_state"]["ui"]["latent_transition"]["delta_norm"]
     assert first_delta != second_delta
     assert risk == 0.0
+
+
+def test_mouse_geometry_reaches_world_prediction_without_leaking_pixels(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("pilot.security.risk_gate.capture_os_snapshot", _snapshot)
+    weights = tmp_path / "geometry_ui.npz"
+    geometry = np.zeros((2, 256), dtype=np.float32)
+    geometry[0, 0] = 0.5
+    geometry[1, 1] = 0.5
+    np.savez(
+        weights,
+        state_weight=np.eye(256, dtype=np.float32),
+        action_weight=np.zeros((len(ActionType), 256), dtype=np.float32),
+        action_geometry_weight=geometry,
+        action_geometry_version=np.array(UiJepaPredictor.ACTION_GEOMETRY_VERSION),
+        bias=np.zeros(256, dtype=np.float32),
+        action_types=np.array([kind.value for kind in ActionType], dtype=np.str_),
+        validated_for_gating=np.array(False),
+    )
+    gate = RiskGate(weights_path="/nonexistent.npz")
+    gate._world_model = HybridWorldModel(visual=UiJepaPredictor(weights))
+    gate.set_ui_observation_provider(lambda: {
+        "latent_embedding": [0.5] * 256, "screen_bounds": (0, 0, 100, 100)
+    })
+    transitions = []
+    for x, y in ((20, 20), (80, 80)):
+        plan = ActionPlan(
+            actions=[Action(action_type=ActionType.MOUSE_CLICK, parameters=MouseParams(x=x, y=y))],
+            raw_input="click measured target",
+        )
+        gate.evaluate_plan(plan, PilotConfig())
+        predicted = gate.last_evaluation["predictions"][0]
+        assert "ui_jepa" in predicted["sources"]
+        assert "latent_embedding" not in predicted["predicted_state"]["ui"]
+        transitions.append(predicted["predicted_state"]["ui"]["latent_transition"]["delta_norm"])
+    assert transitions[0] != transitions[1]
 
 
 def test_plan_rolls_browser_state_forward_without_claiming_observation(monkeypatch) -> None:
