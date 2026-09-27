@@ -163,6 +163,11 @@ def evaluate_final(challenge_path: Path, candidate_path: Path, metrics_path: Pat
 
 
 def main() -> None:
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from scripts.jev_output_policy import block_jev_output_use
+    block_jev_output_use()
+
     parser = argparse.ArgumentParser(description=__doc__)
     root = Path(__file__).resolve().parents[1]
     parser.add_argument("--original", type=Path, default=root / "benchmarks/jev_scope_teacher.json")

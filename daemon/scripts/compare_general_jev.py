@@ -19,6 +19,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from benchmarks.general_decision import DATASET_REVISION, load_split, uniform_baseline  # noqa: E402
 from scripts.evaluate_jev_scope import ENDPOINT, _key  # noqa: E402
+from scripts.jev_output_policy import block_jev_output_use  # noqa: E402
 from scripts.score_general_decision import score_requests  # noqa: E402
 
 JEV_MODEL = "typesafe/jev-1.13"
@@ -42,6 +43,7 @@ def public_payload(row: dict) -> dict:
 
 
 def query_jev(client: httpx.Client, key: str, row: dict) -> tuple[dict, float, str]:
+    block_jev_output_use()
     for attempt in range(3):
         try:
             response = client.post(ENDPOINT, headers={"Authorization": f"Bearer {key}"},
@@ -101,6 +103,8 @@ def compare(rows: list[dict], local: list[dict], jev: list[dict]) -> dict:
 
 
 def main() -> None:
+    block_jev_output_use()
+
     root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--env-file", type=Path, default=root.parent / ".env")

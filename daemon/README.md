@@ -6,10 +6,10 @@ coordination, hybrid world model, verified online learning, strategy/evolution
 harnesses, 21-specialist mesh, Planner/Executor/Verifier, security layers, and
 the 157-action system interface.
 
-The interactive companion also has a small offline Jev-inspired scope head.
-It adds warning-only signals for selected side-effect actions; it is not a
-permission gate or a general-purpose replacement for Jev. See the
-[evaluation and limits](../docs/INTELLIGENCE_EVALUATION.md#jev-inspired-local-scope-decision).
+The interactive companion does not load a learned scope head by default. The
+historical output-derived checkpoint is disabled, and its trainer now refuses
+to run; deterministic safety checks and the companion review remain the active
+controls. See the [evaluation and limits](../docs/INTELLIGENCE_EVALUATION.md#scope-advisory-research-and-current-state).
 
 The optional neural-intent research path runs acquisition and decoding in the
 separately authenticated `pilot-neurod` sidecar. It supports synthetic,
