@@ -1560,17 +1560,27 @@ The last command checks the separately shipped OS-transition model; it does
 not test or enable the research scope head.
 
 OpenRouter's [distillation guidance](https://openrouter.ai/docs/cookbook/evaluate-and-optimize/distillation)
-requires explicit model-provider permission. Its [Jev model page](https://openrouter.ai/typesafe/jev-1.13)
-identifies TypeSafe as the provider. TypeSafe's published
-[terms](https://typesafe.ai/terms-and-conditions) prohibit using Jev interface
-outputs to distill or imitate the model, develop a similar or competing
-product, or publish Jev benchmarks. No written exception or explicit
-distillation permission for Heliox was found. Accordingly, do not make further
-Jev calls for model development, train on Jev outputs, or publish Jev
-performance comparisons unless the provider grants written permission. The
-Apache-2.0 license of Open-Jev/Qwen weights and independently licensed public
-data remains a separate, usable research path; it does not grant rights to
-Jev outputs.
+requires explicit model-provider permission and identifies `is_trainable_text`
+as the opt-in signal. The current OpenRouter catalog entry for
+[`typesafe/jev-router`](https://openrouter.ai/typesafe/jev-1.13) returned
+`is_trainable_text: null`; that is not permission. TypeSafe's current
+[Master Customer Agreement, section 2.3(b)](https://typesafe.ai/legal/mca)
+states that customers may not use the Services or their outputs to distill,
+train a model to imitate the outputs, or develop a similar or competing
+product or service. The previously cited `/terms-and-conditions` URL now
+returns 404, and the current agreement text checked on 2026-09-27 does not
+contain the earlier claimed benchmark-publication restriction. Because Heliox
+would be developed using Jev outputs, the project gate is to make no further
+Jev calls for development and not use those outputs for training unless
+TypeSafe gives written authorization that covers this use. The Apache-2.0
+license of Open-Jev/Qwen weights and independently licensed public data is a
+separate research path; it does not grant rights to TypeSafe service outputs.
+
+Earlier sections in this document and
+[`JEV_SCOPE_STUDY.md`](JEV_SCOPE_STUDY.md) record historical output-based
+experiments. They are not approved training evidence or a basis for further
+development; do not reuse their outputs for that purpose without written
+authorization. The separate public-label evaluation below does not use them.
 
 The separate [Open-Jev 2B public-label baseline](OPENJEV_PUBLIC_GENERAL_RESULT_V2.md)
 is a frozen, group-disjoint evaluation of that published checkpoint. On its
