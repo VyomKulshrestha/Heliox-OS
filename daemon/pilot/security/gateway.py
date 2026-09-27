@@ -640,6 +640,7 @@ class AgentGateway:
         critic_verdict = await self._maybe_run_critic(
             plan,
             critic_already_reviewed or _critic_already_reviewed_context.get(),
+            source,
         )
         if critic_verdict is not None and critic_verdict.get("verdict") == "BLOCK":
             reason = f"Blocked by safety critic: {critic_verdict.get('recommendation', '')}"
@@ -698,20 +699,25 @@ class AgentGateway:
         except Exception:
             logger.warning("Failed to record agent gateway audit event (non-fatal)", exc_info=True)
 
-    async def _maybe_run_critic(self, plan: ActionPlan, critic_already_reviewed: bool) -> dict[str, Any] | None:
+    async def _maybe_run_critic(
+        self, plan: ActionPlan, critic_already_reviewed: bool,
+        source: InvocationSource = InvocationSource.INTERACTIVE,
+    ) -> dict[str, Any] | None:
         """Re-implements server.py's interactive critic-trigger predicate so
         non-interactive plans (autonomous jobs, web-agent plans) get the same
         safety review interactive requests already receive, instead of
         silently skipping it because they never pass through server.py's
         confirmation-gate code path."""
-        if critic_already_reviewed:
-            return None
-
         from pilot.agents.destructive_critic import (
             HEURISTIC_RISK_THRESHOLD,
             assess_plan_risk,
             constrain_verdict_to_plan_authority,
+            plan_changes_state,
         )
+
+        state_changing = plan_changes_state(plan)
+        if critic_already_reviewed and (source == InvocationSource.INTERACTIVE or not state_changing):
+            return None
 
         plan_has_tier4 = any(a.permission_tier == PermissionTier.ROOT_CRITICAL for a in plan.actions)
         plan_has_tier3 = any(a.permission_tier == PermissionTier.DESTRUCTIVE for a in plan.actions)
@@ -719,6 +725,19 @@ class AgentGateway:
         plan_has_blockable_authority = plan_has_tier4 or plan_has_tier3 or plan_has_irreversible
 
         risk_assessment = assess_plan_risk(plan, self._config)
+        if (source != InvocationSource.INTERACTIVE and state_changing
+                and risk_assessment.model_version == "evaluation-error"):
+            return {
+                "verdict": "BLOCK",
+                "risk_score": risk_assessment.combined_score,
+                "issues": risk_assessment.reasons,
+                "safe_actions": [],
+                "flagged_actions": [action.action_type.value for action in plan.actions],
+                "recommendation": "World-model assessment is unavailable for a state-changing plan.",
+                "world_model": risk_assessment.to_dict(),
+            }
+        if critic_already_reviewed:
+            return None
         risk_score = risk_assessment.combined_score
         if not plan_has_blockable_authority:
             if not risk_assessment.requires_confirmation:

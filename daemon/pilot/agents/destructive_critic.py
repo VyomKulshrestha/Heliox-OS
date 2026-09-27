@@ -19,7 +19,7 @@ import logging
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from pilot.actions import PermissionTier
+from pilot.actions import READ_ONLY_ACTIONS, PermissionTier
 
 if TYPE_CHECKING:
     from pilot.actions import ActionPlan
@@ -32,6 +32,16 @@ logger = logging.getLogger("pilot.agents.destructive_critic")
 # dangerous arguments) skips the LLM critic round-trip entirely and goes
 # straight to the confirmation dialog — see heuristic_risk().
 HEURISTIC_RISK_THRESHOLD = 0.3
+
+
+def plan_changes_state(plan: ActionPlan) -> bool:
+    """Identify writes even where legacy permission tiers label reads USER_WRITE."""
+    return any(
+        action.permission_tier >= PermissionTier.SYSTEM_MODIFY
+        or (action.permission_tier > PermissionTier.READ_ONLY
+            and action.action_type not in READ_ONLY_ACTIONS)
+        for action in plan.actions
+    )
 
 
 @dataclass(frozen=True)
@@ -126,11 +136,16 @@ def assess_plan_risk(
             prediction_contract=dict(gate.status(enabled=True).get("prediction_contract", {})),
         )
     except Exception:
-        logger.warning("Learned Risk Gate evaluation failed (non-fatal), using heuristic_risk() alone", exc_info=True)
+        logger.warning("Risk Gate evaluation failed; state-changing plans require review", exc_info=True)
+        state_changing = plan_changes_state(plan)
+        unavailable_score = 1.0 if state_changing else 0.0
         return PlanRiskAssessment(
             heuristic_score=base,
-            world_model_score=0.0,
-            combined_score=base,
+            world_model_score=unavailable_score,
+            combined_score=max(base, unavailable_score),
+            reasons=["World-model assessment unavailable; review state-changing actions before execution."]
+            if state_changing else [],
+            prediction_sources=["evaluation_error"] if state_changing else [],
             model_version="evaluation-error",
         )
 
@@ -155,9 +170,9 @@ def risk_score(plan: ActionPlan, config: PilotConfig | None = None) -> float:
     `needs_review` predicate at both of this function's call sites
     (server.py, gateway.py's _maybe_run_critic).
 
-    Falls back to heuristic_risk() unchanged if config is None, the gate
-    is disabled, or evaluation fails. Missing learned weights still retain
-    RiskGate's deterministic transition checks.
+    Falls back to heuristic_risk() unchanged if config is None or the gate is
+    disabled. An enabled gate failure escalates state-changing plans instead
+    of silently discarding its deterministic transition checks.
     """
     return assess_plan_risk(plan, config).combined_score
 
