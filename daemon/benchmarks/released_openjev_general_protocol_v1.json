@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "purpose": "frozen_released_openjev_general_decision_baseline",
+  "released_checkpoint": "ZefanCai/Open-Jev-2B@0c7aa498b1627be8da4acf34c863ff0ee0a92785",
+  "dataset_revision": "c67699e13d0ae25e35b77165a4b6b079bedc8aba",
+  "archived_reference": "qwen_general_jev_comparison_v4.json",
+  "fresh_seed": 20261003,
+  "fresh_pool": 512,
+  "fresh_rows": 128,
+  "max_length": 1024,
+  "checkpoint_every": 8,
+  "selection_rule": "Take the first 128 source/kind-balanced licensed public OOD rows from the seeded 512-row pool after excluding every group in the archived Jev comparison and all repeated groups within the new selection.",
+  "promotion_rule": "No automatic promotion; compare both splits and retain execution authority in deterministic gates."
+}
