@@ -282,6 +282,15 @@ def fit_temperature(logits: list[np.ndarray], rows: list[dict]) -> float:
     return float(result.x)
 
 
+def training_row_weights(general_items: list[dict], scope_items: list[dict],
+                         *, group_weighting: str, scope_row_weight: float) -> list[float] | None:
+    if not scope_items or (group_weighting == "none" and scope_row_weight == 1.0):
+        return None
+    scope_weights = (scope_group_weights([item["row"] for item in scope_items])
+                     if group_weighting == "inverse_sqrt" else [1.0] * len(scope_items))
+    return [1.0] * len(general_items) + [weight * scope_row_weight for weight in scope_weights]
+
+
 def checkpoint_signature(args: argparse.Namespace, encoded: dict[str, list[dict]],
                          manifests: dict, scope_manifest: dict | None,
                          row_weights: list[float] | None = None) -> str:
@@ -491,13 +500,9 @@ def run(args: argparse.Namespace) -> dict:
             raise ValueError(f"All {split} rows exceed max_length={args.max_length}")
     print(json.dumps({"event": "tokenized", "kept": {name: len(part) for name, part in encoded.items()},
                       "overlong": overlong}), flush=True)
-    row_weights = None
-    if scope_manifest and (args.scope_group_weighting == "inverse_sqrt" or args.scope_row_weight != 1.0):
-        scope_weights = (scope_group_weights([item["row"] for item in encoded["scope_train"]])
-                         if args.scope_group_weighting == "inverse_sqrt" else
-                         [1.0] * len(encoded["scope_train"]))
-        row_weights = ([1.0] * len(encoded["train"]) +
-                       [weight * args.scope_row_weight for weight in scope_weights])
+    row_weights = training_row_weights(
+        encoded["train"], encoded["scope_train"] if scope_manifest else [],
+        group_weighting=args.scope_group_weighting, scope_row_weight=args.scope_row_weight)
     signature = checkpoint_signature(args, encoded, manifests, scope_manifest,
                                      row_weights=row_weights)
 
