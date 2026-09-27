@@ -8,6 +8,13 @@ import json
 import sys
 from pathlib import Path
 
+# On Windows, importing PyArrow before SentencePiece can fault in the latter's
+# native extension. Initialize it before dataset loading in evaluator callers.
+try:
+    import sentencepiece  # noqa: F401
+except ImportError:
+    pass
+
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
