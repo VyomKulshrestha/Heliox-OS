@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "purpose": "frozen_local_8b_multistep_gui_result",
+  "protocol_sha256": "ff1f5139c9a38b0ddcda6dbb9cd9b71e1a6161b19ab7cbeefcaa177956abc59ed",
+  "local_report_sha256": "2a1cd47df59574e57af3cfec15724d0e67c0d68c15cf33e12bb445008ee2c79f",
+  "completed_pairs": 12,
+  "task_scores": {
+    "click-checkboxes": {"baseline": 4, "model": 4},
+    "click-option": {"baseline": 4, "model": 4},
+    "click-button-sequence": {"baseline": 4, "model": 0}
+  },
+  "total": {"baseline": 12, "model": 8},
+  "invalid_index_count": 4,
+  "failure_pattern": "Every sequence episode clicked ONE, then returned index 1 for a one-control filtered list and stopped before TWO.",
+  "research_gate_pass": false,
+  "promoted_to_runtime": false,
+  "limitation": "New seeds within previously explored task families; synthetic browser only. No Jev parity, real-desktop transfer, or safety evidence."
+}
