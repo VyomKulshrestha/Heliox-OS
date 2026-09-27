@@ -152,6 +152,9 @@ def main() -> None:
     args = parser.parse_args()
     if args.max_length < 128 or args.epochs < 1 or args.adapter_dir.exists() or args.report.exists():
         parser.error("Use max-length >=128, epochs >=1, and fresh artifact/report paths")
+    from scripts.openjev_training_runtime import require_training_runtime
+
+    require_training_runtime()
     cases, scope_manifest = load_partitions(args.dataset_dir, args.scopejudge_path)
 
     import torch
