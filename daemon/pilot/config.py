@@ -491,8 +491,12 @@ class TypedDecisionConfig:
     """Opt-in local research scorer; never a source of execution authority."""
 
     enabled: bool = False
+    scoring_mode: str = "trained_head"
     artifact_dir: str = ""
     report_path: str = ""
+    model_id: str = "Qwen/Qwen3-0.6B"
+    max_length: int = 2048
+    temperature: float = 1.0
 
 
 @dataclass
@@ -849,8 +853,12 @@ def _validate_config_types(raw: dict) -> None:
         },
         "typed_decision": {
             "enabled": bool,
+            "scoring_mode": str,
             "artifact_dir": str,
             "report_path": str,
+            "model_id": str,
+            "max_length": int,
+            "temperature": (int, float),
         },
         "proxy": {
             "http": str,

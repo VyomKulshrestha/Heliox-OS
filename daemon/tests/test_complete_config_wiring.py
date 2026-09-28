@@ -31,8 +31,12 @@ def test_calendar_preview_cognitive_and_typed_decision_config_round_trip_through
         "cognitive": {"enabled": False},
         "typed_decision": {
             "enabled": True,
+            "scoring_mode": "trained_head",
             "artifact_dir": "C:/models/decision-candidate",
             "report_path": "C:/models/decision-candidate/report.json",
+            "model_id": "Qwen/Qwen3-0.6B",
+            "max_length": 2048,
+            "temperature": 1.0,
         },
     }
 
@@ -48,8 +52,11 @@ def test_calendar_preview_cognitive_and_typed_decision_config_round_trip_through
     assert config.preview.confirm_timeout_seconds == 45
     assert config.cognitive.enabled is False
     assert config.typed_decision.enabled is True
+    assert config.typed_decision.scoring_mode == "trained_head"
     assert config.typed_decision.artifact_dir == "C:/models/decision-candidate"
     assert config.typed_decision.report_path.endswith("report.json")
+    assert config.typed_decision.model_id == "Qwen/Qwen3-0.6B"
+    assert config.typed_decision.max_length == 2048
 
 
 @pytest.mark.parametrize("section", ["calender", "cognitiv", "prevew"])

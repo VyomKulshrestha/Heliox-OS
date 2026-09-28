@@ -632,7 +632,7 @@ class PilotServer:
         self._mcp_idempotency: dict[str, tuple[str, str]] = {}
         self._mcp_reserved_task_id = ""
         self._typed_decision_engine: Any = None
-        self._typed_decision_engine_key: tuple[str, str] | None = None
+        self._typed_decision_engine_key: tuple[Any, ...] | None = None
         # Cognitive intelligence (lightweight heuristic engine)
         self._cognitive_engine: Any = None
         self._attention_ui: Any = None
@@ -3937,12 +3937,21 @@ class PilotServer:
                 "execution_authority": False,
                 "message": "Heliox is handling an interactive task; retry typed scoring afterward.",
             }
-        if not config.artifact_dir.strip() or not config.report_path.strip():
+        if config.scoring_mode == "trained_head" and (
+            not config.artifact_dir.strip() or not config.report_path.strip()
+        ):
             return {
                 "status": "unavailable",
                 "research_only": True,
                 "execution_authority": False,
                 "message": "Configure local artifact_dir and report_path before enabling the scorer.",
+            }
+        if config.scoring_mode not in {"trained_head", "native_next_token"}:
+            return {
+                "status": "unavailable",
+                "research_only": True,
+                "execution_authority": False,
+                "message": "Choose a supported local typed-decision scoring mode.",
             }
 
         state = params.get("state")
@@ -3963,25 +3972,41 @@ class PilotServer:
                     "execution_authority": False,
                     "message": str(exc)[:300],
                 }
-        elif not isinstance(state, dict):
+        elif not isinstance(state, (str, dict, list)):
             return {
                 "status": "error",
                 "research_only": True,
                 "execution_authority": False,
-                "message": "state must be a JSON object",
+                "message": "state must be text, a JSON object, or an array",
             }
         try:
             from pilot.intelligence.typed_decision import LocalTypedDecisionModel, validate_decision
 
             if not typed_questions:
                 validate_decision(kind, question, options)
-            artifact_dir = str(Path(config.artifact_dir).expanduser())
-            report_path = str(Path(config.report_path).expanduser())
-            engine_key = (artifact_dir, report_path)
+            artifact_dir = str(Path(config.artifact_dir).expanduser()) if config.artifact_dir else ""
+            report_path = str(Path(config.report_path).expanduser()) if config.report_path else ""
+            engine_key = (
+                config.scoring_mode,
+                artifact_dir,
+                report_path,
+                config.model_id,
+                config.max_length,
+                config.temperature,
+            )
             if self._typed_decision_engine_key != engine_key:
                 if self._typed_decision_engine is not None:
                     await asyncio.to_thread(self._typed_decision_engine.unload)
-                self._typed_decision_engine = LocalTypedDecisionModel(artifact_dir, report_path)
+                if config.scoring_mode == "native_next_token":
+                    from pilot.intelligence.native_typed_decision import LocalNextTokenTypedDecisionModel
+
+                    self._typed_decision_engine = LocalNextTokenTypedDecisionModel(
+                        config.model_id,
+                        max_length=config.max_length,
+                        temperature=config.temperature,
+                    )
+                else:
+                    self._typed_decision_engine = LocalTypedDecisionModel(artifact_dir, report_path)
                 self._typed_decision_engine_key = engine_key
             if typed_questions:
                 return await asyncio.to_thread(
@@ -5516,6 +5541,29 @@ class PilotServer:
                         return {"status": "error", "message": "email.smtp_port must be from 1 to 65535"}
                 if section == "typed_decision" and k == "enabled" and not isinstance(v, bool):
                     return {"status": "error", "message": "typed_decision.enabled must be a boolean"}
+                if section == "typed_decision" and k == "scoring_mode" and (
+                    not isinstance(v, str) or v not in {"trained_head", "native_next_token"}
+                ):
+                    return {
+                        "status": "error",
+                        "message": "typed_decision.scoring_mode must be trained_head or native_next_token",
+                    }
+                if section == "typed_decision" and k == "model_id":
+                    from pilot.intelligence.typed_decision import PINNED_BACKBONES
+
+                    if not isinstance(v, str) or v not in PINNED_BACKBONES:
+                        return {"status": "error", "message": "typed_decision.model_id must be a supported pinned model"}
+                if section == "typed_decision" and k == "max_length":
+                    if type(v) is not int or not 64 <= v <= 4096:
+                        return {"status": "error", "message": "typed_decision.max_length must be from 64 to 4096"}
+                if section == "typed_decision" and k == "temperature":
+                    if (
+                        not isinstance(v, (int, float))
+                        or isinstance(v, bool)
+                        or not 0.05 <= v <= 20
+                    ):
+                        return {"status": "error", "message": "typed_decision.temperature must be from 0.05 to 20"}
+                    v = float(v)
                 if section == "typed_decision" and k in {"artifact_dir", "report_path"}:
                     if not isinstance(v, str) or len(v) > 4096:
                         return {
@@ -5539,14 +5587,15 @@ class PilotServer:
                 return {"status": "error", "message": f"Invalid config key found: '{section}.{k}'."}
         if section == "typed_decision":
             will_enable = normalized_values.get("enabled", self.config.typed_decision.enabled)
+            scoring_mode = normalized_values.get("scoring_mode", self.config.typed_decision.scoring_mode)
             artifact_dir = normalized_values.get("artifact_dir", self.config.typed_decision.artifact_dir)
             report_path = normalized_values.get("report_path", self.config.typed_decision.report_path)
-            if will_enable and (not artifact_dir or not report_path):
+            if will_enable and scoring_mode == "trained_head" and (not artifact_dir or not report_path):
                 return {
                     "status": "error",
                     "message": "Set typed_decision artifact_dir and report_path before enabling it",
                 }
-            if will_enable and (
+            if will_enable and scoring_mode == "trained_head" and (
                 not Path(artifact_dir).expanduser().is_absolute()
                 or not Path(report_path).expanduser().is_absolute()
             ):
@@ -5566,8 +5615,16 @@ class PilotServer:
 
         if section == "typed_decision" and self._typed_decision_engine is not None:
             current_key = (
-                str(Path(self.config.typed_decision.artifact_dir).expanduser()),
-                str(Path(self.config.typed_decision.report_path).expanduser()),
+                self.config.typed_decision.scoring_mode,
+                str(Path(self.config.typed_decision.artifact_dir).expanduser())
+                if self.config.typed_decision.artifact_dir
+                else "",
+                str(Path(self.config.typed_decision.report_path).expanduser())
+                if self.config.typed_decision.report_path
+                else "",
+                self.config.typed_decision.model_id,
+                self.config.typed_decision.max_length,
+                self.config.typed_decision.temperature,
             )
             if not self.config.typed_decision.enabled or current_key != self._typed_decision_engine_key:
                 try:
