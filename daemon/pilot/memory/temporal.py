@@ -713,7 +713,7 @@ class TemporalMemoryStore:
             )
             recency = math.exp(-age_days / 21.0)
             session_utility = 1.0 if row[1] == session_id else 0.7
-            outcome_weight = {"success": 1.0, "unverified": 0.65}.get(row[3], 0.8)
+            outcome_weight = {"success": 1.0, "in_progress": 0.55, "unverified": 0.65}.get(row[3], 0.8)
             try:
                 provenance = MemoryProvenance(row[7])
             except ValueError:

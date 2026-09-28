@@ -565,7 +565,9 @@ class VoiceGestureWorkflowEngine:
 
         sub_plan_id = f"{workflow.workflow_id}:{step.index}"
 
-        async def record_round(plan_id, plan, results, verification: VerificationResult) -> None:
+        async def record_round(
+            plan_id, plan, results, verification: VerificationResult, task_complete: bool
+        ) -> None:
             await self._checkpoint_store.start_plan(plan_id, step.description, plan)
             for result in results:
                 await self._checkpoint_store.record_result(plan_id, result)
@@ -579,6 +581,7 @@ class VoiceGestureWorkflowEngine:
                         session_id=workflow.invocation_source,
                         task_id=workflow.workflow_id,
                         verification=verification,
+                        task_complete=task_complete,
                     )
                 except Exception:
                     logger.warning("Could not record adaptive workflow episode", exc_info=True)
@@ -590,6 +593,7 @@ class VoiceGestureWorkflowEngine:
             session_id=workflow.invocation_source,
             plan_id_prefix=sub_plan_id,
             on_round_complete=record_round,
+            memory_task_id=workflow.workflow_id,
         )
         if adaptive_step.status != "success":
             await self._workflow_store.update_step(
