@@ -6,7 +6,12 @@ import json
 
 import pytest
 
-from scripts.evaluate_general_decision_artifact import load_partial, permute_options, prediction_metrics
+from scripts.evaluate_general_decision_artifact import (
+    load_partial,
+    permute_options,
+    prediction_metrics,
+    retain_tokenizable_rows,
+)
 
 
 def test_prediction_metrics_includes_ordinal_rank_error() -> None:
@@ -41,6 +46,23 @@ def test_option_permutation_preserves_labels_and_binary_order() -> None:
     assert first[1] == rows[1]
     assert first[2] == rows[2]
     assert rows[0]["options"] == ["a", "b", "c", "d"]
+
+
+def test_retain_tokenizable_rows_skips_overlong_without_reordering() -> None:
+    rows = [{"id": "first"}, {"id": "too-long"}, {"id": "last"}]
+    encoded = [{"row": rows[0]}, {"row": rows[2]}]
+
+    retained, skipped = retain_tokenizable_rows(rows, encoded)
+
+    assert [row["id"] for row in retained] == ["first", "last"]
+    assert skipped == 1
+
+
+def test_retain_tokenizable_rows_rejects_missing_or_mismatched_ids() -> None:
+    with pytest.raises(ValueError, match="stable IDs"):
+        retain_tokenizable_rows([{"id": "row"}], [{"row": {}}])
+    with pytest.raises(ValueError, match="do not match"):
+        retain_tokenizable_rows([{"id": "row"}], [{"row": {"id": "other"}}])
 
 
 def test_frozen_partial_cache_requires_exact_identity_and_explicit_resume(tmp_path) -> None:
