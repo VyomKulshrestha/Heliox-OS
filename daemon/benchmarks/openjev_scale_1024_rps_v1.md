@@ -36,9 +36,11 @@ lower overall NLL, and no decision kind more than five points down.
 ## Limits and disposition
 
 This is a retrospective ablation on the already-used OOD split, not independent
-confirmation. The 51 OOD Score rows and the −4.35 pp Choice change are small
-and close enough to the per-kind guardrail to warrant a fresh group-disjoint,
-pre-registered replication before relying on the result. Passing this gate does
+confirmation. A later exploratory comparison on another selected slice is
+documented in [openjev_scale_1024_rps_fresh_v1.md](openjev_scale_1024_rps_fresh_v1.md),
+but review found 38 of its 128 selected groups overlap the candidate's earlier
+OOD sample. It is therefore not independent confirmation. Only 20 Score rows
+fit the candidate's 512-token limit. Passing these point-estimate checks does
 not show parity with proprietary TypeSafe Jev, Heliox task success, desktop
 execution quality, or safety. The candidate remains unpromoted and cannot
 authorize or execute actions.

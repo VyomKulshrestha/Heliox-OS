@@ -1,0 +1,351 @@
+{
+  "purpose": "fresh_group_disjoint_public_replication_of_the_openjev_rps_candidate",
+  "protocol_sha256": "576fb2828cb5dec94d8d3b57b4849cf61f50f81f9c3c8943e5e1fba1e48c28bc",
+  "dataset_revision": "c67699e13d0ae25e35b77165a4b6b079bedc8aba",
+  "source_protocol_sha256": "ddb45e962613048e5ee6af389e08c6ac319e66c52b1d4440d12bb0030c1c6f4c",
+  "fresh_selection_signature": "0e74034f4d59fbaa4b545353e744831599d1257bc61369bab7045bb4ab29b2ca",
+  "fresh_rows_selected": 128,
+  "rows_scored_on_both_models": 112,
+  "overlong_rows_excluded_without_truncation": 16,
+  "scored_ids": [
+    "reasoning-control-v1:76109:1170:decision",
+    "reasoning-control-v1:76109:1680:verification",
+    "reasoning-control-v1:76109:2120:ordinal",
+    "snake-v1:475b31117fca81c9b5ff3555:action",
+    "snake-v1:9d38734c6c26e1b0f0eee39d:collision_down",
+    "vizdoom-basic-v1:190919:ood:13:0:choice",
+    "vizdoom-basic-v1:190919:ood:50:0:noul",
+    "workflow-controls-v1:invoice_processing:42:210:v1:HOLD FOR DOCUMENTS",
+    "reasoning-control-v1:76109:950:decision",
+    "reasoning-control-v1:76109:2370:verification",
+    "reasoning-control-v1:76109:130:ordinal",
+    "snake-v1:daffdb8d8628f43a313a376d:action",
+    "snake-v1:dddf29c2674858ed09ad98a3:collision_left",
+    "vizdoom-basic-v1:190919:ood:0:2:choice",
+    "vizdoom-basic-v1:190919:ood:69:2:score",
+    "workflow-controls-v1:agent_trace_observability:42:0:v0:COUNT ONLY",
+    "reasoning-control-v1:76109:1560:decision",
+    "reasoning-control-v1:76109:1080:verification",
+    "reasoning-control-v1:76109:2070:ordinal",
+    "snake-v1:83d56a33aa642903b3021e2f:action",
+    "snake-v1:49f116c9586511b138755067:collision_down",
+    "vizdoom-basic-v1:190919:ood:53:0:choice",
+    "vizdoom-basic-v1:190919:ood:43:1:noul",
+    "vizdoom-basic-v1:190919:ood:26:0:score",
+    "workflow-controls-v1:invoice_processing:42:110:v1:DUPLICATE",
+    "reasoning-control-v1:76109:1490:decision",
+    "reasoning-control-v1:76109:0:verification",
+    "reasoning-control-v1:76109:70:ordinal",
+    "snake-v1:d88f48d702c73e9b4e7fe2d5:action",
+    "snake-v1:c780224a72403991be3dd33b:collision_down",
+    "vizdoom-basic-v1:190919:ood:51:3:noul",
+    "workflow-controls-v1:agent_trace_observability:42:60:v2:AUTO-CLOSE",
+    "workflow-controls-v1:security_incidents:42:10:v1:REMOVE FORWARDING RULES",
+    "reasoning-control-v1:76109:810:decision",
+    "reasoning-control-v1:76109:200:verification",
+    "snake-v1:e951f685f6d9ef90c0fafca7:action",
+    "snake-v1:a5ea265dd1733f047b864d12:collision_right",
+    "vizdoom-basic-v1:190919:ood:76:0:choice",
+    "vizdoom-basic-v1:190919:ood:9:3:noul",
+    "workflow-controls-v1:agent_trace_observability:42:110:v2:FILE ISSUE \u00b7 ROUTE",
+    "reasoning-control-v1:76109:2250:decision",
+    "reasoning-control-v1:76109:1780:ordinal",
+    "snake-v1:6acb2dca53b6f93d2f3b6405:action",
+    "snake-v1:4c64f5040ff6db7d93667329:collision_up",
+    "vizdoom-basic-v1:190919:ood:24:0:noul",
+    "workflow-controls-v1:customer_service:42:180:v1:FREEZE CARD",
+    "reasoning-control-v1:76109:2360:decision",
+    "reasoning-control-v1:76109:2200:verification",
+    "reasoning-control-v1:76109:1330:ordinal",
+    "snake-v1:663cb1574a0a6cebac59e906:action",
+    "snake-v1:ad090ab0c99757c08b76f248:collision_left",
+    "vizdoom-basic-v1:190919:ood:10:1:noul",
+    "vizdoom-basic-v1:190919:ood:25:1:score",
+    "workflow-controls-v1:agent_trace_observability:42:10:v2:FILE ISSUE \u00b7 ROUTE",
+    "reasoning-control-v1:76109:2420:verification",
+    "reasoning-control-v1:76109:2080:ordinal",
+    "snake-v1:dc26d2f36a2e784e44c8d352:action",
+    "snake-v1:50cd24162203798f641b2bd4:collision_left",
+    "vizdoom-basic-v1:190919:ood:23:1:choice",
+    "vizdoom-basic-v1:190919:ood:71:0:score",
+    "reasoning-control-v1:76109:310:decision",
+    "reasoning-control-v1:76109:2490:verification",
+    "snake-v1:d0553cd7d7c245b29c0013d5:action",
+    "snake-v1:7d2f517dcb2df89a9720763e:collision_left",
+    "vizdoom-basic-v1:190919:ood:60:0:choice",
+    "vizdoom-basic-v1:190919:ood:57:2:score",
+    "workflow-controls-v1:invoice_processing:42:130:v0:DUPLICATE",
+    "reasoning-control-v1:76109:1270:decision",
+    "reasoning-control-v1:76109:750:verification",
+    "snake-v1:cf46af14f09a2a4823e06f92:action",
+    "snake-v1:78902c044e878ac920e4c832:collision_down",
+    "workflow-controls-v1:agent_trace_observability:42:20:v2:HUMAN REVIEW",
+    "workflow-controls-v1:invoice_processing:42:190:v1:DUPLICATE",
+    "reasoning-control-v1:76109:1550:decision",
+    "reasoning-control-v1:76109:1860:verification",
+    "reasoning-control-v1:76109:2040:ordinal",
+    "snake-v1:21e993e578b73a3e656addec:action",
+    "snake-v1:654b67a381fc416fdd011f1d:collision_up",
+    "vizdoom-basic-v1:190919:ood:48:2:choice",
+    "vizdoom-basic-v1:190919:ood:49:0:score",
+    "workflow-controls-v1:agent_trace_observability:42:130:v1:NOT A BUG",
+    "reasoning-control-v1:76109:840:decision",
+    "reasoning-control-v1:76109:1430:verification",
+    "reasoning-control-v1:76109:1370:ordinal",
+    "snake-v1:c2c2f33dfecd910023de9428:action",
+    "snake-v1:e3a7b026edbd8bf095122666:collision_down",
+    "vizdoom-basic-v1:190919:ood:20:4:noul",
+    "reasoning-control-v1:76109:1260:decision",
+    "reasoning-control-v1:76109:320:ordinal",
+    "snake-v1:49157ea860bdb1fe9067bdca:action",
+    "snake-v1:a7519c19698a0e1ff27511f0:collision_right",
+    "vizdoom-basic-v1:190919:ood:66:2:noul",
+    "vizdoom-basic-v1:190919:ood:59:4:score",
+    "workflow-controls-v1:invoice_processing:42:140:v1:FRAUD REVIEW",
+    "reasoning-control-v1:76109:1040:decision",
+    "reasoning-control-v1:76109:1650:verification",
+    "reasoning-control-v1:76109:190:ordinal",
+    "snake-v1:64b6561b097503e85cb5159d:action",
+    "snake-v1:60a94976ca6719b2376db7a1:collision_left",
+    "vizdoom-basic-v1:190919:ood:73:2:choice",
+    "vizdoom-basic-v1:190919:ood:22:3:noul",
+    "vizdoom-basic-v1:190919:ood:70:0:score",
+    "workflow-controls-v1:agent_trace_observability:42:170:v1:PAGE ON-CALL",
+    "reasoning-control-v1:76109:570:decision",
+    "reasoning-control-v1:76109:1120:verification",
+    "reasoning-control-v1:76109:820:ordinal",
+    "snake-v1:9592dcf8d1089068d3302075:action",
+    "snake-v1:0eb87362c9634720891ead02:collision_up",
+    "vizdoom-basic-v1:190919:ood:30:3:noul",
+    "workflow-controls-v1:agent_trace_observability:42:240:v2:HUMAN REVIEW",
+    "workflow-controls-v1:security_incidents:42:230:v2:AUTO CLOSE",
+    "reasoning-control-v1:76109:360:decision"
+  ],
+  "released_openjev": {
+    "rows": 112,
+    "top1_accuracy": 0.7946428571428571,
+    "mean_nll": 0.6379192173341355,
+    "mean_brier": 0.08602230603624604,
+    "by_kind": {
+      "choice": {
+        "rows": 38,
+        "top1_accuracy": 0.6052631578947368,
+        "mean_nll": 1.4525675813454482,
+        "mean_brier": 0.14514655027456488
+      },
+      "noul": {
+        "rows": 54,
+        "top1_accuracy": 0.8888888888888888,
+        "mean_nll": 0.19960836259505965,
+        "mean_brier": 0.07085930507783346,
+        "confusion": {
+          "true_positive": 7,
+          "true_negative": 41,
+          "false_positive": 2,
+          "false_negative": 4
+        },
+        "balanced_accuracy": 0.7949260042283298
+      },
+      "score": {
+        "rows": 20,
+        "top1_accuracy": 0.9,
+        "mean_nll": 0.27352663350814643,
+        "mean_brier": 0.014626344571154182,
+        "mean_rank_error": 0.2071863620484086,
+        "mean_ranked_probability_score": 0.020373309702193497
+      }
+    },
+    "by_source": {
+      "reasoning-control-v1": {
+        "rows": 40,
+        "top1_accuracy": 0.525,
+        "mean_nll": 1.5828432815359947,
+        "mean_brier": 0.21553456308242333
+      },
+      "snake-v1": {
+        "rows": 30,
+        "top1_accuracy": 0.8666666666666667,
+        "mean_nll": 0.2693275363610368,
+        "mean_brier": 0.03376376133069274
+      },
+      "vizdoom-basic-v1": {
+        "rows": 26,
+        "top1_accuracy": 1.0,
+        "mean_nll": 0.0019147369772179526,
+        "mean_brier": 7.634369636171367e-06
+      },
+      "workflow-controls-v1/agent_trace_observability": {
+        "rows": 8,
+        "top1_accuracy": 1.0,
+        "mean_nll": 0.00041998478507303136,
+        "mean_brier": 5.511797520041919e-07,
+        "confusion": {
+          "true_positive": 1,
+          "true_negative": 7,
+          "false_positive": 0,
+          "false_negative": 0
+        },
+        "balanced_accuracy": 1.0
+      },
+      "workflow-controls-v1/customer_service": {
+        "rows": 1,
+        "top1_accuracy": 1.0,
+        "mean_nll": 1.6503631102500193e-05,
+        "mean_brier": 2.723653445178056e-10,
+        "confusion": {
+          "true_positive": 0,
+          "true_negative": 1,
+          "false_positive": 0,
+          "false_negative": 0
+        },
+        "balanced_accuracy": null
+      },
+      "workflow-controls-v1/invoice_processing": {
+        "rows": 5,
+        "top1_accuracy": 1.0,
+        "mean_nll": 2.915047313055948e-05,
+        "mean_brier": 8.879379660648212e-10,
+        "confusion": {
+          "true_positive": 0,
+          "true_negative": 5,
+          "false_positive": 0,
+          "false_negative": 0
+        },
+        "balanced_accuracy": null
+      },
+      "workflow-controls-v1/security_incidents": {
+        "rows": 2,
+        "top1_accuracy": 1.0,
+        "mean_nll": 4.484673363132878e-05,
+        "mean_brier": 2.5406152696540475e-09,
+        "confusion": {
+          "true_positive": 0,
+          "true_negative": 2,
+          "false_positive": 0,
+          "false_negative": 0
+        },
+        "balanced_accuracy": null
+      }
+    }
+  },
+  "rps_candidate": {
+    "rows": 112,
+    "top1_accuracy": 0.8214285714285714,
+    "mean_nll": 0.5260904756210547,
+    "mean_brier": 0.06840140912706293,
+    "by_kind": {
+      "choice": {
+        "rows": 38,
+        "top1_accuracy": 0.631578947368421,
+        "mean_nll": 1.2165295111480456,
+        "mean_brier": 0.12501178940812654
+      },
+      "noul": {
+        "rows": 54,
+        "top1_accuracy": 0.9259259259259259,
+        "mean_nll": 0.14661051284065862,
+        "mean_brier": 0.048585325608387374,
+        "confusion": {
+          "true_positive": 9,
+          "true_negative": 41,
+          "false_positive": 2,
+          "false_negative": 2
+        },
+        "balanced_accuracy": 0.8858350951374208
+      },
+      "score": {
+        "rows": 20,
+        "top1_accuracy": 0.9,
+        "mean_nll": 0.23885220762684173,
+        "mean_brier": 0.014345112093466094,
+        "mean_rank_error": 0.23275826043667344,
+        "mean_ranked_probability_score": 0.01939579835005862
+      }
+    },
+    "by_source": {
+      "reasoning-control-v1": {
+        "rows": 40,
+        "top1_accuracy": 0.575,
+        "mean_nll": 1.2789631584101904,
+        "mean_brier": 0.1722362141603466
+      },
+      "snake-v1": {
+        "rows": 30,
+        "top1_accuracy": 0.9,
+        "mean_nll": 0.2515189709637771,
+        "mean_brier": 0.0256509392858026
+      },
+      "vizdoom-basic-v1": {
+        "rows": 26,
+        "top1_accuracy": 1.0,
+        "mean_nll": 0.007141403423208597,
+        "mean_brier": 7.08598458496668e-05
+      },
+      "workflow-controls-v1/agent_trace_observability": {
+        "rows": 8,
+        "top1_accuracy": 1.0,
+        "mean_nll": 0.003033998131886145,
+        "mean_brier": 1.6230676378624427e-05,
+        "confusion": {
+          "true_positive": 1,
+          "true_negative": 7,
+          "false_positive": 0,
+          "false_negative": 0
+        },
+        "balanced_accuracy": 1.0
+      },
+      "workflow-controls-v1/customer_service": {
+        "rows": 1,
+        "top1_accuracy": 1.0,
+        "mean_nll": 0.0007319596615318709,
+        "mean_brier": 5.353729551710681e-07,
+        "confusion": {
+          "true_positive": 0,
+          "true_negative": 1,
+          "false_positive": 0,
+          "false_negative": 0
+        },
+        "balanced_accuracy": null
+      },
+      "workflow-controls-v1/invoice_processing": {
+        "rows": 5,
+        "top1_accuracy": 1.0,
+        "mean_nll": 0.000965429388851414,
+        "mean_brier": 9.553146986620718e-07,
+        "confusion": {
+          "true_positive": 0,
+          "true_negative": 5,
+          "false_positive": 0,
+          "false_negative": 0
+        },
+        "balanced_accuracy": null
+      },
+      "workflow-controls-v1/security_incidents": {
+        "rows": 2,
+        "top1_accuracy": 1.0,
+        "mean_nll": 0.0012651117864518173,
+        "mean_brier": 1.7819467690668008e-06,
+        "confusion": {
+          "true_positive": 0,
+          "true_negative": 2,
+          "false_positive": 0,
+          "false_negative": 0
+        },
+        "balanced_accuracy": null
+      }
+    }
+  },
+  "delta_candidate_minus_released": {
+    "top1_accuracy": 0.0267857142857143,
+    "mean_nll": -0.11182874171308077,
+    "mean_brier": -0.017620896909183115,
+    "score_mean_ranked_probability_score": -0.0009775113521348772
+  },
+  "candidate_adapter_sha256": "5bb2153d689476375b7784884964605411d000f20883b38a9ccd44eae0bfc0a3",
+  "candidate_head_sha256": "aa2a39aee6e7b48efc50eff3a0f1ac5c4fdf391b534bf8b874a4a8da9ba65676",
+  "baseline_artifacts_sha256": {
+    "report": "9bf040f837ab9760ff6467d2b44887d4e6d38ed3ceaa18401468080ae92eeb16",
+    "fresh_logits": "b94f3b6a44662187e3c85536f545ccb41b0c3d800b89eff87b73957bc0fac324"
+  },
+  "limitation": "Public synthetic decisions only; comparison is with released Open-Jev, not TypeSafe Jev, and proves neither desktop task success nor execution safety."
+}
