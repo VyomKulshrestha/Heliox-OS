@@ -52,10 +52,11 @@ Claude runs without tools, browser integration, slash commands, or persistent
 sessions. Returned plans still pass through the normal policy, approval,
 execution, and verification pipeline.
 
-The runtime offers an opt-in local next-token typed-decision scorer. A separate
-frozen-backbone/listwise-head experiment and its shuffled-context results are
-documented in [the Jev-inspired probe report](benchmarks/jevlike_typed_decision_v1.md).
-Neither is Jev parity or execution authority; Jev/TypeSafe outputs are not used
+The runtime offers an opt-in local next-token typed-decision scorer. Separate
+research-only Jev-like option-ranker probes are documented in the
+[current compact scorer report](benchmarks/jevlike_typed_decision_v2.md) and
+[historical frozen-backbone report](benchmarks/jevlike_typed_decision_v1.md).
+Neither is Jev parity or execution authority; no Jev/TypeSafe outputs are used
 as training or evaluation targets.
 
 An opt-in benchmark measures this path without executing actions:

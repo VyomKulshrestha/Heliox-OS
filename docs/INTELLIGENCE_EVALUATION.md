@@ -127,6 +127,15 @@ an arbitrary proposed tool call fulfills a user's task. Its stored temporal
 validation covers 5,400 samples across 12 action types; the benchmark checks
 the saved evidence and direction invariants, not fresh Jev-style reasoning.
 
+A separate [compact option-ranker probe](../daemon/benchmarks/jevlike_typed_decision_v2.md)
+uses only verified-CC0 Open-Jev rows and a tiny listwise byte model. Across two
+1,000-row OOD samples, full-context shuffling reduced top-1 by 12.1 points,
+while choice accuracy was 33.6–42.9% against 25.6–25.8% expected random choice;
+10-bin ECE remained 9.2–10.4%. It is not loaded by Heliox and provides no
+evidence of live desktop or multi-step transfer. This follows the independent
+Open-Jev pattern of ranking supplied choices in one pass; it does not reproduce
+Jev's private model or method.
+
 A separate **research-only GPU task-state head** was retrained from frozen
 Qwen3.5-2B features on the pinned agentic, TBAC, ScopeJudge, and When2Call
 training splits. On the held-out When2Call preference test it reached 70/100,
