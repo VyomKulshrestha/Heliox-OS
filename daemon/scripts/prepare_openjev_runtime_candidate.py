@@ -48,6 +48,23 @@ def head_arrays(state: Any) -> tuple[np.ndarray, np.ndarray]:
     return weight, bias
 
 
+def scorer_provenance(repo: str, revision: str, adapter_sha256: str,
+                      head_sha256: str) -> dict[str, Any]:
+    """Emit the warm-start fields required by Heliox's artifact verifier."""
+    if any(not isinstance(value, str) or not value for value in
+           (repo, revision, adapter_sha256, head_sha256)):
+        raise ValueError("Open-Jev warm-start provenance must be complete")
+    return {
+        "backbone_quantization": "NF4 double quantization",
+        "initial_checkpoint": {
+            "repo": repo,
+            "revision": revision,
+            "adapter_sha256": adapter_sha256,
+            "head_sha256": head_sha256,
+        },
+    }
+
+
 def prepare(output_dir: Path) -> dict:
     """Create a new local artifact directory from already-cached public files."""
     output_dir = output_dir.expanduser().resolve()
@@ -108,6 +125,8 @@ def prepare(output_dir: Path) -> dict:
             "prompt_style": "candidate_v1",
             "model_dtype": "bfloat16",
             "source_checkpoint": f"{OPENJEV_REPO}@{OPENJEV_REVISION}",
+            **scorer_provenance(OPENJEV_REPO, OPENJEV_REVISION,
+                                OPENJEV_ADAPTER_SHA256, OPENJEV_HEAD_SHA256),
             "source_license": "Apache-2.0",
             "source_head_sha256": OPENJEV_HEAD_SHA256,
             "adapter_config_sha256": hashlib.sha256(adapter_config.read_bytes()).hexdigest(),
