@@ -17,6 +17,9 @@ MAX_OPTIONS = 64
 MAX_STATE_CHARS = 16_384
 MAX_QUESTION_CHARS = 4_000
 MAX_OPTION_CHARS = 1_024
+MAX_QUESTIONS = 64
+MAX_QUESTION_ID_CHARS = 128
+MAX_TOTAL_OPTIONS = 256
 MAX_CANDIDATE_MICROBATCH = 16
 
 
@@ -56,6 +59,126 @@ def validate_decision(kind: str, question: str, options: list[str]) -> None:
         raise ValueError("Decision options must be unique")
     if kind == "noul" and options != ["no", "yes"]:
         raise ValueError("Noul options must be ordered as no, yes")
+
+
+def _render_typed_value(value: Any, *, optional: bool = False) -> str | None:
+    if value is None and optional:
+        return None
+    if not isinstance(value, (str, dict, list)):
+        raise ValueError("Instructions and descriptions must be text, an object, or an array")
+    try:
+        return value if isinstance(value, str) else json.dumps(
+            value, ensure_ascii=False, sort_keys=True, allow_nan=False
+        )
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Instructions and descriptions must contain JSON values") from exc
+
+
+def compile_typed_questions(state: Any, questions: Any) -> list[dict[str, Any]]:
+    """Compile TypeSafe-style typed questions into Heliox's neutral candidate API."""
+    if not isinstance(state, (str, dict, list)):
+        raise ValueError("State must be text, a JSON object, or an array")
+    try:
+        state_json = json.dumps(state, ensure_ascii=False, sort_keys=True, allow_nan=False)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("State must contain JSON values") from exc
+    if len(state_json) > MAX_STATE_CHARS:
+        raise ValueError(f"State exceeds {MAX_STATE_CHARS} characters")
+    if not isinstance(questions, dict) or not 1 <= len(questions) <= MAX_QUESTIONS:
+        raise ValueError(f"Questions must be an object with 1-{MAX_QUESTIONS} entries")
+
+    compiled = []
+    total_options = 0
+    for question_id, definition in questions.items():
+        if (not isinstance(question_id, str) or not question_id.strip()
+                or len(question_id) > MAX_QUESTION_ID_CHARS):
+            raise ValueError("Question IDs must be nonempty strings within the size limit")
+        if not isinstance(definition, dict) or set(definition) - {"type", "instructions", "criteria"}:
+            raise ValueError("Question definitions may contain only type, instructions, and criteria")
+        kind = definition.get("type")
+        if kind not in KINDS:
+            raise ValueError("Question type must be choice, score, or noul")
+        question = _render_typed_value(definition.get("instructions"))
+        criteria = definition.get("criteria")
+
+        if kind == "noul":
+            if not isinstance(criteria, dict) or set(criteria) != {"true", "false"}:
+                raise ValueError("Noul criteria must contain true and false descriptions")
+            true = _render_typed_value(criteria["true"])
+            false = _render_typed_value(criteria["false"])
+            question += f"\nYes means: {true}\nNo means: {false}"
+            options = ["no", "yes"]
+            answer_keys = ["false", "true"]
+            legend = None
+        elif kind == "choice":
+            if not isinstance(criteria, dict) or not 2 <= len(criteria) <= MAX_OPTIONS:
+                raise ValueError(f"Choice criteria must contain 2-{MAX_OPTIONS} candidates")
+            if any(not isinstance(name, str) for name in criteria):
+                raise ValueError("Choice candidate names must be strings")
+            answer_keys = list(criteria)
+            options = []
+            for name, description in criteria.items():
+                rendered = _render_typed_value(description, optional=True)
+                options.append(name if rendered is None else f"{name}: {rendered}")
+            legend = None
+        else:
+            if not isinstance(criteria, list) or not 2 <= len(criteria) <= 10:
+                raise ValueError("Score criteria must contain 2-10 ordered levels")
+            answer_keys = [str(index) for index in range(len(criteria))]
+            options = [_render_typed_value(level) for level in criteria]
+            legend = json.loads(json.dumps(criteria, ensure_ascii=False, allow_nan=False))
+
+        validate_decision(kind, question, options)
+        total_options += len(options)
+        if total_options > MAX_TOTAL_OPTIONS:
+            raise ValueError(f"A typed request may contain at most {MAX_TOTAL_OPTIONS} candidate options")
+        compiled.append({
+            "id": question_id,
+            "kind": kind,
+            "question": question,
+            "options": options,
+            "answer_keys": answer_keys,
+            "legend": legend,
+        })
+    return compiled
+
+
+def format_typed_answer(record: dict[str, Any], probabilities: list[float] | np.ndarray) -> dict[str, Any]:
+    """Format normalized candidate probabilities as a TypeSafe-style answer."""
+    values = np.asarray(probabilities, dtype=np.float64)
+    options = record["options"]
+    keys = record["answer_keys"]
+    if (values.ndim != 1 or len(values) != len(options) or len(keys) != len(options)
+            or not np.all(np.isfinite(values)) or np.any(values < 0)):
+        raise ValueError("Model returned invalid typed-decision probabilities")
+    total = float(values.sum())
+    if not np.isclose(total, 1.0, rtol=1e-6, atol=1e-6):
+        raise ValueError("Typed-decision probabilities must sum to one")
+    values = values / total
+    if record["kind"] == "noul":
+        return {"type": "noul", "noul": float(values[1])}
+    if record["kind"] == "choice":
+        selected = int(np.argmax(values))
+        uniform = 1.0 / len(values)
+        confidence = (float(values.max()) - uniform) / (1.0 - uniform)
+        return {
+            "type": "choice",
+            "choice": keys[selected],
+            "probabilities": {key: float(value) for key, value in zip(keys, values, strict=True)},
+            "confidence": float(confidence),
+        }
+    mode = int(np.argmax(values))
+    distance = float(sum(value * abs(index - mode) for index, value in enumerate(values)))
+    center = (len(values) - 1) / 2
+    uniform_deviation = sum(abs(index - center) for index in range(len(values))) / len(values)
+    confidence = max(0.0, 1.0 - distance / uniform_deviation)
+    return {
+        "type": "score",
+        "score": float(np.arange(len(values), dtype=np.float64) @ values),
+        "probabilities": {key: float(value) for key, value in zip(keys, values, strict=True)},
+        "confidence": float(confidence),
+        "legend": record["legend"],
+    }
 
 
 def candidate_prompts(row: dict[str, Any], *, style: str) -> list[str]:
@@ -133,7 +256,7 @@ class LocalTypedDecisionModel:
         self._microbatch_size = MAX_CANDIDATE_MICROBATCH
         self._identity: dict[str, str] = {}
 
-    def score(self, state: dict[str, Any], kind: str, question: str, options: list[str]) -> dict:
+    def score(self, state: Any, kind: str, question: str, options: list[str]) -> dict:
         """Score dynamic options. Input is not persisted or passed to any action planner."""
         validate_decision(kind, question, options)
         try:
@@ -153,7 +276,8 @@ class LocalTypedDecisionModel:
             self._load()
             prompts = candidate_prompts(row, style=self._prompt_style)
             sequences = self._encode(prompts)
-            logits = self._score_sequences(sequences, kind)
+            scores = self._score_sequences(sequences)
+            logits = np.concatenate((np.zeros(1, dtype=np.float64), scores[:1])) if kind == "noul" else scores
             return {
                 "status": "ok",
                 "research_only": True,
@@ -163,6 +287,58 @@ class LocalTypedDecisionModel:
                 "model": self._identity["model"],
                 "revision": self._identity["revision"],
                 "answer": format_answer(kind, options, logits, self._temperature),
+            }
+
+    def score_questions(self, state: Any, questions: Any) -> dict[str, Any]:
+        """Score bounded typed questions together in one cached-model GPU scoring call."""
+        records = compile_typed_questions(state, questions)
+        with self._lock:
+            self._load()
+            state_json = json.dumps(state, ensure_ascii=False, sort_keys=True, allow_nan=False)
+            rows = [
+                {
+                    "kind": record["kind"],
+                    "question": record["question"],
+                    "options": record["options"],
+                    "state_json": state_json,
+                }
+                for record in records
+            ]
+            prompts_by_record = [
+                candidate_prompts(row, style=self._prompt_style) for row in rows
+            ]
+            prompts = [prompt for group in prompts_by_record for prompt in group]
+            sequences = self._encode(prompts)
+            candidate_scores = self._score_sequences(sequences)
+            answers: dict[str, dict[str, Any]] = {}
+            offset = 0
+            for record, record_prompts in zip(records, prompts_by_record, strict=True):
+                count = len(record_prompts)
+                scores = candidate_scores[offset : offset + count]
+                offset += count
+                logits = (
+                    np.concatenate((np.zeros(1, dtype=np.float64), scores[:1]))
+                    if record["kind"] == "noul"
+                    else scores
+                )
+                answer = format_answer(
+                    record["kind"], record["options"], logits, self._temperature
+                )
+                if record["kind"] == "noul":
+                    yes_probability = answer["yes_probability"]
+                    probabilities = [1.0 - yes_probability, yes_probability]
+                else:
+                    probabilities = [answer["probabilities"][option] for option in record["options"]]
+                answers[record["id"]] = format_typed_answer(record, probabilities)
+            return {
+                "status": "ok",
+                "research_only": True,
+                "execution_authority": False,
+                "advisory_only": True,
+                "artifact_integrity": "sha256_verified",
+                "model": self._identity["model"],
+                "revision": self._identity["revision"],
+                "answers": answers,
             }
 
     def _load(self) -> None:
@@ -286,7 +462,7 @@ class LocalTypedDecisionModel:
             sequences.append(token_ids)
         return sequences
 
-    def _score_sequences(self, sequences: list[list[int]], kind: str) -> np.ndarray:
+    def _score_sequences(self, sequences: list[list[int]]) -> np.ndarray:
         torch = self._torch
         candidate_scores = []
         with torch.inference_mode():
@@ -313,8 +489,7 @@ class LocalTypedDecisionModel:
                 candidate_scores.extend(self._head(last_hidden).squeeze(-1).unbind())
                 start += len(batch)
             scores = torch.stack(candidate_scores)
-            logits = torch.cat((torch.zeros_like(scores[:1]), scores[:1])) if kind == "noul" else scores
-        return logits.float().cpu().numpy().astype(np.float64)
+        return scores.float().cpu().numpy().astype(np.float64)
 
     def unload(self) -> None:
         """Release the optional local model and its CUDA allocation."""

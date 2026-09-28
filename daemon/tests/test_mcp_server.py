@@ -56,6 +56,7 @@ async def test_local_mcp_lists_bounded_tools_with_truthful_annotations() -> None
         "list_heliox_capabilities",
         "preview_heliox_task",
         "score_heliox_typed_decision",
+        "score_heliox_typed_questions",
         "submit_heliox_task",
         "get_heliox_task_status",
         "cancel_heliox_task",
@@ -65,6 +66,8 @@ async def test_local_mcp_lists_bounded_tools_with_truthful_annotations() -> None
     assert tools["score_heliox_typed_decision"].annotations.read_only_hint is True
     assert tools["score_heliox_typed_decision"].annotations.destructive_hint is False
     assert tools["score_heliox_typed_decision"].annotations.open_world_hint is False
+    assert tools["score_heliox_typed_questions"].annotations.read_only_hint is True
+    assert tools["score_heliox_typed_questions"].annotations.destructive_hint is False
     assert tools["submit_heliox_task"].annotations.read_only_hint is False
     assert tools["submit_heliox_task"].annotations.destructive_hint is True
     submit_schema = tools["submit_heliox_task"].input_schema["properties"]
@@ -117,6 +120,19 @@ async def test_typed_decision_tool_passes_dynamic_state_without_action_side_effe
                 "options": ["collect evidence", "change settings"],
             },
         )
+        typed_result = await client.call_tool(
+            "score_heliox_typed_questions",
+            {
+                "state": "inspect current screen",
+                "questions": {
+                    "ready": {
+                        "type": "noul",
+                        "instructions": "Is inspection safe?",
+                        "criteria": {"true": "Read only", "false": "Changes state"},
+                    }
+                },
+            },
+        )
 
     assert result.is_error is False
     assert daemon.calls == [
@@ -128,9 +144,23 @@ async def test_typed_decision_tool_passes_dynamic_state_without_action_side_effe
                 "question": "Which candidate best satisfies the request?",
                 "options": ["collect evidence", "change settings"],
             },
-        )
+        ),
+        (
+            "mcp_typed_decision",
+            {
+                "state": "inspect current screen",
+                "questions": {
+                    "ready": {
+                        "type": "noul",
+                        "instructions": "Is inspection safe?",
+                        "criteria": {"true": "Read only", "false": "Changes state"},
+                    }
+                },
+            },
+        ),
     ]
-    assert daemon.timeouts == [120]
+    assert typed_result.is_error is False
+    assert daemon.timeouts == [120, 120]
 
 
 @pytest.mark.parametrize(

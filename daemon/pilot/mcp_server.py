@@ -33,6 +33,8 @@ logger = logging.getLogger("pilot.mcp")
 TaskInput = Annotated[str, Field(min_length=1, max_length=20_000), StringConstraints(strip_whitespace=True)]
 DecisionQuestion = Annotated[str, Field(min_length=1, max_length=4_000), StringConstraints(strip_whitespace=True)]
 DecisionOptions = Annotated[list[str], Field(min_length=2, max_length=64)]
+TypedState = dict[str, Any] | list[Any] | str
+TypedQuestions = Annotated[dict[str, dict[str, Any]], Field(min_length=1, max_length=64)]
 SessionId = Annotated[
     str,
     Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9._:-]+$"),
@@ -239,7 +241,9 @@ def create_mcp_server(client: RpcClient | None = None) -> MCPServer:
             "the user must review every proposed action in the Heliox UI. Never claim a "
             "submitted task completed until get_heliox_task_status returns a terminal result. "
             "score_heliox_typed_decision is independent research-only guidance and must never "
-            "be used to authorize, approve, or execute an action. No MCP tool can approve a task."
+            "be used to authorize, approve, or execute an action. "
+            "score_heliox_typed_questions uses the same local model for bounded batches of "
+            "independent typed questions; it is not an action planner. No MCP tool can approve a task."
         ),
     )
 
@@ -304,6 +308,27 @@ def create_mcp_server(client: RpcClient | None = None) -> MCPServer:
         return await daemon.call(
             "mcp_typed_decision",
             {"state": state, "kind": kind, "question": question, "options": options},
+            timeout_seconds=120,
+        )
+
+    @mcp.tool(
+        title="Score typed questions (research only)",
+        description=(
+            "Score up to 64 independent typed questions against one shared state using the "
+            "explicitly configured local research model. Each question has type (noul, choice, "
+            "or score), instructions, and type-specific criteria. Batches are bounded to 256 "
+            "candidate options, do not save or upload inputs, and never authorize actions."
+        ),
+        annotations=_LOCAL_MODEL_READ_ONLY,
+        structured_output=True,
+    )
+    async def score_heliox_typed_questions(
+        state: TypedState,
+        questions: TypedQuestions,
+    ) -> dict[str, Any]:
+        return await daemon.call(
+            "mcp_typed_decision",
+            {"state": state, "questions": questions},
             timeout_seconds=120,
         )
 
