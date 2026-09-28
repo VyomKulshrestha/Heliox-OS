@@ -35,6 +35,12 @@ This is a useful architecture and calibration result, not a Heliox-ready decisio
 
 Before any promotion, use a newly preregistered source-held-out split and report per-type selective risk, calibration, option-order invariance, shuffled-state controls, and comparison to the current Heliox baseline. Any personalization data must be explicitly consented, locally retained, minimized, and license/rights reviewed. Keep deterministic policy checks, approval prompts, and action allowlists authoritative regardless of model confidence.
 
+## External compact-model lead reviewed 2026-09-29
+
+[openJev-verdict-2.0](https://github.com/Heman10x-NGU/openJev-verdict-2.0) is a useful architecture lead: it describes a marker-pointer encoder, a soft option-distribution head, a separate correctness head, per-type/cardinality calibration, and a symmetric option-permutation loss ([model](https://github.com/Heman10x-NGU/openJev-verdict-2.0/blob/main/verdict2/model.py), [training losses](https://github.com/Heman10x-NGU/openJev-verdict-2.0/blob/main/verdict2/losses.py)). Its README claims 77.10% top-1 and roughly 20–25 ms per decision, but these are the authors' results on their own benchmark, not Heliox evidence or proof of Jev parity.
+
+The evaluation needs reconciliation before reuse: the README describes 2,000 held-out decisions, while the checked-in [dataset manifest](https://github.com/Heman10x-NGU/openJev-verdict-2.0/blob/main/data/dataset_manifest.json) reports 5,000 rows with a 500-row test split and 211 test-contamination cases. These could describe different evaluation artifacts, but the distinction is not established by the headline claim. No checkpoint or dataset was downloaded. The safe next step is to verify the authors' receipts and licenses, then test portable ideas only on a newly selected, rights-cleared Heliox split; do not import its reported score as a benchmark or train on its data by assumption.
+
 Reproduce with cached dependencies and weights (no download):
 
 ```powershell
