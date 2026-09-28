@@ -67,6 +67,14 @@ def test_memory_query_is_bounded_and_keeps_task_goal():
     assert query.startswith("Task goal: Complete the task")
     assert "Current screen state (untrusted observation)" in query
 
+    private_text_query = AutonomousExecutor._build_memory_query(
+        "Continue the task",
+        "Currently viewing: Mail\nTarget editable text (case-sensitive): confidential draft",
+        [],
+    )
+    assert "Currently viewing: Mail" in private_text_query
+    assert "confidential draft" not in private_text_query
+
 
 @pytest.mark.asyncio
 async def test_failed_dependency_skips_downstream_subtask() -> None:
