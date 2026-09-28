@@ -126,6 +126,7 @@ async def test_resume_plan_returns_success_when_checkpoint_already_complete(tmp_
                 passed=True,
                 details=["checkpoint postconditions verified"],
                 failed_actions=[],
+                independently_observed_actions=[0],
             )
         )
     )
