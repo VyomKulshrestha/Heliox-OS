@@ -58,7 +58,7 @@
         "prompt_tokens_above_768": 2
       },
       "max_prompt_tokens": 715,
-      "batches_by_microbatch": {
+      "rows_by_microbatch_cap": {
         "2": 0,
         "4": 41,
         "8": 233

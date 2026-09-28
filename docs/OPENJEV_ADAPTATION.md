@@ -1842,16 +1842,26 @@ The larger-model results in that repository do not transfer automatically to
 Heliox's 8 GiB laptop GPU.
 
 The same 256-row OOD selection was then rescored with the existing Open-Jev
-adapter/head through Heliox's production research wrapper. Candidate prompts
-up to 512 tokens used batches of 8, 513–768 tokens used 4, and longer prompts
-used 2. Compared with the earlier batch-2 run, the length-aware run completed
-in 106.2 seconds including model load, versus 179.0 seconds (1.69× faster),
-with 2.00 GiB peak allocation. Aggregate top-1 was unchanged for all three
-decision kinds; NLL/Brier and ordinal ranking scores shifted slightly with
-batch numerics, so this is not bitwise-identical output. The evaluated prompts
-peaked at 715 tokens, with 233 batches of 8 and 41 batches of 4. The
-device-specific report is
+adapter/head through Heliox's production research wrapper. The initial
+length-aware policy used batches of 8 through 512 tokens, 4 for 513–768, and 2
+for longer prompts. Compared with the earlier batch-2 run, it completed in
+106.2 seconds including model load, versus 179.0 seconds (1.69× faster), with
+2.00 GiB peak allocation. Aggregate top-1 was unchanged for all three decision
+kinds; probabilities shifted slightly with batch numerics. The evaluated
+prompts peaked at 715 tokens; 233 rows used a maximum microbatch cap of 8 and
+41 rows used a cap of 4 (these are row-level policy counts, not forward-pass
+counts). The device-specific report is
 [`openjev_runtime_microbatch_20260928.json`](../daemon/benchmarks/openjev_runtime_microbatch_20260928.json).
+
+A paired 8-versus-16 follow-up on those same 256 rows found a further 4.8%
+scoring speedup (79.3 to 75.7 seconds, excluding model load), with peak
+allocation unchanged at 2.00 GiB. There were no top-1 changes across 256 rows;
+Choice NLL/Brier improved slightly, while Noul and Score metrics were unchanged.
+The maximum raw-logit delta was 1.10, so probability equality is not claimed.
+The selected rows were previously inspected, making this runtime comparison
+engineering evidence rather than a fresh accuracy holdout. Full metrics and
+row-level microbatch-policy counts are in
+[`openjev_runtime_microbatch16_20260928.json`](../daemon/benchmarks/openjev_runtime_microbatch16_20260928.json).
 
 The released checkpoint's published temperature (1.518796342858676; see the
 [Open-Jev-2B model card](https://huggingface.co/ZefanCai/Open-Jev-2B)) was then
@@ -1874,8 +1884,19 @@ top-1 differs by 2 of 229 rows, so the harness's exact row predictions are not
 claimed to be bitwise-reproduced. The full hashed run report is
 [`openjev_runtime_fresh_512_20260928.json`](../daemon/benchmarks/openjev_runtime_fresh_512_20260928.json).
 
-This length-aware setting is now the default for the opt-in local scorer. It
-does not change model weights, prompts, calibration, the approval system, or
-execution authority. The current result is a useful local speed/quality trade,
-not “Jev parity”: a licensed, matched, independently reviewed Jev benchmark
-and real desktop task evaluation are still required before such a claim.
+The 16-item length-aware setting is now the default for the opt-in local
+scorer. It does not change model weights, prompts, calibration, the approval
+system, or execution authority. The current result is a local speed/quality
+trade, not “Jev parity”: a licensed, matched, independently reviewed Jev
+benchmark and real desktop task evaluation are still required before such a
+claim.
+
+An additional research lead is the published
+[`jevre` scorer implementation](https://huggingface.co/di-zhang-fdu/jevre/blob/main/modeling.py),
+which packs context and candidate spans into one sequence and isolates
+candidate attention; its model card describes Plackett–Luce ranking plus a
+Brier term. The card's 93.23% result is on its own `jevre-mix` test split and
+is not comparable to this Open-Jev OOD benchmark. Its linked GitHub repository
+was unavailable during this review, its checkpoint is not in the local cache,
+and no weights or data were downloaded. Treat this as a candidate architecture
+for a separately trained, matching-split experiment—not as a Heliox result.

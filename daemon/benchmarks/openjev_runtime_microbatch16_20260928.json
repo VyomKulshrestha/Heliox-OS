@@ -1,0 +1,115 @@
+{
+  "schema_version": 1,
+  "purpose": "paired_local_gpu_microbatch_comparison_for_research_only_typed_decision_runtime",
+  "date": "2026-09-28",
+  "device": {
+    "name": "NVIDIA GeForce RTX 4060 Laptop GPU",
+    "memory_mib": 8188
+  },
+  "dataset": {
+    "id": "ZefanCai/Open-Jev",
+    "revision": "c67699e13d0ae25e35b77165a4b6b079bedc8aba",
+    "config": "release-v2-redistributable",
+    "split": "ood",
+    "seed": 20260928,
+    "selected_rows": 256,
+    "selected_ids_sha256": "1aa303d033692177599f2c37e7f9293de569cdc43145fd80aa503eee1fc84a39",
+    "selection_previously_inspected": true
+  },
+  "checkpoint": {
+    "source": "ZefanCai/Open-Jev-2B@0c7aa498b1627be8da4acf34c863ff0ee0a92785",
+    "base_model": "Qwen/Qwen3.5-2B",
+    "base_revision": "15852e8c16360a2fea060d615a32b45270f8a8fc",
+    "adapter_sha256": "2d23935b1a7380db444abac572c04646918ba794e59002d1588236182a3ca18f",
+    "head_sha256": "951aa74fc6d5a023a63ae3b083227c0b2e84bb64b27ff5884c4412d131cae0b8",
+    "quantization": "4-bit NF4",
+    "runtime": "Heliox LocalTypedDecisionModel.score"
+  },
+  "comparison": {
+    "measurement": "paired in one process; scoring time excludes model load",
+    "candidate_prompts": 769,
+    "max_prompt_tokens": 715,
+    "baseline_microbatch": {
+      "maximum": 8,
+      "prompt_tokens_at_most_512": 8,
+      "prompt_tokens_513_to_768": 4,
+      "prompt_tokens_above_768": 2,
+      "rows_by_microbatch_cap": {
+        "4": 41,
+        "8": 233
+      },
+      "scoring_seconds": 79.325,
+      "gpu_peak_allocated_bytes": 2147518976,
+      "metrics": {
+        "top1_accuracy": 0.828125,
+        "choice": {
+          "rows": 69,
+          "top1_accuracy": 0.6376811594202898,
+          "mean_nll": 1.272969173636804,
+          "mean_brier": 0.075449754203503
+        },
+        "noul": {
+          "rows": 136,
+          "top1_accuracy": 0.9117647058823529,
+          "balanced_accuracy": 0.8387761106207708,
+          "mean_nll": 0.23785531025346718,
+          "mean_brier": 0.06630696148879967
+        },
+        "score": {
+          "rows": 51,
+          "top1_accuracy": 0.8627450980392157,
+          "mean_nll": 0.5686591515295631,
+          "mean_brier": 0.05058416818645144,
+          "mean_rank_error": 0.2901930121151682,
+          "mean_ranked_probability_score": 0.0651484351141304
+        }
+      }
+    },
+    "candidate_microbatch": {
+      "maximum": 16,
+      "prompt_tokens_at_most_512": 16,
+      "prompt_tokens_513_to_768": 4,
+      "prompt_tokens_above_768": 2,
+      "rows_by_microbatch_cap": {
+        "4": 41,
+        "16": 215
+      },
+      "scoring_seconds": 75.678,
+      "gpu_peak_allocated_bytes": 2147518976,
+      "metrics": {
+        "top1_accuracy": 0.828125,
+        "choice": {
+          "rows": 69,
+          "top1_accuracy": 0.6376811594202898,
+          "mean_nll": 1.2710442618494875,
+          "mean_brier": 0.0751210005329659
+        },
+        "noul": {
+          "rows": 136,
+          "top1_accuracy": 0.9117647058823529,
+          "balanced_accuracy": 0.8387761106207708,
+          "mean_nll": 0.23785531025346718,
+          "mean_brier": 0.06630696148879967
+        },
+        "score": {
+          "rows": 51,
+          "top1_accuracy": 0.8627450980392157,
+          "mean_nll": 0.5686591515295631,
+          "mean_brier": 0.05058416818645144,
+          "mean_rank_error": 0.2901930121151682,
+          "mean_ranked_probability_score": 0.0651484351141304
+        }
+      }
+    },
+    "top1_flips": 0,
+    "max_abs_logit_delta": 1.1020000595599413,
+    "speedup": 1.048,
+    "peak_allocation_delta_bytes": 0
+  },
+  "limitations": [
+    "The selected public synthetic OOD rows were previously inspected; this paired runtime check is not a fresh accuracy holdout.",
+    "Larger batches change floating-point logits; there were no top-1 changes, but exact probability equality is not claimed.",
+    "This measurement does not establish Jev parity, real desktop transfer, or execution authority.",
+    "No model or dataset downloads were performed."
+  ]
+}
