@@ -134,7 +134,8 @@ while choice accuracy was 33.6–42.9% against 25.6–25.8% expected random choi
 10-bin ECE remained 9.2–10.4%. It is not loaded by Heliox and provides no
 evidence of live desktop or multi-step transfer. This follows the independent
 Open-Jev pattern of ranking supplied choices in one pass; it does not reproduce
-Jev's private model or method.
+Jev's private model or method. A scorer-only microbenchmark measured roughly
+1.1 ms median on both CPU and CUDA, excluding Heliox's RPC and approval loop.
 
 A separate **research-only GPU task-state head** was retrained from frozen
 Qwen3.5-2B features on the pinned agentic, TBAC, ScopeJudge, and When2Call
