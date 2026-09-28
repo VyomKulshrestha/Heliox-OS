@@ -175,7 +175,8 @@ CREATE TABLE IF NOT EXISTS episodic_memories (
     importance REAL NOT NULL,
     occurred_at TEXT NOT NULL,
     provenance_event_id TEXT NOT NULL DEFAULT '',
-    payload_json TEXT NOT NULL
+    payload_json TEXT NOT NULL,
+    provenance TEXT NOT NULL DEFAULT 'inferred'
 );
 
 CREATE INDEX IF NOT EXISTS idx_episodes_session_time
@@ -214,6 +215,13 @@ class TemporalMemoryStore:
         async with pool.write() as db:
             await db.execute("PRAGMA foreign_keys = ON")
             await db.executescript(_SCHEMA_SQL)
+            cursor = await db.execute("PRAGMA table_info(episodic_memories)")
+            columns = {row[1] for row in await cursor.fetchall()}
+            await cursor.close()
+            if "provenance" not in columns:
+                await db.execute(
+                    "ALTER TABLE episodic_memories ADD COLUMN provenance TEXT NOT NULL DEFAULT 'inferred'"
+                )
             await db.commit()
         self._pool = pool
 
@@ -616,6 +624,7 @@ class TemporalMemoryStore:
         importance: float = 0.5,
         provenance_event_id: str = "",
         payload: dict[str, Any] | None = None,
+        provenance: MemoryProvenance = MemoryProvenance.INFERRED,
         occurred_at: str | None = None,
     ) -> EpisodicMemory:
         episode = EpisodicMemory(
@@ -635,9 +644,9 @@ class TemporalMemoryStore:
                 """
                 INSERT INTO episodic_memories (
                     episode_id, session_id, task_id, summary, outcome, tags_json,
-                    importance, occurred_at, provenance_event_id, payload_json
+                    importance, occurred_at, provenance_event_id, payload_json, provenance
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     episode.episode_id,
@@ -650,6 +659,7 @@ class TemporalMemoryStore:
                     episode.occurred_at,
                     episode.provenance_event_id,
                     json.dumps(redact_for_persistence(payload or {}), sort_keys=True),
+                    MemoryProvenance(provenance).value,
                 ),
             )
             await db.commit()
@@ -671,7 +681,7 @@ class TemporalMemoryStore:
                 cursor = await db.execute(
                     """
                     SELECT episode_id, session_id, summary, outcome, tags_json,
-                           importance, occurred_at
+                           importance, occurred_at, provenance
                     FROM episodic_memories
                     ORDER BY occurred_at DESC
                     LIMIT 500
@@ -681,7 +691,7 @@ class TemporalMemoryStore:
                 cursor = await db.execute(
                     """
                     SELECT episode_id, session_id, summary, outcome, tags_json,
-                           importance, occurred_at
+                           importance, occurred_at, provenance
                     FROM episodic_memories
                     WHERE session_id = ?
                     ORDER BY occurred_at DESC
@@ -703,15 +713,26 @@ class TemporalMemoryStore:
             )
             recency = math.exp(-age_days / 21.0)
             session_utility = 1.0 if row[1] == session_id else 0.7
-            outcome_weight = 1.0 if row[3] == "success" else 0.8
-            score = (0.1 + 0.9 * relevance) * (0.25 + 0.75 * recency) * float(row[5]) * session_utility * outcome_weight
+            outcome_weight = {"success": 1.0, "unverified": 0.65}.get(row[3], 0.8)
+            try:
+                provenance = MemoryProvenance(row[7])
+            except ValueError:
+                provenance = MemoryProvenance.INFERRED
+            score = (
+                (0.1 + 0.9 * relevance)
+                * (0.25 + 0.75 * recency)
+                * float(row[5])
+                * PROVENANCE_WEIGHT[provenance]
+                * session_utility
+                * outcome_weight
+            )
             ranked.append(
                 RankedMemory(
                     kind="episode",
                     text=text,
                     score=score,
                     confidence=1.0,
-                    provenance=MemoryProvenance.VERIFIED_OUTCOME.value,
+                    provenance=provenance.value,
                     memory_id=row[0],
                 )
             )

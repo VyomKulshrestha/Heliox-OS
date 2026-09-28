@@ -175,6 +175,11 @@ layers. Facts retain evidence, provenance, confidence, validity windows,
 contradiction history, and retraction state. The context assembler ranks
 eligible items by relevance, recency, confidence, provenance, scope utility,
 and outcome utility under a strict token budget.
+Temporal episodes are marked as verified outcomes only after a passing
+postcondition verifier; successful tool calls without that check remain
+unverified and are ranked with lower provenance weight. This conservative
+validation boundary is consistent with MAGE's Maintain operation, without
+adopting its hierarchical execution tree ([paper](https://arxiv.org/abs/2606.06090)).
 
 A new chat receives the durable user model and relevant memories, not an
 unbounded transcript dump. Memory is advisory: it cannot grant permission or
