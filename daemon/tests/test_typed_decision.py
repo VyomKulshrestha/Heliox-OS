@@ -15,7 +15,9 @@ from pilot.intelligence.typed_decision import (
     LocalTypedDecisionModel,
     _candidate_microbatch_size,
     candidate_prompts,
+    compile_typed_questions,
     format_answer,
+    format_typed_answer,
     validate_decision,
 )
 from pilot.security.rpc_identity import RpcClientRole
@@ -51,6 +53,108 @@ def test_typed_decision_rejects_oversized_or_ambiguous_requests() -> None:
         validate_decision("choice", "Choose", ["same", "same"])
     with pytest.raises(ValueError, match=f"2-{MAX_OPTIONS}"):
         validate_decision("choice", "Choose", [str(index) for index in range(MAX_OPTIONS + 1)])
+
+
+def test_jev_style_typed_questions_compile_without_leaking_score_indices() -> None:
+    questions = {
+        "is_safe": {
+            "type": "noul",
+            "instructions": "Can this be read without changing anything?",
+            "criteria": {"true": "Only inspect current state", "false": "It changes state"},
+        },
+        "route": {
+            "type": "choice",
+            "instructions": "Choose the best route",
+            "criteria": {"cache": "Use verified local data", "live": None},
+        },
+        "quality": {
+            "type": "score",
+            "instructions": "Rate the evidence quality",
+            "criteria": ["weak", "partial", "strong"],
+        },
+    }
+    compiled = compile_typed_questions({"goal": "inspect"}, questions)
+
+    assert compiled[0]["options"] == ["no", "yes"]
+    assert "Yes means: Only inspect current state" in compiled[0]["question"]
+    assert "No means: It changes state" in compiled[0]["question"]
+    assert compiled[1]["options"] == ["cache: Use verified local data", "live"]
+    assert compiled[1]["answer_keys"] == ["cache", "live"]
+    assert compiled[2]["options"] == ["weak", "partial", "strong"]
+    assert compiled[2]["answer_keys"] == ["0", "1", "2"]
+    assert all(not option.startswith(("0: ", "1: ", "2: ")) for option in compiled[2]["options"])
+
+    choice = format_typed_answer(compiled[1], [0.1, 0.9])
+    assert choice["choice"] == "live"
+    assert choice["confidence"] == pytest.approx(0.8)
+    score = format_typed_answer(compiled[2], [0.2, 0.5, 0.3])
+    assert score["score"] == pytest.approx(1.1)
+    assert score["legend"] == ["weak", "partial", "strong"]
+
+
+def test_jev_style_typed_question_validation_is_bounded_and_strict() -> None:
+    with pytest.raises(ValueError, match="true and false"):
+        compile_typed_questions({}, {"decision": {"type": "noul", "instructions": "Ready?"}})
+    with pytest.raises(ValueError, match="candidate options"):
+        compile_typed_questions(
+            {},
+            {
+                f"q{index}": {
+                    "type": "choice",
+                    "instructions": "Choose",
+                    "criteria": {f"o{option}": None for option in range(64)},
+                }
+                for index in range(5)
+            },
+        )
+    with pytest.raises(ValueError, match="probabilities must sum"):
+        format_typed_answer(
+            {"kind": "choice", "options": ["a", "b"], "answer_keys": ["a", "b"]},
+            [0.4, 0.4],
+        )
+
+
+def test_typed_question_batch_submits_all_candidates_in_one_scoring_call(monkeypatch) -> None:
+    model = LocalTypedDecisionModel("unused", "unused")
+    model._prompt_style = "candidate_v1"
+    model._identity = {"model": "local-test", "revision": "pinned-test"}
+    model._temperature = 1.0
+    monkeypatch.setattr(model, "_load", lambda: None)
+    monkeypatch.setattr(model, "_encode", lambda prompts: [[index] for index, _ in enumerate(prompts)])
+    calls = []
+
+    def score_sequences(sequences):
+        calls.append(len(sequences))
+        return np.asarray([1.0] * len(sequences))
+
+    monkeypatch.setattr(model, "_score_sequences", score_sequences)
+    result = model.score_questions(
+        {"goal": "inspect"},
+        {
+            "route": {
+                "type": "choice",
+                "instructions": "Choose",
+                "criteria": {"read": None, "write": None},
+            },
+            "safe": {
+                "type": "noul",
+                "instructions": "Is it safe?",
+                "criteria": {"true": "read only", "false": "changes state"},
+            },
+            "quality": {
+                "type": "score",
+                "instructions": "Rate it",
+                "criteria": ["low", "high"],
+            },
+        },
+    )
+
+    assert calls == [5]
+    assert result["research_only"] is True
+    assert result["execution_authority"] is False
+    assert result["answers"]["route"]["choice"] == "read"
+    assert result["answers"]["safe"]["noul"] == pytest.approx(1 / (1 + np.exp(-1)))
+    assert result["answers"]["quality"]["score"] == pytest.approx(0.5)
 
 
 def test_candidate_microbatch_caps_long_prompts_and_respects_lower_limits() -> None:
@@ -131,6 +235,14 @@ async def test_typed_decision_rpc_is_opt_in_and_research_only(monkeypatch, tmp_p
                 "answer": {"type": "choice", "choice": options[0]},
             }
 
+        def score_questions(self, state, questions):
+            return {
+                "status": "ok",
+                "research_only": True,
+                "execution_authority": False,
+                "answers": {question_id: {"type": definition["type"]} for question_id, definition in questions.items()},
+            }
+
         def unload(self):
             calls.append("unload")
 
@@ -141,6 +253,17 @@ async def test_typed_decision_rpc_is_opt_in_and_research_only(monkeypatch, tmp_p
     assert result["execution_authority"] is False
     assert result["answer"]["choice"] == "collect live evidence"
     assert calls == [(str(tmp_path / "artifacts"), str(tmp_path / "report.json"))]
+
+    questions = {
+        "ready": {
+            "type": "noul",
+            "instructions": "Is the inspection read only?",
+            "criteria": {"true": "No changes", "false": "Changes data"},
+        }
+    }
+    batched = await server._handle_mcp_typed_decision({"state": "inspect", "questions": questions}, client)
+    assert batched["execution_authority"] is False
+    assert batched["answers"]["ready"]["type"] == "noul"
 
     config.typed_decision.enabled = False
     await server._handle_mcp_typed_decision(payload, client)

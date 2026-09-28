@@ -3946,10 +3946,24 @@ class PilotServer:
             }
 
         state = params.get("state")
+        typed_questions = "questions" in params
         kind = params.get("kind")
         question = params.get("question")
         options = params.get("options")
-        if not isinstance(state, dict):
+        if typed_questions:
+            questions = params.get("questions")
+            try:
+                from pilot.intelligence.typed_decision import compile_typed_questions
+
+                compile_typed_questions(state, questions)
+            except (TypeError, ValueError) as exc:
+                return {
+                    "status": "error",
+                    "research_only": True,
+                    "execution_authority": False,
+                    "message": str(exc)[:300],
+                }
+        elif not isinstance(state, dict):
             return {
                 "status": "error",
                 "research_only": True,
@@ -3959,7 +3973,8 @@ class PilotServer:
         try:
             from pilot.intelligence.typed_decision import LocalTypedDecisionModel, validate_decision
 
-            validate_decision(kind, question, options)
+            if not typed_questions:
+                validate_decision(kind, question, options)
             artifact_dir = str(Path(config.artifact_dir).expanduser())
             report_path = str(Path(config.report_path).expanduser())
             engine_key = (artifact_dir, report_path)
@@ -3968,13 +3983,13 @@ class PilotServer:
                     await asyncio.to_thread(self._typed_decision_engine.unload)
                 self._typed_decision_engine = LocalTypedDecisionModel(artifact_dir, report_path)
                 self._typed_decision_engine_key = engine_key
-            return await asyncio.to_thread(
-                self._typed_decision_engine.score,
-                state,
-                kind,
-                question,
-                options,
-            )
+            if typed_questions:
+                return await asyncio.to_thread(
+                    self._typed_decision_engine.score_questions,
+                    state,
+                    questions,
+                )
+            return await asyncio.to_thread(self._typed_decision_engine.score, state, kind, question, options)
         except (TypeError, ValueError) as exc:
             return {
                 "status": "error",
