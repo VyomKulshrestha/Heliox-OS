@@ -8,6 +8,7 @@ import json
 import numpy as np
 import pytest
 
+import scripts.train_general_decision as trainer
 from benchmarks.general_decision import (
     candidate_prompts,
     format_answer,
@@ -183,6 +184,17 @@ def test_checkpoint_signature_binds_exact_tokenized_inputs() -> None:
     weighted = checkpoint_signature(args, encoded, {}, None, [1.0, 0.25])
     args.scope_row_weight = 0.25
     assert weighted != checkpoint_signature(args, encoded, {}, None, [1.0, 0.25])
+
+
+def test_checkpoint_signature_binds_ordinal_loss_version(monkeypatch: pytest.MonkeyPatch) -> None:
+    args = argparse.Namespace(seed=1, max_length=128, lora_rank=8, attention="sdpa",
+                              accumulation=4, lr=2e-5, head_lr=5e-5,
+                              brier_weight=0.1, ordinal_weight=0.5,
+                              prompt_style="candidate_v1")
+    encoded = {"train": [{"row": row("score"), "sequences": [[1, 2, 3]]}]}
+    current = checkpoint_signature(args, encoded, {}, None)
+    monkeypatch.setattr(trainer, "ORDINAL_LOSS_VERSION", "different_ordinal_objective")
+    assert current != checkpoint_signature(args, encoded, {}, None)
 
 
 def test_scope_weights_reduce_group_dominance_without_changing_class_mass() -> None:
