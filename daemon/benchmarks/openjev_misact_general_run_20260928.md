@@ -38,7 +38,9 @@ The frozen 20261001 Heliox candidate was also scored against the released Open-J
 | Mean NLL | 0.638 | 0.509 |
 | Mean Brier score | 0.0860 | 0.0792 |
 
-By decision type, top-1 accuracy was 60.5% vs 57.9% for choice, 88.9% vs 88.9% for yes/no, and 90.0% vs 90.0% for score. The candidate is close on this shared subset and improves aggregate probability calibration, but does not improve overall top-1 accuracy; the mixed per-kind NLL results also argue against promotion. The scorer warned that `lora_ga_config` and `use_bdlora` were unrecognized by the installed PEFT version; both saved values are null, but exact scoring should be rechecked with the training-pinned PEFT version before treating these numbers as final parity evidence.
+By decision type, top-1 accuracy was 60.5% vs 57.9% for choice, 88.9% vs 88.9% for yes/no, and 90.0% vs 90.0% for score. The candidate is close on this shared subset and improves aggregate probability calibration, but does not improve overall top-1 accuracy; the mixed per-kind NLL results also argue against promotion.
+
+The comparison was rerun on the local GPU with the exact training-pinned stack (`torch 2.8.0+cu128`, `transformers 5.10.2`, `peft 0.19.1`, `accelerate 1.13.0`). All aggregate and per-kind metrics reproduced exactly, with no PEFT configuration warning. That resolves the earlier environment mismatch for these reported scores; the choice-accuracy gap and lack of proprietary Jev comparison remain. The run used cached model weights and released Open-Jev logits, computed Heliox logits in memory, and wrote no new benchmark artifacts.
 
 ## Decision and limitation
 
