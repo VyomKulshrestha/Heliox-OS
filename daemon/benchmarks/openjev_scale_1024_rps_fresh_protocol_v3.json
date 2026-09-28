@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "purpose": "independent_group_disjoint_public_test_split_replication_of_the_frozen_openjev_rps_candidate",
+  "frozen_at_utc": "2026-09-28",
+  "dataset_revision": "c67699e13d0ae25e35b77165a4b6b079bedc8aba",
+  "source_selection_protocol": {
+    "path": "benchmarks/released_openjev_general_protocol_v4.json",
+    "sha256": "b520295fcc3ba82e724fd49f2be2ef27ace46e29b2cfece8ae3e13ad74cd32df"
+  },
+  "released_baseline": {
+    "report_path": ".bench-state/released_openjev_general_public_v5/report.json",
+    "report_sha256": "d1f7ab8fd07a05f45baea990625543c69e46424d3d29ecf9f92b0cd94250fbac",
+    "fresh_logits_path": ".bench-state/released_openjev_general_public_v5/fresh_logits.json",
+    "fresh_logits_sha256": "ef27a220c1ed04351b53dfe20f9feeb49fb7d04ffdecf69fdaafdf601b330238",
+    "fresh_selection_signature": "14f7a3354c37aa2b787c83622838e46d20bf3d23a66307447a8f42d8b7b28d17"
+  },
+  "candidate": {
+    "report_path": "benchmarks/openjev_scale_1024_rps_v1.json",
+    "report_sha256": "53cea9c46c4504761071a568ae837dcda9920e49709c367668ea6a043165f95a",
+    "artifact_dir": "benchmarks/.bench-state/openjev_scale_1024_rps_v1",
+    "adapter_sha256": "5bb2153d689476375b7784884964605411d000f20883b38a9ccd44eae0bfc0a3",
+    "head_sha256": "aa2a39aee6e7b48efc50eff3a0f1ac5c4fdf391b534bf8b874a4a8da9ba65676",
+    "max_length": 512
+  },
+  "candidate_checkpoint_path": "benchmarks/.bench-state/openjev_scale_1024_rps_fresh_v3/candidate_predictions.json",
+  "selection_rule": "Recreate the pinned archived public selection, then select 512 group-unique licensed rows in source order from the held-out test split after excluding every group in the checksum-pinned prior training, calibration, test, OOD, and first independent comparison selections. Drop candidate-overlength prompts without truncation and score both models on exactly the same remaining IDs.",
+  "evaluation_rule": "No candidate training, calibration, or hyperparameter tuning on these rows. Use the candidate's already-fitted calibration temperature and the released model's frozen logits. Compare overall and per-kind top-1, NLL, Brier, and Score ranked probability score.",
+  "baseline_was_scored_before_candidate_protocol_freeze": true,
+  "promotion": "none",
+  "limitations": [
+    "The candidate evaluation is frozen before candidate scoring, but the protocol was created after the released baseline was scored.",
+    "This compares with released Open-Jev, not proprietary TypeSafe Jev; it is not Jev-parity evidence.",
+    "The public synthetic decisions do not establish desktop task success, safe execution, or model authority."
+  ]
+}
