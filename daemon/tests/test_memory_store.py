@@ -483,6 +483,32 @@ class TestGetContext:
         assert "vscode" in result
 
     @pytest.mark.asyncio
+    async def test_task_phase_query_retrieves_matching_desktop_experience(self, store):
+        await store._temporal.record_episode(
+            session_id="chat-1",
+            task_id="task-1",
+            summary="Hermes desktop workflow opened its settings panel",
+            outcome="success",
+            importance=0.8,
+        )
+        await store._temporal.record_episode(
+            session_id="chat-1",
+            task_id="task-2",
+            summary="Heliox desktop workflow opened its settings panel",
+            outcome="success",
+            importance=0.8,
+        )
+
+        for app in ("Hermes", "Heliox"):
+            context = await store.get_context(
+                f"Task goal: Continue the desktop workflow. Current app: {app}",
+                session_id="chat-1",
+            )
+            episodes = [line for line in context.splitlines() if line.startswith("- [episode;")]
+            assert episodes
+            assert app.lower() in episodes[0].lower()
+
+    @pytest.mark.asyncio
     async def test_get_context_with_chroma_results(self, store):
         """get_context() includes semantic search results from ChromaDB."""
         mock_results = {
