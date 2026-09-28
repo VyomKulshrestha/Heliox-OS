@@ -42,6 +42,8 @@ By decision type, top-1 accuracy was 60.5% vs 57.9% for choice, 88.9% vs 88.9% f
 
 The comparison was rerun on the local GPU with the exact training-pinned stack (`torch 2.8.0+cu128`, `transformers 5.10.2`, `peft 0.19.1`, `accelerate 1.13.0`). All aggregate and per-kind metrics reproduced exactly, with no PEFT configuration warning. That resolves the earlier environment mismatch for these reported scores; the choice-accuracy gap and lack of proprietary Jev comparison remain. The run used cached model weights and released Open-Jev logits, computed Heliox logits in memory, and wrote no new benchmark artifacts.
 
+Paired top-1 outcomes were: both correct on 87 rows, both wrong on 22, Open-Jev-only wrong on 1, and Heliox-only wrong on 2. The exact two-sided McNemar test on the three discordant rows gives p=1.0; this small sample does not establish a meaningful accuracy difference or parity.
+
 ## Decision and limitation
 
 General test accuracy/NLL improved on these small public splits, and the fourth run improved held-out scope ranking AUC to 0.7068. However, its default-threshold false allowances rose from 2 to 27; calibrated thresholds either rejected every in-scope test action or admitted 3–9 out-of-scope actions while recalling only 9.4–23.4% of in-scope actions. None passes the action-scope gate, so keep learned scores advisory/research-only and retain deterministic policy, approval, and refusal checks as the authority. These results do not demonstrate safe desktop control, multi-agent completion, Jarvis behavior, or parity with proprietary Jev.
