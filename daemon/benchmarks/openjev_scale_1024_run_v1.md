@@ -59,6 +59,12 @@ worsened (0.0828 to 0.0949), although its NLL improved. Workflow-control
 sources total only 24 rows, so those numbers are descriptive, not evidence of
 desktop-workflow performance.
 
+A final local typed-scoring smoke test used a new read-only system-health
+question and four runtime-supplied options. The model assigned 0.788 to the
+read-only evidence-and-report option; its response explicitly carried
+`research_only: true` and `execution_authority: false`. No desktop action ran.
+This checks the scoring entry point, not task-success quality.
+
 ## Interpretation and limits
 
 The candidate is a measurable improvement over this released Open-Jev
