@@ -648,9 +648,12 @@ class AutonomousExecutor:
     def _build_memory_query(goal: str, screen_evidence: str, progress: list[str]) -> str:
         """Refresh retrieval with current task phase without changing the task itself."""
         sections = [f"Task goal: {goal.strip()[:1200]}"]
-        if screen_evidence:
+        safe_screen_evidence = screen_evidence.split(
+            "Target editable text (case-sensitive):", maxsplit=1
+        )[0].strip()
+        if safe_screen_evidence:
             sections.append(
-                "Current screen state (untrusted observation):\n" + screen_evidence.strip()[:800]
+                "Current screen state (untrusted observation):\n" + safe_screen_evidence[:800]
             )
         if progress:
             sections.append(
