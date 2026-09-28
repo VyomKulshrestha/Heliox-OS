@@ -21,10 +21,32 @@ include 67 ordered Score decisions.
 | Score: top-1 accuracy | 73.13% | 80.60% | +7.46 pp |
 | Score: ranked probability score | 0.06863 | 0.05426 | -0.01437 (20.9% lower) |
 
+## Exploratory selective-risk readout
+
+After the original comparison had been inspected, the frozen per-row predictions
+were also scored with a tie-aware risk/coverage metric. Maximum candidate
+probability ranks rows for this analysis; ties use expected risk under random
+ordering. This is not a correctness head or calibrated probability of success.
+
+| Selective metric ↓ | Released Open-Jev | Heliox candidate | Candidate change |
+| --- | ---: | ---: | ---: |
+| AURC (all 482) | 0.0593 | 0.0476 | -0.0117 |
+| Selective risk at 50% coverage | 2.49% | 1.66% | -0.83 pp |
+| Selective risk at 80% coverage | 14.25% | 10.10% | -4.15 pp |
+| Selective risk at 90% coverage | 16.59% | 14.98% | -1.61 pp |
+| Choice AURC (229) | 0.0873 | 0.0840 | -0.0033 |
+| Noul AURC (186) | 0.0358 | 0.0223 | -0.0135 |
+| Score AURC (67) | 0.0628 | 0.0301 | -0.0327 |
+
+This secondary analysis is exploratory because it reuses the already-consumed
+v3 selection. It cannot support threshold selection or promotion. In particular,
+the scores are only a ranking heuristic; a learned, validated correctness head
+would require representative Heliox outcome labels and a new untouched split.
+
 On this single held-out sample, the candidate improves aggregate NLL/Brier and
-Score ranking quality; Choice top-1 is slightly lower. These are descriptive
-benchmark results, not a confidence-tested claim or evidence of desktop task
-success.
+Score ranking quality; Choice top-1 is slightly lower, while its secondary
+AURC is slightly better. These are descriptive benchmark results, not a
+confidence-tested claim or evidence of desktop task success.
 
 ## Selection and reproducibility
 
