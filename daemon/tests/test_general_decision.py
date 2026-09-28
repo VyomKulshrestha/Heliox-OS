@@ -11,9 +11,15 @@ import pytest
 import scripts.train_general_decision as trainer
 from benchmarks.general_decision import (
     candidate_prompts,
+    correctness_features,
+    correctness_metrics,
+    fit_correctness_scorer,
     format_answer,
     licensed_row,
     metrics,
+    paired_aurc_bootstrap_delta,
+    paired_mean_bootstrap_delta,
+    predict_correctness,
     probabilities,
     ranked_probability_score,
     select_balanced,
@@ -120,6 +126,63 @@ def test_selective_risk_rejects_invalid_scores_or_labels() -> None:
         selective_risk_metrics([0.4, 1.2], [True, False])
     with pytest.raises(ValueError, match="invalid"):
         selective_risk_metrics([0.4, 0.5], [True, 2])
+
+
+def test_correctness_features_support_variable_option_counts() -> None:
+    uniform = correctness_features(np.full(3, 1 / 3))
+    certain = correctness_features(np.asarray([1.0, 0.0]))
+    assert uniform == pytest.approx([1 / 3, 0.0, 1.0, np.log(3)])
+    assert certain == pytest.approx([1.0, 1.0, 0.0, np.log(2)])
+    with pytest.raises(ValueError, match="normalized probability"):
+        correctness_features(np.asarray([0.2, 0.2]))
+
+
+def test_correctness_scorer_learns_a_task_agnostic_selective_score() -> None:
+    confidence = np.linspace(0.05, 0.95, 20)
+    features = np.column_stack((confidence, confidence / 2, 1 - confidence,
+                                np.full_like(confidence, np.log(3))))
+    labels = [False] * 10 + [True] * 10
+    scorer = fit_correctness_scorer(features, labels)
+    predicted = predict_correctness(features, scorer)
+    assert predicted.shape == (20,)
+    assert np.all(np.diff(predicted) > 0)
+    assert predicted[0] < 0.2
+    assert predicted[-1] > 0.8
+    with pytest.raises(ValueError, match="both labels"):
+        fit_correctness_scorer(features[:5], [True] * 5)
+
+
+def test_correctness_metrics_score_calibration_and_tie_aware_auroc() -> None:
+    report = correctness_metrics([0.1, 0.9, 0.4, 0.6], [False, True, False, True])
+    assert report["auroc"] == pytest.approx(1.0)
+    assert report["brier"] == pytest.approx(0.085)
+    assert report["selective_prediction"]["selection_score"] == (
+        "estimated_probability_of_top_choice_correct")
+    tied = correctness_metrics([0.5, 0.5, 0.1, 0.9], [True, False, False, True])
+    assert tied["auroc"] == pytest.approx(0.875)
+
+
+def test_paired_aurc_bootstrap_is_reproducible_and_paired() -> None:
+    raw = [0.1, 0.4, 0.6, 0.9]
+    learned = [0.1, 0.6, 0.4, 0.9]
+    labels = [False, True, False, True]
+    first = paired_aurc_bootstrap_delta(raw, learned, labels, replicates=200, seed=7)
+    second = paired_aurc_bootstrap_delta(raw, learned, labels, replicates=200, seed=7)
+    assert first == second
+    assert first["confidence_level"] == 0.95
+    assert len(first["delta_aurc_95_percentile_interval"]) == 2
+    with pytest.raises(ValueError, match="inputs are invalid"):
+        paired_aurc_bootstrap_delta(raw, learned, labels, replicates=2)
+
+
+def test_paired_mean_bootstrap_is_reproducible() -> None:
+    result = paired_mean_bootstrap_delta([0.8, 0.9, 1.0], [0.5, 0.8, 0.9],
+                                         replicates=200, seed=12)
+    assert result == paired_mean_bootstrap_delta([0.8, 0.9, 1.0], [0.5, 0.8, 0.9],
+                                                  replicates=200, seed=12)
+    assert result["mean_delta_95_percentile_interval"][0] > 0
+    with pytest.raises(ValueError, match="inputs are invalid"):
+        paired_mean_bootstrap_delta([1.0], [], replicates=200)
 
 
 def test_ordinal_metrics_report_expected_rank_error() -> None:
