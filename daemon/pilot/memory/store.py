@@ -407,20 +407,36 @@ class MemoryStore:
         session_id: str,
         task_id: str,
         action_types: list[str] | None = None,
+        independently_verified: bool = False,
     ) -> None:
-        """Store a task-level success after the autonomous loop accepts fresh completion evidence."""
+        """Store a completion claim, promoting it only when deterministic evidence verifies it."""
         if self._temporal is None:
             return
         context = get_experience_context()
         await self._temporal.record_episode(
             session_id=session_id or context.session_id or "default",
             task_id=task_id or context.task_id,
-            summary=f"Verified task completion: {goal[:500]}",
-            outcome="success",
+            summary=(
+                f"Verified task completion: {goal[:500]}"
+                if independently_verified
+                else f"Completion claim: {goal[:500]}"
+            ),
+            outcome="success" if independently_verified else "unverified",
             tags=action_types or [],
             importance=0.75,
-            payload={"verification_passed": True, "completion_basis": "fresh_observation"},
-            provenance=MemoryProvenance.VERIFIED_OUTCOME,
+            payload={
+                "verification_passed": independently_verified,
+                "completion_basis": (
+                    "exact_editable_text_match"
+                    if independently_verified
+                    else "model_claim_cites_fresh_observation"
+                ),
+            },
+            provenance=(
+                MemoryProvenance.VERIFIED_OUTCOME
+                if independently_verified
+                else MemoryProvenance.MODEL_SYNTHESIS
+            ),
         )
 
     async def get_context(

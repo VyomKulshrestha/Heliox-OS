@@ -364,7 +364,7 @@ class TestRecord:
         assert "Outcome: in_progress" in episodes[0].text
 
     @pytest.mark.asyncio
-    async def test_fresh_task_completion_creates_verified_terminal_episode(self, store):
+    async def test_model_judged_task_completion_claim_is_not_trusted_as_verified(self, store):
         await store.record_task_completion(
             "complete the browser task",
             session_id="chat-complete",
@@ -375,6 +375,25 @@ class TestRecord:
         episodes = await store._temporal.query_episodes(
             "complete browser task",
             session_id="chat-complete",
+        )
+
+        assert len(episodes) == 1
+        assert episodes[0].provenance == MemoryProvenance.MODEL_SYNTHESIS.value
+        assert "Outcome: unverified" in episodes[0].text
+
+    @pytest.mark.asyncio
+    async def test_deterministic_exact_text_completion_creates_verified_episode(self, store):
+        await store.record_task_completion(
+            "type exactly READY in the document",
+            session_id="chat-exact-complete",
+            task_id="task-exact-complete",
+            action_types=["keyboard_type"],
+            independently_verified=True,
+        )
+
+        episodes = await store._temporal.query_episodes(
+            "type exactly READY",
+            session_id="chat-exact-complete",
         )
 
         assert len(episodes) == 1
