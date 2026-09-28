@@ -15,6 +15,7 @@ from scripts.train_general_decision import (
     load_checkpoint,
     save_checkpoint,
     scalar_score,
+    scalar_scores,
 )
 
 
@@ -36,9 +37,13 @@ def main() -> None:
         torch.manual_seed(17)
         backbone = TinyBackbone().cuda()
         head = nn.Linear(4, 1).cuda()
-        sequences = [[1, 2, 3]] if kind == "noul" else [[1, 2], [3, 4], [5, 6]]
+        sequences = [[1, 2, 3]] if kind == "noul" else [[1, 2, 3], [3, 4], [5, 6, 7, 8]]
         item = {"row": {"kind": kind, "target": target}, "sequences": sequences}
-        gradient_row(backbone, head, item, brier_weight=0.1, scale=1.0)
+        batched = scalar_scores(backbone, head, sequences, microbatch_size=2)
+        serial = torch.stack([scalar_score(backbone, head, ids) for ids in sequences])
+        torch.testing.assert_close(batched, serial)
+        gradient_row(backbone, head, item, brier_weight=0.1,
+                     ordinal_weight=0.0, scale=1.0)
         replayed = [parameter.grad.detach().clone()
                     for parameter in (*backbone.parameters(), *head.parameters())]
 
