@@ -1,6 +1,7 @@
 # Open-Jev correctness scorer — exploratory result
 
-Date: 2026-09-29  
+Date: 2026-09-29
+
 Status: research-only; no runtime integration or promotion.
 
 ## Why this experiment
