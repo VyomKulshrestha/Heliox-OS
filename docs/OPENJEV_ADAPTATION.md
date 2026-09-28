@@ -1747,3 +1747,44 @@ This is a research convenience, not a promotion into Heliox's planner, world
 model, deterministic gateway, approvals, or executor. It does not establish
 Jev parity or real desktop-workflow quality. The model files remain ignored
 local artifacts and are not included in the release package.
+
+## Matched base-likelihood check (2026-09-28)
+
+To test whether raw next-token likelihood could replace the trained decision
+head cheaply, the pinned Qwen3-0.6B base was scored on the 256-row public OOD
+selection at seed 20260928. Full-sequence continuation scores were computed on
+the local GPU in 36.7 seconds after loading the cached model; no model or data
+were downloaded. The row IDs exactly match the existing Qwen3-0.6B trained-head
+run, so this is an apples-to-apples diagnostic, not a newly selected holdout.
+The reusable [evaluator](../daemon/scripts/evaluate_base_option_likelihood.py)
+and focused tests are local research utilities; reports and model artifacts
+stay under ignored `.bench-state/`.
+
+| OOD metric | Uniform baseline | Raw base likelihood | Existing trained head |
+| --- | ---: | ---: | ---: |
+| Choice top-1 | 36.2% | 21.7% | 31.9% |
+| Choice NLL | 1.567 | 2.829 | 1.068 |
+| Noul top-1 | 75.7% | 36.8% | 75.0% |
+| Noul balanced accuracy | 50.0% | 53.1% | 57.8% |
+| Score top-1 | 21.6% | 17.6% | 43.1% |
+| Score mean rank error (lower is better) | 1.059 | 1.106 | 1.008 |
+| Score ranked probability score (lower is better) | 0.219 | 0.251 | 0.201 |
+
+The trained-head column uses its already-fitted temperature (1.372776); the
+base model has no fitted calibration. Raw likelihood loses to uniform on all
+three top-1 metrics and is especially overconfident on choice, so it is
+rejected as a shortcut. The existing adapter/head improves choice calibration
+and ordinal ranking, but its 31.9% choice accuracy and 57.8% balanced Noul
+accuracy remain weak; it is not promoted or described as Jev-like parity.
+
+The [current Open-Jev engineering story](https://zefan-cai.github.io/open-jev/story/)
+supports retaining a shared scalar score per candidate, mixing independently
+licensed decision rows, and fitting temperature only on a separate calibration
+split. It also reports that shared-prefix cache expansion exceeded the
+probability-error tolerance in 9 of 11 Qwen hybrid-attention workloads; despite
+matching selected decisions in those checks, prefix caching is disabled by
+default. Heliox therefore keeps full-sequence scoring as the reference and
+shared-prefix scoring diagnostic-only. This validates the existing architecture
+direction, not model quality: the material remaining gap is a stronger base,
+more diverse rights-cleared data, and better held-out task performance, all
+within the current local GPU limits.
