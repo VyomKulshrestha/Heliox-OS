@@ -36,3 +36,24 @@ def test_rejects_unsupported_openjev_training_package(package, actual, expected)
 
     with pytest.raises(RuntimeError, match=re.escape(expected)):
         validate_training_versions(versions)
+
+
+def test_openjev_scoring_entry_points_fail_before_loading_a_model(monkeypatch, tmp_path):
+    from scripts import evaluate_released_openjev_general, evaluate_world_general_qlora
+    from scripts import openjev_training_runtime, score_general_decision
+
+    def reject_runtime():
+        raise RuntimeError("unsupported research runtime")
+
+    monkeypatch.setattr(openjev_training_runtime, "require_training_runtime", reject_runtime)
+    with pytest.raises(RuntimeError, match="unsupported research runtime"):
+        evaluate_released_openjev_general.run(tmp_path / "protocol.json", tmp_path / "output", resume=False)
+
+    monkeypatch.setattr(evaluate_world_general_qlora, "block_jev_output_use", lambda: None)
+    with pytest.raises(RuntimeError, match="unsupported research runtime"):
+        evaluate_world_general_qlora.evaluate(tmp_path / "adapter", tmp_path / "report.json",
+                                              tmp_path / "reference.json")
+
+    request = {"state": {}, "kind": "noul", "question": "Is this safe?", "options": ["no", "yes"]}
+    with pytest.raises(RuntimeError, match="unsupported research runtime"):
+        score_general_decision.score_requests([request], tmp_path / "model", tmp_path / "report.json")

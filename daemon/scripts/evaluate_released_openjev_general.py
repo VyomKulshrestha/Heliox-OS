@@ -137,6 +137,9 @@ def summarize_checkpoints(protocol_path: Path, output_dir: Path) -> dict:
 
 
 def run(protocol_path: Path, output_dir: Path, *, resume: bool) -> dict:
+    from scripts.openjev_training_runtime import require_training_runtime
+
+    require_training_runtime()
     import torch
     from huggingface_hub import snapshot_download
     from peft import PeftModel
