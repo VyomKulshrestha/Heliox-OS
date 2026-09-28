@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "purpose": "offline_public_data_ranked_probability_loss_ablation",
+  "frozen_at_utc": "2026-09-28 06:29:00 UTC",
+  "source_protocol": "openjev_scale_1024_protocol_v1.json",
+  "source": {
+    "dataset": "ZefanCai/Open-Jev",
+    "config": "release-v2-redistributable",
+    "revision": "c67699e13d0ae25e35b77165a4b6b079bedc8aba",
+    "training_license_gate": "Use only rows whose per-row provenance explicitly verifies CC0-1.0.",
+    "jev_outputs_as_labels": false
+  },
+  "hypothesis": "A generalized ranked-probability loss on ordered Score decisions improves held-out ordinal probability quality without sacrificing the broader typed-decision gate.",
+  "training": {
+    "backbone": "Qwen/Qwen3.5-2B",
+    "backbone_revision": "15852e8c16360a2fea060d615a32b45270f8a8fc",
+    "initial_checkpoint": "ZefanCai/Open-Jev-2B@0c7aa498b1627be8da4acf34c863ff0ee0a92785",
+    "warm_start_from_released_openjev": true,
+    "seed": 482176,
+    "rows": {
+      "train": 1024,
+      "calibration": 256,
+      "test": 256,
+      "ood": 256
+    },
+    "max_length": 512,
+    "lora_rank": 8,
+    "prompt_style": "candidate_v1",
+    "brier_weight": 0.1,
+    "ordinal_rps_weight": 0.5,
+    "network_downloads": false
+  },
+  "evaluation": {
+    "baseline": "Pinned released Open-Jev checkpoint on the same selected rows.",
+    "candidate": "Same frozen train/calibration/test/OOD selections and training settings as the source protocol, changing only the optional ordinal RPS weight from 0 to 0.5.",
+    "temperature_fit": "Calibration split only.",
+    "primary_metric": "Mean ranked probability score on Score decisions in the preregistered OOD split.",
+    "secondary_metrics": [
+      "Overall and per-kind top-1 accuracy",
+      "Overall and per-kind negative log likelihood",
+      "Overall and per-kind Brier score"
+    ],
+    "do_not_tune_on": ["test", "ood"]
+  },
+  "retention_gate": "Retain only as a research candidate if OOD Score RPS is lower than the released checkpoint, overall OOD top-1 is no lower, overall OOD NLL is lower, and no decision kind loses more than 5 percentage points of top-1 accuracy. Otherwise reject the ablation.",
+  "limitations": [
+    "This compares with public Open-Jev, not proprietary TypeSafe Jev.",
+    "The OOD split was used in the source protocol and this is a retrospective ablation, not an independent confirmation.",
+    "No TypeSafe Jev outputs are collected, used as labels, used for tuning, or reused.",
+    "This does not demonstrate desktop task success, authorization, or execution safety."
+  ],
+  "promotion": "none"
+}
