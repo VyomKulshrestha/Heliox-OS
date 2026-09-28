@@ -39,6 +39,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger("pilot.agents.autonomous")
 
 MAX_AUTONOMOUS_ROUNDS_PER_STEP = 6
+MAX_TASK_MEMORY_QUERY_CHARS = 2400
 DESKTOP_SETTLE_SECONDS = 0.15
 
 _DESKTOP_LOOP_ACTIONS = frozenset(
@@ -644,6 +645,21 @@ class AutonomousExecutor:
         )
 
     @staticmethod
+    def _build_memory_query(goal: str, screen_evidence: str, progress: list[str]) -> str:
+        """Refresh retrieval with current task phase without changing the task itself."""
+        sections = [f"Task goal: {goal.strip()[:1200]}"]
+        if screen_evidence:
+            sections.append(
+                "Current screen state (untrusted observation):\n" + screen_evidence.strip()[:800]
+            )
+        if progress:
+            sections.append(
+                "Recent task progress (untrusted execution evidence):\n"
+                + "\n".join(progress[-2:])[:600]
+            )
+        return "\n\n".join(sections)[:MAX_TASK_MEMORY_QUERY_CHARS]
+
+    @staticmethod
     def _required_exact_text(goal: str) -> str | None:
         """Extract a case-sensitive payload from common ``type exactly`` goals."""
         quoted = re.search(r"\btype\s+exactly\s+(['\"])(.*?)\1", goal, flags=re.IGNORECASE | re.DOTALL)
@@ -708,6 +724,7 @@ class AutonomousExecutor:
                     screen_context=f"{screen_ctx}\n\n{directive}",
                     force_model=True,
                     session_id=job.session_id,
+                    memory_query=self._build_memory_query(goal, fresh_evidence, progress),
                 )
                 if plan.error:
                     step.error = plan.error

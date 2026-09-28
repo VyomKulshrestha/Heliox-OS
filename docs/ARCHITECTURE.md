@@ -180,6 +180,15 @@ A new chat receives the durable user model and relevant memories, not an
 unbounded transcript dump. Memory is advisory: it cannot grant permission or
 substitute for current-state observation.
 
+During an autonomous task, each observe/plan round refreshes retrieval from the
+stable task goal, bounded current screen evidence, and the last two progress
+notes. The task sent to the planner remains unchanged, and retrieved content is
+explicitly reference-only; screen OCR is not copied into the retrieval query.
+This inference-time working-memory refresh follows the phase-aware direction
+of [HyMEM](https://aclanthology.org/2026.findings-acl.549/) without adopting
+its VLM pipeline or making a model-parity claim. Retrieval uses Heliox's local
+memory stores and existing token budget, not an additional model call.
+
 ### 5. Companion and interruption coordination
 
 One priority coordinator owns narration, risk warnings, approval speech,
