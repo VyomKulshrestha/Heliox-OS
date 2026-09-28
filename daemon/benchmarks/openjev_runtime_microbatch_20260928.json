@@ -1,0 +1,102 @@
+{
+  "schema_version": 1,
+  "purpose": "local_gpu_microbatch_comparison_for_research_only_typed_decision_runtime",
+  "date": "2026-09-28",
+  "device": {
+    "name": "NVIDIA GeForce RTX 4060 Laptop GPU",
+    "memory_mib": 8188
+  },
+  "dataset": {
+    "id": "ZefanCai/Open-Jev",
+    "revision": "c67699e13d0ae25e35b77165a4b6b079bedc8aba",
+    "config": "release-v2-redistributable",
+    "split": "ood",
+    "seed": 20260928,
+    "selected_rows": 256,
+    "selected_ids_sha256": "1aa303d033692177599f2c37e7f9293de569cdc43145fd80aa503eee1fc84a39",
+    "selection_previously_inspected": true
+  },
+  "checkpoint": {
+    "source": "ZefanCai/Open-Jev-2B@0c7aa498b1627be8da4acf34c863ff0ee0a92785",
+    "base_model": "Qwen/Qwen3.5-2B",
+    "base_revision": "15852e8c16360a2fea060d615a32b45270f8a8fc",
+    "adapter_sha256": "2d23935b1a7380db444abac572c04646918ba794e59002d1588236182a3ca18f",
+    "head_sha256": "951aa74fc6d5a023a63ae3b083227c0b2e84bb64b27ff5884c4412d131cae0b8",
+    "quantization": "4-bit NF4",
+    "runtime": "Heliox LocalTypedDecisionModel"
+  },
+  "comparison": {
+    "baseline": {
+      "microbatch_size": 2,
+      "elapsed_seconds_including_model_load": 179.00301409998792,
+      "gpu_peak_allocated_bytes": 1867293184,
+      "metrics": {
+        "choice": {
+          "rows": 69,
+          "top1_accuracy": 0.6376811594202898,
+          "mean_nll": 1.276454255759141,
+          "mean_brier": 0.07529421119347876
+        },
+        "noul": {
+          "rows": 136,
+          "top1_accuracy": 0.9117647058823529,
+          "balanced_accuracy": 0.8387761106207708
+        },
+        "score": {
+          "rows": 51,
+          "top1_accuracy": 0.8627450980392157,
+          "mean_rank_error": 0.28696182569905715,
+          "mean_ranked_probability_score": 0.06295706878763695
+        }
+      }
+    },
+    "length_aware": {
+      "microbatch_policy": {
+        "maximum": 8,
+        "prompt_tokens_at_most_512": 8,
+        "prompt_tokens_513_to_768": 4,
+        "prompt_tokens_above_768": 2
+      },
+      "max_prompt_tokens": 715,
+      "batches_by_microbatch": {
+        "2": 0,
+        "4": 41,
+        "8": 233
+      },
+      "model_load_seconds": 28.429,
+      "scoring_seconds": 77.757,
+      "elapsed_seconds_including_model_load": 106.186,
+      "speedup_vs_previous_run": 1.686,
+      "gpu_peak_allocated_bytes": 2147518976,
+      "metrics": {
+        "choice": {
+          "rows": 69,
+          "top1_accuracy": 0.6376811594202898,
+          "mean_nll": 1.272969173636804,
+          "mean_brier": 0.075449754203503
+        },
+        "noul": {
+          "rows": 136,
+          "top1_accuracy": 0.9117647058823529,
+          "balanced_accuracy": 0.8387761106207708,
+          "true_positive": 23,
+          "true_negative": 101,
+          "false_positive": 2,
+          "false_negative": 10
+        },
+        "score": {
+          "rows": 51,
+          "top1_accuracy": 0.8627450980392157,
+          "mean_rank_error": 0.2901930121151682,
+          "mean_ranked_probability_score": 0.0651484351141304
+        }
+      }
+    }
+  },
+  "limitations": [
+    "The 256-row public synthetic selection has already been inspected and is not a fresh holdout.",
+    "Aggregate top-1 is unchanged, but larger padded batches change floating-point scores slightly; exact per-row output equivalence was not established.",
+    "This local result does not establish Jev parity, desktop transfer, production quality, or execution authority.",
+    "No model or dataset downloads were performed during the comparison."
+  ]
+}

@@ -17,6 +17,18 @@ MAX_OPTIONS = 64
 MAX_STATE_CHARS = 16_384
 MAX_QUESTION_CHARS = 4_000
 MAX_OPTION_CHARS = 1_024
+MAX_CANDIDATE_MICROBATCH = 8
+
+
+def _candidate_microbatch_size(max_prompt_tokens: int, configured_max: int) -> int:
+    """Bound padded GPU work by prompt length while keeping short decisions fast."""
+    if max_prompt_tokens < 1 or configured_max < 1:
+        raise ValueError("Prompt length and microbatch limit must be positive")
+    if max_prompt_tokens > 768:
+        return min(configured_max, 2)
+    if max_prompt_tokens > 512:
+        return min(configured_max, 4)
+    return configured_max
 
 # Only base checkpoints with a reviewed, local-only loading path are supported.
 PINNED_BACKBONES = {
@@ -118,7 +130,7 @@ class LocalTypedDecisionModel:
         self._temperature = 1.0
         self._max_length = 0
         self._prompt_style = ""
-        self._microbatch_size = 2
+        self._microbatch_size = MAX_CANDIDATE_MICROBATCH
         self._identity: dict[str, str] = {}
 
     def score(self, state: dict[str, Any], kind: str, question: str, options: list[str]) -> dict:
@@ -278,8 +290,12 @@ class LocalTypedDecisionModel:
         torch = self._torch
         candidate_scores = []
         with torch.inference_mode():
-            for start in range(0, len(sequences), self._microbatch_size):
-                batch = sequences[start : start + self._microbatch_size]
+            start = 0
+            while start < len(sequences):
+                proposed = sequences[start : start + self._microbatch_size]
+                longest = max(len(ids) for ids in proposed)
+                batch_size = _candidate_microbatch_size(longest, self._microbatch_size)
+                batch = sequences[start : start + batch_size]
                 lengths = torch.tensor([len(ids) for ids in batch], dtype=torch.long, device="cuda")
                 input_ids = torch.nn.utils.rnn.pad_sequence(
                     [torch.tensor(ids, dtype=torch.long) for ids in batch],
@@ -295,6 +311,7 @@ class LocalTypedDecisionModel:
                 ).last_hidden_state
                 last_hidden = hidden[torch.arange(len(batch), device="cuda"), lengths - 1].float()
                 candidate_scores.extend(self._head(last_hidden).squeeze(-1).unbind())
+                start += len(batch)
             scores = torch.stack(candidate_scores)
             logits = torch.cat((torch.zeros_like(scores[:1]), scores[:1])) if kind == "noul" else scores
         return logits.float().cpu().numpy().astype(np.float64)
