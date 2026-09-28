@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "benchmark": "JevBench MIT-licensed original tier",
+  "benchmark_revision": "f8ce71361165846101d02ebc83ad44e47ae44fc3",
+  "benchmark_sha256": "5c2414edb3006b8bfcb70fda433f0f9ca015759433849f8d3104328a1f7c4180",
+  "records": 72,
+  "candidate_prompts": 252,
+  "gold_labels_in_model_inputs": false,
+  "trained_on_evaluation_rows": false,
+  "inference": {
+    "model": "Qwen/Qwen3.5-2B",
+    "revision": "15852e8c16360a2fea060d615a32b45270f8a8fc",
+    "adapter_sha256": "2d23935b1a7380db444abac572c04646918ba794e59002d1588236182a3ca18f",
+    "head_sha256": "951aa74fc6d5a023a63ae3b083227c0b2e84bb64b27ff5884c4412d131cae0b8",
+    "device": "NVIDIA GeForce RTX 4060 Laptop GPU",
+    "prompt_contract": "JevBench TypeSafe question/criteria mapping; unindexed score descriptions"
+  },
+  "heliox": {
+    "correct": 55,
+    "total": 72,
+    "accuracy": 0.763889,
+    "macro_accuracy": 0.796296,
+    "brier_mean": 0.345803,
+    "ece_top_label_10_bins": 0.071212,
+    "score_mae": 0.217451,
+    "per_type": {
+      "choice": {"correct": 26, "total": 36, "accuracy": 0.722222},
+      "noul": {"correct": 18, "total": 24, "accuracy": 0.75},
+      "score": {"correct": 11, "total": 12, "accuracy": 0.916667}
+    },
+    "elapsed_seconds_including_model_load": 51.177
+  },
+  "published_references": {
+    "jev": {"correct": 71, "total": 72},
+    "open_jev_2b": {"correct": 56, "total": 72},
+    "source": "https://github.com/Zefan-Cai/Open-Jev/blob/main/docs/jevbench-public.md"
+  },
+  "limitations": [
+    "This is the small, public MIT original tier only; it is not a broad generalization claim.",
+    "The local candidate is near the published Open-Jev 2B result on this tier, but is 16 tasks behind the published Jev result.",
+    "This evaluates typed candidate scoring, not screen perception, autonomous execution, or safety authority.",
+    "Evaluation labels were used only to compute aggregate metrics and were not passed to the scorer or used for training."
+  ]
+}
