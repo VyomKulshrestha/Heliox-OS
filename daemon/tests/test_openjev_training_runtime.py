@@ -39,8 +39,12 @@ def test_rejects_unsupported_openjev_training_package(package, actual, expected)
 
 
 def test_openjev_scoring_entry_points_fail_before_loading_a_model(monkeypatch, tmp_path):
-    from scripts import evaluate_released_openjev_general, evaluate_world_general_qlora
-    from scripts import openjev_training_runtime, score_general_decision
+    from scripts import (
+        evaluate_released_openjev_general,
+        evaluate_world_general_qlora,
+        openjev_training_runtime,
+        score_general_decision,
+    )
 
     def reject_runtime():
         raise RuntimeError("unsupported research runtime")
