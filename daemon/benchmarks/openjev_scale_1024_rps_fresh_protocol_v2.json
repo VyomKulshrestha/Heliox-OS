@@ -15,9 +15,9 @@
     "fresh_selection_signature": "fc80568f0eac4a90e3482e7ef745cd70861237e1b24bd46b41558289e693ef4d"
   },
   "candidate": {
-    "report_path": "openjev_scale_1024_rps_v1.json",
+    "report_path": "benchmarks/openjev_scale_1024_rps_v1.json",
     "report_sha256": "53cea9c46c4504761071a568ae837dcda9920e49709c367668ea6a043165f95a",
-    "artifact_dir": ".bench-state/openjev_scale_1024_rps_v1",
+    "artifact_dir": "benchmarks/.bench-state/openjev_scale_1024_rps_v1",
     "adapter_sha256": "5bb2153d689476375b7784884964605411d000f20883b38a9ccd44eae0bfc0a3",
     "head_sha256": "aa2a39aee6e7b48efc50eff3a0f1ac5c4fdf391b534bf8b874a4a8da9ba65676",
     "max_length": 512
