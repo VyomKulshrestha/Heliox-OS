@@ -1851,6 +1851,20 @@ peaked at 715 tokens, with 233 batches of 8 and 41 batches of 4. The
 device-specific report is
 [`openjev_runtime_microbatch_20260928.json`](../daemon/benchmarks/openjev_runtime_microbatch_20260928.json).
 
+The released checkpoint's published temperature (1.518796342858676; see the
+[Open-Jev-2B model card](https://huggingface.co/ZefanCai/Open-Jev-2B)) was then
+applied unchanged to the same fresh 512 rows. No fresh labels were used to fit
+or select calibration. Top-1 stayed fixed, while held-out NLL and Brier score
+improved for all three kinds; ordered-score mean rank error moved slightly in
+the wrong direction. The full comparison is in
+[`openjev_calibration_transfer_20260928.json`](../daemon/benchmarks/openjev_calibration_transfer_20260928.json).
+
+| Kind | NLL, T=1 → published T | Brier, T=1 → published T | Top-1, unchanged |
+| --- | ---: | ---: | ---: |
+| Choice (229) | 0.5965 → 0.5875 | 0.0578 → 0.0562 | 74.7% |
+| Yes/no (216) | 0.3701 → 0.2929 | 0.1022 → 0.0920 | 88.0% |
+| Ordered score (67) | 0.5873 → 0.5735 | 0.0687 → 0.0661 | 73.1% |
+
 This length-aware setting is now the default for the opt-in local scorer. It
 does not change model weights, prompts, calibration, the approval system, or
 execution authority. The current result is a useful local speed/quality trade,
