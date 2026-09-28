@@ -242,8 +242,12 @@ def create_mcp_server(client: RpcClient | None = None) -> MCPServer:
             "submitted task completed until get_heliox_task_status returns a terminal result. "
             "score_heliox_typed_decision is independent research-only guidance and must never "
             "be used to authorize, approve, or execute an action. "
-            "score_heliox_typed_questions uses the same local model for bounded batches of "
-            "independent typed questions; it is not an action planner. No MCP tool can approve a task."
+            "For typed decisions, retrieve only relevant state first, ask one focused judgment "
+            "per question, and provide explicit candidate options. "
+            "score_heliox_typed_questions batches independent questions over one shared state; "
+            "it is not an action planner. Choice/score confidence is distribution concentration, "
+            "not a calibrated correctness probability. "
+            "No MCP tool can approve a task."
         ),
     )
 
@@ -294,7 +298,9 @@ def create_mcp_server(client: RpcClient | None = None) -> MCPServer:
         description=(
             "Score a user-supplied yes/no, choice, or ordered option set with the explicitly "
             "configured local research model. This tool is off until enabled in Heliox config, "
-            "does not save or upload inputs, and never authorizes, approves, or executes actions."
+            "does not save or upload inputs, and never authorizes, approves, or executes actions. "
+            "Choice/score confidence is distribution concentration, not a calibrated probability "
+            "that the selected answer is correct."
         ),
         annotations=_LOCAL_MODEL_READ_ONLY,
         structured_output=True,
@@ -317,9 +323,12 @@ def create_mcp_server(client: RpcClient | None = None) -> MCPServer:
             "Score up to 64 independent typed questions against one shared state using the "
             "explicitly configured local research model. Each question has type (noul, choice, "
             "or score), instructions, and type-specific criteria (Noul criteria are optional). "
+            "Ask one focused judgment per question, include only relevant state, and provide "
+            "explicit candidate options. "
             "Choices allow up to 255 candidates. Batches are bounded to 64 questions, 256 total "
             "candidate options, and 64k prompt tokens; inputs are not saved or uploaded and never "
-            "authorize actions."
+            "authorize actions. Choice/score confidence is distribution concentration, not a "
+            "calibrated correctness probability."
         ),
         annotations=_LOCAL_MODEL_READ_ONLY,
         structured_output=True,
