@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "purpose": "held_out_transfer_check_of_published_openjev_temperature",
+  "date": "2026-09-28",
+  "checkpoint": "ZefanCai/Open-Jev-2B@0c7aa498b1627be8da4acf34c863ff0ee0a92785",
+  "dataset": {
+    "id": "ZefanCai/Open-Jev",
+    "revision": "c67699e13d0ae25e35b77165a4b6b079bedc8aba",
+    "config": "release-v2-redistributable",
+    "split": "test",
+    "protocol": "benchmarks/released_openjev_general_protocol_v4.json",
+    "protocol_sha256": "b520295fcc3ba82e724fd49f2be2ef27ace46e29b2cfece8ae3e13ad74cd32df",
+    "selected_rows": 512,
+    "selected_ids_sha256": "4c24582d3700dbd50f36ca07091a0ffb63d16600dd560e5dd7de58e35c1a14ff",
+    "selected_group_ids_sha256": "2229d832ee98b5bce549010a9ce3ebb7d9cf00f348a0bbe0c0589bdada2688d6",
+    "excluded_prior_group_count": 1928
+  },
+  "calibration": {
+    "source": "Published Open-Jev-2B temperature; not fitted on the fresh test rows",
+    "temperature": 1.518796342858676,
+    "metrics": {
+      "choice": {
+        "rows": 229,
+        "top1_accuracy": 0.7467248908296943,
+        "nll_temperature_1": 0.5964730929600602,
+        "nll_published_temperature": 0.5875302934105785,
+        "brier_temperature_1": 0.05780257527670011,
+        "brier_published_temperature": 0.056248455367938835
+      },
+      "noul": {
+        "rows": 216,
+        "top1_accuracy": 0.8796296296296297,
+        "balanced_accuracy": 0.8528411850412821,
+        "nll_temperature_1": 0.3700711977800791,
+        "nll_published_temperature": 0.29288076142699343,
+        "brier_temperature_1": 0.10216032554586792,
+        "brier_published_temperature": 0.09203326025043541
+      },
+      "score": {
+        "rows": 67,
+        "top1_accuracy": 0.7313432835820896,
+        "mean_rank_error_temperature_1": 0.3528774409583848,
+        "mean_rank_error_published_temperature": 0.36149961800649905,
+        "nll_temperature_1": 0.5872840360224186,
+        "nll_published_temperature": 0.5735445952375856,
+        "brier_temperature_1": 0.06867519640822412,
+        "brier_published_temperature": 0.06614915051749733,
+        "ranked_probability_score_temperature_1": 0.0686271036469529,
+        "ranked_probability_score_published_temperature": 0.06563151277471949
+      }
+    }
+  },
+  "limitations": [
+    "The test rows were used only to report this comparison, not to fit the temperature.",
+    "The split is synthetic/public and does not establish Jev parity or desktop transfer.",
+    "The published temperature improves NLL and Brier in this test but does not improve top-1; ordinal mean rank error increases slightly."
+  ]
+}
