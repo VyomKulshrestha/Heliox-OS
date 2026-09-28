@@ -285,6 +285,7 @@ def run(protocol_path: Path, output_dir: Path, *, resume: bool) -> dict:
         "temperature": 1.0,
         "archived": scored["archived"], "fresh": scored["fresh"],
         "excluded_group_manifest_sha256": (protocol.get("excluded_group_manifest") or {}).get("sha256"),
+        "excluded_group_count": len(excluded_group_ids),
         "fresh_ids_sha256": hashlib.sha256("\n".join(row["id"] for row in fresh).encode()).hexdigest(),
         "fresh_group_ids_sha256": hashlib.sha256("\n".join(sorted(
             {row["group_id"] for row in fresh})).encode()).hexdigest(),
