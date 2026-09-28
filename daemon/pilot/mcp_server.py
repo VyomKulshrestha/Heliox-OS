@@ -246,7 +246,8 @@ def create_mcp_server(client: RpcClient | None = None) -> MCPServer:
             "per question, and provide explicit candidate options. "
             "score_heliox_typed_questions batches independent questions over one shared state; "
             "it is not an action planner. Choice/score confidence is distribution concentration, "
-            "not a calibrated correctness probability. "
+            "not a calibrated correctness probability. Candidate probabilities are model-assigned "
+            "distribution mass, not empirically validated probabilities of correctness. "
             "No MCP tool can approve a task."
         ),
     )
@@ -299,8 +300,9 @@ def create_mcp_server(client: RpcClient | None = None) -> MCPServer:
             "Score a user-supplied yes/no, choice, or ordered option set with the explicitly "
             "configured local research model. This tool is off until enabled in Heliox config, "
             "does not save or upload inputs, and never authorizes, approves, or executes actions. "
-            "Choice/score confidence is distribution concentration, not a calibrated probability "
-            "that the selected answer is correct."
+            "Candidate probabilities are model-assigned distribution mass, not empirically validated "
+            "probabilities of correctness. Choice/score confidence is distribution concentration, "
+            "not a calibrated probability that the selected answer is correct."
         ),
         annotations=_LOCAL_MODEL_READ_ONLY,
         structured_output=True,
@@ -327,8 +329,9 @@ def create_mcp_server(client: RpcClient | None = None) -> MCPServer:
             "explicit candidate options. "
             "Choices allow up to 255 candidates. Batches are bounded to 64 questions, 256 total "
             "candidate options, and 64k prompt tokens; inputs are not saved or uploaded and never "
-            "authorize actions. Choice/score confidence is distribution concentration, not a "
-            "calibrated correctness probability."
+            "authorize actions. Candidate probabilities are model-assigned distribution mass, not "
+            "empirically validated probabilities of correctness. Choice/score confidence is "
+            "distribution concentration, not a calibrated correctness probability."
         ),
         annotations=_LOCAL_MODEL_READ_ONLY,
         structured_output=True,

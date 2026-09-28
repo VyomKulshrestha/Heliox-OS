@@ -23,6 +23,7 @@ MAX_TOTAL_OPTIONS = 256
 MAX_TOTAL_PROMPT_TOKENS = 64_000
 MAX_CANDIDATE_MICROBATCH = 16
 CONFIDENCE_SEMANTICS = "normalized_distribution_concentration_not_accuracy_probability"
+DISTRIBUTION_SEMANTICS = "model_assigned_candidate_mass_not_empirical_correctness_probability"
 
 
 def _candidate_microbatch_size(max_prompt_tokens: int, configured_max: int) -> int:
@@ -159,7 +160,11 @@ def format_typed_answer(record: dict[str, Any], probabilities: list[float] | np.
         raise ValueError("Typed-decision probabilities must sum to one")
     values = values / total
     if record["kind"] == "noul":
-        return {"type": "noul", "noul": float(values[1])}
+        return {
+            "type": "noul",
+            "noul": float(values[1]),
+            "distribution_semantics": DISTRIBUTION_SEMANTICS,
+        }
     if record["kind"] == "choice":
         selected = int(np.argmax(values))
         uniform = 1.0 / len(values)
@@ -170,6 +175,7 @@ def format_typed_answer(record: dict[str, Any], probabilities: list[float] | np.
             "probabilities": {key: float(value) for key, value in zip(keys, values, strict=True)},
             "confidence": float(confidence),
             "confidence_semantics": CONFIDENCE_SEMANTICS,
+            "distribution_semantics": DISTRIBUTION_SEMANTICS,
         }
     mode = int(np.argmax(values))
     distance = float(sum(value * abs(index - mode) for index, value in enumerate(values)))
@@ -182,6 +188,7 @@ def format_typed_answer(record: dict[str, Any], probabilities: list[float] | np.
         "probabilities": {key: float(value) for key, value in zip(keys, values, strict=True)},
         "confidence": float(confidence),
         "confidence_semantics": CONFIDENCE_SEMANTICS,
+        "distribution_semantics": DISTRIBUTION_SEMANTICS,
         "legend": record["legend"],
     }
 

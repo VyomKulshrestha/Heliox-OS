@@ -50,9 +50,11 @@ The server exposes nine tools:
 | `get_heliox_task_status` | Poll durable task, approval, and terminal state. |
 | `cancel_heliox_task` | Cancel an MCP-owned task. |
 
-For choice and ordered-score answers, `confidence` describes how concentrated the returned
-distribution is; it is not a calibrated probability that the answer is correct. Validate any
-threshold against representative labeled tasks, and keep execution and approvals in Heliox.
+Returned candidate probabilities are model-assigned distribution mass, not empirically validated
+probabilities that the answer is correct. For choice and ordered-score answers, `confidence`
+describes how concentrated the returned distribution is; it is not a calibrated correctness
+probability. Validate any threshold against representative labeled tasks, and keep execution and
+approvals in Heliox.
 For Jev-style use, retrieve only relevant state, ask one focused judgment per question, and give
 the scorer explicit candidates; batch independent questions against the shared state.
 

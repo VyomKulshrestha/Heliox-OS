@@ -96,10 +96,16 @@ def test_jev_style_typed_questions_compile_without_leaking_score_indices() -> No
     assert choice["confidence_semantics"] == (
         "normalized_distribution_concentration_not_accuracy_probability"
     )
+    assert choice["distribution_semantics"] == (
+        "model_assigned_candidate_mass_not_empirical_correctness_probability"
+    )
     score = format_typed_answer(compiled[2], [0.2, 0.5, 0.3])
     assert score["score"] == pytest.approx(1.1)
     assert score["confidence_semantics"] == (
         "normalized_distribution_concentration_not_accuracy_probability"
+    )
+    assert score["distribution_semantics"] == (
+        "model_assigned_candidate_mass_not_empirical_correctness_probability"
     )
     assert score["legend"] == ["weak", "partial", "strong"]
 
@@ -188,6 +194,9 @@ def test_typed_question_batch_submits_all_candidates_in_one_scoring_call(monkeyp
     assert result["execution_authority"] is False
     assert result["answers"]["route"]["choice"] == "read"
     assert result["answers"]["safe"]["noul"] == pytest.approx(1 / (1 + np.exp(-1)))
+    assert result["answers"]["safe"]["distribution_semantics"] == (
+        "model_assigned_candidate_mass_not_empirical_correctness_probability"
+    )
     assert result["answers"]["quality"]["score"] == pytest.approx(0.5)
 
 
