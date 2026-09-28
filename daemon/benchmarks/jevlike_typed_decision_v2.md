@@ -62,6 +62,11 @@ accuracy of an arbitrary first-option tie break.
 - Option window: 128 bytes; none of the evaluated options were truncated.
 - RTX 4060 Laptop: 42.1–55.4 seconds per 8k-row run; peak allocated VRAM was
   0.196 GiB. Each compressed local checkpoint is about 0.6 MB.
+- Single-decision inference over 128 OOD rows (8 warmups, 120 measured) had
+  1.14 ms GPU / 1.12 ms CPU median latency; p95 was 2.34 / 1.81 ms. These
+  timings include local text encoding and tensor preparation but exclude the
+  daemon/RPC and approval path. CPU and CUDA selected the same option on all
+  128 decisions; that is numerical portability, not an accuracy measure.
 - Reports and weights remain ignored local artifacts under
   `benchmarks/.bench-state/jevlike_tiny_8k_ctx2048_seed28_final/` and
   `benchmarks/.bench-state/jevlike_tiny_8k_ctx2048_seed29_final/`.
