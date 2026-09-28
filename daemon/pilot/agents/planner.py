@@ -1155,7 +1155,13 @@ class Planner:
                 action = self._parse_action(raw_action)
                 actions.append(action)
             except Exception as e:
-                logger.warning("Failed to parse action %d: %s", i, e)
+                logger.warning("Rejecting plan after action %d failed validation: %s", i, e)
+                return ActionPlan(
+                    error=f"ACTION PARSING FAILED: action {i + 1} could not be validated ({e}). "
+                    "No actions were retained.",
+                    explanation=explanation,
+                    raw_input=user_input,
+                )
 
         if not actions:
             return ActionPlan(
@@ -1522,10 +1528,12 @@ class Planner:
 
     def _resolve_action_type(self, raw_type: str) -> ActionType:
         """Resolve an action type string, handling LLM hallucinations."""
-        # Strip any 'ActionType.' prefix the LLM might add
+        # Strip any enum prefix and normalize case without changing meaning.
         clean = raw_type.strip()
-        if clean.startswith("ActionType."):
+        if clean.lower().startswith("actiontype."):
             clean = clean.split(".", 1)[1].lower()
+        else:
+            clean = clean.lower()
 
         # Direct match
         try:
@@ -1539,16 +1547,8 @@ class Planner:
             logger.info("Resolved hallucinated action type '%s' → '%s'", clean, resolved)
             return ActionType(resolved)
 
-        # Fuzzy match: find closest valid action type
-        import difflib
-
-        valid_types = [at.value for at in ActionType]
-        matches = difflib.get_close_matches(clean, valid_types, n=1, cutoff=0.6)
-        if matches:
-            logger.info("Fuzzy-matched action type '%s' → '%s'", clean, matches[0])
-            return ActionType(matches[0])
-
-        raise ValueError(f"'{clean}' is not a valid ActionType")
+        # Never coerce an unknown model label to a different capability.
+        raise ValueError(f"'{clean}' is not a valid ActionType or supported alias")
 
     def _parse_action(self, raw: dict) -> Action:
         action_type = self._resolve_action_type(raw["action_type"])
