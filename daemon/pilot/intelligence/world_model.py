@@ -725,7 +725,12 @@ class UiJepaPredictor:
             browser=deepcopy(current_state.browser),
         )
         risk_evidence: tuple[RiskEvidence, ...] = ()
-        if self._validated_for_gating and geometry_used and delta_norm >= 1.0:
+        if (
+            self._validated_for_gating
+            and candidate_action.action_type in self.POINTER_ACTIONS
+            and geometry_used
+            and delta_norm >= 1.0
+        ):
             risk_evidence = (
                 RiskEvidence(
                     "ui_jepa",
