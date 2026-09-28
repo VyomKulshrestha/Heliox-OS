@@ -50,6 +50,15 @@ def test_prepare_request_keeps_only_declared_input_fields() -> None:
         prepare_requests([])
 
 
+def test_large_research_selection_requires_an_explicit_limit() -> None:
+    payload = {"state": "fixture", "kind": "noul", "question": "Is this true?",
+               "options": ["no", "yes"]}
+    requests = [payload] * 129
+    with pytest.raises(ValueError, match="between 1 and 128"):
+        prepare_requests(requests)
+    assert len(prepare_requests(requests, max_decisions=129)) == 129
+
+
 def test_artifact_hashes_must_match_frozen_report(tmp_path: Path) -> None:
     output_dir = tmp_path / "model"
     adapter = output_dir / "adapter"

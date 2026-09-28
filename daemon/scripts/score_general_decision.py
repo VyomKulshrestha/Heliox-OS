@@ -37,9 +37,11 @@ def prepare_request(payload: dict) -> dict:
             "state_json": json.dumps(payload["state"], ensure_ascii=False)}
 
 
-def prepare_requests(payloads: list[dict]) -> list[dict]:
-    if not isinstance(payloads, list) or not 1 <= len(payloads) <= 128:
-        raise ValueError("Score between 1 and 128 decisions at a time")
+def prepare_requests(payloads: list[dict], *, max_decisions: int = 128) -> list[dict]:
+    if type(max_decisions) is not int or max_decisions < 1:
+        raise ValueError("Maximum decision count must be a positive integer")
+    if not isinstance(payloads, list) or not 1 <= len(payloads) <= max_decisions:
+        raise ValueError(f"Score between 1 and {max_decisions} decisions at a time")
     return [prepare_request(payload) for payload in payloads]
 
 
@@ -72,8 +74,9 @@ def verify_artifact(output_dir: Path, report_path: Path) -> tuple[dict, Path]:
 
 
 def score_requests(payloads: list[dict], output_dir: Path, report_path: Path,
-                   *, on_prediction: Callable[[int, dict], None] | None = None) -> list[dict]:
-    rows = prepare_requests(payloads)
+                   *, on_prediction: Callable[[int, dict], None] | None = None,
+                   max_decisions: int = 128) -> list[dict]:
+    rows = prepare_requests(payloads, max_decisions=max_decisions)
     from scripts.openjev_training_runtime import require_training_runtime
 
     require_training_runtime()

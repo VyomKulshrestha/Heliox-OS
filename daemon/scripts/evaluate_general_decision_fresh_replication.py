@@ -190,7 +190,7 @@ def evaluate(protocol_path: Path, output_path: Path, *, resume: bool) -> dict:
             os.replace(temporary, checkpoint_path)
 
         score_requests(payloads[start:], candidate_dir, candidate_report_path,
-                       on_prediction=save)
+                       on_prediction=save, max_decisions=len(payloads))
     if len(predictions) != len(rows):
         raise ValueError("Candidate output count does not match the scored fresh rows")
 
