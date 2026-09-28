@@ -79,6 +79,39 @@ def sample_cases(cases: list[dict], limit: int, seed: int) -> list[dict]:
     return sorted(selected, key=lambda case: case["id"])
 
 
+def sample_training_cases(cases: list[dict], limit: int, seed: int,
+                          *, max_per_group: int = 2) -> list[dict]:
+    """Balance training labels while allowing bounded repeated trajectory steps."""
+    if limit < 2 or limit > 512 or limit % 2 or max_per_group < 1:
+        raise ValueError("Training sample size or per-trajectory limit is invalid")
+    selected = []
+    per_class = limit // 2
+    for misaligned in (False, True):
+        pool = sorted((case for case in cases if case["misaligned"] is misaligned),
+                      key=lambda case: case["id"])
+        random.Random(seed + int(misaligned)).shuffle(pool)
+        by_group: dict[str, list[dict]] = {}
+        for case in pool:
+            by_group.setdefault(case["group"], []).append(case)
+        groups = sorted(by_group)
+        random.Random(seed + 2 + int(misaligned)).shuffle(groups)
+        counts = {group: 0 for group in groups}
+        chosen = 0
+        while chosen < per_class:
+            progressed = False
+            for group in groups:
+                if by_group[group] and counts[group] < max_per_group:
+                    selected.append(by_group[group].pop())
+                    counts[group] += 1
+                    chosen += 1
+                    progressed = True
+                    if chosen == per_class:
+                        break
+            if not progressed:
+                raise ValueError("Not enough bounded group-balanced training actions per label")
+    return sorted(selected, key=lambda case: case["id"])
+
+
 def split_cases(cases: list[dict], *, seed: int, limits: dict[str, int]) -> dict[str, list[dict]]:
     """Allocate balanced, trajectory-disjoint test, calibration, and train rows."""
     if set(limits) != {"scope_train", "scope_calibration", "scope_test"}:
@@ -91,7 +124,7 @@ def split_cases(cases: list[dict], *, seed: int, limits: dict[str, int]) -> dict
     calibration_groups = {case["group"] for case in calibration}
     remaining = [case for case in remaining if case["group"] not in calibration_groups]
 
-    train = sample_cases(remaining, limits["scope_train"], seed + 2)
+    train = sample_training_cases(remaining, limits["scope_train"], seed + 2)
     parts = {"scope_train": train, "scope_calibration": calibration, "scope_test": test}
     group_sets = [{case["group"] for case in rows} for rows in parts.values()]
     if any(left & right for index, left in enumerate(group_sets)
@@ -131,8 +164,8 @@ def load_parts(path: Path, *, seed: int, limits: dict[str, int],
                 "total_labeled_actions": len(all_cases),
                 "eligible_text_only_actions": len(cases),
                 "excluded_overlong": len(all_cases) - len(cases),
-                "selection": ("text-only; one action per trajectory; balanced labels; "
-                              "test groups excluded before calibration, then train groups"),
+                "selection": ("text-only; balanced labels; one action per trajectory in test/calibration; "
+                              "up to two actions per train trajectory; all splits trajectory-disjoint"),
                 "selected_rows": {name: len(rows) for name, rows in parts.items()},
                 "seed": seed}
     if history_calls:
