@@ -22,14 +22,18 @@ def test_local_mcp_version_matches_running_heliox_package() -> None:
 class _RecordingDaemon:
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.timeouts: list[float | None] = []
 
     async def call(
         self,
         method: str,
         params: dict[str, Any] | None = None,
+        *,
+        timeout_seconds: float | None = None,
     ) -> dict[str, Any]:
         payload = params or {}
         self.calls.append((method, payload))
+        self.timeouts.append(timeout_seconds)
         if method == "mcp_submit_task":
             return {"status": "submitted", "task_id": "task-1", "requires_user_approval": True}
         if method == "mcp_task_status":
@@ -51,12 +55,16 @@ async def test_local_mcp_lists_bounded_tools_with_truthful_annotations() -> None
         "get_heliox_system_status",
         "list_heliox_capabilities",
         "preview_heliox_task",
+        "score_heliox_typed_decision",
         "submit_heliox_task",
         "get_heliox_task_status",
         "cancel_heliox_task",
     }
     assert tools["heliox_health"].annotations.read_only_hint is True
     assert tools["preview_heliox_task"].annotations.read_only_hint is True
+    assert tools["score_heliox_typed_decision"].annotations.read_only_hint is True
+    assert tools["score_heliox_typed_decision"].annotations.destructive_hint is False
+    assert tools["score_heliox_typed_decision"].annotations.open_world_hint is False
     assert tools["submit_heliox_task"].annotations.read_only_hint is False
     assert tools["submit_heliox_task"].annotations.destructive_hint is True
     submit_schema = tools["submit_heliox_task"].input_schema["properties"]
@@ -92,6 +100,37 @@ async def test_local_mcp_submission_and_status_preserve_async_contract() -> None
         ),
         ("mcp_task_status", {"task_id": "task-1"}),
     ]
+
+
+@pytest.mark.asyncio
+async def test_typed_decision_tool_passes_dynamic_state_without_action_side_effects() -> None:
+    daemon = _RecordingDaemon()
+    server = create_mcp_server(daemon)
+
+    async with Client(server) as client:
+        result = await client.call_tool(
+            "score_heliox_typed_decision",
+            {
+                "state": {"request": "read status", "candidate": "collect evidence"},
+                "kind": "choice",
+                "question": "Which candidate best satisfies the request?",
+                "options": ["collect evidence", "change settings"],
+            },
+        )
+
+    assert result.is_error is False
+    assert daemon.calls == [
+        (
+            "mcp_typed_decision",
+            {
+                "state": {"request": "read status", "candidate": "collect evidence"},
+                "kind": "choice",
+                "question": "Which candidate best satisfies the request?",
+                "options": ["collect evidence", "change settings"],
+            },
+        )
+    ]
+    assert daemon.timeouts == [120]
 
 
 @pytest.mark.parametrize(

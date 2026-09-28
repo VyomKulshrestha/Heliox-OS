@@ -631,6 +631,8 @@ class PilotServer:
         self._mcp_task_results: dict[str, dict[str, Any]] = {}
         self._mcp_idempotency: dict[str, tuple[str, str]] = {}
         self._mcp_reserved_task_id = ""
+        self._typed_decision_engine: Any = None
+        self._typed_decision_engine_key: tuple[str, str] | None = None
         # Cognitive intelligence (lightweight heuristic engine)
         self._cognitive_engine: Any = None
         self._attention_ui: Any = None
@@ -1290,6 +1292,7 @@ class PilotServer:
             "resume_plan": self._handle_resume_plan,
             "resume_task": self._handle_resume_task,
             "mcp_plan_task": self._handle_mcp_plan_task,
+            "mcp_typed_decision": self._handle_mcp_typed_decision,
             "mcp_submit_task": self._handle_mcp_submit_task,
             "mcp_task_status": self._handle_mcp_task_status,
             "mcp_cancel_task": self._handle_mcp_cancel_task,
@@ -3907,6 +3910,82 @@ class PilotServer:
             ),
         }
 
+    async def _handle_mcp_typed_decision(
+        self,
+        params: dict[str, Any],
+        ws: ServerConnection,
+    ) -> dict[str, Any]:
+        """Return an opt-in local model score that cannot authorize Heliox actions."""
+        self._require_rpc_role(ws, RpcClientRole.MCP_LOCAL)
+        config = self.config.typed_decision
+        if not config.enabled:
+            return {
+                "status": "disabled",
+                "research_only": True,
+                "execution_authority": False,
+                "message": "Enable typed_decision in local Heliox config to use this scorer.",
+            }
+        if self._interactive_request_active:
+            return {
+                "status": "busy",
+                "research_only": True,
+                "execution_authority": False,
+                "message": "Heliox is handling an interactive task; retry typed scoring afterward.",
+            }
+        if not config.artifact_dir.strip() or not config.report_path.strip():
+            return {
+                "status": "unavailable",
+                "research_only": True,
+                "execution_authority": False,
+                "message": "Configure local artifact_dir and report_path before enabling the scorer.",
+            }
+
+        state = params.get("state")
+        kind = params.get("kind")
+        question = params.get("question")
+        options = params.get("options")
+        if not isinstance(state, dict):
+            return {
+                "status": "error",
+                "research_only": True,
+                "execution_authority": False,
+                "message": "state must be a JSON object",
+            }
+        try:
+            from pilot.intelligence.typed_decision import LocalTypedDecisionModel, validate_decision
+
+            validate_decision(kind, question, options)
+            artifact_dir = str(Path(config.artifact_dir).expanduser())
+            report_path = str(Path(config.report_path).expanduser())
+            engine_key = (artifact_dir, report_path)
+            if self._typed_decision_engine_key != engine_key:
+                if self._typed_decision_engine is not None:
+                    await asyncio.to_thread(self._typed_decision_engine.unload)
+                self._typed_decision_engine = LocalTypedDecisionModel(artifact_dir, report_path)
+                self._typed_decision_engine_key = engine_key
+            return await asyncio.to_thread(
+                self._typed_decision_engine.score,
+                state,
+                kind,
+                question,
+                options,
+            )
+        except (TypeError, ValueError) as exc:
+            return {
+                "status": "error",
+                "research_only": True,
+                "execution_authority": False,
+                "message": str(exc)[:300],
+            }
+        except Exception as exc:
+            logger.warning("Local typed-decision scoring unavailable: %s", type(exc).__name__)
+            return {
+                "status": "unavailable",
+                "research_only": True,
+                "execution_authority": False,
+                "message": str(exc)[:300] or type(exc).__name__,
+            }
+
     async def _handle_mcp_submit_task(
         self,
         params: dict[str, Any],
@@ -5415,6 +5494,20 @@ class PilotServer:
                 if section == "email" and k == "smtp_port":
                     if not isinstance(v, int) or isinstance(v, bool) or not 1 <= v <= 65535:
                         return {"status": "error", "message": "email.smtp_port must be from 1 to 65535"}
+                if section == "typed_decision" and k == "enabled" and not isinstance(v, bool):
+                    return {"status": "error", "message": "typed_decision.enabled must be a boolean"}
+                if section == "typed_decision" and k in {"artifact_dir", "report_path"}:
+                    if not isinstance(v, str) or len(v) > 4096:
+                        return {
+                            "status": "error",
+                            "message": f"typed_decision.{k} must be a path up to 4096 characters",
+                        }
+                    v = v.strip()
+                    if v and not Path(v).expanduser().is_absolute():
+                        return {
+                            "status": "error",
+                            "message": f"typed_decision.{k} must be an absolute local path",
+                        }
                 from pilot.config import _validate_config_types
 
                 try:
@@ -5424,6 +5517,23 @@ class PilotServer:
                 normalized_values[k] = v
             else:
                 return {"status": "error", "message": f"Invalid config key found: '{section}.{k}'."}
+        if section == "typed_decision":
+            will_enable = normalized_values.get("enabled", self.config.typed_decision.enabled)
+            artifact_dir = normalized_values.get("artifact_dir", self.config.typed_decision.artifact_dir)
+            report_path = normalized_values.get("report_path", self.config.typed_decision.report_path)
+            if will_enable and (not artifact_dir or not report_path):
+                return {
+                    "status": "error",
+                    "message": "Set typed_decision artifact_dir and report_path before enabling it",
+                }
+            if will_enable and (
+                not Path(artifact_dir).expanduser().is_absolute()
+                or not Path(report_path).expanduser().is_absolute()
+            ):
+                return {
+                    "status": "error",
+                    "message": "typed_decision artifact_dir and report_path must be absolute local paths",
+                }
         for key, value in normalized_values.items():
             setattr(target, key, value)
         try:
@@ -5433,6 +5543,19 @@ class PilotServer:
                 setattr(target, key, value)
             logger.warning("Config update was not persisted; restored live values", exc_info=True)
             return {"status": "error", "message": f"Config update was not saved: {exc}"}
+
+        if section == "typed_decision" and self._typed_decision_engine is not None:
+            current_key = (
+                str(Path(self.config.typed_decision.artifact_dir).expanduser()),
+                str(Path(self.config.typed_decision.report_path).expanduser()),
+            )
+            if not self.config.typed_decision.enabled or current_key != self._typed_decision_engine_key:
+                try:
+                    await asyncio.to_thread(self._typed_decision_engine.unload)
+                except Exception:
+                    logger.warning("Could not release local typed-decision model", exc_info=True)
+                self._typed_decision_engine = None
+                self._typed_decision_engine_key = None
 
         if voice_listener_was_running:
             try:

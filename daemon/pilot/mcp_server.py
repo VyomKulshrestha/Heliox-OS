@@ -17,7 +17,7 @@ import logging
 import math
 import uuid
 from pathlib import Path
-from typing import Annotated, Any, Protocol
+from typing import Annotated, Any, Literal, Protocol
 from urllib.parse import urlsplit
 
 import websockets
@@ -31,6 +31,8 @@ from pilot.config import RUNTIME_DIR, PilotConfig
 logger = logging.getLogger("pilot.mcp")
 
 TaskInput = Annotated[str, Field(min_length=1, max_length=20_000), StringConstraints(strip_whitespace=True)]
+DecisionQuestion = Annotated[str, Field(min_length=1, max_length=4_000), StringConstraints(strip_whitespace=True)]
+DecisionOptions = Annotated[list[str], Field(min_length=2, max_length=64)]
 SessionId = Annotated[
     str,
     Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9._:-]+$"),
@@ -65,6 +67,12 @@ _MODEL_READ_ONLY = ToolAnnotations(
     idempotentHint=False,
     openWorldHint=True,
 )
+_LOCAL_MODEL_READ_ONLY = ToolAnnotations(
+    readOnlyHint=True,
+    destructiveHint=False,
+    idempotentHint=False,
+    openWorldHint=False,
+)
 _SUBMIT = ToolAnnotations(
     readOnlyHint=False,
     destructiveHint=True,
@@ -84,7 +92,13 @@ class DaemonRpcError(RuntimeError):
 
 
 class RpcClient(Protocol):
-    async def call(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]: ...
+    async def call(
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> dict[str, Any]: ...
 
 
 class HelioxDaemonClient:
@@ -134,9 +148,14 @@ class HelioxDaemonClient:
             raise DaemonRpcError("The local Heliox MCP credential is empty; restart the daemon.")
         return token
 
-    async def _response_for(self, websocket: Any, request_id: str) -> dict[str, Any]:
+    async def _response_for(
+        self,
+        websocket: Any,
+        request_id: str,
+        timeout_seconds: float,
+    ) -> dict[str, Any]:
         for _ in range(100):
-            raw = await asyncio.wait_for(websocket.recv(), timeout=self._timeout_seconds)
+            raw = await asyncio.wait_for(websocket.recv(), timeout=timeout_seconds)
             try:
                 payload = json.loads(raw)
             except (TypeError, json.JSONDecodeError):
@@ -157,14 +176,19 @@ class HelioxDaemonClient:
         self,
         method: str,
         params: dict[str, Any] | None = None,
+        *,
+        timeout_seconds: float | None = None,
     ) -> dict[str, Any]:
+        request_timeout = self._timeout_seconds if timeout_seconds is None else timeout_seconds
+        if not math.isfinite(request_timeout) or not 0.1 <= request_timeout <= 120:
+            raise ValueError("RPC timeout must be between 0.1 and 120 seconds")
         token = self._read_token()
         auth_id = f"auth-{uuid.uuid4()}"
         request_id = f"mcp-{uuid.uuid4()}"
         try:
             async with websockets.connect(
                 self._uri,
-                open_timeout=self._timeout_seconds,
+                open_timeout=request_timeout,
                 close_timeout=2,
                 max_size=4 * 1024 * 1024,
             ) as websocket:
@@ -178,7 +202,7 @@ class HelioxDaemonClient:
                         }
                     )
                 )
-                auth = await self._response_for(websocket, auth_id)
+                auth = await self._response_for(websocket, auth_id, request_timeout)
                 if auth.get("role") != "mcp_local":
                     raise DaemonRpcError("The daemon rejected the local MCP identity.")
 
@@ -192,7 +216,7 @@ class HelioxDaemonClient:
                         }
                     )
                 )
-                return await self._response_for(websocket, request_id)
+                return await self._response_for(websocket, request_id, request_timeout)
         except DaemonRpcError:
             raise
         except (OSError, TimeoutError, websockets.exceptions.WebSocketException) as exc:
@@ -214,7 +238,8 @@ def create_mcp_server(client: RpcClient | None = None) -> MCPServer:
             "preview_heliox_task is advisory. submit_heliox_task returns before execution; "
             "the user must review every proposed action in the Heliox UI. Never claim a "
             "submitted task completed until get_heliox_task_status returns a terminal result. "
-            "No MCP tool can approve a task."
+            "score_heliox_typed_decision is independent research-only guidance and must never "
+            "be used to authorize, approve, or execute an action. No MCP tool can approve a task."
         ),
     )
 
@@ -258,6 +283,28 @@ def create_mcp_server(client: RpcClient | None = None) -> MCPServer:
         return await daemon.call(
             "mcp_plan_task",
             {"input": input, "session_id": session_id},
+        )
+
+    @mcp.tool(
+        title="Score a typed decision (research only)",
+        description=(
+            "Score a user-supplied yes/no, choice, or ordered option set with the explicitly "
+            "configured local research model. This tool is off until enabled in Heliox config, "
+            "does not save or upload inputs, and never authorizes, approves, or executes actions."
+        ),
+        annotations=_LOCAL_MODEL_READ_ONLY,
+        structured_output=True,
+    )
+    async def score_heliox_typed_decision(
+        state: dict[str, Any],
+        kind: Literal["noul", "choice", "score"],
+        question: DecisionQuestion,
+        options: DecisionOptions,
+    ) -> dict[str, Any]:
+        return await daemon.call(
+            "mcp_typed_decision",
+            {"state": state, "kind": kind, "question": question, "options": options},
+            timeout_seconds=120,
         )
 
     @mcp.tool(

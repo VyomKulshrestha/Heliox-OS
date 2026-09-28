@@ -10,7 +10,7 @@ def test_default_persisted_config_is_fully_covered_by_validator():
     _validate_config_types(raw)
 
 
-def test_calendar_preview_and_cognitive_config_round_trip_through_merge():
+def test_calendar_preview_cognitive_and_typed_decision_config_round_trip_through_merge():
     raw = {
         "calendar": {
             "enabled": True,
@@ -29,6 +29,11 @@ def test_calendar_preview_and_cognitive_config_round_trip_through_merge():
         },
         "preview": {"enabled": True, "confirm_timeout_seconds": 45},
         "cognitive": {"enabled": False},
+        "typed_decision": {
+            "enabled": True,
+            "artifact_dir": "C:/models/decision-candidate",
+            "report_path": "C:/models/decision-candidate/report.json",
+        },
     }
 
     _validate_config_types(raw)
@@ -42,6 +47,9 @@ def test_calendar_preview_and_cognitive_config_round_trip_through_merge():
     assert config.preview.enabled is True
     assert config.preview.confirm_timeout_seconds == 45
     assert config.cognitive.enabled is False
+    assert config.typed_decision.enabled is True
+    assert config.typed_decision.artifact_dir == "C:/models/decision-candidate"
+    assert config.typed_decision.report_path.endswith("report.json")
 
 
 @pytest.mark.parametrize("section", ["calender", "cognitiv", "prevew"])
