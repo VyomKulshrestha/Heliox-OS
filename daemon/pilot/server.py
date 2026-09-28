@@ -841,6 +841,12 @@ class PilotServer:
             capture_feature=self._capture_recording_feature,
             allow_manual_event=lambda: not self._pending_confirms,
         )
+        runtime_world_weights = DATA_DIR / "ui_jepa_weights.enc"
+        if runtime_world_weights.is_file():
+            gate.configure_ui_jepa_artifact(
+                runtime_world_weights,
+                weight_loader=self._recorded_workflows.decrypt_model_artifact_file,
+            )
         self._executor.set_recorded_workflow_store(self._recorded_workflows)
         # Import and warm the local system probe stack before readiness so the
         # first harmless status request does not pay lazy import/thread startup.

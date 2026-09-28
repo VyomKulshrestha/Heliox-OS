@@ -2,7 +2,8 @@
 
 Episode-disjoint evaluation compares action-conditioned predictions with both
 an unchanged-screen baseline and an action-ablated version of the same model.
-Weights are not compatible with or loaded by the live UiJepaPredictor.
+An optional linear export matches the live UiJepaPredictor contract, but is
+always shadow-only and never grants action authority.
 """
 
 from __future__ import annotations
@@ -250,6 +251,65 @@ RECORDED_ACTION_IDS = {
     "mouse_double_click": 2,
     "mouse_right_click": 3,
 }
+RECORDED_ACTION_WIDTH = 9
+
+
+def serialize_runtime_linear_artifact(
+    state_dict: dict[str, Any],
+    *,
+    training_samples: int,
+    validation_error: float,
+) -> bytes:
+    """Convert the fitted linear residual head to the live screen-feature contract."""
+    from pilot.actions import ActionType
+    from pilot.intelligence.world_model import UiJepaPredictor
+
+    def as_array(value: Any) -> np.ndarray:
+        if hasattr(value, "detach"):
+            value = value.detach().cpu().numpy()
+        return np.asarray(value, dtype=np.float32)
+
+    weight = as_array(state_dict.get("weight"))
+    bias = as_array(state_dict.get("bias"))
+    dimension = 16 * 16
+    if (
+        weight.shape != (dimension, dimension + RECORDED_ACTION_WIDTH + 2)
+        or bias.shape != (dimension,)
+        or not np.all(np.isfinite(weight))
+        or not np.all(np.isfinite(bias))
+        or isinstance(training_samples, bool)
+        or not isinstance(training_samples, (int, np.integer))
+        or training_samples < 1
+        or not np.isfinite(validation_error)
+        or validation_error < 0
+    ):
+        raise ValueError("Linear checkpoint does not satisfy the bounded runtime feature contract")
+
+    action_types = tuple(ActionType)
+    action_indices = {action.value: index for index, action in enumerate(action_types)}
+    action_weight = np.zeros((len(action_types), dimension), dtype=np.float32)
+    for name, recorded_index in RECORDED_ACTION_IDS.items():
+        if name not in action_indices:
+            raise ValueError(f"Recorded action {name!r} is absent from this Heliox build")
+        action_weight[action_indices[name]] = weight[:, dimension + recorded_index]
+
+    geometry_weight = weight[:, dimension + RECORDED_ACTION_WIDTH :].T.copy()
+    artifact = io.BytesIO()
+    np.savez_compressed(
+        artifact,
+        state_weight=weight[:, :dimension].T.copy(),
+        action_weight=action_weight,
+        action_geometry_weight=geometry_weight,
+        action_geometry_version=np.array(UiJepaPredictor.ACTION_GEOMETRY_VERSION),
+        action_types=np.asarray([action.value for action in action_types], dtype=np.str_),
+        bias=bias,
+        model_version=np.array("ui-jepa-runtime-linear-v1"),
+        prediction_contract=np.array("clipped-residual-v1"),
+        training_samples=np.array(training_samples, dtype=np.int64),
+        validation_error=np.array(validation_error, dtype=np.float32),
+        validated_for_gating=np.array(False),
+    )
+    return artifact.getvalue()
 
 
 def merge_recordings_with_shared_states(
@@ -323,7 +383,7 @@ def load_recorded_features(store: Any, seed: int) -> dict[str, dict[str, np.ndar
         rows = [(group_id, row) for group_id, group_rows in partition for row in group_rows]
         if len(rows) < 10:
             raise ValueError(f"At least ten {split} visual pairs are needed")
-        actions = np.eye(9, dtype=np.float32)[[row[2] for _, row in rows]]
+        actions = np.eye(RECORDED_ACTION_WIDTH, dtype=np.float32)[[row[2] for _, row in rows]]
         coords = np.asarray([row[3] for _, row in rows], dtype=np.float32)
         result[split] = {
             "state": np.asarray([row[0] for _, row in rows], dtype=np.float32),
@@ -345,6 +405,8 @@ def main() -> None:
     parser.add_argument("--recorded-store", type=Path, help="Encrypted opt-in local workflow store")
     parser.add_argument("--report", type=Path, default=state / "tess_visual_model_v1.json")
     parser.add_argument("--weights", type=Path, default=state / "tess_visual_model_v1.pt")
+    parser.add_argument("--runtime-weights", type=Path,
+                        help="Optional live UiJepaPredictor candidate (shadow-only; .enc for recorded data)")
     parser.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
     parser.add_argument("--disable-cudnn", action="store_true")
     parser.add_argument("--architecture", choices=("linear", "mlp", "spatial", "spatial_global",
@@ -379,12 +441,18 @@ def main() -> None:
             or not 0 <= args.inverse_loss_weight <= 10
             or (args.inverse_loss_weight and args.architecture != "spatial_joint")
             or args.report.exists() or args.weights.exists() or args.epochs < 1
+            or (args.runtime_weights and args.runtime_weights.exists())
+            or (args.runtime_weights and args.runtime_weights.resolve() in {
+                args.report.resolve(), args.weights.resolve(),
+            })
             or args.action_permutations < 1):
         parser.error("Use existing pinned features, fresh outputs, and positive epochs")
     recorded_store = None
     if args.recorded_store:
         if args.weights.suffix != ".enc":
             parser.error("Recorded-screen model weights must be saved to an encrypted .enc path")
+        if args.runtime_weights and args.runtime_weights.suffix != ".enc":
+            parser.error("Runtime weights derived from recorded screens must use an encrypted .enc path")
         from pilot.workflows.recorded_workflows import RecordedWorkflowStore
 
         recorded_store = RecordedWorkflowStore(args.recorded_store)
@@ -394,6 +462,8 @@ def main() -> None:
         if hashlib.sha256(args.recorded_store.read_bytes()).hexdigest() != source_hash:
             raise RuntimeError("Recorded workflow store changed during feature loading; retry training")
     else:
+        if args.runtime_weights and args.runtime_weights.suffix != ".npz":
+            parser.error("Runtime weights without recorded screens must use an .npz path")
         rows = load_features(args.features, args.source_report)
         source_hash = hashlib.sha256(args.features.read_bytes()).hexdigest()
         source_metadata = json.loads(args.source_report.read_text(encoding="utf-8"))
@@ -422,6 +492,10 @@ def main() -> None:
                       == "research_only_local_heliox_browser_navigation" else "one public dataset")
     channels, height, width = (1, 16, 16) if recorded_store else feature_shape(args.source_report)
     dimension = channels * height * width
+    if args.runtime_weights and (
+        args.architecture != "linear" or args.train_without_action or channels != 1 or height != 16 or width != 16
+    ):
+        parser.error("Runtime predictor export requires the action-conditioned linear 16x16 architecture")
 
     import torch
     from torch import nn
@@ -608,6 +682,19 @@ def main() -> None:
                 scores[split]["paired_counterfactual_action"] = metrics(
                     predict(swapped).cpu().numpy(), partition["state"], partition["target"]
                 )
+    runtime_candidate_sha256 = None
+    if args.runtime_weights:
+        runtime_payload = serialize_runtime_linear_artifact(
+            best_weights,
+            training_samples=len(rows["train"]["state"]),
+            validation_error=scores["validation"]["trained"]["weighted_mse"],
+        )
+        if recorded_store:
+            runtime_payload = recorded_store.encrypt_model_artifact(runtime_payload)
+        runtime_candidate_sha256 = hashlib.sha256(runtime_payload).hexdigest()
+        args.runtime_weights.parent.mkdir(parents=True, exist_ok=True)
+        args.runtime_weights.write_bytes(runtime_payload)
+
     report = {
         "purpose": "research_only_observed_visual_world_transition_probe",
         "features_sha256": source_hash,
@@ -633,13 +720,21 @@ def main() -> None:
         "groups": {split: len(set(partition["groups"])) for split, partition in rows.items()},
         "scores": scores,
         "inverse_coordinate_diagnostic": inverse_scores if inverse_scores else None,
+        "runtime_candidate": ({
+            "path": str(args.runtime_weights),
+            "sha256": runtime_candidate_sha256,
+            "prediction_contract": "clipped-residual-v1",
+            "mode": "shadow",
+            "validated_for_gating": False,
+        } if args.runtime_weights else None),
         "limitation": f"{channels}x{height}x{width} visual features and mouse action type/coordinates only. "
-                      "Research model is not the live UiJepaPredictor. "
+                      + ("The emitted live-compatible candidate is shadow-only and is not validated for gating. "
+                         if args.runtime_weights else "Research model is not the live UiJepaPredictor. ")
                       + ("Recording and exact pre-screen-disjoint, not environment-disjoint; "
                          "matching coarse screens do not establish identical hidden state; "
                          "action outcomes are observed, not independently verified. " if recorded_store else
                          f"{split_basis}-disjoint within {source_context}, not environment-disjoint. ")
-                      + "No safety, autonomy, Jev parity, or runtime loading claim.",
+                      + "No safety, autonomy, Jev parity, or gating claim.",
     }
     args.weights.parent.mkdir(parents=True, exist_ok=True)
     if recorded_store:

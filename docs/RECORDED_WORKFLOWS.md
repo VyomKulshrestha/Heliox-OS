@@ -66,9 +66,13 @@ content**; they are encrypted with AES-256-GCM in the local recorded-workflow
 store, with the key held in the OS keyring. Without a working keyring, recording
 fails closed. The normal list/get RPCs and workflow prompts never expose the
 features. Values are quantized to 8-bit grayscale before storage. There is no
-upload or automatic training/promotion path. An explicit offline research
-command can decrypt them in memory, train on CUDA or CPU, and write encrypted
-weights plus a metrics-only report. It keeps entire recordings in one partition
+upload or automatic training/promotion path. An explicit offline command can
+decrypt them in memory, train on CUDA or CPU, and write encrypted weights plus
+a metrics-only report. The optional linear 16×16 export matches the live
+predictor contract; if explicitly written to the Heliox data directory, the
+daemon loads it after restart in shadow mode only. It is never marked
+validated for gating. Other architectures remain research checkpoints and
+are not runtime-loaded. Training keeps entire recordings in one partition
 and merges recordings with identical quantized pre-action features before
 splitting, so the same coarse screen cannot appear on both sides of the holdout.
 It requires at least four independent merged groups and ten pairs in each
@@ -76,13 +80,14 @@ held-out partition:
 
 ```bash
 cd daemon
-python -m scripts.train_world_visual_transition --recorded-store <DATA_DIR/recorded_workflows.enc> --architecture spatial --device cuda --disable-cudnn --weights benchmarks/.bench-state/local_visual_candidate.pt.enc --report benchmarks/.bench-state/local_visual_candidate.json
+python -m scripts.train_world_visual_transition --recorded-store <DATA_DIR/recorded_workflows.enc> --architecture linear --device cuda --runtime-weights <DATA_DIR/ui_jepa_weights.enc> --weights benchmarks/.bench-state/local_visual_candidate.pt.enc --report benchmarks/.bench-state/local_visual_candidate.json
 ```
 
 `DATA_DIR` is resolved by `pilot.config` (and can be overridden by
 `XDG_DATA_HOME`). Keep the output files local; weights are derived from private
-screens even though the artifact itself is encrypted. The training script
-does not load weights into the live `UiJepaPredictor`.
+screens even though the artifact itself is encrypted. The runtime candidate is
+loaded only by the optional shadow predictor. Its predictions cannot approve,
+execute, or reduce deterministic warnings.
 Samples are observations of before/after state, not independently verified
 task-success labels. Matching 16×16 features can still hide different app
 state; the grouping prevents an obvious leakage path but does not prove

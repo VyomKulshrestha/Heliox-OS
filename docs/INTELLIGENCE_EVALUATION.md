@@ -968,15 +968,18 @@ not observed. Without loaded visual weights, the structured predictor drops
 the stale observed latent after the first step instead of pretending it is a
 new frame. This is speculative planning only: execution, post-action
 observation, deterministic risk, and approval remain separate. The research
-visual weights discussed above are still not promoted into this runtime path.
-An optional UI-JEPA artifact loads only when finite tensor shapes and its exact
-ordered `ActionType` vocabulary match the running build. Gating additionally
-requires a versioned click-geometry head, at least 100 training samples,
-validation error no greater than 0.35, and an explicit validated-for-gating
-designation. It abstains on unresolved `(0,0)` click targets, missing or
-out-of-bounds screen coordinates, and relative coordinates. Only explicit
-pointer actions can receive learned gating evidence; non-pointer visual
-predictions remain shadow-only. No reviewed geometry artifact is staged.
+visual weights discussed above are not promoted into gating. An explicit
+export from the opt-in encrypted workflow store can produce a
+`clipped-residual-v1` artifact that the daemon loads from its data directory;
+that export always remains shadow-only and is never marked validated for
+gating. Legacy and exported artifacts load only when tensor shapes, geometry
+version, and the exact ordered `ActionType` vocabulary match the running build.
+Gating additionally requires at least 100 training samples, validation error
+no greater than 0.35, and an explicit validated-for-gating designation. It
+abstains on unresolved `(0,0)` click targets, missing or out-of-bounds screen
+coordinates, and relative coordinates. Only explicit pointer actions can
+receive learned gating evidence; non-pointer visual predictions remain
+shadow-only. No reviewed geometry artifact is staged.
 
 Offline world-model trials report Brier score, calibration error, risk false
 negatives, transition-match coverage and mean, high-uncertainty rate, and

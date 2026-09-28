@@ -32,6 +32,7 @@ KEYRING_SERVICE = "Heliox OS Recorded Workflows"
 KEYRING_ACCOUNT = "local-recordings-v1"
 STORE_AAD = b"heliox-recorded-workflows-v1"
 MODEL_AAD = b"heliox-recorded-world-weights-v1"
+MAX_MODEL_ARTIFACT_BYTES = 4 * 1024 * 1024
 MAX_STEPS = 200
 MAX_SAMPLES = 200
 MAX_WORKFLOWS = 50
@@ -633,8 +634,24 @@ class RecordedWorkflowStore:
 
     def encrypt_model_artifact(self, plaintext: bytes) -> bytes:
         """Keep research weights derived from private screens encrypted too."""
+        if not isinstance(plaintext, bytes) or len(plaintext) > MAX_MODEL_ARTIFACT_BYTES - 28:
+            raise ValueError("World-model artifact exceeds the local size limit")
         nonce = os.urandom(12)
         return nonce + AESGCM(self._encryption_key()).encrypt(nonce, plaintext, MODEL_AAD)
+
+    def decrypt_model_artifact(self, ciphertext: bytes) -> bytes:
+        """Decrypt a local model artifact with the same OS-keyring key as its recordings."""
+        if not isinstance(ciphertext, bytes) or not 28 <= len(ciphertext) <= MAX_MODEL_ARTIFACT_BYTES:
+            raise ValueError("Encrypted world-model artifact has an invalid size")
+        try:
+            return AESGCM(self._encryption_key()).decrypt(ciphertext[:12], ciphertext[12:], MODEL_AAD)
+        except InvalidTag as exc:
+            raise RuntimeError("Encrypted world-model artifact could not be verified with the OS keyring key") from exc
+
+    def decrypt_model_artifact_file(self, path: str | Path) -> bytes:
+        """Read a bounded encrypted artifact before decrypting it into memory."""
+        with Path(path).open("rb") as artifact:
+            return self.decrypt_model_artifact(artifact.read(MAX_MODEL_ARTIFACT_BYTES + 1))
 
     def delete(self, workflow_id: str) -> None:
         with self._records_lock:
