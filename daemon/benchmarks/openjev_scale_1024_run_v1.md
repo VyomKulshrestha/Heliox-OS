@@ -72,6 +72,11 @@ evaluation and not evidence that the candidate was trained with RPS (its
 Score regression above. The RPS choice and bootstrap were post hoc, so this
 interval is exploratory rather than a preregistered acceptance result.
 
+A follow-on, one-variable RPS training ablation was subsequently preregistered
+and run against the same selections. Its point estimates pass the frozen
+retention gate, but the OOD split remains retrospective; see
+[`openjev_scale_1024_rps_v1.md`](openjev_scale_1024_rps_v1.md).
+
 A final local typed-scoring smoke test used a new read-only system-health
 question and four runtime-supplied options. The model assigned 0.788 to the
 read-only evidence-and-report option; its response explicitly carried
