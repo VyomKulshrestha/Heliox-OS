@@ -1,0 +1,23 @@
+{
+  "schema_version": 2,
+  "purpose": "frozen_released_openjev_independent_group_disjoint_general_decision_baseline",
+  "released_checkpoint": "ZefanCai/Open-Jev-2B@0c7aa498b1627be8da4acf34c863ff0ee0a92785",
+  "dataset_revision": "c67699e13d0ae25e35b77165a4b6b079bedc8aba",
+  "archived_seed": 20260929,
+  "archived_pool": 384,
+  "archived_rows": 128,
+  "archived_ids_sha256": "51281960c0049591ad0c241bcd8159feefd73b2fe87e4bd262bc3216f3941d13",
+  "fresh_seed": 20261006,
+  "fresh_pool": 2048,
+  "fresh_rows": 128,
+  "fresh_ids_sha256": "1b7d0709a6af1d417fa031de571fc786c95f74a5881666250243354cb935fa14",
+  "fresh_group_ids_sha256": "a0dd5ba298d0db74256064de8264492970240db186c55a81a2cae840672bcc5f",
+  "excluded_group_manifest": {
+    "path": "benchmarks/openjev_scale_1024_independent_group_exclusions_v1.json",
+    "sha256": "20712f06bfdfb8089f53bdd99636752d04400726b95f377d31bd5dbeb3e82918"
+  },
+  "max_length": 1024,
+  "checkpoint_every": 8,
+  "selection_rule": "Use the pinned archived rows for context, then select 128 rows in source order from the new seed after excluding all groups in the checksum-pinned prior training, calibration, test, and OOD selection manifest and all archived/repeated groups. Do not truncate overlength prompts.",
+  "promotion_rule": "No automatic promotion; this public synthetic benchmark is research-only and never grants execution authority."
+}

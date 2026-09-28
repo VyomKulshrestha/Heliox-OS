@@ -21,18 +21,29 @@ from scripts.evaluate_general_decision_artifact import (
     retain_tokenizable_rows,
 )
 from scripts.evaluate_released_openjev_general import (
-    PROTOCOL as RELEASED_PROTOCOL,
-)
-from scripts.evaluate_released_openjev_general import (
+    OPENJEV_REPO,
+    OPENJEV_REVISION,
     input_signature,
+    load_excluded_group_ids,
     select_archived_rows,
     select_fresh_rows,
+    verify_fresh_selection,
 )
 from scripts.score_general_decision import score_requests, verify_artifact
 from scripts.train_general_decision import encode_rows
 
 ROOT = Path(__file__).resolve().parents[1]
 PROTOCOL = ROOT / "benchmarks/openjev_scale_1024_rps_fresh_protocol_v1.json"
+
+
+def resolve_repo_path(value: str, *, allowed_root: Path, label: str) -> Path:
+    relative = Path(value)
+    if relative.is_absolute() or ".." in relative.parts:
+        raise ValueError(f"{label} path must stay inside the repository")
+    path = (ROOT / relative).resolve()
+    if not path.is_relative_to(allowed_root.resolve()):
+        raise ValueError(f"{label} path is outside its allowed directory")
+    return path
 
 
 def sha256_file(path: Path) -> str:
@@ -73,12 +84,17 @@ def evaluate(protocol_path: Path, output_path: Path, *, resume: bool) -> dict:
     if protocol.get("schema_version") != 1 or protocol.get("dataset_revision") != DATASET_REVISION:
         raise ValueError("Fresh replication protocol does not match the pinned dataset")
 
-    source_protocol_path = ROOT / protocol["source_selection_protocol"]["path"]
-    if sha256_file(source_protocol_path) != protocol["source_selection_protocol"]["sha256"]:
+    source_descriptor = protocol["source_selection_protocol"]
+    source_protocol_path = resolve_repo_path(
+        source_descriptor["path"], allowed_root=ROOT / "benchmarks", label="Source protocol")
+    if sha256_file(source_protocol_path) != source_descriptor["sha256"]:
         raise ValueError("Source selection protocol checksum mismatch")
     source_protocol = json.loads(source_protocol_path.read_text(encoding="utf-8"))
-    if source_protocol_path.resolve() != RELEASED_PROTOCOL.resolve():
-        raise ValueError("Unexpected source selection protocol")
+    if (source_protocol.get("schema_version") != 2
+            or source_protocol.get("dataset_revision") != DATASET_REVISION
+            or source_protocol.get("released_checkpoint")
+            != f"{OPENJEV_REPO}@{OPENJEV_REVISION}"):
+        raise ValueError("Source protocol does not pin the supported released Open-Jev model")
 
     baseline = protocol["released_baseline"]
     baseline_report_path = ROOT / "benchmarks" / baseline["report_path"]
@@ -95,13 +111,21 @@ def evaluate(protocol_path: Path, output_path: Path, *, resume: bool) -> dict:
         limit=source_protocol["archived_rows"],
         expected_ids_sha256=source_protocol["archived_ids_sha256"],
     )
+    excluded_group_ids = load_excluded_group_ids(ROOT, source_protocol.get("excluded_group_manifest"))
     fresh, fresh_manifest = select_fresh_rows(
         archived, seed=source_protocol["fresh_seed"], pool=source_protocol["fresh_pool"],
-        limit=source_protocol["fresh_rows"],
+        limit=source_protocol["fresh_rows"], excluded_group_ids=excluded_group_ids,
     )
+    verify_fresh_selection(fresh, source_protocol)
     baseline_signature = input_signature(fresh, fresh_manifest, max_length=source_protocol["max_length"])
     if baseline_signature != baseline["fresh_selection_signature"]:
         raise ValueError("Fresh selection signature differs from the preregistered baseline")
+    if baseline_report.get("fresh", {}).get("selection_signature") != baseline_signature:
+        raise ValueError("Released baseline report does not match the fresh selection")
+    if (baseline_report.get("fresh_ids_sha256") != source_protocol.get("fresh_ids_sha256")
+            or baseline_report.get("fresh_group_ids_sha256")
+            != source_protocol.get("fresh_group_ids_sha256")):
+        raise ValueError("Released baseline report is missing the frozen fresh selection hashes")
     baseline_logits_file = json.loads(baseline_logits_path.read_text(encoding="utf-8"))
     all_baseline_logits = load_candidate_rows(fresh, baseline_logits_file,
                                               signature=baseline_signature)
@@ -143,7 +167,10 @@ def evaluate(protocol_path: Path, output_path: Path, *, resume: bool) -> dict:
         "candidate_adapter_sha256": candidate["adapter_sha256"],
         "candidate_head_sha256": candidate["head_sha256"],
     }, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-    checkpoint_path = ROOT / "benchmarks/.bench-state/openjev_scale_1024_rps_fresh_v1/candidate_predictions.json"
+    checkpoint_path = resolve_repo_path(
+        protocol.get("candidate_checkpoint_path",
+                    "benchmarks/.bench-state/openjev_scale_1024_rps_fresh_v1/candidate_predictions.json"),
+        allowed_root=ROOT / "benchmarks/.bench-state", label="Candidate checkpoint")
     predictions = load_partial(checkpoint_path, signature=checkpoint_signature,
                                ids=ids, resume=resume)
     start = len(predictions)
@@ -175,6 +202,11 @@ def evaluate(protocol_path: Path, output_path: Path, *, resume: bool) -> dict:
         "source_protocol_sha256": protocol["source_selection_protocol"]["sha256"],
         "fresh_selection_signature": baseline_signature,
         "fresh_rows_selected": len(fresh),
+        "excluded_group_count": len(excluded_group_ids),
+        "excluded_group_manifest_sha256": source_protocol.get("excluded_group_manifest", {}).get("sha256"),
+        "fresh_ids_sha256": hashlib.sha256("\n".join(row["id"] for row in fresh).encode()).hexdigest(),
+        "fresh_group_ids_sha256": hashlib.sha256("\n".join(sorted(
+            {row["group_id"] for row in fresh})).encode()).hexdigest(),
         "rows_scored_on_both_models": len(rows),
         "overlong_rows_excluded_without_truncation": overlong_skipped,
         "scored_ids": ids,
