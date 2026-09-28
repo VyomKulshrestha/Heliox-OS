@@ -13,6 +13,7 @@ from pilot.config import PilotConfig
 from pilot.intelligence.typed_decision import (
     MAX_OPTIONS,
     LocalTypedDecisionModel,
+    _candidate_microbatch_size,
     candidate_prompts,
     format_answer,
     validate_decision,
@@ -50,6 +51,16 @@ def test_typed_decision_rejects_oversized_or_ambiguous_requests() -> None:
         validate_decision("choice", "Choose", ["same", "same"])
     with pytest.raises(ValueError, match=f"2-{MAX_OPTIONS}"):
         validate_decision("choice", "Choose", [str(index) for index in range(MAX_OPTIONS + 1)])
+
+
+def test_candidate_microbatch_caps_long_prompts_and_respects_lower_limits() -> None:
+    assert _candidate_microbatch_size(512, 8) == 8
+    assert _candidate_microbatch_size(513, 8) == 4
+    assert _candidate_microbatch_size(768, 8) == 4
+    assert _candidate_microbatch_size(769, 8) == 2
+    assert _candidate_microbatch_size(1_024, 1) == 1
+    with pytest.raises(ValueError, match="must be positive"):
+        _candidate_microbatch_size(0, 8)
 
 
 def test_artifact_verification_fails_before_any_model_or_network_load(tmp_path: Path) -> None:
