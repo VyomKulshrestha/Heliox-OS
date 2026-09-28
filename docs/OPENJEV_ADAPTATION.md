@@ -1809,3 +1809,50 @@ shared-prefix scoring diagnostic-only. This validates the existing architecture
 direction, not model quality: the material remaining gap is a stronger base,
 more diverse rights-cleared data, and better held-out task performance, all
 within the current local GPU limits.
+
+## Independent transfer and local scoring throughput (2026-09-28)
+
+The released checkpoint was also scored on the frozen 512-row test selection in
+[`released_openjev_general_protocol_v4.json`](../daemon/benchmarks/released_openjev_general_protocol_v4.json).
+The selection is group-disjoint from 1,928 previously used groups; the protocol,
+row-ID hash, group-ID hash, checkpoint, and report digest were revalidated
+locally. This is the strongest current independent public-data result, not a
+Jev comparison or desktop-workflow test.
+
+| Fresh public OOD metric | Rows | Open-Jev 2B via Heliox runtime |
+| --- | ---: | ---: |
+| Choice top-1 | 229 | 74.7% |
+| Yes/no top-1 | 216 | 88.0% |
+| Yes/no balanced accuracy | 216 | 85.3% |
+| Ordered score top-1 | 67 | 73.1% |
+| Ordered score mean rank error | 67 | 0.353 |
+| Overall top-1 | 512 | 80.1% |
+
+For a faster readout, [Open Alternative to Jev](https://github.com/ikermoel/open-alternative-jev)
+uses next-token logits over single-token option labels; its packed mode can
+share a state across several questions in one forward pass. A cache-only pilot
+on the first 32 rows of the already-inspected OOD sample tested that idea with
+raw Qwen3.5-2B NF4. It finished scoring in 4.69 seconds, but predicted “no”
+for every yes/no item (0.50 balanced accuracy), reached 33.3% choice top-1,
+and 16.7% ordered-score top-1. That is too weak to replace the released trained
+head; the sample is only a quick rejection signal, not a general failure claim.
+The larger-model results in that repository do not transfer automatically to
+Heliox's 8 GiB laptop GPU.
+
+The same 256-row OOD selection was then rescored with the existing Open-Jev
+adapter/head through Heliox's production research wrapper. Candidate prompts
+up to 512 tokens used batches of 8, 513–768 tokens used 4, and longer prompts
+used 2. Compared with the earlier batch-2 run, the length-aware run completed
+in 106.2 seconds including model load, versus 179.0 seconds (1.69× faster),
+with 2.00 GiB peak allocation. Aggregate top-1 was unchanged for all three
+decision kinds; NLL/Brier and ordinal ranking scores shifted slightly with
+batch numerics, so this is not bitwise-identical output. The evaluated prompts
+peaked at 715 tokens, with 233 batches of 8 and 41 batches of 4. The
+device-specific report is
+[`openjev_runtime_microbatch_20260928.json`](../daemon/benchmarks/openjev_runtime_microbatch_20260928.json).
+
+This length-aware setting is now the default for the opt-in local scorer. It
+does not change model weights, prompts, calibration, the approval system, or
+execution authority. The current result is a useful local speed/quality trade,
+not “Jev parity”: a licensed, matched, independently reviewed Jev benchmark
+and real desktop task evaluation are still required before such a claim.
