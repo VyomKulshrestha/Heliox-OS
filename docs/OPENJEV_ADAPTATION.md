@@ -227,6 +227,26 @@ the frozen control. The adapter remains local and disabled. See the
 [trial](../daemon/benchmarks/qwen_general_ordinal_v1_ablation.json), and
 [trial training report](../daemon/benchmarks/qwen_general_ordinal_v1.json).
 
+The expected-rank penalty above did not improve its primary ordinal metric, so
+the optional score-training objective now uses the normalized ranked probability
+score (RPS): squared errors between cumulative forecast and target probabilities
+across ordered cut points. Unlike a single expected-rank penalty, RPS evaluates
+the distribution at every cut point and works for any number of ordered
+categories. The training loss and benchmark metric share one implementation;
+the loss version is included in checkpoint identity so a checkpoint made with
+the older objective cannot be resumed as an RPS run. This is motivated by the
+distance-sensitive proper scoring rule for ordered categories described by
+[Murphy (1970)](https://doi.org/10.1175/1520-0493(1970)098%3C0917:TRPSAT%3E2.3.CO;2).
+
+This is an objective/measurement improvement, **not yet a trained-model result**.
+Focused tests cover 2-, 3-, and 11-option distributions (22 passed, 1 skipped),
+and the RTX 4060 gradient-replay check confirms the RPS two-pass gradient
+matches direct autograd for the ordered-score case. A new adapter has not been
+trained: the installed Windows runtime (Torch 2.6.0, Transformers 5.2.0, PEFT
+0.18.1) is below the repository's declared Open-Jev training stack, Ubuntu WSL
+has no ML packages installed, and I have not installed a second multi-gigabyte
+environment on the nearly-full system drive.
+
 An earlier 4,096-row continuation with the 2,048-row run's frozen held-out
 selections did not finish on that attempt. It checkpointed 896/4,096 training
 rows, then encountered
