@@ -17,6 +17,7 @@ from benchmarks.general_decision import (
     probabilities,
     ranked_probability_score,
     select_balanced,
+    selective_risk_metrics,
     uniform_baseline,
     validate_decision,
     validate_row,
@@ -95,9 +96,30 @@ def test_variable_option_metrics_and_temperature() -> None:
     report = metrics(examples, logits, 1.0)
     assert report["top1_accuracy"] == 1.0
     assert set(report["by_kind"]) == {"noul", "choice"}
+    assert report["selective_prediction"]["selection_score"] == "maximum_candidate_probability"
+    assert report["selective_prediction"]["risk_at_coverage"]["0.5"]["selective_risk"] == 0.0
     assert probabilities(logits[1], 0.5)[1] > probabilities(logits[1], 2.0)[1]
     with pytest.raises(ValueError, match="option counts"):
         metrics(examples, [logits[0], logits[0]], 1.0)
+
+
+def test_selective_risk_is_order_invariant_for_tied_scores() -> None:
+    ordered = selective_risk_metrics([0.9, 0.5, 0.5, 0.1], [True, True, False, False])
+    reordered = selective_risk_metrics([0.5, 0.9, 0.1, 0.5], [False, True, False, True])
+    assert ordered["aurc"] == pytest.approx(reordered["aurc"])
+    assert ordered["risk_at_coverage"] == reordered["risk_at_coverage"]
+    assert ordered["aurc"] == pytest.approx(13 / 48)
+    assert ordered["risk_at_coverage"]["0.5"]["selective_risk"] == pytest.approx(0.25)
+    assert ordered["risk_at_coverage"]["0.8"]["selective_risk"] == pytest.approx(0.5)
+
+
+def test_selective_risk_rejects_invalid_scores_or_labels() -> None:
+    with pytest.raises(ValueError, match="invalid"):
+        selective_risk_metrics([], [])
+    with pytest.raises(ValueError, match="invalid"):
+        selective_risk_metrics([0.4, 1.2], [True, False])
+    with pytest.raises(ValueError, match="invalid"):
+        selective_risk_metrics([0.4, 0.5], [True, 2])
 
 
 def test_ordinal_metrics_report_expected_rank_error() -> None:

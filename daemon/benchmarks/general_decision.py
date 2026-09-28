@@ -150,6 +150,65 @@ def ranked_probability_score(forecast, target):
     return np.square(cumulative).mean()
 
 
+def selective_risk_metrics(selection_scores: list[float], correct: list[bool]) -> dict:
+    """Measure whether a score ranks correct decisions ahead of errors.
+
+    Equal-score groups use expected risk under a random ordering, so ties do
+    not depend on input order. This is a descriptive benchmark metric, not a
+    runtime authorization threshold.
+    """
+    scores = np.asarray(selection_scores, dtype=np.float64)
+    outcomes = np.asarray(correct)
+    if (
+        scores.ndim != 1
+        or outcomes.ndim != 1
+        or not len(scores)
+        or scores.shape != outcomes.shape
+        or not np.isfinite(scores).all()
+        or np.any(scores < 0)
+        or np.any(scores > 1)
+        or not np.isin(outcomes, [False, True]).all()
+    ):
+        raise ValueError("Selective-risk scores and correctness labels are invalid")
+
+    order = np.argsort(-scores, kind="stable")
+    ordered_scores = scores[order]
+    errors = (~outcomes.astype(bool))[order].astype(np.float64)
+    curve_risks = []
+    retained = 0
+    prior_errors = 0.0
+    index = 0
+    while index < len(scores):
+        end = index + 1
+        while end < len(scores) and ordered_scores[end] == ordered_scores[index]:
+            end += 1
+        group_size = end - index
+        group_errors = float(errors[index:end].sum())
+        for within_group in range(1, group_size + 1):
+            expected_errors = prior_errors + within_group * group_errors / group_size
+            curve_risks.append(expected_errors / (retained + within_group))
+        prior_errors += group_errors
+        retained += group_size
+        index = end
+
+    risk_at_coverage = {}
+    risks = np.asarray(curve_risks, dtype=np.float64)
+    for coverage in (0.5, 0.8, 0.9):
+        count = min(len(scores), math.ceil(coverage * len(scores)))
+        risk_at_coverage[f"{coverage:.1f}"] = {
+            "requested_coverage": coverage,
+            "actual_coverage": count / len(scores),
+            "retained_decisions": count,
+            "selective_risk": float(risks[count - 1]),
+        }
+    return {
+        "aurc": float(risks.mean()),
+        "selection_score": "maximum_candidate_probability",
+        "tie_handling": "expected risk under random ordering within equal-score groups",
+        "risk_at_coverage": risk_at_coverage,
+    }
+
+
 def format_answer(kind: str, options: list[str], logits: np.ndarray,
                   temperature: float = 1.0) -> dict:
     """Convert model scores to a typed decision without executing anything."""
@@ -187,6 +246,7 @@ def metrics(rows: list[dict], logits: list[np.ndarray], temperature: float) -> d
             "top1": int(np.argmax(target) == np.argmax(predicted)),
             "gold_index": int(np.argmax(target)),
             "predicted_index": int(np.argmax(predicted)),
+            "selection_score": float(predicted.max()),
             "nll": float(-target @ np.log(np.clip(predicted, 1e-12, 1.0))),
             "brier": float(np.mean((predicted - target) ** 2)),
         }
@@ -197,10 +257,16 @@ def metrics(rows: list[dict], logits: list[np.ndarray], temperature: float) -> d
         per_row.append(item)
 
     def aggregate(items: list[dict]) -> dict:
-        result = {"rows": len(items),
-                  "top1_accuracy": float(np.mean([item["top1"] for item in items])),
-                  "mean_nll": float(np.mean([item["nll"] for item in items])),
-                  "mean_brier": float(np.mean([item["brier"] for item in items]))}
+        result = {
+            "rows": len(items),
+            "top1_accuracy": float(np.mean([item["top1"] for item in items])),
+            "mean_nll": float(np.mean([item["nll"] for item in items])),
+            "mean_brier": float(np.mean([item["brier"] for item in items])),
+            "selective_prediction": selective_risk_metrics(
+                [item["selection_score"] for item in items],
+                [bool(item["top1"]) for item in items],
+            ),
+        }
         if all(item["kind"] == "score" for item in items):
             result["mean_rank_error"] = float(np.mean([item["rank_error"] for item in items]))
             result["mean_ranked_probability_score"] = float(np.mean(
