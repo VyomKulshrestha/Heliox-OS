@@ -30,9 +30,9 @@ For comparison, the 320-row run's zero-false-allowance calibration threshold (0.
 
 ### Released Open-Jev matched OOD check
 
-The frozen 20261001 Heliox candidate was also scored against the released Open-Jev v3 checkpoint on the protocol v2 fresh OOD selection. Both models used the same 112 rows that fit the Heliox candidate's 512-token context limit; 16 longer yes/no rows were excluded from both rather than truncated. This is a candidate-vs-public-release comparison, not a comparison with proprietary Jev.
+The frozen Heliox candidate trained with experiment seed `20261001` was also scored against the released Open-Jev v3 checkpoint on the protocol v2 fresh OOD selection. The seed is an experiment identifier, not a run date. Both models used the same 112 rows that fit the Heliox candidate's 512-token context limit; 16 longer yes/no rows were excluded from both rather than truncated. This is a candidate-vs-public-release comparison, not a comparison with proprietary Jev.
 
-| Shared rows | Released Open-Jev v3 | Heliox 20261001 candidate |
+| Shared rows | Released Open-Jev v3 | Heliox seed-20261001 candidate |
 | --- | ---: | ---: |
 | Top-1 accuracy | 79.5% | 78.6% |
 | Mean NLL | 0.638 | 0.509 |
@@ -52,7 +52,7 @@ The MisActBench splitter allocates test groups first, then disjoint calibration 
 
 ### Artifact integrity
 
-Run `20261001` local-only artifact hashes:
+Seed `20261001` local-only artifact hashes:
 
 - Training checkpoint: `4e786c6a2d325d511aacd98076b9fff34908e772811053956807766cd25acfc0`
 - Adapter: `66fdf066b140c14a86678e562cb44b84c3b32ca62f13723ac6abaf057792360a`
