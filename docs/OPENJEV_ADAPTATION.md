@@ -1729,6 +1729,14 @@ must install it into the daemon's Python environment themselves, and must
 already have the pinned base model cached. No dependency or model download was
 performed for this integration.
 
+An offline compatibility check on 2026-09-28 confirmed why the version gate is
+necessary: the machine's global Torch 2.6.0 / Transformers 5.2.0 / PEFT 0.18.1
+stack mapped the cached Qwen3.5 config through an unsupported model class, then
+refused multiple released LoRA tensors because their shapes did not match. The
+Heliox app-managed `~/.config/heliox-os/env` does not exist on this machine, and
+Ubuntu WSL has no ML runtime. No guard was bypassed and no model files were
+changed.
+
 The three-case local runtime smoke was only a plumbing check, not a benchmark:
 the yes/no probe and choice probe selected the expected outcomes, but the
 ordered-score probe did not (expected “fully”; top option was “not at all,”
