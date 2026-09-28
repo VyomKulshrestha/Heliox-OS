@@ -7,12 +7,13 @@ remain the authority for whether an action may run and whether it succeeded.
 
 from __future__ import annotations
 
+import io
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Callable, Protocol
 
 import numpy as np
 
@@ -494,14 +495,22 @@ class UiJepaPredictor:
         ActionType.MOUSE_DOUBLE_CLICK,
         ActionType.MOUSE_RIGHT_CLICK,
     }
+    GEOMETRY_ACTIONS = POINTER_ACTIONS | {ActionType.MOUSE_MOVE}
 
-    def __init__(self, weights_path: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        weights_path: str | Path | None = None,
+        *,
+        weight_loader: Callable[[Path], bytes] | None = None,
+    ) -> None:
         self._weights_path = Path(weights_path) if weights_path else Path(__file__).with_name("ui_jepa_weights.npz")
+        self._weight_loader = weight_loader
         self._state_weight: np.ndarray | None = None
         self._action_weight: np.ndarray | None = None
         self._action_geometry_weight: np.ndarray | None = None
         self._bias: np.ndarray | None = None
         self._model_version = "ui-jepa-unavailable"
+        self._prediction_contract = "tanh-v1"
         self._training_samples = 0
         self._validation_error: float | None = None
         self._validated_for_gating = False
@@ -523,6 +532,7 @@ class UiJepaPredictor:
         return {
             "weights_loaded": self.is_loaded,
             "model_version": self._model_version,
+            "prediction_contract": self._prediction_contract,
             "training_samples": self._training_samples,
             "validation_error": self._validation_error,
             "validated_for_gating": self._validated_for_gating,
@@ -539,11 +549,28 @@ class UiJepaPredictor:
 
     def _try_load(self) -> None:
         try:
-            with np.load(self._weights_path, allow_pickle=False) as data:
+            source: str | Path | io.BytesIO = self._weights_path
+            if self._weight_loader is not None:
+                payload = self._weight_loader(self._weights_path)
+                if not isinstance(payload, bytes):
+                    raise TypeError("artifact loader must return bytes")
+                source = io.BytesIO(payload)
+            elif self._weights_path.suffix == ".enc":
+                raise ValueError("encrypted artifact requires the local keyring loader")
+
+            with np.load(source, allow_pickle=False) as data:
                 state_weight = data["state_weight"]
                 action_weight = data["action_weight"]
                 geometry_weight = data["action_geometry_weight"] if "action_geometry_weight" in data.files else None
                 bias = data["bias"]
+                prediction_contract = (
+                    str(data["prediction_contract"].item())
+                    if "prediction_contract" in data.files
+                    else "tanh-v1"
+                )
+                if prediction_contract not in {"tanh-v1", "clipped-residual-v1"}:
+                    self._load_error = "artifact prediction contract is unsupported"
+                    return
                 expected_actions = tuple(action_type.value for action_type in ActionType)
                 stored_actions = (
                     tuple(str(value) for value in data["action_types"].tolist()) if "action_types" in data.files else ()
@@ -574,6 +601,9 @@ class UiJepaPredictor:
                     ):
                         self._load_error = "artifact action geometry version, shape, or values are invalid"
                         return
+                if prediction_contract == "clipped-residual-v1" and geometry_weight is None:
+                    self._load_error = "residual prediction artifact is missing action geometry"
+                    return
                 self._state_weight = state_weight.astype(np.float32)
                 self._action_weight = action_weight.astype(np.float32)
                 self._action_geometry_weight = (
@@ -583,6 +613,7 @@ class UiJepaPredictor:
                 self._model_version = (
                     str(data["model_version"].item())[:120] if "model_version" in data.files else "ui-jepa-unversioned"
                 )
+                self._prediction_contract = prediction_contract
                 self._training_samples = int(data["training_samples"].item()) if "training_samples" in data.files else 0
                 raw_validation_error = (
                     float(data["validation_error"].item()) if "validation_error" in data.files else None
@@ -614,6 +645,10 @@ class UiJepaPredictor:
         except (FileNotFoundError, KeyError, OSError, TypeError, ValueError) as exc:
             self._load_error = str(exc) or exc.__class__.__name__
             return
+        except Exception as exc:
+            # This optional local predictor must never prevent daemon startup.
+            self._load_error = f"artifact could not be loaded: {exc.__class__.__name__}"
+            return
 
     def predict_optional(
         self,
@@ -632,7 +667,7 @@ class UiJepaPredictor:
         action_index = tuple(ActionType).index(candidate_action.action_type)
         action_offset = self._action_weight[action_index].copy()
         geometry_used = False
-        if candidate_action.action_type in self.POINTER_ACTIONS and self._action_geometry_weight is not None:
+        if candidate_action.action_type in self.GEOMETRY_ACTIONS and self._action_geometry_weight is not None:
             if not isinstance(candidate_action.parameters, MouseParams) or candidate_action.parameters.relative:
                 return None
             # Zero/zero is an executor sentinel for a detected target, not a screen point.
@@ -656,7 +691,12 @@ class UiJepaPredictor:
                 return None
             action_offset += np.asarray((x, y), dtype=np.float32) @ self._action_geometry_weight
             geometry_used = True
-        predicted_latent = np.tanh(state @ self._state_weight + action_offset + self._bias)
+        transition = state @ self._state_weight + action_offset + self._bias
+        predicted_latent = (
+            np.clip(state + transition, 0.0, 1.0)
+            if self._prediction_contract == "clipped-residual-v1"
+            else np.tanh(transition)
+        )
         delta_norm = float(np.linalg.norm(predicted_latent - state))
         state_norm = float(np.linalg.norm(state))
         predicted_norm = float(np.linalg.norm(predicted_latent))
@@ -725,6 +765,10 @@ class HybridWorldModel:
     ) -> None:
         self._structured = structured or StructuredTransitionPredictor()
         self._visual = visual or UiJepaPredictor()
+
+    def set_visual_predictor(self, predictor: OptionalWorldPredictor) -> None:
+        """Replace the optional predictor without changing structured rules."""
+        self._visual = predictor
 
     def status(self) -> dict[str, Any]:
         visual_status = (

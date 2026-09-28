@@ -199,6 +199,9 @@ def test_private_model_weights_are_encrypted(tmp_path) -> None:
     protected = store.encrypt_model_artifact(b"private model weights")
     assert b"private model weights" not in protected
     assert AESGCM(b"k" * 32).decrypt(protected[:12], protected[12:], MODEL_AAD) == b"private model weights"
+    artifact_path = tmp_path / "weights.enc"
+    artifact_path.write_bytes(protected)
+    assert store.decrypt_model_artifact_file(artifact_path) == b"private model weights"
 
 
 def test_manual_actions_need_separate_consent_and_text_is_parameterized(tmp_path) -> None:

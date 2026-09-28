@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from pilot.actions import (
     Action,
     ActionType,
@@ -401,6 +403,73 @@ def test_geometry_artifact_requires_exact_feature_contract(tmp_path) -> None:
     predictor = UiJepaPredictor(weights)
     assert predictor.is_loaded is False
     assert "geometry version" in predictor.status()["load_error"]
+
+
+def test_recorded_linear_candidate_reaches_runtime_shadow_prediction(tmp_path) -> None:
+    import numpy as np
+
+    from pilot.security.risk_gate import RiskGate
+    from pilot.workflows.recorded_workflows import RecordedWorkflowStore
+    from scripts.train_world_visual_transition import (
+        RECORDED_ACTION_IDS,
+        RECORDED_ACTION_WIDTH,
+        serialize_runtime_linear_artifact,
+    )
+
+    dimension = 16 * 16
+    weight = np.zeros((dimension, dimension + RECORDED_ACTION_WIDTH + 2), dtype=np.float32)
+    bias = np.zeros(dimension, dtype=np.float32)
+    weight[0, 0] = 0.2
+    weight[0, dimension + RECORDED_ACTION_IDS["mouse_click"]] = 0.1
+    weight[1, dimension + RECORDED_ACTION_WIDTH] = 0.2
+    bias[2] = -0.1
+    plaintext = serialize_runtime_linear_artifact(
+        {"weight": weight, "bias": bias},
+        training_samples=200,
+        validation_error=0.1,
+    )
+    with pytest.raises(ValueError, match="bounded runtime feature contract"):
+        serialize_runtime_linear_artifact(
+            {"weight": weight, "bias": bias},
+            training_samples=1.5,
+            validation_error=0.1,
+        )
+
+    store = RecordedWorkflowStore(tmp_path / "recordings.enc", key_provider=lambda: b"k" * 32)
+    artifact_path = tmp_path / "ui_jepa_weights.enc"
+    artifact_path.write_bytes(store.encrypt_model_artifact(plaintext))
+
+    def loader(path):
+        return store.decrypt_model_artifact(path.read_bytes())
+
+    state = WorldState.empty()
+    observed = np.linspace(0.1, 0.9, dimension, dtype=np.float32)
+    state.ui.update(latent_embedding=observed.tolist(), screen_bounds=(0, 0, 100, 100))
+    click = Action(action_type=ActionType.MOUSE_CLICK, parameters=MouseParams(x=75, y=25))
+
+    predictor = UiJepaPredictor(artifact_path, weight_loader=loader)
+    prediction = predictor.predict_optional(state, click)
+
+    action = np.zeros(RECORDED_ACTION_WIDTH + 2, dtype=np.float32)
+    action[RECORDED_ACTION_IDS["mouse_click"]] = 1.0
+    action[-2:] = (0.75, 0.25)
+    expected = np.clip(observed + np.concatenate((observed, action)) @ weight.T + bias, 0, 1)
+    assert prediction is not None
+    assert np.allclose(prediction.predicted_state.ui["latent_embedding"], expected, atol=1e-6)
+    assert predictor.status()["prediction_contract"] == "clipped-residual-v1"
+    assert predictor.status()["mode"] == "shadow"
+    assert predictor.status()["validated_for_gating"] is False
+    assert prediction.risk_evidence == ()
+
+    gate = RiskGate(weights_path=str(tmp_path / "missing-risk.npz"))
+    gate.configure_ui_jepa_artifact(artifact_path, weight_loader=loader)
+    visual_status = gate.status(enabled=False)["prediction_contract"]["ui_jepa"]
+    assert visual_status["weights_loaded"] is True
+    assert visual_status["mode"] == "shadow"
+
+    wrong_key_store = RecordedWorkflowStore(tmp_path / "wrong-key.enc", key_provider=lambda: b"x" * 32)
+    with pytest.raises(RuntimeError, match="could not be verified"):
+        wrong_key_store.decrypt_model_artifact(artifact_path.read_bytes())
 
 
 def test_hybrid_model_fuses_visual_and_structured_predictions(tmp_path) -> None:

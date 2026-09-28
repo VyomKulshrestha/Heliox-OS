@@ -17,11 +17,13 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
 from pilot.intelligence.world_model import (
     HistoricalFailureRisk,
     HybridWorldModel,
+    UiJepaPredictor,
     WorldState,
 )
 from pilot.security.risk_model import EMBEDDING_SIZE, LEARNABLE_ACTION_TYPES, RiskTransitionModel
@@ -56,6 +58,17 @@ class RiskGate:
     ) -> None:
         """Use an existing fresh screen observation; never capture in this gate."""
         self._ui_observation_provider = provider
+
+    def configure_ui_jepa_artifact(
+        self,
+        weights_path: str | Path,
+        *,
+        weight_loader: Callable[[Path], bytes] | None = None,
+    ) -> None:
+        """Load an optional visual candidate while preserving structured rules."""
+        self._world_model.set_visual_predictor(
+            UiJepaPredictor(weights_path, weight_loader=weight_loader)
+        )
 
     def record_outcome(self, action_type: object, success: bool) -> None:
         """Feed only observed execution outcomes into historical caution."""
