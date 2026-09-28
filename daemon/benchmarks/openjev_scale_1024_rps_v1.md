@@ -43,6 +43,16 @@ not show parity with proprietary TypeSafe Jev, Heliox task success, desktop
 execution quality, or safety. The candidate remains unpromoted and cannot
 authorize or execute actions.
 
+## Exploratory option-order smoke
+
+On a new OOD selection (seed 482190), the artifact evaluator scored 110 of 128
+rows; 18 over-budget rows were excluded without truncation. Reordering Choice
+alternatives with seed 482191 changed the top choice on 0 of 35 Choice rows.
+After aligning probabilities by option text, mean L1 distance was 0.001036
+(maximum 0.010819). This small post-hoc diagnostic is not a preregistered
+benchmark or proof of universal permutation invariance. See
+[openjev_scale_1024_rps_permutation_smoke_v1.json](openjev_scale_1024_rps_permutation_smoke_v1.json).
+
 ## Reproducibility
 
 - Dataset: ZefanCai/Open-Jev release-v2-redistributable at revision

@@ -19,6 +19,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from benchmarks.general_decision import DATASET_REVISION, load_split, metrics  # noqa: E402
 from scripts.score_general_decision import score_requests, verify_artifact  # noqa: E402
+from scripts.train_general_decision import encode_rows  # noqa: E402
 
 
 def permute_options(rows: list[dict], seed: int) -> list[dict]:
@@ -55,6 +56,17 @@ def prediction_metrics(rows: list[dict], predictions: list[dict]) -> dict:
     return metrics(rows, logits, 1.0)
 
 
+def retain_tokenizable_rows(rows: list[dict], encoded: list[dict]) -> tuple[list[dict], int]:
+    """Exclude over-budget rows without truncation and preserve source order."""
+    eligible_ids = {item["row"].get("id") for item in encoded}
+    if None in eligible_ids:
+        raise ValueError("Public decision rows must have stable IDs")
+    retained = [row for row in rows if row.get("id") in eligible_ids]
+    if len(retained) != len(encoded):
+        raise ValueError("Tokenized rows do not match the selected public rows")
+    return retained, len(rows) - len(retained)
+
+
 def load_partial(path: Path, *, signature: str, ids: list[str], resume: bool) -> list[dict]:
     if not path.exists():
         return []
@@ -82,16 +94,29 @@ def main() -> None:
     args = parser.parse_args()
     if not 1 <= args.limit <= 128:
         parser.error("--limit must be 1-128")
-    rows, manifest = load_split(args.split, args.limit, args.seed)
-    if len(rows) != args.limit:
+    selected_rows, manifest = load_split(args.split, args.limit, args.seed)
+    if len(selected_rows) != args.limit:
         raise ValueError("Not enough licensed decisions")
     if args.permute_options_seed is not None:
-        rows = permute_options(rows, args.permute_options_seed)
+        selected_rows = permute_options(selected_rows, args.permute_options_seed)
+    source_report, _ = verify_artifact(args.output_dir, args.model_report)
+    from huggingface_hub import snapshot_download
+    from transformers import AutoTokenizer
+
+    model_path = snapshot_download(source_report["model"], revision=source_report["revision"],
+                                   local_files_only=True)
+    tokenizer = AutoTokenizer.from_pretrained(model_path, local_files_only=True)
+    encoded, _ = encode_rows(tokenizer, selected_rows, source_report["max_length"],
+                             prompt_style=source_report.get("prompt_style", "candidate_v1"))
+    rows, overlong_skipped = retain_tokenizable_rows(selected_rows, encoded)
+    if not rows:
+        raise ValueError("No selected decisions fit the frozen token limit")
     payloads = [{"state": json.loads(row["state_json"]), "kind": row["kind"],
                  "question": row["question"], "options": row["options"]} for row in rows]
-    source_report, _ = verify_artifact(args.output_dir, args.model_report)
     ids = [row["id"] for row in rows]
     identity = {"split": args.split, "seed": args.seed, "ids": ids,
+                "selected_ids": [row["id"] for row in selected_rows],
+                "overlong_skipped": overlong_skipped,
                 "dataset_sha256": manifest["sha256"],
                 "permute_options_seed": args.permute_options_seed,
                 "adapter_sha256": source_report["adapter_sha256"],
@@ -116,7 +141,9 @@ def main() -> None:
         score_requests(payloads[start:], args.output_dir, args.model_report, on_prediction=save)
     report = {"purpose": "offline_frozen_artifact_comparison",
               "dataset_revision": DATASET_REVISION, "dataset_manifest": manifest,
-              "split": args.split, "seed": args.seed, "rows": len(rows),
+              "split": args.split, "seed": args.seed,
+              "selected_rows": len(selected_rows), "rows": len(rows),
+              "overlong_skipped": overlong_skipped,
               "permute_options_seed": args.permute_options_seed,
               "adapter_sha256": source_report["adapter_sha256"],
               "head_sha256": source_report["head_sha256"],

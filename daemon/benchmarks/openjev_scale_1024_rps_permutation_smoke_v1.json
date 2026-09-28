@@ -1,0 +1,19 @@
+{
+  "purpose": "exploratory_choice_option_order_sensitivity",
+  "model": "Qwen/Qwen3.5-2B",
+  "adapter_sha256": "5bb2153d689476375b7784884964605411d000f20883b38a9ccd44eae0bfc0a3",
+  "dataset": "ZefanCai/Open-Jev",
+  "dataset_revision": "c67699e13d0ae25e35b77165a4b6b079bedc8aba",
+  "dataset_sha256": "ba8cb3f95b9121aa73e4b997ac9c350e2ec4dddb972cb5c3086da911f0deb9ef",
+  "split": "ood",
+  "selection_seed": 482190,
+  "selected_rows": 128,
+  "scored_rows": 110,
+  "overlong_skipped": 18,
+  "choice_rows": 35,
+  "option_permutation_seed": 482191,
+  "top_choice_changes_after_alignment": 0,
+  "mean_choice_probability_l1": 0.001036,
+  "max_choice_probability_l1": 0.010819,
+  "limitation": "Small post-hoc diagnostic on one public sample; not independent confirmation, proprietary Jev parity, or desktop-safety evidence."
+}
