@@ -93,8 +93,30 @@ def test_jev_style_typed_questions_compile_without_leaking_score_indices() -> No
 
 
 def test_jev_style_typed_question_validation_is_bounded_and_strict() -> None:
+    optional_criteria = compile_typed_questions(
+        {}, {"decision": {"type": "noul", "instructions": "Ready?"}}
+    )
+    assert optional_criteria[0]["options"] == ["no", "yes"]
+    assert optional_criteria[0]["question"] == "Ready?"
+
+    max_choice = {f"option-{index}": None for index in range(MAX_OPTIONS)}
+    compiled = compile_typed_questions(
+        {}, {"decision": {"type": "choice", "instructions": "Choose", "criteria": max_choice}}
+    )
+    assert len(compiled[0]["options"]) == 255
+    with pytest.raises(ValueError, match=f"2-{MAX_OPTIONS}"):
+        compile_typed_questions(
+            {},
+            {"decision": {
+                "type": "choice", "instructions": "Choose",
+                "criteria": {f"option-{index}": None for index in range(MAX_OPTIONS + 1)},
+            }},
+        )
+
     with pytest.raises(ValueError, match="true and false"):
-        compile_typed_questions({}, {"decision": {"type": "noul", "instructions": "Ready?"}})
+        compile_typed_questions(
+            {}, {"decision": {"type": "noul", "instructions": "Ready?", "criteria": {"true": "yes"}}}
+        )
     with pytest.raises(ValueError, match="candidate options"):
         compile_typed_questions(
             {},
@@ -102,9 +124,9 @@ def test_jev_style_typed_question_validation_is_bounded_and_strict() -> None:
                 f"q{index}": {
                     "type": "choice",
                     "instructions": "Choose",
-                    "criteria": {f"o{option}": None for option in range(64)},
+                    "criteria": {f"o{option}": None for option in range(65)},
                 }
-                for index in range(5)
+                for index in range(4)
             },
         )
     with pytest.raises(ValueError, match="probabilities must sum"):

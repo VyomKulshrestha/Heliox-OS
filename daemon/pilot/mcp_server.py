@@ -32,7 +32,7 @@ logger = logging.getLogger("pilot.mcp")
 
 TaskInput = Annotated[str, Field(min_length=1, max_length=20_000), StringConstraints(strip_whitespace=True)]
 DecisionQuestion = Annotated[str, Field(min_length=1, max_length=4_000), StringConstraints(strip_whitespace=True)]
-DecisionOptions = Annotated[list[str], Field(min_length=2, max_length=64)]
+DecisionOptions = Annotated[list[str], Field(min_length=2, max_length=255)]
 TypedState = dict[str, Any] | list[Any] | str
 TypedQuestions = Annotated[dict[str, dict[str, Any]], Field(min_length=1, max_length=64)]
 SessionId = Annotated[
@@ -316,8 +316,10 @@ def create_mcp_server(client: RpcClient | None = None) -> MCPServer:
         description=(
             "Score up to 64 independent typed questions against one shared state using the "
             "explicitly configured local research model. Each question has type (noul, choice, "
-            "or score), instructions, and type-specific criteria. Batches are bounded to 256 "
-            "candidate options, do not save or upload inputs, and never authorize actions."
+            "or score), instructions, and type-specific criteria (Noul criteria are optional). "
+            "Choices allow up to 255 candidates. Batches are bounded to 64 questions, 256 total "
+            "candidate options, and 64k prompt tokens; inputs are not saved or uploaded and never "
+            "authorize actions."
         ),
         annotations=_LOCAL_MODEL_READ_ONLY,
         structured_output=True,
