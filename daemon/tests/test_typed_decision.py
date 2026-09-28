@@ -10,6 +10,12 @@ import numpy as np
 import pytest
 
 from pilot.config import PilotConfig
+from pilot.intelligence.native_typed_decision import (
+    LocalNextTokenTypedDecisionModel,
+    _encode_prompt_and_labels,
+    _probabilities_in_request_order,
+    _render_question,
+)
 from pilot.intelligence.typed_decision import (
     MAX_OPTIONS,
     LocalTypedDecisionModel,
@@ -193,6 +199,122 @@ def test_candidate_microbatch_caps_long_prompts_and_respects_lower_limits() -> N
         _candidate_microbatch_size(0, 8)
 
 
+def test_native_next_token_labels_are_verified_and_choice_order_is_stable() -> None:
+    class CharacterTokenizer:
+        def apply_chat_template(self, messages, **_kwargs):
+            return "<system>" + messages[0]["content"] + "</system><user>" + messages[1]["content"] + "</user><assistant>"
+
+        def __call__(self, text, *, add_special_tokens=False):
+            assert add_special_tokens is False
+            return {"input_ids": [ord(character) for character in text]}
+
+    record = {
+        "id": "route",
+        "kind": "choice",
+        "question": "Choose one",
+        "options": ["zebra", "apple"],
+        "answer_keys": ["z", "a"],
+    }
+    prompt_ids, label_ids, scored_keys, labels = _encode_prompt_and_labels(
+        CharacterTokenizer(), {"screen": "page"}, record, max_length=4096
+    )
+
+    assert prompt_ids
+    assert len(label_ids) == len(set(label_ids)) == 2
+    assert labels == ["A", "B"]
+    assert scored_keys == ["a", "z"]
+    rendered = _render_question("{}", record, [("A", "private-a", "apple"), ("B", "private-z", "zebra")])
+    assert '"answer":' not in rendered
+    assert "private-" not in rendered
+
+
+def test_native_next_token_reassigns_duplicate_candidate_tokens() -> None:
+    class AliasingTokenizer:
+        def apply_chat_template(self, messages, **_kwargs):
+            return "<system>" + messages[0]["content"] + "</system><user>" + messages[1]["content"] + "</user><assistant>"
+
+        def __call__(self, text, *, add_special_tokens=False):
+            assert add_special_tokens is False
+            return {"input_ids": [300 if character in "AB" else ord(character) for character in text]}
+
+    record = {
+        "id": "route",
+        "kind": "choice",
+        "question": "Choose one",
+        "options": ["zebra", "apple"],
+        "answer_keys": ["z", "a"],
+    }
+    _, label_ids, scored_keys, labels = _encode_prompt_and_labels(
+        AliasingTokenizer(), "page", record, max_length=4096
+    )
+
+    assert labels == ["A", "C"]
+    assert len(label_ids) == len(set(label_ids)) == 2
+    assert scored_keys == ["a", "z"]
+
+
+def test_native_next_token_scores_map_back_to_original_candidate_order() -> None:
+    record = {
+        "kind": "choice",
+        "options": ["zebra", "apple"],
+        "answer_keys": ["z", "a"],
+    }
+    probabilities = _probabilities_in_request_order(
+        record,
+        ["a", "z"],
+        np.asarray([3.0, 0.0]),
+        1.0,
+    )
+    assert probabilities == pytest.approx([0.047425873, 0.952574127])
+    result = format_typed_answer(record, probabilities)
+    assert result["choice"] == "a"
+
+
+def test_native_noul_uses_probabilistic_ratings_not_binary_yes_no_labels() -> None:
+    class CharacterTokenizer:
+        pad_token_id = 0
+        eos_token_id = 1
+
+        def apply_chat_template(self, messages, **_kwargs):
+            return "<system>" + messages[0]["content"] + "</system><user>" + messages[1]["content"] + "</user><assistant>"
+
+        def __call__(self, text, *, add_special_tokens=False):
+            assert add_special_tokens is False
+            return {"input_ids": [ord(character) for character in text]}
+
+    record = {
+        "id": "truth",
+        "kind": "noul",
+        "question": "Is the statement supported?",
+        "options": ["no", "yes"],
+        "answer_keys": ["false", "true"],
+    }
+    prompt_ids, label_ids, scored_keys, labels = _encode_prompt_and_labels(
+        CharacterTokenizer(), {"statement": "The claim is present."}, record, max_length=4096
+    )
+    probabilities = _probabilities_in_request_order(
+        record,
+        scored_keys,
+        np.asarray([-8.0] * 8 + [8.0]),
+        1.0,
+    )
+
+    assert prompt_ids
+    assert labels == list("ABCDEFGHI")
+    assert len(label_ids) == 9
+    assert scored_keys == [str(rating) for rating in range(1, 10)]
+    assert probabilities == pytest.approx([0.01, 0.99], abs=1e-6)
+
+
+def test_native_next_token_model_requires_pinned_model_and_valid_limits() -> None:
+    with pytest.raises(ValueError, match="pinned local"):
+        LocalNextTokenTypedDecisionModel("untrusted/model")
+    with pytest.raises(ValueError, match="token limit"):
+        LocalNextTokenTypedDecisionModel("Qwen/Qwen3-0.6B", max_length=32)
+    with pytest.raises(ValueError, match="temperature"):
+        LocalNextTokenTypedDecisionModel("Qwen/Qwen3-0.6B", temperature=0)
+
+
 def test_artifact_verification_fails_before_any_model_or_network_load(tmp_path: Path) -> None:
     adapter = tmp_path / "adapter"
     adapter.mkdir()
@@ -239,7 +361,7 @@ async def test_typed_decision_rpc_is_opt_in_and_research_only(monkeypatch, tmp_p
     config.typed_decision.enabled = True
     config.typed_decision.artifact_dir = str(tmp_path / "artifacts")
     config.typed_decision.report_path = str(tmp_path / "report.json")
-    invalid = await server._handle_mcp_typed_decision({**payload, "state": []}, client)
+    invalid = await server._handle_mcp_typed_decision({**payload, "state": None}, client)
     assert invalid["status"] == "error"
     assert invalid["research_only"] is True
     assert invalid["execution_authority"] is False
@@ -293,6 +415,60 @@ async def test_typed_decision_rpc_is_opt_in_and_research_only(monkeypatch, tmp_p
 
 
 @pytest.mark.asyncio
+async def test_native_next_token_mode_needs_no_head_artifact_and_stays_advisory(monkeypatch) -> None:
+    config = PilotConfig()
+    config.typed_decision.enabled = True
+    config.typed_decision.scoring_mode = "native_next_token"
+    client = object()
+    server = PilotServer(config)
+    server._client_roles[client] = RpcClientRole.MCP_LOCAL
+    created = []
+
+    class FakeNativeModel:
+        def __init__(self, model_id, *, max_length, temperature) -> None:
+            created.append((model_id, max_length, temperature))
+
+        def score(self, state, kind, question, options):
+            return {
+                "status": "ok",
+                "research_only": True,
+                "execution_authority": False,
+                "scoring_method": "native_next_token_v1",
+                "calibration": "uncalibrated",
+                "answer": {"type": kind, "choice": options[0]},
+            }
+
+        def score_questions(self, state, questions):
+            return {
+                "status": "ok",
+                "research_only": True,
+                "execution_authority": False,
+                "answers": {key: {"type": value["type"]} for key, value in questions.items()},
+            }
+
+        def unload(self):
+            return None
+
+    import pilot.intelligence.native_typed_decision as native_decision_module
+
+    monkeypatch.setattr(native_decision_module, "LocalNextTokenTypedDecisionModel", FakeNativeModel)
+    result = await server._handle_mcp_typed_decision(
+        {
+            "state": "An untrusted textual context",
+            "kind": "choice",
+            "question": "Pick",
+            "options": ["a", "b"],
+        },
+        client,
+    )
+
+    assert created == [("Qwen/Qwen3-0.6B", 2048, 1.0)]
+    assert result["scoring_method"] == "native_next_token_v1"
+    assert result["calibration"] == "uncalibrated"
+    assert result["execution_authority"] is False
+
+
+@pytest.mark.asyncio
 async def test_typed_decision_config_requires_explicit_paths_and_unloads_on_disable(tmp_path: Path) -> None:
     config = PilotConfig()
     config.save = MagicMock()
@@ -322,8 +498,12 @@ async def test_typed_decision_config_requires_explicit_paths_and_unloads_on_disa
     unloaded = []
     server._typed_decision_engine = SimpleNamespace(unload=lambda: unloaded.append(True))
     server._typed_decision_engine_key = (
-        config.typed_decision.artifact_dir,
-        config.typed_decision.report_path,
+        "trained_head",
+        str(Path(config.typed_decision.artifact_dir).expanduser()),
+        str(Path(config.typed_decision.report_path).expanduser()),
+        config.typed_decision.model_id,
+        config.typed_decision.max_length,
+        config.typed_decision.temperature,
     )
     disabled = await server._handle_update_config(
         {"section": "typed_decision", "values": {"enabled": False}},
@@ -332,3 +512,58 @@ async def test_typed_decision_config_requires_explicit_paths_and_unloads_on_disa
     assert disabled == {"status": "ok"}
     assert unloaded == [True]
     assert server._typed_decision_engine is None
+
+
+@pytest.mark.asyncio
+async def test_native_next_token_config_can_be_enabled_without_training_artifacts() -> None:
+    config = PilotConfig()
+    config.save = MagicMock()
+    server = PilotServer(config)
+    invalid = await server._handle_update_config(
+        {"section": "typed_decision", "values": {"enabled": True}},
+        object(),
+    )
+    assert invalid["status"] == "error"
+    config.save.assert_not_called()
+
+    saved = await server._handle_update_config(
+        {
+            "section": "typed_decision",
+            "values": {
+                "enabled": True,
+                "scoring_mode": "native_next_token",
+                "model_id": "Qwen/Qwen3-0.6B",
+            },
+        },
+        object(),
+    )
+    assert saved == {"status": "ok"}
+    assert config.typed_decision.scoring_mode == "native_next_token"
+    assert config.typed_decision.enabled is True
+
+
+@pytest.mark.asyncio
+async def test_native_next_token_config_keeps_cached_model_when_paths_are_empty() -> None:
+    config = PilotConfig()
+    config.typed_decision.enabled = True
+    config.typed_decision.scoring_mode = "native_next_token"
+    config.save = MagicMock()
+    server = PilotServer(config)
+    unloaded = []
+    server._typed_decision_engine = SimpleNamespace(unload=lambda: unloaded.append(True))
+    server._typed_decision_engine_key = (
+        "native_next_token",
+        "",
+        "",
+        config.typed_decision.model_id,
+        config.typed_decision.max_length,
+        config.typed_decision.temperature,
+    )
+
+    result = await server._handle_update_config(
+        {"section": "typed_decision", "values": {"temperature": 1.0}},
+        object(),
+    )
+
+    assert result == {"status": "ok"}
+    assert unloaded == []
