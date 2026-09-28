@@ -22,6 +22,7 @@ MAX_QUESTION_ID_CHARS = 128
 MAX_TOTAL_OPTIONS = 256
 MAX_TOTAL_PROMPT_TOKENS = 64_000
 MAX_CANDIDATE_MICROBATCH = 16
+CONFIDENCE_SEMANTICS = "normalized_distribution_concentration_not_accuracy_probability"
 
 
 def _candidate_microbatch_size(max_prompt_tokens: int, configured_max: int) -> int:
@@ -168,6 +169,7 @@ def format_typed_answer(record: dict[str, Any], probabilities: list[float] | np.
             "choice": keys[selected],
             "probabilities": {key: float(value) for key, value in zip(keys, values, strict=True)},
             "confidence": float(confidence),
+            "confidence_semantics": CONFIDENCE_SEMANTICS,
         }
     mode = int(np.argmax(values))
     distance = float(sum(value * abs(index - mode) for index, value in enumerate(values)))
@@ -179,6 +181,7 @@ def format_typed_answer(record: dict[str, Any], probabilities: list[float] | np.
         "score": float(np.arange(len(values), dtype=np.float64) @ values),
         "probabilities": {key: float(value) for key, value in zip(keys, values, strict=True)},
         "confidence": float(confidence),
+        "confidence_semantics": CONFIDENCE_SEMANTICS,
         "legend": record["legend"],
     }
 

@@ -93,8 +93,14 @@ def test_jev_style_typed_questions_compile_without_leaking_score_indices() -> No
     choice = format_typed_answer(compiled[1], [0.1, 0.9])
     assert choice["choice"] == "live"
     assert choice["confidence"] == pytest.approx(0.8)
+    assert choice["confidence_semantics"] == (
+        "normalized_distribution_concentration_not_accuracy_probability"
+    )
     score = format_typed_answer(compiled[2], [0.2, 0.5, 0.3])
     assert score["score"] == pytest.approx(1.1)
+    assert score["confidence_semantics"] == (
+        "normalized_distribution_concentration_not_accuracy_probability"
+    )
     assert score["legend"] == ["weak", "partial", "strong"]
 
 
