@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "purpose": "fresh_group_disjoint_public_replication_of_the_openjev_rps_candidate",
+  "frozen_at_utc": "2026-09-28",
+  "dataset_revision": "c67699e13d0ae25e35b77165a4b6b079bedc8aba",
+  "source_selection_protocol": {
+    "path": "benchmarks/released_openjev_general_protocol_v2.json",
+    "sha256": "ddb45e962613048e5ee6af389e08c6ac319e66c52b1d4440d12bb0030c1c6f4c"
+  },
+  "released_baseline": {
+    "report_path": ".bench-state/released_openjev_general_public_v3/report.json",
+    "report_sha256": "9bf040f837ab9760ff6467d2b44887d4e6d38ed3ceaa18401468080ae92eeb16",
+    "fresh_logits_path": ".bench-state/released_openjev_general_public_v3/fresh_logits.json",
+    "fresh_logits_sha256": "b94f3b6a44662187e3c85536f545ccb41b0c3d800b89eff87b73957bc0fac324",
+    "fresh_selection_signature": "0e74034f4d59fbaa4b545353e744831599d1257bc61369bab7045bb4ab29b2ca"
+  },
+  "candidate": {
+    "report_path": "benchmarks/openjev_scale_1024_rps_v1.json",
+    "report_sha256": "53cea9c46c4504761071a568ae837dcda9920e49709c367668ea6a043165f95a",
+    "artifact_dir": "benchmarks/.bench-state/openjev_scale_1024_rps_v1",
+    "adapter_sha256": "5bb2153d689476375b7784884964605411d000f20883b38a9ccd44eae0bfc0a3",
+    "head_sha256": "aa2a39aee6e7b48efc50eff3a0f1ac5c4fdf391b534bf8b874a4a8da9ba65676",
+    "max_length": 512
+  },
+  "selection_rule": "Recreate the archived public OOD selection from the source protocol, then use its seeded fresh selection after excluding every archived group and repeated fresh groups. Preserve source order. Exclude candidate-overlength rows without truncation and score both models on exactly the same remaining IDs.",
+  "evaluation_rule": "No training, calibration, or hyperparameter tuning on these rows. Use the candidate's already-fitted calibration temperature and the released model's frozen logits. Compare overall and per-kind top-1, NLL, Brier, and Score ranked probability score.",
+  "promotion": "none",
+  "limitations": [
+    "This tests the local candidate against released Open-Jev, not proprietary TypeSafe Jev.",
+    "The selected examples are public synthetic benchmark rows and do not establish desktop task success, safe execution, or model parity.",
+    "The fresh split was scored for the released baseline before this candidate evaluation; candidate metrics are not used for tuning."
+  ]
+}
