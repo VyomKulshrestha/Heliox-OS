@@ -13,13 +13,14 @@ import numpy as np
 
 KINDS = frozenset({"noul", "choice", "score"})
 PROMPT_STYLES = frozenset({"candidate_v1", "full_options_v2"})
-MAX_OPTIONS = 64
+MAX_OPTIONS = 255
 MAX_STATE_CHARS = 16_384
 MAX_QUESTION_CHARS = 4_000
 MAX_OPTION_CHARS = 1_024
 MAX_QUESTIONS = 64
 MAX_QUESTION_ID_CHARS = 128
 MAX_TOTAL_OPTIONS = 256
+MAX_TOTAL_PROMPT_TOKENS = 64_000
 MAX_CANDIDATE_MICROBATCH = 16
 
 
@@ -102,11 +103,12 @@ def compile_typed_questions(state: Any, questions: Any) -> list[dict[str, Any]]:
         criteria = definition.get("criteria")
 
         if kind == "noul":
-            if not isinstance(criteria, dict) or set(criteria) != {"true", "false"}:
-                raise ValueError("Noul criteria must contain true and false descriptions")
-            true = _render_typed_value(criteria["true"])
-            false = _render_typed_value(criteria["false"])
-            question += f"\nYes means: {true}\nNo means: {false}"
+            if criteria is not None:
+                if not isinstance(criteria, dict) or set(criteria) != {"true", "false"}:
+                    raise ValueError("Noul criteria must contain true and false descriptions")
+                true = _render_typed_value(criteria["true"])
+                false = _render_typed_value(criteria["false"])
+                question += f"\nYes means: {true}\nNo means: {false}"
             options = ["no", "yes"]
             answer_keys = ["false", "true"]
             legend = None
@@ -179,6 +181,14 @@ def format_typed_answer(record: dict[str, Any], probabilities: list[float] | np.
         "confidence": float(confidence),
         "legend": record["legend"],
     }
+
+
+def _validate_prompt_budget(sequences: list[list[int]]) -> None:
+    total = sum(len(sequence) for sequence in sequences)
+    if total > MAX_TOTAL_PROMPT_TOKENS:
+        raise ValueError(
+            f"Typed request exceeds the {MAX_TOTAL_PROMPT_TOKENS}-token local scoring budget"
+        )
 
 
 def candidate_prompts(row: dict[str, Any], *, style: str) -> list[str]:
@@ -276,6 +286,7 @@ class LocalTypedDecisionModel:
             self._load()
             prompts = candidate_prompts(row, style=self._prompt_style)
             sequences = self._encode(prompts)
+            _validate_prompt_budget(sequences)
             scores = self._score_sequences(sequences)
             logits = np.concatenate((np.zeros(1, dtype=np.float64), scores[:1])) if kind == "noul" else scores
             return {
@@ -309,6 +320,7 @@ class LocalTypedDecisionModel:
             ]
             prompts = [prompt for group in prompts_by_record for prompt in group]
             sequences = self._encode(prompts)
+            _validate_prompt_budget(sequences)
             candidate_scores = self._score_sequences(sequences)
             answers: dict[str, dict[str, Any]] = {}
             offset = 0
