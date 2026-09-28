@@ -105,11 +105,35 @@ def scalar_score(backbone, head, ids: list[int]):
     return head(hidden[0, -1].float()).squeeze()
 
 
-def score_row(backbone, head, item: dict) -> np.ndarray:
+def scalar_scores(backbone, head, sequences: list[list[int]], *, microbatch_size: int):
+    """Score candidate sequences in bounded batches with right-padding masks."""
+    import torch
+
+    if microbatch_size < 1 or not sequences or any(not ids for ids in sequences):
+        raise ValueError("Candidate sequences and microbatch size must be valid")
+    scores = []
+    for start in range(0, len(sequences), microbatch_size):
+        batch = sequences[start:start + microbatch_size]
+        lengths = torch.tensor([len(ids) for ids in batch], dtype=torch.long)
+        input_ids = torch.nn.utils.rnn.pad_sequence(
+            [torch.tensor(ids, dtype=torch.long) for ids in batch],
+            batch_first=True, padding_value=0,
+        ).to("cuda")
+        lengths = lengths.to("cuda")
+        attention_mask = torch.arange(input_ids.size(1), device="cuda")[None, :] < lengths[:, None]
+        hidden = backbone(input_ids=input_ids, attention_mask=attention_mask,
+                          use_cache=False, return_dict=True).last_hidden_state
+        last_hidden = hidden[torch.arange(len(batch), device="cuda"), lengths - 1].float()
+        scores.extend(head(last_hidden).squeeze(-1).unbind())
+    return torch.stack(scores)
+
+
+def score_row(backbone, head, item: dict, *, candidate_microbatch_size: int = 2) -> np.ndarray:
     import torch
 
     with torch.inference_mode():
-        scores = torch.stack([scalar_score(backbone, head, ids) for ids in item["sequences"]])
+        scores = scalar_scores(backbone, head, item["sequences"],
+                               microbatch_size=candidate_microbatch_size)
         logits = decision_logits(item["row"]["kind"], scores)
     return logits.float().cpu().numpy().astype(np.float64)
 
@@ -140,7 +164,8 @@ def evaluate(backbone, head, items: list[dict], label: str = "") -> list[np.ndar
 
 def evaluate_checkpointed(backbone, head, items: list[dict], label: str, *,
                           path: Path, signature: str, resume: bool,
-                          checkpoint_every: int) -> list[np.ndarray]:
+                          checkpoint_every: int,
+                          candidate_microbatch_size: int = 2) -> list[np.ndarray]:
     """Resume public held-out scoring only when rows and trained weights match."""
     if checkpoint_every < 1:
         raise ValueError("Evaluation checkpoint interval must be positive")
@@ -167,7 +192,8 @@ def evaluate_checkpointed(backbone, head, items: list[dict], label: str, *,
     for index in range(len(results), len(items)):
         item = items[index]
         try:
-            prediction = score_row(backbone, head, item)
+            prediction = score_row(backbone, head, item,
+                                  candidate_microbatch_size=candidate_microbatch_size)
         except RuntimeError as exc:
             raise RuntimeError(f"{label} failed at row {index + 1}/{len(items)} "
                                f"id={item['row']['id']} "
@@ -192,7 +218,8 @@ def evaluate_checkpointed(backbone, head, items: list[dict], label: str, *,
 
 
 def gradient_row(backbone, head, item: dict, *, brier_weight: float,
-                 ordinal_weight: float, scale: float, weight: float = 1.0) -> float:
+                 ordinal_weight: float, scale: float, weight: float = 1.0,
+                 candidate_microbatch_size: int = 2) -> float:
     """Exact two-pass gradient with O(1) candidate activation memory.
 
     First compute all scalar scores without autograd, differentiate the small
@@ -206,8 +233,8 @@ def gradient_row(backbone, head, item: dict, *, brier_weight: float,
     row = item["row"]
     target = torch.tensor(row["target"], dtype=torch.float32, device="cuda")
     with torch.no_grad():
-        frozen_scores = torch.stack([scalar_score(backbone, head, ids)
-                                     for ids in item["sequences"]]).float()
+        frozen_scores = scalar_scores(backbone, head, item["sequences"],
+                                      microbatch_size=candidate_microbatch_size).float()
     if not torch.isfinite(frozen_scores).all():
         raise FloatingPointError(f"Nonfinite candidate scores for id={row['id']}")
     score_variables = frozen_scores.detach().requires_grad_(True)
@@ -221,18 +248,22 @@ def gradient_row(backbone, head, item: dict, *, brier_weight: float,
     if not torch.isfinite(loss):
         raise FloatingPointError("Nonfinite decision loss")
     score_gradient = torch.autograd.grad(loss, score_variables)[0].detach()
-    for candidate, (ids, derivative) in enumerate(zip(item["sequences"], score_gradient, strict=True)):
+    for start in range(0, len(item["sequences"]), candidate_microbatch_size):
+        end = min(start + candidate_microbatch_size, len(item["sequences"]))
         try:
-            (scalar_score(backbone, head, ids).float() * derivative * weight / scale).backward()
+            scores = scalar_scores(backbone, head, item["sequences"][start:end],
+                                   microbatch_size=candidate_microbatch_size).float()
+            (scores * score_gradient[start:end] * weight / scale).sum().backward()
         except RuntimeError as exc:
-            raise RuntimeError(f"Training failed for id={row['id']} candidate={candidate} tokens={len(ids)}") from exc
+            raise RuntimeError(f"Training failed for id={row['id']} candidates={start}:{end}") from exc
     return float(loss.detach().cpu()) * weight
 
 
 def train_group(backbone, head, optimizer, training_items: list[dict], group: list[int],
                 *, brier_weight: float, ordinal_weight: float,
                 max_retries: int = 2,
-                row_weights: list[float] | None = None) -> tuple[list[float], int]:
+                row_weights: list[float] | None = None,
+                candidate_microbatch_size: int = 2) -> tuple[list[float], int]:
     """Retry a transient nonfinite group without skipping rows or stepping it twice."""
     import torch
 
@@ -248,7 +279,8 @@ def train_group(backbone, head, optimizer, training_items: list[dict], group: li
             losses = [gradient_row(backbone, head, training_items[index],
                                    brier_weight=brier_weight, ordinal_weight=ordinal_weight,
                                    scale=len(group),
-                                   weight=1.0 if row_weights is None else row_weights[index])
+                                   weight=1.0 if row_weights is None else row_weights[index],
+                                   candidate_microbatch_size=candidate_microbatch_size)
                       for index in group]
             norm = torch.nn.utils.clip_grad_norm_(parameters, 1.0)
             if not torch.isfinite(norm):
@@ -305,6 +337,7 @@ def checkpoint_signature(args: argparse.Namespace, encoded: dict[str, list[dict]
                 "token_ids_sha256": token_ids.hexdigest(),
                 "seed": args.seed, "max_length": args.max_length, "lora_rank": args.lora_rank,
                 "attention": args.attention, "accumulation": args.accumulation,
+                "candidate_microbatch_size": getattr(args, "candidate_microbatch_size", 2),
                 "lr": args.lr, "head_lr": args.head_lr, "brier_weight": args.brier_weight,
                 "ordinal_weight": args.ordinal_weight}
     if args.prompt_style != "candidate_v1":
@@ -380,7 +413,8 @@ def run(args: argparse.Namespace) -> dict:
 
     if not torch.cuda.is_available() or torch.cuda.mem_get_info()[0] < 4 * 1024**3:
         raise RuntimeError("At least 4 GiB free CUDA memory is required")
-    if (args.accumulation < 1 or args.max_length < 64 or args.lora_rank < 1
+    if (args.accumulation < 1 or args.candidate_microbatch_size < 1
+            or args.max_length < 64 or args.lora_rank < 1
             or not math.isfinite(args.ordinal_weight) or args.ordinal_weight < 0):
         raise ValueError("Invalid training configuration")
     if args.scope_group_weighting != "none" and not (args.scopejudge_path or args.misactbench_path):
@@ -517,6 +551,7 @@ def run(args: argparse.Namespace) -> dict:
             backbone, head, encoded[part], f"baseline_{part}",
             path=args.output_dir / f"evaluation_baseline_{part}.json",
             signature=identity, resume=args.resume, checkpoint_every=args.checkpoint_every,
+            candidate_microbatch_size=args.candidate_microbatch_size,
         )
 
     baseline_test = baseline("test") if run_baseline else None
@@ -544,6 +579,7 @@ def run(args: argparse.Namespace) -> dict:
             backbone, head, optimizer, training_items, group,
             brier_weight=args.brier_weight, ordinal_weight=args.ordinal_weight,
             row_weights=row_weights,
+            candidate_microbatch_size=args.candidate_microbatch_size,
         )
         if retries:
             print(json.dumps({"event": "retried_nonfinite_group", "start": start,
@@ -568,6 +604,7 @@ def run(args: argparse.Namespace) -> dict:
         return evaluate_checkpointed(
             backbone, head, items, part, path=args.output_dir / f"evaluation_{part}.json",
             signature=identity, resume=args.resume, checkpoint_every=args.checkpoint_every,
+            candidate_microbatch_size=args.candidate_microbatch_size,
         )
 
     calibration_logits = held_out("calibration", calibration_items)
@@ -601,6 +638,7 @@ def run(args: argparse.Namespace) -> dict:
         "attention_implementation": args.attention, "model_dtype": args.dtype,
         "training_checkpoint_sha256": checkpoint_hash,
         "lora_rank": args.lora_rank, "accumulation": args.accumulation,
+        "candidate_microbatch_size": args.candidate_microbatch_size,
         "prompt_style": args.prompt_style,
         "initial_checkpoint": ({"repo": OPENJEV_REPO,
                                 "revision": OPENJEV_REVISION,
@@ -661,6 +699,8 @@ def main() -> None:
     parser.add_argument("--attention", choices=("eager", "sdpa"), default="eager")
     parser.add_argument("--dtype", choices=("bfloat16", "float16"), default="bfloat16")
     parser.add_argument("--accumulation", type=int, default=4)
+    parser.add_argument("--candidate-microbatch-size", type=int, default=2,
+                        help="Bounded number of candidate sequences per GPU forward pass")
     parser.add_argument("--lr", type=float, default=2e-5)
     parser.add_argument("--head-lr", type=float, default=5e-5)
     parser.add_argument("--brier-weight", type=float, default=0.1)
