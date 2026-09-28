@@ -59,6 +59,15 @@ worsened (0.0828 to 0.0949), although its NLL improved. Workflow-control
 sources total only 24 rows, so those numbers are descriptive, not evidence of
 desktop-workflow performance.
 
+After adding a generalized ranked-probability metric, I rescored the cached
+logits on the original preregistered 219-row OOD split (no model or data
+changes). Its 51 Score rows had mean rank error `0.3932` and mean RPS
+`0.0854` for released Open-Jev, versus `0.3294` and `0.0703` for the candidate.
+This is a retrospective metric on the already-reported split, not a fresh
+evaluation and not evidence that the candidate was trained with RPS (its
+`ordinal_weight` was zero). It does not negate the separate 76-row post-hoc
+Score regression above.
+
 A final local typed-scoring smoke test used a new read-only system-health
 question and four runtime-supplied options. The model assigned 0.788 to the
 read-only evidence-and-report option; its response explicitly carried
