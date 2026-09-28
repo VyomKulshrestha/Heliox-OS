@@ -88,6 +88,40 @@ def test_source_selection_manifest_replays_and_checksums_groups(tmp_path, monkey
         load_excluded_group_ids(tmp_path, descriptor)
 
 
+def test_nested_selection_manifest_adds_only_previously_scored_groups(tmp_path, monkeypatch) -> None:
+    rows = [{"id": f"row-{index}", "group_id": f"group-{index}"} for index in range(4)]
+    monkeypatch.setattr("scripts.evaluate_released_openjev_general.load_split",
+                        lambda *_args: (rows, {"sha256": "fixture"}))
+
+    base_groups = ["group-0"]
+    base_content = {"schema_version": 1, "group_ids": base_groups,
+                    "group_ids_sha256": hashlib.sha256(b"group-0").hexdigest()}
+    base_path = tmp_path / "base.json"
+    base_path.write_text(json.dumps(base_content), encoding="utf-8")
+    base_descriptor = {"path": "base.json", "sha256": hashlib.sha256(base_path.read_bytes()).hexdigest()}
+    chosen = [rows[1], rows[2]]
+    chosen_groups = {row["group_id"] for row in chosen}
+    chosen_ids_digest = hashlib.sha256(b"row-1\nrow-2").hexdigest()
+    chosen_groups_digest = hashlib.sha256(b"group-1\ngroup-2").hexdigest()
+    combined_groups = ["group-0", "group-1", "group-2"]
+    content = {
+        "schema_version": 1,
+        "dataset_revision": DATASET_REVISION,
+        "base_manifest": base_descriptor,
+        "source_selections": [{"split": "ood", "pool": 4, "seed": 9, "selected_rows": 2,
+                               "exclude_group_manifest": base_descriptor,
+                               "selected_ids_sha256": chosen_ids_digest,
+                               "group_ids_sha256": chosen_groups_digest}],
+        "unique_group_count": 3,
+        "group_ids_sha256": hashlib.sha256("\n".join(combined_groups).encode()).hexdigest(),
+    }
+    path = tmp_path / "combined.json"
+    path.write_text(json.dumps(content), encoding="utf-8")
+    descriptor = {"path": "combined.json", "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+
+    assert load_excluded_group_ids(tmp_path, descriptor) == set(combined_groups)
+
+
 def test_checkpoint_signature_binds_inputs_and_model_limit() -> None:
     rows = [{"id": "a", "state_json": "{}", "kind": "choice", "question": "Which?",
              "options": ["one", "two"], "target": [0.0, 1.0]}]

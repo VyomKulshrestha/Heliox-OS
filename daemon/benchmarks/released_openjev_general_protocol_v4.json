@@ -1,0 +1,24 @@
+{
+  "schema_version": 2,
+  "purpose": "frozen_released_openjev_independent_group_disjoint_test_split_baseline",
+  "released_checkpoint": "ZefanCai/Open-Jev-2B@0c7aa498b1627be8da4acf34c863ff0ee0a92785",
+  "dataset_revision": "c67699e13d0ae25e35b77165a4b6b079bedc8aba",
+  "archived_seed": 20260929,
+  "archived_pool": 384,
+  "archived_rows": 128,
+  "archived_ids_sha256": "51281960c0049591ad0c241bcd8159feefd73b2fe87e4bd262bc3216f3941d13",
+  "fresh_split": "test",
+  "fresh_seed": 20261008,
+  "fresh_pool": 9750,
+  "fresh_rows": 512,
+  "fresh_ids_sha256": "4c24582d3700dbd50f36ca07091a0ffb63d16600dd560e5dd7de58e35c1a14ff",
+  "fresh_group_ids_sha256": "2229d832ee98b5bce549010a9ce3ebb7d9cf00f348a0bbe0c0589bdada2688d6",
+  "excluded_group_manifest": {
+    "path": "benchmarks/openjev_scale_1024_independent_group_exclusions_v2.json",
+    "sha256": "b97ee8a805e2d929410a9f12a39173617232e9b31bbaf53d10292111b4bb39a4"
+  },
+  "max_length": 1024,
+  "checkpoint_every": 8,
+  "selection_rule": "Select 512 group-unique licensed rows in source order from the pinned test split after excluding every group used in prior training, calibration, tests, OOD comparisons, and the first independent comparison. Preserve the exact row and group hashes; do not truncate overlength prompts.",
+  "promotion_rule": "No automatic promotion; this public synthetic benchmark is research-only and never grants execution authority."
+}

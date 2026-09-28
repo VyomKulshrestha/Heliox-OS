@@ -45,10 +45,12 @@ def select_archived_rows(*, seed: int, pool: int, limit: int,
     return rows, manifest
 
 
-def load_excluded_group_ids(root: Path, descriptor: dict | None) -> set[str]:
+def load_excluded_group_ids(root: Path, descriptor: dict | None, *, _depth: int = 0) -> set[str]:
     """Load group exclusions pinned either directly or by source selections."""
     if descriptor is None:
         return set()
+    if _depth > 8:
+        raise ValueError("Group exclusion manifest nesting is too deep")
     if not isinstance(descriptor, dict) or not isinstance(descriptor.get("path"), str):
         raise ValueError("Group exclusion manifest descriptor is invalid")
     relative = Path(descriptor["path"])
@@ -69,14 +71,26 @@ def load_excluded_group_ids(root: Path, descriptor: dict | None) -> set[str]:
         sources = saved["source_selections"]
         if not isinstance(sources, list) or not sources:
             raise ValueError("Group exclusion manifest has no source selections")
-        groups: set[str] = set()
+        base = saved.get("base_manifest")
+        groups = load_excluded_group_ids(root, base, _depth=_depth + 1) if base else set()
         for source in sources:
             if (not isinstance(source, dict) or not isinstance(source.get("split"), str)
                     or type(source.get("pool")) is not int or source["pool"] < 1
-                    or type(source.get("seed")) is not int):
+                    or type(source.get("seed")) is not int
+                    or type(source.get("selected_rows")) is not int
+                    or not 1 <= source["selected_rows"] <= source["pool"]):
                 raise ValueError("Group exclusion source selection is invalid")
-            rows, _ = load_split(source["split"], source["pool"], source["seed"])
-            if len(rows) != source["pool"] or len(rows) != source.get("selected_rows"):
+            prior = source.get("exclude_group_manifest")
+            if prior is not None:
+                prior_groups = load_excluded_group_ids(root, prior, _depth=_depth + 1)
+                rows, _ = select_fresh_rows(
+                    [], split=source["split"], seed=source["seed"], pool=source["pool"],
+                    limit=source["selected_rows"], excluded_group_ids=prior_groups)
+            else:
+                if source["selected_rows"] != source["pool"]:
+                    raise ValueError("Partial source selections must pin their prior group manifest")
+                rows, _ = load_split(source["split"], source["pool"], source["seed"])
+            if len(rows) != source["selected_rows"]:
                 raise ValueError("Group exclusion source row count changed")
             ids_digest = hashlib.sha256("\n".join(row["id"] for row in rows).encode()).hexdigest()
             source_groups = {row["group_id"] for row in rows}
@@ -100,9 +114,10 @@ def load_excluded_group_ids(root: Path, descriptor: dict | None) -> set[str]:
 
 
 def select_fresh_rows(archived_rows: list[dict], *, seed: int, pool: int, limit: int,
+                      split: str = "ood",
                       excluded_group_ids: set[str] | None = None) -> tuple[list[dict], dict]:
-    """Select public OOD rows, excluding all pinned groups and fresh duplicates."""
-    selected, manifest = load_split("ood", pool, seed)
+    """Select public rows, excluding all pinned groups and fresh duplicates."""
+    selected, manifest = load_split(split, pool, seed)
     seen_groups = {row["group_id"] for row in archived_rows}
     seen_groups.update(excluded_group_ids or ())
     fresh = []
@@ -175,7 +190,8 @@ def summarize_checkpoints(protocol_path: Path, output_dir: Path) -> dict:
         limit=protocol["archived_rows"], expected_ids_sha256=protocol["archived_ids_sha256"])
     excluded_group_ids = load_excluded_group_ids(ROOT, protocol.get("excluded_group_manifest"))
     fresh, fresh_manifest = select_fresh_rows(
-        archived, seed=protocol["fresh_seed"], pool=protocol["fresh_pool"],
+        archived, split=protocol.get("fresh_split", "ood"),
+        seed=protocol["fresh_seed"], pool=protocol["fresh_pool"],
         limit=protocol["fresh_rows"], excluded_group_ids=excluded_group_ids)
     verify_fresh_selection(fresh, protocol)
     scored = {}
@@ -194,6 +210,7 @@ def summarize_checkpoints(protocol_path: Path, output_dir: Path) -> dict:
         "head_sha256": OPENJEV_HEAD_SHA256,
         "backbone": "Qwen3.5-2B NF4; quantized outputs are not the released bf16 outputs",
         "temperature": 1.0,
+        "fresh_split": protocol.get("fresh_split", "ood"),
         "archived": scored["archived"], "fresh": scored["fresh"],
         "excluded_group_manifest_sha256": (protocol.get("excluded_group_manifest") or {}).get("sha256"),
         "excluded_group_count": len(excluded_group_ids),
@@ -233,7 +250,8 @@ def run(protocol_path: Path, output_dir: Path, *, resume: bool) -> dict:
         limit=protocol["archived_rows"], expected_ids_sha256=protocol["archived_ids_sha256"])
     excluded_group_ids = load_excluded_group_ids(ROOT, protocol.get("excluded_group_manifest"))
     fresh, fresh_manifest = select_fresh_rows(
-        archived, seed=protocol["fresh_seed"], pool=protocol["fresh_pool"],
+        archived, split=protocol.get("fresh_split", "ood"),
+        seed=protocol["fresh_seed"], pool=protocol["fresh_pool"],
         limit=protocol["fresh_rows"], excluded_group_ids=excluded_group_ids)
     verify_fresh_selection(fresh, protocol)
     parts = {"archived": (archived, archived_manifest), "fresh": (fresh, fresh_manifest)}
@@ -283,6 +301,7 @@ def run(protocol_path: Path, output_dir: Path, *, resume: bool) -> dict:
         "head_sha256": OPENJEV_HEAD_SHA256,
         "backbone": "Qwen3.5-2B NF4; quantized outputs are not the released bf16 outputs",
         "temperature": 1.0,
+        "fresh_split": protocol.get("fresh_split", "ood"),
         "archived": scored["archived"], "fresh": scored["fresh"],
         "excluded_group_manifest_sha256": (protocol.get("excluded_group_manifest") or {}).get("sha256"),
         "excluded_group_count": len(excluded_group_ids),

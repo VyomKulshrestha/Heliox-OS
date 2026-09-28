@@ -113,7 +113,8 @@ def evaluate(protocol_path: Path, output_path: Path, *, resume: bool) -> dict:
     )
     excluded_group_ids = load_excluded_group_ids(ROOT, source_protocol.get("excluded_group_manifest"))
     fresh, fresh_manifest = select_fresh_rows(
-        archived, seed=source_protocol["fresh_seed"], pool=source_protocol["fresh_pool"],
+        archived, split=source_protocol.get("fresh_split", "ood"),
+        seed=source_protocol["fresh_seed"], pool=source_protocol["fresh_pool"],
         limit=source_protocol["fresh_rows"], excluded_group_ids=excluded_group_ids,
     )
     verify_fresh_selection(fresh, source_protocol)
@@ -202,6 +203,7 @@ def evaluate(protocol_path: Path, output_path: Path, *, resume: bool) -> dict:
         "source_protocol_sha256": protocol["source_selection_protocol"]["sha256"],
         "fresh_selection_signature": baseline_signature,
         "fresh_rows_selected": len(fresh),
+        "fresh_split": source_protocol.get("fresh_split", "ood"),
         "excluded_group_count": len(excluded_group_ids),
         "excluded_group_manifest_sha256": source_protocol.get("excluded_group_manifest", {}).get("sha256"),
         "fresh_ids_sha256": hashlib.sha256("\n".join(row["id"] for row in fresh).encode()).hexdigest(),

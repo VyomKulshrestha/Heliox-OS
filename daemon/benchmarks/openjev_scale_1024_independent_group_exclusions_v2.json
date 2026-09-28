@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "purpose": "exclude_prior_model_exposure_and_the_first_independent_comparison",
+  "dataset_revision": "c67699e13d0ae25e35b77165a4b6b079bedc8aba",
+  "base_manifest": {
+    "path": "benchmarks/openjev_scale_1024_independent_group_exclusions_v1.json",
+    "sha256": "20712f06bfdfb8089f53bdd99636752d04400726b95f377d31bd5dbeb3e82918"
+  },
+  "source_selections": [
+    {
+      "split": "ood",
+      "pool": 2048,
+      "seed": 20261006,
+      "selected_rows": 128,
+      "exclude_group_manifest": {
+        "path": "benchmarks/openjev_scale_1024_independent_group_exclusions_v1.json",
+        "sha256": "20712f06bfdfb8089f53bdd99636752d04400726b95f377d31bd5dbeb3e82918"
+      },
+      "selected_ids_sha256": "1b7d0709a6af1d417fa031de571fc786c95f74a5881666250243354cb935fa14",
+      "group_ids_sha256": "a0dd5ba298d0db74256064de8264492970240db186c55a81a2cae840672bcc5f"
+    }
+  ],
+  "unique_group_count": 1928,
+  "group_ids_sha256": "cd227b458ea4779474a02c1c659557cee5d155bcf2a8fd468a48e75486587cb7"
+}
