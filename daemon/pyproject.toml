@@ -125,6 +125,17 @@ neural = [
     "pylsl>=1.17,<2",
 ]
 
+# Optional, CUDA-only local research scorer. Kept out of `all` because the
+# inference stack is large and the scorer is disabled unless users opt in.
+typed-decision = [
+    "torch>=2.8",
+    "transformers==5.10.2",
+    "peft==0.19.1",
+    "accelerate==1.13.0",
+    "bitsandbytes==0.49.2",
+    "huggingface-hub>=1.33,<2",
+]
+
 # Everything installable from PyPI.
 all = [
     "pilot-daemon[full,automation,vision,browser,documents,ssh,network,wasm,supervision,voice,neural]",

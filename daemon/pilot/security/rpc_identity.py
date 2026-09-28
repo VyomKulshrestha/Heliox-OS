@@ -33,6 +33,7 @@ MCP_LOCAL_METHODS = frozenset(
         "capabilities",
         "agent_capabilities",
         "mcp_plan_task",
+        "mcp_typed_decision",
         "mcp_submit_task",
         "mcp_task_status",
         "mcp_cancel_task",

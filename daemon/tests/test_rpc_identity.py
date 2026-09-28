@@ -51,6 +51,7 @@ def test_local_mcp_can_only_call_its_bounded_adapter_methods() -> None:
     role = RpcClientRole.MCP_LOCAL
     assert rpc_method_allowed(role, "health") is True
     assert rpc_method_allowed(role, "mcp_plan_task") is True
+    assert rpc_method_allowed(role, "mcp_typed_decision") is True
     assert rpc_method_allowed(role, "mcp_submit_task") is True
     assert rpc_method_allowed(role, "mcp_task_status") is True
     assert rpc_method_allowed(role, "mcp_cancel_task") is True

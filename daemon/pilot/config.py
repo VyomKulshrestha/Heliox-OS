@@ -487,6 +487,15 @@ class CognitiveConfig:
 
 
 @dataclass
+class TypedDecisionConfig:
+    """Opt-in local research scorer; never a source of execution authority."""
+
+    enabled: bool = False
+    artifact_dir: str = ""
+    report_path: str = ""
+
+
+@dataclass
 class RedisConfig:
     enabled: bool = False
     host: str = "127.0.0.1"
@@ -582,6 +591,7 @@ class PilotConfig:
     first_run_complete: bool = False
     redis: RedisConfig = field(default_factory=RedisConfig)
     cognitive: CognitiveConfig = field(default_factory=CognitiveConfig)
+    typed_decision: TypedDecisionConfig = field(default_factory=TypedDecisionConfig)
 
     @classmethod
     def load(cls) -> PilotConfig:
@@ -836,6 +846,11 @@ def _validate_config_types(raw: dict) -> None:
         },
         "cognitive": {
             "enabled": bool,
+        },
+        "typed_decision": {
+            "enabled": bool,
+            "artifact_dir": str,
+            "report_path": str,
         },
         "proxy": {
             "http": str,
@@ -1151,6 +1166,11 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
         for k, v in raw["cognitive"].items():
             if hasattr(config.cognitive, k):
                 setattr(config.cognitive, k, v)
+
+    if "typed_decision" in raw:
+        for k, v in raw["typed_decision"].items():
+            if hasattr(config.typed_decision, k):
+                setattr(config.typed_decision, k, v)
 
     if "proxy" in raw and isinstance(raw["proxy"], dict):
         for k, v in raw["proxy"].items():
