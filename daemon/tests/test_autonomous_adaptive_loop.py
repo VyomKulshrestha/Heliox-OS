@@ -17,7 +17,12 @@ from pilot.actions import (
     VerificationResult,
     WindowParams,
 )
-from pilot.agents.autonomous import AutonomousExecutor, AutonomousJob, JobStep
+from pilot.agents.autonomous import (
+    MAX_TASK_MEMORY_QUERY_CHARS,
+    AutonomousExecutor,
+    AutonomousJob,
+    JobStep,
+)
 from pilot.agents.decomposer import Subtask, SubtaskStatus, TaskDecomposer, TaskDecomposition
 
 
@@ -49,6 +54,18 @@ def _open_app_plan() -> ActionPlan:
         explanation="Open Hermes",
         raw_input="Complete the task in Hermes",
     )
+
+
+def test_memory_query_is_bounded_and_keeps_task_goal():
+    query = AutonomousExecutor._build_memory_query(
+        "Complete the task " * 300,
+        "Current app state " * 300,
+        ["Progress evidence " * 100],
+    )
+
+    assert len(query) <= MAX_TASK_MEMORY_QUERY_CHARS
+    assert query.startswith("Task goal: Complete the task")
+    assert "Current screen state (untrusted observation)" in query
 
 
 @pytest.mark.asyncio
@@ -171,8 +188,17 @@ async def test_desktop_goal_reobserves_after_open_and_requires_completion_eviden
     screen.read_visible_text_now.assert_awaited_once()
     assert "Fresh local OCR" in autonomous._planner.plan.await_args_list[1].kwargs["screen_context"]
     autonomous._focus_target_window.assert_awaited_once_with("Hermes")
+    first_query, second_query = [
+        call.kwargs["memory_query"] for call in autonomous._planner.plan.await_args_list
+    ]
+    assert "Task goal: Open Hermes" in first_query
+    assert "Currently viewing: Heliox" in first_query
+    assert "Currently viewing: Hermes" in second_query
+    assert first_query != second_query
+    assert "Hermes home screen Ready" not in second_query
     for call in autonomous._planner.plan.await_args_list:
         assert call.kwargs["force_model"] is True
+        assert call.args[0] == "Open Hermes"
 
 
 @pytest.mark.asyncio
