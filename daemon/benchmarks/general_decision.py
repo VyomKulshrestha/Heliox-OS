@@ -150,7 +150,8 @@ def ranked_probability_score(forecast, target):
     return np.square(cumulative).mean()
 
 
-def selective_risk_metrics(selection_scores: list[float], correct: list[bool]) -> dict:
+def selective_risk_metrics(selection_scores: list[float], correct: list[bool], *,
+                           selection_score: str = "maximum_candidate_probability") -> dict:
     """Measure whether a score ranks correct decisions ahead of errors.
 
     Equal-score groups use expected risk under a random ordering, so ties do
@@ -203,9 +204,178 @@ def selective_risk_metrics(selection_scores: list[float], correct: list[bool]) -
         }
     return {
         "aurc": float(risks.mean()),
-        "selection_score": "maximum_candidate_probability",
+        "selection_score": selection_score,
         "tie_handling": "expected risk under random ordering within equal-score groups",
         "risk_at_coverage": risk_at_coverage,
+    }
+
+
+def correctness_features(probabilities_: np.ndarray) -> np.ndarray:
+    """Summarize any option distribution for a task-agnostic correctness scorer."""
+    values = np.asarray(probabilities_, dtype=np.float64)
+    if (values.ndim != 1 or len(values) < 2 or not np.isfinite(values).all()
+            or np.any(values < 0) or np.any(values > 1)
+            or not math.isclose(float(values.sum()), 1.0, rel_tol=1e-5, abs_tol=1e-5)):
+        raise ValueError("Correctness features need a normalized probability vector")
+    ranked = np.sort(values)[::-1]
+    entropy = -float(np.sum(values * np.log(np.clip(values, 1e-12, 1.0))))
+    normalized_entropy = entropy / math.log(len(values))
+    return np.asarray([ranked[0], ranked[0] - ranked[1], normalized_entropy,
+                       math.log(len(values))], dtype=np.float64)
+
+
+def fit_correctness_scorer(features: np.ndarray, correct: list[bool], *, l2: float = 0.01) -> dict:
+    """Fit a regularized logistic correctness scorer on held-out model outputs."""
+    inputs = np.asarray(features, dtype=np.float64)
+    labels = np.asarray(correct)
+    if (inputs.ndim != 2 or not len(inputs) or labels.shape != (len(inputs),)
+            or not inputs.shape[1] or not np.isfinite(inputs).all()
+            or not np.isin(labels, [False, True]).all()
+            or len(np.unique(labels)) != 2 or not math.isfinite(l2) or l2 < 0):
+        raise ValueError("Correctness training data must contain finite features and both labels")
+
+    labels = labels.astype(np.float64)
+    mean = inputs.mean(axis=0)
+    scale = inputs.std(axis=0)
+    scale[scale < 1e-12] = 1.0
+    normalized = (inputs - mean) / scale
+
+    def objective(parameters: np.ndarray) -> tuple[float, np.ndarray]:
+        weights, bias = parameters[:-1], parameters[-1]
+        logits = normalized @ weights + bias
+        predicted = 1.0 / (1.0 + np.exp(-np.clip(logits, -60.0, 60.0)))
+        loss = np.logaddexp(0.0, logits) - labels * logits
+        value = float(loss.mean() + 0.5 * l2 * (weights @ weights))
+        residual = (predicted - labels) / len(labels)
+        gradient = np.concatenate((normalized.T @ residual + l2 * weights,
+                                   np.asarray([residual.sum()])))
+        return value, gradient
+
+    from scipy.optimize import minimize
+
+    result = minimize(objective, np.zeros(inputs.shape[1] + 1), jac=True,
+                      method="L-BFGS-B", options={"maxiter": 500, "ftol": 1e-12})
+    if not result.success or not np.isfinite(result.x).all():
+        raise RuntimeError(f"Correctness scorer optimization failed: {result.message}")
+    return {"schema_version": 1, "mean": mean, "scale": scale,
+            "weights": result.x[:-1], "bias": float(result.x[-1]), "l2": float(l2)}
+
+
+def predict_correctness(features: np.ndarray, scorer: dict) -> np.ndarray:
+    """Return estimated correctness probabilities from a fitted scorer."""
+    inputs = np.asarray(features, dtype=np.float64)
+    mean = np.asarray(scorer.get("mean"), dtype=np.float64)
+    scale = np.asarray(scorer.get("scale"), dtype=np.float64)
+    weights = np.asarray(scorer.get("weights"), dtype=np.float64)
+    bias = scorer.get("bias")
+    if (inputs.ndim != 2 or mean.ndim != 1 or scale.shape != mean.shape
+            or weights.shape != mean.shape or inputs.shape[1] != len(mean)
+            or not len(inputs) or not np.isfinite(inputs).all()
+            or not np.isfinite(mean).all() or not np.isfinite(scale).all()
+            or np.any(scale <= 0) or not np.isfinite(weights).all()
+            or not isinstance(bias, (float, int)) or not math.isfinite(bias)):
+        raise ValueError("Correctness scorer or features are invalid")
+    logits = ((inputs - mean) / scale) @ weights + bias
+    return 1.0 / (1.0 + np.exp(-np.clip(logits, -60.0, 60.0)))
+
+
+def correctness_metrics(scores: list[float], correct: list[bool], *,
+                        selection_score: str = "estimated_probability_of_top_choice_correct") -> dict:
+    """Evaluate correctness probabilities and their selective-risk ranking."""
+    values = np.asarray(scores, dtype=np.float64)
+    labels = np.asarray(correct)
+    if (values.ndim != 1 or labels.shape != values.shape or not len(values)
+            or not np.isfinite(values).all() or np.any(values < 0) or np.any(values > 1)
+            or not np.isin(labels, [False, True]).all()):
+        raise ValueError("Correctness scores or labels are invalid")
+    labels = labels.astype(bool)
+    clipped = np.clip(values, 1e-12, 1.0 - 1e-12)
+    result = {
+        "rows": len(values),
+        "observed_accuracy": float(labels.mean()),
+        "mean_predicted_correctness": float(values.mean()),
+        "brier": float(np.mean((values - labels) ** 2)),
+        "log_loss": float(np.mean(-(labels * np.log(clipped)
+                                    + (~labels) * np.log1p(-clipped)))),
+        "selective_prediction": selective_risk_metrics(
+            values.tolist(), labels.tolist(), selection_score=selection_score),
+    }
+    positives, negatives = int(labels.sum()), int((~labels).sum())
+    if positives and negatives:
+        order = np.argsort(values, kind="stable")
+        sorted_scores = values[order]
+        ranks = np.empty(len(values), dtype=np.float64)
+        start = 0
+        while start < len(values):
+            end = start + 1
+            while end < len(values) and sorted_scores[end] == sorted_scores[start]:
+                end += 1
+            ranks[order[start:end]] = (start + 1 + end) / 2
+            start = end
+        result["auroc"] = float((ranks[labels].sum() - positives * (positives + 1) / 2)
+                                / (positives * negatives))
+    else:
+        result["auroc"] = None
+    return result
+
+
+def paired_aurc_bootstrap_delta(raw_scores: list[float], learned_scores: list[float],
+                                correct: list[bool], *, replicates: int = 2000,
+                                seed: int = 0) -> dict:
+    """Estimate uncertainty in learned-minus-raw AURC on paired held-out rows."""
+    raw = np.asarray(raw_scores, dtype=np.float64)
+    learned = np.asarray(learned_scores, dtype=np.float64)
+    labels = np.asarray(correct)
+    if (raw.ndim != 1 or learned.shape != raw.shape or labels.shape != raw.shape or not len(raw)
+            or not np.isfinite(raw).all() or not np.isfinite(learned).all()
+            or np.any(raw < 0) or np.any(raw > 1) or np.any(learned < 0) or np.any(learned > 1)
+            or not np.isin(labels, [False, True]).all()
+            or type(replicates) is not int or replicates < 100 or type(seed) is not int):
+        raise ValueError("Paired AURC bootstrap inputs are invalid")
+    labels = labels.astype(bool)
+    rng = np.random.default_rng(seed)
+    deltas = np.empty(replicates, dtype=np.float64)
+    for index in range(replicates):
+        sample = rng.integers(0, len(raw), size=len(raw))
+        sample_labels = labels[sample].tolist()
+        deltas[index] = (
+            selective_risk_metrics(learned[sample].tolist(), sample_labels)["aurc"]
+            - selective_risk_metrics(raw[sample].tolist(), sample_labels)["aurc"]
+        )
+    return {
+        "replicates": replicates,
+        "seed": seed,
+        "confidence_level": 0.95,
+        "delta_aurc_95_percentile_interval": [
+            float(value) for value in np.quantile(deltas, [0.025, 0.975])
+        ],
+        "bootstrap_fraction_learned_lower_aurc": float(np.mean(deltas < 0)),
+    }
+
+
+def paired_mean_bootstrap_delta(candidate: list[float], baseline: list[float], *,
+                                replicates: int = 2000, seed: int = 0) -> dict:
+    """Bootstrap the paired mean candidate-minus-baseline difference."""
+    candidate_values = np.asarray(candidate, dtype=np.float64)
+    baseline_values = np.asarray(baseline, dtype=np.float64)
+    if (candidate_values.ndim != 1 or baseline_values.shape != candidate_values.shape
+            or not len(candidate_values) or not np.isfinite(candidate_values).all()
+            or not np.isfinite(baseline_values).all()
+            or type(replicates) is not int or replicates < 100 or type(seed) is not int):
+        raise ValueError("Paired mean bootstrap inputs are invalid")
+    rng = np.random.default_rng(seed)
+    deltas = np.empty(replicates, dtype=np.float64)
+    for index in range(replicates):
+        sample = rng.integers(0, len(candidate_values), size=len(candidate_values))
+        deltas[index] = float(np.mean(candidate_values[sample] - baseline_values[sample]))
+    return {
+        "replicates": replicates,
+        "seed": seed,
+        "confidence_level": 0.95,
+        "mean_delta_95_percentile_interval": [
+            float(value) for value in np.quantile(deltas, [0.025, 0.975])
+        ],
+        "bootstrap_fraction_positive_delta": float(np.mean(deltas > 0)),
     }
 
 
