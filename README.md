@@ -252,11 +252,12 @@ installed `heliox-mcp` command:
 }
 ```
 
-The local server exposes status, capability, task preview, submission, polling,
-cancellation, and an optional local research-only typed-decision scorer. Every
-submitted action requires visible approval in Heliox; neither the MCP client
-nor the research scorer can approve its own work. See [MCP interfaces](docs/MCP.md)
-for the tool list and security boundary.
+The local server exposes status, capabilities, task preview, submission,
+polling, cancellation, and optional local research-only typed-decision scoring
+for single or batched questions. Every submitted action requires visible
+approval in Heliox; neither the MCP client nor the research scorer can approve
+its own work. See [MCP interfaces](docs/MCP.md) for the tool list and security
+boundary.
 
 ## Try these tasks
 
