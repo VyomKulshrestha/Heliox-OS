@@ -17,7 +17,7 @@ MAX_OPTIONS = 64
 MAX_STATE_CHARS = 16_384
 MAX_QUESTION_CHARS = 4_000
 MAX_OPTION_CHARS = 1_024
-MAX_CANDIDATE_MICROBATCH = 8
+MAX_CANDIDATE_MICROBATCH = 16
 
 
 def _candidate_microbatch_size(max_prompt_tokens: int, configured_max: int) -> int:
