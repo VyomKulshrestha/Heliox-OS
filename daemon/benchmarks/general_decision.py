@@ -136,6 +136,20 @@ def probabilities(logits: np.ndarray, temperature: float = 1.0) -> np.ndarray:
     return values / sum(values)
 
 
+def ranked_probability_score(forecast, target):
+    """Normalized cumulative-probability error for ordered categories."""
+    if forecast.ndim != 1 or target.shape != forecast.shape or len(target) < 2:
+        raise ValueError("Ordinal probabilities and targets must be matching vectors")
+    difference = forecast[:-1] - target[:-1]
+    if type(forecast).__module__.split(".", maxsplit=1)[0] == "torch":
+        import torch
+
+        cumulative = torch.cumsum(difference, dim=0)
+        return cumulative.square().mean()
+    cumulative = np.cumsum(difference)
+    return np.square(cumulative).mean()
+
+
 def format_answer(kind: str, options: list[str], logits: np.ndarray,
                   temperature: float = 1.0) -> dict:
     """Convert model scores to a typed decision without executing anything."""
@@ -179,6 +193,7 @@ def metrics(rows: list[dict], logits: list[np.ndarray], temperature: float) -> d
         if row["kind"] == "score":
             positions = np.arange(len(target))
             item["rank_error"] = float(abs(positions @ predicted - positions @ target))
+            item["ranked_probability_score"] = float(ranked_probability_score(predicted, target))
         per_row.append(item)
 
     def aggregate(items: list[dict]) -> dict:
@@ -188,6 +203,8 @@ def metrics(rows: list[dict], logits: list[np.ndarray], temperature: float) -> d
                   "mean_brier": float(np.mean([item["brier"] for item in items]))}
         if all(item["kind"] == "score" for item in items):
             result["mean_rank_error"] = float(np.mean([item["rank_error"] for item in items]))
+            result["mean_ranked_probability_score"] = float(np.mean(
+                [item["ranked_probability_score"] for item in items]))
         if all(item["kind"] == "noul" for item in items):
             true_positive = sum(item["gold_index"] == 1 and item["predicted_index"] == 1 for item in items)
             true_negative = sum(item["gold_index"] == 0 and item["predicted_index"] == 0 for item in items)
