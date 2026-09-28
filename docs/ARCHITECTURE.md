@@ -187,7 +187,10 @@ explicitly reference-only; screen OCR is not copied into the retrieval query.
 This inference-time working-memory refresh follows the phase-aware direction
 of [HyMEM](https://aclanthology.org/2026.findings-acl.549/) without adopting
 its VLM pipeline or making a model-parity claim. Retrieval uses Heliox's local
-memory stores and existing token budget, not an additional model call.
+memory stores and existing token budget, not an additional model call. Keeping
+the execution summary separate from model reasoning is also consistent with
+[UI-Copilot's memory-decoupling approach](https://aclanthology.org/2026.acl-long.904/);
+Heliox does not adopt its learned policy or claim its benchmark results.
 
 ### 5. Companion and interruption coordination
 
