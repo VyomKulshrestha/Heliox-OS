@@ -4,7 +4,11 @@ import numpy as np
 import pytest
 
 from pilot.intelligence import packed_typed_decision as packed
-from scripts.train_packed_typed_decision import _read_feature_cache, _write_feature_cache
+from scripts.train_packed_typed_decision import (
+    _read_feature_cache,
+    _shuffled_context_pairs,
+    _write_feature_cache,
+)
 
 
 class FakeTokenizer:
@@ -188,3 +192,41 @@ def test_feature_cache_round_trips_with_protocol_signature(tmp_path) -> None:
     assert hidden_size == 2
     with pytest.raises(ValueError, match="does not match"):
         _read_feature_cache(cache, "different-signature", {"train": [row]})
+
+
+def test_shuffled_context_pairs_are_deterministic_and_cross_group() -> None:
+    rows = [
+        {
+            "id": f"row-{index}",
+            "group_id": f"group-{index}",
+            "kind": "choice",
+            "state_json": f'{{"screen": {index}}}',
+        }
+        for index in range(4)
+    ]
+
+    pairs = _shuffled_context_pairs(rows, seed=17)
+    repeated = _shuffled_context_pairs(rows, seed=17)
+
+    assert [(row["id"], donor["id"]) for row, donor in pairs] == [
+        (row["id"], donor["id"]) for row, donor in repeated
+    ]
+    assert len(pairs) == 4
+    assert {donor["id"] for _, donor in pairs} == {row["id"] for row in rows}
+    assert all(
+        row["id"] != donor["id"]
+        and row["group_id"] != donor["group_id"]
+        and row["state_json"] != donor["state_json"]
+        and row["kind"] == donor["kind"]
+        for row, donor in pairs
+    )
+
+
+def test_shuffled_context_pairs_skip_rows_without_a_distinct_context() -> None:
+    rows = [
+        {"id": "one", "group_id": "one", "kind": "choice", "state_json": '{"screen": 1}'},
+        {"id": "two", "group_id": "two", "kind": "noul", "state_json": '{"screen": 2}'},
+        {"id": "three", "group_id": "three", "kind": "noul", "state_json": '{"screen": 2}'},
+    ]
+
+    assert _shuffled_context_pairs(rows, seed=0) == []
