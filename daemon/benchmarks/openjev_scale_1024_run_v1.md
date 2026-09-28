@@ -63,10 +63,14 @@ After adding a generalized ranked-probability metric, I rescored the cached
 logits on the original preregistered 219-row OOD split (no model or data
 changes). Its 51 Score rows had mean rank error `0.3932` and mean RPS
 `0.0854` for released Open-Jev, versus `0.3294` and `0.0703` for the candidate.
+The paired candidate-minus-baseline RPS difference was `-0.0150`; a 10,000-draw
+group-cluster bootstrap over 38 groups (seed `482182`) gave a 95% interval of
+`-0.0337` to `-0.0018`.
 This is a retrospective metric on the already-reported split, not a fresh
 evaluation and not evidence that the candidate was trained with RPS (its
 `ordinal_weight` was zero). It does not negate the separate 76-row post-hoc
-Score regression above.
+Score regression above. The RPS choice and bootstrap were post hoc, so this
+interval is exploratory rather than a preregistered acceptance result.
 
 A final local typed-scoring smoke test used a new read-only system-health
 question and four runtime-supplied options. The model assigned 0.788 to the
