@@ -38,6 +38,8 @@ from pilot.intelligence.packed_typed_decision import (  # noqa: E402
 )
 from scripts.qwen_model_pin import MODEL, REVISION  # noqa: E402
 
+BACKBONE_DTYPE = "bfloat16"
+
 
 def _state_value(row: dict) -> object:
     try:
@@ -70,6 +72,7 @@ def _features(backbone, tokenizer, row: dict, *, max_length: int, device: str) -
             use_cache=False,
             return_dict=True,
         ).last_hidden_state[0]
+    torch.cuda.synchronize(device)
 
     question = packed.questions[0]
     state_vector = hidden[: packed.state_token_count].float().mean(0).cpu().numpy()
@@ -106,6 +109,10 @@ def _encode_split(
             if "model limit" not in str(exc):
                 raise
             skipped.append(row["id"])
+        except RuntimeError as exc:
+            raise RuntimeError(
+                f"Feature extraction failed for {split} row {index}/{len(rows)} id={row['id']}"
+            ) from exc
         if index % 64 == 0 or index == len(rows):
             print(
                 json.dumps(
@@ -122,6 +129,10 @@ def _encode_split(
             )
             if on_checkpoint is not None:
                 on_checkpoint(encoded, skipped)
+        if device.startswith("cuda") and (index % 32 == 0 or index == len(rows)):
+            import torch
+
+            torch.cuda.empty_cache()
     return encoded, skipped
 
 
@@ -206,10 +217,137 @@ def _row_hash(rows: list[dict]) -> str:
     return digest.hexdigest()
 
 
+def _shuffled_context_pairs(rows: list[dict], seed: int) -> list[tuple[dict, dict]]:
+    """Pair each row with another same-kind row's context, never its own/group context."""
+    grouped: dict[str, list[dict]] = {}
+    state_keys = {}
+    for row in rows:
+        grouped.setdefault(row["kind"], []).append(row)
+        try:
+            state_keys[row["id"]] = json.dumps(
+                json.loads(row["state_json"]), sort_keys=True, separators=(",", ":")
+            )
+        except (KeyError, TypeError, json.JSONDecodeError) as exc:
+            raise ValueError("Shuffled-context rows need valid state_json") from exc
+
+    rng = random.Random(seed)
+    pairs = []
+    for kind in sorted(grouped):
+        candidates = list(grouped[kind])
+        rng.shuffle(candidates)
+        if len(candidates) < 2:
+            continue
+
+        def can_pair(row: dict, donor: dict) -> bool:
+            return (
+                row["id"] != donor["id"]
+                and row["group_id"] != donor["group_id"]
+                and state_keys[row["id"]] != state_keys[donor["id"]]
+            )
+
+        offsets = list(range(1, len(candidates)))
+        rng.shuffle(offsets)
+        offset = next(
+            (
+                value
+                for value in offsets
+                if all(can_pair(row, candidates[(index + value) % len(candidates)])
+                       for index, row in enumerate(candidates))
+            ),
+            None,
+        )
+        if offset is not None:
+            pairs.extend(
+                (row, candidates[(index + offset) % len(candidates)])
+                for index, row in enumerate(candidates)
+            )
+            continue
+
+        for row in candidates:
+            donors = [candidate for candidate in candidates if can_pair(row, candidate)]
+            if donors:
+                pairs.append((row, rng.choice(donors)))
+    return pairs
+
+
+def _shuffled_context_control(
+    args: argparse.Namespace,
+    head,
+    items: list[dict],
+    original_logits: list[np.ndarray],
+    temperature: float,
+) -> dict:
+    import torch
+    from huggingface_hub import snapshot_download
+    from transformers import AutoModel, AutoTokenizer
+
+    pairs = _shuffled_context_pairs([item["row"] for item in items], args.seed + 1)
+    if not pairs:
+        raise RuntimeError("No valid same-kind, cross-group contexts are available to shuffle")
+
+    model_path = snapshot_download(MODEL, revision=REVISION, local_files_only=True)
+    tokenizer = AutoTokenizer.from_pretrained(model_path, local_files_only=True)
+    backbone = AutoModel.from_pretrained(
+        model_path,
+        local_files_only=True,
+        dtype=torch.bfloat16,
+        attn_implementation="eager",
+        low_cpu_mem_usage=True,
+        device_map="cuda:0",
+    ).eval()
+    backbone.requires_grad_(False)
+    shuffled = []
+    skipped = []
+    try:
+        for index, (row, donor) in enumerate(pairs, 1):
+            swapped = {**row, "state_json": donor["state_json"]}
+            try:
+                features = _features(
+                    backbone,
+                    tokenizer,
+                    swapped,
+                    max_length=args.max_length,
+                    device="cuda:0",
+                )
+            except ValueError as exc:
+                if "model limit" not in str(exc):
+                    raise
+                skipped.append(row["id"])
+                continue
+            features["row"] = row
+            shuffled.append(features)
+            if index % 32 == 0 or index == len(pairs):
+                torch.cuda.empty_cache()
+    finally:
+        del backbone, tokenizer
+        torch.cuda.empty_cache()
+
+    if not shuffled:
+        raise RuntimeError("No shuffled-context rows fit the model sequence limit")
+
+    shuffled_logits = _logits(head, shuffled, device="cuda:0")
+    rows = [item["row"] for item in shuffled]
+    logit_by_id = {
+        item["row"]["id"]: values for item, values in zip(items, original_logits, strict=True)
+    }
+    paired_original_logits = [logit_by_id[row["id"]] for row in rows]
+    return {
+        "seed": args.seed + 1,
+        "pairing": "same kind; different row, group, and canonical state; cyclic derangement when possible",
+        "requested_pairs": len(pairs),
+        "scored_rows": len(rows),
+        "skipped_over_length_ids": skipped,
+        "original_context": metrics(rows, paired_original_logits, temperature),
+        "shuffled_context": metrics(rows, shuffled_logits, temperature),
+        "uniform": uniform_baseline(rows),
+    }
+
+
 def _cache_signature(rows: dict[str, list[dict]], manifests: dict, max_length: int) -> str:
     identity = {
         "model": MODEL,
         "model_revision": REVISION,
+        "backbone_dtype": BACKBONE_DTYPE,
         "dataset": DATASET,
         "dataset_revision": DATASET_REVISION,
         "max_length": max_length,
@@ -391,7 +529,7 @@ def run(args: argparse.Namespace) -> dict:
         backbone = AutoModel.from_pretrained(
             model_path,
             local_files_only=True,
-            dtype=torch.float16,
+            dtype=torch.bfloat16,
             attn_implementation="eager",
             low_cpu_mem_usage=True,
             device_map="cuda:0",
@@ -511,6 +649,11 @@ def run(args: argparse.Namespace) -> dict:
     temperature = _temperature(calibration_logits, [item["row"] for item in encoded["calibration"]])
     test_logits = _logits(head, encoded["test"], device="cuda:0")
     ood_logits = _logits(head, encoded["ood"], device="cuda:0")
+    shuffled_context = (
+        _shuffled_context_control(args, head, encoded["ood"], ood_logits, temperature)
+        if args.shuffled_context_control
+        else None
+    )
     test_rows = [item["row"] for item in encoded["test"]]
     ood_rows = [item["row"] for item in encoded["ood"]]
 
@@ -532,6 +675,7 @@ def run(args: argparse.Namespace) -> dict:
         "schema_version": 1,
         "model": MODEL,
         "model_revision": REVISION,
+        "backbone_dtype": BACKBONE_DTYPE,
         "dataset": DATASET,
         "dataset_revision": DATASET_REVISION,
         "training_method": "frozen Qwen3-0.6B + packed tree mask + shared bilinear pointer head",
@@ -560,6 +704,7 @@ def run(args: argparse.Namespace) -> dict:
         "trained_test": metrics(test_rows, test_logits, temperature),
         "uniform_ood": uniform_baseline(ood_rows),
         "trained_ood": metrics(ood_rows, ood_logits, temperature),
+        "shuffled_context_control": shuffled_context,
         "pointer_head_sha256": hashlib.sha256(weights_path.read_bytes()).hexdigest(),
         "peak_cuda_gib": round(torch.cuda.max_memory_allocated() / 1024**3, 3),
         "elapsed_seconds": round(time.monotonic() - started, 1),
@@ -589,6 +734,11 @@ def main() -> None:
     parser.add_argument("--brier-weight", type=float, default=0.1)
     parser.add_argument("--ordinal-weight", type=float, default=0.1)
     parser.add_argument("--seed", type=int, default=20260928)
+    parser.add_argument(
+        "--shuffled-context-control",
+        action="store_true",
+        help="Re-encode the OOD rows with other rows' states to test state dependence.",
+    )
     args = parser.parse_args()
     if args.patience < 1:
         raise ValueError("Patience must be positive")
@@ -604,6 +754,7 @@ def main() -> None:
                 "test_nll": report["trained_test"]["mean_nll"],
                 "ood_top1": report["trained_ood"]["top1_accuracy"],
                 "ood_nll": report["trained_ood"]["mean_nll"],
+                "shuffled_context": report["shuffled_context_control"],
                 "peak_cuda_gib": report["peak_cuda_gib"],
                 "elapsed_seconds": report["elapsed_seconds"],
             },
