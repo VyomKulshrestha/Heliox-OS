@@ -352,6 +352,25 @@ def test_ui_jepa_gating_accepts_bound_validated_artifact(tmp_path) -> None:
     assert predictor.status()["gating_action_types"] == ["mouse_click", "mouse_double_click", "mouse_right_click"]
 
 
+def test_visual_geometry_prediction_does_not_expand_gating_to_mouse_move(tmp_path) -> None:
+    weights = tmp_path / "ui_jepa.npz"
+    _write_jepa_weights(weights, validated=True, geometry=True)
+    predictor = UiJepaPredictor(weights)
+    state = _state()
+    state.ui.update(latent_embedding=[20.0, -20.0, 20.0], screen_bounds=(0, 0, 100, 100))
+
+    move = Action(action_type=ActionType.MOUSE_MOVE, parameters=MouseParams(x=50, y=50))
+    click = Action(action_type=ActionType.MOUSE_CLICK, parameters=MouseParams(x=50, y=50))
+
+    move_prediction = predictor.predict_optional(state, move)
+    click_prediction = predictor.predict_optional(state, click)
+
+    assert move_prediction is not None
+    assert move_prediction.risk_evidence == ()
+    assert click_prediction is not None
+    assert click_prediction.risk_evidence
+
+
 def test_legacy_action_type_only_artifact_cannot_gate_clicks(tmp_path) -> None:
     weights = tmp_path / "ui_jepa.npz"
     _write_jepa_weights(weights, validated=True)
