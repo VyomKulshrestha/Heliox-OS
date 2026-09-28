@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "purpose": "offline_public_data_scale_check_for_a_general_typed_decision_model",
+  "source": {
+    "dataset": "ZefanCai/Open-Jev",
+    "config": "release-v2-redistributable",
+    "revision": "c67699e13d0ae25e35b77165a4b6b079bedc8aba",
+    "training_license_gate": "Use only rows whose per-row provenance explicitly verifies CC0-1.0."
+  },
+  "initial_release": {
+    "repository": "ZefanCai/Open-Jev-2B",
+    "revision": "0c7aa498b1627be8da4acf34c863ff0ee0a92785",
+    "adapter_sha256": "2d23935b1a7380db444abac572c04646918ba794e59002d1588236182a3ca18f",
+    "head_sha256": "3532cd576c58d5ad5bf17c3e9f2df4be8c70e08c07fa6bb7fa673dcd7b401f2a"
+  },
+  "training": {
+    "backbone": "Qwen/Qwen3.5-2B",
+    "backbone_revision": "15852e8c16360a2fea060d615a32b45270f8a8fc",
+    "warm_start_from_released_openjev": true,
+    "seed": 482176,
+    "rows": {
+      "train": 1024,
+      "calibration": 256,
+      "test": 256,
+      "ood": 256
+    },
+    "split_seeds": {
+      "train": 482176,
+      "calibration": 482177,
+      "test": 482178,
+      "ood": 482179
+    },
+    "max_length": 512,
+    "lora_rank": 8,
+    "prompt_style": "candidate_v1",
+    "auxiliary_action_labels": null,
+    "network_downloads": false
+  },
+  "primary_comparison": {
+    "baseline": "The hash-pinned released Open-Jev adapter and head, scored on the same selected rows.",
+    "candidate": "Heliox fine-tune initialized from that release, using the same candidate-conditioned scoring interface and temperature fit only on calibration rows.",
+    "metrics": [
+      "overall and per-kind top-1 accuracy",
+      "overall and per-kind negative log likelihood",
+      "overall and per-kind Brier score"
+    ],
+    "acceptance": "A research improvement requires candidate OOD top-1 accuracy no lower than baseline, lower aggregate OOD NLL, and no decision kind more than 5 percentage points below baseline. Otherwise reject the fine-tune and retain the released checkpoint as the stronger general decision model."
+  },
+  "limitations": [
+    "This compares against the released open-source Open-Jev checkpoint, not proprietary TypeSafe Jev.",
+    "No TypeSafe Jev outputs are collected, used as labels, or used for tuning.",
+    "This benchmark does not establish desktop task success, authorization, or execution safety.",
+    "No checkpoint from this protocol may be enabled for execution authority."
+  ],
+  "promotion": "none"
+}
