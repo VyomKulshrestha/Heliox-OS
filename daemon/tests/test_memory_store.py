@@ -335,6 +335,53 @@ class TestRecord:
         assert "Outcome: success" in episodes[0].text
 
     @pytest.mark.asyncio
+    async def test_verified_action_round_stays_in_progress_until_task_completion(
+        self, store, fake_plan, fake_results
+    ):
+        from types import SimpleNamespace
+
+        from pilot.actions import VerificationResult
+
+        fake_plan.actions = [SimpleNamespace(action_type=SimpleNamespace(value="browser_navigate"))]
+        with patch("pilot.memory.store.asyncio.to_thread", new_callable=AsyncMock):
+            await store.record(
+                "complete the browser task",
+                fake_plan,
+                fake_results,
+                session_id="chat-in-progress",
+                task_id="task-in-progress",
+                verification=VerificationResult(passed=True),
+                task_complete=False,
+            )
+
+        episodes = await store._temporal.query_episodes(
+            "complete browser task",
+            session_id="chat-in-progress",
+        )
+
+        assert len(episodes) == 1
+        assert episodes[0].provenance == MemoryProvenance.INFERRED.value
+        assert "Outcome: in_progress" in episodes[0].text
+
+    @pytest.mark.asyncio
+    async def test_fresh_task_completion_creates_verified_terminal_episode(self, store):
+        await store.record_task_completion(
+            "complete the browser task",
+            session_id="chat-complete",
+            task_id="task-complete",
+            action_types=["browser_navigate"],
+        )
+
+        episodes = await store._temporal.query_episodes(
+            "complete browser task",
+            session_id="chat-complete",
+        )
+
+        assert len(episodes) == 1
+        assert episodes[0].provenance == MemoryProvenance.VERIFIED_OUTCOME.value
+        assert "Outcome: success" in episodes[0].text
+
+    @pytest.mark.asyncio
     async def test_verification_failure_overrides_successful_action_results(
         self, store, fake_plan, fake_results
     ):

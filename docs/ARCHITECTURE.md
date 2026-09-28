@@ -176,10 +176,14 @@ contradiction history, and retraction state. The context assembler ranks
 eligible items by relevance, recency, confidence, provenance, scope utility,
 and outcome utility under a strict token budget.
 Temporal episodes are marked as verified outcomes only after a passing
-postcondition verifier; successful tool calls without that check remain
-unverified and are ranked with lower provenance weight. This conservative
-validation boundary is consistent with MAGE's Maintain operation, without
-adopting its hierarchical execution tree ([paper](https://arxiv.org/abs/2606.06090)).
+postcondition verifier and task completion. A verified action round in an
+unfinished interactive task remains lower-trust progress; the terminal episode
+is written only after a fresh observation accepts a goal-complete claim that
+quotes literal screen evidence. Exact-text requests must also match the fresh
+editable field. Successful tool calls without that check remain unverified and
+are ranked with lower provenance weight. This conservative validation boundary
+is consistent with MAGE's Maintain operation, without adopting its
+hierarchical execution tree ([paper](https://arxiv.org/abs/2606.06090)).
 
 A new chat receives the durable user model and relevant memories, not an
 unbounded transcript dump. Memory is advisory: it cannot grant permission or

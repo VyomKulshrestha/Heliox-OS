@@ -26,7 +26,7 @@ from pilot.agents.autonomous import (
 from pilot.agents.decomposer import Subtask, SubtaskStatus, TaskDecomposer, TaskDecomposition
 
 
-def _autonomous(*, plans, results, verifications, screen_vision=None) -> AutonomousExecutor:
+def _autonomous(*, plans, results, verifications, screen_vision=None, memory=None) -> AutonomousExecutor:
     planner = SimpleNamespace(plan=AsyncMock(side_effect=plans))
     executor = SimpleNamespace(execute=AsyncMock(side_effect=results))
     verifier = SimpleNamespace(verify=AsyncMock(side_effect=verifications))
@@ -36,6 +36,7 @@ def _autonomous(*, plans, results, verifications, screen_vision=None) -> Autonom
         verifier=verifier,
         decomposer=MagicMock(),
         screen_vision=screen_vision,
+        memory=memory,
     )
     autonomous._focus_target_window = AsyncMock(return_value=True)
     autonomous._read_target_window_text = AsyncMock(return_value="")
@@ -74,6 +75,35 @@ def test_memory_query_is_bounded_and_keeps_task_goal():
     )
     assert "Currently viewing: Mail" in private_text_query
     assert "confidential draft" not in private_text_query
+
+
+def test_goal_completion_requires_a_literal_quote_from_fresh_observation():
+    matches, reason = AutonomousExecutor._completion_evidence_matches_goal(
+        "Open the requested app",
+        "",
+        'GOAL_COMPLETE: "Workspace ready" is visible.',
+        "Currently viewing: App — App\nFresh local OCR: Workspace ready",
+    )
+    assert matches
+    assert not reason
+
+    matches, reason = AutonomousExecutor._completion_evidence_matches_goal(
+        "Open the requested app",
+        "",
+        'GOAL_COMPLETE: "Everything is ready".',
+        "Currently viewing: App — App\nFresh local OCR: Workspace ready",
+    )
+    assert not matches
+    assert "not present in the fresh observation" in reason
+
+    matches, reason = AutonomousExecutor._completion_evidence_matches_goal(
+        "Open the requested app",
+        "",
+        "GOAL_COMPLETE: It is ready.",
+        "Currently viewing: App — App",
+    )
+    assert not matches
+    assert "did not quote exact text" in reason
 
 
 @pytest.mark.asyncio
@@ -173,22 +203,28 @@ async def test_desktop_goal_reobserves_after_open_and_requires_completion_eviden
         get_context_for_planner=MagicMock(side_effect=["Viewing Heliox", "Viewing Hermes"]),
         read_visible_text_now=AsyncMock(return_value="Hermes home screen Ready"),
     )
+    memory = SimpleNamespace(record_task_completion=AsyncMock())
+    on_round_complete = AsyncMock()
     autonomous = _autonomous(
         plans=[
             open_plan,
-            ActionPlan(actions=[], explanation="GOAL_COMPLETE: Hermes is open and ready."),
+            ActionPlan(actions=[], explanation='GOAL_COMPLETE: "Hermes home screen Ready" is visible.'),
         ],
         results=[[opened]],
         verifications=[VerificationResult(passed=True, details=["application opened"])],
         screen_vision=screen,
+        memory=memory,
     )
-    job = AutonomousJob(goal="Open Hermes", steps=[JobStep(index=0, title="Execute", description="Open")])
 
-    await autonomous._execute_single_step(job)
+    step = await autonomous.execute_goal(
+        "Open Hermes",
+        on_round_complete=on_round_complete,
+        memory_task_id="workflow-1",
+    )
 
-    assert job.steps[0].status == "success"
-    assert job.steps[0].rounds == 2
-    assert "GOAL_COMPLETE" in job.steps[0].output
+    assert step.status == "success"
+    assert step.rounds == 2
+    assert "GOAL_COMPLETE" in step.output
     assert autonomous._planner.plan.await_count == 2
     assert autonomous._executor.execute.await_count == 1
     assert autonomous._verifier.verify.await_count == 1
@@ -204,6 +240,14 @@ async def test_desktop_goal_reobserves_after_open_and_requires_completion_eviden
     assert "Currently viewing: Hermes" in second_query
     assert first_query != second_query
     assert "Hermes home screen Ready" not in second_query
+    on_round_complete.assert_awaited_once()
+    assert on_round_complete.await_args.args[-1] is False
+    memory.record_task_completion.assert_awaited_once_with(
+        "Open Hermes",
+        session_id="default",
+        task_id="workflow-1",
+        action_types=["open_application"],
+    )
     for call in autonomous._planner.plan.await_args_list:
         assert call.kwargs["force_model"] is True
         assert call.args[0] == "Open Hermes"
@@ -364,7 +408,10 @@ async def test_exact_text_completion_rejects_case_mismatch_and_replans():
         plans=[
             ActionPlan(actions=[], explanation="GOAL_COMPLETE: exact text is visible"),
             correction_plan,
-            ActionPlan(actions=[], explanation="GOAL_COMPLETE: exact text is now visible"),
+            ActionPlan(
+                actions=[],
+                explanation='GOAL_COMPLETE: "HELIOX AUTONOMY LIVE TEST" is visible in the document.',
+            ),
         ],
         results=[[focused, typed]],
         verifications=[VerificationResult(passed=True, details=["typed"])],
@@ -443,7 +490,12 @@ async def test_fresh_screen_can_verify_goal_was_already_complete():
         get_context_for_planner=MagicMock(return_value="Viewing Hermes — requested record is complete"),
     )
     autonomous = _autonomous(
-        plans=[ActionPlan(actions=[], explanation="GOAL_COMPLETE: The requested record is visible.")],
+        plans=[
+            ActionPlan(
+                actions=[],
+                explanation='GOAL_COMPLETE: "requested record is complete" is visible.',
+            )
+        ],
         results=[],
         verifications=[],
         screen_vision=screen,
@@ -573,7 +625,7 @@ async def test_failed_verification_is_fed_into_next_adaptive_round():
         plans=[
             first_plan,
             second_plan,
-            ActionPlan(actions=[], explanation="GOAL_COMPLETE: Hermes is visible."),
+            ActionPlan(actions=[], explanation='GOAL_COMPLETE: "Hermes" is visible.'),
         ],
         results=[[first_result], [second_result]],
         verifications=[

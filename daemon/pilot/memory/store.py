@@ -297,8 +297,9 @@ class MemoryStore:
         task_id: str = "",
         provenance_event_id: str = "",
         verification: Any | None = None,
+        task_complete: bool = True,
     ) -> None:
-        """Record execution results; temporal success requires a passing verifier."""
+        """Record execution results; temporal success requires task completion and a passing verifier."""
         if not self._pool:
             return
 
@@ -354,11 +355,20 @@ class MemoryStore:
                 bool(results)
                 and bool(getattr(plan, "actions", None))
                 and success
+                and task_complete
                 and verification is not None
                 and bool(getattr(verification, "passed", False))
             )
             verification_failed = verification is not None and not bool(getattr(verification, "passed", False))
-            outcome = "success" if verified else "failure" if not success or verification_failed else "unverified"
+            outcome = (
+                "success"
+                if verified
+                else "failure"
+                if not success or verification_failed
+                else "in_progress"
+                if task_complete is False and verification is not None
+                else "unverified"
+            )
             action_types = sorted(
                 {
                     str(getattr(getattr(action, "action_type", ""), "value", ""))
@@ -389,6 +399,29 @@ class MemoryStore:
                     MemoryProvenance.VERIFIED_OUTCOME if verified else MemoryProvenance.INFERRED
                 ),
             )
+
+    async def record_task_completion(
+        self,
+        goal: str,
+        *,
+        session_id: str,
+        task_id: str,
+        action_types: list[str] | None = None,
+    ) -> None:
+        """Store a task-level success after the autonomous loop accepts fresh completion evidence."""
+        if self._temporal is None:
+            return
+        context = get_experience_context()
+        await self._temporal.record_episode(
+            session_id=session_id or context.session_id or "default",
+            task_id=task_id or context.task_id,
+            summary=f"Verified task completion: {goal[:500]}",
+            outcome="success",
+            tags=action_types or [],
+            importance=0.75,
+            payload={"verification_passed": True, "completion_basis": "fresh_observation"},
+            provenance=MemoryProvenance.VERIFIED_OUTCOME,
+        )
 
     async def get_context(
         self,
