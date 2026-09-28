@@ -59,6 +59,10 @@ def test_candidate_microbatch_caps_long_prompts_and_respects_lower_limits() -> N
     assert _candidate_microbatch_size(768, 8) == 4
     assert _candidate_microbatch_size(769, 8) == 2
     assert _candidate_microbatch_size(1_024, 1) == 1
+    assert _candidate_microbatch_size(512, 16) == 16
+    assert _candidate_microbatch_size(513, 16) == 4
+    assert _candidate_microbatch_size(768, 16) == 4
+    assert _candidate_microbatch_size(769, 16) == 2
     with pytest.raises(ValueError, match="must be positive"):
         _candidate_microbatch_size(0, 8)
 
