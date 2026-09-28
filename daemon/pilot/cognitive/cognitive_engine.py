@@ -285,11 +285,13 @@ class CognitiveEngine:
         voice_transcript: str = "",
         gesture_name: str = "",
     ) -> list[dict[str, Any]]:
-        """Score intent candidates by predicted alignment with voice/gesture.
+        """Return lexical-overlap diagnostics for candidate descriptions.
 
-        Returns candidates enriched with `neural_affinity` field (0-1).
+        This is a transparent heuristic, not a learned or neural prediction.
+        Results are advisory and must not independently select or authorize an
+        action.
         """
-        return self._intent_affinity_heuristic(candidates, voice_transcript, gesture_name)
+        return self._intent_affinity_heuristic(candidates, voice_transcript)
 
     # ── Heuristic predictions ──
 
@@ -476,10 +478,10 @@ class CognitiveEngine:
         self,
         candidates: list[dict[str, Any]],
         voice: str,
-        gesture: str,
     ) -> list[dict[str, Any]]:
-        """Score intent candidates using Jaccard word-overlap + gesture
-        cross-modal match. Jaccard (intersection / union) penalizes verbose
+        """Score intent candidates using Jaccard word-overlap.
+
+        Jaccard (intersection / union) penalizes verbose
         candidate descriptions that merely contain the voice words as a
         small subset, unlike a plain recall-only overlap ratio."""
         scored = []
@@ -506,16 +508,11 @@ class CognitiveEngine:
             else:
                 overlap = 0.3
 
-            gesture_bonus = 0.0
-            gesture_map = c.get("gesture_match", "")
-            if gesture and gesture_map and gesture.lower() == gesture_map.lower():
-                gesture_bonus = 0.3
-
             c_copy = dict(c)
-            c_copy["neural_affinity"] = min(1.0, overlap * 0.7 + gesture_bonus + 0.1)
+            c_copy["heuristic_affinity"] = overlap
             scored.append(c_copy)
 
-        return sorted(scored, key=lambda x: x["neural_affinity"], reverse=True)
+        return sorted(scored, key=lambda x: x["heuristic_affinity"], reverse=True)
 
     # ── Stats ──
 
