@@ -283,7 +283,10 @@ class TestRecord:
         assert len(called) >= 1
 
     @pytest.mark.asyncio
-    async def test_record_creates_verified_temporal_episode(self, store, fake_plan, fake_results):
+    async def test_action_success_is_not_verified_without_verifier(self, store, fake_plan, fake_results):
+        from types import SimpleNamespace
+
+        fake_plan.actions = [SimpleNamespace(action_type=SimpleNamespace(value="browser_navigate"))]
         with patch("pilot.memory.store.asyncio.to_thread", new_callable=AsyncMock):
             await store.record(
                 "search the web for release notes",
@@ -299,8 +302,65 @@ class TestRecord:
         )
 
         assert len(episodes) == 1
-        assert episodes[0].provenance == MemoryProvenance.VERIFIED_OUTCOME.value
+        assert episodes[0].provenance == MemoryProvenance.INFERRED.value
+        assert "Outcome: unverified" in episodes[0].text
         assert "search the web" in episodes[0].text
+
+    @pytest.mark.asyncio
+    async def test_temporal_episode_is_verified_only_after_goal_verification(
+        self, store, fake_plan, fake_results
+    ):
+        from types import SimpleNamespace
+
+        from pilot.actions import VerificationResult
+
+        fake_plan.actions = [SimpleNamespace(action_type=SimpleNamespace(value="browser_navigate"))]
+        with patch("pilot.memory.store.asyncio.to_thread", new_callable=AsyncMock):
+            await store.record(
+                "search the web for release notes",
+                fake_plan,
+                fake_results,
+                session_id="chat-verified",
+                task_id="task-verified",
+                verification=VerificationResult(passed=True),
+            )
+
+        episodes = await store._temporal.query_episodes(
+            "release notes",
+            session_id="chat-verified",
+        )
+
+        assert len(episodes) == 1
+        assert episodes[0].provenance == MemoryProvenance.VERIFIED_OUTCOME.value
+        assert "Outcome: success" in episodes[0].text
+
+    @pytest.mark.asyncio
+    async def test_verification_failure_overrides_successful_action_results(
+        self, store, fake_plan, fake_results
+    ):
+        from types import SimpleNamespace
+
+        from pilot.actions import VerificationResult
+
+        fake_plan.actions = [SimpleNamespace(action_type=SimpleNamespace(value="browser_navigate"))]
+        with patch("pilot.memory.store.asyncio.to_thread", new_callable=AsyncMock):
+            await store.record(
+                "search the web for release notes",
+                fake_plan,
+                fake_results,
+                session_id="chat-failed-verify",
+                task_id="task-failed-verify",
+                verification=VerificationResult(passed=False),
+            )
+
+        episodes = await store._temporal.query_episodes(
+            "release notes",
+            session_id="chat-failed-verify",
+        )
+
+        assert len(episodes) == 1
+        assert episodes[0].provenance == MemoryProvenance.INFERRED.value
+        assert "Outcome: failure" in episodes[0].text
 
 
 # ---------------------------------------------------------------------------

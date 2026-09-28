@@ -578,6 +578,7 @@ class VoiceGestureWorkflowEngine:
                         results,
                         session_id=workflow.invocation_source,
                         task_id=workflow.workflow_id,
+                        verification=verification,
                     )
                 except Exception:
                     logger.warning("Could not record adaptive workflow episode", exc_info=True)

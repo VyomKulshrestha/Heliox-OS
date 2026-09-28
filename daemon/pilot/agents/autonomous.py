@@ -815,6 +815,7 @@ class AutonomousExecutor:
                             results,
                             session_id=job.session_id,
                             task_id=job.job_id,
+                            verification=verification,
                         )
                     except Exception:
                         logger.warning("Could not record autonomous task episode", exc_info=True)

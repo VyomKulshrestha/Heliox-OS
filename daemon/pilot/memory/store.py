@@ -296,8 +296,9 @@ class MemoryStore:
         session_id: str = "default",
         task_id: str = "",
         provenance_event_id: str = "",
+        verification: Any | None = None,
     ) -> None:
-        """Record an executed plan and its results."""
+        """Record execution results; temporal success requires a passing verifier."""
         if not self._pool:
             return
 
@@ -345,10 +346,19 @@ class MemoryStore:
             except Exception:
                 logger.debug("ChromaDB write failed", exc_info=True)
 
-        if self._temporal is not None:
+        if self._temporal is not None and getattr(plan, "actions", None):
             context = get_experience_context()
             effective_session_id = session_id or context.session_id or "default"
             effective_task_id = task_id or context.task_id
+            verified = (
+                bool(results)
+                and bool(getattr(plan, "actions", None))
+                and success
+                and verification is not None
+                and bool(getattr(verification, "passed", False))
+            )
+            verification_failed = verification is not None and not bool(getattr(verification, "passed", False))
+            outcome = "success" if verified else "failure" if not success or verification_failed else "unverified"
             action_types = sorted(
                 {
                     str(getattr(getattr(action, "action_type", ""), "value", ""))
@@ -367,11 +377,17 @@ class MemoryStore:
                 session_id=effective_session_id,
                 task_id=effective_task_id,
                 summary=(f"Request: {user_input[:500]}. Plan: {str(getattr(plan, 'explanation', ''))[:500]}"),
-                outcome="success" if success else "failure",
+                outcome=outcome,
                 tags=action_types,
                 importance=0.65 if success else 0.8,
                 provenance_event_id=provenance_event_id,
-                payload={"results": result_summaries},
+                payload={
+                    "results": result_summaries,
+                    "verification_passed": bool(getattr(verification, "passed", False)),
+                },
+                provenance=(
+                    MemoryProvenance.VERIFIED_OUTCOME if verified else MemoryProvenance.INFERRED
+                ),
             )
 
     async def get_context(

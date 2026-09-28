@@ -2368,13 +2368,14 @@ class PilotServer:
         _start_time = time.time()
         last_plan_id = ""
 
-        def _record_memory(plan: Any, results: list[Any]) -> Any:
+        def _record_memory(plan: Any, results: list[Any], verification: Any | None = None) -> Any:
             return self._memory.record(
                 user_input,
                 plan,
                 results,
                 session_id=chat_session_id,
                 task_id=get_experience_context().task_id,
+                verification=verification,
             )
 
         async def _record_planned_experience(plan: Any, plan_id: str, attempt: int) -> None:
@@ -3492,7 +3493,9 @@ class PilotServer:
                         "memory_update", "Persisting interaction to long-term memory...", parent_id=mem_store_phase
                     )
 
-                self._spawn_post_execution_task(_record_memory(plan, results), self._memory_record_tasks, "memory")
+                self._spawn_post_execution_task(
+                    _record_memory(plan, results, verification), self._memory_record_tasks, "memory"
+                )
                 if self._checkpoint_store:
                     await self._checkpoint_store.mark_status(plan_id, "complete")
                 self._spawn_post_execution_task(
@@ -3622,7 +3625,9 @@ class PilotServer:
             mem_final = await emit.phase_start("memory_update", MEMORY_STORE_STARTED)
             await emit.phase_complete("memory_update", MEMORY_STORE_COMPLETE, {"partial": True}, parent_id=mem_final)
 
-        self._spawn_post_execution_task(_record_memory(plan, all_results), self._memory_record_tasks, "memory")
+        self._spawn_post_execution_task(
+            _record_memory(plan, all_results, last_verification), self._memory_record_tasks, "memory"
+        )
         if self._checkpoint_store and last_plan_id:
             await self._checkpoint_store.mark_status(last_plan_id, "failed")
 

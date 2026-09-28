@@ -297,6 +297,59 @@ async def test_episode_ranking_prefers_relevant_same_session(store):
 
 
 @pytest.mark.asyncio
+async def test_legacy_episodes_migrate_with_conservative_provenance(tmp_path):
+    db_path = tmp_path / "legacy-temporal.db"
+    connection = sqlite3.connect(db_path)
+    connection.execute(
+        """
+        CREATE TABLE episodic_memories (
+            episode_id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            task_id TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            outcome TEXT NOT NULL,
+            tags_json TEXT NOT NULL,
+            importance REAL NOT NULL,
+            occurred_at TEXT NOT NULL,
+            provenance_event_id TEXT NOT NULL DEFAULT '',
+            payload_json TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO episodic_memories (
+            episode_id, session_id, task_id, summary, outcome, tags_json,
+            importance, occurred_at, provenance_event_id, payload_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "legacy-episode",
+            "s1",
+            "t1",
+            "Legacy release workflow",
+            "success",
+            "[]",
+            0.8,
+            datetime.now(UTC).isoformat(),
+            "",
+            "{}",
+        ),
+    )
+    connection.commit()
+    connection.close()
+
+    temporal = TemporalMemoryStore(db_path)
+    await temporal.initialize()
+    try:
+        episodes = await temporal.query_episodes("release workflow", session_id="s1")
+        assert len(episodes) == 1
+        assert episodes[0].provenance == MemoryProvenance.INFERRED.value
+    finally:
+        await temporal.close()
+
+
+@pytest.mark.asyncio
 async def test_context_assembler_enforces_token_budget_and_provenance_labels(store):
     await store.put_working(
         session_id="s1",
