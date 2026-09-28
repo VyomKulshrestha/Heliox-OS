@@ -704,16 +704,24 @@ is disabled.
 
 The local stdio MCP server authenticates to this WebSocket API as the
 `mcp_local` role using a separate rotated runtime token. It has an explicit
-nine-method allowlist: `health`, `ready`, `system_status`, `capabilities`,
-`agent_capabilities`, and the four methods below. It cannot call `execute`,
+ten-method allowlist: `health`, `ready`, `system_status`, `capabilities`,
+`agent_capabilities`, and the five methods below. It cannot call `execute`,
 `confirm`, configuration, credential, neural, or arbitrary RPC methods.
 
 | Method | Purpose |
 | --- | --- |
 | `mcp_plan_task` | Produce a non-binding, side-effect-free task preview. |
+| `mcp_typed_decision` | Optionally score a bounded dynamic yes/no, choice, or ordered-option request with the local research model; never authorizes actions. |
 | `mcp_submit_task` | Replan and enqueue an MCP-owned durable task; return immediately. |
 | `mcp_task_status` | Read approval, progress, and terminal result for an MCP-owned task. |
 | `mcp_cancel_task` | Cancel an MCP-owned task and deny any pending approval wait. |
+
+`mcp_typed_decision` accepts a JSON-object `state`, `kind` (`noul`, `choice`,
+or `score`), `question`, and two to 64 unique `options`. It returns a local
+research-only score with `execution_authority: false`; it is disabled by
+default, requires explicit local artifact paths and a supported CUDA runtime,
+never downloads weights, and does not write the request to disk. It cannot feed
+the planner or approval pipeline.
 
 `mcp_submit_task` accepts `input` plus an optional `session_id`. It returns a
 `task_id` and an accepted/planning state, not an execution result. Every action

@@ -82,6 +82,9 @@
   let dryRunToast = $state("");
   let previewSaving = $state(false);
   let previewToast = $state("");
+  let typedDecisionSaving = $state(false);
+  let typedDecisionToast = $state("");
+  let typedDecisionPaths = $state({ artifact_dir: "", report_path: "" });
   let gestureCursorToast = $state("");
   let visionToast = $state("");
   let gestureCalibrationToast = $state("");
@@ -103,6 +106,16 @@
   $effect(() => {
     if ($locale) {
       localStorage.setItem("locale", $locale);
+    }
+  });
+
+  $effect(() => {
+    const config = $settings.typed_decision;
+    if (config) {
+      typedDecisionPaths = {
+        artifact_dir: config.artifact_dir || "",
+        report_path: config.report_path || "",
+      };
     }
   });
 
@@ -694,6 +707,55 @@
         : "Preview gate disabled."
       : "Preview was not changed because the daemon could not confirm it.";
     setTimeout(() => (previewToast = ""), 5000);
+  }
+
+  async function saveTypedDecisionPaths() {
+    if (typedDecisionSaving) return;
+    typedDecisionSaving = true;
+    const saved = await settings.updateSection(
+      "typed_decision",
+      {
+        artifact_dir: typedDecisionPaths.artifact_dir.trim(),
+        report_path: typedDecisionPaths.report_path.trim(),
+      },
+      { requireDaemon: true },
+    );
+    typedDecisionSaving = false;
+    typedDecisionToast = saved
+      ? "Local model paths saved. Scoring still requires explicit enablement."
+      : "Paths were not saved. Use absolute local paths and check that Heliox is connected.";
+    setTimeout(() => (typedDecisionToast = ""), 5000);
+  }
+
+  async function toggleTypedDecision() {
+    if (typedDecisionSaving) return;
+    const turningOn = !$settings.typed_decision?.enabled;
+    if (turningOn && (!typedDecisionPaths.artifact_dir.trim() || !typedDecisionPaths.report_path.trim())) {
+      typedDecisionToast = "Set and save the local artifact directory and report file before enabling.";
+      setTimeout(() => (typedDecisionToast = ""), 5000);
+      return;
+    }
+    typedDecisionSaving = true;
+    const saved = await settings.updateSection(
+      "typed_decision",
+      {
+        enabled: turningOn,
+        ...(turningOn
+          ? {
+              artifact_dir: typedDecisionPaths.artifact_dir.trim(),
+              report_path: typedDecisionPaths.report_path.trim(),
+            }
+          : {}),
+      },
+      { requireDaemon: true },
+    );
+    typedDecisionSaving = false;
+    typedDecisionToast = saved
+      ? turningOn
+        ? "Research-only scoring enabled. The model loads on its first MCP request."
+        : "Scoring disabled and its model released from GPU memory."
+      : "The setting was not changed. Check the paths and daemon connection.";
+    setTimeout(() => (typedDecisionToast = ""), 5000);
   }
 
   async function updateGestureCursorSensitivity(e: Event) {
@@ -1388,6 +1450,69 @@
         disabled={previewSaving}
       >
         <span class="toggle-knob"></span>
+      </button>
+    </div>
+  </section>
+
+  <section class="settings-group">
+    <h3>Typed decision model · research</h3>
+    <p class="setting-section-note">
+      Optional local MCP scoring for dynamic yes/no, choice, or ordered options. Disabled by default;
+      scores never approve actions or enter the Heliox planner. Inputs are not saved or uploaded.
+    </p>
+    {#if typedDecisionToast}
+      <div class="root-toast" role="status">{typedDecisionToast}</div>
+    {/if}
+    <label class="typed-decision-field">
+      <span class="setting-label">Local artifact directory</span>
+      <input
+        class="input-md"
+        type="text"
+        bind:value={typedDecisionPaths.artifact_dir}
+        autocomplete="off"
+        spellcheck="false"
+        placeholder="Absolute path containing adapter/ and head.npz"
+        aria-label="Local typed decision model artifact directory"
+        disabled={typedDecisionSaving}
+      />
+    </label>
+    <label class="typed-decision-field">
+      <span class="setting-label">Research report file</span>
+      <input
+        class="input-md"
+        type="text"
+        bind:value={typedDecisionPaths.report_path}
+        autocomplete="off"
+        spellcheck="false"
+        placeholder="Absolute path to the model report JSON"
+        aria-label="Local typed decision model report path"
+        disabled={typedDecisionSaving}
+      />
+    </label>
+    <div class="setting-row">
+      <div class="setting-info">
+        <span class="setting-label">Research-only MCP scoring</span>
+        <span class="setting-desc">
+          {$settings.typed_decision?.enabled
+            ? "Enabled · weights load on demand and are released when disabled"
+            : "Disabled · no model files are loaded or downloaded"}
+        </span>
+      </div>
+      <button
+        class="toggle"
+        class:active={$settings.typed_decision?.enabled}
+        onclick={toggleTypedDecision}
+        aria-label="Toggle research-only typed decision scoring"
+        title="Toggle research-only typed decision scoring"
+        disabled={typedDecisionSaving}
+      >
+        <span class="toggle-knob"></span>
+      </button>
+    </div>
+    <div class="setting-row">
+      <span class="setting-desc">The MCP tool supports at most 64 options per request.</span>
+      <button class="typed-decision-save" onclick={saveTypedDecisionPaths} disabled={typedDecisionSaving}>
+        Save paths
       </button>
     </div>
   </section>
@@ -2389,6 +2514,33 @@
     font-size: 11px;
     line-height: 1.4;
     color: var(--text-muted);
+  }
+
+  .typed-decision-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .typed-decision-field .input-md {
+    width: 100%;
+  }
+
+  .typed-decision-save {
+    padding: 6px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  .typed-decision-save:disabled {
+    cursor: wait;
+    opacity: 0.6;
   }
 
   .setting-row {

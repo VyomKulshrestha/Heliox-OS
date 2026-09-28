@@ -56,6 +56,11 @@ export interface PilotSettings {
   preview: {
     enabled: boolean;
   };
+  typed_decision: {
+    enabled: boolean;
+    artifact_dir: string;
+    report_path: string;
+  };
   network: {
     enabled: boolean;
     port: number;
@@ -161,6 +166,11 @@ const defaultSettings: PilotSettings = {
   preview: {
     enabled: false,
   },
+  typed_decision: {
+    enabled: false,
+    artifact_dir: "",
+    report_path: "",
+  },
   network: {
     enabled: false,
     port: 8786,
@@ -217,6 +227,7 @@ function mergeSettings(current: PilotSettings, incoming: Partial<PilotSettings>)
     gesture_cursor: { ...current.gesture_cursor, ...incoming.gesture_cursor },
     adaptive_calibration: { ...current.adaptive_calibration, ...incoming.adaptive_calibration },
     preview: { ...current.preview, ...incoming.preview },
+    typed_decision: { ...current.typed_decision, ...incoming.typed_decision },
     network: { ...current.network, ...incoming.network },
     calendar: { ...current.calendar, ...incoming.calendar },
     email: { ...current.email, ...incoming.email },

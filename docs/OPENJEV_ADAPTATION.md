@@ -1681,3 +1681,41 @@ to link labels; the new DOM-kind feature provided no held-out lift. The probe
 uses no private desktop data and trains no weights. It does not reproduce
 Dream-RSI's long-horizon loop or establish Jev parity, desktop transfer, or
 any grounds for live-model promotion.
+
+## Bounded Heliox local MCP integration
+
+The frozen candidate now has an explicit, opt-in local scoring path:
+`score_heliox_typed_decision` through the loopback-only `heliox-mcp` bridge.
+It accepts a runtime-supplied JSON state, a `noul`, `choice`, or `score` kind,
+a question, and unique options; the task domain and option vocabulary are not
+hardcoded. The request is not persisted, sent to a provider, or passed into the
+planner. Successful scores and handled errors carry `research_only: true` and
+`execution_authority: false`.
+
+Enable it in Heliox Settings → **Typed decision model · research** only after
+the candidate is already present locally. Configure its artifact directory
+(containing `adapter/adapter_model.safetensors` and `head.npz`) and the matching
+`report.json`, then enable scoring. Model loading is lazy; disabling the feature
+unloads its CUDA allocation. The loader verifies the pinned base revision and
+SHA-256 digests, uses `local_files_only`, requires CUDA, and rejects prompts
+that exceed the trained token limit rather than truncating them. The tool caps
+each request at 64 options to bound local inference cost. Missing optional
+runtime packages or cache files produce an unavailable response; Heliox does
+not install packages or fetch weights automatically.
+
+The optional `pilot-daemon[typed-decision]` extra provides the tested local
+inference stack. It is deliberately not included in `pilot-daemon[all]`; users
+must install it into the daemon's Python environment themselves, and must
+already have the pinned base model cached. No dependency or model download was
+performed for this integration.
+
+The three-case local runtime smoke was only a plumbing check, not a benchmark:
+the yes/no probe and choice probe selected the expected outcomes, but the
+ordered-score probe did not (expected “fully”; top option was “not at all,”
+with expected index 1.203/3). This weak score result is a quality blocker; no
+claim of Jev parity or generalized decision quality is justified.
+
+This is a research convenience, not a promotion into Heliox's planner, world
+model, deterministic gateway, approvals, or executor. It does not establish
+Jev parity or real desktop-workflow quality. The model files remain ignored
+local artifacts and are not included in the release package.
