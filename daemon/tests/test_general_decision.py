@@ -14,6 +14,7 @@ from benchmarks.general_decision import (
     licensed_row,
     metrics,
     probabilities,
+    ranked_probability_score,
     select_balanced,
     uniform_baseline,
     validate_decision,
@@ -21,7 +22,7 @@ from benchmarks.general_decision import (
     verify_disjoint,
 )
 from benchmarks.scopejudge_general import scope_group_weights
-from scripts.train_general_decision import checkpoint_signature, ordinal_penalty, training_row_weights
+from scripts.train_general_decision import checkpoint_signature, training_row_weights
 
 
 def row(kind: str = "choice") -> dict:
@@ -103,6 +104,7 @@ def test_ordinal_metrics_report_expected_rank_error() -> None:
     example["target"] = [0.0, 0.0, 1.0]
     report = metrics([example], [np.array([0.0, 0.0, 0.0])], 1.0)
     assert report["by_kind"]["score"]["mean_rank_error"] == pytest.approx(1.0)
+    assert report["by_kind"]["score"]["mean_ranked_probability_score"] == pytest.approx(5 / 18)
 
 
 def test_uniform_baseline_uses_no_labels_to_form_predictions() -> None:
@@ -205,11 +207,23 @@ def test_scope_loss_weight_only_scales_action_rows() -> None:
     assert training_row_weights(general, [], group_weighting="none", scope_row_weight=0.25) is None
 
 
-def test_ordinal_penalty_respects_distance_and_option_count() -> None:
+def test_ranked_probability_score_respects_cumulative_distance_for_any_option_count() -> None:
     target = np.array([0.0, 0.0, 1.0])
     near = np.array([0.0, 0.5, 0.5])
     far = np.array([1.0, 0.0, 0.0])
-    positions = np.arange(3)
-    assert ordinal_penalty(near, target, positions) < ordinal_penalty(far, target, positions)
-    assert ordinal_penalty(target, target, positions) == 0
-    assert ordinal_penalty(np.array([1.0, 0.0]), np.array([0.0, 1.0]), np.arange(2)) == 1
+    assert ranked_probability_score(near, target) < ranked_probability_score(far, target)
+    assert ranked_probability_score(target, target) == 0
+    assert ranked_probability_score(np.array([1.0, 0.0]), np.array([0.0, 1.0])) == 1
+    many_options = np.zeros(11)
+    many_options[-1] = 1.0
+    opposite = np.zeros(11)
+    opposite[0] = 1.0
+    assert ranked_probability_score(opposite, many_options) == 1
+    assert ranked_probability_score(np.full(11, 1 / 11), np.full(11, 1 / 11)) == 0
+
+
+def test_ranked_probability_score_rejects_mismatched_vectors() -> None:
+    with pytest.raises(ValueError, match="matching vectors"):
+        ranked_probability_score(np.array([0.5, 0.5]), np.array([1.0]))
+    with pytest.raises(ValueError, match="matching vectors"):
+        ranked_probability_score(np.array([1.0]), np.array([1.0]))

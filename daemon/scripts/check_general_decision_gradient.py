@@ -13,6 +13,7 @@ from scripts.train_general_decision import (
     decision_logits,
     gradient_row,
     load_checkpoint,
+    ranked_probability_score,
     save_checkpoint,
     scalar_score,
     scalar_scores,
@@ -42,8 +43,9 @@ def main() -> None:
         batched = scalar_scores(backbone, head, sequences, microbatch_size=2)
         serial = torch.stack([scalar_score(backbone, head, ids) for ids in sequences])
         torch.testing.assert_close(batched, serial)
+        ordinal_weight = 0.2 if kind == "score" else 0.0
         gradient_row(backbone, head, item, brier_weight=0.1,
-                     ordinal_weight=0.0, scale=1.0)
+                     ordinal_weight=ordinal_weight, scale=1.0)
         replayed = [parameter.grad.detach().clone()
                     for parameter in (*backbone.parameters(), *head.parameters())]
 
@@ -53,6 +55,8 @@ def main() -> None:
         expected = torch.tensor(target, device="cuda")
         predicted = logits.softmax(-1)
         loss = -(expected * logits.log_softmax(-1)).sum() + 0.1 * (predicted - expected).square().sum()
+        if kind == "score":
+            loss = loss + ordinal_weight * ranked_probability_score(predicted, expected)
         loss.backward()
         for actual, parameter in zip(replayed, (*backbone.parameters(), *head.parameters()), strict=True):
             torch.testing.assert_close(actual, parameter.grad, rtol=1e-5, atol=1e-6)

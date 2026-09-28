@@ -30,6 +30,7 @@ from benchmarks.general_decision import (  # noqa: E402
     load_split,
     metrics,
     probabilities,
+    ranked_probability_score,
     verify_disjoint,
 )
 from benchmarks.misactbench_general import (  # noqa: E402
@@ -47,6 +48,8 @@ from benchmarks.scopejudge_general import (  # noqa: E402
 from scripts.evaluate_qwen_instruct_scope import MODEL_ID as OPENJEV_BASE_MODEL  # noqa: E402
 from scripts.evaluate_qwen_instruct_scope import MODEL_REVISION as OPENJEV_BASE_REVISION  # noqa: E402
 from scripts.qwen_model_pin import MODEL, REVISION  # noqa: E402
+
+ORDINAL_LOSS_VERSION = "ranked_probability_score_v1"
 
 
 def encode_rows(tokenizer, rows: list[dict], max_length: int,
@@ -136,13 +139,6 @@ def score_row(backbone, head, item: dict, *, candidate_microbatch_size: int = 2)
                                microbatch_size=candidate_microbatch_size)
         logits = decision_logits(item["row"]["kind"], scores)
     return logits.float().cpu().numpy().astype(np.float64)
-
-
-def ordinal_penalty(predicted, target, positions):
-    """Bounded expected-rank error for ordered score options of any length."""
-    scale = max(len(target) - 1, 1)
-    difference = (predicted @ positions - target @ positions) / scale
-    return difference * difference
 
 
 def evaluate(backbone, head, items: list[dict], label: str = "") -> list[np.ndarray]:
@@ -243,8 +239,7 @@ def gradient_row(backbone, head, item: dict, *, brier_weight: float,
     loss = -(target * logits.log_softmax(-1)).sum()
     loss = loss + brier_weight * (predicted - target).square().sum()
     if row["kind"] == "score" and ordinal_weight:
-        positions = torch.arange(len(target), dtype=predicted.dtype, device=predicted.device)
-        loss = loss + ordinal_weight * ordinal_penalty(predicted, target, positions)
+        loss = loss + ordinal_weight * ranked_probability_score(predicted, target)
     if not torch.isfinite(loss):
         raise FloatingPointError("Nonfinite decision loss")
     score_gradient = torch.autograd.grad(loss, score_variables)[0].detach()
@@ -339,7 +334,8 @@ def checkpoint_signature(args: argparse.Namespace, encoded: dict[str, list[dict]
                 "attention": args.attention, "accumulation": args.accumulation,
                 "candidate_microbatch_size": getattr(args, "candidate_microbatch_size", 2),
                 "lr": args.lr, "head_lr": args.head_lr, "brier_weight": args.brier_weight,
-                "ordinal_weight": args.ordinal_weight}
+                "ordinal_weight": args.ordinal_weight,
+                "ordinal_loss": ORDINAL_LOSS_VERSION}
     if args.prompt_style != "candidate_v1":
         identity["prompt_style"] = args.prompt_style
     if getattr(args, "dtype", "bfloat16") != "bfloat16":
@@ -650,6 +646,7 @@ def run(args: argparse.Namespace) -> dict:
         "baseline_skipped_on_resume": not run_baseline,
         "learning_rates": {"adapter": args.lr, "head": args.head_lr},
         "brier_weight": args.brier_weight, "ordinal_weight": args.ordinal_weight,
+        "ordinal_loss": ORDINAL_LOSS_VERSION,
         "scope_group_weighting": args.scope_group_weighting,
         "scope_row_weight": args.scope_row_weight,
         "row_weights_sha256": (None if row_weights is None else hashlib.sha256(
@@ -706,7 +703,7 @@ def main() -> None:
     parser.add_argument("--brier-weight", type=float, default=0.1)
     parser.add_argument("--prompt-style", choices=sorted(PROMPT_STYLES), default="candidate_v1")
     parser.add_argument("--ordinal-weight", type=float, default=0.0,
-                        help="Optional normalized expected-rank loss for ordered score decisions")
+                        help="Optional normalized ranked-probability loss for ordered score decisions")
     parser.add_argument("--progress-every", type=int, default=32)
     parser.add_argument("--checkpoint-every", type=int, default=32)
     parser.add_argument("--resume", action="store_true")
