@@ -787,6 +787,7 @@ class AutonomousExecutor:
                                     session_id=job.session_id,
                                     task_id=memory_task_id or job.job_id,
                                     action_types=sorted(completed_action_types),
+                                    independently_verified=self._required_exact_text(goal) is not None,
                                 )
                             except Exception:
                                 logger.warning("Could not record verified task completion", exc_info=True)

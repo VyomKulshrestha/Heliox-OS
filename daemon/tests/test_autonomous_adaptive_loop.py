@@ -247,6 +247,7 @@ async def test_desktop_goal_reobserves_after_open_and_requires_completion_eviden
         session_id="default",
         task_id="workflow-1",
         action_types=["open_application"],
+        independently_verified=False,
     )
     for call in autonomous._planner.plan.await_args_list:
         assert call.kwargs["force_model"] is True
