@@ -28,6 +28,18 @@ The 512-row run used 64 separate calibration actions (32 per label), with temper
 
 For comparison, the 320-row run's zero-false-allowance calibration threshold (0.9201) yielded 0 test false allowances, 63 false warnings, and 1.6% in-scope recall; a one-allowance calibration budget yielded 0 test false allowances, 56 warnings, and 12.5% recall. These small calibration samples do not reliably select an operating point that balances useful recall with few false allowances.
 
+### Released Open-Jev matched OOD check
+
+The frozen 20261001 Heliox candidate was also scored against the released Open-Jev v3 checkpoint on the protocol v2 fresh OOD selection. Both models used the same 112 rows that fit the Heliox candidate's 512-token context limit; 16 longer yes/no rows were excluded from both rather than truncated. This is a candidate-vs-public-release comparison, not a comparison with proprietary Jev.
+
+| Shared rows | Released Open-Jev v3 | Heliox 20261001 candidate |
+| --- | ---: | ---: |
+| Top-1 accuracy | 79.5% | 78.6% |
+| Mean NLL | 0.638 | 0.509 |
+| Mean Brier score | 0.0860 | 0.0792 |
+
+By decision type, top-1 accuracy was 60.5% vs 57.9% for choice, 88.9% vs 88.9% for yes/no, and 90.0% vs 90.0% for score. The candidate is close on this shared subset and improves aggregate probability calibration, but does not improve overall top-1 accuracy; the mixed per-kind NLL results also argue against promotion. The scorer warned that `lora_ga_config` and `use_bdlora` were unrecognized by the installed PEFT version; both saved values are null, but exact scoring should be rechecked with the training-pinned PEFT version before treating these numbers as final parity evidence.
+
 ## Decision and limitation
 
 General test accuracy/NLL improved on these small public splits, and the fourth run improved held-out scope ranking AUC to 0.7068. However, its default-threshold false allowances rose from 2 to 27; calibrated thresholds either rejected every in-scope test action or admitted 3–9 out-of-scope actions while recalling only 9.4–23.4% of in-scope actions. None passes the action-scope gate, so keep learned scores advisory/research-only and retain deterministic policy, approval, and refusal checks as the authority. These results do not demonstrate safe desktop control, multi-agent completion, Jarvis behavior, or parity with proprietary Jev.
