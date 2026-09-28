@@ -45,10 +45,66 @@ def select_archived_rows(*, seed: int, pool: int, limit: int,
     return rows, manifest
 
 
-def select_fresh_rows(archived_rows: list[dict], *, seed: int, pool: int, limit: int) -> tuple[list[dict], dict]:
-    """Select public OOD rows, excluding archived and repeated groups."""
+def load_excluded_group_ids(root: Path, descriptor: dict | None) -> set[str]:
+    """Load group exclusions pinned either directly or by source selections."""
+    if descriptor is None:
+        return set()
+    if not isinstance(descriptor, dict) or not isinstance(descriptor.get("path"), str):
+        raise ValueError("Group exclusion manifest descriptor is invalid")
+    relative = Path(descriptor["path"])
+    if relative.is_absolute() or ".." in relative.parts:
+        raise ValueError("Group exclusion manifest path must stay inside the benchmark root")
+    root = root.resolve()
+    path = (root / relative).resolve()
+    if not path.is_relative_to(root):
+        raise ValueError("Group exclusion manifest path must stay inside the benchmark root")
+    if hashlib.sha256(path.read_bytes()).hexdigest() != descriptor["sha256"]:
+        raise ValueError("Group exclusion manifest checksum mismatch")
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(saved, dict) or saved.get("schema_version") != 1:
+        raise ValueError("Unsupported group exclusion manifest")
+    if "source_selections" in saved:
+        if saved.get("dataset_revision") != DATASET_REVISION:
+            raise ValueError("Group exclusion dataset revision mismatch")
+        sources = saved["source_selections"]
+        if not isinstance(sources, list) or not sources:
+            raise ValueError("Group exclusion manifest has no source selections")
+        groups: set[str] = set()
+        for source in sources:
+            if (not isinstance(source, dict) or not isinstance(source.get("split"), str)
+                    or type(source.get("pool")) is not int or source["pool"] < 1
+                    or type(source.get("seed")) is not int):
+                raise ValueError("Group exclusion source selection is invalid")
+            rows, _ = load_split(source["split"], source["pool"], source["seed"])
+            if len(rows) != source["pool"] or len(rows) != source.get("selected_rows"):
+                raise ValueError("Group exclusion source row count changed")
+            ids_digest = hashlib.sha256("\n".join(row["id"] for row in rows).encode()).hexdigest()
+            source_groups = {row["group_id"] for row in rows}
+            groups_digest = hashlib.sha256("\n".join(sorted(source_groups)).encode()).hexdigest()
+            if (ids_digest != source.get("selected_ids_sha256")
+                    or groups_digest != source.get("group_ids_sha256")):
+                raise ValueError("Group exclusion source selection changed")
+            groups.update(source_groups)
+        if len(groups) != saved.get("unique_group_count"):
+            raise ValueError("Group exclusion group count changed")
+    else:
+        groups = saved.get("group_ids")
+        if (not isinstance(groups, list) or any(not isinstance(group, str) or not group for group in groups)
+                or groups != sorted(set(groups))):
+            raise ValueError("Group exclusion manifest must contain sorted unique IDs")
+        groups = set(groups)
+    digest = hashlib.sha256("\n".join(sorted(groups)).encode()).hexdigest()
+    if digest != saved.get("group_ids_sha256"):
+        raise ValueError("Group exclusion IDs checksum mismatch")
+    return groups
+
+
+def select_fresh_rows(archived_rows: list[dict], *, seed: int, pool: int, limit: int,
+                      excluded_group_ids: set[str] | None = None) -> tuple[list[dict], dict]:
+    """Select public OOD rows, excluding all pinned groups and fresh duplicates."""
     selected, manifest = load_split("ood", pool, seed)
     seen_groups = {row["group_id"] for row in archived_rows}
+    seen_groups.update(excluded_group_ids or ())
     fresh = []
     for row in selected:
         if row["group_id"] not in seen_groups:
@@ -59,6 +115,17 @@ def select_fresh_rows(archived_rows: list[dict], *, seed: int, pool: int, limit:
     if len(fresh) != limit:
         raise ValueError("Fresh OOD selection lacks enough group-disjoint records")
     return fresh, manifest
+
+
+def verify_fresh_selection(rows: list[dict], protocol: dict) -> None:
+    """Verify the ordered row and unique-group hashes frozen in a protocol."""
+    ids_digest = hashlib.sha256("\n".join(row["id"] for row in rows).encode()).hexdigest()
+    groups_digest = hashlib.sha256("\n".join(sorted(
+        {row["group_id"] for row in rows})).encode()).hexdigest()
+    if protocol.get("fresh_ids_sha256") not in (None, ids_digest):
+        raise ValueError("Fresh OOD row IDs differ from the frozen protocol")
+    if protocol.get("fresh_group_ids_sha256") not in (None, groups_digest):
+        raise ValueError("Fresh OOD groups differ from the frozen protocol")
 
 
 def input_signature(rows: list[dict], manifest: dict, *, max_length: int) -> str:
@@ -106,9 +173,11 @@ def summarize_checkpoints(protocol_path: Path, output_dir: Path) -> dict:
     archived, archived_manifest = select_archived_rows(
         seed=protocol["archived_seed"], pool=protocol["archived_pool"],
         limit=protocol["archived_rows"], expected_ids_sha256=protocol["archived_ids_sha256"])
+    excluded_group_ids = load_excluded_group_ids(ROOT, protocol.get("excluded_group_manifest"))
     fresh, fresh_manifest = select_fresh_rows(
         archived, seed=protocol["fresh_seed"], pool=protocol["fresh_pool"],
-        limit=protocol["fresh_rows"])
+        limit=protocol["fresh_rows"], excluded_group_ids=excluded_group_ids)
+    verify_fresh_selection(fresh, protocol)
     scored = {}
     for name, rows, manifest in (("archived", archived, archived_manifest),
                                  ("fresh", fresh, fresh_manifest)):
@@ -126,6 +195,11 @@ def summarize_checkpoints(protocol_path: Path, output_dir: Path) -> dict:
         "backbone": "Qwen3.5-2B NF4; quantized outputs are not the released bf16 outputs",
         "temperature": 1.0,
         "archived": scored["archived"], "fresh": scored["fresh"],
+        "excluded_group_manifest_sha256": (protocol.get("excluded_group_manifest") or {}).get("sha256"),
+        "excluded_group_count": len(excluded_group_ids),
+        "fresh_ids_sha256": hashlib.sha256("\n".join(row["id"] for row in fresh).encode()).hexdigest(),
+        "fresh_group_ids_sha256": hashlib.sha256("\n".join(sorted(
+            {row["group_id"] for row in fresh})).encode()).hexdigest(),
         "uniform_baseline": {"archived": uniform_baseline(archived)["by_kind"],
                              "fresh": uniform_baseline(fresh)["by_kind"]},
         "archived_ids_sha256": protocol["archived_ids_sha256"],
@@ -157,9 +231,11 @@ def run(protocol_path: Path, output_dir: Path, *, resume: bool) -> dict:
     archived, archived_manifest = select_archived_rows(
         seed=protocol["archived_seed"], pool=protocol["archived_pool"],
         limit=protocol["archived_rows"], expected_ids_sha256=protocol["archived_ids_sha256"])
+    excluded_group_ids = load_excluded_group_ids(ROOT, protocol.get("excluded_group_manifest"))
     fresh, fresh_manifest = select_fresh_rows(
         archived, seed=protocol["fresh_seed"], pool=protocol["fresh_pool"],
-        limit=protocol["fresh_rows"])
+        limit=protocol["fresh_rows"], excluded_group_ids=excluded_group_ids)
+    verify_fresh_selection(fresh, protocol)
     parts = {"archived": (archived, archived_manifest), "fresh": (fresh, fresh_manifest)}
     if not torch.cuda.is_available() or torch.cuda.mem_get_info()[0] < 4 * 1024**3:
         raise RuntimeError("At least 4 GiB free CUDA memory is required")
@@ -208,6 +284,10 @@ def run(protocol_path: Path, output_dir: Path, *, resume: bool) -> dict:
         "backbone": "Qwen3.5-2B NF4; quantized outputs are not the released bf16 outputs",
         "temperature": 1.0,
         "archived": scored["archived"], "fresh": scored["fresh"],
+        "excluded_group_manifest_sha256": (protocol.get("excluded_group_manifest") or {}).get("sha256"),
+        "fresh_ids_sha256": hashlib.sha256("\n".join(row["id"] for row in fresh).encode()).hexdigest(),
+        "fresh_group_ids_sha256": hashlib.sha256("\n".join(sorted(
+            {row["group_id"] for row in fresh})).encode()).hexdigest(),
         "uniform_baseline": {"archived": uniform_baseline(archived)["by_kind"],
                              "fresh": uniform_baseline(fresh)["by_kind"]},
         "archived_ids_sha256": protocol["archived_ids_sha256"],
