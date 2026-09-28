@@ -246,7 +246,7 @@ class TestIntentAffinityJaccard:
         scored = await engine.predict_intent_affinity(candidates, voice_transcript="run")
 
         assert scored[0]["command"] == "run"
-        assert scored[0]["neural_affinity"] > scored[1]["neural_affinity"]
+        assert scored[0]["heuristic_affinity"] > scored[1]["heuristic_affinity"]
 
     @pytest.mark.asyncio
     async def test_multiword_phrase_containment_is_boosted(self):
@@ -261,7 +261,7 @@ class TestIntentAffinityJaccard:
         assert scored[0]["command"] == "a"
 
     @pytest.mark.asyncio
-    async def test_gesture_cross_modal_match_adds_bonus(self):
+    async def test_gesture_name_does_not_fabricate_candidate_affinity(self):
         engine = CognitiveEngine()
         candidates = [
             {"command": "confirm", "description": "confirm", "gesture_match": "thumbs_up"},
@@ -272,7 +272,7 @@ class TestIntentAffinityJaccard:
             candidates, voice_transcript="confirm", gesture_name="thumbs_up"
         )
 
-        assert with_gesture[0]["neural_affinity"] >= without_gesture[0]["neural_affinity"]
+        assert with_gesture[0]["heuristic_affinity"] == without_gesture[0]["heuristic_affinity"]
 
 
 class TestGetStats:

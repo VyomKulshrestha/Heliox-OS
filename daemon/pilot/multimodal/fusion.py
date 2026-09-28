@@ -592,7 +592,7 @@ class MultimodalFusionEngine:
     async def _apply_cognitive_intent(
         self, intent: FusedIntent, voice: InputEvent | None, gesture: InputEvent | None
     ) -> FusedIntent:
-        """Apply heuristic cognitive disambiguation to evaluate best candidate intent."""
+        """Attach advisory lexical diagnostics without changing the fused intent."""
         predictor = getattr(self, "_intent_predictor", None)
         if not predictor or not predictor.enabled:
             return intent
@@ -602,7 +602,8 @@ class MultimodalFusionEngine:
         g_name = gesture.gesture_name if gesture else ""
         g_conf = gesture.gesture_confidence if gesture else 0.0
 
-        # Build candidate commands list starting with our template-resolved default
+        # Keep the template-resolved fusion result first; the diagnostic scorer
+        # must never replace the command or alter its confidence.
         cands = [intent.command]
         if hasattr(predictor, "_generate_candidates"):
             cands.extend(predictor._generate_candidates(v_text, g_name))
@@ -618,14 +619,7 @@ class MultimodalFusionEngine:
             candidate_commands=cands,
         )
 
-        # Override intent with predicted best command
-        intent.command = res.selected_command
-        if res.candidates:
-            intent.confidence = max(intent.confidence, res.candidates[0].boosted_confidence)
-
-        if res.disambiguation_used:
-            intent.metadata["cognitive_disambiguated"] = True
-            intent.metadata["cognitive_boost"] = res.confidence_boost
+        intent.metadata["intent_assessment"] = res.to_dict()
 
         return intent
 
