@@ -1748,7 +1748,7 @@ model, deterministic gateway, approvals, or executor. It does not establish
 Jev parity or real desktop-workflow quality. The model files remain ignored
 local artifacts and are not included in the release package.
 
-## Matched base-likelihood check (2026-09-28)
+## Matched likelihood and Open-Jev runtime check (2026-09-28)
 
 To test whether raw next-token likelihood could replace the trained decision
 head cheaply, the pinned Qwen3-0.6B base was scored on the 256-row public OOD
@@ -1760,22 +1760,43 @@ The reusable [evaluator](../daemon/scripts/evaluate_base_option_likelihood.py)
 and focused tests are local research utilities; reports and model artifacts
 stay under ignored `.bench-state/`.
 
-| OOD metric | Uniform baseline | Raw base likelihood | Existing trained head |
-| --- | ---: | ---: | ---: |
-| Choice top-1 | 36.2% | 21.7% | 31.9% |
-| Choice NLL | 1.567 | 2.829 | 1.068 |
-| Noul top-1 | 75.7% | 36.8% | 75.0% |
-| Noul balanced accuracy | 50.0% | 53.1% | 57.8% |
-| Score top-1 | 21.6% | 17.6% | 43.1% |
-| Score mean rank error (lower is better) | 1.059 | 1.106 | 1.008 |
-| Score ranked probability score (lower is better) | 0.219 | 0.251 | 0.201 |
+| OOD metric | Uniform | Raw Qwen3-0.6B | Raw Qwen3.5-2B NF4 | Open-Jev checkpoint via Heliox runtime | Heliox-trained Qwen3-0.6B head |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Choice top-1 | 36.2% | 21.7% | 30.4% | **63.8%** | 31.9% |
+| Choice NLL | 1.567 | 2.829 | 1.788 | 1.276 | **1.068** |
+| Noul top-1 | 75.7% | 36.8% | 44.1% | **91.2%** | 75.0% |
+| Noul balanced accuracy | 50.0% | 53.1% | 60.0% | **83.9%** | 57.8% |
+| Score top-1 | 21.6% | 17.6% | 15.7% | **86.3%** | 43.1% |
+| Score mean rank error (lower is better) | 1.059 | 1.106 | 1.110 | **0.287** | 1.008 |
+| Score ranked probability score (lower is better) | 0.219 | 0.251 | 0.233 | **0.063** | 0.201 |
 
-The trained-head column uses its already-fitted temperature (1.372776); the
-base model has no fitted calibration. Raw likelihood loses to uniform on all
-three top-1 metrics and is especially overconfident on choice, so it is
-rejected as a shortcut. The existing adapter/head improves choice calibration
-and ordinal ranking, but its 31.9% choice accuracy and 57.8% balanced Noul
-accuracy remain weak; it is not promoted or described as Jev-like parity.
+The 0.6B trained-head column uses its already-fitted temperature (1.372776);
+the two raw bases have no fitted calibration. Raw likelihood loses to uniform
+on all three top-1 metrics and is rejected as a shortcut. The existing Heliox
+adapter/head improves choice calibration but remains weak on choice ranking
+and binary balance.
+
+The released Open-Jev Apache-2.0 adapter/head was then converted from its
+hash-pinned local cache and scored through Heliox's actual
+`LocalTypedDecisionModel` on the **same ordered 256 row IDs**. The pinned
+Qwen3.5-2B NF4 model used the torch fallback (the optional fused kernels are
+not installed); this completed in 179.0 seconds including model load with
+1.739 GiB peak allocated GPU memory. The full local report is ignored at
+`daemon/benchmarks/.bench-state/openjev_runtime_candidate_ood_256.json`; the
+reproducible, no-overwrite converter is
+[`prepare_openjev_runtime_candidate.py`](../daemon/scripts/prepare_openjev_runtime_candidate.py).
+With the already-cached Open-Jev files, prepare the artifact using:
+
+```powershell
+cd daemon
+& benchmarks/.bench-state/openjev-pinned-env/Scripts/python.exe scripts/prepare_openjev_runtime_candidate.py
+```
+
+The resulting artifact is not automatically enabled. It can be selected in
+Heliox Settings → **Typed decision model · research** by setting its artifact
+directory and `report.json`; scoring remains advisory-only and is never passed
+to the planner or executor. This is promising public-benchmark transfer, not
+Jev parity, real desktop evidence, or permission to execute actions.
 
 The [current Open-Jev engineering story](https://zefan-cai.github.io/open-jev/story/)
 supports retaining a shared scalar score per candidate, mixing independently
