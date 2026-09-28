@@ -74,6 +74,9 @@ def verify_artifact(output_dir: Path, report_path: Path) -> tuple[dict, Path]:
 def score_requests(payloads: list[dict], output_dir: Path, report_path: Path,
                    *, on_prediction: Callable[[int, dict], None] | None = None) -> list[dict]:
     rows = prepare_requests(payloads)
+    from scripts.openjev_training_runtime import require_training_runtime
+
+    require_training_runtime()
     import torch
     from huggingface_hub import snapshot_download
     from peft import PeftModel

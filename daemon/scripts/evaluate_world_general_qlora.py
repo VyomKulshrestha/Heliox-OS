@@ -33,6 +33,9 @@ def selected_rows(reference: dict) -> tuple[list[dict], dict]:
 
 def evaluate(adapter_dir: Path, training_report: Path, reference_path: Path) -> dict:
     block_jev_output_use()
+    from scripts.openjev_training_runtime import require_training_runtime
+
+    require_training_runtime()
     import torch
     from peft import PeftModel
     from transformers import AutoTokenizer, BitsAndBytesConfig, Qwen3_5ForCausalLM
