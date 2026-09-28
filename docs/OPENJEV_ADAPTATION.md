@@ -1812,21 +1812,23 @@ within the current local GPU limits.
 
 ## Independent transfer and local scoring throughput (2026-09-28)
 
-The released checkpoint was also scored on the frozen 512-row test selection in
+The released checkpoint was scored on the frozen 512-row test selection in
 [`released_openjev_general_protocol_v4.json`](../daemon/benchmarks/released_openjev_general_protocol_v4.json).
 The selection is group-disjoint from 1,928 previously used groups; the protocol,
 row-ID hash, group-ID hash, checkpoint, and report digest were revalidated
-locally. This is the strongest current independent public-data result, not a
-Jev comparison or desktop-workflow test.
+locally. The model-independent evaluation report scored logits at temperature
+1.0. A final run through Heliox's actual `LocalTypedDecisionModel.score` path,
+using the published temperature and adaptive batches, is the product-relevant
+measurement below. Neither is a Jev comparison or desktop-workflow test.
 
 | Fresh public OOD metric | Rows | Open-Jev 2B via Heliox runtime |
 | --- | ---: | ---: |
-| Choice top-1 | 229 | 74.7% |
+| Choice top-1 | 229 | 75.5% |
 | Yes/no top-1 | 216 | 88.0% |
 | Yes/no balanced accuracy | 216 | 85.3% |
 | Ordered score top-1 | 67 | 73.1% |
-| Ordered score mean rank error | 67 | 0.353 |
-| Overall top-1 | 512 | 80.1% |
+| Ordered score mean rank error | 67 | 0.362 |
+| Overall top-1 | 512 | 80.5% |
 
 For a faster readout, [Open Alternative to Jev](https://github.com/ikermoel/open-alternative-jev)
 uses next-token logits over single-token option labels; its packed mode can
@@ -1864,6 +1866,13 @@ the wrong direction. The full comparison is in
 | Choice (229) | 0.5965 → 0.5875 | 0.0578 → 0.0562 | 74.7% |
 | Yes/no (216) | 0.3701 → 0.2929 | 0.1022 → 0.0920 | 88.0% |
 | Ordered score (67) | 0.5873 → 0.5735 | 0.0687 → 0.0661 | 73.1% |
+
+The actual-wrapper run completed in 162.3 seconds including local model load
+(131.4 seconds scoring) and peaked at 2.00 GiB allocated on the RTX 4060 Laptop
+GPU. Its yes/no and ordered-score top-1 match the separate harness; choice
+top-1 differs by 2 of 229 rows, so the harness's exact row predictions are not
+claimed to be bitwise-reproduced. The full hashed run report is
+[`openjev_runtime_fresh_512_20260928.json`](../daemon/benchmarks/openjev_runtime_fresh_512_20260928.json).
 
 This length-aware setting is now the default for the opt-in local scorer. It
 does not change model weights, prompts, calibration, the approval system, or

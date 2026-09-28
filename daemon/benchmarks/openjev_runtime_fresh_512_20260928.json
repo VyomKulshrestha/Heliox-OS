@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "purpose": "frozen_fresh_public_decision_test_through_heliox_runtime_research_only",
+  "date": "2026-09-28",
+  "device": {
+    "name": "NVIDIA GeForce RTX 4060 Laptop GPU",
+    "memory_mib": 8188
+  },
+  "dataset": {
+    "id": "ZefanCai/Open-Jev",
+    "revision": "c67699e13d0ae25e35b77165a4b6b079bedc8aba",
+    "config": "release-v2-redistributable",
+    "split": "test",
+    "seed": 20261008,
+    "selected_rows": 512,
+    "protocol": "benchmarks/released_openjev_general_protocol_v4.json",
+    "protocol_sha256": "b520295fcc3ba82e724fd49f2be2ef27ace46e29b2cfece8ae3e13ad74cd32df",
+    "selected_ids_sha256": "4c24582d3700dbd50f36ca07091a0ffb63d16600dd560e5dd7de58e35c1a14ff",
+    "selected_group_ids_sha256": "2229d832ee98b5bce549010a9ce3ebb7d9cf00f348a0bbe0c0589bdada2688d6",
+    "prior_excluded_group_count": 1928
+  },
+  "runtime": {
+    "entrypoint": "pilot.intelligence.typed_decision.LocalTypedDecisionModel.score",
+    "model": "Qwen/Qwen3.5-2B",
+    "model_revision": "15852e8c16360a2fea060d615a32b45270f8a8fc",
+    "source_checkpoint": "ZefanCai/Open-Jev-2B@0c7aa498b1627be8da4acf34c863ff0ee0a92785",
+    "adapter_sha256": "2d23935b1a7380db444abac572c04646918ba794e59002d1588236182a3ca18f",
+    "head_sha256": "951aa74fc6d5a023a63ae3b083227c0b2e84bb64b27ff5884c4412d131cae0b8",
+    "quantization": "4-bit NF4",
+    "temperature": 1.518796342858676,
+    "research_only": true,
+    "execution_authority": false,
+    "max_prompt_tokens": 638,
+    "batches_by_size": {
+      "2": 0,
+      "4": 30,
+      "8": 482
+    },
+    "model_load_seconds": 30.827,
+    "scoring_seconds": 131.431,
+    "elapsed_seconds": 162.257,
+    "gpu_peak_allocated_bytes": 2106957824
+  },
+  "metrics": {
+    "rows": 512,
+    "top1_accuracy": 0.8046875,
+    "mean_nll": 0.4616945984124218,
+    "mean_brier": 0.07266601908743617,
+    "choice": {
+      "rows": 229,
+      "top1_accuracy": 0.7554585152838428,
+      "mean_nll": 0.5877859882378499,
+      "mean_brier": 0.05619608797348794
+    },
+    "noul": {
+      "rows": 216,
+      "top1_accuracy": 0.8796296296296297,
+      "balanced_accuracy": 0.8528411850412821,
+      "mean_nll": 0.2928807614269933,
+      "mean_brier": 0.09203326025043541,
+      "true_positive": 55,
+      "true_negative": 135,
+      "false_positive": 10,
+      "false_negative": 16
+    },
+    "score": {
+      "rows": 67,
+      "top1_accuracy": 0.7313432835820896,
+      "mean_rank_error": 0.361992432897883,
+      "mean_nll": 0.574961173320325,
+      "mean_brier": 0.0665210957126049,
+      "mean_ranked_probability_score": 0.06577523139545359
+    }
+  },
+  "comparison_notes": {
+    "separate_harness_choice_top1": 0.7467248908296943,
+    "separate_harness_noul_top1": 0.8796296296296297,
+    "separate_harness_score_top1": 0.7313432835820896,
+    "difference": "Actual runtime differs by two choice top-1 rows; no exact per-row equivalence is claimed. Yes/no and ordered-score top-1 match."
+  },
+  "limitations": [
+    "Public synthetic decision data only; not a real desktop task benchmark.",
+    "No direct or trained-on proprietary Jev outputs were used; this is not Jev parity evidence.",
+    "The scorer is advisory-only and does not grant executor or approval authority.",
+    "No model or dataset downloads were performed during this run."
+  ]
+}
