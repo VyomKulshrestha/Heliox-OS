@@ -2143,3 +2143,50 @@ The frozen local reports and weights are
 `.bench-state` directory. No real-desktop recorder corpus was present for this
 run. The result therefore says nothing about application transfer, multi-step
 desktop success, safety, or Jev parity.
+
+## Independent successor-retrieval objective (2026-09-30)
+
+The [EvoGUI project](https://github.com/Yyhhh6/EvoGUI) describes T3 as
+predicting an action's successor state and selecting it among alternatives.
+That is a useful independent objective to test for Heliox's visual predictor;
+this implementation was written from the published project description and
+does not use EvoGUI code or data. Heliox now has an optional symmetric
+successor-ranking loss over verified same-prestate action pairs. It is disabled
+by default, rejects mismatched prestates, and has a separate
+`--paired-counterfactual-batches` control so ablations can use the same batches.
+Validation reports include group-macro top-1 successor retrieval against each
+group's own chance level. The ranking objective is not wired into runtime
+prediction or execution authority.
+
+The fixed source is the
+[MIT-licensed MiniWoB++ dataset and benchmark](https://github.com/Farama-Foundation/MiniWoB-plusplus),
+at 64x64 visual features and split by task family (124/48/96 rows; 62/24/48
+same-state groups). The feature archive SHA-256 is
+`1111914a3079aa0878eca8fa62f74f15ce3fc89b6696ffb86c0807c334f43999`. Matched
+CUDA runs used one seed (`20260930`), the `spatial_joint` architecture, paired
+batches, identical held-out groups, and PyTorch `2.6.0+cu124`. The baseline
+used ranking weight `0`; the candidate used `0.03` and temperature `0.01`.
+
+| Measure | Matched baseline | Ranking candidate |
+| --- | ---: | ---: |
+| Validation successor top-1 (chance 50%) | 50.0% | 50.0% |
+| Validation weighted pixel MSE | 0.00201928 | 0.00201937 |
+| Selected epoch | 1 | 1 |
+| Evaluation successor top-1 (chance 50%) | 57.29% | 57.29% |
+| Evaluation weighted pixel MSE | 0.52053862 | 0.52053875 |
+
+The candidate did not improve validation retrieval or factual prediction; its
+selected validation objective remained at the first epoch. Its evaluation
+retrieval was also unchanged. The baseline's 48-group bootstrap estimated a
+7.29 percentage-point retrieval lift over group chance (95% CI 3.13 to 12.50
+points), but that is a one-seed result on one browser benchmark, not evidence
+that ranking training caused the lift. Keep the loss as an opt-in research
+probe, not as a better model. The historical Jev-output studies above are
+quarantined and were not used in these runs; there were no Jev service calls,
+Jev examples, or real Heliox recordings in this experiment. No result here
+establishes broad desktop transfer, multi-step task success, or Jev parity.
+
+The ignored local reports and weights are
+`miniwob_successor_rank_matched_baseline_seed20260930_v2` and
+`miniwob_successor_rank_w003_t001_seed20260930` under
+`daemon/benchmarks/.bench-state`.
