@@ -46,6 +46,19 @@ The top-1 and NLL intervals include no difference. The lower Brier score is a
 positive calibration signal on this narrow sample, but the candidate's worse
 selective-risk ranking and source skew prevent a general improvement claim.
 
+The same paired rows are source-skewed in different directions:
+
+| Source | Rows | Released Open-Jev | Heliox candidate | Delta |
+| --- | ---: | ---: | ---: | ---: |
+| `snake-v1` | 245 | 82.04% | 83.67% | +1.63 pp |
+| `reasoning-control-v1` | 11 | 72.73% | 63.64% | −9.09 pp |
+
+The simple two-source macro is 77.38% for Open-Jev and 73.65% for Heliox.
+That macro is descriptive—not a stable estimate with only 11 reasoning rows—
+but it makes clear that the overall row-weighted lead is not consistent across
+the available sources. The next comparison should add untouched task families,
+not tune against these already exposed rows.
+
 ## Post-hoc correctness scorer
 
 The logistic scorer uses only generic probability features (maximum candidate
