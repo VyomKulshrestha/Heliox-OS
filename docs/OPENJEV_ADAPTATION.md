@@ -2110,3 +2110,36 @@ and `.pt`; the original matched baseline is
 All remain local research artifacts. This evaluation does not establish
 cross-application transfer, real desktop task success, multi-step execution,
 action safety, or Jev parity.
+
+## Inverse-action auxiliary-loss ablation (2026-09-30)
+
+The same pinned generated-browser archive was used to test whether predicting
+the observed click coordinates from the before/after features helps the
+forward world predictor. The split remained layout-family-disjoint (160 train,
+40 validation, 40 held out; 80/20/20 page groups), with seed `20260930` and a
+`spatial_joint` architecture. Feature archive SHA-256:
+`caf21093fe12b66ce5d6d65dec2298850a96dbf6f2f929758c5d39245c0df2a2`. The
+zero-weight run is the matched architecture
+baseline; `0.05` is the auxiliary inverse-coordinate loss weight. Five thousand
+paired-bootstrap replicates resampled held-out page groups.
+
+| Inverse-loss weight | Forward weighted MSE (lower is better) | Same-state alternative-action MSE | Correct-vs-alternative gap | Inverse-coordinate MAE |
+| ---: | ---: | ---: | ---: | ---: |
+| `0` | `0.003216` | `0.05953` | `0.05632` | `0.22447` |
+| `0.05` | `0.003357` | `0.05478` | `0.05142` | `0.20184` |
+
+At `0.05`, inverse-coordinate error improved over the normalized-center
+baseline (`0.22452`) by `0.02269` (95% group-bootstrap CI `[-0.03204,
+-0.01378]`). But forward error worsened by about 4.4%, and the correct-vs-swap
+gap narrowed by about 8.7%. Thus the auxiliary target teaches some held-out
+coordinate information but is not a better joint world model on this task.
+Keep this as a research-only tradeoff, not a promoted objective or runtime
+checkpoint. The interval resamples only 20 generated page groups and does not
+cover training-seed uncertainty.
+
+The frozen local reports and weights are
+`controlled_ui_spatial_joint_inv0_ci_seed20260930` and
+`controlled_ui_spatial_joint_inv005_ci_seed20260930` under the ignored
+`.bench-state` directory. No real-desktop recorder corpus was present for this
+run. The result therefore says nothing about application transfer, multi-step
+desktop success, safety, or Jev parity.
