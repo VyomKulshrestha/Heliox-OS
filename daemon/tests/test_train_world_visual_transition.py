@@ -183,6 +183,36 @@ def test_counterfactual_permutation_requires_same_state_distinct_outcomes() -> N
         paired_counterfactual_permutation(partition)
 
 
+def test_counterfactual_groups_support_three_or_more_alternatives() -> None:
+    actions = np.zeros((3, 11), dtype=np.float32)
+    actions[:, 9] = [0.1, 0.5, 0.9]
+    partition = {
+        "groups": np.array(["same-state"] * 3),
+        "state": np.zeros((3, 4), dtype=np.float32),
+        "target": np.eye(3, dtype=np.float32),
+        "action": actions,
+    }
+
+    assert paired_counterfactual_permutation(partition).tolist() == [2, 0, 1]
+    assert paired_group_indices(partition).tolist() == [[0, 1], [0, 2], [1, 2]]
+
+    partition["target"][2] = partition["target"][1]
+    with pytest.raises(ValueError, match="distinct actions and outcomes"):
+        paired_group_indices(partition)
+
+
+def test_counterfactual_group_rejects_single_alternative() -> None:
+    partition = {
+        "groups": np.array(["only-one"]),
+        "state": np.zeros((1, 4), dtype=np.float32),
+        "target": np.ones((1, 4), dtype=np.float32),
+        "action": np.zeros((1, 11), dtype=np.float32),
+    }
+
+    with pytest.raises(ValueError, match="distinct actions and outcomes"):
+        paired_counterfactual_permutation(partition)
+
+
 def test_pairwise_loss_requires_action_specific_outcome_difference() -> None:
     target = np.array([[0.0, 1.0], [1.0, 0.0]])
     matched = pairwise_transition_loss(target, target)
