@@ -12,57 +12,76 @@ also reports that strong single-step scores do not guarantee reliable
 multi-step control: its shadow trajectories expose premature `finish`
 decisions. Heliox therefore keeps this scorer out of execution and approval.
 
+Further public-repo research found [Kev](https://github.com/jaredpalmer/kev),
+an Apache-2.0 typed-decision model. Its documented adaptation recipe warm-starts
+a released checkpoint, replays prior examples, and reserves untouched data for
+evaluation; its model card states that no Jev outputs were used for training.
+The larger [Decider](https://github.com/Mapika/decider) recipe covers about 95
+public datasets and 1.47M examples but reports a 5.3-hour GH200 training run,
+so it is not a sensible local-laptop reproduction. These projects reinforce
+the practical route for Heliox: learn from licensed data and Heliox-owned
+outcomes, then test on held-out tasks.
+
 This probe applies jevlike's tiny, no-pretrained-backbone approach to the
 public Open-Jev rows: learned UTF-8 byte embeddings, ordered context positions,
 independent option pooling, and a shared option-to-context attention head. It
 uses no task IDs or fixed option vocabulary. The data loader accepts only rows
 whose provenance is verified CC0-1.0, and splits remain group-disjoint.
 
-## Three-seed result
+## Five-seed result
 
 Each seed trained on 8,000 rows and used separate 1,000-row calibration, test,
 and OOD partitions. Each OOD set contains 268 choice, 532 yes/no (`noul`), and
-200 score decisions. Metrics below are averages of the three independent sampled
-sets unless a seed is shown. Seed `20260930` is an additional run of the same
-protocol and model size; it used the RTX 4060 for 66.2 seconds and peaked at
-0.196 GiB of CUDA memory.
+200 score decisions. Metrics below average five independently seeded runs.
+The additional seed `20261002` used the RTX 4060 for 66.4 seconds and peaked
+at 0.196 GiB of CUDA memory. Seed `20261001` is also the baseline for the paired
+ordinal-loss ablation below.
 
-| OOD metric | Seed 20260928 | Seed 20260929 | Seed 20260930 | Mean |
-| --- | ---: | ---: | ---: | ---: |
-| Correct-context top-1 | 60.7% | 58.0% | 57.1% | 58.6% |
-| Correct-context mean NLL | 0.950 | 0.934 | 1.040 | 0.975 |
-| Uniform expected top-1 | 38.0% | 38.1% | 38.1% | 38.1% |
-| Uniform mean NLL | 1.077 | 1.073 | 1.072 | 1.074 |
-| Full-context shuffled top-1 | 47.4% | 47.2% | 49.5% | 48.0% |
-| Full-context shuffled mean NLL | 1.324 | 1.323 | 1.245 | 1.297 |
-| Correct-context 10-bin ECE | 9.2% | 10.4% | 12.0% | 10.5% |
+| OOD metric | Seed 20260928 | Seed 20260929 | Seed 20260930 | Seed 20261001 | Seed 20261002 | Mean |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Correct-context top-1 | 60.7% | 58.0% | 57.1% | 59.7% | 57.7% | 58.6% |
+| Correct-context mean NLL | 0.950 | 0.934 | 1.040 | 0.959 | 0.955 | 0.968 |
+| Uniform expected top-1 | 38.0% | 38.1% | 38.1% | 38.3% | 38.2% | 38.2% |
+| Uniform mean NLL | 1.077 | 1.073 | 1.072 | 1.066 | 1.071 | 1.072 |
+| Full-context shuffled top-1 | 47.4% | 47.2% | 49.5% | 51.0% | 47.3% | 48.5% |
+| Full-context shuffled mean NLL | 1.324 | 1.323 | 1.245 | 1.164 | 1.201 | 1.251 |
+| Correct-context 10-bin ECE | 9.2% | 10.4% | 12.0% | 10.6% | 10.4% | 10.5% |
 
 The complete-context control swaps each row's state **and question** with a
-different same-kind, different-group example. Across the three seeds, shuffling
-reduces top-1 by 10.6 percentage points on average and worsens NLL by 0.323.
+different same-kind, different-group example. Across the five seeds, shuffling
+reduces top-1 by 10.2 percentage points on average and worsens NLL by 0.284.
 That is repeatable evidence that this scorer uses context on this dataset—not
 evidence of Heliox desktop generalization.
 
 Aggregate top-1 is partly inflated by the many negative yes/no rows, so the
 task-type results matter more:
 
-| OOD task type | Seed 20260928 | Seed 20260929 | Seed 20260930 | Mean |
-| --- | ---: | ---: | ---: | ---: |
-| Choice top-1 (random-choice expectation) | 42.9% (25.6%) | 33.6% (25.8%) | 35.8% (25.8%) | 37.4% (25.7%) |
-| Yes/no balanced accuracy | 68.5% | 60.9% | 63.9% | 64.4% |
-| Score top-1 | 44.0% | 49.0% | 35.5% | 42.8% |
+| OOD task type | Seed 20260928 | Seed 20260929 | Seed 20260930 | Seed 20261001 | Seed 20261002 | Mean |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Choice top-1 (random-choice expectation) | 42.9% (25.6%) | 33.6% (25.8%) | 35.8% (25.8%) | 41.0% (25.8%) | 39.9% (25.8%) | 38.7% (25.8%) |
+| Yes/no balanced accuracy | 68.5% | 60.9% | 63.9% | 62.5% | 61.7% | 63.5% |
+| Score top-1 | 44.0% | 49.0% | 35.5% | 46.0% | 42.5% | 43.4% |
 
-Choice accuracy beats random chance on all three seeds, but the 33.6–42.9%
+Choice accuracy beats random chance on all five seeds, but the 33.6–42.9%
 spread, weak score results, and 10.5% mean ECE are not enough to claim reliable
 action selection. Do not use these outputs as trusted probabilities or as an
 action-selection policy. The uniform top-1 baseline is the expected
 `1 / option_count`, not the accuracy of an arbitrary first-option tie break.
 
+### Rejected ordinal-loss ablation
+
+On the same seed `20261001` OOD rows (identical row/group hashes), adding a
+0.25 ranked-probability-score loss to ordinal score decisions made the result
+worse: score RPS changed from `0.2218` to `0.2295`, score top-1 from `46.0%` to
+`41.0%`, and all-task OOD NLL from `0.959` to `1.014`. The experimental
+objective was not retained. This paired result is evidence against that
+setting, not evidence that further loss tuning will close a gap to Jev.
+
 ## Cost, reproduction, and limits
 
 - Context window: 2,048 bytes; only 5/1,000 OOD contexts were truncated.
 - Option window: 128 bytes; none of the evaluated options were truncated.
-- RTX 4060 Laptop: 42.1–66.2 seconds per 8k-row run; peak allocated VRAM was
+- RTX 4060 Laptop: 42.1–66.4 seconds per 8k-row run; peak allocated VRAM was
   0.196 GiB. Each compressed local checkpoint is about 0.6 MB.
 - Single-decision inference over 128 OOD rows (8 warmups, 120 measured) had
   1.14 ms GPU / 1.12 ms CPU median latency; p95 was 2.34 / 1.81 ms. These
@@ -88,6 +107,11 @@ python scripts/train_tiny_typed_decision.py `
   --output-dir benchmarks/.bench-state/jevlike_tiny_8k_ctx2048_seed29_final `
   --train-rows 8000 --calibration-rows 1000 --test-rows 1000 --ood-rows 1000 `
   --context-bytes 2048 --option-bytes 128 --seed 20260929
+
+python scripts/train_tiny_typed_decision.py `
+  --output-dir benchmarks/.bench-state/jevlike_tiny_8k_ctx2048_seed20261002 `
+  --train-rows 8000 --calibration-rows 1000 --test-rows 1000 --ood-rows 1000 `
+  --context-bytes 2048 --option-bytes 128 --seed 20261002
 ```
 
 The ECE calculation and uniform top-1 control were corrected in this revision:
