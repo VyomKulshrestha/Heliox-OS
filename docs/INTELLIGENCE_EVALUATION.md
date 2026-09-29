@@ -1014,3 +1014,26 @@ vocabulary, and the frozen gating metrics above.
 5. Perform consented human/hardware or isolated-environment testing.
 6. Promote only an exact reviewed artifact; never infer promotion from a
    model's self-reported success.
+
+## User-rated workflow outcome candidate
+
+The explicit feedback on a saved workflow is also available to an offline,
+research-only outcome probe. It uses only coarse action-family counts,
+placeholder/incomplete indicators, and the user's `achieved` / `partial` /
+`not_achieved` rating; goals, names, action parameters, screens, and executor
+status are excluded. Identical action-type recipes stay in one evaluation group.
+The encrypted candidate has no planner, approval, or execution integration.
+
+Run it locally only after enough consented recordings and ratings exist:
+
+```powershell
+uv run --project daemon python -m scripts.train_recorded_workflow_outcome
+```
+
+The trainer requires at least 24 rated runs across 8 independent recipe groups,
+uses a group-disjoint holdout, encrypts model weights with the recording
+store's OS-keyring key, and writes an aggregate report under the Heliox data
+directory. It refuses to lower these sample gates or overwrite existing
+artifacts. Tests use synthetic fixtures only; they are not reported as user
+training evidence. This candidate is not Jev imitation, Jev parity, or action
+authorization.
