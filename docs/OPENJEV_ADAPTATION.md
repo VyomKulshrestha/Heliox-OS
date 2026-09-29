@@ -2074,3 +2074,39 @@ Reports and weights remain in the ignored local `.bench-state` directory:
 artifact was emitted or loaded. These are one-dataset, episode-disjoint
 research results—not environment-independent world modeling, live Heliox
 success, multi-step autonomy, action safety, or Jev parity.
+
+## Controlled-UI counterfactual loss ablation (2026-09-30)
+
+The paired generated-browser set uses the same 640x480 starting page for two
+clicks at different button locations, with the selected panel as the observed
+outcome. The fixed source archive has SHA-256
+`caf21093fe12b66ce5d6d65dec2298850a96dbf6f2f929758c5d39245c0df2a2`. The
+layout-family split contains 160 training, 40 validation, and 40 held-out
+rows, grouped into 80, 20, and 20 same-state pairs. Both runs used the spatial
+model, seed `20260926`, and the same held-out groups. The comparison is a
+small, generated UI experiment, not a live Heliox workload.
+
+Adding pairwise transition loss with weight `1.0` trained the model to predict
+different outcomes for alternative clicks. On held-out rows, the correct-action
+weighted MSE was `0.01429`; assigning the other click from the same starting
+page raised it to `0.07054`. The 5,000-replicate bootstrap over the 20 page
+groups estimated candidate-minus-reference at `-0.05624` (95% CI
+`[-0.05713, -0.05537]`); negative values favor the correct action.
+
+That regularizer did not improve the factual prediction score. The earlier
+matched no-pairwise run on this archive scored `0.00422` for the correct action
+and `0.06599` for the paired alternative, an observed separation of `0.06177`.
+The pairwise run therefore had worse correct-action prediction and a smaller
+same-state action gap. Keep weight `1.0` as a negative ablation result; do not
+promote its weights or assume this coefficient transfers to other interfaces.
+The prior baseline report does not contain an episode-group confidence
+interval, so these figures do not establish a statistically tested difference
+between the two training objectives.
+
+The new training report and weights are
+`daemon/benchmarks/.bench-state/controlled_ui_pairs_pairwise_bootstrap_seed20260930.json`
+and `.pt`; the original matched baseline is
+`daemon/benchmarks/.bench-state/controlled_ui_pairs_spatial_action_v4.json`.
+All remain local research artifacts. This evaluation does not establish
+cross-application transfer, real desktop task success, multi-step execution,
+action safety, or Jev parity.
