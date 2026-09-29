@@ -71,20 +71,38 @@ execution authority.
 Open-Jev's updated public results show why a 2B adapter alone should not be
 called Jev-equivalent: on its 231-task public subset, Open-Jev-2B scored
 150/231, Open-Jev-9B 179/231, and its independently audited 27B v1.1 scored
-197/231 versus Jev's 200/231. Its 27B run also used a broader 96,849-row
-training set and separately isolated evaluation groups. These are upstream
-results, not Heliox measurements, and the protocols are not interchangeable.
-See the [Open-Jev research and audit](https://zefan-cai.github.io/open-jev/story/)
-and its [2B saved-evidence report](https://github.com/Zefan-Cai/Open-Jev/blob/main/reports/fullpass-2b-n1/README.md).
+197/231 versus Jev's 200/231 (80/111 vs. 81/111 on Hard). The completed 27B
+checkpoint used a frozen 328,672-row mixture containing 148,639 training rows;
+its public benchmark report explicitly limits the comparison to 231 available
+tasks, not the full 534-task benchmark. The recipe uses a shared scalar scorer
+over candidate descriptions, group-isolated evaluation, and a separate
+calibration split. These are upstream results, not Heliox measurements, and
+the protocols are not interchangeable. Reproducing the 27B run required four
+H100 GPUs, so it is not a practical local-training target for Heliox's 8 GB
+RTX 4060.
+
+See the [audited public JevBench report](https://github.com/Zefan-Cai/Open-Jev/blob/main/docs/jevbench-public.md),
+[shared-scoring and training method](https://github.com/Zefan-Cai/Open-Jev/blob/main/docs/multidomain-training.md),
+[internal evaluation protocol](https://github.com/Zefan-Cai/Open-Jev/blob/main/docs/internal-evaluation.md),
+and [Open-Jev project history](https://zefan-cai.github.io/open-jev/story/).
 
 For Heliox's world model, [WorldEvolver](https://arxiv.org/abs/2606.30639)
 suggests a lower-cost complementary direction: retain observed action/state
 transitions, derive reusable rules from prediction mismatches, and pass only
 reliable foresight to the planner instead of continually updating large-model
-weights. [Agentic Abstention](https://arxiv.org/abs/2606.28733) likewise treats
-stopping and gathering more evidence as sequential choices. Those are useful
-design hypotheses, not proof of desktop performance; Heliox still needs
-consented, real before/action/after traces and an untouched task-family test.
+weights. [MemWM](https://arxiv.org/abs/2608.07107) independently emphasizes
+retrieved transition rules, state caches, and hard-to-predict facts, evaluated
+with structured state-fidelity checks rather than text similarity alone.
+[Agentic Abstention](https://arxiv.org/abs/2606.28733) likewise treats
+stopping and gathering more evidence as sequential choices. This points to a
+more efficient Heliox next step than another broad fine-tune: retrieve only
+verified, relevant episodes/rules and abstain from using low-confidence visual
+foresight. Heliox already has an append-only experience ledger, verifier-backed
+online learning, and an opt-in encrypted visual-transition trainer; the latter
+remains shadow-only because its 16x16 observations are not enough to establish
+desktop state fidelity. These are design hypotheses, not proof of desktop
+performance; Heliox still needs consented, real before/action/after traces and
+an untouched task-family test.
 
 ## Disposition and next evidence
 
