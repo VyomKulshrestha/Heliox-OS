@@ -1,0 +1,1338 @@
+{
+  "purpose": "independent_group_disjoint_public_test_split_replication_of_the_frozen_openjev_rps_candidate",
+  "protocol_sha256": "31c3e0dc9246be3d343305afdcf5aaed8ee1fd726f12c019441df9e99272cf96",
+  "dataset_revision": "c67699e13d0ae25e35b77165a4b6b079bedc8aba",
+  "source_protocol_sha256": "b520295fcc3ba82e724fd49f2be2ef27ace46e29b2cfece8ae3e13ad74cd32df",
+  "fresh_selection_signature": "14f7a3354c37aa2b787c83622838e46d20bf3d23a66307447a8f42d8b7b28d17",
+  "fresh_rows_selected": 512,
+  "fresh_split": "test",
+  "excluded_group_count": 1928,
+  "excluded_group_manifest_sha256": "b97ee8a805e2d929410a9f12a39173617232e9b31bbaf53d10292111b4bb39a4",
+  "fresh_ids_sha256": "4c24582d3700dbd50f36ca07091a0ffb63d16600dd560e5dd7de58e35c1a14ff",
+  "fresh_group_ids_sha256": "2229d832ee98b5bce549010a9ce3ebb7d9cf00f348a0bbe0c0589bdada2688d6",
+  "rows_scored_on_both_models": 482,
+  "overlong_rows_excluded_without_truncation": 30,
+  "scored_ids": [
+    "reasoning-control-v1:76109:1018:decision",
+    "reasoning-control-v1:76109:89:verification",
+    "reasoning-control-v1:76109:1738:ordinal",
+    "snake-v1:2b4481c0d247c0d9eda22095:action",
+    "snake-v1:60f67ca6edc03f51bbe376bf:collision_down",
+    "tic_tac_toe-v1:..XOXXO.O:OXX.X.OO.",
+    "workflow-controls-v1:agent_trace_observability:42:176:v1:PRIORITY REVIEW",
+    "workflow-controls-v1:security_incidents:42:6:v1:BLOCK SENDER",
+    "reasoning-control-v1:76109:1232:verification",
+    "reasoning-control-v1:76109:726:ordinal",
+    "snake-v1:76d2cf30a87c50a21fa8f0b3:action",
+    "snake-v1:16503139af28f7b84d29ffbd:collision_down",
+    "tic_tac_toe-v1:...OOXX..:.X..O..OX",
+    "reasoning-control-v1:76109:677:decision",
+    "snake-v1:0a120970c0423790707cf6ef:action",
+    "snake-v1:59b0899da44ceef4c45dd0ec:collision_up",
+    "tic_tac_toe-v1:O.O.X.XOX:X.OOX.X.O",
+    "vizdoom-basic-v1:190919:id:7:5:score",
+    "reasoning-control-v1:76109:918:decision",
+    "reasoning-control-v1:76109:1502:ordinal",
+    "snake-v1:56218482c3408a06084c5d6f:action",
+    "snake-v1:ca55d89ad19035c551478915:collision_up",
+    "tic_tac_toe-v1:....X...O:O...X....",
+    "workflow-controls-v1:agent_trace_observability:42:188:v0:PAGE ON-CALL",
+    "workflow-controls-v1:invoice_processing:42:95:v0:DUPLICATE",
+    "reasoning-control-v1:76109:1554:decision",
+    "reasoning-control-v1:76109:239:verification",
+    "snake-v1:b2fa0eab8f1c48ebb13f098a:action",
+    "snake-v1:45dea87cef00a23a018669ec:collision_left",
+    "workflow-controls-v1:agent_trace_observability:42:224:v1:HUMAN REVIEW",
+    "reasoning-control-v1:76109:1842:ordinal",
+    "snake-v1:71359856c6c503e0ffd7e2ff:action",
+    "snake-v1:9bae34bcfb7532edf68e69e8:collision_left",
+    "tic_tac_toe-v1:..XO..O.X:X....OX.O",
+    "vizdoom-basic-v1:190919:id:216:2:noul",
+    "reasoning-control-v1:76109:117:ordinal",
+    "snake-v1:ebc04be253fb6113710b88ef:action",
+    "snake-v1:7e0680cbc10312bf591324b6:collision_up",
+    "tic_tac_toe-v1:..XO.XXO.:.OXX.OX..",
+    "tile_platformer-v1:9bb3bed07731a3bc921fb504:4294cc1be98dfd3ce0fe175c",
+    "vizdoom-basic-v1:190919:id:208:1:noul",
+    "workflow-controls-v1:agent_trace_observability:42:151:v0:PAGE ON-CALL",
+    "reasoning-control-v1:76109:2251:decision",
+    "reasoning-control-v1:76109:344:verification",
+    "reasoning-control-v1:76109:1789:ordinal",
+    "snake-v1:4714d942b05a8890e1ae5685:action",
+    "snake-v1:751698886ad40ccc2688bc2f:collision_right",
+    "tic_tac_toe-v1:..O..XXO.:.OXX..O..",
+    "vizdoom-basic-v1:190919:id:232:3:score",
+    "workflow-controls-v1:security_incidents:42:227:v1:REMOVE FORWARDING RULES",
+    "reasoning-control-v1:76109:1514:verification",
+    "reasoning-control-v1:76109:756:ordinal",
+    "snake-v1:8ee4c1222c156a0b17ddd55f:action",
+    "snake-v1:b531c1153bcbfbd9e4b9c9ab:collision_down",
+    "tic_tac_toe-v1:..XO.OXXO:..XO.OXXO",
+    "vizdoom-basic-v1:190919:id:23:8:choice",
+    "workflow-controls-v1:invoice_processing:42:173:v1:ROUTE FOR APPROVAL",
+    "reasoning-control-v1:76109:328:decision",
+    "reasoning-control-v1:76109:2014:verification",
+    "reasoning-control-v1:76109:1905:ordinal",
+    "snake-v1:ce01b9350d78b339a37f766c:action",
+    "snake-v1:8b3193c751a4ad4018d97e0f:collision_down",
+    "tic_tac_toe-v1:..O.OXXX.:XX..OX..O",
+    "workflow-controls-v1:agent_trace_observability:42:11:v1:HUMAN REVIEW",
+    "reasoning-control-v1:76109:834:verification",
+    "reasoning-control-v1:76109:1601:ordinal",
+    "snake-v1:a62a354c45c7fa9a95eb7509:action",
+    "snake-v1:84cd3086d83bc9a446912069:collision_up",
+    "tic_tac_toe-v1:.OOX.OX.X:OOXO...XX",
+    "vizdoom-basic-v1:190919:id:51:0:score",
+    "reasoning-control-v1:76109:1778:verification",
+    "snake-v1:20944fed51a6e32069c08225:action",
+    "snake-v1:ab0702458b9a4c855515043b:collision_left",
+    "tic_tac_toe-v1:..XX.OXO.:..XX.OXO.",
+    "workflow-controls-v1:invoice_processing:42:166:v1:DISPUTE LINES",
+    "workflow-controls-v1:security_incidents:42:39:v1:BLOCK SENDER",
+    "reasoning-control-v1:76109:1987:decision",
+    "reasoning-control-v1:76109:2049:verification",
+    "reasoning-control-v1:76109:824:ordinal",
+    "snake-v1:2895beb818f07720c1703910:action",
+    "snake-v1:d417e7de5a680fc6c28030f0:collision_right",
+    "tic_tac_toe-v1:...OOX.X.:.X.OOX...",
+    "workflow-controls-v1:security_incidents:42:88:v0:ESCALATE URGENT",
+    "reasoning-control-v1:76109:1133:decision",
+    "reasoning-control-v1:76109:7:verification",
+    "reasoning-control-v1:76109:1732:ordinal",
+    "snake-v1:9c0ec3dbe84ae5c526965f56:action",
+    "snake-v1:cc07307136a76e7162cd4134:collision_left",
+    "tic_tac_toe-v1:..XX..OXO:X.O..X.XO",
+    "reasoning-control-v1:76109:1411:decision",
+    "reasoning-control-v1:76109:477:ordinal",
+    "snake-v1:49aea6fa2fc6cbdd0b12e68a:action",
+    "snake-v1:9989d40cdfe04e28582f5edf:collision_down",
+    "tile_platformer-v1:984ae29afd20293f996bc58d:813b25eef6fda6923cd9a24d",
+    "vizdoom-basic-v1:190919:id:333:6:noul",
+    "reasoning-control-v1:76109:1683:decision",
+    "reasoning-control-v1:76109:2372:verification",
+    "snake-v1:084e8363a941c8a9e46ca4b3:collision_up",
+    "tic_tac_toe-v1:.OOX.XXOX:XX.O.OXXO",
+    "vizdoom-basic-v1:190919:id:32:9:choice",
+    "workflow-controls-v1:agent_trace_observability:42:38:v1:PRIORITY REVIEW",
+    "reasoning-control-v1:76109:2196:ordinal",
+    "snake-v1:310536ec44dba579ef74edfb:action",
+    "snake-v1:dd4ee3fac52263be4f6405f9:collision_left",
+    "tic_tac_toe-v1:O.XOO.X.X:X.X.OOX.O",
+    "vizdoom-basic-v1:190919:id:41:1:noul",
+    "vizdoom-basic-v1:190919:id:60:1:score",
+    "reasoning-control-v1:76109:1867:decision",
+    "reasoning-control-v1:76109:1637:verification",
+    "reasoning-control-v1:76109:2479:ordinal",
+    "snake-v1:d33f55feb42758175b390d41:action",
+    "snake-v1:1f7df5e255ef5da18018756b:collision_down",
+    "reasoning-control-v1:76109:2161:decision",
+    "reasoning-control-v1:76109:2269:verification",
+    "reasoning-control-v1:76109:794:ordinal",
+    "snake-v1:12668332b278ec18e0d3467c:action",
+    "snake-v1:7df70d8adeb4f61ea6cdc0ce:collision_up",
+    "reasoning-control-v1:76109:1229:decision",
+    "reasoning-control-v1:76109:161:ordinal",
+    "snake-v1:dc09ea74647cd037163078bb:action",
+    "snake-v1:9930ff3d86da448b0c2fd68b:collision_down",
+    "tic_tac_toe-v1:..OX.XOOX:OOXX.X..O",
+    "vizdoom-basic-v1:190919:id:384:3:choice",
+    "reasoning-control-v1:76109:1639:decision",
+    "reasoning-control-v1:76109:2346:verification",
+    "reasoning-control-v1:76109:72:ordinal",
+    "snake-v1:dd4b3efa9dbff292ea2d0583:action",
+    "snake-v1:ad4675a53f7f259756cb86f6:collision_down",
+    "reasoning-control-v1:76109:2091:decision",
+    "reasoning-control-v1:76109:95:verification",
+    "reasoning-control-v1:76109:157:ordinal",
+    "snake-v1:5933556f22c536723801d6ad:action",
+    "snake-v1:d12fc1324c0aef9aff7d126b:collision_left",
+    "vizdoom-basic-v1:190919:id:198:0:noul",
+    "reasoning-control-v1:76109:717:decision",
+    "reasoning-control-v1:76109:2493:verification",
+    "reasoning-control-v1:76109:976:ordinal",
+    "snake-v1:b360996680c0fe41bc002c16:action",
+    "snake-v1:1e64a3b3dc5cb270345e854a:collision_left",
+    "tic_tac_toe-v1:.O.OXX.X.:.X.OXX.O.",
+    "vizdoom-basic-v1:190919:id:154:1:choice",
+    "reasoning-control-v1:76109:2023:verification",
+    "reasoning-control-v1:76109:1193:ordinal",
+    "snake-v1:ddef5914407cfee614e1bf7d:action",
+    "snake-v1:a30c071b9dc88c54f1bd3510:collision_left",
+    "reasoning-control-v1:76109:539:decision",
+    "snake-v1:20d7aca316a03d358bb1dbaa:action",
+    "snake-v1:1ceadd82457a47212b58de1b:collision_down",
+    "tic_tac_toe-v1:.......OX:...O..X..",
+    "workflow-controls-v1:invoice_processing:42:12:v0:SHORT PAY",
+    "reasoning-control-v1:76109:2071:verification",
+    "reasoning-control-v1:76109:2427:ordinal",
+    "snake-v1:1e0624f111d05b621550205a:action",
+    "tic_tac_toe-v1:....OXXO.:XO..OX...",
+    "reasoning-control-v1:76109:2448:decision",
+    "tic_tac_toe-v1:O.OOXXX.X:O.OXXOX.X",
+    "reasoning-control-v1:76109:2021:verification",
+    "snake-v1:3e5c2832ae5e3ced24c340d2:action",
+    "snake-v1:0734b044d4d3f48e77299ff9:collision_right",
+    "reasoning-control-v1:76109:1151:verification",
+    "snake-v1:efb06217439a3a7735e2c115:action",
+    "snake-v1:bd0eb17f8ce20640d356edb9:collision_right",
+    "tic_tac_toe-v1:.O.OXXOXX:.XXOXX.OO",
+    "reasoning-control-v1:76109:1252:verification",
+    "tic_tac_toe-v1:.OOX.X.XO:OXOO.X.X.",
+    "reasoning-control-v1:76109:1143:decision",
+    "reasoning-control-v1:76109:1134:verification",
+    "reasoning-control-v1:76109:414:ordinal",
+    "snake-v1:0f894ae594e8e5476480a2c1:action",
+    "snake-v1:a5db21444191b17a2d5e2bf4:collision_up",
+    "tic_tac_toe-v1:.O.OXXO.X:.O.XXOX.O",
+    "reasoning-control-v1:76109:327:decision",
+    "reasoning-control-v1:76109:438:verification",
+    "snake-v1:d82809f7e38f2d2c22326114:action",
+    "reasoning-control-v1:76109:1593:decision",
+    "reasoning-control-v1:76109:2333:ordinal",
+    "snake-v1:ef3979a946696b849f6448cf:action",
+    "snake-v1:891debe368081c50a8e31165:collision_left",
+    "tic_tac_toe-v1:.XOXX.OOX:X.OOXXOX.",
+    "workflow-controls-v1:agent_trace_observability:42:104:v2:HUMAN REVIEW",
+    "reasoning-control-v1:76109:665:decision",
+    "reasoning-control-v1:76109:242:verification",
+    "reasoning-control-v1:76109:971:ordinal",
+    "snake-v1:f9e5cdce7759c01d667207ac:action",
+    "snake-v1:c051be0b830283189d0e5c8c:collision_down",
+    "workflow-controls-v1:invoice_processing:42:227:v1:SCHEDULE",
+    "reasoning-control-v1:76109:257:decision",
+    "reasoning-control-v1:76109:1623:verification",
+    "reasoning-control-v1:76109:385:ordinal",
+    "snake-v1:7cbcfcd689d3bfac72087ce6:action",
+    "snake-v1:e2ca1c06eb69edbc6185cacd:collision_left",
+    "tic_tac_toe-v1:.OOXOX.X.:.X.XOO.XO",
+    "reasoning-control-v1:76109:479:decision",
+    "reasoning-control-v1:76109:2135:verification",
+    "reasoning-control-v1:76109:2019:ordinal",
+    "snake-v1:b12b7b0cdcd9c45cd7854445:action",
+    "snake-v1:b42dd14bdd9ac6968384032e:collision_right",
+    "tic_tac_toe-v1:.OXX.OXXO:XO.O.XOXX",
+    "reasoning-control-v1:76109:266:ordinal",
+    "snake-v1:95a22556b0a1d8be7f8429f2:action",
+    "snake-v1:bfb87ce1c7a53e4205e14823:collision_up",
+    "tic_tac_toe-v1:..OX...OX:X.OO...X.",
+    "reasoning-control-v1:76109:1699:verification",
+    "snake-v1:1d88ba736278ecc2a14c4088:action",
+    "snake-v1:a3ced9e0a8f4ad40e41585f5:collision_right",
+    "reasoning-control-v1:76109:1949:decision",
+    "reasoning-control-v1:76109:1215:verification",
+    "reasoning-control-v1:76109:1293:ordinal",
+    "snake-v1:0b1c01d9dc574e3b09675016:collision_left",
+    "reasoning-control-v1:76109:1099:verification",
+    "reasoning-control-v1:76109:315:ordinal",
+    "snake-v1:b9d79145ec1e5950844665e0:action",
+    "reasoning-control-v1:76109:1974:decision",
+    "reasoning-control-v1:76109:633:verification",
+    "snake-v1:eb29d9b584a51cadfa71e285:action",
+    "reasoning-control-v1:76109:1951:decision",
+    "snake-v1:277c59e41e49dc215b38be5b:action",
+    "snake-v1:68b25018fefb0fd9ea0b0814:collision_down",
+    "reasoning-control-v1:76109:1832:decision",
+    "reasoning-control-v1:76109:731:ordinal",
+    "snake-v1:aaf1f820b5dc910f0397802f:action",
+    "snake-v1:65917cd462242c177b996632:collision_down",
+    "reasoning-control-v1:76109:446:decision",
+    "reasoning-control-v1:76109:922:verification",
+    "reasoning-control-v1:76109:1279:ordinal",
+    "snake-v1:c33e26e2632bb417c953cab1:action",
+    "snake-v1:80dec29bfbb3471baf65d816:collision_right",
+    "tic_tac_toe-v1:.XXXO.XOO:OOX.OXXX.",
+    "reasoning-control-v1:76109:628:decision",
+    "snake-v1:3b83ce5fe9e61ef32bdab872:action",
+    "reasoning-control-v1:76109:2085:decision",
+    "reasoning-control-v1:76109:2423:verification",
+    "snake-v1:fd8f7c7c42478b4ce5ab2262:collision_down",
+    "vizdoom-basic-v1:190919:id:3:1:noul",
+    "reasoning-control-v1:76109:1457:decision",
+    "snake-v1:8fff1290ec54e2dddac20959:collision_right",
+    "reasoning-control-v1:76109:465:decision",
+    "reasoning-control-v1:76109:2311:ordinal",
+    "snake-v1:e11420c534d7c5d5e28f3aea:collision_left",
+    "snake-v1:6348c13fb2cc9c05b30a8813:action",
+    "snake-v1:48f86e0995d7f12f0a1a8256:collision_left",
+    "reasoning-control-v1:76109:358:verification",
+    "snake-v1:34e11fcf30136f526b85e864:action",
+    "reasoning-control-v1:76109:1946:verification",
+    "snake-v1:6dff683b83acba60b616383d:action",
+    "snake-v1:fe3198d4225429fa3aa097ec:collision_down",
+    "tic_tac_toe-v1:..XX..XOO:X.O..O.XX",
+    "reasoning-control-v1:76109:2012:decision",
+    "reasoning-control-v1:76109:1296:verification",
+    "snake-v1:bef115c8a4ff8c74911d83be:action",
+    "snake-v1:b8c4291fa141346424f059ac:collision_right",
+    "vizdoom-basic-v1:190919:id:30:0:score",
+    "reasoning-control-v1:76109:2325:verification",
+    "reasoning-control-v1:76109:1415:ordinal",
+    "snake-v1:68a886ff11f46d90e532c5cb:action",
+    "snake-v1:4339024bc613b635a1834371:collision_left",
+    "snake-v1:fa190682c7fd144ddc6c7046:collision_right",
+    "tic_tac_toe-v1:..OX.OX.X:..OX.OX.X",
+    "reasoning-control-v1:76109:184:verification",
+    "snake-v1:e81fe37c459909bf36d81ca6:action",
+    "snake-v1:a7c18f28aa49d8fa5f94ca71:collision_left",
+    "tic_tac_toe-v1:.OOX..XXO:O.OO.X.XX",
+    "reasoning-control-v1:76109:256:decision",
+    "reasoning-control-v1:76109:2275:verification",
+    "snake-v1:3a12cd08b5c5390c2bff727e:action",
+    "snake-v1:74e026d5947b0528d4d02a7e:collision_right",
+    "tic_tac_toe-v1:.O.XOX.XO:OX.XOO.X.",
+    "snake-v1:a40f4d6bd99ba6fafc04806e:action",
+    "snake-v1:4b331fee85438f46c59950e4:collision_up",
+    "reasoning-control-v1:76109:1918:ordinal",
+    "snake-v1:7c5a308cdc8923fbe6f7d3a6:action",
+    "snake-v1:f2ffec23b5b59311993d2023:collision_right",
+    "reasoning-control-v1:76109:1571:verification",
+    "reasoning-control-v1:76109:1734:ordinal",
+    "snake-v1:e9ffa4a7ad6bd2d92c334ae0:collision_left",
+    "tic_tac_toe-v1:..O.XXXOO:OXO.XO..X",
+    "reasoning-control-v1:76109:407:ordinal",
+    "snake-v1:94bf639f0727cd0dd5124b0b:action",
+    "snake-v1:2eaffb2cf7d5a24b1c08917f:collision_right",
+    "reasoning-control-v1:76109:1388:decision",
+    "reasoning-control-v1:76109:1172:ordinal",
+    "snake-v1:a30ade31124dfa84c0188a32:action",
+    "reasoning-control-v1:76109:2277:decision",
+    "reasoning-control-v1:76109:5:verification",
+    "snake-v1:7bd190fa9b4b7378b0b7b9e2:collision_right",
+    "reasoning-control-v1:76109:1638:decision",
+    "snake-v1:e2d5048e297cd7e72535d18a:action",
+    "snake-v1:47f23883e907d7684865b8ea:action",
+    "workflow-controls-v1:invoice_processing:42:27:v1:SHORT PAY",
+    "reasoning-control-v1:76109:936:decision",
+    "reasoning-control-v1:76109:1782:verification",
+    "snake-v1:dcf1bd66ec4f92b33ba7fe0a:action",
+    "snake-v1:13da130864ba79bf2c41f7ce:collision_right",
+    "reasoning-control-v1:76109:2367:verification",
+    "reasoning-control-v1:76109:1095:ordinal",
+    "reasoning-control-v1:76109:741:decision",
+    "reasoning-control-v1:76109:2369:ordinal",
+    "snake-v1:5828dc668bcb74ce1a44b9e0:action",
+    "tic_tac_toe-v1:..XOXX.O.:XX..XO.O.",
+    "snake-v1:397a17bb6ba062e4960d6b5a:action",
+    "vizdoom-basic-v1:190919:id:242:2:noul",
+    "workflow-controls-v1:security_incidents:42:205:v1:ESCALATE URGENT",
+    "snake-v1:d41ce7ed6ea601992e827ef9:action",
+    "reasoning-control-v1:76109:1916:decision",
+    "reasoning-control-v1:76109:246:ordinal",
+    "snake-v1:4c0c6b0e6c95edd4b5fc50e6:action",
+    "snake-v1:5cdaceacd9b78fce8a47d3c8:collision_left",
+    "tic_tac_toe-v1:..OXXOXO.:.OOOX.XX.",
+    "workflow-controls-v1:security_incidents:42:209:v1:ISOLATE HOST",
+    "reasoning-control-v1:76109:684:verification",
+    "snake-v1:c3434e520bedc7fc55ba3954:action",
+    "reasoning-control-v1:76109:364:verification",
+    "snake-v1:554cb4aef855f4ec7049119e:action",
+    "snake-v1:9f0e04162bd2aa70f2a39852:collision_left",
+    "reasoning-control-v1:76109:622:decision",
+    "snake-v1:d62e0cebeec6ce9d4f20e572:action",
+    "reasoning-control-v1:76109:79:verification",
+    "reasoning-control-v1:76109:37:ordinal",
+    "snake-v1:4ac60faa21750e9816791a23:action",
+    "snake-v1:28302024f86d9dbf24f44906:collision_down",
+    "tic_tac_toe-v1:...O.XXOX:...O.XXOX",
+    "reasoning-control-v1:76109:996:decision",
+    "snake-v1:af0ada162a951c762da7c363:collision_down",
+    "tic_tac_toe-v1:O.XX.XOXO:XXO..XOXO",
+    "reasoning-control-v1:76109:649:ordinal",
+    "snake-v1:fa12b404a03ba19abe112dc8:action",
+    "reasoning-control-v1:76109:2398:verification",
+    "snake-v1:5796a0afce2fd6c58ba2a374:action",
+    "tic_tac_toe-v1:.XOXOOX.X:XOO.OXXX.",
+    "reasoning-control-v1:76109:2442:decision",
+    "reasoning-control-v1:76109:151:verification",
+    "snake-v1:e43231592e9788f83855c019:action",
+    "snake-v1:8b39dd01219629939d9d4b85:collision_up",
+    "reasoning-control-v1:76109:101:ordinal",
+    "snake-v1:5f362065a820540be82a5bd0:action",
+    "snake-v1:94141a5e00b4ac6f5ee8ebc6:collision_left",
+    "reasoning-control-v1:76109:1764:verification",
+    "snake-v1:a0ce0976cfdbcf7dac711d38:action",
+    "snake-v1:7fa54dea12134c832c2ca5b3:collision_up",
+    "reasoning-control-v1:76109:694:decision",
+    "reasoning-control-v1:76109:283:ordinal",
+    "snake-v1:f67ebee05572fa003eed233b:action",
+    "snake-v1:eca877acf525985a90d2a59b:collision_left",
+    "snake-v1:dab02e4119f81dbf415d1efe:action",
+    "snake-v1:4b53d3909d5dd1501dbb696f:collision_right",
+    "workflow-controls-v1:invoice_processing:42:13:v1:HOLD",
+    "reasoning-control-v1:76109:1119:verification",
+    "workflow-controls-v1:security_incidents:42:243:v1:ISOLATE HOST",
+    "reasoning-control-v1:76109:444:ordinal",
+    "snake-v1:ea82c0786249799f14e0d131:action",
+    "snake-v1:ad971514c5c3e62a8b30c61a:collision_down",
+    "tic_tac_toe-v1:....OXXOX:X..OO.XX.",
+    "snake-v1:d364a46dbfe1edaccf9d43eb:action",
+    "snake-v1:b5702bf164b0ba94722666ba:collision_right",
+    "reasoning-control-v1:76109:2494:decision",
+    "snake-v1:4bcd0411481679ffcb32adaa:action",
+    "snake-v1:62ae86e0da16960ba848dd79:action",
+    "reasoning-control-v1:76109:396:decision",
+    "snake-v1:4df9bc6322c079329fb6882e:collision_left",
+    "reasoning-control-v1:76109:924:decision",
+    "snake-v1:ef8178211a3486472dedae80:collision_up",
+    "snake-v1:76cdbc8d7f92765f507b24e8:collision_down",
+    "reasoning-control-v1:76109:309:ordinal",
+    "snake-v1:57ed00c8232cb1102a7a4873:action",
+    "snake-v1:91ed936653cf02cd5dd2f6ea:collision_left",
+    "reasoning-control-v1:76109:1678:ordinal",
+    "snake-v1:3aeb41f9ce4960a9fede4639:action",
+    "tic_tac_toe-v1:..OX.XX.O:.XX...OXO",
+    "snake-v1:a6ad3034c241a673b9e1d60a:action",
+    "snake-v1:175f41b12fbbed04a8bdc26e:collision_right",
+    "reasoning-control-v1:76109:422:verification",
+    "reasoning-control-v1:76109:887:ordinal",
+    "reasoning-control-v1:76109:1125:ordinal",
+    "snake-v1:5cac7268b9760812a8c6130c:action",
+    "snake-v1:ee2525c4b68869ee1fc43024:collision_right",
+    "reasoning-control-v1:76109:1499:verification",
+    "reasoning-control-v1:76109:14:ordinal",
+    "snake-v1:3e935f09712957c42e89031a:action",
+    "snake-v1:63153e9b9c54ae0a790f7e11:collision_up",
+    "snake-v1:c513f2de8595aae057943023:action",
+    "tic_tac_toe-v1:..XOO.XOX:..XOO.XOX",
+    "snake-v1:f5040464f4d3c3368eca70e7:action",
+    "snake-v1:8e56620c9fa3996250a26060:collision_right",
+    "reasoning-control-v1:76109:798:decision",
+    "reasoning-control-v1:76109:1858:verification",
+    "reasoning-control-v1:76109:849:ordinal",
+    "snake-v1:d106ba3cf2c1370ab478406a:action",
+    "reasoning-control-v1:76109:357:ordinal",
+    "snake-v1:c4dc577fa2ad90a673fd150a:action",
+    "tic_tac_toe-v1:....OXXXO:..X.OX.XO",
+    "reasoning-control-v1:76109:1937:ordinal",
+    "snake-v1:e3cc4aa12e0137fa7cb9daa4:action",
+    "reasoning-control-v1:76109:605:verification",
+    "snake-v1:337b2e1211a90fbcf150bd71:action",
+    "snake-v1:b3a62071a0297791b79c8a44:collision_down",
+    "snake-v1:1d7ac859e1043cd802b52e6f:collision_down",
+    "vizdoom-basic-v1:190919:id:290:0:score",
+    "snake-v1:c8220fd40393cb4517c01e30:action",
+    "reasoning-control-v1:76109:913:verification",
+    "snake-v1:336754bc037b76120643b8bb:collision_right",
+    "snake-v1:a1984eaaa47fa32ed5d9489b:action",
+    "snake-v1:70e32f1041b718f5ccb6f8fd:collision_up",
+    "snake-v1:c17f71f8cc9813700907b68b:action",
+    "reasoning-control-v1:76109:365:decision",
+    "snake-v1:f2ca172486bab54fd04e850d:action",
+    "reasoning-control-v1:76109:1958:verification",
+    "snake-v1:cb8fef100ac2a09e0982b4e3:action",
+    "snake-v1:755ad0cf0934b8923b4c6a13:collision_right",
+    "tic_tac_toe-v1:..XOOXXXO:OXXXOOX..",
+    "snake-v1:10b37b4dc1c40060365098be:action",
+    "snake-v1:03f2757d9e87e06020ce1c7e:collision_up",
+    "snake-v1:2232308eeca6b250025a01d6:action",
+    "snake-v1:59244bdf3c8ef0663e72f138:collision_down",
+    "tic_tac_toe-v1:.OOOX.X.X:X.XOX..OO",
+    "snake-v1:4370bd41223389ae8a4e7e38:action",
+    "snake-v1:dc642101474568086469e083:collision_left",
+    "reasoning-control-v1:76109:2001:decision",
+    "reasoning-control-v1:76109:501:verification",
+    "reasoning-control-v1:76109:1802:ordinal",
+    "snake-v1:54103baf018dbcf254d2bd3c:action",
+    "snake-v1:d01b8921392a1cd8a3aac5d7:collision_left",
+    "snake-v1:3e9a781598135e29874c1950:action",
+    "snake-v1:99dfac1f909ab7f1cb263bae:collision_left",
+    "reasoning-control-v1:76109:1034:verification",
+    "snake-v1:260e8101a0e8b873690c504e:action",
+    "snake-v1:9b361e42fcb04934681ee318:collision_right",
+    "tic_tac_toe-v1:..OX..OX.:..OX..OX.",
+    "snake-v1:157c2396ac580084926a8c59:action",
+    "snake-v1:a93879ce64af1daf350feb88:collision_left",
+    "tic_tac_toe-v1:..XXOO.OX:.X..OOXOX",
+    "reasoning-control-v1:76109:1167:ordinal",
+    "snake-v1:30936081eb24e6256a692153:action",
+    "tic_tac_toe-v1:..X...XO.:X......OX",
+    "snake-v1:08723cd966ddd4827442f838:action",
+    "snake-v1:55499f8ae8faa1a0c977c836:collision_right",
+    "snake-v1:095550b8b2daf531d3f64be8:action",
+    "snake-v1:6517f5072af6dfb612dab572:action",
+    "snake-v1:234cadb814d7b8c1d777e9d7:collision_down",
+    "reasoning-control-v1:76109:1413:verification",
+    "snake-v1:24855686558a72f7bb092ab2:action",
+    "snake-v1:64002c7e83fab08390e7c48d:action",
+    "reasoning-control-v1:76109:1006:decision",
+    "snake-v1:19e3b3fa6e2d974e5f961190:action",
+    "snake-v1:eba7b9dbf9a52a405d16427f:collision_down",
+    "snake-v1:75e725591f0860fed1037e40:action",
+    "reasoning-control-v1:76109:1697:decision",
+    "reasoning-control-v1:76109:529:verification",
+    "reasoning-control-v1:76109:1483:ordinal",
+    "reasoning-control-v1:76109:901:decision",
+    "snake-v1:fd66bb461c2f5d46839582b4:action",
+    "reasoning-control-v1:76109:2127:verification",
+    "snake-v1:3c3df4e3aacde79499d010bc:action",
+    "snake-v1:80a4f6215018c955dd833e03:action",
+    "reasoning-control-v1:76109:2263:decision",
+    "snake-v1:aeeeccf3ec14cb4eafd91b6a:action",
+    "reasoning-control-v1:76109:2256:ordinal",
+    "snake-v1:1d520339832a428e3b8cf97e:action",
+    "reasoning-control-v1:76109:941:verification",
+    "snake-v1:08b0174da2de71feebea3363:action",
+    "snake-v1:75988d5cdfb4d26b7bd8d1a5:collision_right",
+    "snake-v1:c8d32e65f0955e579b5065c5:collision_right",
+    "reasoning-control-v1:76109:2243:ordinal",
+    "snake-v1:36ee7d014d493a01972be306:collision_right",
+    "reasoning-control-v1:76109:223:ordinal",
+    "snake-v1:858b0121fbf6adcc697dfdb0:action",
+    "reasoning-control-v1:76109:813:ordinal",
+    "snake-v1:c5c6c21a9046ff4745fbb077:action",
+    "snake-v1:71b950983ed9391a080fbf43:action",
+    "tic_tac_toe-v1:..OXX..XO:.XOXX...O",
+    "reasoning-control-v1:76109:127:verification",
+    "snake-v1:d2ddb9408fe9036a54414b36:action",
+    "snake-v1:bb438c64cc582424c02918b0:collision_down",
+    "snake-v1:f51d2c0b08afe9c41c91023f:collision_down",
+    "reasoning-control-v1:76109:1376:verification",
+    "snake-v1:f947da50f9fe8b567d3156aa:collision_right",
+    "snake-v1:85201c05f0e4c01b2b0bde50:action",
+    "reasoning-control-v1:76109:389:ordinal",
+    "reasoning-control-v1:76109:907:decision",
+    "snake-v1:c054bb6224edadb941f39419:action",
+    "snake-v1:22c09270f99e29079b3f01d2:collision_up",
+    "reasoning-control-v1:76109:746:decision",
+    "snake-v1:c26506aff6a97333ae6251c3:action"
+  ],
+  "released_openjev": {
+    "rows": 482,
+    "top1_accuracy": 0.7883817427385892,
+    "mean_nll": 0.5307911508363234,
+    "mean_brier": 0.08278871833014656,
+    "selective_prediction": {
+      "aurc": 0.05926213539204637,
+      "selection_score": "maximum_candidate_probability",
+      "tie_handling": "expected risk under random ordering within equal-score groups",
+      "risk_at_coverage": {
+        "0.5": {
+          "requested_coverage": 0.5,
+          "actual_coverage": 0.5,
+          "retained_decisions": 241,
+          "selective_risk": 0.024896265560165973
+        },
+        "0.8": {
+          "requested_coverage": 0.8,
+          "actual_coverage": 0.8008298755186722,
+          "retained_decisions": 386,
+          "selective_risk": 0.14248704663212436
+        },
+        "0.9": {
+          "requested_coverage": 0.9,
+          "actual_coverage": 0.9004149377593361,
+          "retained_decisions": 434,
+          "selective_risk": 0.16589861751152074
+        }
+      }
+    },
+    "by_kind": {
+      "choice": {
+        "rows": 229,
+        "top1_accuracy": 0.7467248908296943,
+        "mean_nll": 0.5964730929600602,
+        "mean_brier": 0.05780257527670011,
+        "selective_prediction": {
+          "aurc": 0.08731862128910074,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5021834061135371,
+              "retained_decisions": 115,
+              "selective_risk": 0.043478260869565216
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 0.8034934497816594,
+              "retained_decisions": 184,
+              "selective_risk": 0.16847826086956522
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 0.9039301310043668,
+              "retained_decisions": 207,
+              "selective_risk": 0.20772946859903382
+            }
+          }
+        }
+      },
+      "noul": {
+        "rows": 186,
+        "top1_accuracy": 0.8602150537634409,
+        "mean_nll": 0.4295750860309249,
+        "mean_brier": 0.11863513084631885,
+        "selective_prediction": {
+          "aurc": 0.03577694615430191,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5,
+              "retained_decisions": 93,
+              "selective_risk": 0.021505376344086023
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 0.8010752688172043,
+              "retained_decisions": 149,
+              "selective_risk": 0.0738255033557047
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 0.9032258064516129,
+              "retained_decisions": 168,
+              "selective_risk": 0.10119047619047619
+            }
+          }
+        },
+        "confusion": {
+          "true_positive": 49,
+          "true_negative": 111,
+          "false_positive": 10,
+          "false_negative": 16
+        },
+        "balanced_accuracy": 0.8356007628734902
+      },
+      "score": {
+        "rows": 67,
+        "top1_accuracy": 0.7313432835820896,
+        "mean_nll": 0.5872840360224186,
+        "mean_brier": 0.06867519640822412,
+        "selective_prediction": {
+          "aurc": 0.06284072409709651,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5074626865671642,
+              "retained_decisions": 34,
+              "selective_risk": 0.0
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 0.8059701492537313,
+              "retained_decisions": 54,
+              "selective_risk": 0.14814814814814814
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 0.9104477611940298,
+              "retained_decisions": 61,
+              "selective_risk": 0.21311475409836064
+            }
+          }
+        },
+        "mean_rank_error": 0.3528774409583848,
+        "mean_ranked_probability_score": 0.0686271036469529
+      }
+    },
+    "by_source": {
+      "reasoning-control-v1": {
+        "rows": 181,
+        "top1_accuracy": 0.8011049723756906,
+        "mean_nll": 0.5422700026564012,
+        "mean_brier": 0.09083175953322428,
+        "selective_prediction": {
+          "aurc": 0.04766706801784309,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5027624309392266,
+              "retained_decisions": 91,
+              "selective_risk": 0.02197802197802198
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 0.8011049723756906,
+              "retained_decisions": 145,
+              "selective_risk": 0.11724137931034483
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 0.9005524861878453,
+              "retained_decisions": 163,
+              "selective_risk": 0.1411042944785276
+            }
+          }
+        }
+      },
+      "snake-v1": {
+        "rows": 213,
+        "top1_accuracy": 0.8309859154929577,
+        "mean_nll": 0.43334828679411935,
+        "mean_brier": 0.07675688678190491,
+        "selective_prediction": {
+          "aurc": 0.05528037647886894,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5023474178403756,
+              "retained_decisions": 107,
+              "selective_risk": 0.018691588785046728
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 0.8028169014084507,
+              "retained_decisions": 171,
+              "selective_risk": 0.11695906432748537
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 0.9014084507042254,
+              "retained_decisions": 192,
+              "selective_risk": 0.15104166666666666
+            }
+          }
+        }
+      },
+      "tic_tac_toe-v1": {
+        "rows": 48,
+        "top1_accuracy": 0.4166666666666667,
+        "mean_nll": 1.2405985567790363,
+        "mean_brier": 0.1249979549460767,
+        "selective_prediction": {
+          "aurc": 0.5667956250089109,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5,
+              "retained_decisions": 24,
+              "selective_risk": 0.5833333333333334
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 0.8125,
+              "retained_decisions": 39,
+              "selective_risk": 0.6410256410256411
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 0.9166666666666666,
+              "retained_decisions": 44,
+              "selective_risk": 0.6363636363636364
+            }
+          }
+        }
+      },
+      "tile_platformer-v1": {
+        "rows": 2,
+        "top1_accuracy": 1.0,
+        "mean_nll": 0.002288248373275149,
+        "mean_brier": 9.778597346788737e-07,
+        "selective_prediction": {
+          "aurc": 0.0,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5,
+              "retained_decisions": 1,
+              "selective_risk": 0.0
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 1.0,
+              "retained_decisions": 2,
+              "selective_risk": 0.0
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 1.0,
+              "retained_decisions": 2,
+              "selective_risk": 0.0
+            }
+          }
+        }
+      },
+      "vizdoom-basic-v1": {
+        "rows": 17,
+        "top1_accuracy": 0.9411764705882353,
+        "mean_nll": 0.2734394574521672,
+        "mean_brier": 0.03934589874258849,
+        "selective_prediction": {
+          "aurc": 0.011058246828143022,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5294117647058824,
+              "retained_decisions": 9,
+              "selective_risk": 0.0
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 0.8235294117647058,
+              "retained_decisions": 14,
+              "selective_risk": 0.0
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 0.9411764705882353,
+              "retained_decisions": 16,
+              "selective_risk": 0.0625
+            }
+          }
+        }
+      },
+      "workflow-controls-v1/agent_trace_observability": {
+        "rows": 7,
+        "top1_accuracy": 1.0,
+        "mean_nll": 0.00020940216686799837,
+        "mean_brier": 1.4541742867776355e-07,
+        "selective_prediction": {
+          "aurc": 0.0,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5714285714285714,
+              "retained_decisions": 4,
+              "selective_risk": 0.0
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 0.8571428571428571,
+              "retained_decisions": 6,
+              "selective_risk": 0.0
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 1.0,
+              "retained_decisions": 7,
+              "selective_risk": 0.0
+            }
+          }
+        },
+        "confusion": {
+          "true_positive": 1,
+          "true_negative": 6,
+          "false_positive": 0,
+          "false_negative": 0
+        },
+        "balanced_accuracy": 1.0
+      },
+      "workflow-controls-v1/invoice_processing": {
+        "rows": 7,
+        "top1_accuracy": 1.0,
+        "mean_nll": 0.014125871815823107,
+        "mean_brier": 0.0011445191833157117,
+        "selective_prediction": {
+          "aurc": 0.0,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5714285714285714,
+              "retained_decisions": 4,
+              "selective_risk": 0.0
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 0.8571428571428571,
+              "retained_decisions": 6,
+              "selective_risk": 0.0
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 1.0,
+              "retained_decisions": 7,
+              "selective_risk": 0.0
+            }
+          }
+        },
+        "confusion": {
+          "true_positive": 3,
+          "true_negative": 4,
+          "false_positive": 0,
+          "false_negative": 0
+        },
+        "balanced_accuracy": 1.0
+      },
+      "workflow-controls-v1/security_incidents": {
+        "rows": 7,
+        "top1_accuracy": 0.8571428571428571,
+        "mean_nll": 0.1550220312065582,
+        "mean_brier": 0.06251430730156335,
+        "selective_prediction": {
+          "aurc": 0.02040816326530612,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5714285714285714,
+              "retained_decisions": 4,
+              "selective_risk": 0.0
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 0.8571428571428571,
+              "retained_decisions": 6,
+              "selective_risk": 0.0
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 1.0,
+              "retained_decisions": 7,
+              "selective_risk": 0.14285714285714285
+            }
+          }
+        },
+        "confusion": {
+          "true_positive": 1,
+          "true_negative": 5,
+          "false_positive": 0,
+          "false_negative": 1
+        },
+        "balanced_accuracy": 0.75
+      }
+    }
+  },
+  "rps_candidate": {
+    "rows": 482,
+    "top1_accuracy": 0.8070539419087137,
+    "mean_nll": 0.4476943473182472,
+    "mean_brier": 0.06498176168612209,
+    "selective_prediction": {
+      "aurc": 0.04755901688350288,
+      "selection_score": "maximum_candidate_probability",
+      "tie_handling": "expected risk under random ordering within equal-score groups",
+      "risk_at_coverage": {
+        "0.5": {
+          "requested_coverage": 0.5,
+          "actual_coverage": 0.5,
+          "retained_decisions": 241,
+          "selective_risk": 0.016597510373443983
+        },
+        "0.8": {
+          "requested_coverage": 0.8,
+          "actual_coverage": 0.8008298755186722,
+          "retained_decisions": 386,
+          "selective_risk": 0.10103626943005181
+        },
+        "0.9": {
+          "requested_coverage": 0.9,
+          "actual_coverage": 0.9004149377593361,
+          "retained_decisions": 434,
+          "selective_risk": 0.1497695852534562
+        }
+      }
+    },
+    "by_kind": {
+      "choice": {
+        "rows": 229,
+        "top1_accuracy": 0.7379912663755459,
+        "mean_nll": 0.5710137726975542,
+        "mean_brier": 0.05280088396446428,
+        "selective_prediction": {
+          "aurc": 0.0839577278099736,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5021834061135371,
+              "retained_decisions": 115,
+              "selective_risk": 0.034782608695652174
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 0.8034934497816594,
+              "retained_decisions": 184,
+              "selective_risk": 0.18478260869565216
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 0.9039301310043668,
+              "retained_decisions": 207,
+              "selective_risk": 0.22705314009661837
+            }
+          }
+        }
+      },
+      "noul": {
+        "rows": 186,
+        "top1_accuracy": 0.8924731182795699,
+        "mean_nll": 0.26756909863596645,
+        "mean_brier": 0.08367709826925855,
+        "selective_prediction": {
+          "aurc": 0.022325476498003698,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5,
+              "retained_decisions": 93,
+              "selective_risk": 0.010752688172043012
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 0.8010752688172043,
+              "retained_decisions": 149,
+              "selective_risk": 0.026845637583892617
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 0.9032258064516129,
+              "retained_decisions": 168,
+              "selective_risk": 0.07142857142857142
+            }
+          }
+        },
+        "confusion": {
+          "true_positive": 51,
+          "true_negative": 115,
+          "false_positive": 6,
+          "false_negative": 14
+        },
+        "balanced_accuracy": 0.8675143038779403
+      },
+      "score": {
+        "rows": 67,
+        "top1_accuracy": 0.8059701492537313,
+        "mean_nll": 0.5262487927367985,
+        "mean_brier": 0.054714424280096076,
+        "selective_prediction": {
+          "aurc": 0.03007598054377982,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5074626865671642,
+              "retained_decisions": 34,
+              "selective_risk": 0.0
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 0.8059701492537313,
+              "retained_decisions": 54,
+              "selective_risk": 0.07407407407407407
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 0.9104477611940298,
+              "retained_decisions": 61,
+              "selective_risk": 0.11475409836065574
+            }
+          }
+        },
+        "mean_rank_error": 0.330308020870435,
+        "mean_ranked_probability_score": 0.054256834179355895
+      }
+    },
+    "by_source": {
+      "reasoning-control-v1": {
+        "rows": 181,
+        "top1_accuracy": 0.8287292817679558,
+        "mean_nll": 0.4391002568395643,
+        "mean_brier": 0.07307685225737,
+        "selective_prediction": {
+          "aurc": 0.03500535790190196,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5027624309392266,
+              "retained_decisions": 91,
+              "selective_risk": 0.01098901098901099
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 0.8011049723756906,
+              "retained_decisions": 145,
+              "selective_risk": 0.06896551724137931
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 0.9005524861878453,
+              "retained_decisions": 163,
+              "selective_risk": 0.12269938650306748
+            }
+          }
+        }
+      },
+      "snake-v1": {
+        "rows": 213,
+        "top1_accuracy": 0.8450704225352113,
+        "mean_nll": 0.34636713772163696,
+        "mean_brier": 0.05467969663429132,
+        "selective_prediction": {
+          "aurc": 0.04122490630661457,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5023474178403756,
+              "retained_decisions": 107,
+              "selective_risk": 0.018691588785046728
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 0.8028169014084507,
+              "retained_decisions": 171,
+              "selective_risk": 0.0935672514619883
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 0.9014084507042254,
+              "retained_decisions": 192,
+              "selective_risk": 0.125
+            }
+          }
+        }
+      },
+      "tic_tac_toe-v1": {
+        "rows": 48,
+        "top1_accuracy": 0.4166666666666667,
+        "mean_nll": 1.1967247167086683,
+        "mean_brier": 0.11709411106808755,
+        "selective_prediction": {
+          "aurc": 0.5690261445174362,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5,
+              "retained_decisions": 24,
+              "selective_risk": 0.5416666666666666
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 0.8125,
+              "retained_decisions": 39,
+              "selective_risk": 0.6153846153846154
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 0.9166666666666666,
+              "retained_decisions": 44,
+              "selective_risk": 0.6136363636363636
+            }
+          }
+        }
+      },
+      "tile_platformer-v1": {
+        "rows": 2,
+        "top1_accuracy": 1.0,
+        "mean_nll": 0.015869465664718856,
+        "mean_brier": 4.169852499472451e-05,
+        "selective_prediction": {
+          "aurc": 0.0,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5,
+              "retained_decisions": 1,
+              "selective_risk": 0.0
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 1.0,
+              "retained_decisions": 2,
+              "selective_risk": 0.0
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 1.0,
+              "retained_decisions": 2,
+              "selective_risk": 0.0
+            }
+          }
+        }
+      },
+      "vizdoom-basic-v1": {
+        "rows": 17,
+        "top1_accuracy": 0.9411764705882353,
+        "mean_nll": 0.26772025216098405,
+        "mean_brier": 0.04202659393287344,
+        "selective_prediction": {
+          "aurc": 0.015259927500411927,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5294117647058824,
+              "retained_decisions": 9,
+              "selective_risk": 0.0
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 0.8235294117647058,
+              "retained_decisions": 14,
+              "selective_risk": 0.07142857142857142
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 0.9411764705882353,
+              "retained_decisions": 16,
+              "selective_risk": 0.0625
+            }
+          }
+        }
+      },
+      "workflow-controls-v1/agent_trace_observability": {
+        "rows": 7,
+        "top1_accuracy": 1.0,
+        "mean_nll": 0.002456188702370841,
+        "mean_brier": 7.430064133854573e-06,
+        "selective_prediction": {
+          "aurc": 0.0,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5714285714285714,
+              "retained_decisions": 4,
+              "selective_risk": 0.0
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 0.8571428571428571,
+              "retained_decisions": 6,
+              "selective_risk": 0.0
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 1.0,
+              "retained_decisions": 7,
+              "selective_risk": 0.0
+            }
+          }
+        },
+        "confusion": {
+          "true_positive": 1,
+          "true_negative": 6,
+          "false_positive": 0,
+          "false_negative": 0
+        },
+        "balanced_accuracy": 1.0
+      },
+      "workflow-controls-v1/invoice_processing": {
+        "rows": 7,
+        "top1_accuracy": 1.0,
+        "mean_nll": 0.011099175580995432,
+        "mean_brier": 0.0004721560468938062,
+        "selective_prediction": {
+          "aurc": 0.0,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5714285714285714,
+              "retained_decisions": 4,
+              "selective_risk": 0.0
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 0.8571428571428571,
+              "retained_decisions": 6,
+              "selective_risk": 0.0
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 1.0,
+              "retained_decisions": 7,
+              "selective_risk": 0.0
+            }
+          }
+        },
+        "confusion": {
+          "true_positive": 3,
+          "true_negative": 4,
+          "false_positive": 0,
+          "false_negative": 0
+        },
+        "balanced_accuracy": 1.0
+      },
+      "workflow-controls-v1/security_incidents": {
+        "rows": 7,
+        "top1_accuracy": 1.0,
+        "mean_nll": 0.05923877352279088,
+        "mean_brier": 0.015587651866941459,
+        "selective_prediction": {
+          "aurc": 0.0,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5714285714285714,
+              "retained_decisions": 4,
+              "selective_risk": 0.0
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 0.8571428571428571,
+              "retained_decisions": 6,
+              "selective_risk": 0.0
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 1.0,
+              "retained_decisions": 7,
+              "selective_risk": 0.0
+            }
+          }
+        },
+        "confusion": {
+          "true_positive": 2,
+          "true_negative": 5,
+          "false_positive": 0,
+          "false_negative": 0
+        },
+        "balanced_accuracy": 1.0
+      }
+    }
+  },
+  "delta_candidate_minus_released": {
+    "top1_accuracy": 0.018672199170124526,
+    "mean_nll": -0.08309680351807625,
+    "mean_brier": -0.01780695664402447,
+    "score_mean_ranked_probability_score": -0.014370269467597008
+  },
+  "paired_group_bootstrap_top1": {
+    "independent_groups": 482,
+    "replicates": 5000,
+    "seed": 20260929,
+    "confidence_level": 0.95,
+    "mean_delta": 0.01867219917012448,
+    "mean_delta_95_percentile_interval": [
+      -0.004149377593360996,
+      0.04149377593360996
+    ],
+    "bootstrap_fraction_positive_delta": 0.9326,
+    "resampling_unit": "group_id",
+    "aggregation": "row-weighted within each sampled group set"
+  },
+  "candidate_adapter_sha256": "5bb2153d689476375b7784884964605411d000f20883b38a9ccd44eae0bfc0a3",
+  "candidate_head_sha256": "aa2a39aee6e7b48efc50eff3a0f1ac5c4fdf391b534bf8b874a4a8da9ba65676",
+  "baseline_artifacts_sha256": {
+    "report": "d1f7ab8fd07a05f45baea990625543c69e46424d3d29ecf9f92b0cd94250fbac",
+    "fresh_logits": "ef27a220c1ed04351b53dfe20f9feeb49fb7d04ffdecf69fdaafdf601b330238"
+  },
+  "limitation": "Public synthetic decisions only; comparison is with released Open-Jev, not TypeSafe Jev, and proves neither desktop task success nor execution safety."
+}

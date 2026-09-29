@@ -45,8 +45,13 @@ would require representative Heliox outcome labels and a new untouched split.
 
 On this single held-out sample, the candidate improves aggregate NLL/Brier and
 Score ranking quality; Choice top-1 is slightly lower, while its secondary
-AURC is slightly better. These are descriptive benchmark results, not a
-confidence-tested claim or evidence of desktop task success.
+AURC is slightly better. A post-hoc paired bootstrap over the 482 independent
+`group_id` clusters estimates a +1.87 pp top-1 change (95% percentile interval
+−0.41 to +4.15 pp; 93.3% of replicates positive). Because the interval includes
+zero, the measured top-1 lift is not conclusive. This interval is descriptive,
+not a promotion gate or evidence of desktop task success. The reproducible
+calculation is in
+[`openjev_scale_1024_rps_fresh_v3_group_bootstrap_exploratory.json`](openjev_scale_1024_rps_fresh_v3_group_bootstrap_exploratory.json).
 
 ## Selection and reproducibility
 
