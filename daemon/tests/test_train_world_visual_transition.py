@@ -12,6 +12,7 @@ from scripts.train_world_visual_transition import (
     action_shuffle_diagnostic,
     combine_training_features,
     feature_shape,
+    group_bootstrap_loss_delta,
     load_features,
     load_recorded_features,
     merge_recordings_with_shared_states,
@@ -54,6 +55,29 @@ def test_action_shuffle_diagnostic_requires_observed_action_advantage() -> None:
     assert ignored["one_sided_shuffle_rank"] == 0.75
     with pytest.raises(ValueError, match="finite and nonempty"):
         action_shuffle_diagnostic(0.1, [float("nan")])
+
+
+def test_group_bootstrap_resamples_whole_episodes_and_is_reproducible() -> None:
+    reference = np.zeros(4)
+    candidate = np.array([-1.0, -1.0, 1.0, 1.0])
+    groups = np.array(["episode-a", "episode-a", "episode-b", "episode-b"])
+    first = group_bootstrap_loss_delta(reference, candidate, groups, seed=19, replicates=1000)
+    second = group_bootstrap_loss_delta(reference, candidate, groups, seed=19, replicates=1000)
+
+    assert first == second
+    assert first["candidate_minus_reference"] == 0
+    assert first["ci95_low"] == -1
+    assert first["ci95_high"] == 1
+    assert first["groups"] == 2
+
+
+def test_group_bootstrap_rejects_unpaired_or_dependent_inputs() -> None:
+    with pytest.raises(ValueError, match="aligned finite losses"):
+        group_bootstrap_loss_delta(np.array([1.0]), np.array([0.0]), np.array(["a"]),
+                                   seed=1, replicates=99)
+    with pytest.raises(ValueError, match="at least two independent groups"):
+        group_bootstrap_loss_delta(np.array([1.0, 1.0]), np.array([0.0, 0.0]),
+                                   np.array(["same", "same"]), seed=1)
 
 
 def _write_features(tmp_path, groups=("a", "b", "c")):

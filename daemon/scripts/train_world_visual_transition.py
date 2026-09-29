@@ -180,6 +180,13 @@ def metrics(predicted: np.ndarray, state: np.ndarray, target: np.ndarray) -> dic
     }
 
 
+def weighted_pixel_mse_by_row(predicted: np.ndarray, state: np.ndarray,
+                              target: np.ndarray) -> np.ndarray:
+    error = (predicted - target) ** 2
+    weights = 1 + 4 * (np.abs(target - state) >= 0.02)
+    return (error * weights).mean(axis=1).astype(np.float64)
+
+
 def action_shuffle_diagnostic(correct: float, shuffled: list[float]) -> dict[str, float]:
     """Positive advantage beats shuffles; rank is descriptive, not a p-value."""
     if not shuffled or not np.isfinite(correct) or not np.all(np.isfinite(shuffled)):
@@ -188,6 +195,48 @@ def action_shuffle_diagnostic(correct: float, shuffled: list[float]) -> dict[str
         "weighted_mse_advantage": float(np.mean(shuffled) - correct),
         "one_sided_shuffle_rank": float((1 + sum(score <= correct for score in shuffled))
                                         / (len(shuffled) + 1)),
+    }
+
+
+def group_bootstrap_loss_delta(reference_losses: np.ndarray, candidate_losses: np.ndarray,
+                               groups: np.ndarray, *, seed: int,
+                               replicates: int = 5000) -> dict[str, float | int]:
+    """Paired row-weighted candidate-minus-reference delta resampling whole groups."""
+    reference = np.asarray(reference_losses, dtype=np.float64)
+    candidate = np.asarray(candidate_losses, dtype=np.float64)
+    group_ids = np.asarray(groups, dtype=str)
+    if (reference.ndim != 1 or candidate.shape != reference.shape
+            or group_ids.shape != reference.shape or not len(reference)
+            or not np.all(np.isfinite(reference)) or not np.all(np.isfinite(candidate))
+            or np.any(group_ids == "") or isinstance(replicates, bool)
+            or not isinstance(replicates, int) or replicates < 100
+            or isinstance(seed, bool) or not isinstance(seed, int)):
+        raise ValueError(
+            "Group bootstrap requires aligned finite losses, groups, and 100+ replicates"
+        )
+    _, group_index = np.unique(group_ids, return_inverse=True)
+    group_count = int(group_index.max()) + 1
+    if group_count < 2:
+        raise ValueError("Group bootstrap requires at least two independent groups")
+    delta_sum = np.bincount(group_index, weights=candidate - reference, minlength=group_count)
+    row_count = np.bincount(group_index, minlength=group_count).astype(np.float64)
+    observed = float(delta_sum.sum() / row_count.sum())
+    rng = np.random.default_rng(seed)
+    draws = np.empty(replicates, dtype=np.float64)
+    chunk_size = max(1, min(256, 1_000_000 // group_count))
+    for start in range(0, replicates, chunk_size):
+        stop = min(replicates, start + chunk_size)
+        sample = rng.integers(group_count, size=(stop - start, group_count))
+        draws[start:stop] = delta_sum[sample].sum(axis=1) / row_count[sample].sum(axis=1)
+    lower, upper = np.quantile(draws, [0.025, 0.975])
+    return {
+        "candidate_minus_reference": observed,
+        "ci95_low": float(lower),
+        "ci95_high": float(upper),
+        "probability_candidate_better": float(np.mean(draws < 0)),
+        "groups": group_count,
+        "replicates": replicates,
+        "seed": seed,
     }
 
 
@@ -424,6 +473,7 @@ def main() -> None:
                         help="Fit observed action-discriminative pixels in verified pairs")
     parser.add_argument("--epochs", type=int, default=80)
     parser.add_argument("--action-permutations", type=int, default=10)
+    parser.add_argument("--group-bootstrap-replicates", type=int, default=5000)
     parser.add_argument("--seed", type=int, default=20260926)
     args = parser.parse_args()
     if ((not args.recorded_store and (not args.features.is_file() or not args.source_report.is_file()))
@@ -445,7 +495,7 @@ def main() -> None:
             or (args.runtime_weights and args.runtime_weights.resolve() in {
                 args.report.resolve(), args.weights.resolve(),
             })
-            or args.action_permutations < 1):
+            or args.action_permutations < 1 or args.group_bootstrap_replicates < 100):
         parser.error("Use existing pinned features, fresh outputs, and positive epochs")
     recorded_store = None
     if args.recorded_store:
@@ -636,26 +686,34 @@ def main() -> None:
                 }
             shuffled_scores = []
             within_type_scores = []
+            shuffled_row_losses = np.zeros(len(partition["state"]), dtype=np.float64)
+            within_type_row_losses = np.zeros(len(partition["state"]), dtype=np.float64)
             rng = np.random.default_rng(args.seed + (1 if split == "validation" else 2))
             for _ in range(args.action_permutations):
                 shuffled = dict(arrays[split])
                 shuffled["action"] = arrays[split]["action"][rng.permutation(len(partition["state"]))]
-                shuffled_scores.append(metrics(
-                    predict(shuffled).cpu().numpy(), partition["state"], partition["target"]
-                ))
+                shuffled_prediction = predict(shuffled).cpu().numpy()
+                shuffled_scores.append(metrics(shuffled_prediction, partition["state"],
+                                               partition["target"]))
+                shuffled_row_losses += weighted_pixel_mse_by_row(
+                    shuffled_prediction, partition["state"], partition["target"]
+                ) / args.action_permutations
                 within_type = dict(arrays[split])
                 within_type["action"] = arrays[split]["action"][
                     within_action_permutation(partition["action"], rng)
                 ]
-                within_type_scores.append(metrics(
-                    predict(within_type).cpu().numpy(), partition["state"], partition["target"]
-                ))
+                within_type_prediction = predict(within_type).cpu().numpy()
+                within_type_scores.append(metrics(within_type_prediction, partition["state"],
+                                                  partition["target"]))
+                within_type_row_losses += weighted_pixel_mse_by_row(
+                    within_type_prediction, partition["state"], partition["target"]
+                ) / args.action_permutations
+            trained_prediction = predict(arrays[split]).cpu().numpy()
+            no_action_prediction = predict(arrays[split], ablate_action=True).cpu().numpy()
             scores[split] = {
                 "unchanged_state": metrics(partition["state"], partition["state"], partition["target"]),
-                "trained": metrics(predict(arrays[split]).cpu().numpy(),
-                                   partition["state"], partition["target"]),
-                "no_action": metrics(predict(arrays[split], ablate_action=True).cpu().numpy(),
-                                     partition["state"], partition["target"]),
+                "trained": metrics(trained_prediction, partition["state"], partition["target"]),
+                "no_action": metrics(no_action_prediction, partition["state"], partition["target"]),
                 "shuffled_action": {
                     key: float(np.mean([score[key] for score in shuffled_scores]))
                     for key in shuffled_scores[0]
@@ -674,6 +732,35 @@ def main() -> None:
                     correct_error, [score["weighted_mse"] for score in within_type_scores]
                 ),
             }
+            if split == "eval":
+                trained_row_losses = weighted_pixel_mse_by_row(
+                    trained_prediction, partition["state"], partition["target"]
+                )
+                scores[split]["episode_group_bootstrap"] = {
+                    "metric": "row-weighted candidate-minus-reference weighted MSE; negative is better",
+                    "comparisons": {
+                        "trained_minus_unchanged_state": group_bootstrap_loss_delta(
+                            weighted_pixel_mse_by_row(partition["state"], partition["state"],
+                                                      partition["target"]),
+                            trained_row_losses, partition["groups"], seed=args.seed + 3,
+                            replicates=args.group_bootstrap_replicates,
+                        ),
+                        "trained_minus_no_action": group_bootstrap_loss_delta(
+                            weighted_pixel_mse_by_row(no_action_prediction, partition["state"],
+                                                      partition["target"]),
+                            trained_row_losses, partition["groups"], seed=args.seed + 4,
+                            replicates=args.group_bootstrap_replicates,
+                        ),
+                        "trained_minus_shuffled_action_mean": group_bootstrap_loss_delta(
+                            shuffled_row_losses, trained_row_losses, partition["groups"],
+                            seed=args.seed + 5, replicates=args.group_bootstrap_replicates,
+                        ),
+                        "trained_minus_shuffled_location_mean": group_bootstrap_loss_delta(
+                            within_type_row_losses, trained_row_losses, partition["groups"],
+                            seed=args.seed + 6, replicates=args.group_bootstrap_replicates,
+                        ),
+                    },
+                }
             if counterfactual_pairs:
                 swapped = dict(arrays[split])
                 swapped["action"] = arrays[split]["action"][
