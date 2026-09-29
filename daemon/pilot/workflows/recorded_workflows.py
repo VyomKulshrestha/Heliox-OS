@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import json
 import logging
 import math
@@ -16,6 +17,7 @@ import os
 import threading
 import time
 import uuid
+from collections import Counter
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
@@ -46,6 +48,7 @@ MANUAL_VISUAL_INTERVAL_SECONDS = 0.2
 MANUAL_PRE_MAX_AGE_SECONDS = 0.75
 MIN_REPEAT_SECONDS = 300
 MAX_REPEAT_SECONDS = 365 * 24 * 60 * 60
+WORKFLOW_ACTION_TYPES = frozenset(action.value for action in ActionType) | {"manual_text"}
 
 # Never retain typed text, form values, scripts, shell commands, or clipboard
 # contents. A recipe with excluded actions is explicitly marked incomplete.
@@ -775,6 +778,58 @@ class RecordedWorkflowStore:
                     feedback.get("visual_samples") for feedback in record.get("feedback", [])
                 )
             ]
+
+    def load_outcome_training_examples(self) -> list[dict[str, Any]]:
+        """Return de-identified, user-rated recipe structure for offline research.
+
+        Goals, names, action parameters, executor status, and screen features are
+        deliberately excluded. Identical action-type sequences share a hashed
+        group so replays of the same recipe cannot cross evaluation splits.
+        """
+        examples: list[dict[str, Any]] = []
+        with self._records_lock:
+            for record in self._read():
+                steps = record.get("steps", [])
+                if not isinstance(steps, list):
+                    continue
+                action_types = [
+                    step["action_type"] for step in steps
+                    if isinstance(step, dict) and step.get("action_type") in WORKFLOW_ACTION_TYPES
+                ]
+                omitted = record.get("omitted_actions", 0)
+                if not isinstance(omitted, int) or isinstance(omitted, bool) or omitted < 0:
+                    omitted = 0
+                omitted += len(steps) - len(action_types)
+                placeholders = sum(action == "manual_text" for action in action_types)
+                denominator = max(1, len(action_types) + omitted)
+                features = {
+                    "step_count_log1p": math.log1p(len(action_types)),
+                    "omitted_fraction": omitted / denominator,
+                    "placeholder_fraction": placeholders / max(1, len(action_types)),
+                    "overlap_warning": float(record.get("overlap_warning") is True),
+                    "incomplete": float(omitted > 0),
+                }
+                family_counts: Counter[str] = Counter()
+                for action in action_types:
+                    family = action.split("_", 1)[0]
+                    family_counts[family] += 1
+                for family, count in family_counts.items():
+                    features[f"action_family_{family}"] = count / max(1, len(action_types))
+                group_id = hashlib.sha256(
+                    json.dumps(action_types, separators=(",", ":")).encode("utf-8")
+                ).hexdigest()
+                for feedback in record.get("feedback", []):
+                    if not isinstance(feedback, dict) or feedback.get("source") != "user":
+                        continue
+                    outcome = feedback.get("reported_outcome")
+                    if outcome not in {"achieved", "partial", "not_achieved"}:
+                        continue
+                    examples.append({
+                        "group_id": group_id,
+                        "features": dict(features),
+                        "label": outcome,
+                    })
+        return examples
 
     def encrypt_model_artifact(self, plaintext: bytes) -> bytes:
         """Keep research weights derived from private screens encrypted too."""

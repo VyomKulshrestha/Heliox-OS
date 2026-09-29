@@ -196,6 +196,33 @@ async def test_explicit_goal_feedback_is_encrypted_and_distinct_from_job_status(
 
 
 @pytest.mark.asyncio
+async def test_outcome_training_export_uses_only_deidentified_user_feedback(tmp_path) -> None:
+    path = tmp_path / "recordings.enc"
+    store = RecordedWorkflowStore(path, key_provider=lambda: b"k" * 32)
+    store.start(name="Private workflow name", goal="private goal phrase", consent=True)
+    action = Action(
+        action_type=ActionType.BROWSER_CLICK,
+        parameters=BrowserParams(selector="#private-selector"),
+    )
+    token = await store.before(action, single_action_batch=True)
+    await store.after(token, ActionResult(action=action, success=True))
+    workflow_id = store.stop(save=True)["id"]
+    store.record_feedback(
+        workflow_id, job_id="private-job-id", outcome="achieved", job_status="failed"
+    )
+
+    examples = store.load_outcome_training_examples()
+    assert len(examples) == 1
+    assert set(examples[0]) == {"group_id", "features", "label"}
+    assert len(examples[0]["group_id"]) == 64
+    assert examples[0]["label"] == "achieved"
+    assert examples[0]["features"]["action_family_browser"] == 1.0
+    assert "executor_status" not in str(examples)
+    assert "private" not in str(examples)
+    assert b"private goal phrase" not in path.read_bytes()
+
+
+@pytest.mark.asyncio
 async def test_replay_visual_pairs_require_per_run_consent_and_feedback(tmp_path) -> None:
     calls = 0
 
