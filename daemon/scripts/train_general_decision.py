@@ -26,6 +26,7 @@ from benchmarks.general_decision import (  # noqa: E402
     DATASET_CONFIG,
     DATASET_REVISION,
     PROMPT_STYLES,
+    TRAINING_SOURCE_POLICY,
     candidate_prompts,
     load_split,
     metrics,
@@ -318,6 +319,12 @@ def training_row_weights(general_items: list[dict], scope_items: list[dict],
     return [1.0] * len(general_items) + [weight * scope_row_weight for weight in scope_weights]
 
 
+def split_id_group_hash(items: list[dict]) -> str:
+    pairs = sorted((item["row"]["id"], item["row"]["group_id"]) for item in items)
+    payload = json.dumps(pairs, separators=(",", ":")).encode()
+    return hashlib.sha256(payload).hexdigest()
+
+
 def checkpoint_signature(args: argparse.Namespace, encoded: dict[str, list[dict]],
                          manifests: dict, scope_manifest: dict | None,
                          row_weights: list[float] | None = None) -> str:
@@ -326,11 +333,16 @@ def checkpoint_signature(args: argparse.Namespace, encoded: dict[str, list[dict]
         for item in items:
             token_ids.update(json.dumps([split, item["row"]["id"], item["sequences"]],
                                         separators=(",", ":")).encode())
+    split_seed = getattr(args, "split_seed", None)
+    if split_seed is None:
+        split_seed = args.seed
     identity = {"model_revision": (OPENJEV_BASE_REVISION if getattr(args, "initial_openjev", False)
                                     else REVISION), "dataset_revision": DATASET_REVISION,
                 "manifests": manifests, "scope_manifest": scope_manifest,
                 "token_ids_sha256": token_ids.hexdigest(),
-                "seed": args.seed, "max_length": args.max_length, "lora_rank": args.lora_rank,
+                "seed": args.seed,
+                "split_seed": split_seed,
+                "max_length": args.max_length, "lora_rank": args.lora_rank,
                 "attention": args.attention, "accumulation": args.accumulation,
                 "candidate_microbatch_size": getattr(args, "candidate_microbatch_size", 2),
                 "lr": args.lr, "head_lr": args.head_lr, "brier_weight": args.brier_weight,
@@ -429,9 +441,12 @@ def run(args: argparse.Namespace) -> dict:
     random.seed(args.seed)
     limits = {"train": args.train_rows, "calibration": args.calibration_rows,
               "test": args.test_rows, "ood": args.ood_rows}
+    split_seed = getattr(args, "split_seed", None)
+    if split_seed is None:
+        split_seed = args.seed
     rows, manifests = {}, {}
     for offset, (split, limit) in enumerate(limits.items()):
-        rows[split], manifests[split] = load_split(split, limit, args.seed + offset)
+        rows[split], manifests[split] = load_split(split, limit, split_seed + offset)
         if not rows[split]:
             raise ValueError(f"No licensed rows in {split}")
     model_name = OPENJEV_BASE_MODEL if args.initial_openjev else MODEL
@@ -446,7 +461,7 @@ def run(args: argparse.Namespace) -> dict:
                         "scope_test": args.scope_test_rows}
         if args.scopejudge_path is not None:
             auxiliary_name = "scopejudge"
-            scope_parts, scope_manifest = load_scope_parts(args.scopejudge_path, seed=args.seed,
+            scope_parts, scope_manifest = load_scope_parts(args.scopejudge_path, seed=split_seed,
                                                            limits=scope_limits,
                                                            history_calls=args.scope_history_calls,
                                                            strategy=args.scope_split_strategy)
@@ -458,12 +473,14 @@ def run(args: argparse.Namespace) -> dict:
                 return bool(encoded)
 
             scope_parts, scope_manifest = load_misact_parts(
-                args.misactbench_path, seed=args.seed, limits=scope_limits,
+                args.misactbench_path, seed=split_seed, limits=scope_limits,
                 eligible=is_eligible)
         rows.update(scope_parts)
     verify_disjoint(rows)
     print(json.dumps({"event": "data_selected", "counts": {name: len(part) for name, part in rows.items()},
                       "excluded_unverified_license": {name: entry["excluded_unverified_license"]
+                                                     for name, entry in manifests.items()},
+                      "excluded_restricted_source": {name: entry["excluded_restricted_source"]
                                                      for name, entry in manifests.items()},
                       "auxiliary": scope_manifest}), flush=True)
 
@@ -552,7 +569,17 @@ def run(args: argparse.Namespace) -> dict:
 
     baseline_test = baseline("test") if run_baseline else None
     baseline_ood = baseline("ood") if run_baseline else None
+    baseline_calibration = baseline("calibration") if run_baseline else None
     baseline_scope = baseline("scope_test") if run_baseline and scope_manifest else None
+    baseline_scope_calibration = (baseline("scope_calibration")
+                                  if run_baseline and scope_manifest else None)
+    baseline_temperature = (fit_temperature(
+        baseline_calibration, [item["row"] for item in encoded["calibration"]])
+        if baseline_calibration is not None else None)
+    baseline_scope_temperature = (fit_temperature(
+        baseline_scope_calibration,
+        [item["row"] for item in encoded["scope_calibration"]])
+        if baseline_scope_calibration is not None else None)
     optimizer = torch.optim.AdamW([
         {"params": [parameter for parameter in backbone.parameters() if parameter.requires_grad], "lr": args.lr},
         {"params": head.parameters(), "lr": args.head_lr},
@@ -623,8 +650,11 @@ def run(args: argparse.Namespace) -> dict:
         "diagnostic_environment": {name: os.environ.get(name) for name in (
             "HF_HUB_OFFLINE", "CUDA_LAUNCH_BLOCKING", "PYTORCH_NO_CUDA_MEMORY_CACHING")},
         "dataset": DATASET, "dataset_revision": DATASET_REVISION, "dataset_config": DATASET_CONFIG,
-        "dataset_manifests": manifests, "seed": args.seed,
+        "training_source_policy": TRAINING_SOURCE_POLICY,
+        "dataset_manifests": manifests, "seed": args.seed, "split_seed": split_seed,
         "selected_rows": limits, "evaluated_rows": {name: len(part) for name, part in encoded.items()},
+        "split_id_group_sha256": {name: split_id_group_hash(part)
+                                  for name, part in encoded.items()},
         "excluded_overlong": overlong, "max_length": args.max_length,
         "scope_history_budget": {
             name: {"rows_with_history": sum(item["history_calls_retained"] > 0 for item in part),
@@ -656,6 +686,13 @@ def run(args: argparse.Namespace) -> dict:
                           if baseline_test is not None else None),
         "baseline_ood": (metrics([item["row"] for item in encoded["ood"]], baseline_ood, 1.0)
                          if baseline_ood is not None else None),
+        "baseline_calibration_temperature": baseline_temperature,
+        "baseline_test_calibrated": (
+            metrics([item["row"] for item in encoded["test"]], baseline_test, baseline_temperature)
+            if baseline_test is not None else None),
+        "baseline_ood_calibrated": (
+            metrics([item["row"] for item in encoded["ood"]], baseline_ood, baseline_temperature)
+            if baseline_ood is not None else None),
         "trained_test": metrics([item["row"] for item in encoded["test"]], test_logits, temperature),
         "trained_ood": metrics([item["row"] for item in encoded["ood"]], ood_logits, temperature),
         "adapter_sha256": hashlib.sha256((args.output_dir / "adapter/adapter_model.safetensors").read_bytes()).hexdigest(),
@@ -675,6 +712,11 @@ def run(args: argparse.Namespace) -> dict:
             "baseline_scope": (scope_metrics([item["row"] for item in encoded["scope_test"]],
                                              baseline_scope, 1.0)
                                if baseline_scope is not None else None),
+            "baseline_scope_calibration_temperature": baseline_scope_temperature,
+            "baseline_scope_calibrated": (
+                scope_metrics([item["row"] for item in encoded["scope_test"]],
+                              baseline_scope, baseline_scope_temperature)
+                if baseline_scope is not None else None),
             "trained_scope": scope_metrics([item["row"] for item in encoded["scope_test"]],
                                            trained_scope, temperature),
         })
@@ -710,6 +752,8 @@ def main() -> None:
     parser.add_argument("--skip-baseline-on-resume", action="store_true",
                         help="Avoid repeated baseline inference after a saved training checkpoint")
     parser.add_argument("--seed", type=int, default=20260924)
+    parser.add_argument("--split-seed", type=int,
+                        help="Keep data partitions fixed while changing model initialization")
     parser.add_argument("--scopejudge-path", type=Path, help="Pinned MIT ScopeJudge train.jsonl for multi-task study")
     parser.add_argument("--misactbench-path", type=Path,
                         help="Pinned CC BY 4.0 MisActBench annotations for text-only multi-task study")
