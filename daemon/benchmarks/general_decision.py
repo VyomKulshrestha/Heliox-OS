@@ -379,6 +379,49 @@ def paired_mean_bootstrap_delta(candidate: list[float], baseline: list[float], *
     }
 
 
+def grouped_mean_bootstrap_delta(group_ids: list[str], candidate: list[float],
+                                 baseline: list[float], *,
+                                 replicates: int = 2000, seed: int = 0) -> dict:
+    """Bootstrap paired row deltas by independent group, preserving clusters."""
+    candidate_values = np.asarray(candidate, dtype=np.float64)
+    baseline_values = np.asarray(baseline, dtype=np.float64)
+    if (not group_ids or len(group_ids) != len(candidate_values)
+            or baseline_values.shape != candidate_values.shape
+            or any(not isinstance(group, str) or not group for group in group_ids)
+            or not np.isfinite(candidate_values).all()
+            or not np.isfinite(baseline_values).all()
+            or type(replicates) is not int or replicates < 100 or type(seed) is not int):
+        raise ValueError("Grouped paired bootstrap inputs are invalid")
+
+    grouped_indices: dict[str, list[int]] = {}
+    for index, group in enumerate(group_ids):
+        grouped_indices.setdefault(group, []).append(index)
+    groups = list(grouped_indices.values())
+    if len(groups) < 2:
+        raise ValueError("Grouped paired bootstrap needs at least two independent groups")
+
+    row_deltas = candidate_values - baseline_values
+    rng = np.random.default_rng(seed)
+    deltas = np.empty(replicates, dtype=np.float64)
+    for replicate in range(replicates):
+        sampled_groups = rng.integers(0, len(groups), size=len(groups))
+        sampled_indices = [index for group_index in sampled_groups for index in groups[group_index]]
+        deltas[replicate] = float(np.mean(row_deltas[sampled_indices]))
+    return {
+        "independent_groups": len(groups),
+        "replicates": replicates,
+        "seed": seed,
+        "confidence_level": 0.95,
+        "mean_delta": float(np.mean(row_deltas)),
+        "mean_delta_95_percentile_interval": [
+            float(value) for value in np.quantile(deltas, [0.025, 0.975])
+        ],
+        "bootstrap_fraction_positive_delta": float(np.mean(deltas > 0)),
+        "resampling_unit": "group_id",
+        "aggregation": "row-weighted within each sampled group set",
+    }
+
+
 def format_answer(kind: str, options: list[str], logits: np.ndarray,
                   temperature: float = 1.0) -> dict:
     """Convert model scores to a typed decision without executing anything."""

@@ -15,7 +15,7 @@ from pathlib import Path
 
 import numpy as np
 
-from benchmarks.general_decision import DATASET_REVISION, metrics
+from benchmarks.general_decision import DATASET_REVISION, grouped_mean_bootstrap_delta, metrics
 from scripts.evaluate_general_decision_artifact import (
     prediction_metrics,
     retain_tokenizable_rows,
@@ -78,7 +78,39 @@ def load_partial(path: Path, *, signature: str, ids: list[str], resume: bool) ->
     return predictions
 
 
-def evaluate(protocol_path: Path, output_path: Path, *, resume: bool) -> dict:
+def paired_top1_correctness(rows: list[dict], logits: list[np.ndarray],
+                            predictions: list[dict]) -> tuple[list[float], list[float]]:
+    """Align per-row top-1 correctness so the comparison stays paired."""
+    if len(rows) != len(logits) or len(rows) != len(predictions):
+        raise ValueError("Top-1 comparison inputs do not align")
+    baseline_correct, candidate_correct = [], []
+    for row, baseline_logits, prediction in zip(rows, logits, predictions, strict=True):
+        target_index = int(np.argmax(row["target"]))
+        baseline_correct.append(float(int(np.argmax(baseline_logits)) == target_index))
+        answer = prediction.get("answer")
+        if not isinstance(answer, dict):
+            raise ValueError("Candidate prediction has no typed answer")
+        if row["kind"] == "noul":
+            yes = float(answer["yes_probability"])
+            candidate_probabilities = np.asarray([1.0 - yes, yes], dtype=np.float64)
+        else:
+            probabilities_by_option = answer.get("probabilities")
+            if not isinstance(probabilities_by_option, dict):
+                raise ValueError("Candidate prediction has no option probabilities")
+            candidate_probabilities = np.asarray(
+                [probabilities_by_option[option] for option in row["options"]], dtype=np.float64)
+        if (candidate_probabilities.shape != (len(row["options"]),)
+                or not np.isfinite(candidate_probabilities).all()
+                or np.any(candidate_probabilities < 0.0)
+                or np.any(candidate_probabilities > 1.0)
+                or not np.isclose(candidate_probabilities.sum(), 1.0, atol=1e-5)):
+            raise ValueError("Candidate option probabilities are invalid")
+        candidate_correct.append(float(int(np.argmax(candidate_probabilities)) == target_index))
+    return baseline_correct, candidate_correct
+
+
+def evaluate(protocol_path: Path, output_path: Path, *, resume: bool,
+             bootstrap_replicates: int = 5000, bootstrap_seed: int = 20260929) -> dict:
     protocol_bytes = protocol_path.read_bytes()
     protocol = json.loads(protocol_bytes)
     if protocol.get("schema_version") != 1 or protocol.get("dataset_revision") != DATASET_REVISION:
@@ -196,6 +228,7 @@ def evaluate(protocol_path: Path, output_path: Path, *, resume: bool) -> dict:
 
     baseline_metrics = metrics(rows, logits, 1.0)
     candidate_metrics = prediction_metrics(rows, predictions)
+    baseline_correct, candidate_correct = paired_top1_correctness(rows, logits, predictions)
     report = {
         "purpose": protocol["purpose"],
         "protocol_sha256": sha256_file(protocol_path),
@@ -225,6 +258,10 @@ def evaluate(protocol_path: Path, output_path: Path, *, resume: bool) -> dict:
                 else None
             ),
         },
+        "paired_group_bootstrap_top1": grouped_mean_bootstrap_delta(
+            [row["group_id"] for row in rows], candidate_correct, baseline_correct,
+            replicates=bootstrap_replicates, seed=bootstrap_seed,
+        ),
         "candidate_adapter_sha256": candidate["adapter_sha256"],
         "candidate_head_sha256": candidate["head_sha256"],
         "baseline_artifacts_sha256": {
@@ -246,14 +283,19 @@ def main() -> None:
     parser.add_argument("--output", type=Path,
                         default=ROOT / "benchmarks/openjev_scale_1024_rps_fresh_v3.json")
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--bootstrap-replicates", type=int, default=5000)
+    parser.add_argument("--bootstrap-seed", type=int, default=20260929)
     args = parser.parse_args()
     if args.output.exists():
         parser.error(f"report already exists: {args.output}")
-    report = evaluate(args.protocol, args.output, resume=args.resume)
+    report = evaluate(args.protocol, args.output, resume=args.resume,
+                      bootstrap_replicates=args.bootstrap_replicates,
+                      bootstrap_seed=args.bootstrap_seed)
     print(json.dumps({"rows": report["rows_scored_on_both_models"],
                       "released_openjev": report["released_openjev"],
                       "rps_candidate": report["rps_candidate"],
-                      "delta_candidate_minus_released": report["delta_candidate_minus_released"]},
+                      "delta_candidate_minus_released": report["delta_candidate_minus_released"],
+                      "paired_group_bootstrap_top1": report["paired_group_bootstrap_top1"]},
                      indent=2))
 
 

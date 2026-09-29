@@ -15,6 +15,7 @@ from benchmarks.general_decision import (
     correctness_metrics,
     fit_correctness_scorer,
     format_answer,
+    grouped_mean_bootstrap_delta,
     licensed_row,
     metrics,
     paired_aurc_bootstrap_delta,
@@ -183,6 +184,22 @@ def test_paired_mean_bootstrap_is_reproducible() -> None:
     assert result["mean_delta_95_percentile_interval"][0] > 0
     with pytest.raises(ValueError, match="inputs are invalid"):
         paired_mean_bootstrap_delta([1.0], [], replicates=200)
+
+
+def test_grouped_mean_bootstrap_is_reproducible_and_clustered() -> None:
+    args = (["a", "a", "b", "c"], [1, 0, 1, 0], [0, 0, 0, 0])
+    result = grouped_mean_bootstrap_delta(*args, replicates=300, seed=7)
+    assert result == grouped_mean_bootstrap_delta(*args, replicates=300, seed=7)
+    assert result["independent_groups"] == 3
+    assert result["mean_delta"] == 0.5
+    assert result["resampling_unit"] == "group_id"
+
+
+def test_grouped_mean_bootstrap_rejects_invalid_clusters() -> None:
+    with pytest.raises(ValueError, match="at least two"):
+        grouped_mean_bootstrap_delta(["same", "same"], [1, 0], [0, 0], replicates=100)
+    with pytest.raises(ValueError, match="inputs are invalid"):
+        grouped_mean_bootstrap_delta(["a"], [1, 0], [0, 0], replicates=100)
 
 
 def test_ordinal_metrics_report_expected_rank_error() -> None:
