@@ -12,6 +12,8 @@ import math
 import random
 from collections import defaultdict
 from pathlib import Path
+from typing import Iterator
+from urllib.parse import urlparse
 
 import numpy as np
 
@@ -20,13 +22,53 @@ DATASET_REVISION = "c67699e13d0ae25e35b77165a4b6b079bedc8aba"
 DATASET_CONFIG = "release-v2-redistributable"
 KINDS = frozenset({"noul", "choice", "score"})
 PROMPT_STYLES = frozenset({"candidate_v1", "full_options_v2"})
+RESTRICTED_TRAINING_SOURCE_DOMAINS = ("typesafe.ai",)
+TRAINING_SOURCE_POLICY = {
+    "required_license": "CC0-1.0",
+    "exclude_unverified_upstream_rights": True,
+    "excluded_source_domains": RESTRICTED_TRAINING_SOURCE_DOMAINS,
+}
+
+
+def _iter_url_fields(value: object) -> Iterator[str]:
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            normalized_key = key.lower() if isinstance(key, str) else ""
+            if ((normalized_key in {"url", "uri"} or normalized_key.endswith(("_url", "_uri")))
+                    and isinstance(nested, str)):
+                yield nested
+            yield from _iter_url_fields(nested)
+    elif isinstance(value, list):
+        for nested in value:
+            yield from _iter_url_fields(nested)
+
+
+def _has_restricted_training_source(metadata: dict) -> bool:
+    for url in _iter_url_fields(metadata):
+        host = urlparse(url).hostname
+        if host is None:
+            host = urlparse(f"//{url}").hostname
+        if host and any(host.lower() == domain or host.lower().endswith(f".{domain}")
+                        for domain in RESTRICTED_TRAINING_SOURCE_DOMAINS):
+            return True
+    return False
+
+
+def training_exclusion_reason(row: dict) -> str | None:
+    """Require verified CC0 rights and exclude provider-origin training sources."""
+    metadata = json.loads(row["metadata_json"])
+    provenance = metadata.get("provenance", {})
+    license_text = str(provenance.get("license", ""))
+    if not license_text.startswith("CC0-1.0") or "not verified" in license_text.lower():
+        return "unverified_license"
+    if _has_restricted_training_source(metadata):
+        return "restricted_source"
+    return None
 
 
 def licensed_row(row: dict) -> bool:
-    """Exclude records whose per-row provenance leaves source rights unresolved."""
-    metadata = json.loads(row["metadata_json"])
-    license_text = str(metadata.get("provenance", {}).get("license", ""))
-    return license_text.startswith("CC0-1.0") and "not verified" not in license_text.lower()
+    """Return whether the row is safe for this locally trained public-data study."""
+    return training_exclusion_reason(row) is None
 
 
 def validate_decision(kind: str, question: str, options: list[str]) -> None:
@@ -100,10 +142,11 @@ def load_split(split: str, limit: int, seed: int) -> tuple[list[dict], dict]:
                "state_json", "metadata_json")
     all_rows = parquet.read_table(path, columns=list(columns)).to_pylist()
     accepted = []
-    rejected_license = 0
+    excluded = defaultdict(int)
     for row in all_rows:
-        if not licensed_row(row):
-            rejected_license += 1
+        reason = training_exclusion_reason(row)
+        if reason is not None:
+            excluded[reason] += 1
             continue
         validate_row(row)
         accepted.append(row)
@@ -112,7 +155,9 @@ def load_split(split: str, limit: int, seed: int) -> tuple[list[dict], dict]:
         "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
         "total_rows": len(all_rows),
         "licensed_rows": len(accepted),
-        "excluded_unverified_license": rejected_license,
+        "excluded_unverified_license": excluded["unverified_license"],
+        "excluded_restricted_source": excluded["restricted_source"],
+        "source_policy": TRAINING_SOURCE_POLICY,
         "selected_rows": len(selected),
     }
 

@@ -17,7 +17,9 @@ sys.path.insert(0, str(ROOT))
 
 from benchmarks.general_decision import (  # noqa: E402
     DATASET,
+    DATASET_CONFIG,
     DATASET_REVISION,
+    TRAINING_SOURCE_POLICY,
     load_split,
     metrics,
     probabilities,
@@ -267,7 +269,9 @@ def run(args: argparse.Namespace) -> dict:
         "method": "trainable UTF-8 byte embeddings + position embeddings + listwise cross-attention; no pretrained backbone",
         "reference": "Minimal Labs jevlike TinyScorer and AttentionHead, adapted from MIT-licensed source",
         "dataset": DATASET,
+        "dataset_config": DATASET_CONFIG,
         "dataset_revision": DATASET_REVISION,
+        "training_source_policy": TRAINING_SOURCE_POLICY,
         "seed": args.seed,
         "split_seed": split_seed,
         "width": args.width,

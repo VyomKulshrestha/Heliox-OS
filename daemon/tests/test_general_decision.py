@@ -31,7 +31,11 @@ from benchmarks.general_decision import (
     verify_disjoint,
 )
 from benchmarks.scopejudge_general import scope_group_weights
-from scripts.train_general_decision import checkpoint_signature, training_row_weights
+from scripts.train_general_decision import (
+    checkpoint_signature,
+    split_id_group_hash,
+    training_row_weights,
+)
 
 
 def row(kind: str = "choice") -> dict:
@@ -80,6 +84,41 @@ def test_reject_unverified_rights_and_invalid_targets() -> None:
         validate_row(example)
 
 
+@pytest.mark.parametrize("url", [
+    "https://typesafe.ai/evals/example",
+    "https://evals.typesafe.ai/customer_service",
+    "typesafe.ai/docs/example",
+])
+def test_training_filter_excludes_provider_origin_sources(url: str) -> None:
+    example = row()
+    example["metadata_json"] = json.dumps({"provenance": {
+        "license": "CC0-1.0", "source_url": url,
+    }})
+    assert not licensed_row(example)
+
+
+@pytest.mark.parametrize("url", [
+    "https://nottypesafe.ai/evals/example",
+    "https://typesafe.ai.attacker.example/evals/example",
+    "https://example.org/typesafe.ai/evals/example",
+])
+def test_training_filter_does_not_reject_unrelated_url_text(url: str) -> None:
+    example = row()
+    example["metadata_json"] = json.dumps({"provenance": {
+        "license": "CC0-1.0", "source_url": url,
+    }})
+    assert licensed_row(example)
+
+
+def test_training_filter_searches_nested_provenance_urls() -> None:
+    example = row()
+    example["metadata_json"] = json.dumps({"provenance": {
+        "license": "CC0-1.0",
+        "references": [{"uri": "https://docs.typesafe.ai/patterns/fan-out.md"}],
+    }})
+    assert not licensed_row(example)
+
+
 def test_group_disjoint_and_balanced_sampling() -> None:
     examples = []
     for source in ("a", "b"):
@@ -95,6 +134,14 @@ def test_group_disjoint_and_balanced_sampling() -> None:
     verify_disjoint({"train": first, "test": [examples[-1]]})
     with pytest.raises(ValueError, match="Group leakage"):
         verify_disjoint({"train": first, "test": [first[0]]})
+
+
+def test_split_hash_binds_sorted_ids_and_group_assignments() -> None:
+    items = [{"row": {"id": "b", "group_id": "g2"}},
+             {"row": {"id": "a", "group_id": "g1"}}]
+    assert split_id_group_hash(items) == split_id_group_hash(list(reversed(items)))
+    changed = [{"row": {"id": "b", "group_id": "g1"}}, items[1]]
+    assert split_id_group_hash(items) != split_id_group_hash(changed)
 
 
 def test_variable_option_metrics_and_temperature() -> None:
@@ -261,6 +308,10 @@ def test_checkpoint_signature_binds_exact_tokenized_inputs() -> None:
                               prompt_style="candidate_v1")
     encoded = {"train": [{"row": row(), "sequences": [[1, 2, 3]]}]}
     first = checkpoint_signature(args, encoded, {}, None)
+    assert first == checkpoint_signature(args, encoded, {}, None)
+    args.split_seed = 0
+    assert first != checkpoint_signature(args, encoded, {}, None)
+    args.split_seed = 1
     assert first == checkpoint_signature(args, encoded, {}, None)
     encoded["train"][0]["sequences"] = [[1, 2, 4]]
     assert first != checkpoint_signature(args, encoded, {}, None)
