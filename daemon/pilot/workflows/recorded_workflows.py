@@ -17,6 +17,7 @@ import threading
 import time
 import uuid
 from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Awaitable, Callable
@@ -35,6 +36,10 @@ MODEL_AAD = b"heliox-recorded-world-weights-v1"
 MAX_MODEL_ARTIFACT_BYTES = 4 * 1024 * 1024
 MAX_STEPS = 200
 MAX_SAMPLES = 200
+MAX_REPLAY_SAMPLES = 50
+MAX_REPLAY_SAMPLES_PER_WORKFLOW = 200
+MAX_PENDING_REPLAY_JOBS = 8
+REPLAY_CAPTURE_TTL_SECONDS = 30 * 60
 MAX_WORKFLOWS = 50
 VISUAL_SETTLE_SECONDS = 0.15
 MANUAL_VISUAL_INTERVAL_SECONDS = 0.2
@@ -146,6 +151,24 @@ class RecordedWorkflowStore:
         self._manual_visual_loop: asyncio.AbstractEventLoop | None = None
         self._manual_feature: tuple[float, list[int], tuple[int, int, int, int]] | None = None
         self._manual_event_generation = 0
+        self._replay_visual_workflow: ContextVar[str] = ContextVar(
+            f"heliox_replay_visual_workflow_{id(self)}", default=""
+        )
+        self._pending_replay_samples: dict[tuple[str, str], tuple[float, list[dict[str, Any]]]] = {}
+
+    @contextmanager
+    def capture_replay_visual(self, workflow_id: str, *, consent: bool):
+        """Opt in to visual transitions for one replay; persist them only with user feedback."""
+        if consent is not True:
+            raise ValueError("Explicit replay-capture consent is required")
+        if self._capture_feature is None:
+            raise ValueError("Fresh local screen capture is unavailable")
+        self.get(workflow_id)
+        token = self._replay_visual_workflow.set(workflow_id)
+        try:
+            yield
+        finally:
+            self._replay_visual_workflow.reset(token)
 
     def _encryption_key(self) -> bytes:
         with self._key_lock:
@@ -457,7 +480,26 @@ class RecordedWorkflowStore:
         with self._session_lock:
             session = self._active
         if session is None:
-            return None
+            workflow_id = self._replay_visual_workflow.get()
+            if not workflow_id or not single_action_batch or action.action_type not in VISUAL_ACTIONS:
+                return None
+            from pilot.intelligence.experience import get_experience_context
+
+            job_id = get_experience_context().task_id
+            if not job_id:
+                return None
+            try:
+                feature = await self._capture_feature() if self._capture_feature else None
+            except Exception:
+                logger.warning("Replay pre-action visual feature capture failed", exc_info=True)
+                feature = None
+            return {
+                "replay_visual": True,
+                "workflow_id": workflow_id,
+                "job_id": job_id,
+                "action_type": action.action_type.value,
+                "before": feature,
+            }
         if not single_action_batch:
             return {"session_id": session["id"], "before": None, "parallel": True}
         feature = None
@@ -469,6 +511,9 @@ class RecordedWorkflowStore:
         return {"session_id": session["id"], "before": feature}
 
     async def after(self, token: dict[str, Any] | None, result: ActionResult) -> None:
+        if token is not None and token.get("replay_visual"):
+            await self._after_replay_visual(token, result)
+            return
         if not result.success or not result.executed:
             return
         with self._session_lock:
@@ -525,6 +570,82 @@ class RecordedWorkflowStore:
             if self._active is session and len(session["samples"]) < MAX_SAMPLES:
                 session["samples"].append(sample)
 
+    async def _after_replay_visual(self, token: dict[str, Any], result: ActionResult) -> None:
+        """Hold eligible transitions in memory until the user rates this exact replay."""
+        from pilot.intelligence.experience import get_experience_context
+
+        workflow_id = token.get("workflow_id")
+        job_id = token.get("job_id")
+        if (
+            not result.success or not result.executed
+            or token.get("before") is None
+            or token.get("action_type") != result.action.action_type.value
+            or self._replay_visual_workflow.get() != workflow_id
+            or get_experience_context().task_id != job_id
+        ):
+            return
+        try:
+            await asyncio.sleep(VISUAL_SETTLE_SECONDS)
+            feature = await self._capture_feature() if self._capture_feature else None
+        except Exception:
+            logger.warning("Replay post-action visual feature capture failed", exc_info=True)
+            return
+        before_feature = token["before"]
+        before, after = _feature_bytes(before_feature), _feature_bytes(feature) if feature else None
+        if before is None or after is None or feature is None:
+            return
+        left, top, width, height = (
+            before_feature.get(key) for key in ("left", "top", "width", "height")
+        )
+        params = result.action.parameters
+        if (
+            not all(isinstance(value, (int, float)) and math.isfinite(value)
+                    for value in (left, top, width, height))
+            or width <= 0 or height <= 0
+            or tuple(feature.get(key) for key in ("left", "top", "width", "height"))
+            != (left, top, width, height)
+            or getattr(params, "relative", False)
+            or not (left <= params.x < left + width and top <= params.y < top + height)
+        ):
+            return
+        key = (workflow_id, job_id)
+        now = time.monotonic()
+        with self._records_lock:
+            for stale_key, (created_at, _) in list(self._pending_replay_samples.items()):
+                if now - created_at > REPLAY_CAPTURE_TTL_SECONDS:
+                    self._pending_replay_samples.pop(stale_key, None)
+            pending = self._pending_replay_samples.get(key)
+            if pending is None:
+                if len(self._pending_replay_samples) >= MAX_PENDING_REPLAY_JOBS:
+                    return
+                pending = (now, [])
+                self._pending_replay_samples[key] = pending
+                asyncio.get_running_loop().call_later(
+                    REPLAY_CAPTURE_TTL_SECONDS,
+                    self._expire_replay_samples,
+                    key,
+                    now,
+                )
+            samples = pending[1]
+            if len(samples) >= MAX_REPLAY_SAMPLES:
+                return
+            samples.append({
+                "step_index": len(samples),
+                "action_type": result.action.action_type.value,
+                "coords": [(params.x - left) / width, (params.y - top) / height],
+                "before": before,
+                "after": after,
+                "post_observed": True,
+                "independently_verified": False,
+                "source": "replay",
+            })
+
+    def _expire_replay_samples(self, key: tuple[str, str], created_at: float) -> None:
+        with self._records_lock:
+            pending = self._pending_replay_samples.get(key)
+            if pending is not None and pending[0] == created_at:
+                self._pending_replay_samples.pop(key, None)
+
     def stop(self, *, save: bool) -> dict[str, Any]:
         with self._session_lock:
             session = self._active
@@ -578,6 +699,9 @@ class RecordedWorkflowStore:
                              if step["action_type"] == "manual_text"],
             "schedule": record.get("schedule"),
             "feedback_count": len(record.get("feedback", [])),
+            "feedback_visual_sample_count": sum(
+                len(item.get("visual_samples", [])) for item in record.get("feedback", [])
+            ),
         }
 
     def list(self) -> list[dict[str, Any]]:
@@ -611,14 +735,24 @@ class RecordedWorkflowStore:
                 raise ValueError("Feedback for this run was already saved")
             if len(feedback) >= 50:
                 raise ValueError("Maximum of 50 feedback entries reached for this workflow")
-            feedback.append({
+            pending = self._pending_replay_samples.get((workflow_id, job_id))
+            stored_visual_count = sum(
+                len(item.get("visual_samples", [])) for item in feedback
+            )
+            remaining_visual_capacity = max(0, MAX_REPLAY_SAMPLES_PER_WORKFLOW - stored_visual_count)
+            visual_samples = pending[1][:remaining_visual_capacity] if pending else []
+            feedback_item = {
                 "job_id": job_id,
                 "reported_outcome": outcome,
                 "executor_status": job_status,
                 "source": "user",
                 "created_at": datetime.now(UTC).isoformat(),
-            })
+            }
+            if visual_samples:
+                feedback_item["visual_samples"] = visual_samples
+            feedback.append(feedback_item)
             self._write(records)
+            self._pending_replay_samples.pop((workflow_id, job_id), None)
             return self._public(record)
 
     def load_research_samples(self) -> list[dict[str, Any]]:
@@ -628,8 +762,18 @@ class RecordedWorkflowStore:
         """
         with self._records_lock:
             return [
-                {"workflow_id": record["id"], "samples": record["samples"]}
-                for record in self._read() if record["samples"]
+                {
+                    "workflow_id": record["id"],
+                    "samples": record.get("samples", []) + [
+                        sample
+                        for feedback in record.get("feedback", [])
+                        for sample in feedback.get("visual_samples", [])
+                    ],
+                }
+                for record in self._read()
+                if record.get("samples") or any(
+                    feedback.get("visual_samples") for feedback in record.get("feedback", [])
+                )
             ]
 
     def encrypt_model_artifact(self, plaintext: bytes) -> bytes:
@@ -660,6 +804,9 @@ class RecordedWorkflowStore:
             if len(remaining) == len(records):
                 raise KeyError("Recorded workflow not found")
             self._write(remaining)
+            for key in list(self._pending_replay_samples):
+                if key[0] == workflow_id:
+                    self._pending_replay_samples.pop(key, None)
 
     def schedule(
         self, workflow_id: str, *, run_at: str, repeat_seconds: int = 0, reviewed: bool = False

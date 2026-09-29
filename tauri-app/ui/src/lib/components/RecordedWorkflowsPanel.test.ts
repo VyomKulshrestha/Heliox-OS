@@ -80,7 +80,7 @@ describe("recorded workflow goal feedback", () => {
         id: "flow-1", name: "Review", goal: "Check a status", steps: [], step_count: 1,
         sample_count: 0, omitted_actions: 0, visual_gaps: 0, incomplete: false,
         needs_review: false, overlap_warning: false, placeholders: [], schedule: null,
-        feedback_count: 0,
+        feedback_count: 0, feedback_visual_sample_count: 0,
       }] });
       if (method === "recorded_workflow_run") return Promise.resolve({
         status: "submitted", job: { job_id: "job-1", status: "queued" },
@@ -102,5 +102,15 @@ describe("recorded workflow goal feedback", () => {
       workflow_id: "flow-1", job_id: "job-1", outcome: "not_achieved",
     });
     expect(await screen.findByText("Goal-outcome rating saved locally.")).toBeTruthy();
+  });
+
+  it("captures replay visuals only when enabled for that run", async () => {
+    render(RecordedWorkflowsPanel);
+    await fireEvent.click(await screen.findByText("Review"));
+    await fireEvent.click(screen.getByLabelText(/Capture local 16×16 before\/after features/));
+    await fireEvent.click(screen.getByRole("button", { name: "Run with approvals" }));
+    expect(daemonMocks.call).toHaveBeenCalledWith("recorded_workflow_run", {
+      workflow_id: "flow-1", reviewed: false, text_values: {}, capture_visual: true,
+    });
   });
 });

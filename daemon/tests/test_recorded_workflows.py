@@ -15,6 +15,7 @@ from pilot.actions import (
     KeyboardParams,
     MouseParams,
 )
+from pilot.intelligence.experience import experience_scope
 from pilot.workflows.recorded_workflows import MODEL_AAD, RecordedWorkflowStore, workflow_prompt
 
 
@@ -192,6 +193,57 @@ async def test_explicit_goal_feedback_is_encrypted_and_distinct_from_job_status(
     with pytest.raises(ValueError, match="already saved"):
         store.record_feedback(workflow_id, job_id="job-1", outcome="achieved", job_status="success")
     assert store.status()["active"] is False
+
+
+@pytest.mark.asyncio
+async def test_replay_visual_pairs_require_per_run_consent_and_feedback(tmp_path) -> None:
+    calls = 0
+
+    async def capture() -> dict:
+        nonlocal calls
+        calls += 1
+        return {
+            "embedding": [0.25 if calls == 1 else 0.75] * 256,
+            "left": 0, "top": 0, "width": 100, "height": 100,
+        }
+
+    path = tmp_path / "recordings.enc"
+    store = RecordedWorkflowStore(path, key_provider=lambda: b"k" * 32, capture_feature=capture)
+    demo = Action(action_type=ActionType.BROWSER_CLICK, parameters=BrowserParams(selector="#review"))
+    token = await store.before(demo, single_action_batch=True)
+    assert token is None
+    with pytest.raises(ValueError, match="Explicit replay-capture consent"), store.capture_replay_visual(
+        "missing", consent=False
+    ):
+        pass
+
+    store.start(name="Review", consent=True)
+    demo_token = await store.before(demo, single_action_batch=True)
+    await store.after(demo_token, ActionResult(action=demo, success=True))
+    workflow_id = store.stop(save=True)["id"]
+    action = Action(action_type=ActionType.MOUSE_CLICK, parameters=MouseParams(x=25, y=75))
+    with store.capture_replay_visual(workflow_id, consent=True), experience_scope(
+        session_id=f"recorded:{workflow_id}", task_id="job-replay-1"
+    ):
+        replay_token = await store.before(action, single_action_batch=True)
+        await store.after(replay_token, ActionResult(action=action, success=True, executed=True))
+
+    assert store._read()[0]["feedback"] == []
+    assert len(store._pending_replay_samples[(workflow_id, "job-replay-1")][1]) == 1
+    feedback = store.record_feedback(
+        workflow_id, job_id="job-replay-1", outcome="not_achieved", job_status="success"
+    )
+    assert feedback["feedback_visual_sample_count"] == 1
+    assert b"visual_samples" not in path.read_bytes()
+    samples = store.load_research_samples()
+    assert samples == [{"workflow_id": workflow_id, "samples": [
+        {
+            "step_index": 0, "action_type": "mouse_click", "coords": [0.25, 0.75],
+            "before": [64] * 256, "after": [191] * 256,
+            "post_observed": True, "independently_verified": False, "source": "replay",
+        }
+    ]}]
+    assert store._read()[0]["feedback"][0]["reported_outcome"] == "not_achieved"
 
 
 def test_private_model_weights_are_encrypted(tmp_path) -> None:
