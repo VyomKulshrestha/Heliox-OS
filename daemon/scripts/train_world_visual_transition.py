@@ -282,6 +282,51 @@ def paired_counterfactual_permutation(partition: dict[str, np.ndarray]) -> np.nd
     return permutation
 
 
+def counterfactual_successor_retrieval(
+    predicted: np.ndarray, partition: dict[str, np.ndarray], *, seed: int,
+    replicates: int = 5000,
+) -> dict[str, Any]:
+    """Measure whether each action prediction retrieves its observed same-state outcome."""
+    predictions = np.asarray(predicted, dtype=np.float64)
+    states = np.asarray(partition["state"], dtype=np.float64)
+    targets = np.asarray(partition["target"], dtype=np.float64)
+    actions = np.asarray(partition["action"])
+    groups = np.asarray(partition["groups"], dtype=str)
+    if (predictions.shape != states.shape or targets.shape != states.shape
+            or predictions.ndim != 2 or actions.ndim != 2
+            or actions.shape[0] != len(predictions) or groups.shape != (len(predictions),)
+            or not np.isfinite(predictions).all() or not np.isfinite(states).all()
+            or not np.isfinite(targets).all() or not np.isfinite(actions).all()):
+        raise ValueError("Successor retrieval requires aligned finite feature matrices")
+    paired_counterfactual_permutation(partition)
+
+    group_ids = np.unique(groups)
+    group_accuracy = []
+    group_chance = []
+    for group_id in group_ids:
+        indices = np.flatnonzero(groups == group_id)
+        state = states[indices[0]][None, None, :]
+        candidates = targets[indices][None, :, :]
+        weights = 1 + 4 * (np.abs(candidates - state) >= 0.02)
+        differences = predictions[indices][:, None, :] - candidates
+        costs = (differences ** 2 * weights).mean(axis=2)
+        correct = np.argmin(costs, axis=1) == np.arange(len(indices))
+        group_accuracy.append(float(correct.mean()))
+        group_chance.append(1.0 / len(indices))
+
+    accuracy = np.asarray(group_accuracy, dtype=np.float64)
+    chance = np.asarray(group_chance, dtype=np.float64)
+    return {
+        "mean_group_top1_accuracy": float(accuracy.mean()),
+        "mean_group_chance_accuracy": float(chance.mean()),
+        "groups": int(len(group_ids)),
+        "rows": int(len(predictions)),
+        "bootstrap_vs_group_chance": group_bootstrap_loss_delta(
+            1 - chance, 1 - accuracy, group_ids, seed=seed, replicates=replicates,
+        ),
+    }
+
+
 def paired_group_indices(partition: dict[str, np.ndarray]) -> np.ndarray:
     """Return every verified same-state action pair for action-specific training."""
     paired_counterfactual_permutation(partition)  # Validate every branch before pairing.
@@ -314,6 +359,36 @@ def pairwise_focused_loss(predicted, target):
     signal = (expected ** 2 * mask).sum(axis=1)
     error = ((observed - expected) ** 2 * mask).sum(axis=1)
     return (error / (signal + 1e-6)).mean()
+
+
+def successor_ranking_loss(predicted, state, target, *, temperature: float):
+    """Rank each action's observed same-state successor ahead of its alternatives."""
+    import torch
+    import torch.nn.functional as functional
+
+    if (predicted.shape != state.shape or target.shape != state.shape
+            or predicted.ndim != 2 or len(predicted) < 2 or len(predicted) % 2
+            or not np.isfinite(temperature) or temperature <= 0
+            or not torch.isfinite(predicted).all() or not torch.isfinite(state).all()
+            or not torch.isfinite(target).all()):
+        raise ValueError("Successor ranking requires finite aligned action-pair tensors")
+    state_pairs = state.reshape(-1, 2, state.shape[1])
+    if not torch.equal(state_pairs[:, 0], state_pairs[:, 1]):
+        raise ValueError("Successor ranking pairs must share the exact same pre-action state")
+
+    prediction_pairs = predicted.reshape(-1, 2, predicted.shape[1])
+    target_pairs = target.reshape(-1, 2, target.shape[1])
+    baseline = state_pairs[:, :1]
+    target_weights = 1 + 4 * ((target_pairs - baseline).abs() >= 0.02)
+    pairwise_errors = (prediction_pairs[:, :, None] - target_pairs[:, None, :]) ** 2
+    costs = (pairwise_errors * target_weights[:, None]).mean(dim=3)
+    logits = -costs / temperature
+    labels = torch.arange(2, device=predicted.device).expand(len(logits), -1)
+    prediction_to_target = functional.cross_entropy(logits.reshape(-1, 2), labels.reshape(-1))
+    target_to_prediction = functional.cross_entropy(
+        logits.transpose(1, 2).reshape(-1, 2), labels.reshape(-1)
+    )
+    return (prediction_to_target + target_to_prediction) / 2
 
 
 RECORDED_ACTION_IDS = {
@@ -493,6 +568,12 @@ def main() -> None:
                         help="Fit distinct observed outcomes from matched counterfactual actions")
     parser.add_argument("--pairwise-focus-weight", type=float, default=0.0,
                         help="Fit observed action-discriminative pixels in verified pairs")
+    parser.add_argument("--successor-ranking-weight", type=float, default=0.0,
+                        help="Rank each observed same-state successor above alternatives")
+    parser.add_argument("--successor-ranking-temperature", type=float, default=0.01,
+                        help="Temperature for the optional successor-ranking objective")
+    parser.add_argument("--paired-counterfactual-batches", action="store_true",
+                        help="Keep verified same-state branches together for matched ablations")
     parser.add_argument("--epochs", type=int, default=80)
     parser.add_argument("--action-permutations", type=int, default=10)
     parser.add_argument("--group-bootstrap-replicates", type=int, default=5000)
@@ -509,6 +590,10 @@ def main() -> None:
             or not 0 <= args.pairwise_loss_weight <= 10
             or not np.isfinite(args.pairwise_focus_weight)
             or not 0 <= args.pairwise_focus_weight <= 10
+            or not np.isfinite(args.successor_ranking_weight)
+            or not 0 <= args.successor_ranking_weight <= 10
+            or not np.isfinite(args.successor_ranking_temperature)
+            or args.successor_ranking_temperature <= 0
             or not np.isfinite(args.inverse_loss_weight)
             or not 0 <= args.inverse_loss_weight <= 10
             or (args.inverse_loss_weight and args.architecture != "spatial_joint")
@@ -552,8 +637,10 @@ def main() -> None:
             additional_metadata = json.loads(args.additional_source_report.read_text(encoding="utf-8"))
             counterfactual_pairs = (counterfactual_pairs
                                     and additional_metadata.get("counterfactual_pairs") is True)
-    if (args.pairwise_loss_weight or args.pairwise_focus_weight) and not counterfactual_pairs:
-        parser.error("Pairwise loss requires verified counterfactual action pairs")
+    if (args.pairwise_loss_weight or args.pairwise_focus_weight
+            or args.paired_counterfactual_batches
+            or args.successor_ranking_weight) and not counterfactual_pairs:
+        parser.error("Counterfactual objectives require verified same-state action pairs")
     split_basis = "recording_and_exact_pre_screen" if recorded_store else source_metadata.get("split_basis", "episode")
     if args.additional_features:
         split_basis += "_with_additional_fit_validation_source"
@@ -580,7 +667,9 @@ def main() -> None:
     device = torch.device("cuda:0" if args.device == "cuda" else "cpu")
     arrays = {split: {key: torch.from_numpy(value).to(device) for key, value in partition.items()
                       if key != "groups"} for split, partition in rows.items()}
-    paired_training = bool(args.pairwise_loss_weight or args.pairwise_focus_weight)
+    paired_training = bool(args.paired_counterfactual_batches
+                           or args.pairwise_loss_weight or args.pairwise_focus_weight
+                           or args.successor_ranking_weight)
     pair_indices = ({split: torch.from_numpy(paired_group_indices(rows[split])).to(device)
                      for split in ("train", "validation")}
                     if paired_training else {})
@@ -626,6 +715,11 @@ def main() -> None:
         if args.pairwise_focus_weight:
             loss = loss + args.pairwise_focus_weight * pairwise_focused_loss(
                 predicted, partition["target"]
+            )
+        if args.successor_ranking_weight:
+            loss = loss + args.successor_ranking_weight * successor_ranking_loss(
+                predicted, partition["state"], partition["target"],
+                temperature=args.successor_ranking_temperature,
             )
         return loss
 
@@ -807,6 +901,11 @@ def main() -> None:
                 scores[split]["paired_counterfactual_action"] = metrics(
                     swapped_prediction, partition["state"], partition["target"]
                 )
+                scores[split]["successor_retrieval"] = counterfactual_successor_retrieval(
+                    trained_prediction, partition,
+                    seed=args.seed + (9 if split == "eval" else 8),
+                    replicates=args.group_bootstrap_replicates,
+                )
                 if split == "eval":
                     scores[split]["episode_group_bootstrap"]["comparisons"][
                         "trained_minus_same_state_action_permutation"
@@ -839,10 +938,13 @@ def main() -> None:
         "feature_shape": [channels, height, width],
         "split_basis": split_basis,
         "counterfactual_pairs": counterfactual_pairs,
+        "paired_counterfactual_batches": paired_training,
         "trained_without_action": args.train_without_action,
         "transition_scale_power": args.transition_scale_power,
         "pairwise_loss_weight": args.pairwise_loss_weight,
         "pairwise_focus_weight": args.pairwise_focus_weight,
+        "successor_ranking_weight": args.successor_ranking_weight,
+        "successor_ranking_temperature": args.successor_ranking_temperature,
         "inverse_loss_weight": args.inverse_loss_weight,
         "validation_inverse_mse": (float(inverse_loss(arrays["validation"]).item())
                                    if args.architecture == "spatial_joint" else None),
