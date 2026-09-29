@@ -1,5 +1,17 @@
 # Compact Jev-like option scorer (research-only)
 
+## Provenance correction — 2026-09-30
+
+A later source-URL audit found that the original CC0-only filter admitted
+synthetic/programmatic rows whose provenance referenced TypeSafe-hosted docs or
+eval pages. Dataset metadata did not identify those labels as TypeSafe model
+outputs, and no TypeSafe service, key, output, or checkpoint was used, but the
+older results did include provider-origin task references. Treat every metric
+below as exploratory, not as the clean-source comparison. The shared loader now
+also rejects any row with a `typesafe.ai` source URL; see the clean-source
+replication report before using a result. Rows whose upstream license was
+unverified were already excluded by the original filter.
+
 ## What the internet research changed
 
 [Open-Jev's training guide](https://github.com/daseinlabs/open-jev/blob/main/docs/training.md)
@@ -25,8 +37,10 @@ outcomes, then test on held-out tasks.
 This probe applies jevlike's tiny, no-pretrained-backbone approach to the
 public Open-Jev rows: learned UTF-8 byte embeddings, ordered context positions,
 independent option pooling, and a shared option-to-context attention head. It
-uses no task IDs or fixed option vocabulary. The data loader accepts only rows
-whose provenance is verified CC0-1.0, and splits remain group-disjoint.
+uses no task IDs or fixed option vocabulary. The original data loader accepted
+rows whose provenance declared CC0-1.0, and splits remained group-disjoint; it
+did not yet exclude provider-origin source URLs. See the provenance correction
+above.
 
 ## Five-seed result
 
@@ -159,8 +173,10 @@ expected random-choice accuracy; reports include calibration-bin counts,
 confidence, and accuracy.
 
 This is a compact research prototype, not a Jev/TypeSafe reproduction or
-parity claim. It was trained only on licensed public rows; no TypeSafe/Jev
-outputs, weights, or labels were used. It has not been tested on multi-step
+parity claim. No TypeSafe Jev service, output, weights, or labels were used.
+However, as noted above, these older runs included rows whose task sources
+referenced TypeSafe-hosted pages; they are superseded for clean-source claims.
+It has not been tested on multi-step
 Heliox workflows, live desktop state, or real user outcomes, and it is not
 loaded by the daemon. The next useful evidence is reviewed, opt-in Heliox
 workflow data with app/group-held-out tests, especially early-finish and
