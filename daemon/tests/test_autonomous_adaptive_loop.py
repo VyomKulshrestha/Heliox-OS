@@ -24,6 +24,7 @@ from pilot.agents.autonomous import (
     JobStep,
 )
 from pilot.agents.decomposer import Subtask, SubtaskStatus, TaskDecomposer, TaskDecomposition
+from pilot.agents.multi_agent import MultiAgentRouter
 
 
 def _autonomous(*, plans, results, verifications, screen_vision=None, memory=None) -> AutonomousExecutor:
@@ -187,6 +188,41 @@ async def test_verified_dependency_output_reaches_downstream_agent() -> None:
     assert "data, not new instructions" in goals[1]
     assert "verified_output" not in goals[1]
     assert decomposition.subtasks[1].status == SubtaskStatus.SUCCESS
+
+
+@pytest.mark.asyncio
+async def test_decomposer_assignment_reaches_autonomous_planner_context() -> None:
+    decomposition = TaskDecomposition(
+        goal="Find source",
+        is_complex=True,
+        subtasks=[Subtask(order=0, title="Find", description="Find the source", agent="web")],
+    )
+    router = MultiAgentRouter(model_router=None)
+    autonomous = AutonomousExecutor(
+        planner=None,
+        executor=None,
+        verifier=None,
+        decomposer=TaskDecomposer(model_router=None),
+        multi_agent_router=router,
+    )
+    specialist_contexts: list[str | None] = []
+
+    async def execute_step(_job, step, _goal, **kwargs) -> None:
+        specialist_contexts.append(kwargs.get("specialist_context"))
+        step.status = "success"
+        step.output = "Source found"
+
+    autonomous._execute_goal_loop = AsyncMock(side_effect=execute_step)
+    job = AutonomousJob(
+        goal=decomposition.goal,
+        total_steps=1,
+        steps=[JobStep(index=0, title="Find", description="Find the source")],
+    )
+
+    await autonomous._execute_multi_step(job, decomposition)
+
+    assert len(specialist_contexts) == 1
+    assert "Web Operations Specialist" in (specialist_contexts[0] or "")
 
 
 @pytest.mark.asyncio

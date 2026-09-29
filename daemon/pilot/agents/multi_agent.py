@@ -230,6 +230,18 @@ class MultiAgentRouter:
 
         return "\n\n".join([f"=== SPECIALIST MODE: {', '.join(r.value for r in roles)} ==="] + prompts)
 
+    def get_enhanced_prompt_for_specialist(self, specialist: str) -> str:
+        """Resolve a decomposer specialist name to its domain guidance."""
+        normalized = specialist.strip().casefold()
+        roles: dict[str, AgentRole] = {}
+        for role in AgentRole:
+            for name in (role.value, role.name):
+                alias = name.casefold()
+                roles[alias] = role
+                roles[alias.removesuffix("_agent")] = role
+        role = roles.get(normalized)
+        return self.get_enhanced_prompt([role]) if role is not None else ""
+
     def get_routing_summary(self, user_input: str) -> dict[str, Any]:
         """Get a full routing analysis for a user input."""
         roles = self.classify(user_input)

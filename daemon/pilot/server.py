@@ -926,6 +926,7 @@ class PilotServer:
         self._reflector = Reflector(model_router)
         await self._reflector.initialize()
         self._multi_agent = MultiAgentRouter(model_router)
+        self._planner.set_multi_agent_router(self._multi_agent)
         self._background = BackgroundTaskManager()
         self._background.set_broadcast(self._broadcast_notification)
         self._background.register_builtin_monitors()
@@ -1140,6 +1141,7 @@ class PilotServer:
                 screen_vision=self._screen_vision,
                 memory=self._memory,
                 orchestrator=self._orchestrator,
+                multi_agent_router=self._multi_agent,
             )
             self._autonomous.set_broadcast(self._broadcast_notification)
             self._autonomous.set_speech(self._speak_companion_text)
