@@ -1993,3 +1993,33 @@ run-level mitigations, not a diagnosed root-cause fix or a claim that Heliox
 runtime inference is stable on all machines. The frozen measurements remain
 valid for the rows actually scored, but runtime robustness still needs a
 separate investigation.
+
+## Group-disjoint fresh replication (2026-09-29)
+
+The frozen candidate was additionally compared with the released Open-Jev
+checkpoint on 482 rows from 482 previously unseen public-data groups. The
+512-row selection was frozen before candidate scoring; 30 rows exceeded the
+candidate's token limit and were excluded without truncation. No parameters,
+calibration, or thresholds were changed using these rows.
+
+| Metric | Released Open-Jev | Heliox candidate | Difference |
+| --- | ---: | ---: | ---: |
+| Top-1 accuracy | 78.84% | 80.71% | +1.87 pp |
+| Mean NLL | 0.5308 | 0.4477 | -0.0831 |
+| Mean Brier score | 0.0828 | 0.0650 | -0.0178 |
+
+A paired bootstrap over the 482 independent groups used 5,000 replicates
+(seed `20260929`); the 95% interval for the top-1 difference was
+`[-0.41, +4.15]` percentage points and includes zero. The candidate improved
+NLL and Brier overall, but choice top-1 was 73.80% versus 74.67% for the
+released model; Noul and ordered-score top-1 were higher. This mixed result is
+promising but not evidence of a statistically reliable accuracy gain.
+
+The frozen local report is
+`daemon/benchmarks/openjev_scale_1024_rps_fresh_v3.json`; the paired group
+bootstrap is recorded in
+`daemon/benchmarks/openjev_scale_1024_rps_fresh_v3_group_bootstrap_exploratory.json`.
+This is still a comparison to released Open-Jev—not TypeSafe Jev—and uses
+public synthetic decisions only. It does not establish real desktop-task
+success, multi-step execution quality, or action safety. The candidate remains
+research-only and is not automatically loaded into the planner.
