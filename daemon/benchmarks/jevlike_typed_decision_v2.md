@@ -77,6 +77,43 @@ worse: score RPS changed from `0.2218` to `0.2295`, score top-1 from `46.0%` to
 objective was not retained. This paired result is evidence against that
 setting, not evidence that further loss tuning will close a gap to Jev.
 
+## Follow-up scaling and capacity probes
+
+The 40k-row scaling check used seed `20261002` and kept calibration, test, and
+OOD row/group hashes identical to its 8k-row baseline. More training data
+improved the sampled test NLL but harmed OOD calibration and NLL, so this
+setting is rejected as a general improvement:
+
+| Training rows / head | Test NLL | OOD top-1 | OOD NLL | OOD ECE |
+| --- | ---: | ---: | ---: | ---: |
+| 8k / width 64, rank 64 | 0.780 | 57.7% | 0.955 | 10.4% |
+| 40k / width 64, rank 64 | 0.692 | 57.2% | 1.170 | 16.4% |
+
+Widening the small head from 64 to 128 gave a modest improvement on that same
+sample, but capacity selection had already observed those OOD rows. A paired
+follow-up therefore fixes the partition seed independently of model
+initialization. All six runs used the same 8k train, 1k calibration, 1k test,
+and 1k OOD row/group hashes, with `split_seed=20261010`; all groups are
+disjoint across those splits.
+
+| Width / rank | Model seeds | OOD top-1 | OOD NLL | OOD ECE | Choice top-1 | Noul balanced accuracy | Score top-1 | Shuffled-context NLL |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 64 / 64 | 11, 29, 47 | 57.2% | 0.996 | 13.1% | 38.2% | 64.9% | 39.5% | 1.256 |
+| 128 / 128 | 11, 29, 47 | 58.1% | 0.949 | 10.2% | 37.9% | 68.1% | 37.7% | 1.211 |
+
+This paired result supports a limited claim: width 128 improved aggregate
+OOD NLL, calibration, and yes/no balanced accuracy on this one fixed public
+split, while choice and score top-1 did not improve. It is not evidence of
+Jev parity, desktop-workflow generalization, or a safe execution policy. The
+model remains research-only and is not loaded by Heliox. The training code now
+accepts `--split-seed` for reproducible paired comparisons; omitting it keeps
+the prior behavior (`split_seed` defaults to `--seed`).
+
+Artifacts and per-run reports remain in ignored local
+`benchmarks/.bench-state/jevlike_tiny_*` directories. The runs used only the
+revision-pinned, per-row CC0-filtered public dataset described above; no
+TypeSafe Jev service, output, weights, or labels were used.
+
 ## Cost, reproduction, and limits
 
 - Context window: 2,048 bytes; only 5/1,000 OOD contexts were truncated.
