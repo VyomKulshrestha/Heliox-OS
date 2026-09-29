@@ -1,0 +1,109 @@
+{
+  "schema_version": 1,
+  "benchmark": "JevBench MIT-licensed original tier",
+  "benchmark_revision": "9ec6f15a8773aaffbbb41e7d7e65a20599ab0cc3",
+  "benchmark_sha256": "5c2414edb3006b8bfcb70fda433f0f9ca015759433849f8d3104328a1f7c4180",
+  "records": 72,
+  "gold_labels_in_model_inputs": false,
+  "trained_on_evaluation_rows": false,
+  "prompt_contract": "Heliox candidate_v1 with JevBench criterion descriptions; score levels kept ordered",
+  "heliox": {
+    "correct": 54,
+    "total": 72,
+    "accuracy": 0.75,
+    "macro_accuracy": 0.7824074074074074,
+    "mean_brier": 0.1102130150316022,
+    "mean_nll": 0.6585382174829298,
+    "mean_score_rank_error": 0.24694955923239928,
+    "per_type": {
+      "choice": {
+        "correct": 26,
+        "total": 36,
+        "accuracy": 0.7222222222222222
+      },
+      "noul": {
+        "correct": 17,
+        "total": 24,
+        "accuracy": 0.7083333333333334
+      },
+      "score": {
+        "correct": 11,
+        "total": 12,
+        "accuracy": 0.9166666666666666
+      }
+    },
+    "elapsed_seconds_including_model_load": 31.072,
+    "peak_cuda_gib": 1.659
+  },
+  "released_open_jev_2b_local": {
+    "correct": 54,
+    "total": 72,
+    "accuracy": 0.75,
+    "macro_accuracy": 0.7824074074074074,
+    "mean_brier": 0.11072276799938538,
+    "mean_nll": 0.6580712228337421,
+    "mean_score_rank_error": 0.21596332251262948,
+    "per_type": {
+      "choice": {
+        "correct": 26,
+        "total": 36,
+        "accuracy": 0.7222222222222222
+      },
+      "noul": {
+        "correct": 17,
+        "total": 24,
+        "accuracy": 0.7083333333333334
+      },
+      "score": {
+        "correct": 11,
+        "total": 12,
+        "accuracy": 0.9166666666666666
+      }
+    },
+    "elapsed_seconds_including_model_load": 28.397,
+    "peak_cuda_gib": 1.659
+  },
+  "inference": {
+    "heliox": {
+      "model": "Qwen/Qwen3.5-2B",
+      "revision": "15852e8c16360a2fea060d615a32b45270f8a8fc",
+      "model_report_sha256": "53cea9c46c4504761071a568ae837dcda9920e49709c367668ea6a043165f95a",
+      "adapter_sha256": "5bb2153d689476375b7784884964605411d000f20883b38a9ccd44eae0bfc0a3",
+      "head_sha256": "aa2a39aee6e7b48efc50eff3a0f1ac5c4fdf391b534bf8b874a4a8da9ba65676",
+      "device": "NVIDIA GeForce RTX 4060 Laptop GPU",
+      "max_length": 512
+    },
+    "released_open_jev_2b_local": {
+      "model": "Qwen/Qwen3.5-2B",
+      "revision": "15852e8c16360a2fea060d615a32b45270f8a8fc",
+      "model_report_sha256": "5610c48b333d1eec976c05bda38efdc2c920fa64b924e937325bcbffbde5dffb",
+      "adapter_sha256": "2d23935b1a7380db444abac572c04646918ba794e59002d1588236182a3ca18f",
+      "head_sha256": "951aa74fc6d5a023a63ae3b083227c0b2e84bb64b27ff5884c4412d131cae0b8",
+      "device": "NVIDIA GeForce RTX 4060 Laptop GPU",
+      "max_length": 1024
+    }
+  },
+  "paired_accuracy_difference": {
+    "candidate_minus_baseline_accuracy": 0.0,
+    "confidence_level": 0.95,
+    "group_bootstrap_replicates": 5000,
+    "group_bootstrap_seed": 20260929,
+    "groups_resampled": 36,
+    "percentile_95_interval": [
+      -0.05555555555555555,
+      0.06944444444444445
+    ]
+  },
+  "published_references": {
+    "jev": {
+      "correct": 71,
+      "total": 72
+    },
+    "open_jev_2b": {
+      "correct": 56,
+      "total": 72
+    },
+    "source": "https://github.com/Zefan-Cai/Open-Jev/blob/main/docs/jevbench-public.md"
+  },
+  "limitation": "Small public transfer set only; published Jev/Open-Jev numbers use their own prompt contracts. This does not establish Jev parity, desktop task success, or safe execution."
+}
