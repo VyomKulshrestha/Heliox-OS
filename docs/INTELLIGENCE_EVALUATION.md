@@ -1034,6 +1034,8 @@ The trainer requires at least 24 rated runs across 8 independent recipe groups,
 uses a group-disjoint holdout, encrypts model weights with the recording
 store's OS-keyring key, and writes an aggregate report under the Heliox data
 directory. It refuses to lower these sample gates or overwrite existing
-artifacts. Tests use synthetic fixtures only; they are not reported as user
-training evidence. This candidate is not Jev imitation, Jev parity, or action
-authorization.
+artifacts. Every observed outcome class must occur in both train and test
+groups; reports include per-class recall and test coverage so partial-class
+holdouts cannot inflate balanced accuracy. Tests use synthetic fixtures only;
+they are not user training evidence. This is not Jev imitation, parity, or
+action authorization.
