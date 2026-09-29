@@ -189,9 +189,10 @@ def run(args: argparse.Namespace) -> dict:
         "test": args.test_rows,
         "ood": args.ood_rows,
     }
+    split_seed = args.seed if args.split_seed is None else args.split_seed
     rows, manifests = {}, {}
     for offset, (split, limit) in enumerate(split_limits.items()):
-        rows[split], manifests[split] = load_split(split, limit, args.seed + offset)
+        rows[split], manifests[split] = load_split(split, limit, split_seed + offset)
     verify_disjoint(rows)
 
     started = time.monotonic()
@@ -268,6 +269,7 @@ def run(args: argparse.Namespace) -> dict:
         "dataset": DATASET,
         "dataset_revision": DATASET_REVISION,
         "seed": args.seed,
+        "split_seed": split_seed,
         "width": args.width,
         "rank": args.rank,
         "context_byte_limit": args.context_bytes,
@@ -314,6 +316,12 @@ def main() -> None:
     parser.add_argument("--patience", type=int, default=2)
     parser.add_argument("--learning-rate", type=float, default=2e-3)
     parser.add_argument("--seed", type=int, default=20260928)
+    parser.add_argument(
+        "--split-seed",
+        type=int,
+        default=None,
+        help="Fix dataset sampling independently of model initialization; defaults to --seed.",
+    )
     args = parser.parse_args()
     if args.patience < 1:
         raise ValueError("patience must be positive")
