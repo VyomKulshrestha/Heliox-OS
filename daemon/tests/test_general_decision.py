@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections import Counter
 
 import numpy as np
 import pytest
@@ -24,11 +25,13 @@ from benchmarks.general_decision import (
     probabilities,
     ranked_probability_score,
     select_balanced,
+    select_source_holdout,
     selective_risk_metrics,
     uniform_baseline,
     validate_decision,
     validate_row,
     verify_disjoint,
+    verify_source_holdout,
 )
 from benchmarks.scopejudge_general import scope_group_weights
 from scripts.train_general_decision import (
@@ -134,6 +137,60 @@ def test_group_disjoint_and_balanced_sampling() -> None:
     verify_disjoint({"train": first, "test": [examples[-1]]})
     with pytest.raises(ValueError, match="Group leakage"):
         verify_disjoint({"train": first, "test": [first[0]]})
+
+
+def test_balanced_sampler_is_reproducible_and_balances_categories() -> None:
+    examples = [{**row(kind), "id": f"{source}:{kind}:{index}",
+                 "group_id": f"{source}:{kind}:{index}", "source": source}
+                for source in ("a", "b") for kind in ("choice", "score")
+                for index in range(30)]
+    first = select_balanced(examples, 9, 19)
+    second = select_balanced(examples, 9, 19)
+    assert [entry["id"] for entry in first] == [entry["id"] for entry in second]
+    counts = Counter((entry["source"], entry["kind"]) for entry in first)
+    assert len(first) == 9
+    assert len(counts) == 4
+    assert max(counts.values()) - min(counts.values()) <= 1
+
+
+def test_source_holdout_is_deterministic_and_excludes_nonshared_sources() -> None:
+    counts = {
+        "train": {"alpha": 30, "beta": 20, "gamma": 10, "train-only": 7},
+        "calibration": {"alpha": 8, "beta": 6, "gamma": 4},
+        "test": {"alpha": 8, "beta": 6, "gamma": 4},
+        "ood": {"alpha": 8, "beta": 6, "gamma": 4, "ood-only": 5},
+    }
+    first = select_source_holdout(counts, 0.2, 17)
+    assert first == select_source_holdout(counts, 0.2, 17)
+    assert first["common_sources"] == ["alpha", "beta", "gamma"]
+    assert len(first["held_out_sources"]) == 1
+    assert set(first["seen_sources"]).isdisjoint(first["held_out_sources"])
+    assert set(first["seen_sources"] + first["held_out_sources"]) == set(first["common_sources"])
+    disabled = select_source_holdout(counts, 0.0, 17)
+    assert disabled["held_out_sources"] == []
+
+
+def test_source_holdout_rejects_invalid_or_unidentifiable_sources() -> None:
+    counts = {name: {"alpha": 1} for name in ("train", "calibration", "test", "ood")}
+    with pytest.raises(ValueError, match="at least two"):
+        select_source_holdout(counts, 0.2, 1)
+    with pytest.raises(ValueError, match="fraction"):
+        select_source_holdout(counts, 1.0, 1)
+    with pytest.raises(ValueError, match="include"):
+        select_source_holdout({"train": {}}, 0.2, 1)
+
+
+def test_source_holdout_verifier_rejects_seen_source_leakage() -> None:
+    split_rows = {name: [{**row(), "source": "seen"}]
+                  for name in ("train", "calibration", "test", "ood")}
+    split_rows["ood"] = [{**row(), "source": "held-out"}]
+    verify_source_holdout(split_rows, {"held-out"})
+    split_rows["test"] = [{**row(), "source": "held-out"}]
+    with pytest.raises(ValueError, match="leaked into test"):
+        verify_source_holdout(split_rows, {"held-out"})
+    split_rows["test"] = [{**row(), "source": "seen"}]
+    with pytest.raises(ValueError, match="OOD rows"):
+        verify_source_holdout(split_rows, {"another-source"})
 
 
 def test_split_hash_binds_sorted_ids_and_group_assignments() -> None:
@@ -305,7 +362,8 @@ def test_checkpoint_signature_binds_exact_tokenized_inputs() -> None:
     args = argparse.Namespace(seed=1, max_length=128, lora_rank=8, attention="sdpa",
                               accumulation=4, lr=2e-5, head_lr=5e-5,
                               brier_weight=0.1, ordinal_weight=0.0,
-                              prompt_style="candidate_v1")
+                              prompt_style="candidate_v1", source_holdout_fraction=0.2,
+                              source_holdout_seed=3)
     encoded = {"train": [{"row": row(), "sequences": [[1, 2, 3]]}]}
     first = checkpoint_signature(args, encoded, {}, None)
     assert first == checkpoint_signature(args, encoded, {}, None)
@@ -313,6 +371,9 @@ def test_checkpoint_signature_binds_exact_tokenized_inputs() -> None:
     assert first != checkpoint_signature(args, encoded, {}, None)
     args.split_seed = 1
     assert first == checkpoint_signature(args, encoded, {}, None)
+    args.source_holdout_seed = 4
+    assert first != checkpoint_signature(args, encoded, {}, None)
+    args.source_holdout_seed = 3
     encoded["train"][0]["sequences"] = [[1, 2, 4]]
     assert first != checkpoint_signature(args, encoded, {}, None)
     encoded["train"][0]["sequences"] = [[1, 2, 3]]

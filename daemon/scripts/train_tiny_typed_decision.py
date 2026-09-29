@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import random
 import sys
 import time
@@ -20,10 +21,13 @@ from benchmarks.general_decision import (  # noqa: E402
     DATASET_CONFIG,
     DATASET_REVISION,
     TRAINING_SOURCE_POLICY,
+    load_clean_source_counts,
     load_split,
     metrics,
     probabilities,
+    select_source_holdout,
     verify_disjoint,
+    verify_source_holdout,
 )
 from pilot.intelligence.tiny_decision_scorer import build_tiny_decision_scorer  # noqa: E402
 from scripts.train_cross_attention_typed_decision import (  # noqa: E402
@@ -192,10 +196,24 @@ def run(args: argparse.Namespace) -> dict:
         "ood": args.ood_rows,
     }
     split_seed = args.seed if args.split_seed is None else args.split_seed
+    source_holdout = None
+    if args.source_holdout_fraction > 0:
+        source_holdout_seed = (split_seed if args.source_holdout_seed is None
+                               else args.source_holdout_seed)
+        source_holdout = select_source_holdout(
+            load_clean_source_counts(), args.source_holdout_fraction, source_holdout_seed)
     rows, manifests = {}, {}
     for offset, (split, limit) in enumerate(split_limits.items()):
-        rows[split], manifests[split] = load_split(split, limit, split_seed + offset)
+        allowed_sources = None
+        if source_holdout is not None:
+            allowed = (source_holdout["held_out_sources"] if split == "ood"
+                       else source_holdout["seen_sources"])
+            allowed_sources = set(allowed)
+        rows[split], manifests[split] = load_split(
+            split, limit, split_seed + offset, allowed_sources=allowed_sources)
     verify_disjoint(rows)
+    if source_holdout is not None:
+        verify_source_holdout(rows, set(source_holdout["held_out_sources"]))
 
     started = time.monotonic()
     torch.cuda.reset_peak_memory_stats()
@@ -274,6 +292,8 @@ def run(args: argparse.Namespace) -> dict:
         "training_source_policy": TRAINING_SOURCE_POLICY,
         "seed": args.seed,
         "split_seed": split_seed,
+        "source_holdout_seed": (None if source_holdout is None else source_holdout["seed"]),
+        "source_holdout": source_holdout,
         "width": args.width,
         "rank": args.rank,
         "context_byte_limit": args.context_bytes,
@@ -326,9 +346,15 @@ def main() -> None:
         default=None,
         help="Fix dataset sampling independently of model initialization; defaults to --seed.",
     )
+    parser.add_argument("--source-holdout-fraction", type=float, default=0.2,
+                        help="Fraction of shared licensed source categories reserved for OOD; 0 disables")
+    parser.add_argument("--source-holdout-seed", type=int,
+                        help="Choose held-out categories independently of row-sampling seed")
     args = parser.parse_args()
     if args.patience < 1:
         raise ValueError("patience must be positive")
+    if not math.isfinite(args.source_holdout_fraction) or not 0 <= args.source_holdout_fraction < 1:
+        raise ValueError("source holdout fraction must be in [0, 1)")
     report = run(args)
     print(
         json.dumps(
