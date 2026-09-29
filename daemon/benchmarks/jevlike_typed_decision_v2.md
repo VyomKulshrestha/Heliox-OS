@@ -18,49 +18,51 @@ independent option pooling, and a shared option-to-context attention head. It
 uses no task IDs or fixed option vocabulary. The data loader accepts only rows
 whose provenance is verified CC0-1.0, and splits remain group-disjoint.
 
-## Two-seed result
+## Three-seed result
 
 Each seed trained on 8,000 rows and used separate 1,000-row calibration, test,
 and OOD partitions. Each OOD set contains 268 choice, 532 yes/no (`noul`), and
-200 score decisions. Metrics below are averages of the two independent sampled
-sets unless a seed is shown.
+200 score decisions. Metrics below are averages of the three independent sampled
+sets unless a seed is shown. Seed `20260930` is an additional run of the same
+protocol and model size; it used the RTX 4060 for 66.2 seconds and peaked at
+0.196 GiB of CUDA memory.
 
-| OOD metric | Seed 20260928 | Seed 20260929 | Mean |
-| --- | ---: | ---: | ---: |
-| Correct-context top-1 | 60.7% | 58.0% | 59.4% |
-| Correct-context mean NLL | 0.950 | 0.934 | 0.942 |
-| Uniform expected top-1 | 38.0% | 38.1% | 38.1% |
-| Uniform mean NLL | 1.077 | 1.073 | 1.075 |
-| Full-context shuffled top-1 | 47.4% | 47.2% | 47.3% |
-| Full-context shuffled mean NLL | 1.324 | 1.323 | 1.324 |
-| Correct-context 10-bin ECE | 9.2% | 10.4% | 9.8% |
+| OOD metric | Seed 20260928 | Seed 20260929 | Seed 20260930 | Mean |
+| --- | ---: | ---: | ---: | ---: |
+| Correct-context top-1 | 60.7% | 58.0% | 57.1% | 58.6% |
+| Correct-context mean NLL | 0.950 | 0.934 | 1.040 | 0.975 |
+| Uniform expected top-1 | 38.0% | 38.1% | 38.1% | 38.1% |
+| Uniform mean NLL | 1.077 | 1.073 | 1.072 | 1.074 |
+| Full-context shuffled top-1 | 47.4% | 47.2% | 49.5% | 48.0% |
+| Full-context shuffled mean NLL | 1.324 | 1.323 | 1.245 | 1.297 |
+| Correct-context 10-bin ECE | 9.2% | 10.4% | 12.0% | 10.5% |
 
 The complete-context control swaps each row's state **and question** with a
-different same-kind, different-group example. Across the two seeds, shuffling
-reduces top-1 by 12.1 percentage points and worsens NLL by 0.382. That is
-repeatable evidence that this scorer uses context on this dataset—not evidence
-of Heliox desktop generalization.
+different same-kind, different-group example. Across the three seeds, shuffling
+reduces top-1 by 10.6 percentage points on average and worsens NLL by 0.323.
+That is repeatable evidence that this scorer uses context on this dataset—not
+evidence of Heliox desktop generalization.
 
 Aggregate top-1 is partly inflated by the many negative yes/no rows, so the
 task-type results matter more:
 
-| OOD task type | Seed 20260928 | Seed 20260929 |
-| --- | ---: | ---: |
-| Choice top-1 (random-choice expectation) | 42.9% (25.6%) | 33.6% (25.8%) |
-| Yes/no balanced accuracy | 68.5% | 60.9% |
-| Score top-1 | 44.0% | 49.0% |
+| OOD task type | Seed 20260928 | Seed 20260929 | Seed 20260930 | Mean |
+| --- | ---: | ---: | ---: | ---: |
+| Choice top-1 (random-choice expectation) | 42.9% (25.6%) | 33.6% (25.8%) | 35.8% (25.8%) | 37.4% (25.7%) |
+| Yes/no balanced accuracy | 68.5% | 60.9% | 63.9% | 64.4% |
+| Score top-1 | 44.0% | 49.0% | 35.5% | 42.8% |
 
-Choice accuracy beats random chance on both seeds, but the 33.6–42.9% range is
-not enough to claim reliable action selection; calibration also remains weak.
-Do not use these outputs as trusted probabilities or as an action-selection
-policy. The uniform top-1 baseline is the expected `1 / option_count`, not the
-accuracy of an arbitrary first-option tie break.
+Choice accuracy beats random chance on all three seeds, but the 33.6–42.9%
+spread, weak score results, and 10.5% mean ECE are not enough to claim reliable
+action selection. Do not use these outputs as trusted probabilities or as an
+action-selection policy. The uniform top-1 baseline is the expected
+`1 / option_count`, not the accuracy of an arbitrary first-option tie break.
 
 ## Cost, reproduction, and limits
 
 - Context window: 2,048 bytes; only 5/1,000 OOD contexts were truncated.
 - Option window: 128 bytes; none of the evaluated options were truncated.
-- RTX 4060 Laptop: 42.1–55.4 seconds per 8k-row run; peak allocated VRAM was
+- RTX 4060 Laptop: 42.1–66.2 seconds per 8k-row run; peak allocated VRAM was
   0.196 GiB. Each compressed local checkpoint is about 0.6 MB.
 - Single-decision inference over 128 OOD rows (8 warmups, 120 measured) had
   1.14 ms GPU / 1.12 ms CPU median latency; p95 was 2.34 / 1.81 ms. These
