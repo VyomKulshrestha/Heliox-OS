@@ -198,6 +198,108 @@ def score_frozen_model(rows: list[dict], output_dir: Path, model_report_path: Pa
     }
 
 
+def score_cross_attention_model(rows: list[dict], artifact_path: Path, report_path: Path) -> dict:
+    import torch
+    from huggingface_hub import snapshot_download
+    from transformers import AutoModel, AutoTokenizer
+
+    from pilot.intelligence.listwise_decision_head import build_listwise_decision_head
+    from scripts.train_cross_attention_typed_decision import _context_text, _encode_split, _logits
+
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    if (report.get("model") != "Qwen/Qwen3-0.6B"
+            or report.get("model_revision") != "c1899de289a04d12100db370d81485cdf75e47ca"
+            or report.get("head_sha256") != hashlib.sha256(artifact_path.read_bytes()).hexdigest()):
+        raise ValueError("Cached cross-attention artifact does not match its pinned report")
+    with np.load(artifact_path, allow_pickle=False) as saved:
+        model_id = str(saved["model"])
+        revision = str(saved["revision"])
+        max_length = int(saved["max_length"])
+        max_context_tokens = int(saved["max_context_tokens"])
+        rank = int(saved["rank"])
+        temperature = float(saved["temperature"])
+        state = {
+            key: torch.from_numpy(saved[key].copy())
+            for key in (
+                "context_norm.weight", "context_norm.bias", "option_norm.weight",
+                "option_norm.bias", "query.weight", "key.weight", "value.weight",
+            )
+        }
+    if model_id != report["model"] or revision != report["model_revision"]:
+        raise ValueError("Cross-attention checkpoint identity differs from its report")
+
+    model_path = snapshot_download(model_id, revision=revision, local_files_only=True)
+    tokenizer = AutoTokenizer.from_pretrained(model_path, local_files_only=True)
+    text_inputs = [_context_text(row) for row in rows]
+    text_inputs.extend(option for row in rows for option in row["options"])
+    lengths = tokenizer(text_inputs, add_special_tokens=True, truncation=False, padding=False)["input_ids"]
+    overlong = sum(len(ids) > max_length for ids in lengths)
+    if overlong:
+        raise ValueError(
+            f"Refusing a truncated cross-attention comparison: {overlong} sequences exceed "
+            f"the frozen {max_length}-token input limit"
+        )
+
+    started = time.perf_counter()
+    torch.cuda.reset_peak_memory_stats()
+    backbone = AutoModel.from_pretrained(
+        model_path, local_files_only=True, dtype=torch.bfloat16,
+        attn_implementation="eager", low_cpu_mem_usage=True, device_map="cuda:0",
+    ).eval()
+    backbone.requires_grad_(False)
+    head = build_listwise_decision_head(int(backbone.config.hidden_size), rank).to("cuda:0")
+    head.load_state_dict(state, strict=True)
+    head.eval()
+    items, skipped, truncated = _encode_split(
+        backbone, tokenizer, rows, split="jevbench-mit-original",
+        max_length=max_length, max_context_tokens=max_context_tokens,
+        batch_size=16, device="cuda:0",
+    )
+    if skipped or truncated or len(items) != len(rows):
+        raise ValueError("Cross-attention input was skipped or truncated; refusing a partial score")
+    logits = _logits(head, items, device="cuda:0")
+    elapsed = time.perf_counter() - started
+    report_metrics = metrics(rows, logits, temperature)
+    return {
+        "inference": {
+            "model": model_id,
+            "revision": revision,
+            "head_sha256": hashlib.sha256(artifact_path.read_bytes()).hexdigest(),
+            "head_report_sha256": hashlib.sha256(report_path.read_bytes()).hexdigest(),
+            "head_training_rows": report.get("train_rows"),
+            "device": torch.cuda.get_device_name(),
+            "max_length": max_length,
+            "max_context_tokens": max_context_tokens,
+            "prompt_contract": "Heliox cross-attention: independent ordered context and option features",
+        },
+        "metrics": {
+            "correct": int(round(report_metrics["top1_accuracy"] * len(rows))),
+            "total": len(rows),
+            "accuracy": report_metrics["top1_accuracy"],
+            "macro_accuracy": float(np.mean([
+                summary["top1_accuracy"] for summary in report_metrics["by_kind"].values()
+            ])),
+            "mean_brier": report_metrics["mean_brier"],
+            "mean_nll": report_metrics["mean_nll"],
+            "mean_score_rank_error": report_metrics["by_kind"].get("score", {}).get("mean_rank_error"),
+            "per_type": {
+                kind: {
+                    "correct": int(round(summary["top1_accuracy"] * summary["rows"])),
+                    "total": summary["rows"],
+                    "accuracy": summary["top1_accuracy"],
+                }
+                for kind, summary in report_metrics["by_kind"].items()
+            },
+            "elapsed_seconds_including_model_load": round(elapsed, 3),
+            "peak_cuda_gib": round(torch.cuda.max_memory_allocated() / 1024**3, 3),
+        },
+        "correct_by_row": [
+            bool(np.argmax(values) == np.argmax(row["target"]))
+            for row, values in zip(rows, logits, strict=True)
+        ],
+    }
+
+
 def paired_accuracy_difference(rows: list[dict], candidate: list[bool],
                                baseline: list[bool], *, replicates: int = 5000,
                                seed: int = 20260929) -> dict:
@@ -228,13 +330,17 @@ def paired_accuracy_difference(rows: list[dict], candidate: list[bool],
 
 
 def evaluate(output_dir: Path, model_report_path: Path, baseline_output_dir: Path,
-             baseline_model_report_path: Path, report_path: Path) -> dict:
+             baseline_model_report_path: Path, cross_attention_artifact: Path,
+             cross_attention_report: Path, report_path: Path) -> dict:
     with urlopen(BENCHMARK_URL, timeout=30) as response:
         payload = response.read(MAX_DATA_BYTES + 1)
     tasks = parse_tasks(payload)
     rows = [task_to_row(task) for task in tasks]
     candidate = score_frozen_model(rows, output_dir, model_report_path)
     baseline = score_frozen_model(rows, baseline_output_dir, baseline_model_report_path)
+    cross_attention = score_cross_attention_model(
+        rows, cross_attention_artifact, cross_attention_report,
+    )
 
     result = {
         "schema_version": 1,
@@ -247,12 +353,17 @@ def evaluate(output_dir: Path, model_report_path: Path, baseline_output_dir: Pat
         "prompt_contract": "Heliox candidate_v1 with JevBench criterion descriptions; score levels kept ordered",
         "heliox": candidate["metrics"],
         "released_open_jev_2b_local": baseline["metrics"],
+        "heliox_cross_attention_v2_local": cross_attention["metrics"],
         "inference": {
             "heliox": candidate["inference"],
             "released_open_jev_2b_local": baseline["inference"],
+            "heliox_cross_attention_v2_local": cross_attention["inference"],
         },
         "paired_accuracy_difference": paired_accuracy_difference(
             rows, candidate["correct_by_row"], baseline["correct_by_row"],
+        ),
+        "heliox_cross_attention_minus_local_open_jev_2b": paired_accuracy_difference(
+            rows, cross_attention["correct_by_row"], baseline["correct_by_row"],
         ),
         "published_references": {
             "jev": {"correct": 71, "total": 72},
@@ -289,18 +400,31 @@ def main() -> None:
         default=ROOT / "benchmarks/.bench-state/openjev_runtime_candidate_v1/report.json",
     )
     parser.add_argument(
+        "--cross-attention-artifact", type=Path,
+        default=ROOT / "benchmarks/.bench-state/cross_attention_v2/cross_attention_head.npz",
+    )
+    parser.add_argument(
+        "--cross-attention-report", type=Path,
+        default=ROOT / "benchmarks/.bench-state/cross_attention_v2/report.json",
+    )
+    parser.add_argument(
         "--report", type=Path,
         default=ROOT / "benchmarks/.bench-state/jevbench_mit_original_rps_v1/report.json",
     )
     args = parser.parse_args()
     result = evaluate(
         args.output_dir, args.model_report, args.baseline_output_dir,
-        args.baseline_model_report, args.report,
+        args.baseline_model_report, args.cross_attention_artifact,
+        args.cross_attention_report, args.report,
     )
     print(json.dumps({
         "heliox": result["heliox"],
         "released_open_jev_2b_local": result["released_open_jev_2b_local"],
+        "heliox_cross_attention_v2_local": result["heliox_cross_attention_v2_local"],
         "paired_accuracy_difference": result["paired_accuracy_difference"],
+        "heliox_cross_attention_minus_local_open_jev_2b": result[
+            "heliox_cross_attention_minus_local_open_jev_2b"
+        ],
     }, indent=2))
 
 
