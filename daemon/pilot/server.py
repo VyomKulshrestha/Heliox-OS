@@ -10247,11 +10247,21 @@ def handle_tool(tool_name, params):
             text_values = params.get("text_values", {})
             if not isinstance(text_values, dict):
                 raise ValueError("Text placeholder values must be an object")
-            job = await self._autonomous.submit(
-                workflow_prompt(workflow, text_values=text_values),
-                source="recorded_workflow",
-                session_id=f"recorded:{workflow['id']}",
-            )
+            capture_visual = _validated_bool(params, "capture_visual", False)
+            submit = self._autonomous.submit
+            if capture_visual:
+                with self._recorded_workflows.capture_replay_visual(workflow["id"], consent=True):
+                    job = await submit(
+                        workflow_prompt(workflow, text_values=text_values),
+                        source="recorded_workflow",
+                        session_id=f"recorded:{workflow['id']}",
+                    )
+            else:
+                job = await submit(
+                    workflow_prompt(workflow, text_values=text_values),
+                    source="recorded_workflow",
+                    session_id=f"recorded:{workflow['id']}",
+                )
             self._remember_recorded_workflow_job(job.job_id, workflow["id"])
             return {"status": "submitted", "job": job.to_dict()}
         except (KeyError, ValueError, RuntimeError) as exc:

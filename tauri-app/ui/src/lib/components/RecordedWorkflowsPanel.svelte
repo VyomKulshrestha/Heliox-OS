@@ -20,6 +20,7 @@
     overlap_warning: boolean;
     placeholders: string[];
     feedback_count: number;
+    feedback_visual_sample_count: number;
     schedule: { next_run_at: string; repeat_seconds: number } | null;
   }
   interface RecordingStatus {
@@ -52,7 +53,8 @@
   let repeat = $state<Record<string, string>>({});
   let reviewed = $state<Record<string, boolean>>({});
   let textValues = $state<Record<string, Record<string, string>>>({});
-  let lastRun = $state<{ workflowId: string; jobId: string; status: string; feedbackSaved: boolean } | null>(null);
+  let captureReplayVisual = $state<Record<string, boolean>>({});
+  let lastRun = $state<{ workflowId: string; jobId: string; status: string; feedbackSaved: boolean; captureVisual: boolean } | null>(null);
 
   function runFinished(status: string): boolean {
     return ["success", "partial", "failed", "cancelled"].includes(status);
@@ -148,12 +150,15 @@
       const result = requireResultStatus((await call("recorded_workflow_run", {
         workflow_id: workflow.id, reviewed: reviewed[workflow.id] === true,
         text_values: textValues[workflow.id] ?? {},
+        capture_visual: captureReplayVisual[workflow.id] === true,
       })) as DaemonStatusResult & { job?: { job_id: string; status: string } },
       "submitted", "Could not run workflow");
       if (!result.job?.job_id) throw new Error("The workflow run did not return a job ID");
+      const capturedVisual = captureReplayVisual[workflow.id] === true;
       lastRun = { workflowId: workflow.id, jobId: result.job.job_id,
-        status: result.job.status, feedbackSaved: false };
+        status: result.job.status, feedbackSaved: false, captureVisual: capturedVisual };
       textValues[workflow.id] = {};
+      captureReplayVisual[workflow.id] = false;
       notice = `${workflow.name} submitted through Heliox's normal approvals and verification.`;
     } catch (cause) { error = message(cause); }
     finally { busy = false; }
@@ -167,7 +172,9 @@
         workflow_id: workflow.id, job_id: lastRun.jobId, outcome,
       })) as DaemonStatusResult, "Could not save outcome feedback");
       lastRun = { ...lastRun, feedbackSaved: true };
-      notice = "Your goal-outcome rating was saved locally. It is separate from the executor status.";
+      notice = lastRun.captureVisual
+        ? "Your goal-outcome rating was saved locally; any retained replay visual transitions are encrypted at rest and available only to offline world-model research."
+        : "Your goal-outcome rating was saved locally. It is separate from the executor status.";
       await refresh();
     } catch (cause) { error = message(cause); }
     finally { busy = false; }
@@ -268,7 +275,7 @@
     <div class="saved-list">
       {#each workflows as workflow (workflow.id)}
         <details class="workflow">
-          <summary><strong>{workflow.name}</strong><span>{workflow.step_count} steps · {workflow.sample_count} private samples{workflow.feedback_count ? ` · ${workflow.feedback_count} goal ratings` : ""}</span></summary>
+          <summary><strong>{workflow.name}</strong><span>{workflow.step_count} steps · {workflow.sample_count} private samples{workflow.feedback_count ? ` · ${workflow.feedback_count} goal ratings` : ""}{workflow.feedback_visual_sample_count ? ` · ${workflow.feedback_visual_sample_count} replay pairs` : ""}</span></summary>
           <p class="goal">Goal: {workflow.goal}</p>
           {#if workflow.visual_gaps}<p class="warning">{workflow.visual_gaps} manual clicks have no reliable visual pair. Their recipe steps remain, but they were excluded from local visual training.</p>{/if}
           {#if workflow.incomplete}<p class="warning">{workflow.omitted_actions} actions were excluded (for example Heliox-entered text, shortcuts, scripts, or parallel actions). This draft cannot run or schedule; those steps need a parameterized workflow.</p>{/if}
@@ -284,6 +291,10 @@
           {#if workflow.schedule}
             <p class="schedule-note">Next run: {new Date(workflow.schedule.next_run_at).toLocaleString()} {workflow.schedule.repeat_seconds ? `(every ${workflow.schedule.repeat_seconds / 3600} hours)` : "(once)"}</p>
           {/if}
+          <label class="check"><input type="checkbox" checked={captureReplayVisual[workflow.id] === true} onchange={(event) => captureReplayVisual[workflow.id] = event.currentTarget.checked} /> Capture local 16×16 before/after features for this replay’s world-model research.</label>
+          {#if captureReplayVisual[workflow.id]}
+            <p class="warning">Only eligible Heliox mouse actions in this run are captured. Features can reveal screen content; they stay in a bounded in-memory buffer until you rate this run, then are encrypted at rest locally. If you skip feedback, they are discarded after 30 minutes or on restart. No raw screenshot or typed text is stored. This consent applies to one run only.</p>
+          {/if}
           <div class="actions">
             <button disabled={busy || workflow.incomplete || !textReady(workflow) || (workflow.needs_review && !reviewed[workflow.id])} onclick={() => void run(workflow)}>Run with approvals</button>
             {#if workflow.schedule}<button class="secondary" disabled={busy} onclick={() => void unschedule(workflow)}>Remove schedule</button>{/if}
@@ -295,7 +306,7 @@
               {#if !runFinished(lastRun.status)}
                 <button class="secondary" disabled={busy} onclick={() => void refreshRunStatus()}>Check run status</button>
               {:else if lastRun.feedbackSaved}
-                <p>Goal-outcome rating saved locally.</p>
+                <p>{lastRun.captureVisual ? "Goal-outcome rating and any replay visual pairs saved locally." : "Goal-outcome rating saved locally."}</p>
               {:else}
                 <p>Did this run achieve your goal? Your answer is optional and stored locally with this workflow.</p>
                 <div class="actions" role="group" aria-label="Rate this run's goal outcome">

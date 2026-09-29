@@ -19,8 +19,11 @@ After a submitted run finishes, the user may optionally rate whether the
 is stored encrypted with the workflow and kept separate from the executor's
 step status; an executor success does not imply goal success. Only a completed
 job launched for that workflow can be rated, and a run can be rated once.
-Deleting the workflow removes its ratings. Ratings are not automatically fed
-into the live planner, world model, or training pipeline.
+Deleting the workflow removes its ratings and visual samples. The outcome
+label itself is not used by the live planner, world model, or trainer. If the
+user separately opts into replay visual capture for a run, its eligible
+before/after transitions are added to the encrypted offline visual-training
+pool only when that run receives explicit feedback.
 
 The Heliox-action recorder retains an allowlist of navigation, browser targeting,
 and mouse actions only after Heliox reports that the action actually executed
@@ -66,7 +69,21 @@ content**; they are encrypted with AES-256-GCM in the local recorded-workflow
 store, with the key held in the OS keyring. Without a working keyring, recording
 fails closed. The normal list/get RPCs and workflow prompts never expose the
 features. Values are quantized to 8-bit grayscale before storage. There is no
-upload or automatic training/promotion path. An explicit offline command can
+upload or automatic training/promotion path.
+
+For an individual workflow replay, a second per-run checkbox can opt in to the
+same local 16×16 features. This captures eligible Heliox mouse actions from
+that replay task only; it does not capture manual input, text, or raw
+screenshots, and scheduled runs never opt in. Features remain in a bounded
+in-memory buffer until the user rates the completed run, then the transitions
+and separate goal-outcome label are written to the encrypted workflow store.
+Unrated features expire 30 minutes after the first captured transition or on
+daemon restart. A replay contributes at most 50 pairs, and a workflow at most
+200 replay pairs. These transitions are observations, not per-action credit
+assignments; the goal-outcome label is preserved separately and is not used as
+a transition target.
+
+An explicit offline command can
 decrypt them in memory, train on CUDA or CPU, and write encrypted weights plus
 a metrics-only report. The optional linear 16×16 export matches the live
 predictor contract; if explicitly written to the Heliox data directory, the
@@ -91,8 +108,9 @@ execute, or reduce deterministic warnings.
 Samples are observations of before/after state, not independently verified
 task-success labels. Matching 16×16 features can still hide different app
 state; the grouping prevents an obvious leakage path but does not prove
-counterfactual equivalence. The visual feature store is capped at 200 pairs per
-recording and the store accepts at most 50 saved workflows. Deleting a
+counterfactual equivalence. The visual feature store is capped at 200
+demonstration pairs per recording, 200 replay pairs per workflow, and the
+store accepts at most 50 saved workflows. Deleting a
 workflow also deletes its local samples.
 
 Current limitations: manual actions have no robust app/element identity and

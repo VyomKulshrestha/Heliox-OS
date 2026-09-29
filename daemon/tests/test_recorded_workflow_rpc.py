@@ -183,3 +183,36 @@ async def test_feedback_requires_matching_completed_workflow_job(tmp_path) -> No
     assert saved["status"] == "ok"
     assert saved["workflow"]["feedback_count"] == 1
     assert (await server._handle_recorded_workflow_feedback(params, None))["status"] == "error"
+
+
+@pytest.mark.asyncio
+async def test_replay_visual_capture_is_scoped_and_opt_in(tmp_path) -> None:
+    async def capture() -> dict:
+        return {"embedding": [0.5] * 256, "left": 0, "top": 0, "width": 100, "height": 100}
+
+    server = PilotServer(PilotConfig())
+    server._recorded_workflows = RecordedWorkflowStore(
+        tmp_path / "recordings.enc", key_provider=lambda: b"k" * 32, capture_feature=capture
+    )
+    server._autonomous = _Autonomous()
+    store = server._recorded_workflows
+    store.start(name="Review", consent=True)
+    action = Action(action_type=ActionType.BROWSER_CLICK, parameters=BrowserParams(selector="#review"))
+    token = await store.before(action, single_action_batch=True)
+    await store.after(token, ActionResult(action=action, success=True))
+    workflow_id = store.stop(save=True)["id"]
+
+    observed: list[str] = []
+
+    async def submit(_prompt: str, **_kwargs):
+        observed.append(store._replay_visual_workflow.get())
+        return server._autonomous.job
+
+    server._autonomous.submit = submit
+    ordinary = await server._handle_recorded_workflow_run({"workflow_id": workflow_id}, None)
+    opted_in = await server._handle_recorded_workflow_run(
+        {"workflow_id": workflow_id, "capture_visual": True}, None
+    )
+    assert ordinary["status"] == opted_in["status"] == "submitted"
+    assert observed == ["", workflow_id]
+    assert store._replay_visual_workflow.get() == ""

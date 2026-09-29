@@ -311,7 +311,8 @@ class AutonomousExecutor:
             if decomposition.error:
                 raise RuntimeError(decomposition.error)
 
-            if decomposition.is_complex and decomposition.subtasks:
+            multi_step = decomposition.is_complex and bool(decomposition.subtasks)
+            if multi_step:
                 # Complex task — execute each subtask
                 job.total_steps = len(decomposition.subtasks)
                 for i, subtask in enumerate(decomposition.subtasks):
@@ -323,12 +324,18 @@ class AutonomousExecutor:
                         )
                     )
                 await self._notify("autonomous_decomposed", job)
-                await self._execute_multi_step(job, decomposition)
             else:
                 # Simple task — single-step execution
                 job.total_steps = 1
                 job.steps.append(JobStep(index=0, title="Execute", description=job.goal))
-                await self._execute_single_step(job)
+
+            from pilot.intelligence.experience import experience_scope
+
+            with experience_scope(session_id=job.session_id, task_id=job.job_id):
+                if multi_step:
+                    await self._execute_multi_step(job, decomposition)
+                else:
+                    await self._execute_single_step(job)
 
             # Stage 3: Summarize results
             successes = sum(1 for s in job.steps if s.status == "success")
