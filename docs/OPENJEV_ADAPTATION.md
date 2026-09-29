@@ -1951,3 +1951,45 @@ remains an explicit in-app opt-in. Focused regressions passed: 30 passed, 1
 skipped across the decision metrics, training retry, and resumable evaluation
 tests. Adapter SHA-256: `f5c2d3c815bd281bdf22c217bcbd476b258514ee367672ba002c675ec457b687`;
 scalar-head SHA-256: `cc3d73473e32776fbd458395d0878141cb7d3967ff7ee706f794aa5d4cced875`.
+
+## Candidate-specific fresh comparison with released Open-Jev (2026-09-29)
+
+The frozen warm-start adapter was next compared with the pinned released
+Open-Jev checkpoint on candidate-independent public rows. Selection excluded
+all groups used by this adapter's train, calibration, test, and OOD splits.
+Of 341 selected rows, 10 exceeded the adapter's 512-token limit and were
+excluded without truncation; both models were therefore scored on the same 331
+independent groups. No model or calibration changes were made using these rows.
+
+| Metric | Released Open-Jev | Heliox adapter | Difference |
+| --- | ---: | ---: | ---: |
+| Top-1 accuracy (331 rows) | 77.64% | 79.15% | +1.51 pp |
+| Mean NLL | 0.5358 | 0.4392 | -0.0966 |
+| Mean Brier score | 0.0874 | 0.0691 | -0.0183 |
+| Score ranked-probability score | 0.0844 | 0.0599 | -0.0245 |
+
+The paired group bootstrap used 5,000 replicates (seed `20261011`); its 95%
+interval for top-1 change was `[-1.21, +4.23]` percentage points and includes
+zero. The observed gains are promising but inconclusive, so this adapter is
+not promoted. This is a comparison to released Open-Jev—not TypeSafe Jev—and
+does not measure real desktop task success, multi-step execution, or safety.
+
+The frozen local report is
+`daemon/benchmarks/.bench-state/openjev_candidate_subset_v2_20260929/candidate_vs_released_report.json`.
+Protocol SHA-256 is
+`8f1f166c2d570a9bdde8ca7157e352177585e903f390423a46f97f2ffc806f18`; the
+scored-row ID SHA-256 is
+`12fb13558ead8cfb7a0c0fb09bce32e124a6c7712eb8856f25594865cad6d339`. These
+large run artifacts remain local and ignored rather than being distributed as
+part of the application.
+
+On this Windows RTX 4060 run, the first unsynchronized evaluation attempt
+encountered a CUDA illegal-instruction error after saving a resumable partial
+checkpoint. The exact next row succeeded with `CUDA_LAUNCH_BLOCKING=1`, and
+the remaining rows completed with synchronization enabled. An earlier
+attempt had also recorded a native `torch_cpu.dll` access violation; limiting
+CPU thread fan-out avoided that failure on the successful run. These are
+run-level mitigations, not a diagnosed root-cause fix or a claim that Heliox
+runtime inference is stable on all machines. The frozen measurements remain
+valid for the rows actually scored, but runtime robustness still needs a
+separate investigation.
