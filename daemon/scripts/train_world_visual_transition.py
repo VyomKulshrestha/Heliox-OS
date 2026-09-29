@@ -777,9 +777,19 @@ def main() -> None:
                 swapped["action"] = arrays[split]["action"][
                     paired_counterfactual_permutation(partition)
                 ]
+                swapped_prediction = predict(swapped).cpu().numpy()
                 scores[split]["paired_counterfactual_action"] = metrics(
-                    predict(swapped).cpu().numpy(), partition["state"], partition["target"]
+                    swapped_prediction, partition["state"], partition["target"]
                 )
+                if split == "eval":
+                    scores[split]["episode_group_bootstrap"]["comparisons"][
+                        "trained_minus_same_state_action_permutation"
+                    ] = group_bootstrap_loss_delta(
+                        weighted_pixel_mse_by_row(swapped_prediction, partition["state"],
+                                                  partition["target"]),
+                        trained_row_losses, partition["groups"], seed=args.seed + 7,
+                        replicates=args.group_bootstrap_replicates,
+                    )
     runtime_candidate_sha256 = None
     if args.runtime_weights:
         runtime_payload = serialize_runtime_linear_artifact(
