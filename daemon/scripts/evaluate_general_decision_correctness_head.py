@@ -2,7 +2,8 @@
 
 The frozen decision model and action-execution path are not changed. All rows
 come from licensed public Open-Jev data; no TypeSafe Jev calls or outputs are
-used.
+used. Fit and evaluation partitions must be outside the released model's
+training mixture and every previously exposed group.
 """
 
 from __future__ import annotations
@@ -38,7 +39,7 @@ from scripts.evaluate_released_openjev_general import (  # noqa: E402
 from scripts.score_general_decision import score_requests, verify_artifact  # noqa: E402
 from scripts.train_general_decision import encode_rows  # noqa: E402
 
-PROTOCOL = ROOT / "benchmarks/openjev_correctness_head_v1.json"
+PROTOCOL = ROOT / "benchmarks/openjev_correctness_head_v2.json"
 
 
 def sha256_file(path: Path) -> str:
@@ -85,37 +86,107 @@ def prior_groups(protocol: dict) -> set[str]:
     return groups
 
 
-def select_partitions(protocol: dict) -> tuple[list[dict], list[dict], dict]:
-    groups = prior_groups(protocol)
-    groups_sha256 = hashlib.sha256("\n".join(sorted(groups)).encode()).hexdigest()
-    if (len(groups) != protocol["excluded_group_count"]
-            or groups_sha256 != protocol["excluded_group_ids_sha256"]):
-        raise ValueError("Reconstructed prior exposure groups differ from the frozen protocol")
+def digest_lines(values) -> str:
+    return hashlib.sha256("\n".join(values).encode()).hexdigest()
 
-    rows, manifest = load_split(protocol["split"], protocol["pool"], protocol["seed"])
-    if manifest["sha256"] != protocol["dataset_sha256"]:
-        raise ValueError("Pinned Open-Jev split checksum changed")
-    chosen = []
-    seen_groups = set(groups)
+
+def validate_split_policy(protocol: dict) -> None:
+    """Do not fit or report on a split used to train the released model."""
+    training_splits = protocol.get("base_training_splits")
+    fit_split = protocol.get("fit_split")
+    test_split = protocol.get("test_split")
+    if (not isinstance(training_splits, list) or not training_splits
+            or any(not isinstance(split, str) or not split for split in training_splits)
+            or not isinstance(fit_split, str) or not isinstance(test_split, str)
+            or fit_split == test_split
+            or fit_split in training_splits or test_split in training_splits):
+        raise ValueError("Fit and evaluation splits must be distinct from the base training mixture")
+
+
+def select_unseen_group_rows(rows: list[dict], excluded_groups: set[str], limit: int) -> list[dict]:
+    """Select in source order while excluding groups already used or selected."""
+    if type(limit) is not int or limit < 1:
+        raise ValueError("Selection limit must be a positive integer")
+    seen = set(excluded_groups)
+    selected = []
     for row in rows:
-        if row["group_id"] in seen_groups:
+        group_id = row.get("group_id")
+        if not isinstance(group_id, str) or not group_id:
+            raise ValueError("Selection rows must carry a nonempty group ID")
+        if group_id in seen:
             continue
-        chosen.append(row)
-        seen_groups.add(row["group_id"])
-        if len(chosen) == protocol["fit_rows"] + protocol["test_rows"]:
+        selected.append(row)
+        seen.add(group_id)
+        if len(selected) == limit:
             break
-    if len(chosen) != protocol["fit_rows"] + protocol["test_rows"]:
-        raise ValueError("Not enough previously unused, group-unique rows")
-    fit_rows = chosen[:protocol["fit_rows"]]
-    test_rows = chosen[protocol["fit_rows"]:]
-    verify_disjoint({"correctness_fit": fit_rows, "correctness_test": test_rows})
-    for name, selected in (("fit", fit_rows), ("test", test_rows)):
-        ids = hashlib.sha256("\n".join(row["id"] for row in selected).encode()).hexdigest()
-        groups = {row["group_id"] for row in selected}
-        group_hash = hashlib.sha256("\n".join(sorted(groups)).encode()).hexdigest()
-        if ids != protocol[f"{name}_ids_sha256"] or group_hash != protocol[f"{name}_group_ids_sha256"]:
+    if len(selected) != limit:
+        raise ValueError(f"Not enough previously unseen groups: selected {len(selected)} of {limit}")
+    return selected
+
+
+def select_partitions(protocol: dict) -> tuple[list[dict], list[dict], dict, dict]:
+    """Recreate fresh calibration/evaluation rows from frozen split identities."""
+    validate_split_policy(protocol)
+    legacy = checked_json(
+        protocol["legacy_diagnostic_protocol"]["path"],
+        protocol["legacy_diagnostic_protocol"]["sha256"],
+    )
+    groups = prior_groups(legacy)
+    groups_sha256 = digest_lines(sorted(groups))
+    if (len(groups) != protocol["prior_excluded_group_count"]
+            or groups_sha256 != protocol["prior_excluded_group_ids_sha256"]):
+        raise ValueError("Reconstructed prior exposure groups differ from the frozen protocol")
+    candidate_training = checked_json(
+        protocol["candidate_training_protocol"]["path"],
+        protocol["candidate_training_protocol"]["sha256"],
+    )
+    if (candidate_training.get("source", {}).get("revision") != DATASET_REVISION
+            or candidate_training.get("training", {}).get("warm_start_from_released_openjev") is not True):
+        raise ValueError("Candidate training provenance is not the pinned public Open-Jev protocol")
+    candidate_groups = load_excluded_group_ids(ROOT, protocol["candidate_exposure_manifest"])
+    if (len(candidate_groups) != protocol["candidate_exposure_group_count"]
+            or digest_lines(sorted(candidate_groups))
+            != protocol["candidate_exposure_group_ids_sha256"]
+            or not candidate_groups <= groups):
+        raise ValueError("Candidate training/calibration/evaluation exposure is not fully excluded")
+
+    # Rebuild and exclude the earlier train-split diagnostic. Those rows were
+    # already seen by the released checkpoint and must not be reused for tuning.
+    diagnostic = protocol["legacy_diagnostic_selection"]
+    diagnostic_rows, diagnostic_manifest = load_split(
+        diagnostic["split"], diagnostic["pool"], diagnostic["seed"])
+    if diagnostic_manifest["sha256"] != protocol["dataset_sha256_by_split"][diagnostic["split"]]:
+        raise ValueError("Pinned legacy diagnostic split checksum changed")
+    diagnostic_rows = select_unseen_group_rows(
+        diagnostic_rows, groups, diagnostic["selected_rows"])
+    if (digest_lines(row["id"] for row in diagnostic_rows) != diagnostic["ids_sha256"]
+            or digest_lines(sorted({row["group_id"] for row in diagnostic_rows}))
+            != diagnostic["group_ids_sha256"]):
+        raise ValueError("Legacy diagnostic exposure differs from the frozen selection")
+    groups.update(row["group_id"] for row in diagnostic_rows)
+    combined_hash = digest_lines(sorted(groups))
+    if (len(groups) != protocol["excluded_before_new_selection_group_count"]
+            or combined_hash != protocol["excluded_before_new_selection_group_ids_sha256"]):
+        raise ValueError("Legacy exposure groups differ from the frozen protocol")
+
+    selected_partitions = {}
+    manifests = {}
+    for name in ("fit", "test"):
+        split = protocol[f"{name}_split"]
+        rows, manifest = load_split(split, protocol[f"{name}_pool"], protocol[f"{name}_seed"])
+        if manifest["sha256"] != protocol["dataset_sha256_by_split"][split]:
+            raise ValueError(f"Pinned {split} split checksum changed")
+        selected = select_unseen_group_rows(rows, groups, protocol[f"{name}_rows"])
+        if (digest_lines(row["id"] for row in selected) != protocol[f"{name}_ids_sha256"]
+                or digest_lines(sorted({row["group_id"] for row in selected}))
+                != protocol[f"{name}_group_ids_sha256"]):
             raise ValueError(f"Frozen {name} selection differs from the recorded IDs")
-    return fit_rows, test_rows, manifest
+        groups.update(row["group_id"] for row in selected)
+        selected_partitions[name] = selected
+        manifests[name] = manifest
+    verify_disjoint({"correctness_fit": selected_partitions["fit"],
+                     "correctness_test": selected_partitions["test"]})
+    return selected_partitions["fit"], selected_partitions["test"], manifests["fit"], manifests["test"]
 
 
 def option_probabilities(row: dict, prediction: dict) -> np.ndarray:
@@ -205,10 +276,12 @@ def main() -> None:
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
     if args.protocol.resolve() != PROTOCOL.resolve():
-        parser.error("This evaluator only accepts the frozen v1 protocol")
+        parser.error("This evaluator only accepts the frozen v2 protocol")
     protocol = json.loads(args.protocol.read_text(encoding="utf-8"))
-    if protocol.get("dataset_revision") != DATASET_REVISION:
+    if (protocol.get("schema_version") != 2
+            or protocol.get("dataset_revision") != DATASET_REVISION):
         raise ValueError("Protocol dataset revision differs from the loader")
+    validate_split_policy(protocol)
     if (protocol.get("research_only") is not True
             or protocol.get("execution_authority") is not False
             or protocol.get("uses_typesafe_jev_outputs") is not False
@@ -221,7 +294,7 @@ def main() -> None:
         if not args.resume:
             raise FileExistsError(f"Refusing to overwrite the research report: {report_path}")
         previous = json.loads(report_path.read_text(encoding="utf-8"))
-        if (previous.get("purpose") != "research_only_posthoc_correctness_scoring"
+        if (previous.get("purpose") != "research_only_posthoc_correctness_scoring_v2"
                 or previous.get("candidate_adapter_sha256") != protocol["candidate_adapter_sha256"]
                 or previous.get("candidate_head_sha256") != protocol["candidate_head_sha256"]
                 or previous.get("selection", {}).get("fit_ids_sha256") is None
@@ -252,7 +325,7 @@ def main() -> None:
             or verified_baseline.get("head_sha256") != protocol["baseline_head_sha256"]):
         raise ValueError("Released Open-Jev baseline artifact differs from the frozen protocol")
 
-    fit_rows, test_rows, manifest = select_partitions(protocol)
+    fit_rows, test_rows, fit_manifest, test_manifest = select_partitions(protocol)
     from huggingface_hub import snapshot_download
     from transformers import AutoTokenizer
 
@@ -261,21 +334,20 @@ def main() -> None:
                           local_files_only=True), local_files_only=True,
     )
     output_dir.mkdir(parents=True, exist_ok=True)
-    combined_rows = fit_rows + test_rows
-    combined, overlong = load_or_score(
-        combined_rows, tokenizer, {**candidate_report, "dataset_sha256": manifest["sha256"],
-                                   "report_path": protocol["candidate_report_path"]},
-        artifact_dir, output_dir / "predictions.json", resume=args.resume,
+    scored, fit_overlong = load_or_score(
+        fit_rows, tokenizer, {**candidate_report, "dataset_sha256": fit_manifest["sha256"],
+                              "report_path": protocol["candidate_report_path"]},
+        artifact_dir, output_dir / "fit_predictions.json", resume=args.resume,
     )
-    fit_groups = {row["group_id"] for row in fit_rows}
-    scored = [item for item in combined if item["row"]["group_id"] in fit_groups]
-    test_scored = [item for item in combined if item["row"]["group_id"] not in fit_groups]
-    fit_overlong = len(fit_rows) - len(scored)
-    test_overlong = len(test_rows) - len(test_scored)
+    test_scored, test_overlong = load_or_score(
+        test_rows, tokenizer, {**candidate_report, "dataset_sha256": test_manifest["sha256"],
+                               "report_path": protocol["candidate_report_path"]},
+        artifact_dir, output_dir / "test_predictions.json", resume=args.resume,
+    )
     verify_disjoint({"scored_correctness_fit": [item["row"] for item in scored],
                      "scored_correctness_test": [item["row"] for item in test_scored]})
     baseline_scored, baseline_overlong = load_or_score(
-        test_rows, tokenizer, {**baseline_report, "dataset_sha256": manifest["sha256"],
+        test_rows, tokenizer, {**baseline_report, "dataset_sha256": test_manifest["sha256"],
                                "report_path": protocol["baseline_report_path"]},
         baseline_artifact_dir, output_dir / "baseline_test_predictions.json", resume=args.resume,
     )
@@ -352,11 +424,14 @@ def main() -> None:
         replicates=protocol["bootstrap"]["replicates"], seed=protocol["bootstrap"]["seed"],
     )
     report = {
-        "schema_version": 1,
-        "purpose": "research_only_posthoc_correctness_scoring",
+        "schema_version": 2,
+        "purpose": "research_only_posthoc_correctness_scoring_v2",
         "dataset_revision": DATASET_REVISION,
         "protocol_sha256": sha256_file(args.protocol),
-        "dataset_sha256": manifest["sha256"],
+        "dataset_sha256_by_split": {
+            protocol["fit_split"]: fit_manifest["sha256"],
+            protocol["test_split"]: test_manifest["sha256"],
+        },
         "candidate_model": candidate_report["model"],
         "candidate_revision": candidate_report["revision"],
         "candidate_adapter_sha256": candidate_report["adapter_sha256"],
@@ -366,8 +441,9 @@ def main() -> None:
         "research_only": True,
         "execution_authority": False,
         "selection": {
-            "split": protocol["split"], "seed": protocol["seed"],
-            "prior_excluded_group_count": protocol["excluded_group_count"],
+            "fit_split": protocol["fit_split"], "fit_seed": protocol["fit_seed"],
+            "test_split": protocol["test_split"], "test_seed": protocol["test_seed"],
+            "prior_excluded_group_count": protocol["excluded_before_new_selection_group_count"],
             "fit_rows_selected": len(fit_rows), "test_rows_selected": len(test_rows),
             "fit_rows_scored": len(scored), "test_rows_scored": len(test_scored),
             "fit_overlength_skipped": fit_overlong,
@@ -382,7 +458,6 @@ def main() -> None:
                 {item["row"]["group_id"] for item in scored})).encode()).hexdigest(),
             "test_group_ids_sha256": hashlib.sha256("\n".join(sorted(
                 {item["row"]["group_id"] for item in test_scored})).encode()).hexdigest(),
-            "all_overlength_skipped": overlong,
         },
         "correctness_scorer": {
             "features": ["top_probability", "top_two_margin", "normalized_entropy",
@@ -392,7 +467,7 @@ def main() -> None:
             "scale": scorer["scale"].tolist(), "weights": scorer["weights"].tolist(),
             "bias": scorer["bias"],
         },
-        "heldout_test": {
+        "heldout_evaluation": {
             "top1_accuracy": float(test_labels.mean()),
             "same_row_model_comparison": {
                 "rows": len(common_rows),
@@ -413,7 +488,7 @@ def main() -> None:
         },
         "limitations": [
             "This is a small public-data research experiment, not proprietary Jev parity.",
-            "AURC and calibration metrics are descriptive on one held-out selection; no risk guarantee is claimed.",
+            "AURC and calibration metrics are descriptive on one untouched public selection; no risk guarantee is claimed.",
             "The correctness scorer does not change the selected action, approvals, or execution authority.",
             "The public Open-Jev labels do not establish success on live Heliox desktop tasks.",
         ],
@@ -423,6 +498,8 @@ def main() -> None:
                       "raw_aurc": raw_metrics["selective_prediction"]["aurc"],
                       "learned_aurc": learned_metrics["selective_prediction"]["aurc"],
                       "raw_brier": raw_metrics["brier"], "learned_brier": learned_metrics["brier"],
+                      "candidate_accuracy": candidate_decisions["top1_accuracy"],
+                      "baseline_accuracy": baseline_decisions["top1_accuracy"],
                       "report": str(report_path)}, indent=2))
 
 

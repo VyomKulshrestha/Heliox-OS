@@ -1,8 +1,19 @@
-# Open-Jev correctness scorer — exploratory result
+# Open-Jev correctness scorer v1 — in-training diagnostic
 
 Date: 2026-09-29
 
 Status: research-only; no runtime integration or promotion.
+
+## Important data-exposure correction
+
+This v1 run selected its fit and evaluation rows from the `train` split. The
+released Open-Jev checkpoint was trained on that full release-v2 training
+mixture, so the reported 111-row comparison is **not an untouched or
+independent generalization result**. Its group exclusions prevented overlap
+with earlier Heliox experiments but could not remove the released checkpoint's
+training exposure. Treat every v1 metric below as an in-training diagnostic;
+do not use it to claim held-out improvement or Jev parity. The v2 protocol
+replaces this selection with fresh calibration-fit and OOD-evaluation rows.
 
 ## Why this experiment
 
@@ -29,7 +40,7 @@ method. They are follow-up hypotheses, not claimed results. See
   `c67699e13d0ae25e35b77165a4b6b079bedc8aba`; 2,440 previously exposed groups
   were excluded before selecting 128 fit and 128 test groups.
 - The frozen Heliox RPS adapter and released Open-Jev adapter were evaluated
-  against the same held-out test rows. The logistic scorer was fit only on the
+  against the same train-split diagnostic rows. The logistic scorer was fit only on the
   fit partition. Long prompts were excluded rather than truncated: 13 fit and
   17 test rows exceeded the candidate's 512-token limit. This left 115 fit
   rows and 111 paired test rows.
@@ -40,7 +51,7 @@ method. They are follow-up hypotheses, not claimed results. See
 
 ## Head-to-head result
 
-| Same held-out rows | Released Open-Jev | Heliox RPS candidate | Candidate minus baseline |
+| Same train-split diagnostic rows | Released Open-Jev | Heliox RPS candidate | Candidate minus baseline |
 | --- | ---: | ---: | ---: |
 | Top-1 accuracy (111) | 81.98% | 82.88% | +0.90 pp (one row) |
 | Mean NLL | 0.3710 | 0.3240 | -0.0470 |
@@ -56,7 +67,7 @@ show broad task or desktop parity.
 
 ## Confidence-scoring result and disposition
 
-On the 111 held-out candidate rows, post-hoc logistic scoring moved AURC only
+On the 111 scored train-split candidate rows, post-hoc logistic scoring moved AURC only
 from 0.02910 to 0.02848. The paired 95% interval for learned-minus-raw AURC
 was [-0.00410, +0.00217]. Brier worsened from 0.08141 to 0.08697. The
 confidence score therefore remains rejected for runtime use; a tiny ranking
@@ -71,7 +82,7 @@ authority was promoted. TypeSafe's current
 to distill/train an imitation or develop/facilitate a similar or competing
 product; this work deliberately uses no such outputs.
 
-## Fastest defensible next experiment
+## Follow-up direction
 
 1. Keep the Open-Jev-style candidate scorer small and local; do not add a
    general-purpose model call to every action.
@@ -87,12 +98,19 @@ product; this work deliberately uses no such outputs.
 
 ## Reproduction
 
-Run from `daemon/` with the already-prepared local model artifacts:
+Run the corrected v2 evaluation from `daemon/` with the already-prepared local
+model artifacts:
 
 ```powershell
 python scripts/evaluate_general_decision_correctness_head.py --resume
 ```
 
-The evaluator writes resumable predictions and `report.json` under the ignored
-`benchmarks/.bench-state/openjev_correctness_head_v1/` directory. Model weights,
-predictions, and caches are intentionally not committed.
+The evaluator now accepts only the checksum-frozen v2 protocol and writes
+resumable predictions and `report.json` under the ignored
+`benchmarks/.bench-state/openjev_correctness_head_v2/` directory. Model weights,
+predictions, and caches are intentionally not committed. The historical v1
+artifacts remain unchanged for auditability; its original split and outputs
+are identified in `openjev_correctness_head_v1.json`.
+
+The subsequent group-held-out run and its interpretation are documented in
+[`openjev_correctness_head_v2.md`](openjev_correctness_head_v2.md).
