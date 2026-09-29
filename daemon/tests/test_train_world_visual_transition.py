@@ -21,6 +21,7 @@ from scripts.train_world_visual_transition import (
     paired_group_indices,
     pairwise_focused_loss,
     pairwise_transition_loss,
+    per_example_coordinate_mae,
     within_action_permutation,
 )
 
@@ -78,6 +79,17 @@ def test_group_bootstrap_rejects_unpaired_or_dependent_inputs() -> None:
     with pytest.raises(ValueError, match="at least two independent groups"):
         group_bootstrap_loss_delta(np.array([1.0, 1.0]), np.array([0.0, 0.0]),
                                    np.array(["same", "same"]), seed=1)
+
+
+def test_per_example_coordinate_mae_preserves_rows_and_rejects_invalid_inputs() -> None:
+    predicted = np.array([[0.6, 0.4], [0.2, 0.8]])
+    expected = np.array([[0.5, 0.5], [0.0, 1.0]])
+
+    np.testing.assert_allclose(per_example_coordinate_mae(predicted, expected), [0.1, 0.2])
+    with pytest.raises(ValueError, match="aligned finite matrices"):
+        per_example_coordinate_mae(predicted, expected[:1])
+    with pytest.raises(ValueError, match="aligned finite matrices"):
+        per_example_coordinate_mae(np.full((2, 2), np.nan), expected)
 
 
 def _write_features(tmp_path, groups=("a", "b", "c")):

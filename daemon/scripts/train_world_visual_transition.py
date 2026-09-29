@@ -240,6 +240,17 @@ def group_bootstrap_loss_delta(reference_losses: np.ndarray, candidate_losses: n
     }
 
 
+def per_example_coordinate_mae(predicted: np.ndarray, expected: np.ndarray) -> np.ndarray:
+    """Return aligned per-row coordinate errors for grouped uncertainty estimates."""
+    predicted_values = np.asarray(predicted, dtype=np.float64)
+    expected_values = np.asarray(expected, dtype=np.float64)
+    if (predicted_values.ndim != 2 or predicted_values.shape != expected_values.shape
+            or predicted_values.shape[0] == 0 or predicted_values.shape[1] == 0
+            or not np.isfinite(predicted_values).all() or not np.isfinite(expected_values).all()):
+        raise ValueError("Coordinate predictions and targets must be aligned finite matrices")
+    return np.mean(np.abs(predicted_values - expected_values), axis=1)
+
+
 def within_action_permutation(actions: np.ndarray, rng: np.random.Generator) -> np.ndarray:
     """Shuffle locations while preserving each row's action type."""
     permutation = np.arange(len(actions))
@@ -688,13 +699,28 @@ def main() -> None:
                 state = observed["state"].reshape(-1, channels, height, width)
                 target = observed["target"].reshape(-1, channels, height, width)
                 expected = observed["action"][:, 9:11]
+                expected_coordinates = expected.cpu().numpy()
+                predicted_coordinates = model.inverse(state, target).cpu().numpy()
+                before_only_coordinates = model.inverse(state, state).cpu().numpy()
+                center_coordinates = np.full_like(expected_coordinates, 0.5)
+                observed_row_errors = per_example_coordinate_mae(
+                    predicted_coordinates, expected_coordinates
+                )
+                center_row_errors = per_example_coordinate_mae(
+                    center_coordinates, expected_coordinates
+                )
                 inverse_scores[split] = {
-                    "observed_before_after_coordinate_mae": float(
-                        (model.inverse(state, target) - expected).abs().mean().item()),
-                    "before_only_coordinate_mae": float(
-                        (model.inverse(state, state) - expected).abs().mean().item()),
-                    "center_coordinate_mae": float((0.5 - expected).abs().mean().item()),
+                    "observed_before_after_coordinate_mae": float(observed_row_errors.mean()),
+                    "before_only_coordinate_mae": float(per_example_coordinate_mae(
+                        before_only_coordinates, expected_coordinates
+                    ).mean()),
+                    "center_coordinate_mae": float(center_row_errors.mean()),
                 }
+                if split == "eval":
+                    inverse_scores[split]["group_bootstrap_vs_center"] = group_bootstrap_loss_delta(
+                        center_row_errors, observed_row_errors, partition["groups"],
+                        seed=args.seed + 8, replicates=args.group_bootstrap_replicates,
+                    )
             shuffled_scores = []
             within_type_scores = []
             shuffled_row_losses = np.zeros(len(partition["state"]), dtype=np.float64)
