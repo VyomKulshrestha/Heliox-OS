@@ -250,26 +250,37 @@ def within_action_permutation(actions: np.ndarray, rng: np.random.Generator) -> 
 
 
 def paired_counterfactual_permutation(partition: dict[str, np.ndarray]) -> np.ndarray:
-    """Swap actions only between observed alternatives to the exact same state."""
+    """Permute actions only among distinct observed outcomes from the exact same state."""
     groups = partition["groups"]
+    if not len(groups):
+        raise ValueError("Counterfactual data must contain at least one multi-action state")
     permutation = np.arange(len(groups))
     for group in np.unique(groups):
         indices = np.flatnonzero(groups == group)
-        if (len(indices) != 2
-                or not np.array_equal(partition["state"][indices[0]], partition["state"][indices[1]])
-                or np.array_equal(partition["target"][indices[0]], partition["target"][indices[1]])
-                or np.array_equal(partition["action"][indices[0]],
-                                  partition["action"][indices[1]])):
-            raise ValueError("Counterfactual group must contain two distinct outcomes from one state")
-        permutation[indices] = indices[::-1]
+        states, targets, actions = (partition[key] for key in ("state", "target", "action"))
+        distinct_targets = {np.ascontiguousarray(targets[index]).tobytes() for index in indices}
+        distinct_actions = {np.ascontiguousarray(actions[index]).tobytes() for index in indices}
+        if (len(indices) < 2
+                or any(not np.array_equal(states[indices[0]], states[index]) for index in indices[1:])
+                or len(distinct_targets) != len(indices)
+                or len(distinct_actions) != len(indices)):
+            raise ValueError(
+                "Counterfactual group must contain distinct actions and outcomes from one state"
+            )
+        permutation[indices] = np.roll(indices, 1)
     return permutation
 
 
 def paired_group_indices(partition: dict[str, np.ndarray]) -> np.ndarray:
-    """Return verified alternatives side by side for action-specific training."""
-    permutation = paired_counterfactual_permutation(partition)
-    first = np.flatnonzero(np.arange(len(permutation)) < permutation)
-    return np.column_stack((first, permutation[first]))
+    """Return every verified same-state action pair for action-specific training."""
+    paired_counterfactual_permutation(partition)  # Validate every branch before pairing.
+    pairs = []
+    for group in np.unique(partition["groups"]):
+        indices = np.flatnonzero(partition["groups"] == group)
+        pairs.extend((indices[left], indices[right])
+                     for left in range(len(indices) - 1)
+                     for right in range(left + 1, len(indices)))
+    return np.asarray(pairs, dtype=np.int64).reshape(-1, 2)
 
 
 def pairwise_transition_loss(predicted, target):
