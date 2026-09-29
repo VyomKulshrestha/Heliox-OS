@@ -1900,3 +1900,52 @@ is not comparable to this Open-Jev OOD benchmark. Its linked GitHub repository
 was unavailable during this review, its checkpoint is not in the local cache,
 and no weights or data were downloaded. Treat this as a candidate architecture
 for a separately trained, matching-split experiment—not as a Heliox result.
+
+## Open-Jev warm-start adaptation on RTX 4060 (2026-09-29)
+
+A local, research-only LoRA adaptation was run from the cached
+[Apache-2.0 Open-Jev-2B checkpoint](https://huggingface.co/ZefanCai/Open-Jev-2B)
+on the pinned Qwen3.5-2B base. Training examples came only from the
+`release-v2-redistributable` configuration of the
+[CC0 Open-Jev dataset](https://huggingface.co/datasets/ZefanCai/Open-Jev);
+the run made no OpenRouter or hosted TypeSafe Jev requests and did not read an
+API key. This distinction matters: the current
+[TypeSafe MCA, section 2.3(b)](https://typesafe.ai/legal/mca) prohibits using
+its hosted Service or Output for imitation/distillation training or developing
+a similar or competing product. The open checkpoint and CC0 data are a separate
+training route.
+
+The fixed seed was `20260930`; rows were selected independently for train,
+calibration, test, and OOD, then group-disjointness was checked. At 512 tokens,
+overlong rows were excluded without truncation: 906/1,024 train, 232/256
+calibration, 460/512 test, and 440/512 OOD rows remained. The run used rank-8
+LoRA, NF4 double quantization, bfloat16, and reached 3.503 GiB peak allocated
+VRAM on the RTX 4060 Laptop GPU. Fine-tuning, calibration, and adapted test/OOD
+scoring took 93.5 minutes, excluding model/data loading, tokenization, and the
+pre-training baseline scoring. The report records dataset revision
+`c67699e13d0ae25e35b77165a4b6b079bedc8aba`, Open-Jev checkpoint revision
+`0c7aa498b1627be8da4acf34c863ff0ee0a92785`, Qwen3.5-2B revision
+`15852e8c16360a2fea060d615a32b45270f8a8fc`, and artifact hashes.
+
+| Split | Rows | Warm-start top-1 | Adapted top-1 | Paired group-bootstrap delta, 95% interval |
+| --- | ---: | ---: | ---: | ---: |
+| Group-disjoint test | 460 / 259 groups | 88.70% | 91.09% | +2.39 pp [+0.40, +4.59] |
+| OOD | 440 / 258 groups | 83.41% | 84.32% | +0.91 pp [-1.05, +2.89] |
+
+The test result is a positive signal on this public synthetic benchmark:
+5,000 paired bootstrap replicates were positive 98.56% of the time. The OOD
+interval includes zero, so its small aggregate gain is inconclusive. By OOD
+decision kind, choice accuracy fell 3.6 points while yes/no rose 4.0 points
+and score ranking rose 1.0 point. Do not describe this as robust OOD transfer,
+Jev parity, or improvement on real Heliox tasks.
+
+The local report is
+`daemon/benchmarks/.bench-state/heliox_openjev_warmstart_1k_seed20260930.json`;
+the adapter and scalar head are alongside it under the same ignored
+`.bench-state` directory. They were not copied into a runtime artifact path,
+loaded by the application, or granted execution authority. This experiment used
+no Heliox-recorded task traces: the daemon/UI were not running, and recording
+remains an explicit in-app opt-in. Focused regressions passed: 30 passed, 1
+skipped across the decision metrics, training retry, and resumable evaluation
+tests. Adapter SHA-256: `f5c2d3c815bd281bdf22c217bcbd476b258514ee367672ba002c675ec457b687`;
+scalar-head SHA-256: `cc3d73473e32776fbd458395d0878141cb7d3967ff7ee706f794aa5d4cced875`.
