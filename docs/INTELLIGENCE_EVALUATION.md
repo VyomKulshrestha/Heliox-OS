@@ -137,6 +137,30 @@ Open-Jev pattern of ranking supplied choices in one pass; it does not reproduce
 Jev's private model or method. A scorer-only microbenchmark measured roughly
 1.1 ms median on both CPU and CUDA, excluding Heliox's RPC and approval loop.
 
+An audit found that the earlier row-sampled `ood` partition shared source
+categories with training. Those results remain row-held-out diagnostics, not
+source-generalization evidence. `scripts/train_general_decision.py` now
+defaults to a deterministic 20% source-category holdout: it selects only
+license-eligible categories present in every frozen split, excludes those
+categories from train/calibration/test, and restricts OOD evaluation to them.
+The report binds the holdout seed, category lists, per-split source filters,
+and parquet hashes. The loader validates metadata in bounded batches, then
+fetches only the seeded, source/kind-balanced row IDs in bounded batches;
+runtime prompts still omit source names. Use
+`--source-holdout-fraction 0` only to reproduce the older row-held-out
+protocol. `--source-holdout-seed` selects source folds independently from
+`--split-seed`, which fixes sampled rows within each fold. A source-heldout
+score is still a small public-data probe, not Jev
+parity or evidence that the daemon can complete real desktop tasks.
+
+The first matched 4k leave-one-source-out trial found no useful transfer:
+held-out choice accuracy was below its random baseline in all three folds,
+yes/no balanced accuracy was 50.0–54.1%, and OOD NLL was worse than uniform
+in every fold. The scratch byte scorer is rejected for general decision use
+and remains disconnected from runtime. Detailed fold metrics and the 8k
+scaling check are in
+[`jevlike_typed_decision_v2.md`](../daemon/benchmarks/jevlike_typed_decision_v2.md).
+
 A separate **research-only GPU task-state head** was retrained from frozen
 Qwen3.5-2B features on the pinned agentic, TBAC, ScopeJudge, and When2Call
 training splits. On the held-out When2Call preference test it reached 70/100,

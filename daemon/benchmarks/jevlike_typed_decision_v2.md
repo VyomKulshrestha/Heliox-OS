@@ -42,7 +42,45 @@ rows whose provenance declared CC0-1.0, and splits remained group-disjoint; it
 did not yet exclude provider-origin source URLs. See the provenance correction
 above.
 
-## Five-seed result
+## Source-heldout transfer check (2026-09-30)
+
+The old row-heldout `ood` split reused source families across training and
+evaluation. A new protocol now dynamically selects a source category shared by
+all four frozen splits, removes it from train/calibration/test, and uses it
+only for OOD. Source selection and row sampling have separate seeds. The
+loader validates metadata in bounded Parquet batches, keeps the existing
+sorted-ID/source-kind round-robin sample semantics, retrieves only selected
+rows in bounded batches, and hashes the file incrementally. No source names
+are included in model prompts.
+
+Three 4k-row leave-one-source-out runs used the same model seed, row seed,
+2,048-byte context window, and architecture (width/rank 64/64). Each used
+4,096 train, 512 calibration, 512 seen-source test, and 512 held-out OOD rows.
+The fold seed selected each available source category in turn:
+
+| Held-out source | OOD top-1 (uniform expected) | Choice top-1 (uniform expected) | Yes/no balanced accuracy | OOD NLL (uniform) | OOD ECE | Shuffled-context NLL |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `painting-geometry-v1` | 28.1% (28.3%) | 0.0% (8.8%) | 50.0% | 1.991 (1.513) | 23.9% | 1.999 |
+| `snake-v1` | 54.3% (41.7%) | 23.4% (33.3%) | 52.6% | 1.758 (0.896) | 28.9% | 1.687 |
+| `vizdoom-basic-v1` | 37.3% (34.5%) | 19.3% (33.3%) | 54.1% | 1.584 (1.133) | 25.8% | 1.661 |
+
+Seen-source test top-1 was 68.0%, 67.0%, and 61.0%, respectively, but
+held-out choice accuracy stayed below its random-choice baseline in all
+folds, yes/no balanced accuracy stayed near chance, and OOD NLL was worse
+than uniform in every fold. Shuffling context sometimes improved NLL. The
+above-chance aggregate top-1 in the snake fold is therefore not evidence of
+useful generalization. A separate 8k-train/1k-OOD snake fold also had 32.8%
+choice accuracy versus 33.3% chance, 51.8% yes/no balanced accuracy, 1.969
+OOD NLL versus 0.896 uniform, and 26.8% ECE.
+
+These source-heldout runs **reject this scratch byte scorer as a generic
+decision model**. It remains research-only and is not wired into the daemon.
+No TypeSafe Jev service, API key, output, or checkpoint was used; these results
+do not establish Jev parity or real-desktop capability. The next meaningful
+training signal is Heliox-owned task outcome data, not additional tuning on
+source-overlapping synthetic rows.
+
+## Five-seed row-held-out result (not source-generalization)
 
 Each seed trained on 8,000 rows and used separate 1,000-row calibration, test,
 and OOD partitions. Each OOD set contains 268 choice, 532 yes/no (`noul`), and
