@@ -66,21 +66,27 @@ def fit_workflow_outcome_model(
     label_values = np.asarray(labels)
     group_values = np.asarray(groups)
     all_classes = set(classes)
+    class_group_counts = {
+        label: len({group for group, observed in zip(groups, labels, strict=True) if observed == label})
+        for label in classes
+    }
+    if any(count < 2 for count in class_group_counts.values()):
+        raise ValueError("Each observed outcome class must occur in at least two independent recipe groups")
     splitter = GroupShuffleSplit(
         n_splits=128,
-        test_size=max(2, math.ceil(len(unique_groups) * 0.25)),
+        test_size=max(2, math.ceil(len(unique_groups) * 0.25), len(classes)),
         random_state=seed,
     )
     selected_split = None
     for train_indices, test_indices in splitter.split(
         np.zeros((len(examples), 1)), label_values, group_values
     ):
-        if (all_classes.issubset(set(label_values[train_indices]))
-                and len(set(label_values[test_indices])) >= 2):
+        if (set(label_values[train_indices]) == all_classes
+                and set(label_values[test_indices]) == all_classes):
             selected_split = train_indices, test_indices
             break
     if selected_split is None:
-        raise ValueError("Could not form a group-disjoint holdout containing multiple outcome classes")
+        raise ValueError("Could not form a group-disjoint holdout containing every observed outcome class in both partitions")
     train_indices, test_indices = selected_split
     train_groups = set(group_values[train_indices])
     test_groups = set(group_values[test_indices])
@@ -112,13 +118,18 @@ def fit_workflow_outcome_model(
     probabilities = model.predict_proba(test_x)
     predictions = model.classes_[np.argmax(probabilities, axis=1)]
     majority = Counter(train_y).most_common(1)[0][0]
-    test_classes = np.unique(test_y)
     candidate_balanced_accuracy = recall_score(
-        test_y, predictions, labels=test_classes, average="macro", zero_division=0,
+        test_y, predictions, labels=classes, average="macro", zero_division=0,
+    )
+    candidate_class_recall = recall_score(
+        test_y, predictions, labels=classes, average=None, zero_division=0,
     )
     majority_predictions = np.full(len(test_y), majority)
     majority_balanced_accuracy = recall_score(
-        test_y, majority_predictions, labels=test_classes, average="macro", zero_division=0,
+        test_y, majority_predictions, labels=classes, average="macro", zero_division=0,
+    )
+    majority_class_recall = recall_score(
+        test_y, majority_predictions, labels=classes, average=None, zero_division=0,
     )
 
     artifact = {
@@ -146,12 +157,20 @@ def fit_workflow_outcome_model(
             "accuracy": float(accuracy_score(test_y, predictions)),
             "balanced_accuracy": float(candidate_balanced_accuracy),
             "log_loss": float(log_loss(test_y, probabilities, labels=model.classes_)),
+            "class_recall": {
+                label: float(value) for label, value in zip(classes, candidate_class_recall, strict=True)
+            },
         },
         "majority_baseline": {
             "class": majority,
             "accuracy": float(accuracy_score(test_y, majority_predictions)),
             "balanced_accuracy": float(majority_balanced_accuracy),
+            "class_recall": {
+                label: float(value) for label, value in zip(classes, majority_class_recall, strict=True)
+            },
         },
+        "class_group_counts": class_group_counts,
+        "test_class_coverage": {label: int(Counter(test_y)[label]) for label in classes},
         "seed": seed,
         "split": "group-disjoint recipe holdout",
         "privacy": "Only coarse action-family structure and user outcome labels are used; no goals, names, parameters, screens, or executor status.",

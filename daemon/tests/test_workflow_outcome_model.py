@@ -42,6 +42,8 @@ def test_outcome_candidate_is_fitted_and_research_only() -> None:
     assert report["recipe_groups"] == 12
     assert report["train_groups"] + report["test_groups"] == 12
     assert report["split"] == "group-disjoint recipe holdout"
+    assert all(count > 0 for count in report["test_class_coverage"].values())
+    assert set(report["candidate"]["class_recall"]) == set(report["classes"])
     assert report["candidate"]["accuracy"] >= report["majority_baseline"]["accuracy"]
     assert math.isfinite(report["candidate"]["log_loss"])
     assert "opaque-recipe" not in str(artifact)
@@ -53,6 +55,16 @@ def test_outcome_candidate_is_fitted_and_research_only() -> None:
 def test_outcome_candidate_rejects_too_few_real_examples() -> None:
     with pytest.raises(ValueError, match="user-rated runs"):
         fit_workflow_outcome_model(_examples()[:3])
+
+
+def test_outcome_candidate_rejects_class_with_only_one_independent_recipe() -> None:
+    examples = [
+        row for row in _examples()
+        if row["label"] != "not_achieved" or row["group_id"].endswith("-0")
+    ]
+
+    with pytest.raises(ValueError, match="at least two independent recipe groups"):
+        fit_workflow_outcome_model(examples, minimum_examples=12, minimum_groups=8)
 
 
 def test_outcome_candidate_rejects_extra_private_fields() -> None:
