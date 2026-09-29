@@ -1933,11 +1933,13 @@ pre-training baseline scoring. The report records dataset revision
 | OOD | 440 / 258 groups | 83.41% | 84.32% | +0.91 pp [-1.05, +2.89] |
 
 The test result is a positive signal on this public synthetic benchmark:
-5,000 paired bootstrap replicates were positive 98.56% of the time. The OOD
-interval includes zero, so its small aggregate gain is inconclusive. By OOD
-decision kind, choice accuracy fell 3.6 points while yes/no rose 4.0 points
-and score ranking rose 1.0 point. Do not describe this as robust OOD transfer,
-Jev parity, or improvement on real Heliox tasks.
+5,000 paired group-bootstrap replicates (seed `20260932`, resampling
+`group_id` with row-weighted aggregation) were positive 98.56% of the time.
+The OOD interval includes zero; its 5,000 replicates used seed `20260933`, so
+the small aggregate gain is inconclusive. By OOD decision kind, choice accuracy
+fell 3.6 points while yes/no rose 4.0 points and score ranking rose 1.0 point.
+Do not describe this as robust OOD transfer, Jev parity, or improvement on real
+Heliox tasks.
 
 The local report is
 `daemon/benchmarks/.bench-state/heliox_openjev_warmstart_1k_seed20260930.json`;
