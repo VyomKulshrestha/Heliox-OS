@@ -11,6 +11,7 @@ import pytest
 from scripts.train_world_visual_transition import (
     action_shuffle_diagnostic,
     combine_training_features,
+    counterfactual_successor_retrieval,
     feature_shape,
     group_bootstrap_loss_delta,
     load_features,
@@ -79,6 +80,35 @@ def test_group_bootstrap_rejects_unpaired_or_dependent_inputs() -> None:
     with pytest.raises(ValueError, match="at least two independent groups"):
         group_bootstrap_loss_delta(np.array([1.0, 1.0]), np.array([0.0, 0.0]),
                                    np.array(["same", "same"]), seed=1)
+
+
+def test_counterfactual_successor_retrieval_is_group_aware_and_compares_to_chance() -> None:
+    partition = {
+        "state": np.zeros((5, 2), dtype=np.float32),
+        "target": np.array([[1, 0], [0, 1], [1, 1], [0, 0], [0.5, 0.5]], dtype=np.float32),
+        "action": np.eye(5, dtype=np.float32),
+        "groups": np.array(["pair-a", "pair-a", "pair-b", "pair-b", "pair-b"]),
+    }
+
+    result = counterfactual_successor_retrieval(
+        partition["target"], partition, seed=19, replicates=1000,
+    )
+
+    assert result["mean_group_top1_accuracy"] == 1
+    assert result["mean_group_chance_accuracy"] == pytest.approx((0.5 + 1 / 3) / 2)
+    assert result["bootstrap_vs_group_chance"]["candidate_minus_reference"] < 0
+    assert result["bootstrap_vs_group_chance"]["groups"] == 2
+
+
+def test_counterfactual_successor_retrieval_rejects_misaligned_predictions() -> None:
+    partition = {
+        "state": np.zeros((2, 2), dtype=np.float32),
+        "target": np.array([[1, 0], [0, 1]], dtype=np.float32),
+        "action": np.eye(2, dtype=np.float32),
+        "groups": np.array(["same", "same"]),
+    }
+    with pytest.raises(ValueError, match="aligned finite feature matrices"):
+        counterfactual_successor_retrieval(np.zeros((1, 2)), partition, seed=1)
 
 
 def test_per_example_coordinate_mae_preserves_rows_and_rejects_invalid_inputs() -> None:
@@ -245,6 +275,32 @@ def test_focused_pairwise_loss_ignores_shared_background_and_empty_mask() -> Non
     assert pairwise_focused_loss(np.zeros_like(target), np.zeros_like(target)) == 0
     with pytest.raises(ValueError, match="aligned action pairs"):
         pairwise_focused_loss(target[:1], target[:1])
+
+
+def test_successor_ranking_prefers_observed_outcomes_and_checks_pair_alignment() -> None:
+    code = """
+import torch
+from scripts.train_world_visual_transition import successor_ranking_loss
+state = torch.zeros(2, 4)
+target = torch.tensor([[0.1, 0.0, 0.0, 0.0], [0.0, 0.1, 0.0, 0.0]])
+exact = successor_ranking_loss(target, state, target, temperature=0.01)
+collapsed_prediction = state.clone().requires_grad_(True)
+collapsed = successor_ranking_loss(collapsed_prediction, state, target, temperature=0.01)
+assert exact < collapsed
+collapsed.backward()
+assert collapsed_prediction.grad.abs().sum() > 0
+try:
+    successor_ranking_loss(target, torch.tensor([[0.0] * 4, [0.1] * 4]), target,
+                           temperature=0.01)
+except ValueError as error:
+    assert "same pre-action state" in str(error)
+else:
+    raise AssertionError("misaligned state pair was accepted")
+"""
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    if "No module named 'torch'" in result.stderr:
+        pytest.skip("Optional torch research dependency is not installed")
+    assert result.returncode == 0, result.stderr
 
 
 def test_private_samples_split_by_recording_without_plaintext_files() -> None:
