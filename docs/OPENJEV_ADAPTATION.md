@@ -2023,3 +2023,54 @@ This is still a comparison to released Open-Jev—not TypeSafe Jev—and uses
 public synthetic decisions only. It does not establish real desktop-task
 success, multi-step execution quality, or action safety. The candidate remains
 research-only and is not automatically loaded into the planner.
+
+## Larger-sample world-transition action-grounding check (2026-09-29)
+
+To separate generic screen-change prediction from action-conditioned prediction,
+the local world-transition probe was sampled again from the MIT-licensed
+[`TESS-Computer/tess-agentnet`](https://huggingface.co/datasets/TESS-Computer/tess-agentnet)
+revision `c88c33e0ec473904e6e15b3c83179e47aa4e79ea`. Forty-eight disjoint
+50-row pages produced 1,899 adjacent screenshot/action transitions. The
+episode-disjoint split contains 1,287 train rows / 124 episodes, 326 validation
+rows / 27 episodes, and 286 held-out rows / 27 episodes. Screens are reduced to
+16x16 grayscale features; raw screenshots are not stored. The source rows API
+is not itself revision-pinned, so the sampler checks image revisions and pins
+the resulting feature archive by SHA-256.
+
+The linear action-conditioned model was evaluated against unchanged-screen,
+no-action, and 100 shuffled-action/location baselines. Lower weighted MSE is
+better:
+
+| Held-out condition | Weighted MSE |
+| --- | ---: |
+| Unchanged screen | 0.22465 |
+| Correct recorded action | 0.17758 |
+| Same model, action removed | 0.17895 |
+| Same model, actions shuffled across rows | 0.17685 |
+| Same model, locations shuffled within action type | 0.17706 |
+
+A 5,000-replicate paired bootstrap over the 27 episodes found a clear reduction
+versus unchanged screens (`-0.04707`, 95% CI `[-0.08155, -0.01390]`), but no
+reliable incremental benefit from the action input: correct action versus
+no-action was `-0.00137` (95% CI `[-0.01187, +0.00941]`), and correct action
+versus the mean shuffled-action prediction was `+0.00072` (95% CI
+`[-0.00109, +0.00230]`). The latter point estimate favors shuffled actions.
+Therefore the measured gain is mostly screen-transition regularity, not
+demonstrated action understanding.
+
+A matched spatial joint model with an inverse-coordinate loss lowered held-out
+weighted MSE to `0.15860` versus `0.16957` with action inputs removed, but its
+100-permutation results were only modestly better than shuffled actions
+(`0.16158`) and shuffled locations (`0.15955`). Its coordinate MAE (`0.22598`)
+was no better than the before-screen-only baseline (`0.22467`) or the constant
+center baseline (`0.22297`). That run does not yet have the new episode-level
+bootstrap interval and is not used to claim action grounding. Rerun that
+interval before considering further conclusions.
+
+Reports and weights remain in the ignored local `.bench-state` directory:
+`tess_visual_transitions_v2_48p_seed20261003.json`,
+`tess_visual_48p_linear_groupboot_seed20261003_v2.json`, and
+`tess_visual_48p_joint_inverse_seed20261004_v1.json`. No runtime-compatible
+artifact was emitted or loaded. These are one-dataset, episode-disjoint
+research results—not environment-independent world modeling, live Heliox
+success, multi-step autonomy, action safety, or Jev parity.
