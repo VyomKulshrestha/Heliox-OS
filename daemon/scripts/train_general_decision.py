@@ -28,11 +28,14 @@ from benchmarks.general_decision import (  # noqa: E402
     PROMPT_STYLES,
     TRAINING_SOURCE_POLICY,
     candidate_prompts,
+    load_clean_source_counts,
     load_split,
     metrics,
     probabilities,
     ranked_probability_score,
+    select_source_holdout,
     verify_disjoint,
+    verify_source_holdout,
 )
 from benchmarks.misactbench_general import (  # noqa: E402
     decision_row as misact_decision_row,
@@ -342,6 +345,8 @@ def checkpoint_signature(args: argparse.Namespace, encoded: dict[str, list[dict]
                 "token_ids_sha256": token_ids.hexdigest(),
                 "seed": args.seed,
                 "split_seed": split_seed,
+                "source_holdout_fraction": getattr(args, "source_holdout_fraction", 0.0),
+                "source_holdout_seed": getattr(args, "source_holdout_seed", None),
                 "max_length": args.max_length, "lora_rank": args.lora_rank,
                 "attention": args.attention, "accumulation": args.accumulation,
                 "candidate_microbatch_size": getattr(args, "candidate_microbatch_size", 2),
@@ -444,9 +449,21 @@ def run(args: argparse.Namespace) -> dict:
     split_seed = getattr(args, "split_seed", None)
     if split_seed is None:
         split_seed = args.seed
+    source_holdout = None
+    if args.source_holdout_fraction > 0:
+        source_holdout_seed = (split_seed if args.source_holdout_seed is None
+                               else args.source_holdout_seed)
+        source_holdout = select_source_holdout(
+            load_clean_source_counts(), args.source_holdout_fraction, source_holdout_seed)
     rows, manifests = {}, {}
     for offset, (split, limit) in enumerate(limits.items()):
-        rows[split], manifests[split] = load_split(split, limit, split_seed + offset)
+        allowed_sources = None
+        if source_holdout is not None:
+            allowed = (source_holdout["held_out_sources"] if split == "ood"
+                       else source_holdout["seen_sources"])
+            allowed_sources = set(allowed)
+        rows[split], manifests[split] = load_split(
+            split, limit, split_seed + offset, allowed_sources=allowed_sources)
         if not rows[split]:
             raise ValueError(f"No licensed rows in {split}")
     model_name = OPENJEV_BASE_MODEL if args.initial_openjev else MODEL
@@ -477,7 +494,10 @@ def run(args: argparse.Namespace) -> dict:
                 eligible=is_eligible)
         rows.update(scope_parts)
     verify_disjoint(rows)
+    if source_holdout is not None:
+        verify_source_holdout(rows, set(source_holdout["held_out_sources"]))
     print(json.dumps({"event": "data_selected", "counts": {name: len(part) for name, part in rows.items()},
+                      "source_holdout": source_holdout,
                       "excluded_unverified_license": {name: entry["excluded_unverified_license"]
                                                      for name, entry in manifests.items()},
                       "excluded_restricted_source": {name: entry["excluded_restricted_source"]
@@ -651,6 +671,7 @@ def run(args: argparse.Namespace) -> dict:
             "HF_HUB_OFFLINE", "CUDA_LAUNCH_BLOCKING", "PYTORCH_NO_CUDA_MEMORY_CACHING")},
         "dataset": DATASET, "dataset_revision": DATASET_REVISION, "dataset_config": DATASET_CONFIG,
         "training_source_policy": TRAINING_SOURCE_POLICY,
+        "source_holdout": source_holdout,
         "dataset_manifests": manifests, "seed": args.seed, "split_seed": split_seed,
         "selected_rows": limits, "evaluated_rows": {name: len(part) for name, part in encoded.items()},
         "split_id_group_sha256": {name: split_id_group_hash(part)
@@ -754,6 +775,10 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=20260924)
     parser.add_argument("--split-seed", type=int,
                         help="Keep data partitions fixed while changing model initialization")
+    parser.add_argument("--source-holdout-fraction", type=float, default=0.2,
+                        help="Fraction of shared licensed source categories reserved for OOD; 0 disables")
+    parser.add_argument("--source-holdout-seed", type=int,
+                        help="Choose held-out categories independently of row-sampling seed")
     parser.add_argument("--scopejudge-path", type=Path, help="Pinned MIT ScopeJudge train.jsonl for multi-task study")
     parser.add_argument("--misactbench-path", type=Path,
                         help="Pinned CC BY 4.0 MisActBench annotations for text-only multi-task study")
@@ -776,6 +801,8 @@ def main() -> None:
     if any(value < 1 for value in (args.train_rows, args.calibration_rows, args.test_rows,
                                    args.ood_rows, args.progress_every, args.checkpoint_every)):
         parser.error("Row limits and progress interval must be positive")
+    if not math.isfinite(args.source_holdout_fraction) or not 0 <= args.source_holdout_fraction < 1:
+        parser.error("Source holdout fraction must be in [0, 1)")
     if (args.scopejudge_path is not None or args.misactbench_path is not None) and any(value < 2 for value in (
             args.scope_train_rows, args.scope_calibration_rows, args.scope_test_rows)):
         parser.error("Action-label row limits must be at least two")

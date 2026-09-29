@@ -10,9 +10,9 @@ import hashlib
 import json
 import math
 import random
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
-from typing import Iterator
+from typing import Iterator, Mapping
 from urllib.parse import urlparse
 
 import numpy as np
@@ -131,34 +131,128 @@ def select_balanced(rows: list[dict], limit: int, seed: int) -> list[dict]:
     return result
 
 
-def load_split(split: str, limit: int, seed: int) -> tuple[list[dict], dict]:
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def load_clean_source_counts() -> dict[str, dict[str, int]]:
+    """Count license-eligible source categories in each frozen dataset split."""
+    import pyarrow.parquet as parquet
+    from huggingface_hub import hf_hub_download
+
+    result = {}
+    for split in ("train", "calibration", "test", "ood"):
+        filename = f"data/{DATASET_CONFIG}/{split}-00000-of-00001.parquet"
+        path = Path(hf_hub_download(DATASET, filename, repo_type="dataset",
+                                    revision=DATASET_REVISION, local_files_only=True))
+        counts = Counter()
+        parquet_file = parquet.ParquetFile(path)
+        for batch in parquet_file.iter_batches(batch_size=512,
+                                               columns=["source", "metadata_json"]):
+            counts.update(row["source"] for row in batch.to_pylist()
+                          if training_exclusion_reason(row) is None)
+        result[split] = dict(counts)
+    return result
+
+
+def select_source_holdout(source_counts: Mapping[str, Mapping[str, int]],
+                          fraction: float, seed: int) -> dict:
+    """Choose held-out source categories shared by every evaluation partition."""
+    if not math.isfinite(fraction) or not 0.0 <= fraction < 1.0:
+        raise ValueError("Source holdout fraction must be in [0, 1)")
+    required = ("train", "calibration", "test", "ood")
+    if any(name not in source_counts for name in required):
+        raise ValueError("Source counts must include train, calibration, test, and ood")
+    common = set(source_counts[required[0]])
+    for name in required[1:]:
+        common.intersection_update(source_counts[name])
+    common = {source for source in common
+              if all(source_counts[name][source] > 0 for name in required)}
+    if fraction == 0.0:
+        return {"fraction": 0.0, "seed": seed, "common_sources": sorted(common),
+                "seen_sources": sorted(common), "held_out_sources": []}
+    if len(common) < 2:
+        raise ValueError("Source holdout needs at least two source categories shared by all splits")
+    count = min(len(common) - 1, max(1, math.ceil(len(common) * fraction)))
+    held_out = sorted(random.Random(seed).sample(sorted(common), count))
+    seen = sorted(common.difference(held_out))
+    return {"fraction": fraction, "seed": seed, "common_sources": sorted(common),
+            "seen_sources": seen, "held_out_sources": held_out}
+
+
+def verify_source_holdout(splits: Mapping[str, list[dict]], held_out_sources: set[str]) -> None:
+    """Fail closed unless OOD rows are from held-out categories only."""
+    if not held_out_sources:
+        raise ValueError("Source holdout must contain at least one held-out category")
+    for name in ("train", "calibration", "test"):
+        overlap = {row["source"] for row in splits[name]} & held_out_sources
+        if overlap:
+            raise ValueError(f"Held-out source leaked into {name}: {sorted(overlap)}")
+    ood_sources = {row["source"] for row in splits["ood"]}
+    if not ood_sources or not ood_sources.issubset(held_out_sources):
+        raise ValueError("OOD rows must use held-out source categories only")
+
+
+def load_split(split: str, limit: int, seed: int, *,
+               allowed_sources: set[str] | None = None) -> tuple[list[dict], dict]:
     import pyarrow.parquet as parquet
     from huggingface_hub import hf_hub_download
 
     filename = f"data/{DATASET_CONFIG}/{split}-00000-of-00001.parquet"
     path = Path(hf_hub_download(DATASET, filename, repo_type="dataset",
                                 revision=DATASET_REVISION, local_files_only=True))
-    columns = ("id", "group_id", "source", "kind", "question", "options", "target",
-               "state_json", "metadata_json")
-    all_rows = parquet.read_table(path, columns=list(columns)).to_pylist()
-    accepted = []
+    metadata_columns = ("id", "group_id", "source", "kind", "question", "options",
+                        "target", "metadata_json")
+    columns = (*metadata_columns[:7], "state_json", "metadata_json")
+    parquet_file = parquet.ParquetFile(path)
     excluded = defaultdict(int)
-    for row in all_rows:
-        reason = training_exclusion_reason(row)
-        if reason is not None:
-            excluded[reason] += 1
-            continue
-        validate_row(row)
-        accepted.append(row)
-    selected = select_balanced(accepted, limit, seed)
+    licensed_rows = 0
+    source_excluded_rows = 0
+    eligible_rows = 0
+    candidates = []
+    for batch in parquet_file.iter_batches(batch_size=512, columns=list(metadata_columns)):
+        for row in batch.to_pylist():
+            reason = training_exclusion_reason(row)
+            if reason is not None:
+                excluded[reason] += 1
+                continue
+            licensed_rows += 1
+            validate_row(row)
+            if allowed_sources is not None and row["source"] not in allowed_sources:
+                source_excluded_rows += 1
+                continue
+            eligible_rows += 1
+            candidates.append({key: row[key] for key in ("id", "source", "kind")})
+
+    selected_ids = select_balanced(candidates, limit, seed)
+    wanted = {row["id"] for row in selected_ids}
+    selected_by_id = {}
+    for batch in parquet_file.iter_batches(batch_size=128, columns=list(columns)):
+        for row in batch.to_pylist():
+            if row["id"] in wanted:
+                if row["id"] in selected_by_id:
+                    raise ValueError(f"Duplicate dataset row ID: {row['id']}")
+                selected_by_id[row["id"]] = row
+    if selected_by_id.keys() != wanted:
+        raise ValueError("Selected dataset rows were not all recovered on the second pass")
+    selected = [selected_by_id[row["id"]] for row in selected_ids]
     return selected, {
-        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
-        "total_rows": len(all_rows),
-        "licensed_rows": len(accepted),
+        "sha256": _sha256_file(path),
+        "total_rows": parquet_file.metadata.num_rows,
+        "licensed_rows": licensed_rows,
         "excluded_unverified_license": excluded["unverified_license"],
         "excluded_restricted_source": excluded["restricted_source"],
         "source_policy": TRAINING_SOURCE_POLICY,
+        "allowed_sources": None if allowed_sources is None else sorted(allowed_sources),
+        "source_excluded_rows": source_excluded_rows,
+        "eligible_rows": eligible_rows,
+        "selected_sources": sorted({row["source"] for row in selected}),
         "selected_rows": len(selected),
+        "sampler": "sorted_id_seeded_source_kind_round_robin_v1",
     }
 
 
