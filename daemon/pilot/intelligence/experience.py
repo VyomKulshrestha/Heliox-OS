@@ -66,6 +66,8 @@ class ExperienceContext:
     task_id: str = ""
     user_id: str = "local"
     parent_event_id: str = ""
+    plan_id: str = ""
+    action_index_offset: int = 0
 
 
 _CURRENT_CONTEXT: ContextVar[ExperienceContext | None] = ContextVar(
@@ -81,6 +83,8 @@ def experience_scope(
     task_id: str = "",
     user_id: str = "local",
     parent_event_id: str = "",
+    plan_id: str = "",
+    action_index_offset: int | None = None,
 ) -> Iterator[ExperienceContext]:
     """Propagate ledger identity through nested agents and executor tasks."""
 
@@ -90,6 +94,10 @@ def experience_scope(
         task_id=task_id or inherited.task_id,
         user_id=user_id or inherited.user_id,
         parent_event_id=parent_event_id or inherited.parent_event_id,
+        plan_id=plan_id or inherited.plan_id,
+        action_index_offset=(
+            inherited.action_index_offset if action_index_offset is None else action_index_offset
+        ),
     )
     token = _CURRENT_CONTEXT.set(context)
     try:

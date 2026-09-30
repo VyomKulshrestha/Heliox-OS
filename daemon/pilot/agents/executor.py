@@ -648,9 +648,11 @@ class Executor:
     ) -> list[ActionResult]:
         """Record and execute a plan through the one canonical action ingress."""
 
-        resolved_plan_id = plan_id or str(uuid.uuid4())[:8]
         attempt_id = str(uuid.uuid4())
         context = get_experience_context()
+        resolved_plan_id = plan_id or context.plan_id or str(uuid.uuid4())[:8]
+        if plan_id is None and context.plan_id:
+            action_index_offset = context.action_index_offset
         task_id = context.task_id or resolved_plan_id
         source = invocation_source.value
         if not context.task_id:
@@ -687,10 +689,11 @@ class Executor:
 
         action_indices = {id(action): index + action_index_offset for index, action in enumerate(plan.actions)}
         action_ids = {
-            id(action): stable_action_idempotency_key(resolved_plan_id, index, action)
+            id(action): stable_action_idempotency_key(resolved_plan_id, index + action_index_offset, action)
             for index, action in enumerate(plan.actions)
         }
         for index, action in enumerate(plan.actions):
+            global_index = index + action_index_offset
             action_id = action_ids[id(action)]
             await self._append_experience(
                 ExperienceEventType.CANDIDATE_ACTION,
@@ -700,10 +703,10 @@ class Executor:
                 plan_id=resolved_plan_id,
                 action_id=action_id,
                 parent_event_id=plan_event.event_id if plan_event else "",
-                idempotency_key=f"plan:{resolved_plan_id}:candidate:{index}",
+                idempotency_key=f"plan:{resolved_plan_id}:candidate:{global_index}",
                 source=source,
                 payload={
-                    "index": index,
+                    "index": global_index,
                     "action_idempotency_key": action_id,
                     "action": action,
                 },

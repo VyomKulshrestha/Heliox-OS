@@ -20,6 +20,7 @@ from pilot.intelligence.experience import (
     ExperienceLedger,
     experience_scope,
 )
+from pilot.intelligence.online_learning import VerifiedOnlineLearner
 from pilot.security.audit import AuditLogger
 from pilot.security.gateway import InvocationSource
 from pilot.security.permissions import PermissionChecker
@@ -122,6 +123,67 @@ async def test_reexecution_keeps_action_identity_and_records_each_attempt(tmp_pa
     completions = [event for event in events if event.event_type == ExperienceEventType.ACTION_COMPLETED]
     assert len(starts) == len(completions) == 2
     assert {event.action_id for event in starts + completions} == {candidate.action_id}
+
+
+@pytest.mark.asyncio
+async def test_scoped_subplans_replay_as_one_verified_parent_plan(tmp_path, ledger):
+    config = PilotConfig()
+    executor = Executor(
+        config,
+        ActionValidator(config),
+        PermissionChecker(config),
+        AuditLogger(audit_file=tmp_path / "scoped-audit.jsonl"),
+    )
+    executor.set_experience_ledger(ledger)
+    learner = VerifiedOnlineLearner(tmp_path / "scoped-learning-state.json")
+    ledger.subscribe(learner.consume)
+
+    # Safe read-only actions run against fixture files and preserve the full
+    # parent-plan indices while each specialist is dispatched independently.
+    paths = [tmp_path / "first.txt", tmp_path / "second.txt"]
+    for index, path in enumerate(paths):
+        path.write_text(f"fixture {index}", encoding="utf-8")
+    actions = [
+        Action(action_type=ActionType.FILE_READ, target=str(path), parameters=FileParams(path=str(path)))
+        for path in paths
+    ]
+    for index, action in enumerate(actions):
+        subplan = ActionPlan(actions=[action], explanation="read fixture")
+        with experience_scope(
+            task_id="parent-plan",
+            plan_id="parent-plan",
+            action_index_offset=index,
+        ):
+            result = await executor.execute(subplan)
+        assert result[0].success is True
+
+    await ledger.append(
+        ExperienceEventType.OUTCOME_VERIFIED,
+        plan_id="parent-plan",
+        source="verifier",
+        idempotency_key="parent-plan:verified",
+        payload={
+            "result_count": 2,
+            "verification": {
+                "passed": True,
+                "failed_actions": [],
+                "independently_observed_actions": [0, 1],
+            },
+        },
+    )
+    await ledger.drain_subscribers()
+
+    events = await ledger.list_events(plan_id="parent-plan")
+    candidates = [event for event in events if event.event_type == ExperienceEventType.CANDIDATE_ACTION]
+    starts = [event for event in events if event.event_type == ExperienceEventType.ACTION_STARTED]
+    completions = [event for event in events if event.event_type == ExperienceEventType.ACTION_COMPLETED]
+    assert [event.payload["index"] for event in candidates] == [0, 1]
+    assert [event.payload["index"] for event in starts] == [0, 1]
+    assert [event.payload["index"] for event in completions] == [0, 1]
+    assert [event.action_id for event in candidates] == [event.action_id for event in starts]
+    assert [event.action_id for event in candidates] == [event.action_id for event in completions]
+    assert learner.status()["transitions"]["labels"] == 2
+    assert learner.status()["workflow_patterns"] == 1
 
 
 @pytest.mark.asyncio
