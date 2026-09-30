@@ -42,6 +42,96 @@ def test_provider_evaluation_is_disabled_by_default() -> None:
         query_jev(NoNetwork(), "test-key", {})
 
 
+@pytest.mark.parametrize("reference_only", [False, True])
+def test_saved_reference_calls_resume_without_duplicate_billing(tmp_path, monkeypatch, reference_only):
+    from scripts import compare_general_jev as comparison
+
+    corpus = tmp_path / "cases.json"
+    corpus.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "one",
+                    "state": {},
+                    "kind": "noul",
+                    "question": "Valid?",
+                    "options": ["no", "yes"],
+                    "target": [1, 0],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    report_path = tmp_path / "comparison.json"
+    arguments = [
+        "comparison",
+        "--acknowledge-provider-terms",
+        "--limit",
+        "1",
+        "--cases-json",
+        str(corpus),
+        "--report",
+        str(report_path),
+    ]
+    monkeypatch.setattr(sys, "argv", [*arguments, "--cache-reference-only"] if reference_only else arguments)
+    monkeypatch.setattr(
+        comparison, "verify_artifact", lambda *_args: ({"adapter_sha256": "a" * 64, "head_sha256": "b" * 64}, None)
+    )
+    monkeypatch.setattr(comparison, "_key", lambda _path: "test-key")
+    calls = []
+
+    def query(*_args, **_kwargs):
+        calls.append("billed")
+        return {"noul": 0.1}, 0.001, "test-reference"
+
+    def fail(*_args):
+        assert not reference_only, "Reference-only collection must not load a GPU model"
+        raise RuntimeError("GPU unavailable")
+
+    monkeypatch.setattr(comparison, "query_jev", query)
+    monkeypatch.setattr(comparison, "score_requests", fail)
+    if reference_only:
+        comparison.main()
+    else:
+        with pytest.raises(RuntimeError, match="GPU unavailable"):
+            comparison.main()
+    assert not report_path.exists()
+    assert report_path.with_suffix(".partial.json").is_file()
+    monkeypatch.setattr(sys, "argv", [*arguments, "--resume"])
+    monkeypatch.setattr(comparison, "_key", lambda _path: pytest.fail("Complete cache must not need credentials"))
+    monkeypatch.setattr(
+        comparison, "query_jev", lambda *_args, **_kwargs: pytest.fail("Saved response must not be billed again")
+    )
+    monkeypatch.setattr(comparison, "score_requests", lambda *_args: [{"answer": {"yes_probability": 0.1}}])
+    comparison.main()
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["calls"] == 1 and report["cost_usd"] == 0.001
+    assert report["local_head_sha256"] == "b" * 64
+    assert calls == ["billed"]
+
+
+def test_reference_checkpoint_rejects_changed_identity_and_invalid_cost(tmp_path):
+    from scripts.compare_general_jev import load_reference_checkpoint
+
+    path = tmp_path / "reference.json"
+    saved = {
+        "schema_version": 1,
+        "signature": "frozen",
+        "records": [{"answer": {"noul": 0.1}, "model": "test", "cost_usd": 0.001}],
+    }
+    path.write_text(json.dumps(saved), encoding="utf-8")
+    with pytest.raises(FileExistsError, match="--resume"):
+        load_reference_checkpoint(path, "frozen", resume=False)
+    with pytest.raises(ValueError, match="does not match"):
+        load_reference_checkpoint(path, "changed", resume=True)
+    assert len(load_reference_checkpoint(path, "frozen", resume=True)) == 1
+    for cost in (-1, True, float("nan")):
+        saved["records"][0]["cost_usd"] = cost
+        path.write_text(json.dumps(saved), encoding="utf-8")
+        with pytest.raises(ValueError, match="does not match"):
+            load_reference_checkpoint(path, "frozen", resume=True)
+
+
 def test_comparison_verifies_artifact_before_credentials_or_billed_calls(tmp_path, monkeypatch):
     from scripts import compare_general_jev as comparison
 
