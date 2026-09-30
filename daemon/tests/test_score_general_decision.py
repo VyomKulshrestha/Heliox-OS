@@ -126,6 +126,17 @@ def test_joint_openjev_artifact_requires_pinned_source(tmp_path: Path) -> None:
         verify_artifact(tmp_path, report_path)
 
 
+@pytest.mark.parametrize("microbatch_size", [0, -1, True, "1"])
+def test_artifact_rejects_invalid_candidate_microbatch(tmp_path: Path, microbatch_size) -> None:
+    report_path = tmp_path / "report.json"
+    report_path.write_text(
+        json.dumps({"model": MODEL, "revision": REVISION, "candidate_microbatch_size": microbatch_size}),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="microbatch size"):
+        verify_artifact(tmp_path, report_path)
+
+
 def test_scope_transfer_payload_contains_only_request_and_action() -> None:
     payload = case_payload(CASES[0])
     assert payload["kind"] == "noul"

@@ -61,6 +61,9 @@ def verify_artifact(output_dir: Path, report_path: Path) -> tuple[dict, Path]:
     identity = report.get("model"), report.get("revision")
     if identity not in {(MODEL, REVISION), (OPENJEV_BASE_MODEL, OPENJEV_BASE_REVISION)}:
         raise ValueError("Research report does not match the pinned base model")
+    microbatch_size = report.get("candidate_microbatch_size", 2)
+    if type(microbatch_size) is not int or microbatch_size < 1:
+        raise ValueError("Candidate microbatch size must be a positive integer")
     if identity == (OPENJEV_BASE_MODEL, OPENJEV_BASE_REVISION):
         from scripts.train_world_scope_qlora import (
             OPENJEV_ADAPTER_SHA256,
@@ -179,7 +182,12 @@ def score_requests(
             "execution_authority": False,
             "model": model_name,
             "revision": model_revision,
-            "answer": format_answer(row["kind"], row["options"], score_row(backbone, head, item), temperature),
+            "answer": format_answer(
+                row["kind"],
+                row["options"],
+                score_row(backbone, head, item, candidate_microbatch_size=report.get("candidate_microbatch_size", 2)),
+                temperature,
+            ),
         }
         predictions.append(prediction)
         if on_prediction is not None:

@@ -1,5 +1,4 @@
 """Local, non-authoritative typed decisions for research and inspection."""
-
 from __future__ import annotations
 
 import hashlib
@@ -35,6 +34,7 @@ def _candidate_microbatch_size(max_prompt_tokens: int, configured_max: int) -> i
     if max_prompt_tokens > 512:
         return min(configured_max, 4)
     return configured_max
+
 
 # Only base checkpoints with a reviewed, local-only loading path are supported.
 PINNED_BACKBONES = {
@@ -378,6 +378,10 @@ class LocalTypedDecisionModel:
             raise ValueError("Research report does not match a supported pinned backbone")
         if not re.fullmatch(r"[0-9a-f]{40}", str(revision)):
             raise ValueError("Research report contains an invalid model revision")
+        microbatch_size = report.get("candidate_microbatch_size", self._microbatch_size)
+        if type(microbatch_size) is not int or microbatch_size < 1:
+            raise ValueError("Candidate microbatch size must be a positive integer")
+        self._microbatch_size = min(self._microbatch_size, microbatch_size)
         adapter_path = self.artifact_dir / "adapter" / "adapter_model.safetensors"
         head_path = self.artifact_dir / "head.npz"
         for path, key in ((adapter_path, "adapter_sha256"), (head_path, "head_sha256")):
@@ -453,7 +457,7 @@ class LocalTypedDecisionModel:
                 device_map={"": 0},
                 attn_implementation=attention,
             )
-            backbone = PeftModel.from_pretrained(base, self.artifact_dir / "adapter", is_trainable=False)
+            backbone = PeftModel.from_pretrained(base.model, self.artifact_dir / "adapter", is_trainable=False)
         del base
         head = nn.Linear(weights.shape[1], 1, dtype=torch.float32, device="cuda")
         with torch.no_grad():
