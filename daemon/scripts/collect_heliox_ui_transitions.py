@@ -46,6 +46,12 @@ def require_free_space(path: Path) -> None:
         raise RuntimeError("At least 512 MiB of free disk space is required for collection")
 
 
+def validate_viewport(width: int, height: int) -> tuple[int, int]:
+    if not (320 <= width <= 4096 and 320 <= height <= 4096):
+        raise ValueError("Capture viewport dimensions must be between 320 and 4096 pixels")
+    return width, height
+
+
 def _features(page) -> np.ndarray:
     with Image.open(io.BytesIO(page.screenshot(animations="disabled"))) as image:
         frame = np.asarray(image.convert("RGB").resize((64, 64)).convert("L"), dtype=np.float32)
@@ -63,7 +69,7 @@ def _load_baseline(page, url: str) -> None:
 
 def _pair(page, url: str, family: int, index: int, width: int, height: int) -> list[dict]:
     page.set_viewport_size({"width": width, "height": height})
-    group = hashlib.sha256(f"heliox-ui:{family}:{index}".encode("ascii")).hexdigest()
+    group = hashlib.sha256(f"heliox-ui:{family}:{index}:{width}:{height}".encode("ascii")).hexdigest()
     split = "train" if family < 4 else "validation" if family == 4 else "eval"
     rows = []
     for title in TAB_TITLES:
@@ -99,11 +105,15 @@ def main() -> None:
                         help="Browser color scheme for fit and validation viewport families")
     parser.add_argument("--eval-dark", action="store_true",
                         help="Use dark browser color scheme for the evaluation family")
+    parser.add_argument("--eval-viewport", nargs=2, type=int, metavar=("WIDTH", "HEIGHT"),
+                        help="Reserve a different viewport for a frozen-model transfer evaluation")
     parser.add_argument("--features", type=Path, default=state / "heliox_ui_transitions_v1.npz")
     parser.add_argument("--report", type=Path, default=state / "heliox_ui_transitions_v1.json")
     args = parser.parse_args()
     try:
         validate_url(args.url)
+        if args.eval_viewport is not None:
+            validate_viewport(*args.eval_viewport)
     except ValueError as exc:
         parser.error(str(exc))
     if (args.samples_per_family < 2
@@ -119,6 +129,8 @@ def main() -> None:
         browser = playwright.chromium.launch(headless=True)
         try:
             for family, (base_width, base_height) in enumerate(VIEWPORTS):
+                if family == 5 and args.eval_viewport is not None:
+                    base_width, base_height = args.eval_viewport
                 theme = "dark" if args.eval_dark and family == 5 else args.training_theme
                 sample_count = (args.eval_samples_per_family
                                 if family == 5 and args.eval_samples_per_family is not None
@@ -176,6 +188,7 @@ def main() -> None:
                         else "viewport_family"),
         "training_theme": args.training_theme,
         "eval_dark": args.eval_dark,
+        "eval_viewport": list(args.eval_viewport or VIEWPORTS[-1]),
         "fit_layouts": [0, 1, 2, 3], "validation_layout": 4, "eval_layout": 5,
         "rows": dict(Counter(row["split"] for row in rows)),
         "groups": {split: len({row["group"] for row in rows if row["split"] == split})

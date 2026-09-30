@@ -13,7 +13,15 @@ from scripts.collect_heliox_ui_transitions import (
     _features,
     require_free_space,
     validate_url,
+    validate_viewport,
 )
+
+
+def test_held_out_viewports_are_bounded() -> None:
+    assert validate_viewport(1680, 960) == (1680, 960)
+    for width, height in ((0, 960), (1680, 0), (5000, 960), (1680, 5000)):
+        with pytest.raises(ValueError, match="viewport dimensions"):
+            validate_viewport(width, height)
 
 
 @pytest.mark.parametrize("url", ["http://127.0.0.1:1420/", "http://localhost:5173/"])
