@@ -1,5 +1,9 @@
 # Intelligence evaluation and research map
 
+The [2026-09-30 checkpoint](INTELLIGENCE_STATUS_2026-09-30.md) records current
+collaboration/learning fixes, live Jev reference calls and failed frozen visual
+transfer tests. The generalized-intelligence goal remains unachieved.
+
 Heliox treats neural intent, MCP, multi-agent execution, and world-model
 prediction as four different control surfaces. A strong result in one is not
 evidence for another. The release boundary is deterministic policy, visible
