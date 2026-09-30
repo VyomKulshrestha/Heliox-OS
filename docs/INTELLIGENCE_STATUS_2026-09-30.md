@@ -1,8 +1,8 @@
 # Heliox intelligence: current evidence
 
 The generalized Jev-like intelligence goal is **not achieved**. The runtime
-repairs below are tested, but neither new visual candidate qualifies for
-runtime promotion.
+repairs below are tested, but neither new visual candidate nor the clean-base
+2B decision candidate qualifies for runtime promotion.
 
 ## Runtime repairs
 
@@ -50,7 +50,7 @@ The four visual experiment directories total 324,184 bytes. No screenshots or
 private desktop recordings were persisted by these isolated browser probes;
 no manual recorder session was activated.
 
-## Live Jev comparison
+## Earlier live Jev comparison
 
 OpenRouter served `typesafe/jev-1.13-20260917`. This checkpoint made 13 new
 successful calls: one read-only authorization smoke case and 12 licensed
@@ -79,6 +79,70 @@ and a fresh report path. That opt-in does not establish output-training or
 redistribution permission; historical teacher-output training CLIs remain
 disabled.
 
+## Clean-base 2B candidate
+
+The [frozen protocol](../daemon/benchmarks/clean_2b_protocol_20260930.json)
+trained rank-8 QLoRA and a scalar head from the pinned Qwen3.5-2B base, without
+released Open-Jev adapter weights. Only license-verified CC0 rows passed the
+source filter; unverified upstream rights and TypeSafe-source rows were excluded.
+Fitting used 256 rows, calibration 48, test 64, and source-held-out evaluation
+96. Snake was excluded from fitting/calibration, while painting and VizDoom
+were seen sources. No selected row exceeded the 512-token limit.
+
+Training and held-out evaluation completed, and both exported artifact hashes
+verified. The [aggregate report](../daemon/benchmarks/clean_2b_20260930.json)
+records these results against the separately calibrated base:
+
+| Measure | Calibrated base | Trained candidate |
+| --- | ---: | ---: |
+| Test top-1 accuracy, 64 rows | 31.25% | 46.875% |
+| Test mean Brier score, lower is better | 0.184576 | 0.217688 |
+| Test ordinal mean rank error, 21 rows | 1.131174 | 0.954872 |
+| Held-source top-1 accuracy, 96 rows | 67.708% | 67.708% |
+| Held-source choice accuracy, 48 rows | 47.917% | 47.917% |
+| Held-source Noul balanced accuracy, 48 rows | 50% | 50% |
+| Held-source mean NLL, lower is better | 0.794206 | 1.093230 |
+
+The test gain is real but narrow. Both held-source Noul models predicted no
+for all 48 rows: 42 correct negatives and 6 missed positives. Ordinary 87.5%
+Noul accuracy therefore does not show discrimination. Training also worsened
+held-source choice confidence and overall NLL/Brier score. This candidate is
+not a generalized desktop model and remains inactive.
+
+The PyTorch peak allocation was 3.503 GiB. The recorded training/evaluation
+elapsed time was 3,136 seconds, excluding initial model loading and baseline
+work. Windows Torch 2.14/CUDA 13 failed during backward recomputation after
+64 saved training rows. The exact optimizer/adapter checkpoint resumed under
+the existing WSL Torch 2.8/CUDA 12.8 environment and completed the remaining
+rows without changing the frozen data or hyperparameters. This mixed-runtime
+recovery is not a bitwise single-platform replication. After export, the owned
+training process stalled on a Linux swap-page fault; it was terminated only
+after verifying the report and artifact hashes. Docker, Codex, and unrelated
+Linux workloads were not stopped, and no WSL restart was performed.
+
+The daemon loader now attaches both supported adapters to their decoder model
+and respects the frozen candidate-microbatch limit. The comparison can exercise
+that actual loader with `--runtime-scorer`. Billed reference responses are saved
+atomically with a signature binding the cases, adapter, head and requested
+reference model; `--resume` reuses them without duplicate calls. A reference-only
+collection explicitly does not report a completed local comparison.
+
+Twelve new authored desktop references all fit the limit (maximum 181 tokens).
+The 12 actual Jev calls cost $0.000189 and served
+`typesafe/jev-1.13-20260917`. Jev matched all 6 Noul and 4 choice labels; its
+mean ordinal error on 2 score cases was 0.01. These are small authored cases,
+not real task trajectories or a confirmatory holdout. The responses were not
+used for fitting or calibration. Together with the earlier checkpoint's 13
+calls, this date's two checkpoints contain 25 successful new calls costing
+$0.000459858; this is not a historical cumulative total.
+
+The complete reference cache is ignored at
+`daemon/benchmarks/.bench-state/clean_2b_desktop_jev_20260930.partial.json`,
+SHA-256 `59c3d4acca5594f18020a682ec5dc81cc593f9ad7802d947a4780f77555bbe94`.
+Local desktop runtime scoring is still pending while WSL startup is unreliable
+and host RAM is constrained. No completed local-vs-Jev desktop result or parity
+claim follows from this reference-only checkpoint.
+
 ## Verification environment and remaining work
 
 Use `uv run python -m pytest`, not a bare `uv run pytest`: the latter initially
@@ -92,6 +156,12 @@ Ruff lint, formatting and Git whitespace checks passed. The formatting-only
 commit was checked for unchanged Python ASTs. This is local Windows evidence,
 not a full-suite result or a hosted CI run. The owned temporary UI capture
 server was stopped after collection; no Docker or Codex processes were stopped.
+
+The subsequent clean-base/runtime/comparison verification passed 231 tests
+with one Torch-module skip in the lightweight suite. The three Torch retry tests
+passed separately with `HELIOX_TEST_REAL_TORCH=1`. Repository-wide Ruff lint and
+Git whitespace checks passed. These remain targeted local results, not a full
+repository test run or hosted CI.
 
 Broad decisions, unseen-application transitions and reliable multi-step task
 completion remain unproven. The next useful corpus is consented,
