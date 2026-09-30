@@ -42,8 +42,11 @@ def public_payload(row: dict) -> dict:
             "question": row["question"], "options": row["options"]}
 
 
-def query_jev(client: httpx.Client, key: str, row: dict) -> tuple[dict, float, str]:
-    block_jev_output_use()
+def query_jev(
+    client: httpx.Client, key: str, row: dict, *, acknowledge_provider_terms: bool = False,
+) -> tuple[dict, float, str]:
+    if acknowledge_provider_terms is not True:
+        block_jev_output_use()
     for attempt in range(3):
         try:
             response = client.post(ENDPOINT, headers={"Authorization": f"Bearer {key}"},
@@ -103,8 +106,6 @@ def compare(rows: list[dict], local: list[dict], jev: list[dict]) -> dict:
 
 
 def main() -> None:
-    block_jev_output_use()
-
     root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--env-file", type=Path, default=root.parent / ".env")
@@ -112,10 +113,16 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=20260926)
     parser.add_argument("--output-dir", type=Path, default=root / "benchmarks/.bench-state/qwen_general_v2")
     parser.add_argument("--model-report", type=Path, default=root / "benchmarks/qwen_general_probe_v2.json")
-    parser.add_argument("--report", type=Path, default=root / "benchmarks/qwen_general_jev_comparison_v2.json")
+    parser.add_argument("--report", type=Path, required=True, help="Fresh local evaluation report path")
+    parser.add_argument("--acknowledge-provider-terms", action="store_true",
+                        help="Explicitly opt into billed provider evaluation, not output-based training rights")
     args = parser.parse_args()
+    if not args.acknowledge_provider_terms:
+        block_jev_output_use()
     if not 1 <= args.limit <= 128:
         parser.error("--limit must be 1-128")
+    if args.report.exists():
+        parser.error("Use a fresh report path; prior evaluations are never overwritten")
     rows, manifest = load_split("ood", args.limit * 3, args.seed)
     rows = [row for row in rows if row["kind"] != "score" or len(row["options"]) <= 10][:args.limit]
     if len(rows) != args.limit:
@@ -125,14 +132,14 @@ def main() -> None:
     with httpx.Client(timeout=45.0, trust_env=True) as client:
         # One real request verifies routing, credentials, and model availability
         # before a full local GPU pass. Responses remain evaluation-only.
-        answer, charge, version = query_jev(client, key, rows[0])
+        answer, charge, version = query_jev(client, key, rows[0], acknowledge_provider_terms=True)
         jev.append(answer)
         cost += charge
         versions.add(version)
         print(f"Evaluated 1/{len(rows)} public {rows[0]['kind']} decisions", flush=True)
         local = score_requests([public_payload(row) for row in rows], args.output_dir, args.model_report)
         for index, row in enumerate(rows[1:], 2):
-            answer, charge, version = query_jev(client, key, row)
+            answer, charge, version = query_jev(client, key, row, acknowledge_provider_terms=True)
             jev.append(answer)
             cost += charge
             versions.add(version)
@@ -143,9 +150,13 @@ def main() -> None:
                   "\n".join(row["id"] for row in rows).encode()).hexdigest(),
               "local_adapter_sha256": json.loads(args.model_report.read_text(encoding="utf-8"))["adapter_sha256"],
               "jev_models": sorted(versions), "calls": len(rows), "cost_usd": cost,
+              "provider_evaluation_explicitly_enabled": True,
+              "teacher_outputs_used_for_training": False,
               "uniform_baseline": uniform_baseline(rows)["by_kind"],
               "comparison": compare(rows, local, jev),
-              "limitation": "Small public synthetic OOD sample; no training permission or desktop-safety proof."}
+              "limitation": "Small public synthetic OOD sample, possibly inspected in earlier studies; "
+                            "not a confirmatory holdout, training permission or desktop-safety proof."}
+    args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report["comparison"], indent=2))
 
