@@ -330,13 +330,49 @@ def fit_temperature(logits: list[np.ndarray], rows: list[dict]) -> float:
     return float(result.x)
 
 
+def general_group_weights(general_items: list[dict], weighting: str) -> list[float]:
+    """Balance repeated public examples without changing source/kind loss mass."""
+    if weighting not in {"none", "inverse_sqrt", "inverse"}:
+        raise ValueError("Unknown general group weighting")
+    if weighting == "none":
+        return [1.0] * len(general_items)
+
+    buckets: dict[tuple[str, str], list[int]] = {}
+    group_keys: list[tuple[str, str, tuple[str, str | int]]] = []
+    counts: dict[tuple[str, str, tuple[str, str | int]], int] = {}
+    for index, item in enumerate(general_items):
+        row = item["row"]
+        source = row.get("source")
+        kind = row.get("kind")
+        if not isinstance(source, str) or not source or not isinstance(kind, str) or not kind:
+            raise ValueError("General training rows require source and kind")
+        group_id = row.get("group_id")
+        group = ("group", group_id) if isinstance(group_id, str) and group_id else ("row", index)
+        group_key = (source, kind, group)
+        group_keys.append(group_key)
+        counts[group_key] = counts.get(group_key, 0) + 1
+        buckets.setdefault((source, kind), []).append(index)
+
+    weights = [0.0] * len(general_items)
+    for indices in buckets.values():
+        raw = [1.0 / (counts[group_keys[index]] ** (0.5 if weighting == "inverse_sqrt" else 1.0))
+               for index in indices]
+        scale = len(indices) / sum(raw)
+        for index, weight in zip(indices, raw, strict=True):
+            weights[index] = weight * scale
+    return weights
+
+
 def training_row_weights(general_items: list[dict], scope_items: list[dict],
-                         *, group_weighting: str, scope_row_weight: float) -> list[float] | None:
-    if not scope_items or (group_weighting == "none" and scope_row_weight == 1.0):
+                         *, group_weighting: str, scope_row_weight: float,
+                         general_group_weighting: str = "none") -> list[float] | None:
+    if (general_group_weighting == "none"
+            and (not scope_items or (group_weighting == "none" and scope_row_weight == 1.0))):
         return None
+    general_weights = general_group_weights(general_items, general_group_weighting)
     scope_weights = (scope_group_weights([item["row"] for item in scope_items])
                      if group_weighting == "inverse_sqrt" else [1.0] * len(scope_items))
-    return [1.0] * len(general_items) + [weight * scope_row_weight for weight in scope_weights]
+    return general_weights + [weight * scope_row_weight for weight in scope_weights]
 
 
 def split_id_group_hash(items: list[dict]) -> str:
@@ -382,6 +418,8 @@ def checkpoint_signature(args: argparse.Namespace, encoded: dict[str, list[dict]
         )
 
         identity["initial_openjev"] = [OPENJEV_REVISION, OPENJEV_ADAPTER_SHA256, OPENJEV_HEAD_SHA256]
+    if getattr(args, "general_group_weighting", "none") != "none":
+        identity["general_group_weighting"] = args.general_group_weighting
     if getattr(args, "scope_group_weighting", "none") != "none":
         identity["scope_group_weighting"] = args.scope_group_weighting
     if getattr(args, "scope_row_weight", 1.0) != 1.0:
@@ -596,7 +634,8 @@ def run(args: argparse.Namespace) -> dict:
                       "overlong": overlong}), flush=True)
     row_weights = training_row_weights(
         encoded["train"], encoded["scope_train"] if scope_manifest else [],
-        group_weighting=args.scope_group_weighting, scope_row_weight=args.scope_row_weight)
+        group_weighting=args.scope_group_weighting, scope_row_weight=args.scope_row_weight,
+        general_group_weighting=args.general_group_weighting)
     signature = checkpoint_signature(args, encoded, manifests, scope_manifest,
                                      row_weights=row_weights)
 
@@ -725,6 +764,7 @@ def run(args: argparse.Namespace) -> dict:
         "learning_rates": {"adapter": args.lr, "head": args.head_lr},
         "brier_weight": args.brier_weight, "ordinal_weight": args.ordinal_weight,
         "ordinal_loss": ORDINAL_LOSS_VERSION,
+        "general_group_weighting": args.general_group_weighting,
         "scope_group_weighting": args.scope_group_weighting,
         "scope_row_weight": args.scope_row_weight,
         "row_weights_sha256": (None if row_weights is None else hashlib.sha256(
@@ -816,6 +856,9 @@ def main() -> None:
                         help="Include up to this many calls from completed earlier trajectory steps")
     parser.add_argument("--scope-group-weighting", choices=("none", "inverse_sqrt"), default="none",
                         help="Optional label-normalized inverse-sqrt trajectory weighting")
+    parser.add_argument("--general-group-weighting", choices=("none", "inverse_sqrt", "inverse"),
+                        default="none",
+                        help="Experimental within-source/kind episode balancing; baseline is unweighted")
     parser.add_argument("--scope-row-weight", type=float, default=1.0,
                         help="Relative training loss weight for each action-label row")
     parser.add_argument("--scope-split-strategy", choices=SPLIT_STRATEGIES,

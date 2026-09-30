@@ -36,6 +36,7 @@ from benchmarks.general_decision import (
 from benchmarks.scopejudge_general import scope_group_weights
 from scripts.train_general_decision import (
     checkpoint_signature,
+    general_group_weights,
     require_free_host_ram,
     split_id_group_hash,
     training_row_weights,
@@ -380,7 +381,7 @@ def test_checkpoint_signature_binds_exact_tokenized_inputs() -> None:
                               accumulation=4, lr=2e-5, head_lr=5e-5,
                               brier_weight=0.1, ordinal_weight=0.0,
                               prompt_style="candidate_v1", source_holdout_fraction=0.2,
-                              source_holdout_seed=3)
+                              source_holdout_seed=3, general_group_weighting="none")
     encoded = {"train": [{"row": row(), "sequences": [[1, 2, 3]]}]}
     first = checkpoint_signature(args, encoded, {}, None)
     assert first == checkpoint_signature(args, encoded, {}, None)
@@ -415,6 +416,12 @@ def test_checkpoint_signature_binds_exact_tokenized_inputs() -> None:
     weighted = checkpoint_signature(args, encoded, {}, None, [1.0, 0.25])
     args.scope_row_weight = 0.25
     assert weighted != checkpoint_signature(args, encoded, {}, None, [1.0, 0.25])
+    args.general_group_weighting = "inverse_sqrt"
+    assert first != checkpoint_signature(args, encoded, {}, None)
+    args.general_group_weighting = "inverse"
+    assert checkpoint_signature(args, encoded, {}, None) != checkpoint_signature(
+        argparse.Namespace(**{**vars(args), "general_group_weighting": "inverse_sqrt"}),
+        encoded, {}, None)
 
 
 def test_checkpoint_signature_binds_ordinal_loss_version(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -448,6 +455,57 @@ def test_scope_loss_weight_only_scales_action_rows() -> None:
     assert training_row_weights(general, scope, group_weighting="none", scope_row_weight=0.25) == [
         1.0, 1.0, 0.25, 0.25]
     assert training_row_weights(general, [], group_weighting="none", scope_row_weight=0.25) is None
+
+
+def test_general_group_weighting_preserves_source_kind_loss_mass() -> None:
+    def item(group_id: str, source: str = "source", kind: str = "choice") -> dict:
+        return {"row": {"group_id": group_id, "source": source, "kind": kind}}
+
+    rows = [item("episode-a") for _ in range(4)] + [item("episode-b")]
+    rows += [item("episode-a", source="other-source")]
+    rows += [item("episode-c", kind="noul") for _ in range(2)]
+    weights = general_group_weights(rows, "inverse_sqrt")
+
+    assert sum(weights[:5]) == pytest.approx(5.0)
+    assert sum(weights[5:6]) == pytest.approx(1.0)
+    assert sum(weights[6:]) == pytest.approx(2.0)
+    assert weights[0] == pytest.approx(weights[3])
+    assert weights[0] < weights[4]
+
+
+def test_general_inverse_group_weighting_equalizes_episode_mass() -> None:
+    rows = [{"row": {"group_id": "repeated", "source": "source", "kind": "choice"}}
+            for _ in range(3)]
+    rows.append({"row": {"group_id": "single", "source": "source", "kind": "choice"}})
+
+    weights = general_group_weights(rows, "inverse")
+
+    assert sum(weights[:3]) == pytest.approx(weights[3])
+    assert sum(weights) == pytest.approx(len(rows))
+
+
+def test_general_group_weighting_keeps_missing_ids_row_unique() -> None:
+    rows = [{"row": {"source": "source", "kind": "choice"}} for _ in range(3)]
+    assert general_group_weights(rows, "inverse") == pytest.approx([1.0, 1.0, 1.0])
+    assert general_group_weights(rows, "none") == [1.0, 1.0, 1.0]
+
+
+def test_training_row_weights_applies_general_episode_ablation() -> None:
+    general = [{"row": {"group_id": "repeated", "source": "source", "kind": "choice"}}
+               for _ in range(3)]
+    general.append({"row": {"group_id": "single", "source": "source", "kind": "choice"}})
+
+    weights = training_row_weights(general, [], group_weighting="none", scope_row_weight=1.0,
+                                   general_group_weighting="inverse")
+
+    assert weights is not None
+    assert sum(weights[:3]) == pytest.approx(weights[3])
+    assert sum(weights) == pytest.approx(len(general))
+
+
+def test_general_group_weighting_rejects_unknown_mode() -> None:
+    with pytest.raises(ValueError, match="Unknown general group weighting"):
+        general_group_weights([], "surprise")
 
 
 def test_ranked_probability_score_respects_cumulative_distance_for_any_option_count() -> None:
