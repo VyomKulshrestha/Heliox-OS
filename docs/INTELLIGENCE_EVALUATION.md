@@ -142,6 +142,14 @@ with retrieval-based adaptation). Their benchmark gains are not Heliox results.
 Heliox still needs held-out, task-family evaluation before claiming that this
 feedback improves unseen-task success.
 
+Suggestion feedback also preserves label meaning: explicit acceptance is a
+positive label, explicit dismissal is negative, and an expired/ignored card is
+counted as missing feedback rather than a negative outcome. This distinction is
+important for replaying long-running experience ledgers where most suggestions
+may receive no explicit response. The proactive relevance prior follows the same
+rule, using only acceptances and dismissals; impressions and timeouts do not
+silently push its estimate downward.
+
 ## Hybrid world model
 
 The shipped OS-impact head predicts coarse disk/process changes, not whether

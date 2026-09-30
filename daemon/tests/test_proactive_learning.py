@@ -130,7 +130,24 @@ async def test_unanswered_suggestion_expires_as_ignored_feedback(tmp_path):
 
     assert suggestion not in engine._pending_suggestions
     assert suggestion in engine._suggestion_history
-    assert engine.get_learning_status()["patterns"]["terminal_error"]["ignored"] == 1
+    pattern = engine.get_learning_status()["patterns"]["terminal_error"]
+    assert pattern["ignored"] == 1
+    assert pattern["learned_relevance"] == 0.5
+    assert engine._feedback["terminal_error"]["last_feedback"] == 0
+
+
+def test_only_explicit_feedback_changes_proactive_relevance(tmp_path):
+    engine = ProactiveSuggestionEngine(feedback_path=tmp_path / "feedback.json")
+
+    for _ in range(5):
+        engine._record_feedback("terminal_error", "shown")
+        engine._record_feedback("terminal_error", "ignored")
+    assert engine.get_learning_status()["patterns"]["terminal_error"]["learned_relevance"] == 0.5
+
+    engine._record_feedback("terminal_error", "accepted")
+    assert engine.get_learning_status()["patterns"]["terminal_error"]["learned_relevance"] == 0.667
+    engine._record_feedback("terminal_error", "dismissed")
+    assert engine.get_learning_status()["patterns"]["terminal_error"]["learned_relevance"] == 0.5
 
 
 @pytest.mark.asyncio
