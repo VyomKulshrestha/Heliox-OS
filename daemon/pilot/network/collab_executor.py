@@ -204,7 +204,12 @@ class CollabExecutor:
                 )
             return
         if not pending.future.done():
-            pending.future.set_result(results)
+            # Peer payloads reconstruct equivalent Action objects. Restore the
+            # coordinator's original action instances so parent-plan callbacks
+            # can retain stable action indices and experience identities.
+            pending.future.set_result(
+                [result.model_copy(update={"action": action}) for action, result in zip(pending.actions, results)]
+            )
         logger.info(
             "CollabExecutor: received %d result(s) from peer %s for task %s",
             len(results),

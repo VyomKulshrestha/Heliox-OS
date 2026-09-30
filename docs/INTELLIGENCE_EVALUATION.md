@@ -134,6 +134,14 @@ task, passes only the distilled lesson (not the previous task text), and labels
 model-written lessons advisory. This is retrieval-based adaptation; it does
 not update model weights or grant action authority.
 
+Collaborative execution records one lifecycle against the originating plan.
+Local batches keep the normal execution checks while suppressing duplicate
+child traces; remote results are checked against the delegated actions and
+reattached to the coordinator's original action identities before recording.
+That preserves parent-plan action indices for later verification and workflow
+replay. Peer receipts alone are not outcome labels: the independent verifier
+still determines which outcomes qualify for learning.
+
 The design follows the transferable principles in
 [LifeMem](https://arxiv.org/abs/2609.12655) (workflow-level consolidation and
 retrieval across task streams) and

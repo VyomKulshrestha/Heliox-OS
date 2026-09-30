@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 import pytest_asyncio
 
-from pilot.actions import Action, ActionPlan, ActionType, FileParams
+from pilot.actions import Action, ActionPlan, ActionResult, ActionType, FileParams, SystemInfoParams
 from pilot.agents.executor import Executor
 from pilot.agents.proactive import ProactiveSuggestionEngine
 from pilot.config import PilotConfig
@@ -21,6 +21,7 @@ from pilot.intelligence.experience import (
     experience_scope,
 )
 from pilot.intelligence.online_learning import VerifiedOnlineLearner
+from pilot.network.collab_executor import CollabExecutor
 from pilot.security.audit import AuditLogger
 from pilot.security.gateway import InvocationSource
 from pilot.security.permissions import PermissionChecker
@@ -184,6 +185,103 @@ async def test_scoped_subplans_replay_as_one_verified_parent_plan(tmp_path, ledg
     assert [event.action_id for event in candidates] == [event.action_id for event in completions]
     assert learner.status()["transitions"]["labels"] == 2
     assert learner.status()["workflow_patterns"] == 1
+
+
+@pytest.mark.asyncio
+async def test_remote_collaboration_records_original_parent_action_indices(tmp_path, ledger):
+    config = PilotConfig()
+    config.security.dry_run = False
+    executor = Executor(
+        config,
+        ActionValidator(config),
+        PermissionChecker(config),
+        AuditLogger(audit_file=tmp_path / "remote-collab-audit.jsonl"),
+    )
+    executor.set_experience_ledger(ledger)
+    learner = VerifiedOnlineLearner(tmp_path / "remote-collab-learning.json")
+    ledger.subscribe(learner.consume)
+
+    actions = [
+        Action(action_type=ActionType.SYSTEM_INFO, parameters=SystemInfoParams()),
+        Action(action_type=ActionType.SYSTEM_INFO, parameters=SystemInfoParams()),
+    ]
+    plan = ActionPlan(actions=actions, raw_input="review system status")
+    collab = None
+
+    async def send_to(peer_id, message_type, payload):
+        if message_type == "task_delegate":
+            remote_actions = [Action.model_validate(item) for item in payload["actions"]]
+            raw_results = [
+                ActionResult(action=action, success=True, output=f"remote result {index}").model_dump(mode="json")
+                for index, action in enumerate(remote_actions)
+            ]
+            asyncio.create_task(
+                collab.handle_task_result(peer_id, {"task_id": payload["task_id"], "results": raw_results})
+            )
+        return True
+
+    mesh = SimpleNamespace(
+        peer_ids=["peer-a"],
+        get_connection=lambda _peer: SimpleNamespace(connected=True, peer_capabilities=None),
+        send_to=send_to,
+    )
+    collab = CollabExecutor(mesh=mesh, local_executor=executor)
+    executor.set_collab_executor(collab)
+
+    results = await executor.execute(plan, plan_id="remote-parent")
+
+    assert [result.output for result in results] == ["remote result 0", "remote result 1"]
+    events = await ledger.list_events(plan_id="remote-parent")
+    candidates = [event for event in events if event.event_type == ExperienceEventType.CANDIDATE_ACTION]
+    starts = [event for event in events if event.event_type == ExperienceEventType.ACTION_STARTED]
+    completions = [event for event in events if event.event_type == ExperienceEventType.ACTION_COMPLETED]
+    assert [event.payload["index"] for event in candidates] == [0, 1]
+    assert [event.payload["index"] for event in starts] == [0, 1]
+    assert [event.payload["index"] for event in completions] == [0, 1]
+    assert [event.action_id for event in candidates] == [event.action_id for event in starts]
+    assert [event.action_id for event in candidates] == [event.action_id for event in completions]
+
+    await ledger.append(
+        ExperienceEventType.OUTCOME_VERIFIED,
+        plan_id="remote-parent",
+        source="verifier",
+        idempotency_key="remote-parent:verified",
+        payload={
+            "result_count": 2,
+            "verification": {"passed": True, "failed_actions": [], "independently_observed_actions": [0, 1]},
+        },
+    )
+    await ledger.drain_subscribers()
+    assert learner.status()["transitions"]["labels"] == 2
+    assert learner.status()["workflow_patterns"] == 1
+
+
+@pytest.mark.asyncio
+async def test_local_collaboration_batches_share_one_experience_trace(tmp_path, ledger):
+    config = PilotConfig()
+    config.security.dry_run = False
+    executor = Executor(
+        config,
+        ActionValidator(config),
+        PermissionChecker(config),
+        AuditLogger(audit_file=tmp_path / "local-collab-audit.jsonl"),
+    )
+    executor.set_experience_ledger(ledger)
+    action = Action(action_type=ActionType.SYSTEM_INFO, parameters=SystemInfoParams())
+    plan = ActionPlan(actions=[action], raw_input="review system status")
+    collab = CollabExecutor(mesh=SimpleNamespace(peer_ids=[]), local_executor=executor, enabled=False)
+    # Exercise the distributed ingress and its local-only fallback.
+    collab.should_distribute = lambda _plan, _batches: True
+    executor.set_collab_executor(collab)
+
+    results = await executor.execute(plan, plan_id="local-parent")
+
+    assert len(results) == 1 and results[0].success
+    events = await ledger.list_events(plan_id="local-parent")
+    assert sum(event.event_type == ExperienceEventType.PLAN_CREATED for event in events) == 1
+    assert sum(event.event_type == ExperienceEventType.CANDIDATE_ACTION for event in events) == 1
+    assert sum(event.event_type == ExperienceEventType.ACTION_STARTED for event in events) == 1
+    assert sum(event.event_type == ExperienceEventType.ACTION_COMPLETED for event in events) == 1
 
 
 @pytest.mark.asyncio

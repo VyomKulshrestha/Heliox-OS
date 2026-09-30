@@ -123,8 +123,10 @@ async def test_remote_callbacks_are_emitted_exactly_once():
     )
 
     assert results == [result]
+    assert results[0].action is action
     on_start.assert_awaited_once_with(action)
     on_complete.assert_awaited_once_with(result)
+    assert on_complete.await_args.args[0].action is action
     local.execute.assert_not_awaited()
     assert "raw_input" not in delegated_payload
 

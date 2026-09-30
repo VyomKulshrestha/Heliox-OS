@@ -591,6 +591,7 @@ class Executor:
         user_confirmed: bool = False,
         action_index_offset: int = 0,
         allow_collaboration: bool = True,
+        record_experience: bool = True,
     ) -> list[ActionResult]:
         """Acquire the shared effect lease before entering canonical execution."""
 
@@ -608,6 +609,17 @@ class Executor:
             "user_confirmed": user_confirmed,
             "action_index_offset": action_index_offset,
         }
+        if not record_experience:
+            controller_lease = getattr(self, "_controller_lease", None)
+            if controller_lease is None:
+                return await self._execute_with_desktop_lock(plan, **kwargs)
+            owner = f"{invocation_source.value}:{plan_id or uuid.uuid4()}"
+            async with controller_lease.claim(
+                owner,
+                wait=invocation_source != InvocationSource.NEURAL,
+            ):
+                return await self._execute_with_desktop_lock(plan, **kwargs)
+
         collab = getattr(self, "_collab_executor", None)
         if (
             allow_collaboration
@@ -619,7 +631,11 @@ class Executor:
         ):
             batches = self._analyze_dependencies(plan.actions)
             if collab.should_distribute(plan, batches):
-                return await collab.distribute(plan, batches, execution_options=kwargs)
+                return await self._execute_without_controller_lease(
+                    plan,
+                    collaboration=(collab, batches),
+                    **kwargs,
+                )
         controller_lease = getattr(self, "_controller_lease", None)
         if controller_lease is None:
             return await self._execute_without_controller_lease(plan, **kwargs)
@@ -645,6 +661,7 @@ class Executor:
         critic_already_reviewed: bool = False,
         user_confirmed: bool = False,
         action_index_offset: int = 0,
+        collaboration: tuple[Any, list[list[Action]]] | None = None,
     ) -> list[ActionResult]:
         """Record and execute a plan through the one canonical action ingress."""
 
@@ -802,16 +819,24 @@ class Executor:
             "user_confirmed": user_confirmed,
             "action_index_offset": action_index_offset,
         }
-        uses_desktop = any(action.action_type in self._DESKTOP_ACTION_TYPES for action in plan.actions)
-        if uses_desktop:
-            async with self._desktop_execution_lock:
-                results = await self._execute_inner(plan, **execute_kwargs)
+        if collaboration is not None:
+            collab, batches = collaboration
+            # The parent owns the trace; local batches report through these
+            # callbacks while retaining their normal execution checks.
+            execute_kwargs["record_experience"] = False
+            results = await collab.distribute(plan, batches, execution_options=execute_kwargs)
         else:
-            results = await self._execute_inner(plan, **execute_kwargs)
+            results = await self._execute_with_desktop_lock(plan, **execute_kwargs)
         for result in results:
             if id(result) not in completed_result_ids:
                 await _record_completion(result, callback_observed=False)
         return results
+
+    async def _execute_with_desktop_lock(self, plan: ActionPlan, **kwargs: Any) -> list[ActionResult]:
+        if any(action.action_type in self._DESKTOP_ACTION_TYPES for action in plan.actions):
+            async with self._desktop_execution_lock:
+                return await self._execute_inner(plan, **kwargs)
+        return await self._execute_inner(plan, **kwargs)
 
     async def _execute_inner(
         self,
