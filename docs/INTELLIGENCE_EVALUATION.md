@@ -152,6 +152,10 @@ protocol. `--source-holdout-seed` selects source folds independently from
 `--split-seed`, which fixes sampled rows within each fold. A source-heldout
 score is still a small public-data probe, not Jev
 parity or evidence that the daemon can complete real desktop tasks.
+Before importing the model or allocating CUDA state, the trainer also checks
+available host RAM (2.5 GiB by default) to avoid starting a fine-tune while the
+workstation is paging; adjust `--minimum-free-host-gib` only when the machine's
+remaining memory is understood.
 
 The first matched 4k leave-one-source-out trial found no useful transfer:
 held-out choice accuracy was below its random baseline in all three folds,

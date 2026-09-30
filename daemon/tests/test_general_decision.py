@@ -36,6 +36,7 @@ from benchmarks.general_decision import (
 from benchmarks.scopejudge_general import scope_group_weights
 from scripts.train_general_decision import (
     checkpoint_signature,
+    require_free_host_ram,
     split_id_group_hash,
     training_row_weights,
 )
@@ -47,6 +48,22 @@ def row(kind: str = "choice") -> dict:
             "options": ["no", "yes"] if kind == "noul" else ["left", "right", "wait"],
             "target": [0.0, 1.0] if kind == "noul" else [0.0, 1.0, 0.0],
             "metadata_json": json.dumps({"provenance": {"license": "CC0-1.0"}})}
+
+
+def test_gpu_training_preflight_accepts_sufficient_host_memory() -> None:
+    available = int(3.0 * 1024**3)
+    assert require_free_host_ram(available, 2.5) == available
+
+
+def test_gpu_training_preflight_rejects_low_host_memory() -> None:
+    with pytest.raises(RuntimeError, match="only 0.61 GiB is available"):
+        require_free_host_ram(int(0.61 * 1024**3), 2.5)
+
+
+@pytest.mark.parametrize(("available", "minimum"), [(-1, 2.5), (1, float("nan")), (1, 0.25)])
+def test_gpu_training_preflight_rejects_invalid_values(available: int, minimum: float) -> None:
+    with pytest.raises(ValueError, match="Host-memory preflight"):
+        require_free_host_ram(available, minimum)
 
 
 @pytest.mark.parametrize("kind,count", [("noul", 1), ("choice", 3), ("score", 3)])
