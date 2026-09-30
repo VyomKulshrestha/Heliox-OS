@@ -86,6 +86,17 @@ def public_payload(row: dict) -> dict:
     }
 
 
+def score_runtime_requests(payloads: list[dict], output_dir: Path, report_path: Path) -> list[dict]:
+    """Exercise the daemon's actual local scorer without activating daemon settings."""
+    from pilot.intelligence.typed_decision import LocalTypedDecisionModel
+
+    model = LocalTypedDecisionModel(output_dir.resolve(), report_path.resolve())
+    try:
+        return [model.score(**payload) for payload in payloads]
+    finally:
+        model.unload()
+
+
 def query_jev(
     client: httpx.Client,
     key: str,
@@ -194,6 +205,9 @@ def main() -> None:
     parser.add_argument("--cases-json", type=Path, help="Explicit local labeled corpus, used only for evaluation")
     parser.add_argument("--output-dir", type=Path, default=root / "benchmarks/.bench-state/qwen_general_v2")
     parser.add_argument("--model-report", type=Path, default=root / "benchmarks/qwen_general_probe_v2.json")
+    parser.add_argument(
+        "--runtime-scorer", action="store_true", help="Test the daemon's actual opt-in model loader and scorer"
+    )
     parser.add_argument("--report", type=Path, required=True, help="Fresh local evaluation report path")
     parser.add_argument(
         "--acknowledge-provider-terms",
@@ -224,7 +238,8 @@ def main() -> None:
         cost += charge
         versions.add(version)
         print(f"Evaluated 1/{len(rows)} public {rows[0]['kind']} decisions", flush=True)
-        local = score_requests([public_payload(row) for row in rows], args.output_dir, args.model_report)
+        scorer = score_runtime_requests if args.runtime_scorer else score_requests
+        local = scorer([public_payload(row) for row in rows], args.output_dir, args.model_report)
         for index, row in enumerate(rows[1:], 2):
             answer, charge, version = query_jev(client, key, row, acknowledge_provider_terms=True)
             jev.append(answer)
@@ -238,6 +253,8 @@ def main() -> None:
         "selection_seed": args.seed if args.cases_json is None else None,
         "selected_ids_sha256": hashlib.sha256("\n".join(row["id"] for row in rows).encode()).hexdigest(),
         "local_adapter_sha256": model_report["adapter_sha256"],
+        "local_head_sha256": model_report["head_sha256"],
+        "local_scorer": "daemon_runtime" if args.runtime_scorer else "offline_research",
         "jev_models": sorted(versions),
         "calls": len(rows),
         "cost_usd": cost,

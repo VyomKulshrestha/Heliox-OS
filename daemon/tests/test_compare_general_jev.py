@@ -12,6 +12,35 @@ from scripts import compare_general_jev as comparison
 from scripts.compare_general_jev import compare, decision_request, public_payload
 
 
+@pytest.mark.parametrize("fail", [False, True])
+def test_daemon_scorer_is_exercised_and_released_even_after_failure(monkeypatch, tmp_path, fail):
+    from pilot.intelligence import typed_decision
+
+    events = []
+
+    class FakeModel:
+        def __init__(self, output_dir, report_path):
+            assert output_dir.is_absolute() and report_path.is_absolute()
+
+        def score(self, **payload):
+            events.append(payload)
+            if fail:
+                raise RuntimeError("scoring failed")
+            return {"answer": {"yes_probability": 0.1}, "execution_authority": False}
+
+        def unload(self):
+            events.append("unload")
+
+    monkeypatch.setattr(typed_decision, "LocalTypedDecisionModel", FakeModel)
+    payload = {"state": {}, "kind": "noul", "question": "Valid?", "options": ["no", "yes"]}
+    if fail:
+        with pytest.raises(RuntimeError, match="scoring failed"):
+            comparison.score_runtime_requests([payload], tmp_path, tmp_path / "report.json")
+    else:
+        assert comparison.score_runtime_requests([payload], tmp_path, tmp_path / "report.json")[0]["answer"]["yes_probability"] == 0.1
+    assert events == [payload, "unload"]
+
+
 def row(kind: str, options: list[str], target: list[float]) -> dict:
     return {"kind": kind, "state_json": json.dumps({"scene": "public synthetic"}),
             "question": "What follows?", "options": options, "target": target}
