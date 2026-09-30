@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -354,6 +355,85 @@ def test_artifact_verification_fails_before_any_model_or_network_load(tmp_path: 
     with pytest.raises(ValueError, match="checksum mismatch"):
         model.score({}, "choice", "Choose", ["one", "two"])
     assert model._loaded is False
+
+
+@pytest.mark.parametrize("model_name", ["Qwen/Qwen3-0.6B", "Qwen/Qwen3.5-2B"])
+def test_artifact_load_attaches_adapter_to_decoder_and_preserves_batch_limit(monkeypatch, tmp_path: Path, model_name):
+    from pilot.intelligence.typed_decision import PINNED_BACKBONES
+
+    revision = PINNED_BACKBONES[model_name]
+    adapter = tmp_path / "adapter"
+    adapter.mkdir()
+    adapter_file = adapter / "adapter_model.safetensors"
+    adapter_file.write_bytes(b"mock adapter")
+    head_file = tmp_path / "head.npz"
+    np.savez(
+        head_file,
+        model_revision=revision,
+        max_length=128,
+        temperature=1.0,
+        weights=np.zeros((1, 2), dtype=np.float32),
+        bias=np.zeros(1, dtype=np.float32),
+    )
+    report_file = tmp_path / "report.json"
+    report_file.write_text(
+        json.dumps(
+            {
+                "model": model_name,
+                "revision": revision,
+                "max_length": 128,
+                "candidate_microbatch_size": 1,
+                "adapter_sha256": hashlib.sha256(adapter_file.read_bytes()).hexdigest(),
+                "head_sha256": hashlib.sha256(head_file.read_bytes()).hexdigest(),
+            }
+        ),
+        encoding="utf-8",
+    )
+    decoder = MagicMock()
+    loader = MagicMock(return_value=SimpleNamespace(model=decoder))
+    adapter_loader = MagicMock(return_value=decoder)
+    torch = MagicMock()
+    torch.cuda.is_available.return_value = True
+    torch.cuda.mem_get_info.return_value = (8 * 1024**3, 8 * 1024**3)
+    monkeypatch.setitem(sys.modules, "torch", torch)
+    monkeypatch.setitem(
+        sys.modules, "huggingface_hub", SimpleNamespace(snapshot_download=MagicMock(return_value="cache"))
+    )
+    monkeypatch.setitem(sys.modules, "peft", SimpleNamespace(PeftModel=SimpleNamespace(from_pretrained=adapter_loader)))
+    monkeypatch.setitem(
+        sys.modules,
+        "transformers",
+        SimpleNamespace(
+            AutoModelForCausalLM=SimpleNamespace(from_pretrained=loader),
+            Qwen3_5ForCausalLM=SimpleNamespace(from_pretrained=loader),
+            AutoTokenizer=SimpleNamespace(from_pretrained=MagicMock()),
+            BitsAndBytesConfig=MagicMock(),
+        ),
+    )
+    monkeypatch.setitem(sys.modules, "transformers.utils", SimpleNamespace(logging=MagicMock()))
+    model = LocalTypedDecisionModel(tmp_path, report_file)
+    model._load()
+    adapter_loader.assert_called_once_with(decoder, adapter, is_trainable=False)
+    assert model._loaded is True
+    assert model._backbone is decoder
+    assert model._microbatch_size == 1
+
+
+@pytest.mark.parametrize("microbatch_size", [0, -1, True, "1"])
+def test_runtime_rejects_invalid_batch_metadata_before_model_load(tmp_path: Path, microbatch_size):
+    report = tmp_path / "report.json"
+    report.write_text(
+        json.dumps(
+            {
+                "model": "Qwen/Qwen3-0.6B",
+                "revision": "c1899de289a04d12100db370d81485cdf75e47ca",
+                "candidate_microbatch_size": microbatch_size,
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="microbatch size"):
+        LocalTypedDecisionModel(tmp_path, report)._load()
 
 
 @pytest.mark.asyncio
