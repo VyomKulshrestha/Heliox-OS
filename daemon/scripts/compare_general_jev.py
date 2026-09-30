@@ -115,6 +115,7 @@ def query_jev(
 
 def compare(rows: list[dict], local: list[dict], jev: list[dict]) -> dict:
     by_kind: dict[str, list[dict]] = {kind: [] for kind in ("noul", "choice", "score")}
+    classification_labels = {"noul": [], "choice": []}
     for row, prediction, answer in zip(rows, local, jev, strict=True):
         kind = row["kind"]
         result = prediction["answer"]
@@ -124,6 +125,7 @@ def compare(rows: list[dict], local: list[dict], jev: list[dict]) -> dict:
             student = float(result["yes_probability"])
             if not 0 <= teacher <= 1:
                 raise ValueError("Invalid Jev Noul probability")
+            classification_labels[kind].append((int(target[1] >= 0.5), int(student >= 0.5), int(teacher >= 0.5)))
             by_kind[kind].append(
                 {
                     "agreement": int((student >= 0.5) == (teacher >= 0.5)),
@@ -139,6 +141,7 @@ def compare(rows: list[dict], local: list[dict], jev: list[dict]) -> dict:
                 raise ValueError("Jev returned an unknown choice key")
             teacher_index = keys.index(teacher_key)
             student_index = row["options"].index(result["choice"])
+            classification_labels[kind].append((int(target.argmax()), student_index, teacher_index))
             by_kind[kind].append(
                 {
                     "agreement": int(student_index == teacher_index),
@@ -159,11 +162,27 @@ def compare(rows: list[dict], local: list[dict], jev: list[dict]) -> dict:
                     "jev_gold_error": abs(teacher - gold),
                 }
             )
-    return {
+    summary = {
         kind: {"rows": len(items), **{key: float(np.mean([item[key] for item in items])) for key in items[0]}}
         for kind, items in by_kind.items()
         if items
     }
+    for kind, labels in classification_labels.items():
+        if not labels:
+            continue
+        classes = sorted({gold for gold, _, _ in labels})
+        summary[kind]["gold_label_counts"] = {
+            str(label): sum(gold == label for gold, _, _ in labels) for label in classes
+        }
+        for column, name in ((1, "local"), (2, "jev")):
+            recalls = [np.mean([row[column] == label for row in labels if row[0] == label]) for label in classes]
+            summary[kind][f"{name}_balanced_accuracy"] = (
+                None if kind == "noul" and len(classes) < 2 else float(np.mean(recalls))
+            )
+            if kind == "noul":
+                summary[kind][f"{name}_false_positives"] = sum(row[0] == 0 and row[column] == 1 for row in labels)
+                summary[kind][f"{name}_false_negatives"] = sum(row[0] == 1 and row[column] == 0 for row in labels)
+    return summary
 
 
 def main() -> None:
