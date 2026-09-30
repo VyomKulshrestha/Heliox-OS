@@ -1,6 +1,6 @@
 """Compare a frozen local adapter with Jev on licensed public OOD decisions.
 
-Evaluation only: Jev responses are aggregated, never used to fit weights or
+Evaluation only: Jev responses are audited, never used to fit weights or
 calibration. The API key is read from the environment or the requested .env.
 """
 
@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from benchmarks.general_decision import DATASET_REVISION, load_split, uniform_baseline, validate_row  # noqa: E402
 from scripts.evaluate_jev_scope import ENDPOINT, _key  # noqa: E402
 from scripts.jev_output_policy import block_jev_output_use  # noqa: E402
-from scripts.score_general_decision import score_requests  # noqa: E402
+from scripts.score_general_decision import score_requests, verify_artifact  # noqa: E402
 
 JEV_MODEL = "typesafe/jev-1.13"
 
@@ -194,6 +194,7 @@ def main() -> None:
     rows = [row for row in rows if row["kind"] != "score" or len(row["options"]) <= 10][: args.limit]
     if len(rows) != args.limit:
         raise ValueError("Not enough compatible licensed OOD decisions")
+    model_report, _ = verify_artifact(args.output_dir, args.model_report)
     key = _key(args.env_file)
     jev, cost, versions = [], 0.0, set()
     with httpx.Client(timeout=45.0, trust_env=True) as client:
@@ -217,7 +218,7 @@ def main() -> None:
         "dataset_manifest": manifest,
         "selection_seed": args.seed if args.cases_json is None else None,
         "selected_ids_sha256": hashlib.sha256("\n".join(row["id"] for row in rows).encode()).hexdigest(),
-        "local_adapter_sha256": json.loads(args.model_report.read_text(encoding="utf-8"))["adapter_sha256"],
+        "local_adapter_sha256": model_report["adapter_sha256"],
         "jev_models": sorted(versions),
         "calls": len(rows),
         "cost_usd": cost,
@@ -225,6 +226,16 @@ def main() -> None:
         "teacher_outputs_used_for_training": False,
         "uniform_baseline": uniform_baseline(rows)["by_kind"],
         "comparison": compare(rows, local, jev),
+        "case_results": [
+            {
+                "id": row["id"],
+                "kind": row["kind"],
+                "target": row["target"],
+                "local_answer": prediction["answer"],
+                "jev_answer": answer,
+            }
+            for row, prediction, answer in zip(rows, local, jev, strict=True)
+        ],
         "limitation": "Small synthetic evaluation sample, possibly inspected in earlier studies; "
         "not a confirmatory holdout, training permission or desktop-safety proof.",
     }

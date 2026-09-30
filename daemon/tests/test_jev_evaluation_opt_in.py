@@ -1,6 +1,7 @@
 """Provider comparison is an explicit, bounded evaluation, not a training unlock."""
 
 import json
+import sys
 
 import httpx
 import pytest
@@ -39,6 +40,49 @@ def test_provider_evaluation_is_disabled_by_default() -> None:
 
     with pytest.raises(SystemExit):
         query_jev(NoNetwork(), "test-key", {})
+
+
+def test_comparison_verifies_artifact_before_credentials_or_billed_calls(tmp_path, monkeypatch):
+    from scripts import compare_general_jev as comparison
+
+    corpus = tmp_path / "cases.json"
+    corpus.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "one",
+                    "state": {},
+                    "kind": "noul",
+                    "question": "Valid?",
+                    "options": ["no", "yes"],
+                    "target": [1, 0],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(comparison, "_key", lambda _path: pytest.fail("Credentials read before artifact verification"))
+    monkeypatch.setattr(comparison, "query_jev", lambda *_args, **_kwargs: pytest.fail("Paid call before verification"))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "compare_general_jev",
+            "--acknowledge-provider-terms",
+            "--limit",
+            "1",
+            "--cases-json",
+            str(corpus),
+            "--output-dir",
+            str(tmp_path / "missing-model"),
+            "--model-report",
+            str(tmp_path / "missing-model.json"),
+            "--report",
+            str(tmp_path / "comparison.json"),
+        ],
+    )
+    with pytest.raises(FileNotFoundError):
+        comparison.main()
 
 
 def test_explicit_evaluation_posts_only_the_public_decision() -> None:
