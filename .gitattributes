@@ -9,4 +9,5 @@ releases.xml text eol=lf
 
 # Capability source hashes must not depend on checkout line-ending policy.
 daemon/pilot/actions.py text eol=lf
+daemon/pilot/network/collab_executor.py text eol=lf
 daemon/pilot/plugins/**/manifest.json text eol=lf

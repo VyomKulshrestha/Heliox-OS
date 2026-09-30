@@ -36,9 +36,12 @@ def test_independence_audit_rejects_relabelled_development_screens(tmp_path) -> 
 
 def test_paired_evaluation_includes_retrieval_and_group_uncertainty() -> None:
     target = np.asarray([[1, 0], [0, 1], [1, 0], [0, 1]], dtype=np.float32)
-    partition = {"state": np.zeros_like(target), "target": target,
-                 "groups": np.asarray(["a", "a", "b", "b"]),
-                 "action": np.asarray([[1, 0], [0, 1], [1, 0], [0, 1]], dtype=np.float32)}
+    partition = {
+        "state": np.zeros_like(target),
+        "target": target,
+        "groups": np.asarray(["a", "a", "b", "b"]),
+        "action": np.asarray([[1, 0], [0, 1], [1, 0], [0, 1]], dtype=np.float32),
+    }
     result = paired_evaluation(target, target[[1, 0, 3, 2]], partition, seed=17, replicates=100)
     assert result["successor_retrieval"]["mean_group_top1_accuracy"] == 1
     assert result["successor_retrieval"]["mean_group_chance_accuracy"] == 0.5
@@ -54,26 +57,21 @@ def test_paired_action_diagnostic_counts_groups_not_rows() -> None:
     correct = target.copy()
     swapped = target.copy()
     swapped[:2] = target[1::-1]
-    result = paired_action_diagnostic(
-        correct, swapped, state, target, np.array(["a", "a", "b", "b"])
-    )
+    result = paired_action_diagnostic(correct, swapped, state, target, np.array(["a", "a", "b", "b"]))
 
     assert result["groups"] == 2
     assert result["correct_action_wins"] == 1
     assert result["ties"] == 1
     assert result["mean_weighted_mse_advantage"] > 0
     with pytest.raises(ValueError, match="exactly two"):
-        paired_action_diagnostic(correct, swapped, state, target,
-                                 np.array(["a", "a", "a", "b"]))
+        paired_action_diagnostic(correct, swapped, state, target, np.array(["a", "a", "a", "b"]))
 
 
 def test_discriminative_diagnostic_skips_pairs_without_distinct_pixels() -> None:
     target = np.array([[1, 0], [0, 1], [0, 0], [0.001, 0]], dtype=np.float32)
     correct = target.copy()
     swapped = target[[1, 0, 3, 2]]
-    result = paired_discriminative_diagnostic(
-        correct, swapped, target, np.array(["a", "a", "b", "b"])
-    )
+    result = paired_discriminative_diagnostic(correct, swapped, target, np.array(["a", "a", "b", "b"]))
     assert result["groups_with_distinct_pixels"] == 1
     assert result["correct_action_wins"] == 1
     assert result["mean_mse_advantage"] > 0
@@ -81,8 +79,11 @@ def test_discriminative_diagnostic_skips_pairs_without_distinct_pixels() -> None
 
 def test_task_masks_align_with_eval_rows(tmp_path) -> None:
     path = tmp_path / "features.npz"
-    np.savez(path, split=np.asarray(["train", "eval", "eval", "eval", "eval"]),
-             task=np.asarray(["train", "a", "a", "b", "b"]))
+    np.savez(
+        path,
+        split=np.asarray(["train", "eval", "eval", "eval", "eval"]),
+        task=np.asarray(["train", "a", "a", "b", "b"]),
+    )
     assert task_masks(path, 4)["b"].tolist() == [False, False, True, True]
     assert task_masks(path, 1, "train")["train"].tolist() == [True]
     with pytest.raises(ValueError, match="align"):

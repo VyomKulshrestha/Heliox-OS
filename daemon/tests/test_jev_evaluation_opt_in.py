@@ -20,12 +20,22 @@ def test_explicit_evaluation_posts_only_the_public_decision() -> None:
 
     def respond(request):
         requests.append(request)
-        return httpx.Response(200, json={"answers": {"decision": {"type": "noul", "noul": 0.7}},
-                                        "usage": {"cost": 0.001}, "model": "test-reference"})
+        return httpx.Response(
+            200,
+            json={
+                "answers": {"decision": {"type": "noul", "noul": 0.7}},
+                "usage": {"cost": 0.001},
+                "model": "test-reference",
+            },
+        )
 
-    row = {"kind": "noul", "state_json": '{"evidence": "public"}',
-           "question": "Is evidence available?", "options": ["no", "yes"],
-           "target": [0.1, 0.9]}
+    row = {
+        "kind": "noul",
+        "state_json": '{"evidence": "public"}',
+        "question": "Is evidence available?",
+        "options": ["no", "yes"],
+        "target": [0.1, 0.9],
+    }
     with httpx.Client(transport=httpx.MockTransport(respond)) as client:
         answer, cost, model = query_jev(client, "test-key", row, acknowledge_provider_terms=True)
     assert answer["noul"] == 0.7

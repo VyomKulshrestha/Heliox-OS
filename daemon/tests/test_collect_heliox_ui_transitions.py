@@ -20,7 +20,10 @@ from scripts.collect_heliox_ui_transitions import (
 
 def test_mixed_capture_covers_both_themes_without_changing_reserved_dark_evaluation() -> None:
     assert [capture_theme("mixed", evaluation_dark=False, index=index) for index in range(4)] == [
-        "light", "dark", "light", "dark",
+        "light",
+        "dark",
+        "light",
+        "dark",
     ]
     assert capture_theme("mixed", evaluation_dark=True, index=0) == "dark"
     assert capture_theme("dark", evaluation_dark=False, index=0) == "dark"
@@ -39,10 +42,16 @@ def test_accepts_only_local_browser_development_urls(url: str) -> None:
     assert validate_url(url) == url
 
 
-@pytest.mark.parametrize("url", [
-    "https://example.com/", "http://example.com/", "http://127.0.0.1:1420/?token=secret",
-    "http://user:pass@localhost:1420/", "file:///private/screen.html",
-])
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://example.com/",
+        "http://example.com/",
+        "http://127.0.0.1:1420/?token=secret",
+        "http://user:pass@localhost:1420/",
+        "file:///private/screen.html",
+    ],
+)
 def test_rejects_remote_or_sensitive_urls(url: str) -> None:
     with pytest.raises(ValueError):
         validate_url(url)
@@ -65,7 +74,8 @@ def test_features_are_live_model_shape_and_do_not_write_screenshots() -> None:
 
 
 def test_collection_stops_before_disk_exhaustion(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("scripts.collect_heliox_ui_transitions.shutil.disk_usage",
-                        lambda _: SimpleNamespace(free=MIN_FREE_BYTES - 1))
+    monkeypatch.setattr(
+        "scripts.collect_heliox_ui_transitions.shutil.disk_usage", lambda _: SimpleNamespace(free=MIN_FREE_BYTES - 1)
+    )
     with pytest.raises(RuntimeError, match="512 MiB"):
         require_free_space(Path("."))
