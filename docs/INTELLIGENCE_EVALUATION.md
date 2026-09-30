@@ -44,8 +44,10 @@ repeatable training recipe or evidence of a current model. Under the current
 [TypeSafe Master Customer Agreement, section 2.3(b)](https://typesafe.ai/legal/mca),
 using provider outputs to distill, imitate, or develop a similar or competing
 service requires written authorization. Until that authorization is verified,
-do not make new Jev calls or reuse those outputs for training, tuning,
-benchmark comparisons, or product development. The detailed
+historical teacher-output training and tuning entry points remain disabled.
+The bounded `compare_general_jev` evaluation CLI separately requires explicit
+`--acknowledge-provider-terms` and a fresh report path; it does not fit weights
+or calibration to provider answers or establish output-training rights. The detailed
 [historical study](JEV_SCOPE_STUDY.md) is retained for audit and is not a
 current product claim.
 
