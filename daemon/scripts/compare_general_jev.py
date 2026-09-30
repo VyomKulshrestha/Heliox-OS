@@ -17,12 +17,50 @@ import httpx
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from benchmarks.general_decision import DATASET_REVISION, load_split, uniform_baseline  # noqa: E402
+from benchmarks.general_decision import DATASET_REVISION, load_split, uniform_baseline, validate_row  # noqa: E402
 from scripts.evaluate_jev_scope import ENDPOINT, _key  # noqa: E402
 from scripts.jev_output_policy import block_jev_output_use  # noqa: E402
 from scripts.score_general_decision import score_requests  # noqa: E402
 
 JEV_MODEL = "typesafe/jev-1.13"
+
+
+def load_local_cases(path: Path) -> tuple[list[dict], dict]:
+    """Read an explicitly selected evaluation corpus; never fit from its labels."""
+    if path.stat().st_size > 1_000_000:
+        raise ValueError("Local evaluation cases must be no larger than 1 MB")
+    raw = path.read_bytes()
+    cases = json.loads(raw)
+    if not isinstance(cases, list) or not 1 <= len(cases) <= 128:
+        raise ValueError("Local evaluation requires 1-128 labeled cases")
+    rows, ids = [], set()
+    for case in cases:
+        if not isinstance(case, dict):
+            raise ValueError("Each evaluation case must be an object")
+        identifier = case.get("id")
+        if not isinstance(identifier, str) or not identifier.strip() or identifier in ids:
+            raise ValueError("Evaluation case IDs must be unique nonempty strings")
+        if "state" not in case or not isinstance(case.get("target"), list):
+            raise ValueError("Each evaluation case requires state and target")
+        row = {
+            "id": identifier,
+            "group_id": identifier,
+            "source": "local_evaluation",
+            "state_json": json.dumps(case["state"], ensure_ascii=False, allow_nan=False),
+            "kind": case.get("kind"),
+            "question": case.get("question"),
+            "options": case.get("options"),
+            "target": case["target"],
+        }
+        validate_row(row)
+        rows.append(row)
+        ids.add(identifier)
+    return rows, {
+        "source": "local_evaluation",
+        "rows": len(rows),
+        "sha256": hashlib.sha256(raw).hexdigest(),
+        "evaluation_only": True,
+    }
 
 
 def decision_request(row: dict) -> dict:
@@ -134,6 +172,7 @@ def main() -> None:
     parser.add_argument("--env-file", type=Path, default=root.parent / ".env")
     parser.add_argument("--limit", type=int, default=24)
     parser.add_argument("--seed", type=int, default=20260926)
+    parser.add_argument("--cases-json", type=Path, help="Explicit local labeled corpus, used only for evaluation")
     parser.add_argument("--output-dir", type=Path, default=root / "benchmarks/.bench-state/qwen_general_v2")
     parser.add_argument("--model-report", type=Path, default=root / "benchmarks/qwen_general_probe_v2.json")
     parser.add_argument("--report", type=Path, required=True, help="Fresh local evaluation report path")
@@ -149,7 +188,9 @@ def main() -> None:
         parser.error("--limit must be 1-128")
     if args.report.exists():
         parser.error("Use a fresh report path; prior evaluations are never overwritten")
-    rows, manifest = load_split("ood", args.limit * 3, args.seed)
+    rows, manifest = (
+        load_split("ood", args.limit * 3, args.seed) if args.cases_json is None else load_local_cases(args.cases_json)
+    )
     rows = [row for row in rows if row["kind"] != "score" or len(row["options"]) <= 10][: args.limit]
     if len(rows) != args.limit:
         raise ValueError("Not enough compatible licensed OOD decisions")
@@ -172,9 +213,9 @@ def main() -> None:
             print(f"Evaluated {index}/{len(rows)} public {row['kind']} decisions", flush=True)
     report = {
         "purpose": "evaluation_only_no_teacher_training",
-        "dataset_revision": DATASET_REVISION,
+        "dataset_revision": DATASET_REVISION if args.cases_json is None else None,
         "dataset_manifest": manifest,
-        "selection_seed": args.seed,
+        "selection_seed": args.seed if args.cases_json is None else None,
         "selected_ids_sha256": hashlib.sha256("\n".join(row["id"] for row in rows).encode()).hexdigest(),
         "local_adapter_sha256": json.loads(args.model_report.read_text(encoding="utf-8"))["adapter_sha256"],
         "jev_models": sorted(versions),
@@ -184,7 +225,7 @@ def main() -> None:
         "teacher_outputs_used_for_training": False,
         "uniform_baseline": uniform_baseline(rows)["by_kind"],
         "comparison": compare(rows, local, jev),
-        "limitation": "Small public synthetic OOD sample, possibly inspected in earlier studies; "
+        "limitation": "Small synthetic evaluation sample, possibly inspected in earlier studies; "
         "not a confirmatory holdout, training permission or desktop-safety proof.",
     }
     args.report.parent.mkdir(parents=True, exist_ok=True)

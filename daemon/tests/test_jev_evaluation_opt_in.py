@@ -1,9 +1,35 @@
 """Provider comparison is an explicit, bounded evaluation, not a training unlock."""
 
+import json
+
 import httpx
 import pytest
 
-from scripts.compare_general_jev import query_jev
+from scripts.compare_general_jev import decision_request, load_local_cases, public_payload, query_jev
+
+
+def test_local_case_labels_and_identifiers_never_enter_model_requests(tmp_path):
+    path = tmp_path / "cases.json"
+    case = {
+        "id": "hidden-id",
+        "state": {"evidence": "available"},
+        "kind": "noul",
+        "question": "Is evidence available?",
+        "options": ["no", "yes"],
+        "target": [0.0, 1.0],
+    }
+    path.write_text(json.dumps([case]), encoding="utf-8")
+    rows, manifest = load_local_cases(path)
+    assert manifest["evaluation_only"] is True and manifest["rows"] == 1
+    for request in (public_payload(rows[0]), decision_request(rows[0])):
+        assert "hidden-id" not in json.dumps(request)
+        assert "target" not in request
+    path.write_text(json.dumps([case, case]), encoding="utf-8")
+    with pytest.raises(ValueError, match="unique"):
+        load_local_cases(path)
+    path.write_text(json.dumps([{**case, "target": [0.0, 0.0]}]), encoding="utf-8")
+    with pytest.raises(ValueError, match="sum to one"):
+        load_local_cases(path)
 
 
 def test_provider_evaluation_is_disabled_by_default() -> None:
