@@ -54,6 +54,23 @@ from scripts.evaluate_qwen_instruct_scope import MODEL_REVISION as OPENJEV_BASE_
 from scripts.qwen_model_pin import MODEL, REVISION  # noqa: E402
 
 ORDINAL_LOSS_VERSION = "ranked_probability_score_v1"
+DEFAULT_MIN_FREE_HOST_RAM_GIB = 2.5
+
+
+def require_free_host_ram(available_bytes: int, minimum_gib: float) -> int:
+    """Refuse a GPU run that would likely push this workstation into paging."""
+    if (not isinstance(available_bytes, int) or isinstance(available_bytes, bool)
+            or available_bytes < 0 or not math.isfinite(minimum_gib)
+            or minimum_gib < 0.5):
+        raise ValueError("Host-memory preflight values must be finite and non-negative")
+    minimum_bytes = int(minimum_gib * 1024**3)
+    if available_bytes < minimum_bytes:
+        available_gib = available_bytes / 1024**3
+        raise RuntimeError(
+            f"Training needs at least {minimum_gib:.1f} GiB available system RAM; "
+            f"only {available_gib:.2f} GiB is available. Free memory and retry."
+        )
+    return available_bytes
 
 
 def encode_rows(tokenizer, rows: list[dict], max_length: int,
@@ -413,6 +430,12 @@ def load_checkpoint(path: Path, backbone, head, optimizer, *, signature: str,
 
 
 def run(args: argparse.Namespace) -> dict:
+    import psutil
+
+    available_host_ram = require_free_host_ram(
+        psutil.virtual_memory().available,
+        getattr(args, "minimum_free_host_gib", DEFAULT_MIN_FREE_HOST_RAM_GIB),
+    )
     if args.initial_openjev:
         from scripts.openjev_training_runtime import require_training_runtime
 
@@ -671,6 +694,10 @@ def run(args: argparse.Namespace) -> dict:
             "HF_HUB_OFFLINE", "CUDA_LAUNCH_BLOCKING", "PYTORCH_NO_CUDA_MEMORY_CACHING")},
         "dataset": DATASET, "dataset_revision": DATASET_REVISION, "dataset_config": DATASET_CONFIG,
         "training_source_policy": TRAINING_SOURCE_POLICY,
+        "host_memory_preflight": {
+            "available_gib_before_model_load": round(available_host_ram / 1024**3, 2),
+            "minimum_gib": getattr(args, "minimum_free_host_gib", DEFAULT_MIN_FREE_HOST_RAM_GIB),
+        },
         "source_holdout": source_holdout,
         "dataset_manifests": manifests, "seed": args.seed, "split_seed": split_seed,
         "selected_rows": limits, "evaluated_rows": {name: len(part) for name, part in encoded.items()},
@@ -753,6 +780,9 @@ def main() -> None:
     parser.add_argument("--test-rows", type=int, default=128)
     parser.add_argument("--ood-rows", type=int, default=128)
     parser.add_argument("--max-length", type=int, default=512)
+    parser.add_argument("--minimum-free-host-gib", type=float,
+                        default=DEFAULT_MIN_FREE_HOST_RAM_GIB,
+                        help="Fail before model loading if less system RAM is available")
     parser.add_argument("--lora-rank", type=int, default=8)
     parser.add_argument("--initial-openjev", action="store_true",
                         help="Warm-start a 4-bit joint decision model from pinned Open-Jev weights")
@@ -803,6 +833,9 @@ def main() -> None:
         parser.error("Row limits and progress interval must be positive")
     if not math.isfinite(args.source_holdout_fraction) or not 0 <= args.source_holdout_fraction < 1:
         parser.error("Source holdout fraction must be in [0, 1)")
+    if (not math.isfinite(args.minimum_free_host_gib)
+            or args.minimum_free_host_gib < 0.5):
+        parser.error("Minimum free host RAM must be finite and at least 0.5 GiB")
     if (args.scopejudge_path is not None or args.misactbench_path is not None) and any(value < 2 for value in (
             args.scope_train_rows, args.scope_calibration_rows, args.scope_test_rows)):
         parser.error("Action-label row limits must be at least two")
