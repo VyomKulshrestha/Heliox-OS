@@ -15,6 +15,7 @@ prediction can add caution but cannot replace a stronger rule prediction.
 
 from __future__ import annotations
 
+import math
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -23,7 +24,9 @@ from typing import TYPE_CHECKING, Any, Callable
 from pilot.intelligence.world_model import (
     HistoricalFailureRisk,
     HybridWorldModel,
+    RiskEvidence,
     UiJepaPredictor,
+    WorldPrediction,
     WorldState,
 )
 from pilot.security.risk_model import EMBEDDING_SIZE, LEARNABLE_ACTION_TYPES, RiskTransitionModel
@@ -34,6 +37,34 @@ if TYPE_CHECKING:
     from pilot.actions import ActionPlan
     from pilot.config import PilotConfig
     from pilot.intelligence.online_learning import VerifiedOnlineLearner
+
+
+def _highest_risk_evidence(prediction: WorldPrediction) -> RiskEvidence | None:
+    """Return the strongest well-formed advisory evidence from a predictor."""
+    highest: RiskEvidence | None = None
+    highest_score = -1.0
+    for evidence in prediction.risk_evidence:
+        raw_score = evidence.score
+        if isinstance(raw_score, bool) or not isinstance(raw_score, (int, float)):
+            continue
+        try:
+            score = float(raw_score)
+        except (OverflowError, TypeError, ValueError):
+            continue
+        if (
+            not math.isfinite(score)
+            or not 0.0 <= score <= 1.0
+            or not isinstance(evidence.deterministic, bool)
+            or not isinstance(evidence.source, str)
+            or not evidence.source.strip()
+            or not isinstance(evidence.reason, str)
+            or not evidence.reason.strip()
+        ):
+            continue
+        if score > highest_score:
+            highest = evidence
+            highest_score = score
+    return highest
 
 
 class RiskGate:
@@ -158,6 +189,7 @@ class RiskGate:
                 WorldState.from_os_snapshot(simulated, ui=rollout_ui, browser=rollout_browser),
                 action,
             )
+            contract_evidence = _highest_risk_evidence(contract_prediction)
             rollout_ui = dict(contract_prediction.predicted_state.ui)
             rollout_browser = dict(contract_prediction.predicted_state.browser)
             learned_or_rule = self._transition.predict(simulated, action)
@@ -196,6 +228,24 @@ class RiskGate:
 
             transition_risk = action_risk
             transition_reasons = list(action_reasons)
+
+            if contract_evidence is not None and contract_evidence.score > action_risk:
+                action_risk = contract_evidence.score
+                action_reasons = [contract_evidence.reason]
+            if contract_evidence is not None and contract_evidence.score > worst_risk:
+                worst_risk = contract_evidence.score
+                worst_reasons = [contract_evidence.reason]
+                worst_action_type = action.action_type.value
+                worst_sources = sorted({
+                    *contract_prediction.sources,
+                    *(candidate.source for candidate in candidates),
+                    contract_evidence.source,
+                })
+                worst_prediction_confidence = (
+                    None if contract_evidence.deterministic
+                    else max(0.0, min(1.0, 1.0 - contract_prediction.uncertainty))
+                )
+
             historical_risk, historical_reason = self._history.score(action.action_type)
             if historical_risk > action_risk:
                 action_risk = historical_risk

@@ -1,11 +1,19 @@
 """RiskGate consumes one fresh visual observation without exporting it."""
 
+import io
+
 import numpy as np
 
 from pilot.actions import Action, ActionPlan, ActionType, BrowserParams, EmptyParams, MouseParams
 from pilot.config import PilotConfig
-from pilot.intelligence.world_model import HybridWorldModel, UiJepaPredictor
-from pilot.security.risk_gate import RiskGate
+from pilot.intelligence.world_model import (
+    HybridWorldModel,
+    RiskEvidence,
+    UiJepaPredictor,
+    WorldPrediction,
+    WorldState,
+)
+from pilot.security.risk_gate import RiskGate, _highest_risk_evidence
 from pilot.security.risk_observation import OsSnapshot
 
 
@@ -164,3 +172,74 @@ def test_plan_rolls_browser_state_forward_without_claiming_observation(monkeypat
     assert second["expected_effects"][0]["before"] == "https://example.com/first"
     assert second["predicted_state"]["browser"]["url"] == "https://example.com/second"
     assert second["input_state_source"] == "predicted"
+
+
+def test_validated_visual_risk_reaches_gate_without_replacing_deterministic_rules(monkeypatch) -> None:
+    monkeypatch.setattr("pilot.security.risk_gate.capture_os_snapshot", _snapshot)
+    weights = io.BytesIO()
+    np.savez(
+        weights,
+        state_weight=np.eye(256, dtype=np.float32) * 2.0,
+        action_weight=np.zeros((len(ActionType), 256), dtype=np.float32),
+        action_geometry_weight=np.zeros((2, 256), dtype=np.float32),
+        action_geometry_version=np.array(UiJepaPredictor.ACTION_GEOMETRY_VERSION),
+        bias=np.zeros(256, dtype=np.float32),
+        action_types=np.array([kind.value for kind in ActionType], dtype=np.str_),
+        validated_for_gating=np.array(True),
+        training_samples=np.array(UiJepaPredictor.MIN_GATING_SAMPLES),
+        validation_error=np.array(0.1),
+    )
+    payload = weights.getvalue()
+    gate = RiskGate(weights_path="/nonexistent.npz")
+    gate.configure_ui_jepa_artifact("/unused.npz", weight_loader=lambda _path: payload)
+    gate.set_ui_observation_provider(
+        lambda: {"latent_embedding": [0.5] * 256, "screen_bounds": (0, 0, 100, 100)}
+    )
+    plan = ActionPlan(
+        actions=[Action(action_type=ActionType.MOUSE_CLICK, parameters=MouseParams(x=50, y=50))],
+        raw_input="click measured target",
+    )
+
+    risk, reasons = gate.evaluate_plan(plan, PilotConfig())
+
+    prediction = gate.last_evaluation["predictions"][0]
+    visual_evidence = next(item for item in prediction["risk_evidence"] if item["source"] == "ui_jepa")
+    assert risk > 0.9
+    assert visual_evidence["deterministic"] is False
+    assert visual_evidence["reason"] in reasons
+    assert "ui_jepa" in gate.last_evaluation["prediction_sources"]
+    assert not any(
+        item["source"] == "risk_transition"
+        and item["deterministic"]
+        and item["reason"] == visual_evidence["reason"]
+        for item in prediction["risk_evidence"]
+    )
+
+    privileged = Action(
+        action_type=ActionType.MOUSE_CLICK,
+        parameters=MouseParams(x=50, y=50),
+        requires_root=True,
+    )
+    privileged_risk, privileged_reasons = gate.evaluate_plan(ActionPlan(actions=[privileged]), PilotConfig())
+    assert privileged_risk == 1.0
+    assert "root privileges" in " ".join(privileged_reasons)
+
+
+def test_malformed_risk_evidence_is_ignored_without_overflow() -> None:
+    valid = RiskEvidence("valid", 0.4, "usable evidence")
+    prediction = WorldPrediction(
+        action_type=ActionType.MOUSE_CLICK.value,
+        predicted_state=WorldState.empty(),
+        expected_effects=(),
+        uncertainty=0.2,
+        risk_evidence=(
+            RiskEvidence("oversized", 10**1000, "malformed integer"),
+            RiskEvidence("nonfinite", float("nan"), "malformed float"),
+            RiskEvidence("boolean", True, "malformed boolean"),
+            valid,
+        ),
+        sources=(),
+        model_version="test",
+    )
+
+    assert _highest_risk_evidence(prediction) is valid
