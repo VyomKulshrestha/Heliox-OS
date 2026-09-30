@@ -100,7 +100,7 @@ async def test_suggestion_model_promotes_only_after_repeated_explicit_feedback(
 
 
 @pytest.mark.asyncio
-async def test_ignored_suggestions_are_negative_labels(tmp_path, occurred_at):
+async def test_ignored_suggestions_are_unlabeled_not_negative(tmp_path, occurred_at):
     learner = VerifiedOnlineLearner(tmp_path / "learning-state.json")
     ledger = ExperienceLedger(tmp_path / "experience.db")
     await ledger.initialize()
@@ -127,9 +127,47 @@ async def test_ignored_suggestions_are_negative_labels(tmp_path, occurred_at):
         priority="low",
         occurred_at=occurred_at,
     )
+    assert learned.state == "candidate"
+    assert learned.probability == 0.5
+    assert learned.labels == 0
+    status = learner.status()
+    assert status["suggestions"]["negative"] == 0
+    assert status["ignored_feedback"] == MINIMUM_PROMOTION_LABELS
+    await ledger.close()
+
+
+@pytest.mark.asyncio
+async def test_explicit_dismissals_remain_negative_labels(tmp_path, occurred_at):
+    learner = VerifiedOnlineLearner(tmp_path / "learning-state.json")
+    ledger = ExperienceLedger(tmp_path / "experience.db")
+    await ledger.initialize()
+    ledger.subscribe(learner.consume)
+
+    for index in range(MINIMUM_PROMOTION_LABELS):
+        await ledger.append(
+            ExperienceEventType.SUGGESTION_FEEDBACK,
+            idempotency_key=f"dismissed-{index}",
+            occurred_at=occurred_at,
+            payload={
+                "suggestion_id": f"dismissed-{index}",
+                "pattern_id": "browser_research",
+                "context_app": "chrome",
+                "priority": "low",
+                "decision": "dismissed",
+            },
+        )
+    await ledger.drain_subscribers()
+
+    learned = learner.score_suggestion(
+        pattern_id="browser_research",
+        app_name="chrome",
+        priority="low",
+        occurred_at=occurred_at,
+    )
     assert learned.state == "promoted"
     assert learned.probability < 0.42
     assert learner.status()["suggestions"]["negative"] == MINIMUM_PROMOTION_LABELS
+    assert learner.status()["ignored_feedback"] == 0
     await ledger.close()
 
 
@@ -540,17 +578,29 @@ async def test_rebuild_and_reset_checkpoint_are_deterministic(tmp_path, occurred
                 "decision": "accepted",
             },
         )
+    await ledger.append(
+        ExperienceEventType.SUGGESTION_FEEDBACK,
+        idempotency_key="ignored-feedback",
+        occurred_at=occurred_at,
+        payload={
+            "suggestion_id": "ignored-suggestion",
+            "pattern_id": "terminal_error",
+            "decision": "ignored",
+        },
+    )
 
     learner = VerifiedOnlineLearner(state_path)
     await learner.initialize(ledger)
     assert learner.status()["suggestions"]["labels"] == 3
+    assert learner.status()["ignored_feedback"] == 1
     reset = await learner.reset()
     assert reset["suggestions"]["labels"] == 0
+    assert reset["ignored_feedback"] == 0
 
     rebuilt = VerifiedOnlineLearner(state_path)
     await rebuilt.initialize(ledger)
     assert rebuilt.status()["suggestions"]["labels"] == 0
-    assert rebuilt.status()["reset_before_sequence"] == 3
+    assert rebuilt.status()["reset_before_sequence"] == 4
     await ledger.close()
 
 

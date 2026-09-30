@@ -400,7 +400,7 @@ class ProactiveSuggestionEngine:
             dismissed = int(learned.get("dismissed", 0))
             shown = int(learned.get("shown", 0))
             last_feedback = float(learned.get("last_feedback", 0.0))
-            learned_relevance = (accepted + 1) / (shown + 2)
+            learned_relevance = (accepted + 1) / (accepted + dismissed + 2)
             adaptation_state = "candidate"
             if self._online_learner is not None:
                 adaptation = self._online_learner.score_suggestion(
@@ -492,7 +492,7 @@ class ProactiveSuggestionEngine:
             break
 
     async def _expire_ignored_suggestions(self, now: float) -> None:
-        """Turn an untouched card into explicit negative evidence after a bounded wait."""
+        """Record an untouched card as missing feedback after a bounded wait."""
 
         expired = [
             suggestion
@@ -540,7 +540,8 @@ class ProactiveSuggestionEngine:
                     "dismissed": int(values.get("dismissed", 0)),
                     "ignored": int(values.get("ignored", 0)),
                     "learned_relevance": round(
-                        (int(values.get("accepted", 0)) + 1) / (int(values.get("shown", 0)) + 2),
+                        (int(values.get("accepted", 0)) + 1)
+                        / (int(values.get("accepted", 0)) + int(values.get("dismissed", 0)) + 2),
                         3,
                     ),
                 }
@@ -578,7 +579,7 @@ class ProactiveSuggestionEngine:
             },
         )
         values[event] = int(values.get(event, 0)) + 1
-        if event != "shown":
+        if event in {"accepted", "dismissed"}:
             values["last_feedback"] = time.time()
         self._save_feedback()
 
