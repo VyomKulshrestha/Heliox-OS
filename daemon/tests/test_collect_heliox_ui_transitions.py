@@ -11,10 +11,20 @@ from PIL import Image
 from scripts.collect_heliox_ui_transitions import (
     MIN_FREE_BYTES,
     _features,
+    capture_theme,
     require_free_space,
     validate_url,
     validate_viewport,
 )
+
+
+def test_mixed_capture_covers_both_themes_without_changing_reserved_dark_evaluation() -> None:
+    assert [capture_theme("mixed", evaluation_dark=False, index=index) for index in range(4)] == [
+        "light", "dark", "light", "dark",
+    ]
+    assert capture_theme("mixed", evaluation_dark=True, index=0) == "dark"
+    assert capture_theme("dark", evaluation_dark=False, index=0) == "dark"
+    assert capture_theme("light", evaluation_dark=False, index=1) == "light"
 
 
 def test_held_out_viewports_are_bounded() -> None:

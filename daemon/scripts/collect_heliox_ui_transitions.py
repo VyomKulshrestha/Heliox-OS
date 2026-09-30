@@ -52,6 +52,14 @@ def validate_viewport(width: int, height: int) -> tuple[int, int]:
     return width, height
 
 
+def capture_theme(training_theme: str, *, evaluation_dark: bool, index: int) -> str:
+    if evaluation_dark:
+        return "dark"
+    if training_theme == "mixed":
+        return "dark" if index % 2 else "light"
+    return training_theme
+
+
 def _features(page) -> np.ndarray:
     with Image.open(io.BytesIO(page.screenshot(animations="disabled"))) as image:
         frame = np.asarray(image.convert("RGB").resize((64, 64)).convert("L"), dtype=np.float32)
@@ -67,9 +75,9 @@ def _load_baseline(page, url: str) -> None:
         raise RuntimeError("Heliox did not reset to the command view")
 
 
-def _pair(page, url: str, family: int, index: int, width: int, height: int) -> list[dict]:
+def _pair(page, url: str, family: int, index: int, width: int, height: int, theme: str) -> list[dict]:
     page.set_viewport_size({"width": width, "height": height})
-    group = hashlib.sha256(f"heliox-ui:{family}:{index}:{width}:{height}".encode("ascii")).hexdigest()
+    group = hashlib.sha256(f"heliox-ui:{family}:{index}:{width}:{height}:{theme}".encode("ascii")).hexdigest()
     split = "train" if family < 4 else "validation" if family == 4 else "eval"
     rows = []
     for title in TAB_TITLES:
@@ -101,7 +109,7 @@ def main() -> None:
     parser.add_argument("--eval-samples-per-family", type=int,
                         help="Override only the held-out viewport family's sample count")
     parser.add_argument("--seed", type=int, default=20260926)
-    parser.add_argument("--training-theme", choices=("light", "dark"), default="light",
+    parser.add_argument("--training-theme", choices=("light", "dark", "mixed"), default="light",
                         help="Browser color scheme for fit and validation viewport families")
     parser.add_argument("--eval-dark", action="store_true",
                         help="Use dark browser color scheme for the evaluation family")
@@ -136,7 +144,8 @@ def main() -> None:
                                 if family == 5 and args.eval_samples_per_family is not None
                                 else args.samples_per_family)
                 context = browser.new_context(device_scale_factor=1, reduced_motion="reduce",
-                                              color_scheme=theme, service_workers="block")
+                                              color_scheme="light" if theme == "mixed" else theme,
+                                              service_workers="block")
                 try:
                     context.route("**/*", lambda route: route.continue_()
                                   if urlsplit(route.request.url).netloc == urlsplit(args.url).netloc
@@ -159,7 +168,11 @@ def main() -> None:
                         require_free_space(args.features.parent)
                         width = base_width + rng.randint(-16, 16)
                         height = base_height + rng.randint(-16, 16)
-                        rows.extend(_pair(page, args.url, family, index, width, height))
+                        sample_theme = capture_theme(
+                            args.training_theme, evaluation_dark=args.eval_dark and family == 5, index=index,
+                        )
+                        page.emulate_media(color_scheme=sample_theme)
+                        rows.extend(_pair(page, args.url, family, index, width, height, sample_theme))
                 finally:
                     context.close()
                 print(json.dumps({"viewport_family": family,
