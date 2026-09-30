@@ -157,6 +157,15 @@ available host RAM (2.5 GiB by default) to avoid starting a fine-tune while the
 workstation is paging; adjust `--minimum-free-host-gib` only when the machine's
 remaining memory is understood.
 
+The optional `--general-group-weighting inverse_sqrt` or `inverse` setting is
+an **unproven ablation** for repeated episodes within each source/decision-kind
+bucket. It reweights rows by episode frequency and renormalizes each bucket to
+its original total loss mass; the default `none` preserves the baseline. A
+weighting mode must be compared on the same frozen source-heldout folds before
+it is considered an improvement. Repeated rows remain within their existing
+group-disjoint split; weighting does not create additional independent
+episodes or increase the evidence count.
+
 The first matched 4k leave-one-source-out trial found no useful transfer:
 held-out choice accuracy was below its random baseline in all three folds,
 yes/no balanced accuracy was 50.0–54.1%, and OOD NLL was worse than uniform
