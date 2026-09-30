@@ -120,6 +120,28 @@ subset can enter CI. Anthropic's
 supports orchestrator-worker evaluation, but its results are not Heliox
 results.
 
+## Cross-task experience reuse
+
+The Reflector now stores lessons only for real outcomes with verifier evidence:
+successes require an independent postcondition for each planned action, while
+failures require a failed action or an explicit verifier-failed action. Dry
+runs, unobserved success reports, missing evidence, and contradictory
+action/verifier results are excluded. Terminal verifier failures are reflected
+as well as successes. Old reflection rows migrate as `legacy_unverified`, are
+excluded from verified statistics, and are not recalled as learning evidence.
+For a new task, Heliox ranks a bounded set of verified examples against that
+task, passes only the distilled lesson (not the previous task text), and labels
+model-written lessons advisory. This is retrieval-based adaptation; it does
+not update model weights or grant action authority.
+
+The design follows the transferable principles in
+[LifeMem](https://arxiv.org/abs/2609.12655) (workflow-level consolidation and
+retrieval across task streams) and
+[Memento](https://arxiv.org/abs/2508.16153) (outcome-labelled episodic cases
+with retrieval-based adaptation). Their benchmark gains are not Heliox results.
+Heliox still needs held-out, task-family evaluation before claiming that this
+feedback improves unseen-task success.
+
 ## Hybrid world model
 
 The shipped OS-impact head predicts coarse disk/process changes, not whether

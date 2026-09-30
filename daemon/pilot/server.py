@@ -923,7 +923,7 @@ class PilotServer:
         )
 
         # Advanced agent components
-        self._reflector = Reflector(model_router)
+        self._reflector = Reflector(model_router, memory_store=self._memory)
         await self._reflector.initialize()
         self._multi_agent = MultiAgentRouter(model_router)
         self._planner.set_multi_agent_router(self._multi_agent)
@@ -3508,6 +3508,8 @@ class PilotServer:
                         verification,
                         retry_count=attempt,
                         duration_ms=int((time.time() - _start_time) * 1000),
+                        dry_run=dry_run,
+                        session_id=chat_session_id,
                     ),
                     self._reflection_tasks,
                     "reflection",
@@ -3626,6 +3628,22 @@ class PilotServer:
         if emit:
             mem_final = await emit.phase_start("memory_update", MEMORY_STORE_STARTED)
             await emit.phase_complete("memory_update", MEMORY_STORE_COMPLETE, {"partial": True}, parent_id=mem_final)
+
+        if not dry_run and last_verification is not None and results:
+            self._spawn_post_execution_task(
+                self._reflector.reflect(
+                    user_input,
+                    plan,
+                    results,
+                    last_verification,
+                    retry_count=attempt,
+                    duration_ms=int((time.time() - _start_time) * 1000),
+                    dry_run=False,
+                    session_id=chat_session_id,
+                ),
+                self._reflection_tasks,
+                "reflection",
+            )
 
         self._spawn_post_execution_task(
             _record_memory(plan, all_results, last_verification), self._memory_record_tasks, "memory"

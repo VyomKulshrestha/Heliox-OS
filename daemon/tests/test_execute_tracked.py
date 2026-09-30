@@ -582,16 +582,27 @@ async def test_handle_execute_partial_failure_reports_execution_error_not_plan_i
             )
 
     server = _server_ready_for_handle_execute(_Executor())
+    reflections = []
+
+    class _RecordingReflector(_FakeReflector):
+        async def reflect(self, *args, **kwargs):
+            reflections.append((args, kwargs))
+
+    server._reflector = _RecordingReflector()
     server._verifier = _Verifier()
     server.MAX_RETRIES = 0
     ws = _FakeWs()
 
     result = await server._handle_execute({"input": "run the task"}, ws)
+    await asyncio.sleep(0)
 
     assert result["status"] == "partial_failure"
     assert "Process exited with code 125" in result["message"]
     assert result["message"] != result["explanation"]
     assert [method for method, _ in server.test_broadcasts].count("task_complete") == 1
+    assert len(reflections) == 1
+    assert reflections[0][0][3].passed is False
+    assert reflections[0][1]["dry_run"] is False
 
 
 @pytest.mark.asyncio
