@@ -651,6 +651,61 @@ class TestGetContext:
         assert "open browser last time" in result
 
     @pytest.mark.asyncio
+    async def test_generic_context_does_not_duplicate_verified_reflections(self, store):
+        async def fake_to_thread(fn, *args, **kwargs):
+            return {
+                "documents": [["verified lesson", "ordinary episode"]],
+                "metadatas": [[
+                    {"source": "verified_reflection"},
+                    {"source": "episode", "explanation": "ordinary result"},
+                ]],
+            }
+
+        with patch("pilot.memory.store.asyncio.to_thread", side_effect=fake_to_thread):
+            context = await store.get_context("export a report")
+
+        assert "verified lesson" not in context
+        assert "ordinary episode" in context
+
+    @pytest.mark.asyncio
+    async def test_verified_reflection_memory_upserts_and_searches_only_verified_cases(self, store):
+        async def fake_to_thread(fn, *args, **kwargs):
+            if fn == store._chroma_collection.upsert:
+                assert kwargs["metadatas"][0]["source"] == "verified_reflection"
+                assert kwargs["metadatas"][0]["outcome"] == "failed"
+                assert kwargs["ids"][0].startswith("reflection-")
+                return None
+            assert kwargs["where"] == {"source": "verified_reflection"}
+            assert kwargs["n_results"] == 3
+            return {
+                "documents": [["Check the requested file exists.", "untrusted text"]],
+                "metadatas": [[
+                    {"source": "verified_reflection", "outcome": "failed"},
+                    {"source": "ordinary_episode", "outcome": "passed"},
+                ]],
+            }
+
+        with patch("pilot.memory.store.asyncio.to_thread", side_effect=fake_to_thread):
+            stored = await store.record_verified_reflection(
+                "Check the requested file exists.",
+                outcome="failed",
+                session_id="session-1",
+                occurred_at="2026-09-30T00:00:00Z",
+            )
+            found = await store.search_verified_reflections("export a report", limit=3)
+
+        assert stored is True
+        assert found == [{"lesson": "Check the requested file exists.", "outcome": "failed"}]
+
+    @pytest.mark.asyncio
+    async def test_verified_reflection_search_handles_missing_metadata(self, store):
+        async def fake_to_thread(fn, *args, **kwargs):
+            return {"documents": [["lesson"]], "metadatas": [[None]]}
+
+        with patch("pilot.memory.store.asyncio.to_thread", side_effect=fake_to_thread):
+            assert await store.search_verified_reflections("a related task") == []
+
+    @pytest.mark.asyncio
     async def test_get_context_filters_semantic_memory_by_chat_session(self, store):
         await store.set_preference("interaction_style", "concise")
 
