@@ -1,0 +1,23 @@
+{
+  "purpose": "research_only_frozen_mixed_theme_navigation_transfer",
+  "model_report": "benchmarks/.bench-state/heliox_ui_mixed_20260930/global_rank_gpu.json",
+  "model_report_sha256": "fd6284380393f2f77694993a4f631d8412b13065445c02344ae0f4293ba9b555",
+  "weights": "benchmarks/.bench-state/heliox_ui_mixed_20260930/global_rank_gpu.pt",
+  "weights_sha256": "7b3d85e86e43913751f0ee09f45b233bf8b61bb21fb51c8b745c7d1ea8ae0c80",
+  "development_features_sha256": "45dd143f4d6a7655f8b6602e8f4cea042407ea814889ab1c8770da6bfe2e1c5c",
+  "architecture": "spatial_global",
+  "target_capture_seed": 20261005,
+  "target_eval_viewport": [1760, 990],
+  "target_eval_groups": 24,
+  "target_eval_dark": true,
+  "evaluation_split": "eval",
+  "group_bootstrap_replicates": 5000,
+  "success_criteria": [
+    "Frozen weights match their hash; no refitting or threshold selection",
+    "No exact prestate or group overlap with any development partition",
+    "Successor retrieval lift over group chance has a strictly positive lower 95 percent group-bootstrap bound",
+    "Correct-action weighted MSE beats the paired alternate with a strictly negative upper 95 percent group-bootstrap bound"
+  ],
+  "failure_handling": "Report every failed criterion without filtering target failures or revising this candidate after evaluation.",
+  "limitations": "Two fixed UI navigation alternatives only. Earlier failed dark-screen data influenced the choice to train mixed themes but was not used for fitting. This protocol uses another reserved viewport and fresh capture seed; it cannot establish arbitrary desktop success, safety or Jev parity."
+}
