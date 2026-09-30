@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import logging
 from datetime import UTC, datetime
@@ -488,6 +489,9 @@ class MemoryStore:
                         results["metadatas"][0],
                         strict=False,
                     ):
+                        meta = meta if isinstance(meta, dict) else {}
+                        if meta.get("source") == "verified_reflection":
+                            continue
                         _append_if_fits(
                             "- [legacy episode; source=semantic history] "
                             f'"{doc}" (result: {meta.get("explanation", "N/A")})'
@@ -504,6 +508,72 @@ class MemoryStore:
                     _append_if_fits(f"- [legacy preference; source=stored setting] {k}: {v}")
 
         return "\n".join(parts) if parts else ""
+
+    async def record_verified_reflection(
+        self,
+        lesson: str,
+        *,
+        outcome: str,
+        session_id: str,
+        occurred_at: str,
+    ) -> bool:
+        """Index a distilled verifier-backed lesson for semantic case retrieval."""
+        if (
+            self._chroma_collection is None
+            or not isinstance(lesson, str)
+            or not lesson.strip()
+            or outcome not in {"passed", "failed"}
+        ):
+            return False
+        memory_id = hashlib.sha256(
+            f"{session_id}\0{occurred_at}\0{outcome}\0{lesson}".encode()
+        ).hexdigest()
+        await asyncio.to_thread(
+            self._chroma_collection.upsert,
+            documents=[lesson],
+            metadatas=[{
+                "source": "verified_reflection",
+                "outcome": outcome,
+                "success": str(outcome == "passed"),
+                "session_id": session_id or "default",
+                "timestamp": occurred_at,
+            }],
+            ids=[f"reflection-{memory_id}"],
+        )
+        return True
+
+    async def search_verified_reflections(self, query: str, *, limit: int = 3) -> list[dict[str, str]]:
+        """Search only distilled, verifier-backed cases in the semantic memory index."""
+        if self._chroma_collection is None or not query.strip():
+            return []
+        bounded_limit = max(1, min(int(limit), 10))
+        try:
+            results = await asyncio.to_thread(
+                self._chroma_collection.query,
+                query_texts=[query],
+                n_results=bounded_limit,
+                where={"source": "verified_reflection"},
+            )
+        except Exception:
+            logger.debug("Verified reflection search failed", exc_info=True)
+            return []
+        documents = results.get("documents") or [[]]
+        metadatas = results.get("metadatas") or [[]]
+        documents = documents[0] if documents and isinstance(documents[0], list) else []
+        metadatas = metadatas[0] if metadatas and isinstance(metadatas[0], list) else []
+        found: list[dict[str, str]] = []
+        for document, metadata in zip(documents, metadatas, strict=False):
+            if not isinstance(document, str) or not document.strip():
+                continue
+            if not isinstance(metadata, dict):
+                continue
+            if metadata.get("source") != "verified_reflection":
+                continue
+            outcome = metadata.get("outcome", "")
+            if outcome not in {"passed", "failed"}:
+                continue
+            found.append({"lesson": document, "outcome": outcome})
+        return found
 
     async def get_history(
         self,
