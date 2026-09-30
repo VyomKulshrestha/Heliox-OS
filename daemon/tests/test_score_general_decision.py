@@ -34,25 +34,37 @@ from scripts.train_world_scope_qlora import (
 
 
 def test_prepare_request_keeps_only_declared_input_fields() -> None:
-    request = prepare_request({"state": {"cursor": [2, 4]}, "kind": "choice",
-                               "question": "Choose a safe route.",
-                               "options": ["wait", "ask", "proceed"],
-                               "target": [0, 0, 1], "source": "hidden-label"})
+    request = prepare_request(
+        {
+            "state": {"cursor": [2, 4]},
+            "kind": "choice",
+            "question": "Choose a safe route.",
+            "options": ["wait", "ask", "proceed"],
+            "target": [0, 0, 1],
+            "source": "hidden-label",
+        }
+    )
     assert set(request) == {"state_json", "kind", "question", "options"}
     assert json.loads(request["state_json"]) == {"cursor": [2, 4]}
     with pytest.raises(ValueError, match="Noul"):
         prepare_request({**request, "state": "hello", "kind": "noul"})
-    assert len(prepare_requests([{"state": "a", "kind": "noul", "question": "Valid?",
-                                  "options": ["no", "yes"]},
-                                 {"state": "b", "kind": "choice", "question": "Pick?",
-                                  "options": ["one", "two"]}])) == 2
+    assert (
+        len(
+            prepare_requests(
+                [
+                    {"state": "a", "kind": "noul", "question": "Valid?", "options": ["no", "yes"]},
+                    {"state": "b", "kind": "choice", "question": "Pick?", "options": ["one", "two"]},
+                ]
+            )
+        )
+        == 2
+    )
     with pytest.raises(ValueError, match="between 1 and 128"):
         prepare_requests([])
 
 
 def test_large_research_selection_requires_an_explicit_limit() -> None:
-    payload = {"state": "fixture", "kind": "noul", "question": "Is this true?",
-               "options": ["no", "yes"]}
+    payload = {"state": "fixture", "kind": "noul", "question": "Is this true?", "options": ["no", "yes"]}
     requests = [payload] * 129
     with pytest.raises(ValueError, match="between 1 and 128"):
         prepare_requests(requests)
@@ -68,11 +80,17 @@ def test_artifact_hashes_must_match_frozen_report(tmp_path: Path) -> None:
     head = output_dir / "head.npz"
     head.write_bytes(b"head")
     report_path = tmp_path / "report.json"
-    report_path.write_text(json.dumps({
-        "model": MODEL, "revision": REVISION,
-        "adapter_sha256": hashlib.sha256(weights.read_bytes()).hexdigest(),
-        "head_sha256": hashlib.sha256(head.read_bytes()).hexdigest(),
-    }), encoding="utf-8")
+    report_path.write_text(
+        json.dumps(
+            {
+                "model": MODEL,
+                "revision": REVISION,
+                "adapter_sha256": hashlib.sha256(weights.read_bytes()).hexdigest(),
+                "head_sha256": hashlib.sha256(head.read_bytes()).hexdigest(),
+            }
+        ),
+        encoding="utf-8",
+    )
     assert verify_artifact(output_dir, report_path)[1] == head
     head.write_bytes(b"changed")
     with pytest.raises(ValueError, match="checksum mismatch"):
@@ -86,13 +104,19 @@ def test_joint_openjev_artifact_requires_pinned_source(tmp_path: Path) -> None:
     weights.write_bytes(b"joint-adapter")
     head = tmp_path / "head.npz"
     head.write_bytes(b"joint-head")
-    report = {"model": OPENJEV_BASE_MODEL, "revision": OPENJEV_BASE_REVISION,
-              "adapter_sha256": hashlib.sha256(weights.read_bytes()).hexdigest(),
-              "head_sha256": hashlib.sha256(head.read_bytes()).hexdigest(),
-              "backbone_quantization": "NF4 double quantization",
-              "initial_checkpoint": {"repo": OPENJEV_REPO, "revision": OPENJEV_REVISION,
-                                     "adapter_sha256": OPENJEV_ADAPTER_SHA256,
-                                     "head_sha256": OPENJEV_HEAD_SHA256}}
+    report = {
+        "model": OPENJEV_BASE_MODEL,
+        "revision": OPENJEV_BASE_REVISION,
+        "adapter_sha256": hashlib.sha256(weights.read_bytes()).hexdigest(),
+        "head_sha256": hashlib.sha256(head.read_bytes()).hexdigest(),
+        "backbone_quantization": "NF4 double quantization",
+        "initial_checkpoint": {
+            "repo": OPENJEV_REPO,
+            "revision": OPENJEV_REVISION,
+            "adapter_sha256": OPENJEV_ADAPTER_SHA256,
+            "head_sha256": OPENJEV_HEAD_SHA256,
+        },
+    }
     report_path = tmp_path / "report.json"
     report_path.write_text(json.dumps(report), encoding="utf-8")
     assert verify_artifact(tmp_path, report_path)[1] == head
@@ -105,9 +129,45 @@ def test_joint_openjev_artifact_requires_pinned_source(tmp_path: Path) -> None:
 def test_scope_transfer_payload_contains_only_request_and_action() -> None:
     payload = case_payload(CASES[0])
     assert payload["kind"] == "noul"
-    assert payload["state"] == {"user_request": CASES[0].request,
-                                "proposed_action": CASES[0].action}
+    assert payload["state"] == {"user_request": CASES[0].request, "proposed_action": CASES[0].action}
     assert "in_scope" not in json.dumps(payload)
+
+
+def test_clean_2b_artifact_requires_explicit_initialization_and_source_policy(tmp_path: Path) -> None:
+    from benchmarks.general_decision import TRAINING_SOURCE_POLICY
+
+    adapter = tmp_path / "adapter"
+    adapter.mkdir()
+    (adapter / "adapter_model.safetensors").write_bytes(b"clean-adapter")
+    head = tmp_path / "head.npz"
+    head.write_bytes(b"clean-head")
+    report = {
+        "model": OPENJEV_BASE_MODEL,
+        "revision": OPENJEV_BASE_REVISION,
+        "adapter_sha256": hashlib.sha256(b"clean-adapter").hexdigest(),
+        "head_sha256": hashlib.sha256(b"clean-head").hexdigest(),
+        "backbone_quantization": "NF4 double quantization",
+        "initial_checkpoint": None,
+        "initialization": "base_yes_no_head_v1",
+        "training_source_policy": TRAINING_SOURCE_POLICY,
+    }
+    report_path = tmp_path / "report.json"
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    assert verify_artifact(tmp_path, report_path)[1] == head
+    for key in ("initial_checkpoint", "initialization", "training_source_policy"):
+        incomplete = {name: value for name, value in report.items() if name != key}
+        report_path.write_text(json.dumps(incomplete), encoding="utf-8")
+        with pytest.raises(ValueError, match="pinned warm start"):
+            verify_artifact(tmp_path, report_path)
+    report["initial_checkpoint"] = {
+        "repo": OPENJEV_REPO,
+        "revision": OPENJEV_REVISION,
+        "adapter_sha256": OPENJEV_ADAPTER_SHA256,
+        "head_sha256": OPENJEV_HEAD_SHA256,
+    }
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(ValueError, match="pinned warm start"):
+        verify_artifact(tmp_path, report_path)
 
 
 def test_cautious_scope_gate_uses_only_calibration_negatives() -> None:
@@ -116,14 +176,17 @@ def test_cautious_scope_gate_uses_only_calibration_negatives() -> None:
     threshold = cautious_threshold(probabilities, labels)
     assert threshold > 0.8
     assert classification_metrics(probabilities, labels, threshold) == {
-        "accuracy": 0.75, "false_allowances": 0, "false_warnings": 1}
+        "accuracy": 0.75,
+        "false_allowances": 0,
+        "false_warnings": 1,
+    }
     with pytest.raises(ValueError, match="out-of-scope"):
         cautious_threshold(probabilities[:2], np.asarray([True, True]))
 
 
 def test_scope_calibration_uses_pinned_scope_manifest_limits() -> None:
-    report = {"selected_rows": {"train": 256},
-              "scopejudge": {"selected_rows": {
-                  "scope_train": 512, "scope_calibration": 58, "scope_test": 755}}}
-    assert scope_limits(report) == {"scope_train": 512,
-                                    "scope_calibration": 58, "scope_test": 755}
+    report = {
+        "selected_rows": {"train": 256},
+        "scopejudge": {"selected_rows": {"scope_train": 512, "scope_calibration": 58, "scope_test": 755}},
+    }
+    assert scope_limits(report) == {"scope_train": 512, "scope_calibration": 58, "scope_test": 755}
