@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -23,6 +24,34 @@ from scripts.jev_output_policy import block_jev_output_use  # noqa: E402
 from scripts.score_general_decision import score_requests, verify_artifact  # noqa: E402
 
 JEV_MODEL = "typesafe/jev-1.13"
+
+
+def load_reference_checkpoint(path: Path, signature: str, *, resume: bool) -> list[dict]:
+    if not path.exists():
+        return []
+    if not resume:
+        raise FileExistsError("Reference checkpoint already exists; use --resume with the same cases and artifacts")
+    if path.stat().st_size > 1_000_000:
+        raise ValueError("Reference checkpoint exceeds the evaluation size limit")
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    records = saved.get("records")
+    if (
+        saved.get("schema_version") != 1
+        or saved.get("signature") != signature
+        or not isinstance(records, list)
+        or len(records) > 128
+        or any(
+            not isinstance(record, dict)
+            or not isinstance(record.get("answer"), dict)
+            or not isinstance(record.get("model"), str)
+            or type(record.get("cost_usd")) not in (int, float)
+            or not np.isfinite(record["cost_usd"])
+            or record["cost_usd"] < 0
+            for record in records
+        )
+    ):
+        raise ValueError("Reference checkpoint does not match this frozen evaluation")
+    return records
 
 
 def load_local_cases(path: Path) -> tuple[list[dict], dict]:
@@ -210,6 +239,12 @@ def main() -> None:
     )
     parser.add_argument("--report", type=Path, required=True, help="Fresh local evaluation report path")
     parser.add_argument(
+        "--resume", action="store_true", help="Reuse matching saved provider responses after interruption"
+    )
+    parser.add_argument(
+        "--cache-reference-only", action="store_true", help="Save reference responses without loading a local GPU model"
+    )
+    parser.add_argument(
         "--acknowledge-provider-terms",
         action="store_true",
         help="Explicitly opt into billed provider evaluation, not output-based training rights",
@@ -228,24 +263,48 @@ def main() -> None:
     if len(rows) != args.limit:
         raise ValueError("Not enough compatible licensed OOD decisions")
     model_report, _ = verify_artifact(args.output_dir, args.model_report)
-    key = _key(args.env_file)
-    jev, cost, versions = [], 0.0, set()
-    with httpx.Client(timeout=45.0, trust_env=True) as client:
-        # One real request verifies routing, credentials, and model availability
-        # before a full local GPU pass. Responses remain evaluation-only.
-        answer, charge, version = query_jev(client, key, rows[0], acknowledge_provider_terms=True)
-        jev.append(answer)
-        cost += charge
-        versions.add(version)
-        print(f"Evaluated 1/{len(rows)} public {rows[0]['kind']} decisions", flush=True)
-        scorer = score_runtime_requests if args.runtime_scorer else score_requests
-        local = scorer([public_payload(row) for row in rows], args.output_dir, args.model_report)
-        for index, row in enumerate(rows[1:], 2):
-            answer, charge, version = query_jev(client, key, row, acknowledge_provider_terms=True)
-            jev.append(answer)
-            cost += charge
-            versions.add(version)
-            print(f"Evaluated {index}/{len(rows)} public {row['kind']} decisions", flush=True)
+    signature = hashlib.sha256(
+        json.dumps(
+            {
+                "rows": rows,
+                "adapter": model_report["adapter_sha256"],
+                "head": model_report["head_sha256"],
+                "model": JEV_MODEL,
+            },
+            sort_keys=True,
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode()
+    ).hexdigest()
+    checkpoint = args.report.with_suffix(".partial.json")
+    records = load_reference_checkpoint(checkpoint, signature, resume=args.resume)
+    if len(records) > len(rows):
+        raise ValueError("Reference checkpoint exceeds the selected evaluation rows")
+    if len(records) < len(rows):
+        key = _key(args.env_file)
+        with httpx.Client(timeout=45.0, trust_env=True) as client:
+            for index in range(len(records), len(rows)):
+                row = rows[index]
+                answer, charge, version = query_jev(client, key, row, acknowledge_provider_terms=True)
+                records.append({"answer": answer, "cost_usd": charge, "model": version})
+                checkpoint.parent.mkdir(parents=True, exist_ok=True)
+                temporary = checkpoint.with_suffix(".tmp")
+                temporary.write_text(
+                    json.dumps({"schema_version": 1, "signature": signature, "records": records}, allow_nan=False),
+                    encoding="utf-8",
+                )
+                os.replace(temporary, checkpoint)
+                print(f"Evaluated {index + 1}/{len(rows)} reference {row['kind']} decisions", flush=True)
+    jev = [record["answer"] for record in records]
+    cost = sum(record["cost_usd"] for record in records)
+    versions = {record["model"] for record in records}
+    if args.cache_reference_only:
+        print(
+            json.dumps({"reference_calls": len(records), "cost_usd": cost, "local_model_evaluated": False}), flush=True
+        )
+        return
+    scorer = score_runtime_requests if args.runtime_scorer else score_requests
+    local = scorer([public_payload(row) for row in rows], args.output_dir, args.model_report)
     report = {
         "purpose": "evaluation_only_no_teacher_training",
         "dataset_revision": DATASET_REVISION if args.cases_json is None else None,
