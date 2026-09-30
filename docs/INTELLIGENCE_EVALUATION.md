@@ -148,7 +148,9 @@ counted as missing feedback rather than a negative outcome. This distinction is
 important for replaying long-running experience ledgers where most suggestions
 may receive no explicit response. The proactive relevance prior follows the same
 rule, using only acceptances and dismissals; impressions and timeouts do not
-silently push its estimate downward.
+silently push its estimate downward. Online labels also require a matching
+proactive `suggestion_shown` event; orphan feedback rows are counted but never
+turned into fabricated training features.
 
 ## Hybrid world model
 
