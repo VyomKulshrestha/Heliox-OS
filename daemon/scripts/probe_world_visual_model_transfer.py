@@ -14,11 +14,62 @@ import numpy as np
 
 from scripts.train_world_visual_transition import (
     build_spatial_joint_model,
+    counterfactual_successor_retrieval,
     feature_shape,
+    group_bootstrap_loss_delta,
     load_features,
     metrics,
     paired_counterfactual_permutation,
+    weighted_pixel_mse_by_row,
 )
+
+
+def audit_source_overlap(
+    source_path: Path, model_report: dict, partition: dict[str, np.ndarray],
+) -> dict[str, int | bool | str]:
+    """Pin the development archive and reject reused groups or exact prestates."""
+    digest = hashlib.sha256(source_path.read_bytes()).hexdigest()
+    if digest != model_report.get("features_sha256"):
+        raise ValueError("Source features do not match the frozen model report")
+    if model_report.get("additional_training_features_sha256"):
+        raise ValueError("Independence audit requires all training sources; merged training is unsupported")
+    with np.load(source_path, allow_pickle=False) as archive:
+        source_states = archive["state"].astype(np.float32)
+        source_groups = set(archive["group"].astype(str))
+    if source_states.ndim != 2 or source_states.shape[1:] != partition["state"].shape[1:]:
+        raise ValueError("Source and target prestates must have matching feature dimensions")
+    state_keys = {state.tobytes() for state in source_states}
+    overlap = sum(state.tobytes() in state_keys for state in partition["state"])
+    shared_groups = source_groups & set(partition["groups"])
+    if overlap or shared_groups:
+        raise ValueError(f"Target overlaps development data: {overlap} prestates, {len(shared_groups)} groups")
+    return {"verified": True, "source_features_sha256": digest,
+            "overlapping_prestates": overlap, "overlapping_groups": len(shared_groups)}
+
+
+def paired_evaluation(
+    correct: np.ndarray, swapped: np.ndarray, partition: dict[str, np.ndarray], *,
+    seed: int, replicates: int,
+) -> dict:
+    """Summarize action-specific prediction and retrieval using whole-state groups."""
+    state, target, groups = (partition[key] for key in ("state", "target", "groups"))
+    result = {
+        "paired_action_diagnostic": paired_action_diagnostic(correct, swapped, state, target, groups),
+        "paired_discriminative_diagnostic": paired_discriminative_diagnostic(correct, swapped, target, groups),
+        "observed_pair_signal": observed_pair_signal(target, groups),
+    }
+    if len(np.unique(groups)) >= 2:
+        result["successor_retrieval"] = counterfactual_successor_retrieval(
+            correct, partition, seed=seed, replicates=replicates,
+        )
+        result["paired_action_group_bootstrap"] = group_bootstrap_loss_delta(
+            weighted_pixel_mse_by_row(swapped, state, target),
+            weighted_pixel_mse_by_row(correct, state, target),
+            groups, seed=seed + 1, replicates=replicates,
+        )
+    else:
+        result["uncertainty_unavailable"] = "At least two state groups are required"
+    return result
 
 
 def task_masks(features_path: Path, expected_rows: int, split: str = "eval") -> dict[str, np.ndarray]:
@@ -100,11 +151,22 @@ def main() -> None:
     parser.add_argument("--target-features", type=Path, required=True)
     parser.add_argument("--target-report", type=Path, required=True)
     parser.add_argument("--report", type=Path, required=True)
+    parser.add_argument("--source-features", type=Path,
+                        help="Pin and compare against the complete development archive")
+    parser.add_argument("--expected-weights-sha256",
+                        help="Optional precommitted weight hash for a frozen confirmatory probe")
+    parser.add_argument("--seed", type=int, default=20260930)
+    parser.add_argument("--group-bootstrap-replicates", type=int, default=5000)
     parser.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
     parser.add_argument("--split", choices=("train", "validation", "eval"), default="eval")
     args = parser.parse_args()
     if args.report.exists():
         parser.error("Use a fresh output report path")
+    if args.group_bootstrap_replicates < 100:
+        parser.error("Use at least 100 group-bootstrap replicates")
+    weights_hash = hashlib.sha256(args.weights.read_bytes()).hexdigest()
+    if args.expected_weights_sha256 is not None and weights_hash != args.expected_weights_sha256:
+        raise ValueError("Weights do not match the frozen expected hash")
     model_report = json.loads(args.model_report.read_text(encoding="utf-8"))
     source_shape = tuple(model_report["feature_shape"])
     target_shape = feature_shape(args.target_report)
@@ -114,6 +176,9 @@ def main() -> None:
         raise ValueError("Only frozen non-private research artifacts are supported")
     rows = load_features(args.target_features, args.target_report)
     partition = rows[args.split]
+    independence = (audit_source_overlap(args.source_features, model_report, partition)
+                    if args.source_features is not None else
+                    {"verified": False, "reason": "Development source archive was not supplied"})
     channels, height, width = target_shape
     dimension = channels * height * width
 
@@ -207,7 +272,9 @@ def main() -> None:
     report = {
         "purpose": "research_only_frozen_visual_model_transfer_probe",
         "model_report_sha256": hashlib.sha256(args.model_report.read_bytes()).hexdigest(),
-        "weights_sha256": hashlib.sha256(args.weights.read_bytes()).hexdigest(),
+        "weights_sha256": weights_hash,
+        "weights_pinned_before_probe": args.expected_weights_sha256 is not None,
+        "development_independence": independence,
         "target_features_sha256": hashlib.sha256(args.target_features.read_bytes()).hexdigest(),
         "target_split": args.split,
         "target_rows": len(partition["state"]),
@@ -240,6 +307,9 @@ def main() -> None:
         "limitation": "Frozen one-step model and target archive only; no runtime promotion, safety, "
                       "general desktop transfer, or Jev parity claim. Tiny target sets are descriptive only.",
     }
+    if swapped is not None:
+        report.update(paired_evaluation(correct, swapped, partition, seed=args.seed,
+                                       replicates=args.group_bootstrap_replicates))
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report, indent=2))

@@ -1,0 +1,22 @@
+{
+  "purpose": "research_only_frozen_local_navigation_transfer",
+  "model_report": "benchmarks/.bench-state/heliox_native_ui_r1_20260930/global_rank_gpu.json",
+  "weights": "benchmarks/.bench-state/heliox_native_ui_r1_20260930/global_rank_gpu.pt",
+  "weights_sha256": "1bc6ef7e91406310c4c77ee5f78e59657e8da48c1784c0d07e87fb914b0e079d",
+  "development_features_sha256": "078e77fe6fe98ab88069219c62e3b2b4a32a3f688ed3bbf7c6590234aa9a7a6f",
+  "architecture": "spatial_global",
+  "target_capture_seed": 20261001,
+  "target_eval_viewport": [1680, 960],
+  "target_eval_groups": 24,
+  "target_eval_dark": true,
+  "evaluation_split": "eval",
+  "group_bootstrap_replicates": 5000,
+  "success_criteria": [
+    "Frozen weights match their hash; no refitting or threshold selection",
+    "No exact prestate or group overlap with any development partition",
+    "Successor retrieval lift over group chance has a strictly positive lower 95 percent group-bootstrap bound",
+    "Correct-action weighted MSE beats the paired alternate with a strictly negative upper 95 percent group-bootstrap bound"
+  ],
+  "failure_handling": "Report every failed criterion without filtering failed target captures or modifying the candidate after evaluation.",
+  "limitations": "Two fixed UI navigation alternatives in an isolated browser, not arbitrary desktop actions, safety, personalization, multi-step execution or Jev parity. Browser color scheme alone does not prove the application theme changed."
+}
