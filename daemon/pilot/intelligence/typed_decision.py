@@ -414,6 +414,11 @@ class LocalTypedDecisionModel:
         if not np.all(np.isfinite(weights)) or not np.all(np.isfinite(bias)):
             raise ValueError("Decision head contains non-finite values")
 
+        import psutil
+
+        if psutil.virtual_memory().available < int(2.5 * 1024**3):
+            raise RuntimeError("At least 2.5 GiB of available system RAM is required before local model loading")
+
         # Optional research dependencies are imported only after explicit enablement and
         # local artifact validation. Every HF lookup is cache-only; this code never downloads.
         import torch

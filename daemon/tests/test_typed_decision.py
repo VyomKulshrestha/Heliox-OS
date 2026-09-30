@@ -358,7 +358,10 @@ def test_artifact_verification_fails_before_any_model_or_network_load(tmp_path: 
 
 
 @pytest.mark.parametrize("model_name", ["Qwen/Qwen3-0.6B", "Qwen/Qwen3.5-2B"])
-def test_artifact_load_attaches_adapter_to_decoder_and_preserves_batch_limit(monkeypatch, tmp_path: Path, model_name):
+@pytest.mark.parametrize("low_host_memory", [False, True])
+def test_artifact_load_attaches_adapter_to_decoder_and_preserves_batch_limit(
+    monkeypatch, tmp_path: Path, model_name, low_host_memory
+):
     from pilot.intelligence.typed_decision import PINNED_BACKBONES
 
     revision = PINNED_BACKBONES[model_name]
@@ -411,7 +414,19 @@ def test_artifact_load_attaches_adapter_to_decoder_and_preserves_batch_limit(mon
         ),
     )
     monkeypatch.setitem(sys.modules, "transformers.utils", SimpleNamespace(logging=MagicMock()))
+    monkeypatch.setitem(
+        sys.modules,
+        "psutil",
+        SimpleNamespace(virtual_memory=lambda: SimpleNamespace(available=(1 if low_host_memory else 8) * 1024**3)),
+    )
     model = LocalTypedDecisionModel(tmp_path, report_file)
+    if low_host_memory:
+        with pytest.raises(RuntimeError, match="available system RAM"):
+            model._load()
+        loader.assert_not_called()
+        adapter_loader.assert_not_called()
+        assert model._loaded is False
+        return
     model._load()
     adapter_loader.assert_called_once_with(decoder, adapter, is_trainable=False)
     assert model._loaded is True
