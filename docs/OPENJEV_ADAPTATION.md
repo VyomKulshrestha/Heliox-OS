@@ -10,9 +10,10 @@ Status: **research only; no new decision model is enabled in Heliox**.
 > verified written authorization is recorded here. Treat every Jev-labeled
 > cache and archived comparison as quarantined: do not call, load, train from,
 > tune on, compare against, or use those outputs for product decisions. The
-> same agreement's section 2.3(f) also prohibits publishing benchmarks or
-> performance information about the Services; keep this historical record
-> local and do not push or republish it. The first-party Jev-output CLIs fail
+> live agreement checked on 2026-09-30 does not contain the previously claimed
+> benchmark-publication prohibition in section 2.3(f); that clause concerns
+> interference with the Services. Keep archived teacher-derived artifacts local
+> while their intended use and redistribution rights remain unresolved. The first-party Jev-output CLIs fail
 > closed; this banner supersedes the historical experiment narratives below.
 > This is a compliance boundary, not legal advice.
 
