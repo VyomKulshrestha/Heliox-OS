@@ -2212,6 +2212,39 @@ projection. Keep the resulting adapter as a local research candidate; do not
 describe its complete training lineage as CC0-cleared or promote it until the
 checkpoint's data provenance is resolved. A fresh run from the pinned Qwen
 base with only verified-license rows, or from consented independently
-verified Heliox outcomes, is the cleaner next training path. This does not
-change the recorded fact that the experiment made no TypeSafe Jev API calls
-and used no TypeSafe/Jev outputs.
+verified Heliox outcomes, is the cleaner next training path. The clean-base
+experiment below follows the first route, but remains an offline synthetic
+benchmark rather than a deployed Heliox model.
+
+## Clean-source Qwen decision runs (2026-09-30)
+
+To avoid the unresolved provenance of the Open-Jev warm-start, three adapters
+were trained from the pinned `Qwen/Qwen3-0.6B` base using only rows accepted by
+Heliox's clean-source filter at dataset revision
+`c67699e13d0ae25e35b77165a4b6b079bedc8aba`. The fixed group/source split was
+512 training, 96 calibration, 128 test, and 128 source-held-out OOD rows;
+training seeds were 11, 29, and 47. No TypeSafe Jev service calls or outputs,
+Open-Jev checkpoint weights, private task data, or screen recordings were
+used. CUDA peak memory was 3.82 GiB per run. Reports and weights remain in
+ignored local benchmark state.
+
+| Source-held-out OOD metric (128 rows) | Qwen base, mean | Fine-tuned, three-seed mean | Per-seed fine-tuned range |
+| --- | ---: | ---: | ---: |
+| Top-1 accuracy | 27.34% | 53.65% | 50.78–55.47% |
+| Brier score (lower is better) | 0.3789 | 0.1903 | 0.1756–0.2007 |
+| NLL (lower is better) | 2.0760 | 1.0435 | 0.9958–1.0725 |
+
+Mean top-1 accuracy by held-out source was 60.42% on painting geometry,
+70.83% on Snake, and 35.42% on VizDoom (the base scored 29.17%, 28.13%, and
+25.00%, respectively). The weaker VizDoom result and the synthetic nature of
+all three sources matter: this is evidence that clean task-specific fine-tuning
+helps this typed benchmark, not that Heliox can reliably operate arbitrary
+desktop software. These same OOD rows have now been reviewed during
+experimentation, so they are development evidence and must not be reused as a
+confirmatory holdout. The adapters are not runtime-loaded, and no result
+establishes Jev parity, live task success, or action authority.
+
+The local Heliox encrypted recorded-workflow store was absent when this result
+was reviewed. Consequently, there are not yet consented Heliox task-outcome
+examples to train a personalized outcome model; that requires real user-rated
+workflow runs, not synthetic labels or provider-generated targets.
