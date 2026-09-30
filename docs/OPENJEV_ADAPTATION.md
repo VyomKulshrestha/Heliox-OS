@@ -2248,3 +2248,27 @@ The local Heliox encrypted recorded-workflow store was absent when this result
 was reviewed. Consequently, there are not yet consented Heliox task-outcome
 examples to train a personalized outcome model; that requires real user-rated
 workflow runs, not synthetic labels or provider-generated targets.
+
+## Lightweight scorer source-holdout stress test
+
+A separate MIT-derived UTF-8 byte-embedding/listwise-attention scorer was fit
+from the same CC0-filtered dataset revision, with 4,096 training rows and
+512-row calibration, random test, and source-held-out OOD splits. Each run
+held out one of the three synthetic source families; the model had no
+pretrained language backbone. This protocol is separate from the Qwen runs
+above, so the scores below are not a direct model comparison.
+
+| Held-out source | Random-test top-1 | OOD uniform top-1 | OOD trained top-1 | OOD uniform Brier | OOD trained Brier | OOD uniform NLL | OOD trained NLL |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Painting geometry | 68.36% | 28.33% | 28.13% | 0.1728 | 0.1987 | 1.5131 | 1.9907 |
+| Snake | 66.99% | 41.67% | 54.30% | 0.2083 | 0.1988 | 0.8959 | 1.7584 |
+| VizDoom basic | 61.52% | 34.47% | 37.30% | 0.2108 | 0.2606 | 1.1328 | 1.5840 |
+
+Although random-test top-1 is substantially above uniform, OOD NLL worsens on
+all three held-out families; OOD Brier worsens on painting geometry and
+VizDoom, and improves only slightly on Snake. This is a concrete shortcut and
+calibration warning: the small scorer's in-domain gains do not transfer
+reliably to a new source. Keep it research-only. The CUDA peak was below
+0.1 GiB, but the low compute cost does not compensate for the measured
+source-shift failure. Reports and weights remain ignored under
+`daemon/benchmarks/.bench-state/tiny_source_lodo_4k_*`.
