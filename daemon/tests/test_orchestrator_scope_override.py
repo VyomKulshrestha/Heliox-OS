@@ -12,6 +12,7 @@ from pilot.actions import Action, ActionPlan, ActionResult, ActionType, Calendar
 from pilot.agents.base_agent import AgentRole, BaseAgent
 from pilot.agents.orchestrator import AgentOrchestrator
 from pilot.config import PilotConfig
+from pilot.intelligence.experience import get_experience_context
 from pilot.security.gateway import AgentGateway, InvocationSource, TaskScopeOverride
 from pilot.security.permissions import PermissionChecker
 
@@ -146,3 +147,38 @@ async def test_previous_output_context_crosses_specialist_agent_boundary(orchest
     context = code_agent.handle_task.call_args.kwargs["context"]
     assert context["initial_last_output"] == "Windows 11 version 10.0.26220"
     assert context["initial_largest_output"] == "Windows 11 version 10.0.26220"
+
+
+@pytest.mark.asyncio
+async def test_multi_agent_subplans_inherit_parent_plan_and_original_indices(orchestrator):
+    first = _make_action(ActionType.SYSTEM_INFO, target="os")
+    second = Action(
+        action_type=ActionType.CODE_EXECUTE,
+        target="report",
+        parameters=CodeExecParams(code="print('ok')", language="python"),
+    )
+    plan = ActionPlan(actions=[first, second], explanation="multi-agent", raw_input="test")
+    seen = []
+
+    def observing_agent(action, role):
+        agent = _stub_agent(role)
+
+        async def handle_task(*args, **kwargs):
+            seen.append(get_experience_context())
+            return [ActionResult(action=action, success=True, output="ok")]
+
+        agent.handle_task = AsyncMock(side_effect=handle_task)
+        return agent
+
+    system_agent = observing_agent(first, AgentRole.SYSTEM)
+    code_agent = observing_agent(second, AgentRole.CODE)
+    orchestrator._action_registry[ActionType.SYSTEM_INFO] = AgentRole.SYSTEM
+    orchestrator._action_registry[ActionType.CODE_EXECUTE] = AgentRole.CODE
+    orchestrator._agents[AgentRole.SYSTEM] = system_agent
+    orchestrator._agents[AgentRole.CODE] = code_agent
+
+    await orchestrator.execute_plan("test", plan, plan_id="parent-plan")
+
+    assert [context.plan_id for context in seen] == ["parent-plan", "parent-plan"]
+    assert [context.task_id for context in seen] == ["parent-plan", "parent-plan"]
+    assert [context.action_index_offset for context in seen] == [0, 1]

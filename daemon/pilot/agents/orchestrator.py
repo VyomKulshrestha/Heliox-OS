@@ -34,6 +34,7 @@ from pilot.agents.circuit_breaker import (
     CircuitBreaker,
     CircuitBreakerOpenError,
 )
+from pilot.intelligence.experience import experience_scope
 from pilot.models.budget_tracker import (
     ActionBudgetExceededError,
     BudgetExceededError,
@@ -601,16 +602,21 @@ class AgentOrchestrator:
                             contract.budget.max_tokens_per_task,
                         )
                 try:
-                    results = await agent.handle_task(
-                        user_input,
-                        sub_plan,
-                        context={
-                            "initial_last_output": prior_last_output,
-                            "initial_largest_output": prior_largest_output,
-                            "user_confirmed": user_confirmed,
-                        },
-                        scope_override=scope_override,
-                    )
+                    with experience_scope(
+                        task_id=task_id,
+                        plan_id=task_id,
+                        action_index_offset=indices[0],
+                    ):
+                        results = await agent.handle_task(
+                            user_input,
+                            sub_plan,
+                            context={
+                                "initial_last_output": prior_last_output,
+                                "initial_largest_output": prior_largest_output,
+                                "user_confirmed": user_confirmed,
+                            },
+                            scope_override=scope_override,
+                        )
                 finally:
                     current_agent_id.reset(agent_context_token)
             except (
