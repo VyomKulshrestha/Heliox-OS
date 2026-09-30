@@ -121,7 +121,10 @@ after verifying the report and artifact hashes. Docker, Codex, and unrelated
 Linux workloads were not stopped, and no WSL restart was performed.
 
 The daemon loader now attaches both supported adapters to their decoder model
-and respects the frozen candidate-microbatch limit. The comparison can exercise
+and respects the frozen candidate-microbatch limit. It also checks for at least
+2.5 GiB of available system RAM before importing optional model dependencies,
+in addition to the existing CUDA-memory check. A VM's available-RAM reading does
+not establish free physical memory on its Windows host. The comparison can exercise
 that actual loader with `--runtime-scorer`. Billed reference responses are saved
 atomically with a signature binding the cases, adapter, head and requested
 reference model; `--resume` reuses them without duplicate calls. A reference-only
@@ -162,6 +165,8 @@ with one Torch-module skip in the lightweight suite. The three Torch retry tests
 passed separately with `HELIOX_TEST_REAL_TORCH=1`. Repository-wide Ruff lint and
 Git whitespace checks passed. These remain targeted local results, not a full
 repository test run or hosted CI.
+The subsequent RAM-guard change passed 40 focused tests, including both
+supported backbones refusing low-memory loading before any model allocation.
 
 Broad decisions, unseen-application transitions and reliable multi-step task
 completion remain unproven. The next useful corpus is consented,
