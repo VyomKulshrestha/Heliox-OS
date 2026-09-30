@@ -184,6 +184,7 @@ class VerifiedOnlineLearner:
         self._corrections = 0
         self._explicit_rules = 0
         self._ignored_feedback = 0
+        self._unmatched_feedback = 0
         self._cursor = 0
         self._reset_before_sequence = 0
         self._load_checkpoint()
@@ -269,6 +270,7 @@ class VerifiedOnlineLearner:
             "corrections": self._corrections,
             "explicit_rules": self._explicit_rules,
             "ignored_feedback": self._ignored_feedback,
+            "unmatched_feedback": self._unmatched_feedback,
             "routine_patterns": [
                 {"pattern": pattern, "decayed_evidence": round(evidence, 3)} for pattern, evidence in routine_items
             ],
@@ -299,6 +301,7 @@ class VerifiedOnlineLearner:
             self._corrections = 0
             self._explicit_rules = 0
             self._ignored_feedback = 0
+            self._unmatched_feedback = 0
             self._save_checkpoint()
             return self.status()
 
@@ -307,7 +310,7 @@ class VerifiedOnlineLearner:
         payload = event.payload
         if event_type == ExperienceEventType.SUGGESTION_SHOWN:
             suggestion_id = str(payload.get("suggestion_id", ""))
-            if suggestion_id:
+            if suggestion_id and event.source == "proactive":
                 self._suggestion_features[suggestion_id] = self._suggestion_vector(
                     pattern_id=str(payload.get("pattern_id", "")),
                     app_name=str(payload.get("context_app", "unknown")),
@@ -315,21 +318,22 @@ class VerifiedOnlineLearner:
                     occurred_at=event.occurred_at,
                 )
         elif event_type == ExperienceEventType.SUGGESTION_FEEDBACK:
+            if event.source != "proactive":
+                self._unmatched_feedback += 1
+                return
             suggestion_id = str(payload.get("suggestion_id", ""))
             features = self._suggestion_features.pop(suggestion_id, None)
             if features is None:
-                features = self._suggestion_vector(
-                    pattern_id=str(payload.get("pattern_id", "")),
-                    app_name=str(payload.get("context_app", "unknown")),
-                    priority=str(payload.get("priority", "low")),
-                    occurred_at=event.occurred_at,
-                )
+                self._unmatched_feedback += 1
+                return
             decision = str(payload.get("decision", "")).lower()
             if decision in {"accepted", "dismissed"}:
                 self._suggestions.learn(features, decision == "accepted", event.occurred_at)
             elif decision == "ignored":
                 # Timeout is missing feedback, not an explicit negative label.
                 self._ignored_feedback += 1
+            else:
+                self._unmatched_feedback += 1
         elif event_type in {
             ExperienceEventType.CANDIDATE_ACTION,
             ExperienceEventType.ACTION_STARTED,
