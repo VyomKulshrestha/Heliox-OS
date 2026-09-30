@@ -14,6 +14,7 @@ import pytest_asyncio
 from pilot.actions import Action, ActionPlan, ActionResult, ActionType, FileParams, SystemInfoParams
 from pilot.agents.executor import Executor
 from pilot.agents.proactive import ProactiveSuggestionEngine
+from pilot.agents.verifier import Verifier
 from pilot.config import PilotConfig
 from pilot.intelligence.experience import (
     ExperienceEventType,
@@ -282,6 +283,55 @@ async def test_local_collaboration_batches_share_one_experience_trace(tmp_path, 
     assert sum(event.event_type == ExperienceEventType.CANDIDATE_ACTION for event in events) == 1
     assert sum(event.event_type == ExperienceEventType.ACTION_STARTED for event in events) == 1
     assert sum(event.event_type == ExperienceEventType.ACTION_COMPLETED for event in events) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tamper", [False, True])
+async def test_collaborative_real_file_outcomes_rebuild_verified_learning(tmp_path, ledger, tamper):
+    config = PilotConfig()
+    config.security.dry_run = False
+    executor = Executor(
+        config, ActionValidator(config), PermissionChecker(config),
+        AuditLogger(audit_file=tmp_path / "real-outcomes-audit.jsonl"),
+    )
+    executor.set_experience_ledger(ledger)
+    # An unavailable peer exercises the canonical local batch path, not a
+    # fabricated remote receipt or a mocked action implementation.
+    collab = CollabExecutor(mesh=SimpleNamespace(peer_ids=[]), local_executor=executor, enabled=False)
+    collab.should_distribute = lambda _plan, _batches: True
+    executor.set_collab_executor(collab)
+    actions = [
+        Action(action_type=ActionType.FILE_WRITE, target=str(tmp_path / f"output-{index}.txt"),
+               parameters=FileParams(path=str(tmp_path / f"output-{index}.txt"), content=f"result {index}"))
+        for index in range(2)
+    ]
+    plan = ActionPlan(actions=actions, raw_input="Write two independent test outputs")
+    learner = VerifiedOnlineLearner(tmp_path / "real-learning.json")
+    ledger.subscribe(learner.consume)
+    results = await executor.execute(plan, plan_id="real-parent", user_confirmed=True)
+    assert len(results) == 2
+    assert all(result.success and result.executed for result in results)
+    if tamper:
+        (tmp_path / "output-1.txt").write_text("unexpected content", encoding="utf-8")
+
+    verification = await Verifier(MagicMock()).verify(plan, results)
+    assert verification.independently_observed_actions == [0, 1]
+    assert verification.passed is (not tamper)
+    assert verification.failed_actions == ([1] if tamper else [])
+    await ledger.append(
+        ExperienceEventType.OUTCOME_VERIFIED, plan_id="real-parent", source="verifier",
+        idempotency_key="real-parent:verified",
+        payload={"result_count": len(results), "verification": verification.model_dump(mode="json")},
+    )
+    await ledger.drain_subscribers()
+    transitions = learner.status()["transitions"]
+    assert transitions["labels"] == 2
+    assert transitions["positive"] == (1 if tamper else 2)
+    assert transitions["negative"] == (1 if tamper else 0)
+    rebuilt = VerifiedOnlineLearner(tmp_path / "rebuilt-learning.json")
+    await rebuilt.initialize(ledger)
+    assert rebuilt.status()["transitions"] == transitions
+    assert rebuilt.status()["workflow_patterns"] == 1
 
 
 @pytest.mark.asyncio
