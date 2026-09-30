@@ -19,7 +19,12 @@ except ImportError:
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from benchmarks.general_decision import PROMPT_STYLES, format_answer, validate_decision  # noqa: E402
+from benchmarks.general_decision import (  # noqa: E402
+    PROMPT_STYLES,
+    TRAINING_SOURCE_POLICY,
+    format_answer,
+    validate_decision,
+)
 from scripts.evaluate_qwen_instruct_scope import MODEL_ID as OPENJEV_BASE_MODEL  # noqa: E402
 from scripts.evaluate_qwen_instruct_scope import MODEL_REVISION as OPENJEV_BASE_REVISION  # noqa: E402
 from scripts.qwen_model_pin import MODEL, REVISION  # noqa: E402
@@ -33,8 +38,12 @@ def prepare_request(payload: dict) -> dict:
     question = payload.get("question")
     options = payload.get("options")
     validate_decision(kind, question, options)
-    return {"kind": kind, "question": question, "options": options,
-            "state_json": json.dumps(payload["state"], ensure_ascii=False)}
+    return {
+        "kind": kind,
+        "question": question,
+        "options": options,
+        "state_json": json.dumps(payload["state"], ensure_ascii=False),
+    }
 
 
 def prepare_requests(payloads: list[dict], *, max_decisions: int = 128) -> list[dict]:
@@ -60,22 +69,38 @@ def verify_artifact(output_dir: Path, report_path: Path) -> tuple[dict, Path]:
             OPENJEV_REVISION,
         )
 
-        expected = {"repo": OPENJEV_REPO, "revision": OPENJEV_REVISION,
-                    "adapter_sha256": OPENJEV_ADAPTER_SHA256,
-                    "head_sha256": OPENJEV_HEAD_SHA256}
-        if (report.get("backbone_quantization") != "NF4 double quantization"
-                or report.get("initial_checkpoint") != expected):
+        expected = {
+            "repo": OPENJEV_REPO,
+            "revision": OPENJEV_REVISION,
+            "adapter_sha256": OPENJEV_ADAPTER_SHA256,
+            "head_sha256": OPENJEV_HEAD_SHA256,
+        }
+        clean_base = (
+            report.get("initialization") == "base_yes_no_head_v1"
+            and "initial_checkpoint" in report
+            and report["initial_checkpoint"] is None
+            and report.get("training_source_policy") == json.loads(json.dumps(TRAINING_SOURCE_POLICY))
+        )
+        if (
+            report.get("backbone_quantization") != "NF4 double quantization"
+            or (not clean_base and report.get("initial_checkpoint") != expected)
+            or (report.get("initialization") == "base_yes_no_head_v1" and not clean_base)
+        ):
             raise ValueError("Open-Jev research report is missing its pinned warm start")
-    for path, key in ((adapter / "adapter_model.safetensors", "adapter_sha256"),
-                      (head, "head_sha256")):
+    for path, key in ((adapter / "adapter_model.safetensors", "adapter_sha256"), (head, "head_sha256")):
         if hashlib.sha256(path.read_bytes()).hexdigest() != report[key]:
             raise ValueError(f"Frozen artifact checksum mismatch: {path.name}")
     return report, head
 
 
-def score_requests(payloads: list[dict], output_dir: Path, report_path: Path,
-                   *, on_prediction: Callable[[int, dict], None] | None = None,
-                   max_decisions: int = 128) -> list[dict]:
+def score_requests(
+    payloads: list[dict],
+    output_dir: Path,
+    report_path: Path,
+    *,
+    on_prediction: Callable[[int, dict], None] | None = None,
+    max_decisions: int = 128,
+) -> list[dict]:
     rows = prepare_requests(payloads, max_decisions=max_decisions)
     from scripts.openjev_training_runtime import require_training_runtime
 
@@ -119,16 +144,25 @@ def score_requests(payloads: list[dict], output_dir: Path, report_path: Path,
     dtype = {"bfloat16": torch.bfloat16, "float16": torch.float16}[model_dtype]
     if model_name == OPENJEV_BASE_MODEL:
         base = Qwen3_5ForCausalLM.from_pretrained(
-            model_path, local_files_only=True, dtype=dtype,
-            device_map={"": 0}, attn_implementation=attention,
+            model_path,
+            local_files_only=True,
+            dtype=dtype,
+            device_map={"": 0},
+            attn_implementation=attention,
             quantization_config=BitsAndBytesConfig(
-                load_in_4bit=True, bnb_4bit_quant_type="nf4",
-                bnb_4bit_use_double_quant=True, bnb_4bit_compute_dtype=dtype),
+                load_in_4bit=True,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_use_double_quant=True,
+                bnb_4bit_compute_dtype=dtype,
+            ),
         )
     else:
         base = AutoModelForCausalLM.from_pretrained(
-            model_path, local_files_only=True, dtype=dtype,
-            device_map={"": 0}, attn_implementation=attention,
+            model_path,
+            local_files_only=True,
+            dtype=dtype,
+            device_map={"": 0},
+            attn_implementation=attention,
         )
     backbone = PeftModel.from_pretrained(base.model, output_dir / "adapter", is_trainable=False)
     del base
@@ -140,10 +174,13 @@ def score_requests(payloads: list[dict], output_dir: Path, report_path: Path,
     head.eval()
     predictions = []
     for index, (row, item) in enumerate(zip(rows, encoded, strict=True)):
-        prediction = {"research_only": True, "execution_authority": False,
-                      "model": model_name, "revision": model_revision,
-                      "answer": format_answer(row["kind"], row["options"],
-                                              score_row(backbone, head, item), temperature)}
+        prediction = {
+            "research_only": True,
+            "execution_authority": False,
+            "model": model_name,
+            "revision": model_revision,
+            "answer": format_answer(row["kind"], row["options"], score_row(backbone, head, item), temperature),
+        }
         predictions.append(prediction)
         if on_prediction is not None:
             on_prediction(index, prediction)
