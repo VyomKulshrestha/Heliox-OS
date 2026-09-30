@@ -2190,3 +2190,28 @@ The ignored local reports and weights are
 `miniwob_successor_rank_matched_baseline_seed20260930_v2` and
 `miniwob_successor_rank_w003_t001_seed20260930` under
 `daemon/benchmarks/.bench-state`.
+
+## Open-Jev checkpoint data-provenance clarification (2026-09-30)
+
+A live review of the current [Open-Jev-2B model card](https://huggingface.co/ZefanCai/Open-Jev-2B)
+and [Open-Jev dataset card](https://huggingface.co/datasets/ZefanCai/Open-Jev)
+adds a provenance caveat to the warm-start experiment above. The published
+2B checkpoint was trained on the original `release-v2` mixture (80,816 train
+rows), not the byte-identical `release-v2-redistributable` projection (79,116
+train rows). The public projection removes 1,700 Wikispeedia training rows
+whose graph/path redistribution rights were not verified. The dataset card
+also marks some customer-control question descriptions sourced from TypeSafe
+documentation as having an unverified source license; Heliox's row filter
+rejects those rows, but the released 2B checkpoint's full training mixture
+contains them.
+
+Accordingly, the 2026-09-30 Heliox warm-start used only rows that passed
+Heliox's clean-row filter for its *additional fine-tuning*, but its starting
+checkpoint was not trained exclusively on that verified redistributable
+projection. Keep the resulting adapter as a local research candidate; do not
+describe its complete training lineage as CC0-cleared or promote it until the
+checkpoint's data provenance is resolved. A fresh run from the pinned Qwen
+base with only verified-license rows, or from consented independently
+verified Heliox outcomes, is the cleaner next training path. This does not
+change the recorded fact that the experiment made no TypeSafe Jev API calls
+and used no TypeSafe/Jev outputs.
