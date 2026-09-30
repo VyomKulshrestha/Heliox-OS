@@ -1,0 +1,37 @@
+{
+  "purpose": "research_only_local_navigation_transfer_summary",
+  "runtime_promotion": false,
+  "experiments": [
+    {
+      "protocol": "heliox_navigation_frozen_protocol_20260930.json",
+      "training_theme": "light",
+      "transfer_report_sha256": "61c49a3b3761bd7e61fa90fab2c41dd9190d2d21e027479f0ea4fde08c198292",
+      "target_features_sha256": "24f73109e26f0cfbec931f729901bd04563cf9b738871c1723c382339a93a7ff",
+      "target_rows": 48,
+      "target_groups": 24,
+      "successor_top1": 0.5,
+      "successor_chance": 0.5,
+      "correct_action_weighted_mse": 0.9987656325031425,
+      "alternate_action_weighted_mse": 0.6784986523432078,
+      "unchanged_state_weighted_mse": 0.005622135237800402,
+      "correct_minus_alternate_ci95": [0.31436414953531, 0.3262866293724041],
+      "frozen_criteria_passed": false
+    },
+    {
+      "protocol": "heliox_navigation_mixed_frozen_protocol_20260930.json",
+      "training_theme": "mixed",
+      "transfer_report_sha256": "454eba9bba3368ce6d3be28811b306077a58dd2f44b3d06e2fb33d3055b19080",
+      "target_features_sha256": "8982dd7503193487aa959dc7095273805167491f9e143bebc6848312840a38b0",
+      "target_rows": 48,
+      "target_groups": 24,
+      "successor_top1": 0.5,
+      "successor_chance": 0.5,
+      "correct_action_weighted_mse": 0.017596482163580954,
+      "alternate_action_weighted_mse": 0.0261410802342651,
+      "unchanged_state_weighted_mse": 0.005542030875631858,
+      "correct_minus_alternate_ci95": [-0.00858537499999476, -0.008503302062145085],
+      "frozen_criteria_passed": false
+    }
+  ],
+  "limitations": "Separate small within-application capture sets, not a matched causal comparison. Exact prestate and group disjointness do not establish independent task families. No broad desktop success, physical safety, personalization or Jev-parity claim."
+}

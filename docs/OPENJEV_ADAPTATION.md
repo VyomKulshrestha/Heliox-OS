@@ -13,8 +13,11 @@ Status: **research only; no new decision model is enabled in Heliox**.
 > live agreement checked on 2026-09-30 does not contain the previously claimed
 > benchmark-publication prohibition in section 2.3(f); that clause concerns
 > interference with the Services. Keep archived teacher-derived artifacts local
-> while their intended use and redistribution rights remain unresolved. The first-party Jev-output CLIs fail
-> closed; this banner supersedes the historical experiment narratives below.
+> while their intended use and redistribution rights remain unresolved.
+> Historical output-training CLIs fail closed. The separate reference evaluator
+> now permits explicitly acknowledged, bounded provider evaluation without
+> enabling training from its results; see the [current checkpoint](INTELLIGENCE_STATUS_2026-09-30.md).
+> This banner supersedes the historical experiment narratives below.
 > This is a compliance boundary, not legal advice.
 
 The separate [visual world-model branch probe](../daemon/benchmarks/miniwob_semantic_branch_seed3200_results_v1.md)
