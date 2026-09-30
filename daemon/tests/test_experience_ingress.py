@@ -291,7 +291,9 @@ async def test_collaborative_real_file_outcomes_rebuild_verified_learning(tmp_pa
     config = PilotConfig()
     config.security.dry_run = False
     executor = Executor(
-        config, ActionValidator(config), PermissionChecker(config),
+        config,
+        ActionValidator(config),
+        PermissionChecker(config),
         AuditLogger(audit_file=tmp_path / "real-outcomes-audit.jsonl"),
     )
     executor.set_experience_ledger(ledger)
@@ -301,8 +303,11 @@ async def test_collaborative_real_file_outcomes_rebuild_verified_learning(tmp_pa
     collab.should_distribute = lambda _plan, _batches: True
     executor.set_collab_executor(collab)
     actions = [
-        Action(action_type=ActionType.FILE_WRITE, target=str(tmp_path / f"output-{index}.txt"),
-               parameters=FileParams(path=str(tmp_path / f"output-{index}.txt"), content=f"result {index}"))
+        Action(
+            action_type=ActionType.FILE_WRITE,
+            target=str(tmp_path / f"output-{index}.txt"),
+            parameters=FileParams(path=str(tmp_path / f"output-{index}.txt"), content=f"result {index}"),
+        )
         for index in range(2)
     ]
     plan = ActionPlan(actions=actions, raw_input="Write two independent test outputs")
@@ -319,7 +324,9 @@ async def test_collaborative_real_file_outcomes_rebuild_verified_learning(tmp_pa
     assert verification.passed is (not tamper)
     assert verification.failed_actions == ([1] if tamper else [])
     await ledger.append(
-        ExperienceEventType.OUTCOME_VERIFIED, plan_id="real-parent", source="verifier",
+        ExperienceEventType.OUTCOME_VERIFIED,
+        plan_id="real-parent",
+        source="verifier",
         idempotency_key="real-parent:verified",
         payload={"result_count": len(results), "verification": verification.model_dump(mode="json")},
     )

@@ -32,25 +32,34 @@ def decision_request(row: dict) -> dict:
         criteria = {f"option_{index}": option for index, option in enumerate(row["options"])}
     else:
         criteria = row["options"]
-    return {"model": JEV_MODEL, "state": json.loads(row["state_json"]),
-            "questions": {"decision": {"type": row["kind"],
-                                       "instructions": row["question"], "criteria": criteria}}}
+    return {
+        "model": JEV_MODEL,
+        "state": json.loads(row["state_json"]),
+        "questions": {"decision": {"type": row["kind"], "instructions": row["question"], "criteria": criteria}},
+    }
 
 
 def public_payload(row: dict) -> dict:
-    return {"state": json.loads(row["state_json"]), "kind": row["kind"],
-            "question": row["question"], "options": row["options"]}
+    return {
+        "state": json.loads(row["state_json"]),
+        "kind": row["kind"],
+        "question": row["question"],
+        "options": row["options"],
+    }
 
 
 def query_jev(
-    client: httpx.Client, key: str, row: dict, *, acknowledge_provider_terms: bool = False,
+    client: httpx.Client,
+    key: str,
+    row: dict,
+    *,
+    acknowledge_provider_terms: bool = False,
 ) -> tuple[dict, float, str]:
     if acknowledge_provider_terms is not True:
         block_jev_output_use()
     for attempt in range(3):
         try:
-            response = client.post(ENDPOINT, headers={"Authorization": f"Bearer {key}"},
-                                   json=decision_request(row))
+            response = client.post(ENDPOINT, headers={"Authorization": f"Bearer {key}"}, json=decision_request(row))
         except httpx.TransportError:
             if attempt == 2:
                 raise
@@ -77,10 +86,14 @@ def compare(rows: list[dict], local: list[dict], jev: list[dict]) -> dict:
             student = float(result["yes_probability"])
             if not 0 <= teacher <= 1:
                 raise ValueError("Invalid Jev Noul probability")
-            by_kind[kind].append({"agreement": int((student >= 0.5) == (teacher >= 0.5)),
-                                  "local_gold": int((student >= 0.5) == (target[1] >= 0.5)),
-                                  "jev_gold": int((teacher >= 0.5) == (target[1] >= 0.5)),
-                                  "probability_gap": abs(student - teacher)})
+            by_kind[kind].append(
+                {
+                    "agreement": int((student >= 0.5) == (teacher >= 0.5)),
+                    "local_gold": int((student >= 0.5) == (target[1] >= 0.5)),
+                    "jev_gold": int((teacher >= 0.5) == (target[1] >= 0.5)),
+                    "probability_gap": abs(student - teacher),
+                }
+            )
         elif kind == "choice":
             teacher_key = str(answer["choice"])
             keys = [f"option_{index}" for index in range(len(row["options"]))]
@@ -88,21 +101,31 @@ def compare(rows: list[dict], local: list[dict], jev: list[dict]) -> dict:
                 raise ValueError("Jev returned an unknown choice key")
             teacher_index = keys.index(teacher_key)
             student_index = row["options"].index(result["choice"])
-            by_kind[kind].append({"agreement": int(student_index == teacher_index),
-                                  "local_gold": int(student_index == int(target.argmax())),
-                                  "jev_gold": int(teacher_index == int(target.argmax()))})
+            by_kind[kind].append(
+                {
+                    "agreement": int(student_index == teacher_index),
+                    "local_gold": int(student_index == int(target.argmax())),
+                    "jev_gold": int(teacher_index == int(target.argmax())),
+                }
+            )
         else:
             teacher = float(answer["score"])
             student = float(result["expected_index"])
             gold = float(np.arange(len(target)) @ target)
             if not 0 <= teacher <= len(target) - 1:
                 raise ValueError("Jev score outside criterion range")
-            by_kind[kind].append({"score_gap": abs(student - teacher),
-                                  "local_gold_error": abs(student - gold),
-                                  "jev_gold_error": abs(teacher - gold)})
-    return {kind: {"rows": len(items), **{key: float(np.mean([item[key] for item in items]))
-                                              for key in items[0]}}
-            for kind, items in by_kind.items() if items}
+            by_kind[kind].append(
+                {
+                    "score_gap": abs(student - teacher),
+                    "local_gold_error": abs(student - gold),
+                    "jev_gold_error": abs(teacher - gold),
+                }
+            )
+    return {
+        kind: {"rows": len(items), **{key: float(np.mean([item[key] for item in items])) for key in items[0]}}
+        for kind, items in by_kind.items()
+        if items
+    }
 
 
 def main() -> None:
@@ -114,8 +137,11 @@ def main() -> None:
     parser.add_argument("--output-dir", type=Path, default=root / "benchmarks/.bench-state/qwen_general_v2")
     parser.add_argument("--model-report", type=Path, default=root / "benchmarks/qwen_general_probe_v2.json")
     parser.add_argument("--report", type=Path, required=True, help="Fresh local evaluation report path")
-    parser.add_argument("--acknowledge-provider-terms", action="store_true",
-                        help="Explicitly opt into billed provider evaluation, not output-based training rights")
+    parser.add_argument(
+        "--acknowledge-provider-terms",
+        action="store_true",
+        help="Explicitly opt into billed provider evaluation, not output-based training rights",
+    )
     args = parser.parse_args()
     if not args.acknowledge_provider_terms:
         block_jev_output_use()
@@ -124,7 +150,7 @@ def main() -> None:
     if args.report.exists():
         parser.error("Use a fresh report path; prior evaluations are never overwritten")
     rows, manifest = load_split("ood", args.limit * 3, args.seed)
-    rows = [row for row in rows if row["kind"] != "score" or len(row["options"]) <= 10][:args.limit]
+    rows = [row for row in rows if row["kind"] != "score" or len(row["options"]) <= 10][: args.limit]
     if len(rows) != args.limit:
         raise ValueError("Not enough compatible licensed OOD decisions")
     key = _key(args.env_file)
@@ -144,18 +170,23 @@ def main() -> None:
             cost += charge
             versions.add(version)
             print(f"Evaluated {index}/{len(rows)} public {row['kind']} decisions", flush=True)
-    report = {"purpose": "evaluation_only_no_teacher_training",
-              "dataset_revision": DATASET_REVISION, "dataset_manifest": manifest,
-              "selection_seed": args.seed, "selected_ids_sha256": hashlib.sha256(
-                  "\n".join(row["id"] for row in rows).encode()).hexdigest(),
-              "local_adapter_sha256": json.loads(args.model_report.read_text(encoding="utf-8"))["adapter_sha256"],
-              "jev_models": sorted(versions), "calls": len(rows), "cost_usd": cost,
-              "provider_evaluation_explicitly_enabled": True,
-              "teacher_outputs_used_for_training": False,
-              "uniform_baseline": uniform_baseline(rows)["by_kind"],
-              "comparison": compare(rows, local, jev),
-              "limitation": "Small public synthetic OOD sample, possibly inspected in earlier studies; "
-                            "not a confirmatory holdout, training permission or desktop-safety proof."}
+    report = {
+        "purpose": "evaluation_only_no_teacher_training",
+        "dataset_revision": DATASET_REVISION,
+        "dataset_manifest": manifest,
+        "selection_seed": args.seed,
+        "selected_ids_sha256": hashlib.sha256("\n".join(row["id"] for row in rows).encode()).hexdigest(),
+        "local_adapter_sha256": json.loads(args.model_report.read_text(encoding="utf-8"))["adapter_sha256"],
+        "jev_models": sorted(versions),
+        "calls": len(rows),
+        "cost_usd": cost,
+        "provider_evaluation_explicitly_enabled": True,
+        "teacher_outputs_used_for_training": False,
+        "uniform_baseline": uniform_baseline(rows)["by_kind"],
+        "comparison": compare(rows, local, jev),
+        "limitation": "Small public synthetic OOD sample, possibly inspected in earlier studies; "
+        "not a confirmatory holdout, training permission or desktop-safety proof.",
+    }
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report["comparison"], indent=2))

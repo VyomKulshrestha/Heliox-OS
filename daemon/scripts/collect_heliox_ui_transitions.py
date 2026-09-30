@@ -22,8 +22,7 @@ from playwright.sync_api import sync_playwright
 
 from pilot.agents.screen_vision import _world_embedding_from_frame
 
-VIEWPORTS = ((1100, 700), (1200, 700), (1280, 720),
-             (1360, 768), (1440, 800), (1536, 864))
+VIEWPORTS = ((1100, 700), (1200, 700), (1280, 720), (1360, 768), (1440, 800), (1536, 864))
 TAB_TITLES = ("Open Dashboard", "Open Settings")
 STABLE_STYLE = (
     "canvas, .titlebar-right { visibility: hidden !important } "
@@ -87,13 +86,13 @@ def _pair(page, url: str, family: int, index: int, width: int, height: int, them
         box = button.bounding_box()
         if box is None:
             raise RuntimeError(f"Heliox navigation button is not visible: {title}")
-        coords = ((box["x"] + box["width"] / 2) / width,
-                  (box["y"] + box["height"] / 2) / height)
+        coords = ((box["x"] + box["width"] / 2) / width, (box["y"] + box["height"] / 2) / height)
         button.click()
         page.locator(f'nav.tabs button.active[title="{title}"]').wait_for()
         page.wait_for_timeout(500)
-        rows.append({"state": before, "target": _features(page), "action": 1,
-                     "coords": coords, "group": group, "split": split})
+        rows.append(
+            {"state": before, "target": _features(page), "action": 1, "coords": coords, "group": group, "split": split}
+        )
     if not np.array_equal(rows[0]["state"], rows[1]["state"]):
         raise RuntimeError("Heliox navigation alternatives did not start from the same screen")
     if np.array_equal(rows[0]["target"], rows[1]["target"]):
@@ -106,15 +105,26 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--url", default="http://127.0.0.1:1420/")
     parser.add_argument("--samples-per-family", type=int, default=12)
-    parser.add_argument("--eval-samples-per-family", type=int,
-                        help="Override only the held-out viewport family's sample count")
+    parser.add_argument(
+        "--eval-samples-per-family", type=int, help="Override only the held-out viewport family's sample count"
+    )
     parser.add_argument("--seed", type=int, default=20260926)
-    parser.add_argument("--training-theme", choices=("light", "dark", "mixed"), default="light",
-                        help="Browser color scheme for fit and validation viewport families")
-    parser.add_argument("--eval-dark", action="store_true",
-                        help="Use dark browser color scheme for the evaluation family")
-    parser.add_argument("--eval-viewport", nargs=2, type=int, metavar=("WIDTH", "HEIGHT"),
-                        help="Reserve a different viewport for a frozen-model transfer evaluation")
+    parser.add_argument(
+        "--training-theme",
+        choices=("light", "dark", "mixed"),
+        default="light",
+        help="Browser color scheme for fit and validation viewport families",
+    )
+    parser.add_argument(
+        "--eval-dark", action="store_true", help="Use dark browser color scheme for the evaluation family"
+    )
+    parser.add_argument(
+        "--eval-viewport",
+        nargs=2,
+        type=int,
+        metavar=("WIDTH", "HEIGHT"),
+        help="Reserve a different viewport for a frozen-model transfer evaluation",
+    )
     parser.add_argument("--features", type=Path, default=state / "heliox_ui_transitions_v1.npz")
     parser.add_argument("--report", type=Path, default=state / "heliox_ui_transitions_v1.json")
     args = parser.parse_args()
@@ -124,9 +134,12 @@ def main() -> None:
             validate_viewport(*args.eval_viewport)
     except ValueError as exc:
         parser.error(str(exc))
-    if (args.samples_per_family < 2
-            or (args.eval_samples_per_family is not None and args.eval_samples_per_family < 2)
-            or args.features.exists() or args.report.exists()):
+    if (
+        args.samples_per_family < 2
+        or (args.eval_samples_per_family is not None and args.eval_samples_per_family < 2)
+        or args.features.exists()
+        or args.report.exists()
+    ):
         parser.error("Use at least two samples per family and fresh output paths")
     args.features.parent.mkdir(parents=True, exist_ok=True)
     args.report.parent.mkdir(parents=True, exist_ok=True)
@@ -140,17 +153,27 @@ def main() -> None:
                 if family == 5 and args.eval_viewport is not None:
                     base_width, base_height = args.eval_viewport
                 theme = "dark" if args.eval_dark and family == 5 else args.training_theme
-                sample_count = (args.eval_samples_per_family
-                                if family == 5 and args.eval_samples_per_family is not None
-                                else args.samples_per_family)
-                context = browser.new_context(device_scale_factor=1, reduced_motion="reduce",
-                                              color_scheme="light" if theme == "mixed" else theme,
-                                              service_workers="block")
+                sample_count = (
+                    args.eval_samples_per_family
+                    if family == 5 and args.eval_samples_per_family is not None
+                    else args.samples_per_family
+                )
+                context = browser.new_context(
+                    device_scale_factor=1,
+                    reduced_motion="reduce",
+                    color_scheme="light" if theme == "mixed" else theme,
+                    service_workers="block",
+                )
                 try:
-                    context.route("**/*", lambda route: route.continue_()
-                                  if urlsplit(route.request.url).netloc == urlsplit(args.url).netloc
-                                  else route.abort())
-                    context.add_init_script('''
+                    context.route(
+                        "**/*",
+                        lambda route: (
+                            route.continue_()
+                            if urlsplit(route.request.url).netloc == urlsplit(args.url).netloc
+                            else route.abort()
+                        ),
+                    )
+                    context.add_init_script("""
                         localStorage.setItem("heliox_first_run_complete", "true");
                         const NativeWebSocket = window.WebSocket;
                         window.WebSocket = class extends NativeWebSocket {
@@ -162,21 +185,22 @@ def main() -> None:
                                 else super(url, protocols);
                             }
                         };
-                    ''')
+                    """)
                     page = context.new_page()
                     for index in range(sample_count):
                         require_free_space(args.features.parent)
                         width = base_width + rng.randint(-16, 16)
                         height = base_height + rng.randint(-16, 16)
                         sample_theme = capture_theme(
-                            args.training_theme, evaluation_dark=args.eval_dark and family == 5, index=index,
+                            args.training_theme,
+                            evaluation_dark=args.eval_dark and family == 5,
+                            index=index,
                         )
                         page.emulate_media(color_scheme=sample_theme)
                         rows.extend(_pair(page, args.url, family, index, width, height, sample_theme))
                 finally:
                     context.close()
-                print(json.dumps({"viewport_family": family,
-                                  "theme": theme, "completed": sample_count}), flush=True)
+                print(json.dumps({"viewport_family": family, "theme": theme, "completed": sample_count}), flush=True)
         finally:
             browser.close()
 
@@ -196,24 +220,28 @@ def main() -> None:
         "samples_per_family": args.samples_per_family,
         "eval_samples_per_family": args.eval_samples_per_family or args.samples_per_family,
         "counterfactual_pairs": True,
-        "split_basis": ("viewport_family_and_theme"
-                        if args.eval_dark and args.training_theme != "dark"
-                        else "viewport_family"),
+        "split_basis": (
+            "viewport_family_and_theme" if args.eval_dark and args.training_theme != "dark" else "viewport_family"
+        ),
         "training_theme": args.training_theme,
         "eval_dark": args.eval_dark,
         "eval_viewport": list(args.eval_viewport or VIEWPORTS[-1]),
-        "fit_layouts": [0, 1, 2, 3], "validation_layout": 4, "eval_layout": 5,
+        "fit_layouts": [0, 1, 2, 3],
+        "validation_layout": 4,
+        "eval_layout": 5,
         "rows": dict(Counter(row["split"] for row in rows)),
-        "groups": {split: len({row["group"] for row in rows if row["split"] == split})
-                   for split in ("train", "validation", "eval")},
+        "groups": {
+            split: len({row["group"] for row in rows if row["split"] == split})
+            for split in ("train", "validation", "eval")
+        },
         "same_screen_and_distinct_outcome_verified": True,
         "network_scope": "same-origin HTTP only; external WebSocket and service workers blocked",
         "features_sha256": hashlib.sha256(args.features.read_bytes()).hexdigest(),
         "limitation": "Fresh browser storage; decorative canvases and live header telemetry hidden "
-                      "during capture. Two fixed Heliox navigation actions and held-out viewport "
-                      "layouts only; color scheme is recorded for fit and evaluation. "
-                      "No personal desktop recording, real OS action transfer, "
-                      "safety, autonomy, or Jev parity claim.",
+        "during capture. Two fixed Heliox navigation actions and held-out viewport "
+        "layouts only; color scheme is recorded for fit and evaluation. "
+        "No personal desktop recording, real OS action transfer, "
+        "safety, autonomy, or Jev parity claim.",
     }
     args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report, indent=2), flush=True)

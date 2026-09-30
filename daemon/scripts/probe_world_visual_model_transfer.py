@@ -25,7 +25,9 @@ from scripts.train_world_visual_transition import (
 
 
 def audit_source_overlap(
-    source_path: Path, model_report: dict, partition: dict[str, np.ndarray],
+    source_path: Path,
+    model_report: dict,
+    partition: dict[str, np.ndarray],
 ) -> dict[str, int | bool | str]:
     """Pin the development archive and reject reused groups or exact prestates."""
     digest = hashlib.sha256(source_path.read_bytes()).hexdigest()
@@ -43,13 +45,21 @@ def audit_source_overlap(
     shared_groups = source_groups & set(partition["groups"])
     if overlap or shared_groups:
         raise ValueError(f"Target overlaps development data: {overlap} prestates, {len(shared_groups)} groups")
-    return {"verified": True, "source_features_sha256": digest,
-            "overlapping_prestates": overlap, "overlapping_groups": len(shared_groups)}
+    return {
+        "verified": True,
+        "source_features_sha256": digest,
+        "overlapping_prestates": overlap,
+        "overlapping_groups": len(shared_groups),
+    }
 
 
 def paired_evaluation(
-    correct: np.ndarray, swapped: np.ndarray, partition: dict[str, np.ndarray], *,
-    seed: int, replicates: int,
+    correct: np.ndarray,
+    swapped: np.ndarray,
+    partition: dict[str, np.ndarray],
+    *,
+    seed: int,
+    replicates: int,
 ) -> dict:
     """Summarize action-specific prediction and retrieval using whole-state groups."""
     state, target, groups = (partition[key] for key in ("state", "target", "groups"))
@@ -60,12 +70,17 @@ def paired_evaluation(
     }
     if len(np.unique(groups)) >= 2:
         result["successor_retrieval"] = counterfactual_successor_retrieval(
-            correct, partition, seed=seed, replicates=replicates,
+            correct,
+            partition,
+            seed=seed,
+            replicates=replicates,
         )
         result["paired_action_group_bootstrap"] = group_bootstrap_loss_delta(
             weighted_pixel_mse_by_row(swapped, state, target),
             weighted_pixel_mse_by_row(correct, state, target),
-            groups, seed=seed + 1, replicates=replicates,
+            groups,
+            seed=seed + 1,
+            replicates=replicates,
         )
     else:
         result["uncertainty_unavailable"] = "At least two state groups are required"
@@ -151,10 +166,10 @@ def main() -> None:
     parser.add_argument("--target-features", type=Path, required=True)
     parser.add_argument("--target-report", type=Path, required=True)
     parser.add_argument("--report", type=Path, required=True)
-    parser.add_argument("--source-features", type=Path,
-                        help="Pin and compare against the complete development archive")
-    parser.add_argument("--expected-weights-sha256",
-                        help="Optional precommitted weight hash for a frozen confirmatory probe")
+    parser.add_argument("--source-features", type=Path, help="Pin and compare against the complete development archive")
+    parser.add_argument(
+        "--expected-weights-sha256", help="Optional precommitted weight hash for a frozen confirmatory probe"
+    )
     parser.add_argument("--seed", type=int, default=20260930)
     parser.add_argument("--group-bootstrap-replicates", type=int, default=5000)
     parser.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
@@ -176,9 +191,11 @@ def main() -> None:
         raise ValueError("Only frozen non-private research artifacts are supported")
     rows = load_features(args.target_features, args.target_report)
     partition = rows[args.split]
-    independence = (audit_source_overlap(args.source_features, model_report, partition)
-                    if args.source_features is not None else
-                    {"verified": False, "reason": "Development source archive was not supplied"})
+    independence = (
+        audit_source_overlap(args.source_features, model_report, partition)
+        if args.source_features is not None
+        else {"verified": False, "reason": "Development source archive was not supplied"}
+    )
     channels, height, width = target_shape
     dimension = channels * height * width
 
@@ -193,15 +210,15 @@ def main() -> None:
         model = build_spatial_joint_model(nn, channels)
     elif architecture in {"spatial", "spatial_global"}:
         model = nn.Sequential(
-            nn.Conv2d(channels + (12 if architecture == "spatial_global" else 10),
-                      32, 3, padding=1), nn.GELU(),
-            nn.Conv2d(32, 32, 3, padding=1), nn.GELU(),
+            nn.Conv2d(channels + (12 if architecture == "spatial_global" else 10), 32, 3, padding=1),
+            nn.GELU(),
+            nn.Conv2d(32, 32, 3, padding=1),
+            nn.GELU(),
             nn.Conv2d(32, channels, 3, padding=1),
         )
     elif architecture == "mlp":
         hidden = min(512, max(256, dimension))
-        model = nn.Sequential(nn.Linear(dimension + 11, hidden), nn.GELU(),
-                              nn.Linear(hidden, dimension))
+        model = nn.Sequential(nn.Linear(dimension + 11, hidden), nn.GELU(), nn.Linear(hidden, dimension))
     elif architecture == "linear":
         model = nn.Linear(dimension + 11, dimension)
     else:
@@ -215,8 +232,9 @@ def main() -> None:
         if model_report["trained_without_action"]:
             actions = torch.zeros_like(actions)
         if architecture in {"spatial", "spatial_global", "spatial_joint"}:
-            y, x = torch.meshgrid(torch.arange(height, device=device),
-                                  torch.arange(width, device=device), indexing="ij")
+            y, x = torch.meshgrid(
+                torch.arange(height, device=device), torch.arange(width, device=device), indexing="ij"
+            )
             cx = actions[:, 9, None, None] * (width - 1)
             cy = actions[:, 10, None, None] * (height - 1)
             radius = 4.5 * (min(height, width) / 16) ** 2
@@ -225,9 +243,11 @@ def main() -> None:
             inputs = [state.reshape(-1, channels, height, width), locus, kind]
             if architecture in {"spatial_global", "spatial_joint"}:
                 inputs.append(actions[:, 9:11, None, None].expand(-1, -1, height, width))
-            delta = (model(inputs[0], torch.cat(inputs[1:], dim=1))
-                     if architecture == "spatial_joint" else
-                     model(torch.cat(inputs, dim=1))).reshape(-1, dimension)
+            delta = (
+                model(inputs[0], torch.cat(inputs[1:], dim=1))
+                if architecture == "spatial_joint"
+                else model(torch.cat(inputs, dim=1))
+            ).reshape(-1, dimension)
         else:
             delta = model(torch.cat((state, actions), dim=1))
         return torch.clamp(state + delta, 0, 1).cpu().numpy()
@@ -242,9 +262,9 @@ def main() -> None:
             expected = action[:, 9:11]
             inverse_diagnostic = {
                 "observed_before_after_coordinate_mae": float(
-                    (model.inverse(before, after) - expected).abs().mean().item()),
-                "before_only_coordinate_mae": float(
-                    (model.inverse(before, before) - expected).abs().mean().item()),
+                    (model.inverse(before, after) - expected).abs().mean().item()
+                ),
+                "before_only_coordinate_mae": float((model.inverse(before, before) - expected).abs().mean().item()),
                 "center_coordinate_mae": float((0.5 - expected).abs().mean().item()),
             }
         swapped = None
@@ -265,9 +285,11 @@ def main() -> None:
                 },
                 "observed_pair_signal": observed_pair_signal(target, groups),
                 "paired_action_diagnostic": paired_action_diagnostic(
-                    correct[mask], swapped[mask], partition["state"][mask], target, groups),
+                    correct[mask], swapped[mask], partition["state"][mask], target, groups
+                ),
                 "paired_discriminative_diagnostic": paired_discriminative_diagnostic(
-                    correct[mask], swapped[mask], target, groups),
+                    correct[mask], swapped[mask], target, groups
+                ),
             }
     report = {
         "purpose": "research_only_frozen_visual_model_transfer_probe",
@@ -286,30 +308,31 @@ def main() -> None:
             "correct_action": metrics(correct, partition["state"], partition["target"]),
             "no_action": metrics(ablated, partition["state"], partition["target"]),
             "paired_alternative_action": metrics(swapped, partition["state"], partition["target"])
-            if swapped is not None else None,
+            if swapped is not None
+            else None,
         },
         "paired_action_diagnostic": (
-            paired_action_diagnostic(correct, swapped, partition["state"],
-                                     partition["target"], partition["groups"])
-            if swapped is not None else None
+            paired_action_diagnostic(correct, swapped, partition["state"], partition["target"], partition["groups"])
+            if swapped is not None
+            else None
         ),
         "paired_discriminative_diagnostic": (
-            paired_discriminative_diagnostic(correct, swapped, partition["target"],
-                                             partition["groups"])
-            if swapped is not None else None
+            paired_discriminative_diagnostic(correct, swapped, partition["target"], partition["groups"])
+            if swapped is not None
+            else None
         ),
         "observed_pair_signal": (
-            observed_pair_signal(partition["target"], partition["groups"])
-            if swapped is not None else None
+            observed_pair_signal(partition["target"], partition["groups"]) if swapped is not None else None
         ),
         "paired_diagnostics_by_task": by_task,
         "inverse_coordinate_diagnostic": inverse_diagnostic,
         "limitation": "Frozen one-step model and target archive only; no runtime promotion, safety, "
-                      "general desktop transfer, or Jev parity claim. Tiny target sets are descriptive only.",
+        "general desktop transfer, or Jev parity claim. Tiny target sets are descriptive only.",
     }
     if swapped is not None:
-        report.update(paired_evaluation(correct, swapped, partition, seed=args.seed,
-                                       replicates=args.group_bootstrap_replicates))
+        report.update(
+            paired_evaluation(correct, swapped, partition, seed=args.seed, replicates=args.group_bootstrap_replicates)
+        )
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report, indent=2))
