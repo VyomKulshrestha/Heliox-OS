@@ -1,5 +1,6 @@
 """Shared test fixtures."""
 
+import os
 import sys
 from typing import Any, Callable
 
@@ -7,8 +8,9 @@ import pytest
 
 from pilot.config import PilotConfig
 
-# Optional safe mocks to prevent heavy dependencies from breaking CI tests
-sys.modules["torch"] = None
+# Keep ordinary CI lightweight; research checks can explicitly use real Torch.
+if os.environ.get("HELIOX_TEST_REAL_TORCH") != "1":
+    sys.modules["torch"] = None
 
 
 def pytest_sessionfinish(session, exitstatus):
