@@ -11,10 +11,12 @@ from benchmarks.desktop_decision_corpus import (
     FAMILY_OOD,
     HELD_OUT_VARIANT,
     TRAIN_LEXICON,
+    evaluation_cases,
     generate,
     manifest,
 )
 from benchmarks.general_decision import candidate_prompts, validate_row
+from scripts.compare_general_jev import load_local_cases
 
 
 @pytest.fixture(scope="module")
@@ -121,3 +123,17 @@ def test_injection_rows_never_authorize_following_untrusted_content(parts) -> No
     ]
     assert followed
     assert all(row["target"] == [1.0, 0.0] for row in followed)
+
+
+def test_evaluation_cases_are_held_out_family_balanced_and_comparable(parts, tmp_path) -> None:
+    cases = evaluation_cases(parts, 128)
+    assert len(cases) == 128
+    held_out_ids = {row["id"] for row in parts["test"] + parts["family_ood"]}
+    assert {case["id"] for case in cases} <= held_out_ids
+    families = [case["id"].split(":")[2] for case in cases]
+    counts = {family: families.count(family) for family in set(families)}
+    assert len(counts) == 14 and max(counts.values()) - min(counts.values()) <= 1
+    path = tmp_path / "cases.json"
+    path.write_text(json.dumps(cases), encoding="utf-8")
+    rows, manifest = load_local_cases(path)
+    assert len(rows) == 128 and manifest["evaluation_only"] is True
