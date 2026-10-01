@@ -21,10 +21,13 @@ import numpy as np
 from scipy.optimize import minimize_scalar
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from benchmarks.desktop_decision_corpus import generate as generate_desktop_corpus  # noqa: E402
+from benchmarks.desktop_decision_corpus import manifest as desktop_corpus_manifest  # noqa: E402
 from benchmarks.general_decision import (  # noqa: E402
     DATASET,
     DATASET_CONFIG,
     DATASET_REVISION,
+    EXTRA_TRAINING_CONFIGS,
     PROMPT_STYLES,
     TRAINING_SOURCE_POLICY,
     candidate_prompts,
@@ -396,6 +399,62 @@ def fit_temperature(logits: list[np.ndarray], rows: list[dict]) -> float:
     return float(result.x)
 
 
+def fit_kind_temperatures(logits: list[np.ndarray], rows: list[dict]) -> dict[str, float]:
+    """Fit one calibration temperature per decision kind present in the calibration split."""
+    temperatures = {}
+    for kind in sorted({row["kind"] for row in rows}):
+        indices = [index for index, row in enumerate(rows) if row["kind"] == kind]
+        temperatures[kind] = fit_temperature([logits[index] for index in indices], [rows[index] for index in indices])
+    return temperatures
+
+
+def apply_kind_temperatures(
+    logits: list[np.ndarray], rows: list[dict], temperatures: dict[str, float], fallback: float
+) -> list[np.ndarray]:
+    """Pre-scale logits so shared metrics can be computed with temperature 1."""
+    if len(logits) != len(rows):
+        raise ValueError("Rows and logits must align")
+    return [values / temperatures.get(row["kind"], fallback) for values, row in zip(logits, rows, strict=True)]
+
+
+def soft_ordinal_target(target: list[float], sigma: float) -> list[float]:
+    """Spread a one-hot ordinal label over adjacent levels with a discrete Gaussian."""
+    if not math.isfinite(sigma) or sigma <= 0:
+        raise ValueError("Ordinal label sigma must be finite and positive")
+    center = int(np.argmax(target))
+    weights = np.exp(-0.5 * ((np.arange(len(target)) - center) / sigma) ** 2)
+    return [float(value) for value in weights / weights.sum()]
+
+
+def parse_extra_config(spec: str) -> tuple[str, int, int, int]:
+    """Parse CONFIG:TRAIN:CALIBRATION:TEST row limits for an allowlisted Open-Jev config."""
+    parts = spec.split(":")
+    if len(parts) != 4 or parts[0] not in EXTRA_TRAINING_CONFIGS:
+        raise ValueError(f"Extra configs must be CONFIG:TRAIN:CAL:TEST with CONFIG in {sorted(EXTRA_TRAINING_CONFIGS)}")
+    try:
+        limits = tuple(int(value) for value in parts[1:])
+    except ValueError as exc:
+        raise ValueError("Extra config row limits must be integers") from exc
+    if any(value < 1 for value in limits):
+        raise ValueError("Extra config row limits must be positive")
+    return (parts[0], *limits)
+
+
+def noul_safety_by_source(rows: list[dict], logits: list[np.ndarray]) -> dict[str, dict[str, int]]:
+    """Count false allowances (gold no, predicted yes) and false warnings per source."""
+    summary: dict[str, dict[str, int]] = {}
+    for row, values in zip(rows, logits, strict=True):
+        if row["kind"] != "noul":
+            continue
+        gold_yes = row["target"][1] >= 0.5
+        predicted_yes = probabilities(values, 1.0)[1] >= 0.5
+        entry = summary.setdefault(row["source"], {"rows": 0, "false_allowances": 0, "false_warnings": 0})
+        entry["rows"] += 1
+        entry["false_allowances"] += int(predicted_yes and not gold_yes)
+        entry["false_warnings"] += int(gold_yes and not predicted_yes)
+    return summary
+
+
 def general_group_weights(general_items: list[dict], weighting: str) -> list[float]:
     """Balance repeated public examples without changing source/kind loss mass."""
     if weighting not in {"none", "inverse_sqrt", "inverse"}:
@@ -506,6 +565,13 @@ def checkpoint_signature(
         identity["initialization"] = "base_yes_no_head_v1"
     if getattr(args, "general_group_weighting", "none") != "none":
         identity["general_group_weighting"] = args.general_group_weighting
+    if getattr(args, "extra_config", None):
+        identity["extra_config"] = list(args.extra_config)
+    if getattr(args, "desktop_corpus", False):
+        identity["desktop_corpus_seed"] = args.desktop_corpus_seed
+        identity["desktop_train_scenarios"] = getattr(args, "desktop_train_scenarios", 40)
+    if getattr(args, "score_label_sigma", 0.0):
+        identity["score_label_sigma"] = args.score_label_sigma
     if getattr(args, "scope_group_weighting", "none") != "none":
         identity["scope_group_weighting"] = args.scope_group_weighting
     if getattr(args, "scope_row_weight", 1.0) != 1.0:
@@ -637,6 +703,31 @@ def run(args: argparse.Namespace) -> dict:
         rows[split], manifests[split] = load_split(split, limit, split_seed + offset, allowed_sources=allowed_sources)
         if not rows[split]:
             raise ValueError(f"No licensed rows in {split}")
+    for spec in getattr(args, "extra_config", None) or []:
+        config, *extra_limits = parse_extra_config(spec)
+        for offset, (split, limit) in enumerate(zip(("train", "calibration", "test"), extra_limits, strict=True)):
+            extra_rows, manifests[f"{config}:{split}"] = load_split(
+                split, limit, split_seed + 100 + offset, config=config
+            )
+            rows[split] = rows[split] + extra_rows
+    desktop_manifest = None
+    if getattr(args, "desktop_corpus", False):
+        desktop_parts = generate_desktop_corpus(
+            args.desktop_corpus_seed, {"train": getattr(args, "desktop_train_scenarios", 40)}
+        )
+        desktop_manifest = desktop_corpus_manifest(desktop_parts, args.desktop_corpus_seed)
+        rows["train"] = rows["train"] + desktop_parts["train"]
+        rows["calibration"] = rows["calibration"] + desktop_parts["calibration"]
+        rows["desktop_test"] = desktop_parts["test"]
+        rows["desktop_family_ood"] = desktop_parts["family_ood"]
+    if getattr(args, "score_label_sigma", 0.0):
+        # Soft ordinal targets apply to fitting rows only; calibration and evaluation keep gold labels.
+        rows["train"] = [
+            {**row, "target": soft_ordinal_target(row["target"], args.score_label_sigma)}
+            if row["kind"] == "score"
+            else row
+            for row in rows["train"]
+        ]
     path = snapshot_download(model_name, revision=model_revision, local_files_only=True)
     tokenizer = AutoTokenizer.from_pretrained(path, local_files_only=True)
     scope_manifest = None
@@ -833,6 +924,7 @@ def run(args: argparse.Namespace) -> dict:
     baseline_test = baseline("test") if run_baseline else None
     baseline_ood = baseline("ood") if run_baseline else None
     baseline_calibration = baseline("calibration") if run_baseline else None
+    baseline_desktop = baseline("desktop_test") if run_baseline and desktop_manifest else None
     baseline_scope = baseline("scope_test") if run_baseline and scope_manifest else None
     baseline_scope_calibration = baseline("scope_calibration") if run_baseline and scope_manifest else None
     baseline_temperature = (
@@ -927,10 +1019,32 @@ def run(args: argparse.Namespace) -> dict:
         )
 
     calibration_logits = held_out("calibration", calibration_items)
-    temperature = fit_temperature(calibration_logits, [item["row"] for item in calibration_items])
+    calibration_rows = [item["row"] for item in calibration_items]
+    temperature = fit_temperature(calibration_logits, calibration_rows)
+    kind_temperatures = (
+        fit_kind_temperatures(calibration_logits, calibration_rows)
+        if getattr(args, "kind_temperatures", False)
+        else None
+    )
     test_logits = held_out("trained_test", encoded["test"])
     ood_logits = held_out("trained_ood", encoded["ood"])
     trained_scope = held_out("trained_scope", encoded["scope_test"]) if scope_manifest else None
+    trained_desktop = held_out("trained_desktop_test", encoded["desktop_test"]) if desktop_manifest else None
+    trained_desktop_ood = (
+        held_out("trained_desktop_family_ood", encoded["desktop_family_ood"]) if desktop_manifest else None
+    )
+
+    def calibrated_metrics(part: str, logits: list[np.ndarray]) -> dict:
+        part_rows = [item["row"] for item in encoded[part]]
+        if kind_temperatures is None:
+            return metrics(part_rows, logits, temperature)
+        return metrics(part_rows, apply_kind_temperatures(logits, part_rows, kind_temperatures, temperature), 1.0)
+
+    def calibrated_safety(part: str, logits: list[np.ndarray]) -> dict:
+        part_rows = [item["row"] for item in encoded[part]]
+        scaled = apply_kind_temperatures(logits, part_rows, kind_temperatures or {}, temperature)
+        return noul_safety_by_source(part_rows, scaled)
+
     args.output_dir.mkdir(parents=True, exist_ok=True)
     backbone.save_pretrained(args.output_dir / "adapter")
     np.savez_compressed(
@@ -944,6 +1058,11 @@ def run(args: argparse.Namespace) -> dict:
         attention_implementation=args.attention,
         prompt_style=args.prompt_style,
         model_dtype=args.dtype,
+        **(
+            {"kind_temperatures": json.dumps(kind_temperatures, sort_keys=True)}
+            if kind_temperatures is not None
+            else {}
+        ),
     )
 
     report = {
@@ -1013,6 +1132,7 @@ def run(args: argparse.Namespace) -> dict:
             else hashlib.sha256(json.dumps(row_weights, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
         ),
         "calibration_temperature": temperature,
+        "kind_temperatures": kind_temperatures,
         "baseline_test": (
             metrics([item["row"] for item in encoded["test"]], baseline_test, 1.0)
             if baseline_test is not None
@@ -1032,8 +1152,8 @@ def run(args: argparse.Namespace) -> dict:
             if baseline_ood is not None
             else None
         ),
-        "trained_test": metrics([item["row"] for item in encoded["test"]], test_logits, temperature),
-        "trained_ood": metrics([item["row"] for item in encoded["ood"]], ood_logits, temperature),
+        "trained_test": calibrated_metrics("test", test_logits),
+        "trained_ood": calibrated_metrics("ood", ood_logits),
         "adapter_sha256": hashlib.sha256(
             (args.output_dir / "adapter/adapter_model.safetensors").read_bytes()
         ).hexdigest(),
@@ -1056,6 +1176,27 @@ def run(args: argparse.Namespace) -> dict:
             else "Licensed public synthetic sample only; not proprietary Jev parity or Heliox execution authority."
         ),
     }
+    if getattr(args, "extra_config", None):
+        report["extra_configs"] = list(args.extra_config)
+    if getattr(args, "score_label_sigma", 0.0):
+        report["score_label_sigma"] = args.score_label_sigma
+    if desktop_manifest:
+        report.update(
+            {
+                "desktop_corpus": desktop_manifest,
+                "baseline_desktop_test": (
+                    metrics([item["row"] for item in encoded["desktop_test"]], baseline_desktop, 1.0)
+                    if baseline_desktop is not None
+                    else None
+                ),
+                "trained_desktop_test": calibrated_metrics("desktop_test", trained_desktop),
+                "trained_desktop_family_ood": calibrated_metrics("desktop_family_ood", trained_desktop_ood),
+                "trained_desktop_safety": {
+                    "test": calibrated_safety("desktop_test", trained_desktop),
+                    "family_ood": calibrated_safety("desktop_family_ood", trained_desktop_ood),
+                },
+            }
+        )
     if scope_manifest:
         report.update(
             {
@@ -1175,6 +1316,25 @@ def main() -> None:
     parser.add_argument("--scope-train-rows", type=int, default=512)
     parser.add_argument("--scope-calibration-rows", type=int, default=128)
     parser.add_argument("--scope-test-rows", type=int, default=128)
+    parser.add_argument(
+        "--extra-config",
+        action="append",
+        help="Add CC0 Open-Jev control rows as CONFIG:TRAIN:CAL:TEST (repeatable)",
+    )
+    parser.add_argument(
+        "--desktop-corpus", action="store_true", help="Add the authored licensed Heliox desktop decision corpus"
+    )
+    parser.add_argument("--desktop-corpus-seed", type=int, default=20261002)
+    parser.add_argument(
+        "--desktop-train-scenarios", type=int, default=40, help="Authored scenario groups per training family"
+    )
+    parser.add_argument("--kind-temperatures", action="store_true", help="Calibrate one temperature per decision kind")
+    parser.add_argument(
+        "--score-label-sigma",
+        type=float,
+        default=0.0,
+        help="Soft ordinal training targets for score rows; 0 keeps one-hot labels",
+    )
     parser.add_argument("--output-dir", type=Path, default=root / "benchmarks/.bench-state/qwen_general_v1")
     parser.add_argument("--report", type=Path, default=root / "benchmarks/qwen_general_probe_v1.json")
     args = parser.parse_args()
@@ -1202,6 +1362,15 @@ def main() -> None:
         parser.error("Action-label row limits must be at least two")
     if args.scope_history_calls < 0 or (args.scope_history_calls and args.scopejudge_path is None):
         parser.error("Scope history requires ScopeJudge and a non-negative call count")
+    for spec in args.extra_config or []:
+        try:
+            parse_extra_config(spec)
+        except ValueError as exc:
+            parser.error(str(exc))
+    if args.desktop_train_scenarios < 1:
+        parser.error("Desktop training scenarios must be positive")
+    if not math.isfinite(args.score_label_sigma) or args.score_label_sigma < 0:
+        parser.error("Score label sigma must be finite and non-negative")
     if not math.isfinite(args.scope_row_weight) or args.scope_row_weight <= 0:
         parser.error("Scope row weight must be finite and positive")
     if args.scope_row_weight != 1.0 and args.scopejudge_path is None and args.misactbench_path is None:

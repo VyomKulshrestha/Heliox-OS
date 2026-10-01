@@ -20,6 +20,9 @@ import numpy as np
 DATASET = "ZefanCai/Open-Jev"
 DATASET_REVISION = "c67699e13d0ae25e35b77165a4b6b079bedc8aba"
 DATASET_CONFIG = "release-v2-redistributable"
+# Agent-domain control configs at the same pinned revision. Every row still
+# passes the per-row CC0 and restricted-source filter before selection.
+EXTRA_TRAINING_CONFIGS = frozenset({"email-selection-control-v1", "mailroom-control-v1"})
 KINDS = frozenset({"noul", "choice", "score"})
 PROMPT_STYLES = frozenset({"candidate_v1", "full_options_v2"})
 RESTRICTED_TRAINING_SOURCE_DOMAINS = ("typesafe.ai",)
@@ -198,11 +201,14 @@ def verify_source_holdout(splits: Mapping[str, list[dict]], held_out_sources: se
 
 
 def load_split(split: str, limit: int, seed: int, *,
-               allowed_sources: set[str] | None = None) -> tuple[list[dict], dict]:
+               allowed_sources: set[str] | None = None,
+               config: str = DATASET_CONFIG) -> tuple[list[dict], dict]:
     import pyarrow.parquet as parquet
     from huggingface_hub import hf_hub_download
 
-    filename = f"data/{DATASET_CONFIG}/{split}-00000-of-00001.parquet"
+    if config != DATASET_CONFIG and config not in EXTRA_TRAINING_CONFIGS:
+        raise ValueError(f"Unsupported Open-Jev config: {config}")
+    filename = f"data/{config}/{split}-00000-of-00001.parquet"
     path = Path(hf_hub_download(DATASET, filename, repo_type="dataset",
                                 revision=DATASET_REVISION, local_files_only=True))
     metadata_columns = ("id", "group_id", "source", "kind", "question", "options",
@@ -240,7 +246,7 @@ def load_split(split: str, limit: int, seed: int, *,
     if selected_by_id.keys() != wanted:
         raise ValueError("Selected dataset rows were not all recovered on the second pass")
     selected = [selected_by_id[row["id"]] for row in selected_ids]
-    return selected, {
+    manifest = {
         "sha256": _sha256_file(path),
         "total_rows": parquet_file.metadata.num_rows,
         "licensed_rows": licensed_rows,
@@ -254,6 +260,10 @@ def load_split(split: str, limit: int, seed: int, *,
         "selected_rows": len(selected),
         "sampler": "sorted_id_seeded_source_kind_round_robin_v1",
     }
+    if config != DATASET_CONFIG:
+        # Only extra configs record their name, so existing protocol signatures are unchanged.
+        manifest["config"] = config
+    return selected, manifest
 
 
 def verify_disjoint(splits: dict[str, list[dict]]) -> None:
