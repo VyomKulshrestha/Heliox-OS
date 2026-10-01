@@ -229,7 +229,9 @@ def main() -> None:
     root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--env-file", type=Path, default=root.parent / ".env")
-    parser.add_argument("--limit", type=int, default=24)
+    parser.add_argument(
+        "--limit", type=int, help="Decisions to evaluate; defaults to 24 OOD rows or every --cases-json case"
+    )
     parser.add_argument("--seed", type=int, default=20260926)
     parser.add_argument("--cases-json", type=Path, help="Explicit local labeled corpus, used only for evaluation")
     parser.add_argument("--output-dir", type=Path, default=root / "benchmarks/.bench-state/qwen_general_v2")
@@ -252,16 +254,25 @@ def main() -> None:
     args = parser.parse_args()
     if not args.acknowledge_provider_terms:
         block_jev_output_use()
-    if not 1 <= args.limit <= 128:
+    if args.limit is not None and not 1 <= args.limit <= 128:
         parser.error("--limit must be 1-128")
     if args.report.exists():
         parser.error("Use a fresh report path; prior evaluations are never overwritten")
-    rows, manifest = (
-        load_split("ood", args.limit * 3, args.seed) if args.cases_json is None else load_local_cases(args.cases_json)
-    )
-    rows = [row for row in rows if row["kind"] != "score" or len(row["options"]) <= 10][: args.limit]
-    if len(rows) != args.limit:
-        raise ValueError("Not enough compatible licensed OOD decisions")
+    if args.cases_json is None:
+        limit = 24 if args.limit is None else args.limit
+        rows, manifest = load_split("ood", limit * 3, args.seed)
+    else:
+        rows, manifest = load_local_cases(args.cases_json)
+        limit = len(rows) if args.limit is None else args.limit
+    compatible = [row for row in rows if row["kind"] != "score" or len(row["options"]) <= 10]
+    rows = compatible[:limit]
+    if len(rows) != limit:
+        if args.cases_json is None:
+            raise ValueError("Not enough compatible licensed OOD decisions")
+        raise ValueError(
+            f"--limit {limit} exceeds the {len(compatible)} compatible local cases; "
+            "score cases are limited to 10 levels"
+        )
     model_report, _ = verify_artifact(args.output_dir, args.model_report)
     signature = hashlib.sha256(
         json.dumps(

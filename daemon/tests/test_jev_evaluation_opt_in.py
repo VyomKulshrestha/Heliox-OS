@@ -110,6 +110,44 @@ def test_saved_reference_calls_resume_without_duplicate_billing(tmp_path, monkey
     assert calls == ["billed"]
 
 
+def test_local_cases_default_to_the_whole_corpus_and_explain_oversized_limits(tmp_path, monkeypatch):
+    from scripts import compare_general_jev as comparison
+
+    corpus = tmp_path / "cases.json"
+    corpus.write_text(
+        json.dumps(
+            [
+                {
+                    "id": identifier,
+                    "state": {},
+                    "kind": "noul",
+                    "question": "Valid?",
+                    "options": ["no", "yes"],
+                    "target": [1, 0],
+                }
+                for identifier in ("one", "two", "three")
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        comparison, "verify_artifact", lambda *_args: ({"adapter_sha256": "a" * 64, "head_sha256": "b" * 64}, None)
+    )
+    monkeypatch.setattr(comparison, "_key", lambda _path: "test-key")
+    monkeypatch.setattr(comparison, "query_jev", lambda *_args, **_kwargs: ({"noul": 0.1}, 0.0, "test-reference"))
+    arguments = ["comparison", "--acknowledge-provider-terms", "--cases-json", str(corpus), "--cache-reference-only"]
+
+    monkeypatch.setattr(sys, "argv", [*arguments, "--report", str(tmp_path / "all.json")])
+    comparison.main()
+    saved = json.loads((tmp_path / "all.partial.json").read_text(encoding="utf-8"))
+    assert len(saved["records"]) == 3
+
+    monkeypatch.setattr(sys, "argv", [*arguments, "--limit", "4", "--report", str(tmp_path / "too_many.json")])
+    with pytest.raises(ValueError, match="exceeds the 3 compatible local cases"):
+        comparison.main()
+    assert not (tmp_path / "too_many.partial.json").exists()
+
+
 def test_reference_checkpoint_rejects_changed_identity_and_invalid_cost(tmp_path):
     from scripts.compare_general_jev import load_reference_checkpoint
 
