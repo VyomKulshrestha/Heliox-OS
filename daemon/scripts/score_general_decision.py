@@ -25,6 +25,7 @@ from benchmarks.general_decision import (  # noqa: E402
     format_answer,
     validate_decision,
 )
+from pilot.intelligence.typed_decision import parse_kind_temperatures  # noqa: E402
 from scripts.evaluate_qwen_instruct_scope import MODEL_ID as OPENJEV_BASE_MODEL  # noqa: E402
 from scripts.evaluate_qwen_instruct_scope import MODEL_REVISION as OPENJEV_BASE_REVISION  # noqa: E402
 from scripts.qwen_model_pin import MODEL, REVISION  # noqa: E402
@@ -130,6 +131,7 @@ def score_requests(
         attention = str(saved["attention_implementation"]) if "attention_implementation" in saved else "eager"
         prompt_style = str(saved["prompt_style"]) if "prompt_style" in saved else "candidate_v1"
         model_dtype = str(saved["model_dtype"]) if "model_dtype" in saved else "bfloat16"
+        kind_temperatures = parse_kind_temperatures(saved.get("kind_temperatures"), report)
     if max_length != report["max_length"]:
         raise ValueError("Head token limit differs from research report")
     if attention not in ("eager", "sdpa") or attention != report.get("attention_implementation", "eager"):
@@ -186,7 +188,7 @@ def score_requests(
                 row["kind"],
                 row["options"],
                 score_row(backbone, head, item, candidate_microbatch_size=report.get("candidate_microbatch_size", 2)),
-                temperature,
+                kind_temperatures.get(row["kind"], temperature),
             ),
         }
         predictions.append(prediction)

@@ -767,3 +767,36 @@ def test_runtime_entry_points_render_the_offline_training_prompt(monkeypatch) ->
     )
 
     assert rendered[0] == rendered[1] == offline
+
+
+def test_kind_temperatures_must_match_the_report_and_drive_runtime_scaling(monkeypatch) -> None:
+    from pilot.intelligence.typed_decision import parse_kind_temperatures
+
+    saved = json.dumps({"noul": 3.0, "choice": 1.5}, sort_keys=True)
+    report = {"kind_temperatures": {"noul": 3.0, "choice": 1.5}}
+    assert parse_kind_temperatures(saved, report) == {"noul": 3.0, "choice": 1.5}
+    assert parse_kind_temperatures(None, {}) == {}
+    for bad_saved, bad_report in (
+        (None, report),
+        (saved, {"kind_temperatures": {"noul": 2.0, "choice": 1.5}}),
+        (json.dumps({"verdict": 1.0}), {"kind_temperatures": {"verdict": 1.0}}),
+        (json.dumps({"noul": 0.0}), {"kind_temperatures": {"noul": 0.0}}),
+        ("not json", report),
+    ):
+        with pytest.raises(ValueError, match="per-kind temperatures"):
+            parse_kind_temperatures(bad_saved, bad_report)
+
+    model = LocalTypedDecisionModel("C:/unused", "C:/unused.json")
+    model._loaded = True
+    model._prompt_style = "candidate_v1"
+    model._temperature = 1.0
+    model._kind_temperatures = {"noul": 4.0}
+    model._identity = {"model": "Qwen/Qwen3-0.6B", "revision": "c1899de289a04d12100db370d81485cdf75e47ca"}
+    monkeypatch.setattr(model, "_encode", lambda prompts: [[1] for _ in prompts])
+    monkeypatch.setattr(model, "_score_sequences", lambda sequences: np.full(len(sequences), 4.0))
+    noul = model.score("state", "noul", "Ready?", ["no", "yes"])["answer"]["yes_probability"]
+    choice = model.score("state", "choice", "Pick", ["a", "b"])["answer"]["probabilities"]["a"]
+    assert noul == pytest.approx(1 / (1 + np.exp(-1.0)))
+    assert choice == pytest.approx(0.5)
+    batched = model.score_questions("state", {"ready": {"type": "noul", "instructions": "Ready?"}})
+    assert batched["answers"]["ready"]["noul"] == pytest.approx(noul)
