@@ -23,6 +23,15 @@ MAX_TOTAL_PROMPT_TOKENS = 64_000
 MAX_CANDIDATE_MICROBATCH = 16
 CONFIDENCE_SEMANTICS = "normalized_distribution_concentration_not_accuracy_probability"
 DISTRIBUTION_SEMANTICS = "model_assigned_candidate_mass_not_empirical_correctness_probability"
+MIN_AVAILABLE_HOST_RAM_BYTES = int(2.5 * 1024**3)
+
+
+def require_available_host_memory() -> None:
+    """Refuse optional model loading before importing large dependencies under memory pressure."""
+    import psutil
+
+    if psutil.virtual_memory().available < MIN_AVAILABLE_HOST_RAM_BYTES:
+        raise RuntimeError("At least 2.5 GiB of available system RAM is required before local model loading")
 
 
 def _candidate_microbatch_size(max_prompt_tokens: int, configured_max: int) -> int:
@@ -414,10 +423,7 @@ class LocalTypedDecisionModel:
         if not np.all(np.isfinite(weights)) or not np.all(np.isfinite(bias)):
             raise ValueError("Decision head contains non-finite values")
 
-        import psutil
-
-        if psutil.virtual_memory().available < int(2.5 * 1024**3):
-            raise RuntimeError("At least 2.5 GiB of available system RAM is required before local model loading")
+        require_available_host_memory()
 
         # Optional research dependencies are imported only after explicit enablement and
         # local artifact validation. Every HF lookup is cache-only; this code never downloads.
