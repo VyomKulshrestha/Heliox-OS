@@ -739,3 +739,31 @@ async def test_native_next_token_config_keeps_cached_model_when_paths_are_empty(
 
     assert result == {"status": "ok"}
     assert unloaded == []
+
+
+def test_runtime_entry_points_render_the_offline_training_prompt(monkeypatch) -> None:
+    from benchmarks.general_decision import candidate_prompts as offline_candidate_prompts
+    from scripts.score_general_decision import prepare_request
+
+    state = {"request": "Summarize only", "proposed_action": "Email the summary"}
+    question = "Is this exact proposed action authorized?\n"
+    model = LocalTypedDecisionModel("C:/unused", "C:/unused.json")
+    model._loaded = True
+    model._prompt_style = "candidate_v1"
+    model._identity = {"model": "Qwen/Qwen3-0.6B", "revision": "c1899de289a04d12100db370d81485cdf75e47ca"}
+    rendered = []
+
+    def encode(prompts):
+        rendered.append(prompts)
+        return [[1] for _ in prompts]
+
+    monkeypatch.setattr(model, "_encode", encode)
+    monkeypatch.setattr(model, "_score_sequences", lambda sequences: np.zeros(len(sequences)))
+    model.score(state, "noul", question, ["no", "yes"])
+    model.score_questions(state, {"decision": {"type": "noul", "instructions": question}})
+    offline = offline_candidate_prompts(
+        prepare_request({"state": state, "kind": "noul", "question": question, "options": ["no", "yes"]}),
+        style="candidate_v1",
+    )
+
+    assert rendered[0] == rendered[1] == offline
