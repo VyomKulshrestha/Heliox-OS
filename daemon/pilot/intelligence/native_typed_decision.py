@@ -22,6 +22,7 @@ from pilot.intelligence.typed_decision import (
     _candidate_microbatch_size,
     compile_typed_questions,
     format_typed_answer,
+    require_available_host_memory,
     validate_decision,
 )
 
@@ -212,6 +213,7 @@ class LocalNextTokenTypedDecisionModel:
     def _load(self) -> None:
         if self._loaded:
             return
+        require_available_host_memory()
         import torch
         from huggingface_hub import snapshot_download
         from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig

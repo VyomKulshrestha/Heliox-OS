@@ -331,6 +331,24 @@ def test_native_next_token_model_requires_pinned_model_and_valid_limits() -> Non
         LocalNextTokenTypedDecisionModel("Qwen/Qwen3-0.6B", temperature=0)
 
 
+@pytest.mark.parametrize("model_name", ["Qwen/Qwen3-0.6B", "Qwen/Qwen3.5-2B"])
+def test_native_next_token_model_refuses_loading_under_host_memory_pressure(monkeypatch, model_name) -> None:
+    torch_module = MagicMock()
+    monkeypatch.setitem(sys.modules, "torch", torch_module)
+    monkeypatch.setitem(
+        sys.modules,
+        "psutil",
+        SimpleNamespace(virtual_memory=lambda: SimpleNamespace(available=1024**3)),
+    )
+    model = LocalNextTokenTypedDecisionModel(model_name)
+
+    with pytest.raises(RuntimeError, match="available system RAM"):
+        model._load()
+
+    torch_module.cuda.is_available.assert_not_called()
+    assert model._loaded is False
+
+
 def test_artifact_verification_fails_before_any_model_or_network_load(tmp_path: Path) -> None:
     adapter = tmp_path / "adapter"
     adapter.mkdir()
