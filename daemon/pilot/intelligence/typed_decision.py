@@ -73,6 +73,30 @@ def validate_decision(kind: str, question: str, options: list[str]) -> None:
         raise ValueError("Noul options must be ordered as no, yes")
 
 
+def parse_kind_temperatures(saved: Any, report: dict[str, Any]) -> dict[str, float]:
+    """Validate optional per-kind calibration temperatures stored with a decision head."""
+    if saved is None:
+        if report.get("kind_temperatures") is not None:
+            raise ValueError("Decision head is missing its reported per-kind temperatures")
+        return {}
+    try:
+        temperatures = json.loads(str(saved))
+    except json.JSONDecodeError as exc:
+        raise ValueError("Decision head per-kind temperatures are invalid") from exc
+    if (
+        not isinstance(temperatures, dict)
+        or not temperatures
+        or not set(temperatures) <= KINDS
+        or any(
+            type(value) is not float or not np.isfinite(value) or not 0.05 <= value <= 20
+            for value in temperatures.values()
+        )
+        or temperatures != report.get("kind_temperatures")
+    ):
+        raise ValueError("Decision head per-kind temperatures differ from its report")
+    return temperatures
+
+
 def _render_typed_value(value: Any, *, optional: bool = False) -> str | None:
     if value is None and optional:
         return None
@@ -280,6 +304,7 @@ class LocalTypedDecisionModel:
         self._tokenizer: Any = None
         self._torch: Any = None
         self._temperature = 1.0
+        self._kind_temperatures: dict[str, float] = {}
         self._max_length = 0
         self._prompt_style = ""
         self._microbatch_size = MAX_CANDIDATE_MICROBATCH
@@ -317,7 +342,7 @@ class LocalTypedDecisionModel:
                 "artifact_integrity": "sha256_verified",
                 "model": self._identity["model"],
                 "revision": self._identity["revision"],
-                "answer": format_answer(kind, options, logits, self._temperature),
+                "answer": format_answer(kind, options, logits, self._temperature_for(kind)),
             }
 
     def score_questions(self, state: Any, questions: Any) -> dict[str, Any]:
@@ -354,7 +379,7 @@ class LocalTypedDecisionModel:
                     else scores
                 )
                 answer = format_answer(
-                    record["kind"], record["options"], logits, self._temperature
+                    record["kind"], record["options"], logits, self._temperature_for(record["kind"])
                 )
                 if record["kind"] == "noul":
                     yes_probability = answer["yes_probability"]
@@ -411,6 +436,8 @@ class LocalTypedDecisionModel:
             attention = str(saved["attention_implementation"]) if "attention_implementation" in saved else "eager"
             self._prompt_style = str(saved["prompt_style"]) if "prompt_style" in saved else "candidate_v1"
             model_dtype = str(saved["model_dtype"]) if "model_dtype" in saved else "bfloat16"
+            kind_temperatures = saved.get("kind_temperatures")
+        self._kind_temperatures = parse_kind_temperatures(kind_temperatures, report)
         if self._max_length != report.get("max_length") or not 1 <= self._max_length <= 4096:
             raise ValueError("Decision head token limit differs from its report")
         if attention not in {"eager", "sdpa"} or attention != report.get("attention_implementation", "eager"):
@@ -484,6 +511,9 @@ class LocalTypedDecisionModel:
         self._head = head
         self._identity = {"model": model, "revision": revision}
         self._loaded = True
+
+    def _temperature_for(self, kind: str) -> float:
+        return self._kind_temperatures.get(kind, self._temperature)
 
     def _encode(self, prompts: list[str]) -> list[list[int]]:
         sequences = []
