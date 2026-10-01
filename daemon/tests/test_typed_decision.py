@@ -525,6 +525,50 @@ async def test_typed_decision_rpc_is_opt_in_and_research_only(monkeypatch, tmp_p
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure",
+    [
+        RuntimeError("CUDA is required for this opt-in local research model"),
+        ModuleNotFoundError("No module named 'peft'"),
+        FileNotFoundError("Configured local decision artifacts were not found"),
+    ],
+)
+async def test_typed_decision_rpc_reports_unavailable_runtime_without_internal_error(
+    monkeypatch, tmp_path: Path, failure: Exception
+) -> None:
+    config = PilotConfig()
+    config.typed_decision.enabled = True
+    config.typed_decision.artifact_dir = str(tmp_path / "artifacts")
+    config.typed_decision.report_path = str(tmp_path / "report.json")
+    server = PilotServer(config)
+    client = object()
+    server._client_roles[client] = RpcClientRole.MCP_LOCAL
+
+    class UnavailableModel:
+        def __init__(self, artifact_dir, report_path) -> None:
+            pass
+
+        def score(self, state, kind, question, options):
+            raise failure
+
+        def unload(self):
+            return None
+
+    import pilot.intelligence.typed_decision as typed_decision_module
+
+    monkeypatch.setattr(typed_decision_module, "LocalTypedDecisionModel", UnavailableModel)
+    result = await server._handle_mcp_typed_decision(
+        {"state": "inspect", "kind": "noul", "question": "Ready?", "options": ["no", "yes"]},
+        client,
+    )
+
+    assert result["status"] == "unavailable"
+    assert result["research_only"] is True
+    assert result["execution_authority"] is False
+    assert str(failure) in result["message"]
+
+
+@pytest.mark.asyncio
 async def test_native_next_token_mode_needs_no_head_artifact_and_stays_advisory(monkeypatch) -> None:
     config = PilotConfig()
     config.typed_decision.enabled = True
