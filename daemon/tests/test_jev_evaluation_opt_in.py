@@ -242,3 +242,63 @@ def test_explicit_evaluation_posts_only_the_public_decision() -> None:
     assert b"target" not in requests[0].content
     assert b"test-key" not in requests[0].content
     assert requests[0].headers["Authorization"] == "Bearer test-key"
+
+
+def test_shared_reference_cache_is_reused_across_local_models_without_rebilling(tmp_path, monkeypatch):
+    from scripts import compare_general_jev as comparison
+
+    corpus = tmp_path / "cases.json"
+    corpus.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "one",
+                    "state": {},
+                    "kind": "noul",
+                    "question": "Valid?",
+                    "options": ["no", "yes"],
+                    "target": [1, 0],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    cache = tmp_path / "reference.json"
+    calls = []
+
+    def query(*_args, **_kwargs):
+        calls.append("billed")
+        return {"noul": 0.2}, 0.001, "test-reference"
+
+    monkeypatch.setattr(comparison, "_key", lambda _path: "test-key")
+    monkeypatch.setattr(comparison, "query_jev", query)
+    monkeypatch.setattr(comparison, "score_requests", lambda *_args: [{"answer": {"yes_probability": 0.1}}])
+    for name, adapter in (("small", "a"), ("large", "c")):
+        monkeypatch.setattr(
+            comparison,
+            "verify_artifact",
+            lambda *_args, adapter=adapter: ({"adapter_sha256": adapter * 64, "head_sha256": "b" * 64}, None),
+        )
+        report = tmp_path / f"{name}.json"
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "comparison",
+                "--acknowledge-provider-terms",
+                "--cases-json",
+                str(corpus),
+                "--reference-cache",
+                str(cache),
+                "--report",
+                str(report),
+            ],
+        )
+        comparison.main()
+        saved = json.loads(report.read_text(encoding="utf-8"))
+        assert saved["reference_cache_shared"] is True
+        assert saved["local_adapter_sha256"] == adapter * 64
+    assert calls == ["billed"]
+    assert json.loads(cache.read_text(encoding="utf-8"))["schema_version"] == 2
+    with pytest.raises(ValueError, match="does not match"):
+        comparison.load_reference_checkpoint(cache, "legacy-adapter-bound", resume=True, schema_version=1)

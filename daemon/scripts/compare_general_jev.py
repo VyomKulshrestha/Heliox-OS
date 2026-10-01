@@ -26,7 +26,7 @@ from scripts.score_general_decision import score_requests, verify_artifact  # no
 JEV_MODEL = "typesafe/jev-1.13"
 
 
-def load_reference_checkpoint(path: Path, signature: str, *, resume: bool) -> list[dict]:
+def load_reference_checkpoint(path: Path, signature: str, *, resume: bool, schema_version: int = 1) -> list[dict]:
     if not path.exists():
         return []
     if not resume:
@@ -36,7 +36,7 @@ def load_reference_checkpoint(path: Path, signature: str, *, resume: bool) -> li
     saved = json.loads(path.read_text(encoding="utf-8"))
     records = saved.get("records")
     if (
-        saved.get("schema_version") != 1
+        saved.get("schema_version") != schema_version
         or saved.get("signature") != signature
         or not isinstance(records, list)
         or len(records) > 128
@@ -244,6 +244,11 @@ def main() -> None:
         "--resume", action="store_true", help="Reuse matching saved provider responses after interruption"
     )
     parser.add_argument(
+        "--reference-cache",
+        type=Path,
+        help="Shared reference-answer cache keyed only by cases and reference model, reusable across local models",
+    )
+    parser.add_argument(
         "--cache-reference-only", action="store_true", help="Save reference responses without loading a local GPU model"
     )
     parser.add_argument(
@@ -274,21 +279,18 @@ def main() -> None:
             "score cases are limited to 10 levels"
         )
     model_report, _ = verify_artifact(args.output_dir, args.model_report)
+    identity = {"rows": rows, "model": JEV_MODEL}
+    if args.reference_cache is None:
+        # Legacy per-report caches are also bound to the local artifact.
+        identity.update({"adapter": model_report["adapter_sha256"], "head": model_report["head_sha256"]})
     signature = hashlib.sha256(
-        json.dumps(
-            {
-                "rows": rows,
-                "adapter": model_report["adapter_sha256"],
-                "head": model_report["head_sha256"],
-                "model": JEV_MODEL,
-            },
-            sort_keys=True,
-            ensure_ascii=False,
-            allow_nan=False,
-        ).encode()
+        json.dumps(identity, sort_keys=True, ensure_ascii=False, allow_nan=False).encode()
     ).hexdigest()
-    checkpoint = args.report.with_suffix(".partial.json")
-    records = load_reference_checkpoint(checkpoint, signature, resume=args.resume)
+    schema_version = 1 if args.reference_cache is None else 2
+    checkpoint = args.report.with_suffix(".partial.json") if args.reference_cache is None else args.reference_cache
+    records = load_reference_checkpoint(
+        checkpoint, signature, resume=args.resume or args.reference_cache is not None, schema_version=schema_version
+    )
     if len(records) > len(rows):
         raise ValueError("Reference checkpoint exceeds the selected evaluation rows")
     if len(records) < len(rows):
@@ -301,7 +303,10 @@ def main() -> None:
                 checkpoint.parent.mkdir(parents=True, exist_ok=True)
                 temporary = checkpoint.with_suffix(".tmp")
                 temporary.write_text(
-                    json.dumps({"schema_version": 1, "signature": signature, "records": records}, allow_nan=False),
+                    json.dumps(
+                        {"schema_version": schema_version, "signature": signature, "records": records},
+                        allow_nan=False,
+                    ),
                     encoding="utf-8",
                 )
                 os.replace(temporary, checkpoint)
@@ -328,6 +333,8 @@ def main() -> None:
         "jev_models": sorted(versions),
         "calls": len(rows),
         "cost_usd": cost,
+        "reference_signature": signature,
+        "reference_cache_shared": args.reference_cache is not None,
         "provider_evaluation_explicitly_enabled": True,
         "teacher_outputs_used_for_training": False,
         "uniform_baseline": uniform_baseline(rows)["by_kind"],
