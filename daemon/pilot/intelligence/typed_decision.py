@@ -296,7 +296,8 @@ class LocalTypedDecisionModel:
             raise ValueError(f"State exceeds {MAX_STATE_CHARS} characters")
         row = {
             "kind": kind,
-            "question": question.strip(),
+            # Match score_questions, the offline scorer and training prompts exactly.
+            "question": question,
             "options": options,
             "state_json": state_json,
         }
