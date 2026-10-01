@@ -904,3 +904,49 @@ def manifest(parts: dict[str, list[dict]], seed: int) -> dict:
             for split, rows in parts.items()
         },
     }
+
+
+def evaluation_cases(parts: dict[str, list[dict]], limit: int = 128, seed: int = 20261002) -> list[dict]:
+    """Select a family-balanced held-out evaluation set in the comparison-case format."""
+    rows = parts["test"] + parts["family_ood"]
+    by_family: dict[str, list[dict]] = {}
+    for row in sorted(rows, key=lambda item: item["id"]):
+        by_family.setdefault(row["family"], []).append(row)
+    rng = random.Random(seed)
+    for family_rows in by_family.values():
+        rng.shuffle(family_rows)
+    selected: list[dict] = []
+    while len(selected) < limit and any(by_family.values()):
+        for family in sorted(by_family):
+            if by_family[family] and len(selected) < limit:
+                selected.append(by_family[family].pop())
+    return [
+        {
+            "id": row["id"],
+            "state": json.loads(row["state_json"]),
+            "kind": row["kind"],
+            "question": row["question"],
+            "options": row["options"],
+            "target": row["target"],
+        }
+        for row in selected
+    ]
+
+
+if __name__ == "__main__":
+    import argparse
+    from pathlib import Path
+
+    parser = argparse.ArgumentParser(description="Export held-out authored desktop evaluation cases")
+    parser.add_argument("output", type=Path)
+    parser.add_argument("--limit", type=int, default=128)
+    parser.add_argument("--seed", type=int, default=20261002)
+    arguments = parser.parse_args()
+    if arguments.output.exists():
+        parser.error("Use a fresh output path")
+    cases = evaluation_cases(generate(arguments.seed), arguments.limit)
+    arguments.output.write_text(
+        "[\n" + ",\n".join(json.dumps(case, ensure_ascii=False, sort_keys=True) for case in cases) + "\n]\n",
+        encoding="utf-8",
+    )
+    print(json.dumps({"cases": len(cases), "families": len({case["id"].split(":")[2] for case in cases})}))
