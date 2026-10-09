@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "purpose": "compute-budgeted licensed agent-domain mixture on a clean-base Qwen3.5-4B; not Jev parity or execution authority",
+  "frozen_before_execution": true,
+  "supersedes": "jev_like_mixture_protocol_v2_20261009.json, stopped during baseline evaluation (no training step taken) because its measured T4 throughput projected about 6 hours",
+  "compute": "Google Colab Tesla T4 16 GB (free tier); fp16 because T4 lacks native bf16",
+  "budget_evidence": {
+    "v2_training_tokens": 2737247,
+    "email_selection_share_of_v2_training_tokens": 0.443,
+    "email_selection_mean_tokens_per_row": 5343,
+    "measured_v2_baseline_eval": "about 5 seconds per mixed test row on the T4"
+  },
+  "changes_from_v2": [
+    "email-selection-control-v1 training rows 256 -> 64 (largest token cost per row)",
+    "release-v2 training rows 512 -> 256 (same as v1 protocol)",
+    "mailroom-control-v1 training rows 256 -> 192",
+    "smaller extra-config calibration/test splits",
+    "untrained-head baseline evaluation skipped (--skip-baseline); gates never used it"
+  ],
+  "training_data": {
+    "release-v2-redistributable": {"train": 256, "calibration": 48, "test": 64, "ood": 96, "source_holdout_fraction": 0.2, "source_holdout_seed": 20261008},
+    "email-selection-control-v1": {"train": 64, "calibration": 16, "test": 16, "license": "CC0-1.0 per row"},
+    "mailroom-control-v1": {"train": 192, "calibration": 24, "test": 32, "license": "CC0-1.0 per row"},
+    "heliox_desktop_decisions_v1": {"seed": 20261002, "train_scenarios_per_family": 60, "license": "MIT, authored in repository", "family_ood": ["action_risk", "approval_gate", "least_privilege"], "held_out_surface_variant": 3},
+    "excluded": ["TypeSafe Jev outputs", "released Open-Jev adapter weights", "rows failing the per-row CC0 or typesafe.ai source filter"]
+  },
+  "candidate": {"backbone": "qwen3.5-4b", "candidate_microbatch_size": 2},
+  "fallback_rule": "If, after the first 64 training rows, measured throughput projects more than 3 hours of training, stop and run the identical configuration with --backbone qwen3.5-2b.",
+  "hyperparameters": {
+    "seed": 20261008,
+    "split_seed": 20261008,
+    "max_length": 1536,
+    "lora_rank": 8,
+    "prompt_style": "full_options_v2",
+    "attention": "sdpa",
+    "dtype": "float16",
+    "accumulation": 4,
+    "lr": 0.00002,
+    "head_lr": 0.00005,
+    "brier_weight": 0.1,
+    "ordinal_weight": 0.1,
+    "score_label_sigma": 0.75,
+    "kind_temperatures": true,
+    "passes": 1
+  },
+  "promotion_gates": "identical to jev_like_mixture_protocol_20261002.json G1-G5, checked by scripts/check_jev_like_promotion.py",
+  "reported_not_gated": [
+    "128 held-out desktop cases against cached Jev reference answers (no new provider calls)",
+    "per-source and per-kind NLL, Brier and selective-prediction metrics"
+  ]
+}
