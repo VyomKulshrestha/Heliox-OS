@@ -19,6 +19,7 @@ import numpy as np
 from pilot.intelligence.typed_decision import (
     MAX_TOTAL_PROMPT_TOKENS,
     PINNED_BACKBONES,
+    QWEN35_NF4_BACKBONES,
     _candidate_microbatch_size,
     compile_typed_questions,
     format_typed_answer,
@@ -237,7 +238,7 @@ class LocalNextTokenTypedDecisionModel:
             "device_map": {"": 0},
             "attn_implementation": "eager",
         }
-        if self.model_id == "Qwen/Qwen3.5-2B":
+        if self.model_id in QWEN35_NF4_BACKBONES:
             load_options["quantization_config"] = BitsAndBytesConfig(
                 load_in_4bit=True,
                 bnb_4bit_quant_type="nf4",

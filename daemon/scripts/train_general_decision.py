@@ -52,6 +52,7 @@ from benchmarks.scopejudge_general import (  # noqa: E402
     scope_group_weights,
     scope_metrics,
 )
+from pilot.intelligence.typed_decision import PINNED_BACKBONES, QWEN35_NF4_BACKBONES  # noqa: E402
 from scripts.evaluate_qwen_instruct_scope import MODEL_ID as OPENJEV_BASE_MODEL  # noqa: E402
 from scripts.evaluate_qwen_instruct_scope import MODEL_REVISION as OPENJEV_BASE_REVISION  # noqa: E402
 from scripts.qwen_model_pin import MODEL, REVISION  # noqa: E402
@@ -60,11 +61,18 @@ ORDINAL_LOSS_VERSION = "ranked_probability_score_v1"
 DEFAULT_MIN_FREE_HOST_RAM_GIB = 2.5
 
 
+BACKBONES = ("qwen3-0.6b", "qwen3.5-2b", "qwen3.5-4b")
+
+
 def model_identity(args: argparse.Namespace) -> tuple[str, str]:
     """Select a pinned backbone independently of optional adapter warm starts."""
     backbone = getattr(args, "backbone", "qwen3-0.6b")
-    if backbone not in ("qwen3-0.6b", "qwen3.5-2b"):
+    if backbone not in BACKBONES:
         raise ValueError("Unknown pinned decision backbone")
+    if backbone == "qwen3.5-4b":
+        if getattr(args, "initial_openjev", False):
+            raise ValueError("Open-Jev warm starts exist only for the 2B backbone")
+        return "Qwen/Qwen3.5-4B", PINNED_BACKBONES["Qwen/Qwen3.5-4B"]
     if getattr(args, "initial_openjev", False) or backbone == "qwen3.5-2b":
         return OPENJEV_BASE_MODEL, OPENJEV_BASE_REVISION
     return MODEL, REVISION
@@ -561,7 +569,7 @@ def checkpoint_signature(
         )
 
         identity["initial_openjev"] = [OPENJEV_REVISION, OPENJEV_ADAPTER_SHA256, OPENJEV_HEAD_SHA256]
-    elif model_identity(args)[0] == OPENJEV_BASE_MODEL:
+    elif model_identity(args)[0] in QWEN35_NF4_BACKBONES:
         identity["initialization"] = "base_yes_no_head_v1"
     if getattr(args, "general_group_weighting", "none") != "none":
         identity["general_group_weighting"] = args.general_group_weighting
@@ -643,7 +651,7 @@ def run(args: argparse.Namespace) -> dict:
         getattr(args, "minimum_free_host_gib", DEFAULT_MIN_FREE_HOST_RAM_GIB),
     )
     model_name, model_revision = model_identity(args)
-    if model_name == OPENJEV_BASE_MODEL:
+    if model_name in QWEN35_NF4_BACKBONES:
         from scripts.openjev_training_runtime import require_training_runtime
 
         require_training_runtime()
@@ -822,7 +830,7 @@ def run(args: argparse.Namespace) -> dict:
         del base
     else:
         dtype = {"bfloat16": torch.bfloat16, "float16": torch.float16}[args.dtype]
-        quantized = model_name == OPENJEV_BASE_MODEL
+        quantized = model_name in QWEN35_NF4_BACKBONES
         loader = Qwen3_5ForCausalLM if quantized else AutoModelForCausalLM
         extra = (
             {
@@ -1115,7 +1123,7 @@ def run(args: argparse.Namespace) -> dict:
             else None
         ),
         "initialization": "openjev_warm_start_v1" if args.initial_openjev else "base_yes_no_head_v1",
-        "backbone_quantization": "NF4 double quantization" if model_name == OPENJEV_BASE_MODEL else None,
+        "backbone_quantization": "NF4 double quantization" if model_name in QWEN35_NF4_BACKBONES else None,
         "checkpoint_every": args.checkpoint_every,
         "resumed": args.resume,
         "baseline_skipped_on_resume": not run_baseline,
@@ -1240,7 +1248,7 @@ def main() -> None:
     parser.add_argument("--lora-rank", type=int, default=8)
     parser.add_argument(
         "--backbone",
-        choices=("qwen3-0.6b", "qwen3.5-2b"),
+        choices=BACKBONES,
         default="qwen3-0.6b",
         help="Pinned base model; 2B uses NF4 without requiring Open-Jev weights",
     )

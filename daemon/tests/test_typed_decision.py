@@ -331,7 +331,7 @@ def test_native_next_token_model_requires_pinned_model_and_valid_limits() -> Non
         LocalNextTokenTypedDecisionModel("Qwen/Qwen3-0.6B", temperature=0)
 
 
-@pytest.mark.parametrize("model_name", ["Qwen/Qwen3-0.6B", "Qwen/Qwen3.5-2B"])
+@pytest.mark.parametrize("model_name", ["Qwen/Qwen3-0.6B", "Qwen/Qwen3.5-2B", "Qwen/Qwen3.5-4B"])
 def test_native_next_token_model_refuses_loading_under_host_memory_pressure(monkeypatch, model_name) -> None:
     torch_module = MagicMock()
     monkeypatch.setitem(sys.modules, "torch", torch_module)
@@ -375,7 +375,7 @@ def test_artifact_verification_fails_before_any_model_or_network_load(tmp_path: 
     assert model._loaded is False
 
 
-@pytest.mark.parametrize("model_name", ["Qwen/Qwen3-0.6B", "Qwen/Qwen3.5-2B"])
+@pytest.mark.parametrize("model_name", ["Qwen/Qwen3-0.6B", "Qwen/Qwen3.5-2B", "Qwen/Qwen3.5-4B"])
 @pytest.mark.parametrize("low_host_memory", [False, True])
 def test_artifact_load_attaches_adapter_to_decoder_and_preserves_batch_limit(
     monkeypatch, tmp_path: Path, model_name, low_host_memory

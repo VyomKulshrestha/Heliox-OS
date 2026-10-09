@@ -201,3 +201,27 @@ def test_scope_calibration_uses_pinned_scope_manifest_limits() -> None:
         "scopejudge": {"selected_rows": {"scope_train": 512, "scope_calibration": 58, "scope_test": 755}},
     }
     assert scope_limits(report) == {"scope_train": 512, "scope_calibration": 58, "scope_test": 755}
+
+
+def test_clean_base_4b_reports_require_quantization_and_source_policy(tmp_path):
+    from benchmarks.general_decision import TRAINING_SOURCE_POLICY
+    from scripts.score_general_decision import verify_artifact
+
+    report = {
+        "model": "Qwen/Qwen3.5-4B",
+        "revision": "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
+        "backbone_quantization": "NF4 double quantization",
+        "initialization": "base_yes_no_head_v1",
+        "initial_checkpoint": None,
+        "training_source_policy": json.loads(json.dumps(TRAINING_SOURCE_POLICY)),
+        "adapter_sha256": "0" * 64,
+        "head_sha256": "0" * 64,
+    }
+    for change in ({"backbone_quantization": None}, {"initial_checkpoint": {"repo": "x"}}, {"training_source_policy": {}}):
+        path = tmp_path / "report.json"
+        path.write_text(json.dumps({**report, **change}), encoding="utf-8")
+        with pytest.raises(ValueError, match="Clean-base research report"):
+            verify_artifact(tmp_path, path)
+    path.write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(FileNotFoundError):
+        verify_artifact(tmp_path, path)

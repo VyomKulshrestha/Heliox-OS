@@ -49,7 +49,10 @@ def _candidate_microbatch_size(max_prompt_tokens: int, configured_max: int) -> i
 PINNED_BACKBONES = {
     "Qwen/Qwen3-0.6B": "c1899de289a04d12100db370d81485cdf75e47ca",
     "Qwen/Qwen3.5-2B": "15852e8c16360a2fea060d615a32b45270f8a8fc",
+    "Qwen/Qwen3.5-4B": "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
 }
+# Qwen3.5 checkpoints are loaded as text decoders in NF4 with double quantization.
+QWEN35_NF4_BACKBONES = frozenset({"Qwen/Qwen3.5-2B", "Qwen/Qwen3.5-4B"})
 
 
 def validate_decision(kind: str, question: str, options: list[str]) -> None:
@@ -471,7 +474,7 @@ class LocalTypedDecisionModel:
         model_path = snapshot_download(model, revision=revision, local_files_only=True)
         tokenizer = AutoTokenizer.from_pretrained(model_path, local_files_only=True)
         dtype = {"bfloat16": torch.bfloat16, "float16": torch.float16}[model_dtype]
-        if model == "Qwen/Qwen3.5-2B":
+        if model in QWEN35_NF4_BACKBONES:
             from transformers import Qwen3_5ForCausalLM
 
             base = Qwen3_5ForCausalLM.from_pretrained(
