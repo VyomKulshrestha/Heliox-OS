@@ -92,6 +92,12 @@ def test_checkpoint_signature_binds_the_new_mixture_options() -> None:
         {"desktop_corpus": True, "desktop_corpus_seed": 3, "desktop_train_scenarios": 40},
         {"desktop_corpus": True, "desktop_corpus_seed": 3, "desktop_train_scenarios": 2},
         {"score_label_sigma": 0.75},
+        {
+            "desktop_corpus": True,
+            "desktop_corpus_seed": 3,
+            "desktop_train_scenarios": 40,
+            "desktop_corpus_version": "v2",
+        },
     ]
     signatures = {original}
     for change in variants:

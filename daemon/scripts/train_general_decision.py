@@ -578,6 +578,8 @@ def checkpoint_signature(
     if getattr(args, "desktop_corpus", False):
         identity["desktop_corpus_seed"] = args.desktop_corpus_seed
         identity["desktop_train_scenarios"] = getattr(args, "desktop_train_scenarios", 40)
+        if getattr(args, "desktop_corpus_version", "v1") != "v1":
+            identity["desktop_corpus_version"] = args.desktop_corpus_version
     if getattr(args, "score_label_sigma", 0.0):
         identity["score_label_sigma"] = args.score_label_sigma
     if getattr(args, "scope_group_weighting", "none") != "none":
@@ -720,10 +722,11 @@ def run(args: argparse.Namespace) -> dict:
             rows[split] = rows[split] + extra_rows
     desktop_manifest = None
     if getattr(args, "desktop_corpus", False):
+        corpus_version = getattr(args, "desktop_corpus_version", "v1")
         desktop_parts = generate_desktop_corpus(
-            args.desktop_corpus_seed, {"train": getattr(args, "desktop_train_scenarios", 40)}
+            args.desktop_corpus_seed, {"train": getattr(args, "desktop_train_scenarios", 40)}, version=corpus_version
         )
-        desktop_manifest = desktop_corpus_manifest(desktop_parts, args.desktop_corpus_seed)
+        desktop_manifest = desktop_corpus_manifest(desktop_parts, args.desktop_corpus_seed, corpus_version)
         rows["train"] = rows["train"] + desktop_parts["train"]
         rows["calibration"] = rows["calibration"] + desktop_parts["calibration"]
         rows["desktop_test"] = desktop_parts["test"]
@@ -1339,6 +1342,7 @@ def main() -> None:
         "--desktop-corpus", action="store_true", help="Add the authored licensed Heliox desktop decision corpus"
     )
     parser.add_argument("--desktop-corpus-seed", type=int, default=20261002)
+    parser.add_argument("--desktop-corpus-version", choices=("v1", "v2"), default="v1")
     parser.add_argument(
         "--desktop-train-scenarios", type=int, default=40, help="Authored scenario groups per training family"
     )
