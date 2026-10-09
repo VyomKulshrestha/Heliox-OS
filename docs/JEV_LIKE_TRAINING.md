@@ -222,3 +222,60 @@ generalization rather than real-world desktop accuracy. Recommended next
 iteration: train on `approval_gate` and more multi-effect scope negatives,
 and add licensed arithmetic/ordinal data, then rerun under a new frozen
 protocol with a fresh holdout.
+
+### Promoted candidate: Qwen3.5-2B, protocol v4 (current)
+
+Protocol v4 kept the v3 recipe with two changes. It used desktop corpus v2,
+which trains `approval_gate` with varied untrusted approvers and near-miss
+approvals. Corpus v2 also adds `compound_scope` and `injection_next_step`,
+doubles the arithmetic and evidence-rating scenarios, and holds out a new
+`third_party_disclosure` family. v4 also raised the learning rate to 1e-4
+(adapter) and 2e-4 (head): v3 took about 470 optimizer steps, against
+Open-Jev-2B's 20,204. Training covered 2,375 rows in 8,230 s on a Colab T4.
+The run survived a browser disconnect. The artifact zip SHA-256 `00dca6a5...`
+matched Colab; adapter `a1f63979d3dc...`, head `cd0e0a3a4fd2...`, report
+`7e5b65d2...`.
+
+Gates on v4's own held-out splits all passed. Desktop test top-1 was 98.3%,
+with 0% Noul false allowances and 0 injected-instruction allowances.
+Never-trained families scored 100% top-1 with 0 false allowances. Release-v2
+test was 60.9% and held-source OOD 67.7%.
+
+**Pre-registered promotion rule against v3.** The daemon runtime scorer ran
+on the laptop GPU, scoring 128 v1 held-out cases against cached Jev
+references, with no new calls. v4 got 98/100 Noul and choice cases correct;
+the rule required more than v3's 91. It made 0 Noul false allowances; the
+rule allowed at most v3's 3. **v4 is promoted** and is now the configured
+`typed_decision` engine.
+
+| Held-out set | Metric | v3 | v4 | Jev |
+| --- | --- | ---: | ---: | ---: |
+| v1, 128 cases | Noul gold accuracy | 90.7% | 96.3% | 96.3% |
+| | Noul false allowances | 3 | 0 | 0 |
+| | Choice gold accuracy | 91.3% | 100% | 97.8% |
+| | Score mean absolute error | 0.409 | 0.122 | 0.040 |
+| | Agreement with Jev, Noul / choice | 87.0% / 89.1% | 92.6% / 97.8% | - |
+| v2, 128 fresh cases | Noul gold accuracy | 89.8% | 98.3% | 96.6% |
+| | Noul false allowances | 2 | 0 | 0 |
+| | Choice gold accuracy | 88.9% | 95.6% | 100% |
+| | Score mean absolute error | 0.503 | 0.109 | 0.095 |
+| | Agreement with Jev, Noul / choice | 86.4% / 88.9% | 94.9% / 95.6% | - |
+
+The v2 reference set cost $0.002067 (128 calls) and was used for evaluation
+only. Jev agreed with the authored v2 labels on 123/128 cases; the
+disagreements were borderline evidence-strength and near-threshold Noul cases.
+
+**Limits.**
+- v4 matches or exceeds Jev on gold accuracy for these authored templates,
+  partly because it learned the author's labelling conventions. Jev disagrees
+  with those labels on 2-4% of cases.
+- Agreement with Jev is 93-98%, so v4 is close to Jev on this decision
+  family, not equal to Jev in general.
+- Score answers still trail Jev on the v1 set (0.122 vs 0.040 mean error).
+- In an end-to-end MCP check, v4 rated emailing saved passwords as
+  "external sharing" (level 2, 0.98) rather than "credential exposure"
+  (level 3). The `action_risk` family was held out of training by design.
+- The general release-v2 test (60.9%) and held-source OOD (67.7%) remain far
+  below Open-Jev-2B's full-data results. This model is specialized for
+  Heliox desktop decisions.
+- All scores stay advisory, with execution authority `false`.
