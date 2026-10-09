@@ -25,7 +25,11 @@ from benchmarks.general_decision import (  # noqa: E402
     format_answer,
     validate_decision,
 )
-from pilot.intelligence.typed_decision import parse_kind_temperatures  # noqa: E402
+from pilot.intelligence.typed_decision import (  # noqa: E402
+    PINNED_BACKBONES,
+    QWEN35_NF4_BACKBONES,
+    parse_kind_temperatures,
+)
 from scripts.evaluate_qwen_instruct_scope import MODEL_ID as OPENJEV_BASE_MODEL  # noqa: E402
 from scripts.evaluate_qwen_instruct_scope import MODEL_REVISION as OPENJEV_BASE_REVISION  # noqa: E402
 from scripts.qwen_model_pin import MODEL, REVISION  # noqa: E402
@@ -60,8 +64,18 @@ def verify_artifact(output_dir: Path, report_path: Path) -> tuple[dict, Path]:
     adapter = output_dir / "adapter"
     head = output_dir / "head.npz"
     identity = report.get("model"), report.get("revision")
-    if identity not in {(MODEL, REVISION), (OPENJEV_BASE_MODEL, OPENJEV_BASE_REVISION)}:
+    supported = {(MODEL, REVISION), (OPENJEV_BASE_MODEL, OPENJEV_BASE_REVISION)} | {
+        (name, PINNED_BACKBONES[name]) for name in QWEN35_NF4_BACKBONES
+    }
+    if identity not in supported:
         raise ValueError("Research report does not match the pinned base model")
+    if identity[0] in QWEN35_NF4_BACKBONES and identity[0] != OPENJEV_BASE_MODEL and (
+        report.get("backbone_quantization") != "NF4 double quantization"
+        or report.get("initialization") != "base_yes_no_head_v1"
+        or report.get("initial_checkpoint") is not None
+        or report.get("training_source_policy") != json.loads(json.dumps(TRAINING_SOURCE_POLICY))
+    ):
+        raise ValueError("Clean-base research report is missing its quantization or source policy")
     microbatch_size = report.get("candidate_microbatch_size", 2)
     if type(microbatch_size) is not int or microbatch_size < 1:
         raise ValueError("Candidate microbatch size must be a positive integer")
@@ -147,7 +161,7 @@ def score_requests(
     if overlong:
         raise ValueError("Decision exceeds the trained token limit; input was not truncated")
     dtype = {"bfloat16": torch.bfloat16, "float16": torch.float16}[model_dtype]
-    if model_name == OPENJEV_BASE_MODEL:
+    if model_name in QWEN35_NF4_BACKBONES:
         base = Qwen3_5ForCausalLM.from_pretrained(
             model_path,
             local_files_only=True,
