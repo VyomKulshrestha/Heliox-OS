@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "purpose": "scaled licensed agent-domain mixture on a larger clean-base backbone; not Jev parity or execution authority",
+  "frozen_before_execution": true,
+  "supersedes_for_promotion": "jev_like_mixture_protocol_20261002.json (2B run paused at row 1056/1305 by local NVIDIA driver faults)",
+  "compute": "Google Colab Tesla T4 16 GB (free tier), datacenter driver; fp16 because T4 lacks native bf16",
+  "changes_from_v1": [
+    "backbone qwen3.5-2b -> qwen3.5-4b (pinned 851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a, Apache-2.0, NF4 double quantization, clean base)",
+    "dtype bfloat16 -> float16 and attention eager -> sdpa for T4 tensor cores",
+    "max_length 1024 -> 1536 so long email-selection rows are no longer excluded",
+    "candidate_microbatch_size 1 -> 2",
+    "training rows roughly 1,305 -> 2,400 (data scale was the main gap identified in the Open-Jev recipe)"
+  ],
+  "training_data": {
+    "release-v2-redistributable": {"train": 512, "calibration": 64, "test": 64, "ood": 96, "source_holdout_fraction": 0.2, "source_holdout_seed": 20261008},
+    "email-selection-control-v1": {"train": 256, "calibration": 32, "test": 48, "license": "CC0-1.0 per row"},
+    "mailroom-control-v1": {"train": 256, "calibration": 32, "test": 48, "license": "CC0-1.0 per row"},
+    "heliox_desktop_decisions_v1": {"seed": 20261002, "train_scenarios_per_family": 60, "license": "MIT, authored in repository", "family_ood": ["action_risk", "approval_gate", "least_privilege"], "held_out_surface_variant": 3},
+    "excluded": ["TypeSafe Jev outputs", "released Open-Jev adapter weights", "rows failing the per-row CC0 or typesafe.ai source filter"]
+  },
+  "candidate": {"backbone": "qwen3.5-4b", "candidate_microbatch_size": 2},
+  "hyperparameters": {
+    "seed": 20261008,
+    "split_seed": 20261008,
+    "max_length": 1536,
+    "lora_rank": 8,
+    "prompt_style": "full_options_v2",
+    "attention": "sdpa",
+    "dtype": "float16",
+    "accumulation": 4,
+    "lr": 0.00002,
+    "head_lr": 0.00005,
+    "brier_weight": 0.1,
+    "ordinal_weight": 0.1,
+    "score_label_sigma": 0.75,
+    "kind_temperatures": true,
+    "passes": 1
+  },
+  "promotion_gates": "identical to jev_like_mixture_protocol_20261002.json G1-G5, checked by scripts/check_jev_like_promotion.py",
+  "reported_not_gated": [
+    "128 held-out desktop cases against cached Jev reference answers (no new provider calls)",
+    "12 previously inspected typed_desktop_transfer cases",
+    "per-source and per-kind NLL, Brier and selective-prediction metrics"
+  ]
+}
