@@ -913,7 +913,7 @@ def run(args: argparse.Namespace) -> dict:
     )
     signature = checkpoint_signature(args, encoded, manifests, scope_manifest, row_weights=row_weights)
 
-    run_baseline = not (args.resume and args.skip_baseline_on_resume)
+    run_baseline = not (getattr(args, "skip_baseline", False) or (args.resume and args.skip_baseline_on_resume))
 
     def baseline(part: str) -> list[np.ndarray]:
         identity = hashlib.sha256(f"{signature}:baseline:{part}".encode()).hexdigest()
@@ -1127,6 +1127,7 @@ def run(args: argparse.Namespace) -> dict:
         "checkpoint_every": args.checkpoint_every,
         "resumed": args.resume,
         "baseline_skipped_on_resume": not run_baseline,
+        "baseline_skipped": bool(getattr(args, "skip_baseline", False)),
         "learning_rates": {"adapter": args.lr, "head": args.head_lr},
         "brier_weight": args.brier_weight,
         "ordinal_weight": args.ordinal_weight,
@@ -1283,6 +1284,11 @@ def main() -> None:
         "--skip-baseline-on-resume",
         action="store_true",
         help="Avoid repeated baseline inference after a saved training checkpoint",
+    )
+    parser.add_argument(
+        "--skip-baseline",
+        action="store_true",
+        help="Skip untrained-head baseline evaluation to save compute; gates do not use it",
     )
     parser.add_argument("--seed", type=int, default=20260924)
     parser.add_argument("--split-seed", type=int, help="Keep data partitions fixed while changing model initialization")
