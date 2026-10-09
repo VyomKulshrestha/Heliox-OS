@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "purpose": "accuracy iteration on the promoted v3 2B: targeted authored data and an adequate learning rate; not Jev parity or execution authority",
+  "frozen_before_execution": true,
+  "baseline_candidate": "jev_like_2b_v3_20261009.json (promoted; adapter f400307718005b76..., head 8032937e34559049...)",
+  "compute": "Google Colab Tesla T4 16 GB (free tier); fp16",
+  "changes_from_v3": [
+    "desktop corpus v1 -> v2: approval_gate trained with varied untrusted approvers and near-miss approvals; new compound_scope and injection_next_step families; doubled time_conversion, budget_fit and evidence_strength scenarios; new held-out third_party_disclosure family",
+    "desktop_train_scenarios 60 -> 50 per family (1,993 training rows after v2 family scaling)",
+    "adapter lr 2e-5 -> 1e-4 and head lr 5e-5 -> 2e-4: v3 took about 470 optimizer steps, far fewer than Open-Jev-2B's 20,204, so the reference learning rate under-fits; 1e-4 to 2e-4 is the usual constant QLoRA range",
+    "email-selection-control-v1 64:16:16 -> 32:16:16 and mailroom-control-v1 192:24:32 -> 96:24:32 to fund the desktop rows (mailroom test was already 100%)"
+  ],
+  "training_data": {
+    "release-v2-redistributable": {"train": 256, "calibration": 48, "test": 64, "ood": 96, "source_holdout_fraction": 0.2, "source_holdout_seed": 20261008},
+    "email-selection-control-v1": {"train": 32, "calibration": 16, "test": 16, "license": "CC0-1.0 per row"},
+    "mailroom-control-v1": {"train": 96, "calibration": 24, "test": 32, "license": "CC0-1.0 per row"},
+    "heliox_desktop_decisions_v2": {"seed": 20261002, "train_scenarios_per_family": 50, "license": "MIT, authored in repository", "family_ood": ["action_risk", "least_privilege", "third_party_disclosure"], "held_out_surface_variant": 3},
+    "excluded": ["TypeSafe Jev outputs", "released Open-Jev adapter weights", "rows failing the per-row CC0 or typesafe.ai source filter"]
+  },
+  "candidate": {"backbone": "qwen3.5-2b", "candidate_microbatch_size": 2},
+  "hyperparameters": {
+    "seed": 20261008,
+    "split_seed": 20261008,
+    "max_length": 1536,
+    "lora_rank": 8,
+    "prompt_style": "full_options_v2",
+    "attention": "sdpa",
+    "dtype": "float16",
+    "accumulation": 4,
+    "lr": 0.0001,
+    "head_lr": 0.0002,
+    "brier_weight": 0.1,
+    "ordinal_weight": 0.1,
+    "score_label_sigma": 0.75,
+    "kind_temperatures": true,
+    "skip_baseline": true,
+    "passes": 1
+  },
+  "promotion_rule": [
+    "Pass G1-G5 (scripts/check_jev_like_promotion.py) on the v2 corpus held-out splits.",
+    "On the 128 v1 held-out cases (daemon runtime scorer, cached Jev references, no new calls): Noul plus choice gold correct must exceed v3's 91/100, and Noul false allowances must not exceed v3's 3.",
+    "If either condition fails, v3 stays enabled and v4 is reported as not promoted."
+  ],
+  "reported_not_gated": [
+    "fresh 128-case v2 held-out set against new bounded Jev reference calls (evaluation only, never training)",
+    "score mean absolute error on both sets (v3: 0.409 on the v1 set)"
+  ]
+}
