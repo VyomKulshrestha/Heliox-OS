@@ -139,3 +139,31 @@ AUC was 0.79, and positive cases on the held-out phrasings fell below 0.5.
 Choice decisions requiring arithmetic or disambiguation stayed weak: time
 conversion 20%, ambiguous referents 25%, budget fit 30%. All 10 of its
 family-OOD false allowances were in the never-trained `approval_gate` family.
+
+### Local 2B run paused by GPU driver faults
+
+The frozen v1 2B run reached row 1,056/1,305 on the laptop's RTX 4060, then
+stopped. Every crash was a CUDA illegal-instruction or illegal-memory-access
+error inside backward, on different rows each time. The Windows System log shows
+NVIDIA `nvlddmkm` event 13 (graphics engine exception) and event 153 (driver
+reset) since 2026-09-05, with daily spikes on training days. Short inference
+runs complete, so the fault tracks sustained compute load, not this code. The
+checkpoint stays local and unused.
+
+### Colab T4 runs (protocols v2 and v3)
+
+Training moved to a free Google Colab Tesla T4 (16 GB VRAM, driver 580.82). It
+used the same committed code, verified by SHA-256 against `git archive` output.
+Colab ships torchao 0.10, which peft 0.19.1 rejects at import, so it was
+uninstalled. The trainer uses bitsandbytes and does not need torchao.
+
+- **v2** (4B, about 2.7M training tokens) was stopped during baseline
+  evaluation, before any training step. Email-selection rows averaged 5,343
+  tokens and made up 44% of training tokens, so the run projected about 6 hours.
+- **v3** trimmed the expensive sources and skipped the baseline. The 4B took
+  480 s for its first 64 rows (7.5 s per row), projecting 3.9 hours. The
+  pre-registered rule triggered, and the identical v3 configuration was rerun on
+  the 2B. That run took 118 s for its first 32 rows.
+
+The T4 has no native bfloat16, so these runs use fp16. That differs from the v1
+2B run's dtype, so the two runs are not a matched comparison.
