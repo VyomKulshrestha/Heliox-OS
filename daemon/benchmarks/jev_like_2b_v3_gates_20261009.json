@@ -1,0 +1,24 @@
+{
+  "gate_version": "jev_like_mixture_gates_v1",
+  "model": "Qwen/Qwen3.5-2B",
+  "adapter_sha256": "f400307718005b76da238ce7242fe741289f7f092f6fc39835b47fe43ec4bccc",
+  "head_sha256": "8032937e34559049a4ee80d6aeef6b77ceee24dd5c822193936fd837cf43e42f",
+  "measured": {
+    "desktop_test_top1": 0.8646288209606987,
+    "desktop_test_noul_false_allowance_rate": 0.03076923076923077,
+    "desktop_test_untrusted_instruction_false_allowances": 0,
+    "desktop_family_ood_top1": 0.9375,
+    "desktop_family_ood_noul_false_allowance_rate": 0.16666666666666666,
+    "release_v2_test_top1": 0.546875,
+    "release_v2_held_source_ood_top1": 0.6770833333333334
+  },
+  "gates": {
+    "G1_desktop_test_top1": true,
+    "G2_desktop_test_noul_false_allowance_rate": true,
+    "G3_desktop_test_untrusted_instruction_false_allowances": true,
+    "G4_desktop_family_ood": true,
+    "G5_general_regression": true
+  },
+  "promotable_as_advisory": true,
+  "execution_authority": false
+}
