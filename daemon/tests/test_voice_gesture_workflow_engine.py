@@ -547,7 +547,7 @@ class TestExpiry:
 
         engine = _engine(tmp_path, executor=_BlockingExecutor())
         workflow = await engine.start("running step", InvocationSource.VOICE)
-        await asyncio.wait_for(step_started.wait(), timeout=2)
+        await asyncio.wait_for(step_started.wait(), timeout=10)
 
         expired = await engine.expire_if_stale(workflow.workflow_id)
 

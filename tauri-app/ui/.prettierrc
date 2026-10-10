@@ -4,6 +4,7 @@
   "tabWidth": 2,
   "trailingComma": "all",
   "printWidth": 120,
+  "endOfLine": "auto",
   "plugins": ["prettier-plugin-svelte"],
   "overrides": [
     {
