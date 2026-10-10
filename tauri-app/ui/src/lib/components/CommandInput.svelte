@@ -116,8 +116,11 @@
       bind:value={input}
       maxlength="20000"
       placeholder={$session.loading
-        ? inTaskMode === "ask" ? "Ask about the task or screen..."
-          : inTaskMode === "next" ? "Describe the next task..." : "Correct or stop the running task..."
+        ? inTaskMode === "ask"
+          ? "Ask about the task or screen..."
+          : inTaskMode === "next"
+            ? "Describe the next task..."
+            : "Correct or stop the running task..."
         : "Tell Heliox OS what to do..."}
       onkeydown={handleKeydown}
       autocomplete="off"
@@ -131,12 +134,15 @@
       type="submit"
       class="send-btn"
       title={$session.loading
-        ? inTaskMode === "ask" ? "Ask without interrupting"
-          : inTaskMode === "next" ? "Queue another task" : "Correct the running task"
+        ? inTaskMode === "ask"
+          ? "Ask without interrupting"
+          : inTaskMode === "next"
+            ? "Queue another task"
+            : "Correct the running task"
         : "Send"}
       disabled={(!input.trim() && attachments.length === 0) || input.length >= MAX_CHARS}
     >
-      {$session.loading ? inTaskMode === "ask" ? "Ask" : inTaskMode === "next" ? "Queue" : "Correct" : "Send"}
+      {$session.loading ? (inTaskMode === "ask" ? "Ask" : inTaskMode === "next" ? "Queue" : "Correct") : "Send"}
     </button>
   </div>
 
@@ -144,9 +150,16 @@
     <div class="queued-tasks" aria-label="Queued tasks">
       {#each $session.queuedTasks.filter((task) => task.sessionId === $session.activeSessionId) as task (task.taskId)}
         <div class="queued-task">
-          <span class="queued-task-label" title={task.input}>{task.status === "running" ? "Running" : "Queued"}: {task.input}</span>
+          <span class="queued-task-label" title={task.input}
+            >{task.status === "running" ? "Running" : "Queued"}: {task.input}</span
+          >
           {#if task.status === "queued" && task.resumeToken}
-            <button type="button" class="cancel-queued" aria-label={`Cancel queued task: ${task.input}`} onclick={() => session.cancelQueuedTask(task.taskId)}>
+            <button
+              type="button"
+              class="cancel-queued"
+              aria-label={`Cancel queued task: ${task.input}`}
+              onclick={() => session.cancelQueuedTask(task.taskId)}
+            >
               Cancel
             </button>
           {/if}

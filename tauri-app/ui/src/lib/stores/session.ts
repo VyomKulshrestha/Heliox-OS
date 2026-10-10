@@ -380,13 +380,16 @@ function createSession() {
           ...s,
           queuedTasks: s.queuedTasks.some((task) => task.taskId === taskId)
             ? s.queuedTasks
-            : [...s.queuedTasks, {
-                taskId,
-                resumeToken: "",
-                sessionId,
-                input: String(p.input ?? ""),
-                status: "queued" as const,
-              }],
+            : [
+                ...s.queuedTasks,
+                {
+                  taskId,
+                  resumeToken: "",
+                  sessionId,
+                  input: String(p.input ?? ""),
+                  status: "queued" as const,
+                },
+              ],
         }));
         break;
       }
@@ -399,14 +402,17 @@ function createSession() {
           loading: sessionId === s.activeSessionId ? true : s.loading,
           phase: sessionId === s.activeSessionId ? "running queued task" : s.phase,
           queuedTasks: s.queuedTasks.some((task) => task.taskId === taskId)
-            ? s.queuedTasks.map((task) => task.taskId === taskId ? { ...task, status: "running" as const } : task)
-            : [...s.queuedTasks, {
-                taskId,
-                resumeToken: "",
-                sessionId,
-                input: String(p.input ?? ""),
-                status: "running" as const,
-              }],
+            ? s.queuedTasks.map((task) => (task.taskId === taskId ? { ...task, status: "running" as const } : task))
+            : [
+                ...s.queuedTasks,
+                {
+                  taskId,
+                  resumeToken: "",
+                  sessionId,
+                  input: String(p.input ?? ""),
+                  status: "running" as const,
+                },
+              ],
         }));
         break;
       }
@@ -420,7 +426,7 @@ function createSession() {
         }
         const sessionId = String(p.session_id ?? "");
         const status = String(p.status ?? "error");
-        const result = p.result && typeof p.result === "object" ? p.result as Record<string, unknown> : null;
+        const result = p.result && typeof p.result === "object" ? (p.result as Record<string, unknown>) : null;
         const terminal = result ? classifyExecuteResponse(result) : null;
         const message = terminal?.text || String(p.message ?? "Task finished.");
         const actionResults: ActionResultData[] = Array.isArray(result?.results)
@@ -453,9 +459,7 @@ function createSession() {
           phase: sessionId === s.activeSessionId ? "" : s.phase,
           durableTask: s.durableTask?.taskId === taskId ? undefined : s.durableTask,
           queuedTasks: s.queuedTasks.filter((task) => task.taskId !== taskId),
-          messages: sessionId === s.activeSessionId
-            ? [...s.messages, terminalMessage]
-            : s.messages,
+          messages: sessionId === s.activeSessionId ? [...s.messages, terminalMessage] : s.messages,
         }));
         if (sessionId !== get({ subscribe }).activeSessionId) {
           const index = chatSessions.findIndex((chat) => chat.id === sessionId);
@@ -509,11 +513,14 @@ function createSession() {
           if (message) {
             update((s) => ({
               ...s,
-              messages: [...s.messages, {
-                type: status === "answered" ? "result" as MessageType : "system" as MessageType,
-                text: message,
-                timestamp: Date.now(),
-              }],
+              messages: [
+                ...s.messages,
+                {
+                  type: status === "answered" ? ("result" as MessageType) : ("system" as MessageType),
+                  text: message,
+                  timestamp: Date.now(),
+                },
+              ],
             }));
           }
           break;
@@ -975,7 +982,11 @@ function createSession() {
     }
   }
 
-  async function sendCommand(input: string, attachments: Attachment[] = [], inTaskMode: "correct" | "ask" | "next" = "correct") {
+  async function sendCommand(
+    input: string,
+    attachments: Attachment[] = [],
+    inTaskMode: "correct" | "ask" | "next" = "correct",
+  ) {
     const current = get({ subscribe });
     if (current.loading) {
       const previousPhase = current.phase;
@@ -1001,17 +1012,21 @@ function createSession() {
             queuedTasks: completedQueuedTaskIds.has(queuedTaskId)
               ? s.queuedTasks
               : s.queuedTasks.some((task) => task.taskId === queuedTaskId)
-              ? s.queuedTasks.map((task) => task.taskId === queuedTaskId
-                  ? { ...task, resumeToken: queuedResumeToken }
-                  : task)
-              : [...s.queuedTasks, {
-                  taskId: queuedTaskId,
-                  resumeToken: queuedResumeToken,
-                  sessionId: current.activeSessionId,
-                  input,
-                  status: "queued" as const,
-                }],
-            messages: [...s.messages,
+                ? s.queuedTasks.map((task) =>
+                    task.taskId === queuedTaskId ? { ...task, resumeToken: queuedResumeToken } : task,
+                  )
+                : [
+                    ...s.queuedTasks,
+                    {
+                      taskId: queuedTaskId,
+                      resumeToken: queuedResumeToken,
+                      sessionId: current.activeSessionId,
+                      input,
+                      status: "queued" as const,
+                    },
+                  ],
+            messages: [
+              ...s.messages,
               { type: "user" as MessageType, text: input, timestamp: Date.now() },
               { type: "system" as MessageType, text: "Queued after the current task.", timestamp: Date.now() },
             ],
@@ -1037,7 +1052,10 @@ function createSession() {
           update((s) => ({
             ...s,
             phase: previousPhase,
-            messages: [...s.messages, { type: "result", text: result.message || "No answer available.", timestamp: Date.now() }],
+            messages: [
+              ...s.messages,
+              { type: "result", text: result.message || "No answer available.", timestamp: Date.now() },
+            ],
           }));
         } else if (result.status === "revising") {
           update((s) => ({ ...s, phase: "stopping current step and revising" }));
@@ -1156,11 +1174,14 @@ function createSession() {
         const terminal = classifyExecuteResponse(result);
         update((s) => ({
           ...s,
-          messages: [...s.messages, {
-            type: terminal.messageType as MessageType,
-            text: terminal.text,
-            timestamp: Date.now(),
-          }],
+          messages: [
+            ...s.messages,
+            {
+              type: terminal.messageType as MessageType,
+              text: terminal.text,
+              timestamp: Date.now(),
+            },
+          ],
         }));
       } else {
         applyTaskResult(result);
