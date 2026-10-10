@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
-from scripts.train_qwen_scope_noul import group_split, prompt, training_rows
+from scripts.train_qwen_scope_noul import group_split, prompt
 
 
 def test_noul_prompt_carries_request_action_and_yes_no_meanings() -> None:
@@ -16,11 +14,20 @@ def test_noul_prompt_carries_request_action_and_yes_no_meanings() -> None:
 
 
 def test_training_splits_keep_requests_together() -> None:
-    rows = training_rows(Path(__file__).resolve().parents[1])
+    # Synthetic rows: the real training rows need Jev teacher outputs, which stay local and untracked.
+    rows = [
+        {
+            "id": f"r{request}a{action}",
+            "request": f"request {request}",
+            "action": f"action {action}",
+            "probability": 0.5,
+        }
+        for request in range(20)
+        for action in range(4)
+    ]
     parts = group_split(rows)
     assert sum(len(part) for part in parts.values()) == len(rows)
-    groups = {name: {rows[index]["request"] for index in indices}
-              for name, indices in parts.items()}
+    groups = {name: {rows[index]["request"] for index in indices} for name, indices in parts.items()}
     assert not (groups["fit"] & groups["calibration"])
     assert not (groups["fit"] & groups["validation"])
     assert not (groups["calibration"] & groups["validation"])
