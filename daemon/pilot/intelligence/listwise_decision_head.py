@@ -1,7 +1,7 @@
 """Small cross-attention head for frozen-context, listwise decisions.
 
 The option-to-context attention pattern is adapted from Dasein Labs' Open-Jev
-AttentionHead (MIT; copyright notice is in benchmarks/OPEN_JEV_LICENSE.txt).
+AttentionHead (MIT; copyright notice is in benchmarks/DASEIN_LABS_LICENSE.txt).
 """
 
 from __future__ import annotations

@@ -6,7 +6,7 @@ import json
 import numpy as np
 import pytest
 
-from benchmarks.jev_scope_suite import ScopeCase
+from benchmarks.refscope_suite import ScopeCase
 from scripts.evaluate_qwen_instruct_scope import MODEL_ID, MODEL_REVISION
 from scripts.evaluate_world_scope_qlora import artifact_metadata, paired_replay, teacher_rows
 

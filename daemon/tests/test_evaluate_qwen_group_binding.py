@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from benchmarks.jev_scope_suite import ScopeCase
+from benchmarks.refscope_suite import ScopeCase
 from scripts.evaluate_qwen_group_binding import (
     group_cases,
     load_partial,

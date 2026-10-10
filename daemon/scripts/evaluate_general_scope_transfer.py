@@ -15,7 +15,7 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from benchmarks.jev_scope_qwen_v1_holdout import CASES  # noqa: E402
+from benchmarks.refscope_qwen_v1_holdout import CASES  # noqa: E402
 from benchmarks.scopejudge_general import load_scope_parts  # noqa: E402
 from scripts.score_general_decision import score_requests, verify_artifact  # noqa: E402
 
@@ -52,7 +52,7 @@ def scope_limits(model_report: dict) -> dict[str, int]:
 def main() -> None:
     import sys
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    from scripts.jev_output_policy import block_jev_output_use
+    from scripts.reference_output_policy import block_jev_output_use
     block_jev_output_use()
 
     root = Path(__file__).resolve().parents[1]

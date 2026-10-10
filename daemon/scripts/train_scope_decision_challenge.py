@@ -16,11 +16,11 @@ import numpy as np
 from sklearn.linear_model import LogisticRegression
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from benchmarks.jev_scope_augmentation import CASES as AUGMENTATION_CASES  # noqa: E402
-from benchmarks.jev_scope_challenge import CASES as CHALLENGE_CASES  # noqa: E402
-from benchmarks.jev_scope_stress import CASES as STRESS_CASES  # noqa: E402
-from benchmarks.jev_scope_suite import CASES as ORIGINAL_CASES  # noqa: E402
-from benchmarks.jev_scope_suite import ScopeCase  # noqa: E402
+from benchmarks.refscope_augmentation import CASES as AUGMENTATION_CASES  # noqa: E402
+from benchmarks.refscope_challenge import CASES as CHALLENGE_CASES  # noqa: E402
+from benchmarks.refscope_stress import CASES as STRESS_CASES  # noqa: E402
+from benchmarks.refscope_suite import CASES as ORIGINAL_CASES  # noqa: E402
+from benchmarks.refscope_suite import ScopeCase  # noqa: E402
 from benchmarks.scope_decision_experiment import (  # noqa: E402
     FEATURE_COUNT,
     MODEL_VERSION,
@@ -165,7 +165,7 @@ def evaluate_final(challenge_path: Path, candidate_path: Path, metrics_path: Pat
 def main() -> None:
     import sys
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    from scripts.jev_output_policy import block_jev_output_use
+    from scripts.reference_output_policy import block_jev_output_use
     block_jev_output_use()
 
     parser = argparse.ArgumentParser(description=__doc__)

@@ -657,7 +657,7 @@ def run(args: argparse.Namespace) -> dict:
     )
     model_name, model_revision = model_identity(args)
     if model_name in QWEN35_NF4_BACKBONES:
-        from scripts.openjev_training_runtime import require_training_runtime
+        from scripts.opendec_training_runtime import require_training_runtime
 
         require_training_runtime()
     import torch

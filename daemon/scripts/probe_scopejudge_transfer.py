@@ -17,7 +17,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import GroupShuffleSplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from benchmarks.jev_scope_semantic_v4_holdout import CASES as JEV_HOLDOUT  # noqa: E402
+from benchmarks.refscope_semantic_v4_holdout import CASES as JEV_HOLDOUT  # noqa: E402
 from benchmarks.scope_decision_experiment import feature_matrix  # noqa: E402
 from benchmarks.scope_semantic_head import guarded_probabilities  # noqa: E402
 from scripts.evaluate_scopejudge_external import evaluate, load_cases  # noqa: E402
@@ -99,7 +99,7 @@ def run(dataset: Path, root: Path) -> dict:
 def main() -> None:
     import sys
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    from scripts.jev_output_policy import block_jev_output_use
+    from scripts.reference_output_policy import block_jev_output_use
     block_jev_output_use()
 
     root = Path(__file__).resolve().parents[1]

@@ -11,10 +11,10 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from benchmarks.jev_scope_fresh_final import CASES as FRESH_CASES  # noqa: E402
-from benchmarks.jev_scope_random_final import CASES as RANDOM_CASES  # noqa: E402
-from benchmarks.jev_scope_stress import CASES as STRESS_CASES  # noqa: E402
-from benchmarks.jev_scope_unseen_final import CASES as UNSEEN_CASES  # noqa: E402
+from benchmarks.refscope_fresh_final import CASES as FRESH_CASES  # noqa: E402
+from benchmarks.refscope_random_final import CASES as RANDOM_CASES  # noqa: E402
+from benchmarks.refscope_stress import CASES as STRESS_CASES  # noqa: E402
+from benchmarks.refscope_unseen_final import CASES as UNSEEN_CASES  # noqa: E402
 from benchmarks.scope_decision_experiment import LocalScopeDecisionHead  # noqa: E402
 from scripts.train_scope_decision_challenge import _metrics, _rows  # noqa: E402
 
@@ -22,7 +22,7 @@ from scripts.train_scope_decision_challenge import _metrics, _rows  # noqa: E402
 def main() -> None:
     import sys
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    from scripts.jev_output_policy import block_jev_output_use
+    from scripts.reference_output_policy import block_jev_output_use
     block_jev_output_use()
 
     root = Path(__file__).resolve().parents[1]

@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-from benchmarks.jev_scope_augmentation import CASES as AUGMENTATION_CASES
-from benchmarks.jev_scope_challenge import CASES as CHALLENGE_CASES
-from benchmarks.jev_scope_fresh_final import CASES as FRESH_CASES
-from benchmarks.jev_scope_random_final import CASES as RANDOM_CASES
-from benchmarks.jev_scope_semantic_holdout import CASES as SEMANTIC_CASES
-from benchmarks.jev_scope_semantic_v3_holdout import CASES, SCENARIOS
-from benchmarks.jev_scope_stress import CASES as STRESS_CASES
-from benchmarks.jev_scope_suite import CASES as ORIGINAL_CASES
-from benchmarks.jev_scope_unseen_final import CASES as UNSEEN_CASES
+from benchmarks.refscope_augmentation import CASES as AUGMENTATION_CASES
+from benchmarks.refscope_challenge import CASES as CHALLENGE_CASES
+from benchmarks.refscope_fresh_final import CASES as FRESH_CASES
+from benchmarks.refscope_random_final import CASES as RANDOM_CASES
+from benchmarks.refscope_semantic_holdout import CASES as SEMANTIC_CASES
+from benchmarks.refscope_semantic_v3_holdout import CASES, SCENARIOS
+from benchmarks.refscope_stress import CASES as STRESS_CASES
+from benchmarks.refscope_suite import CASES as ORIGINAL_CASES
+from benchmarks.refscope_unseen_final import CASES as UNSEEN_CASES
 
 
 def test_semantic_v3_holdout_is_balanced_and_disjoint():

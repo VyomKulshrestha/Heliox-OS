@@ -5,7 +5,7 @@ import json
 import numpy as np
 import pytest
 
-from benchmarks.jev_scope_suite import ScopeCase
+from benchmarks.refscope_suite import ScopeCase
 from scripts.evaluate_qwen_binding_review import messages, summarize_cases
 from scripts.evaluate_world_entity_binding import task_metrics
 from scripts.evaluate_world_tau_binding import group_metrics

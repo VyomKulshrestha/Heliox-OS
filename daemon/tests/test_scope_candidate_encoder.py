@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from benchmarks.scope_candidate_encoder import HIDDEN_SIZE, candidate_differences, candidate_prompts
-from scripts.probe_openjev_scope import probabilities
+from scripts.probe_opendec_scope import probabilities
 
 
 def test_candidate_prompts_share_context_and_differ_only_in_candidate() -> None:

@@ -29,7 +29,7 @@ from scripts.extract_misactbench_frozen_features import (  # noqa: E402
     SPLITS,
     feature_signature,
 )
-from scripts.fit_openjev_scope_head import metrics  # noqa: E402
+from scripts.fit_opendec_scope_head import metrics  # noqa: E402
 from scripts.train_general_decision import encode_rows  # noqa: E402
 
 

@@ -16,7 +16,7 @@ import numpy as np
 from benchmarks.general_decision import load_split, metrics
 from scripts.evaluate_qwen_instruct_scope import MODEL_ID, MODEL_REVISION
 from scripts.evaluate_world_scope_qlora import artifact_metadata
-from scripts.jev_output_policy import block_jev_output_use
+from scripts.reference_output_policy import block_jev_output_use
 from scripts.train_general_decision import encode_rows, score_row
 
 
@@ -33,7 +33,7 @@ def selected_rows(reference: dict) -> tuple[list[dict], dict]:
 
 def evaluate(adapter_dir: Path, training_report: Path, reference_path: Path) -> dict:
     block_jev_output_use()
-    from scripts.openjev_training_runtime import require_training_runtime
+    from scripts.opendec_training_runtime import require_training_runtime
 
     require_training_runtime()
     import torch
@@ -89,7 +89,7 @@ def main() -> None:
     parser.add_argument("--adapter-dir", type=Path, required=True)
     parser.add_argument("--training-report", type=Path, required=True)
     parser.add_argument("--reference", type=Path,
-                        default=root / "benchmarks/qwen_general_jev_comparison_v4.json")
+                        default=root / "benchmarks/qwen_general_reference_comparison_v4.json")
     parser.add_argument("--output", type=Path,
                         default=root / "benchmarks/.bench-state/world_general_comparison.json")
     args = parser.parse_args()

@@ -120,7 +120,7 @@ def score_requests(
     max_decisions: int = 128,
 ) -> list[dict]:
     rows = prepare_requests(payloads, max_decisions=max_decisions)
-    from scripts.openjev_training_runtime import require_training_runtime
+    from scripts.opendec_training_runtime import require_training_runtime
 
     require_training_runtime()
     import torch

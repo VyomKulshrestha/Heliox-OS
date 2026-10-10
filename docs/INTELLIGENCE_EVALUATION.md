@@ -47,7 +47,7 @@ repeatable training recipe or evidence of a current model. Under the current
 using provider outputs to distill, imitate, or develop a similar or competing
 service requires written authorization. Until that authorization is verified,
 historical teacher-output training and tuning entry points remain disabled.
-The bounded `compare_general_jev` evaluation CLI separately requires explicit
+The bounded `compare_general_reference` evaluation CLI separately requires explicit
 `--acknowledge-provider-terms` and a fresh report path; it does not fit weights
 or calibration to provider answers or establish output-training rights. The detailed
 [historical study](JEV_SCOPE_STUDY.md) is retained for audit and is not a
@@ -175,7 +175,7 @@ an arbitrary proposed tool call fulfills a user's task. Its stored temporal
 validation covers 5,400 samples across 12 action types; the benchmark checks
 the saved evidence and direction invariants, not fresh Jev-style reasoning.
 
-A separate [compact option-ranker probe](../daemon/benchmarks/jevlike_typed_decision_v2.md)
+A separate [compact option-ranker probe](../daemon/benchmarks/typed_decision_probe_v2.md)
 uses only verified-CC0 Open-Jev rows and a tiny listwise byte model. Across two
 1,000-row OOD samples, full-context shuffling reduced top-1 by 12.1 points,
 while choice accuracy was 33.6–42.9% against 25.6–25.8% expected random choice;
@@ -220,7 +220,7 @@ yes/no balanced accuracy was 50.0–54.1%, and OOD NLL was worse than uniform
 in every fold. The scratch byte scorer is rejected for general decision use
 and remains disconnected from runtime. Detailed fold metrics and the 8k
 scaling check are in
-[`jevlike_typed_decision_v2.md`](../daemon/benchmarks/jevlike_typed_decision_v2.md).
+[`typed_decision_probe_v2.md`](../daemon/benchmarks/typed_decision_probe_v2.md).
 
 A separate **research-only GPU task-state head** was retrained from frozen
 Qwen3.5-2B features on the pinned agentic, TBAC, ScopeJudge, and When2Call

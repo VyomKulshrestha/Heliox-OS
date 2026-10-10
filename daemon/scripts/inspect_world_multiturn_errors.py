@@ -9,8 +9,8 @@ from pathlib import Path
 
 import numpy as np
 
-from benchmarks.jev_scope_qwen_v1_holdout import CASES as HELIOX_CASES
-from scripts.evaluate_openjev_checkpoint import scopejudge_cases
+from benchmarks.refscope_qwen_v1_holdout import CASES as HELIOX_CASES
+from scripts.evaluate_opendec_checkpoint import scopejudge_cases
 from scripts.evaluate_world_conversation_scope import AGENTIC_TEST_SHA256, load_pre_call_cases
 from scripts.evaluate_world_scope_artifact import score_features
 from scripts.train_world_multiturn_scope_semantic import AGENTIC_VALIDATION_SHA256

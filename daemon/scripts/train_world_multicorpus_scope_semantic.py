@@ -17,8 +17,8 @@ import numpy as np
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
 
-from benchmarks.jev_scope_qwen_v1_holdout import CASES as HELIOX_CASES
-from scripts.evaluate_openjev_checkpoint import scopejudge_cases
+from benchmarks.refscope_qwen_v1_holdout import CASES as HELIOX_CASES
+from scripts.evaluate_opendec_checkpoint import scopejudge_cases
 from scripts.evaluate_qwen_instruct_scope import MODEL_ID, MODEL_REVISION, SYSTEM_PROMPT
 from scripts.train_world_scope_semantic import (
     REGULARIZATION,

@@ -16,9 +16,9 @@ from pathlib import Path
 import numpy as np
 from sklearn.metrics import roc_auc_score
 
-from benchmarks.jev_scope_qwen_v1_holdout import CASES as HELIOX_CASES
-from benchmarks.jev_scope_suite import jev_request
-from scripts.evaluate_openjev_checkpoint import scopejudge_cases
+from benchmarks.refscope_qwen_v1_holdout import CASES as HELIOX_CASES
+from benchmarks.refscope_suite import jev_request
+from scripts.evaluate_opendec_checkpoint import scopejudge_cases
 from scripts.evaluate_qwen_instruct_scope import MODEL_ID, MODEL_REVISION, SYSTEM_PROMPT, messages
 from scripts.train_world_scope_semantic import metrics
 from scripts.train_world_tool_scope_semantic import DATASET_HASHES, DATASET_REVISION, load_cases, split_validation
@@ -152,7 +152,7 @@ def main() -> None:
     args = parser.parse_args()
     if args.max_length < 128 or args.epochs < 1 or args.adapter_dir.exists() or args.report.exists():
         parser.error("Use max-length >=128, epochs >=1, and fresh artifact/report paths")
-    from scripts.openjev_training_runtime import require_training_runtime
+    from scripts.opendec_training_runtime import require_training_runtime
 
     require_training_runtime()
     cases, scope_manifest = load_partitions(args.dataset_dir, args.scopejudge_path)

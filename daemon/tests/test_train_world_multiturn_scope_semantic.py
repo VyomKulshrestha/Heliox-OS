@@ -4,7 +4,7 @@ import json
 
 import numpy as np
 
-from benchmarks.jev_scope_suite import ScopeCase
+from benchmarks.refscope_suite import ScopeCase
 from scripts.train_world_multiturn_scope_semantic import select_head, split_agentic
 
 

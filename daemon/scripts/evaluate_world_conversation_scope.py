@@ -14,7 +14,7 @@ from pathlib import Path
 
 import numpy as np
 
-from benchmarks.jev_scope_suite import ScopeCase
+from benchmarks.refscope_suite import ScopeCase
 from scripts.evaluate_qwen_instruct_scope import MODEL_ID, MODEL_REVISION, SYSTEM_PROMPT
 from scripts.evaluate_world_scope_artifact import score_features
 from scripts.train_world_scope_semantic import embed_cases, metrics
