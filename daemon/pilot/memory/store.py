@@ -10,6 +10,7 @@ import contextlib
 import hashlib
 import json
 import logging
+import math
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -22,7 +23,7 @@ from pilot.intelligence.experience import (
     PrivacyClass,
     get_experience_context,
 )
-from pilot.memory.assembler import TemporalContextAssembler
+from pilot.memory.assembler import DUPLICATE_SIMILARITY, TemporalContextAssembler, memory_terms, term_similarity
 from pilot.memory.sliding_window import get_token_count
 from pilot.memory.temporal import (
     MemoryProvenance,
@@ -450,6 +451,7 @@ class MemoryStore:
         effective_session_id = session_id or context.session_id or "default"
         effective_task_id = task_id if task_id is not None else context.task_id
 
+        seen_terms: list[frozenset[str]] = []
         if self._context_assembler is not None:
             assembled = await self._context_assembler.assemble(
                 query,
@@ -459,6 +461,7 @@ class MemoryStore:
             )
             if assembled.text:
                 parts.append(assembled.text)
+            seen_terms.extend(memory_terms(item.text) for item in assembled.items)
 
         def _append_if_fits(line: str) -> bool:
             candidate = "\n".join([*parts, line])
@@ -469,27 +472,40 @@ class MemoryStore:
 
         if self._chroma_collection is not None:
             try:
+                # Fetch extra so dropping repeats still leaves n_results distinct episodes.
                 query_args: dict[str, Any] = {
                     "query_texts": [query],
-                    "n_results": n_results,
+                    "n_results": n_results * 3,
                 }
                 if session_id is not None:
                     query_args["where"] = {"session_id": effective_session_id}
                 results = await asyncio.to_thread(self._chroma_collection.query, **query_args)
 
                 if results["documents"] and results["documents"][0]:
-                    for doc, meta in zip(
-                        results["documents"][0],
-                        results["metadatas"][0],
-                        strict=False,
+                    distances = (results.get("distances") or [[]])[0] or []
+                    ranked = []
+                    for index, (doc, meta) in enumerate(
+                        zip(results["documents"][0], results["metadatas"][0], strict=False)
                     ):
                         meta = meta if isinstance(meta, dict) else {}
                         if meta.get("source") == "verified_reflection":
                             continue
-                        _append_if_fits(
+                        distance = float(distances[index]) if index < len(distances) else float(index)
+                        score = self._legacy_recency(meta.get("timestamp")) / (1.0 + max(0.0, distance))
+                        ranked.append((score, -index, doc, meta))
+                    added = 0
+                    for _score, _order, doc, meta in sorted(ranked, key=lambda entry: entry[:2], reverse=True):
+                        if added >= n_results:
+                            break
+                        terms = memory_terms(str(doc))
+                        if any(term_similarity(terms, seen) >= DUPLICATE_SIMILARITY for seen in seen_terms):
+                            continue
+                        if _append_if_fits(
                             "- [legacy episode; source=semantic history] "
                             f'"{doc}" (result: {meta.get("explanation", "N/A")})'
-                        )
+                        ):
+                            seen_terms.append(terms)
+                            added += 1
 
             except Exception:
                 logger.debug("ChromaDB query failed", exc_info=True)
@@ -502,6 +518,18 @@ class MemoryStore:
                     _append_if_fits(f"- [legacy preference; source=stored setting] {k}: {v}")
 
         return "\n".join(parts) if parts else ""
+
+    @staticmethod
+    def _legacy_recency(timestamp: object, now: datetime | None = None) -> float:
+        """Same age weighting as temporal episodes: about a 21-day decay toward a 0.25 floor."""
+        try:
+            recorded = datetime.fromisoformat(str(timestamp))
+        except ValueError:
+            return 0.25
+        if recorded.tzinfo is None:
+            recorded = recorded.replace(tzinfo=UTC)
+        age_days = max(0.0, ((now or datetime.now(UTC)) - recorded).total_seconds() / 86400)
+        return 0.25 + 0.75 * math.exp(-age_days / 21.0)
 
     async def record_verified_reflection(
         self,

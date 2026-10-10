@@ -174,7 +174,12 @@ Memory is separated into working, episodic, semantic, and time-bounded fact
 layers. Facts retain evidence, provenance, confidence, validity windows,
 contradiction history, and retraction state. The context assembler ranks
 eligible items by relevance, recency, confidence, provenance, scope utility,
-and outcome utility under a strict token budget.
+and outcome utility under a strict token budget. Recency decays with age:
+facts fall toward 35% weight over roughly 45 days and episodes toward 25% over
+roughly 21 days, and legacy semantic-history recall uses the episode curve.
+Selection then uses maximal marginal relevance (relevance weight 0.7), so a
+task recorded ten times does not crowd out other memories, and an item sharing
+85% or more of its terms with one already chosen is dropped as a duplicate.
 Temporal episodes are marked as verified outcomes only after a passing
 postcondition verifier and task completion. A verified action round in an
 unfinished interactive task remains lower-trust progress; the terminal episode
