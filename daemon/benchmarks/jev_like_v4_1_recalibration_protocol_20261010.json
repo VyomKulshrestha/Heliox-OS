@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "purpose": "calibration-only variant of the promoted v4 while Colab GPU quota is exhausted",
+  "frozen_before_execution": true,
+  "base": "jev_like_2b_v4_20261009.json (adapter a1f63979d3dc..., head weights unchanged)",
+  "change": "refit per-kind temperatures on v4's own saved calibration-split logits with the widened [0.05, 20] search (scripts/train_general_decision.py TEMPERATURE_BOUNDS); adapter and head weights are byte-identical",
+  "expected_effect": "score temperature 0.25 -> about 0.181; offline held-out desktop score MAE 0.112 -> 0.086",
+  "promotion_rule": "Replace v4 only if, on benchmarks/desktop_decisions_v3_eval_cases.json, score mean absolute error is lower than v4's 0.214 while Noul plus choice gold correct and Noul false allowances are unchanged or better.",
+  "note": "Evaluating v4.1 consumes one look at the confirmatory set; the pre-registered v5 rules are unchanged."
+}
