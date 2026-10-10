@@ -12,7 +12,7 @@ The Heliox OS UI and daemon communicate over a local WebSocket using the [JSON-R
 | Request timeout | 5 minutes |
 | Reconnect interval | 3 seconds (auto-reconnect on close) |
 
-The daemon currently registers **186 WebSocket RPC methods**. That is the API
+The daemon currently registers **197 WebSocket RPC methods**. That is the API
 surface count, not the action catalog: Heliox exposes **157 action
 types** through the guarded planner/executor system. This document names every
 registered RPC method; grouped tables are used where several methods share one
@@ -1180,6 +1180,16 @@ Return voice listener statistics.
 **Params:** `{}`
 **Result:** stats dict.
 
+#### `voice_recognition_test`
+Capture one utterance and return its transcript without executing it. If
+continuous listening is off, a temporary listener is started for the test and
+stopped afterwards.
+
+**Params:** `{ "timeout_seconds": 12 }` (clamped to 3-30 seconds)
+**Result:** `{ "status": "ok", ... }` with the listener's diagnostic transcript
+fields, or `{ "status": "error", "message": "..." }` when nothing was recognized
+before the timeout.
+
 Recognized commands enter the same `execute` handler and observable
 `interaction_state` phases as typed commands. During active work, ordinary
 speech is a live correction; “quick question …” receives an answer without
@@ -1272,6 +1282,30 @@ replanning when the goal is not complete. Jobs stop on verified completion,
 cancellation, repeated no progress, or six rounds per step.
 
 ---
+
+### Recorded Workflows
+
+Opt-in recording and guarded replay of desktop workflows (see
+[`docs/RECORDED_WORKFLOWS.md`](docs/RECORDED_WORKFLOWS.md)). Recording needs
+explicit consent, observing manual desktop input needs a second consent, and
+replay is submitted to the guarded autonomous executor. Errors return
+`{ "status": "error", "message": "..." }`.
+
+| Method | Params | Result |
+| --- | --- | --- |
+| `recorded_workflow_status` | `{}` | `active`, `name`, `capture_visual`, `capture_manual`, `step_count`, `sample_count`, `omitted_actions`, `visual_gaps`, `manual_hook_healthy` |
+| `recorded_workflow_start` | `{ "consent": true, "name": "...", "goal": "...", "capture_visual": false, "capture_manual": false, "manual_consent": false }` | the new recording session |
+| `recorded_workflow_stop` | `{ "save": true }` | `saved` plus the stored workflow, or the discarded session's status |
+| `recorded_workflow_list` | `{}` | `workflows` |
+| `recorded_workflow_get` | `{ "workflow_id": "..." }` | `workflow` |
+| `recorded_workflow_delete` | `{ "workflow_id": "..." }` | `{ "status": "ok" }` |
+| `recorded_workflow_run` | `{ "workflow_id": "...", "reviewed": false, "text_values": {}, "capture_visual": false }` | `{ "status": "submitted", "job": {...} }` |
+| `recorded_workflow_feedback` | `{ "workflow_id": "...", "job_id": "...", "outcome": "..." }` | updated `workflow`, accepted only after that run finished |
+| `recorded_workflow_schedule` | `{ "workflow_id": "...", "run_at": "<future ISO 8601 time with zone>", "repeat_seconds": 0, "reviewed": false }` | updated `workflow`; repeats need 5 minutes to 1 year |
+| `recorded_workflow_unschedule` | `{ "workflow_id": "..." }` | updated `workflow` |
+
+Replay is refused while a recording is active, for incomplete recordings, and
+for workflows with manual or coordinate-based steps unless `reviewed` is true.
 
 ### Durable Voice/Gesture Workflows
 
@@ -1518,6 +1552,26 @@ plugin count. When mesh networking is unavailable, returns
 
 #### `mesh_status`
 Return LAN mesh configuration, node identity, connection count, and readiness.
+
+#### `mesh_configure`
+Persist and apply Peer Mesh settings in one step. A supplied `shared_secret`
+must be 32-512 bytes with no leading or trailing whitespace and is stored in the
+OS vault; enabling the mesh requires a saved secret.
+
+**Params:** `{ "enabled": true, "skill_sync_enabled": false, "collab_exec_enabled": false, "shared_secret": "<optional>" }`
+
+#### `mesh_generate_secret`
+Return a new random secret for the user to copy to trusted peers. Nothing is
+stored until `mesh_configure` saves it.
+
+**Params:** `{}`
+**Result:** `{ "status": "ok", "shared_secret": "..." }`
+
+#### `mesh_clear_secret`
+Delete the stored mesh secret. Refused while Peer Mesh is enabled.
+
+**Params:** `{}`
+**Result:** `{ "status": "ok" }`
 
 #### `get_plan_history`
 Return paginated plan-audit summaries, distinct from chat history.

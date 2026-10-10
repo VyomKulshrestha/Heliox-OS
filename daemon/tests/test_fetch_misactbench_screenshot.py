@@ -13,6 +13,7 @@ import pytest
 
 from scripts import fetch_misactbench_screenshot as fetch
 from scripts.probe_misactbench_visual import PROMPT_V1
+from tests.eol import assert_pinned_text_hash
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"fixture"
 
@@ -79,6 +80,6 @@ def test_visual_probe_pins_selected_cases_and_prompt() -> None:
     report = json.loads((root / "misactbench_visual_gpu_recheck_v1.json").read_text())
     case_ids = json.loads(selection.read_text())["case_ids"]
     assert len(case_ids) == len(set(case_ids)) == 16
-    assert report["selection_sha256"] == hashlib.sha256(selection.read_bytes()).hexdigest()
+    assert_pinned_text_hash(report["selection_sha256"], selection)
     assert report["prompt_v1_sha256"] == hashlib.sha256(PROMPT_V1.encode()).hexdigest()
     assert report["archive_central_sha256"] == fetch.CENTRAL_SHA256

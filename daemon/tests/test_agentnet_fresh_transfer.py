@@ -9,6 +9,7 @@ from pathlib import Path
 
 from scripts import select_agentnet_fresh_transfer as transfer
 from scripts.extract_agentnet_outcome_features import sha256_file
+from tests.eol import assert_pinned_text_hash
 
 
 def test_reserve_excludes_prior_groups_and_pairs_new_domains(monkeypatch, tmp_path) -> None:
@@ -46,12 +47,12 @@ def test_tracked_fresh_reservation_is_disjoint_from_fit_groups() -> None:
     pre_action = json.loads((benchmark / "agentnet_preaction_dev_v1.json").read_text(encoding="utf-8"))
     previous_groups = {case_id.split(":", 1)[0] for case_id in previous["case_ids"]}
     fresh_groups = [case_id.split(":", 1)[0] for case_id in fresh["case_ids"]]
-    assert fresh["previous_manifest_sha256"] == sha256_file(previous_path)
+    assert_pinned_text_hash(fresh["previous_manifest_sha256"], previous_path)
     assert previous_groups.isdisjoint(fresh_groups)
     assert len(fresh_groups) == len(set(fresh_groups)) == 256
     assert {name: len(ids) for name, ids in fresh["splits"].items()} == fresh["split_rows"]
-    assert pre_action["fit_selection_sha256"] == sha256_file(previous_path)
-    assert pre_action["fresh_transfer_selection_sha256"] == sha256_file(fresh_path)
+    assert_pinned_text_hash(pre_action["fit_selection_sha256"], previous_path)
+    assert_pinned_text_hash(pre_action["fresh_transfer_selection_sha256"], fresh_path)
     assert pre_action["fresh_transfer_labels_opened"] is False
     assert pre_action["promotion"] == "none"
 
@@ -61,7 +62,7 @@ def test_tracked_paired_transfer_uses_frozen_heads_and_exact_auc_differences() -
     paired = json.loads((benchmark / "agentnet_paired_fresh_transfer_v1.json").read_text(encoding="utf-8"))
     pre = json.loads((benchmark / "agentnet_preaction_dev_v1.json").read_text(encoding="utf-8"))
     post = json.loads((benchmark / "agentnet_outcome_dev_v1.json").read_text(encoding="utf-8"))
-    assert paired["fresh_manifest_sha256"] == sha256_file(benchmark / "agentnet_fresh_transfer_selection_v1.json")
+    assert_pinned_text_hash(paired["fresh_manifest_sha256"], benchmark / "agentnet_fresh_transfer_selection_v1.json")
     assert paired["training"]["pre_action"]["head_sha256"] == pre["head_sha256"]
     assert paired["training"]["post_action"]["head_sha256"] == post["head_sha256"]
     for split in ("final", "ood"):

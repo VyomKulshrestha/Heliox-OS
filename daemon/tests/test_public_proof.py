@@ -52,7 +52,9 @@ def test_committed_public_proof_is_current(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[2]
     output = tmp_path / "proof.md"
     _generate(repo_root, output)
-    assert output.read_bytes() == (repo_root / "proof.md").read_bytes()
+    # Line endings depend on the platform and checkout settings, not on the evidence.
+    generated = output.read_bytes().replace(b"\r\n", b"\n")
+    assert generated == (repo_root / "proof.md").read_bytes().replace(b"\r\n", b"\n")
 
 
 def test_current_source_documentation_matches_runtime_contracts() -> None:

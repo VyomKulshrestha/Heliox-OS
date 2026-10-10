@@ -18,6 +18,7 @@ from scripts.extract_agentnet_outcome_features import (
     sha256_file,
 )
 from scripts.fit_agentnet_outcome_head import assess, labels_for
+from tests.eol import assert_pinned_text_hash
 
 
 def test_selected_prompt_uses_only_task_transition_evidence(tmp_path) -> None:
@@ -204,7 +205,8 @@ def test_tracked_outcome_reports_preserve_frozen_provenance() -> None:
     dev = json.loads((benchmark / "agentnet_outcome_dev_v1.json").read_text(encoding="utf-8"))
     final = json.loads((benchmark / "agentnet_outcome_final_v1.json").read_text(encoding="utf-8"))
     shortcuts = json.loads((benchmark / "agentnet_outcome_shortcuts_v1.json").read_text(encoding="utf-8"))
-    assert dev["selection_sha256"] == final["manifest_sha256"] == sha256_file(selection)
+    assert dev["selection_sha256"] == final["manifest_sha256"]
+    assert_pinned_text_hash(dev["selection_sha256"], selection)
     assert dev["features_sha256"] == final["feature_sha256"]
     assert dev["head_sha256"] == final["artifact_sha256"]
     assert shortcuts["manifest_sha256"] == final["manifest_sha256"]
