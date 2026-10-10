@@ -1345,7 +1345,7 @@ def main() -> None:
         "--desktop-corpus", action="store_true", help="Add the authored licensed Heliox desktop decision corpus"
     )
     parser.add_argument("--desktop-corpus-seed", type=int, default=20261002)
-    parser.add_argument("--desktop-corpus-version", choices=("v1", "v2"), default="v1")
+    parser.add_argument("--desktop-corpus-version", choices=("v1", "v2", "v3"), default="v1")
     parser.add_argument(
         "--desktop-train-scenarios", type=int, default=40, help="Authored scenario groups per training family"
     )
