@@ -9,6 +9,8 @@ Updated for the expanded action set with cross-platform support.
 from __future__ import annotations
 
 import logging
+import os
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from pilot.actions import (
@@ -41,6 +43,31 @@ if TYPE_CHECKING:
     from pilot.config import PilotConfig
 
 logger = logging.getLogger("pilot.security.validator")
+
+
+def heliox_private_dirs() -> tuple[Path, ...]:
+    """Folders holding Heliox's own configuration, auth tokens and MCP server list."""
+    from pilot.config import CONFIG_DIR, RUNTIME_DIR
+
+    return (CONFIG_DIR, RUNTIME_DIR)
+
+
+def inside_heliox_private_dirs(path: str) -> bool:
+    """True when ``path`` resolves into a folder that actions must never read or change."""
+    if not path:
+        return False
+    try:
+        resolved = os.path.normcase(os.path.realpath(os.path.expanduser(path)))
+    except (OSError, ValueError):
+        return False
+    for root in heliox_private_dirs():
+        try:
+            base = os.path.normcase(os.path.realpath(str(root)))
+        except (OSError, ValueError):
+            continue
+        if resolved == base or resolved.startswith(base.rstrip("\\/") + os.sep):
+            return True
+    return False
 
 
 class ValidationError(Exception):
@@ -325,7 +352,15 @@ class ActionValidator:
         restrictions = self._config.restrictions
 
         if isinstance(action.parameters, (FileParams, GitResolveParams)):
-            import os
+            # Built in, whatever the user's restrictions say: config.toml holds the
+            # daemon auth token and mcp_servers.json decides which programs may run.
+            for candidate in (action.parameters.path, getattr(action.parameters, "destination", None)):
+                if candidate and inside_heliox_private_dirs(candidate):
+                    raise ValidationError(
+                        idx,
+                        f"{candidate} is inside Heliox's own configuration or runtime folder, "
+                        "which actions may not read or change",
+                    )
 
             try:
                 resolved_path = os.path.realpath(action.parameters.path)

@@ -484,6 +484,15 @@ holding a stale confirmation wait until its timeout.
 
 ---
 
+## 🔐 Heliox's own configuration is off-limits to actions
+
+File actions may not read, write, copy into or move into Heliox's configuration
+folder (`config.toml`, which stores the daemon auth token, `restrictions.toml`,
+`mcp_servers.json`, skills and plugins) or its runtime folder (auth tokens).
+This is built into the validator and applies whatever `protected_folders`
+says, so a prompt-injected plan cannot read the token or register a program
+for Heliox to run.
+
 ## ✋ Human takeover of the desktop
 
 **What this is.** `pilot.security.human_control.HumanControlGate` lets the

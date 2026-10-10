@@ -54,3 +54,47 @@ def test_protected_folder_bypass_mitigated(validator):
         with pytest.raises(Exception) as excinfo:
             validator.validate_action(action, 0)
         assert "is in protected folder" in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    ("action_type", "path", "destination"),
+    [
+        (ActionType.FILE_READ, "{config}/config.toml", None),
+        (ActionType.FILE_WRITE, "{config}/mcp_servers.json", None),
+        (ActionType.FILE_READ, "{runtime}/auth_token", None),
+        (ActionType.FILE_COPY, "{home}/notes.txt", "{config}/skills/evil.md"),
+        (ActionType.FILE_READ, "{config}/../heliox-os/config.toml", None),
+    ],
+)
+def test_heliox_config_and_runtime_folders_are_off_limits(
+    validator, monkeypatch, tmp_path, action_type, path, destination
+):
+    import pilot.config
+
+    config_dir = tmp_path / "cfg" / "heliox-os"
+    runtime_dir = tmp_path / "run" / "heliox-os"
+    monkeypatch.setattr(pilot.config, "CONFIG_DIR", config_dir)
+    monkeypatch.setattr(pilot.config, "RUNTIME_DIR", runtime_dir)
+    values = {"config": str(config_dir), "runtime": str(runtime_dir), "home": str(tmp_path)}
+    action = Action(
+        action_type=action_type,
+        target=path.format(**values),
+        parameters=FileParams(
+            path=path.format(**values), destination=destination.format(**values) if destination else None
+        ),
+    )
+
+    with pytest.raises(Exception, match="Heliox's own configuration or runtime folder|Path traversal"):
+        validator.validate_action(action, 0)
+
+
+def test_neighbouring_folders_are_not_mistaken_for_heliox_config(monkeypatch, tmp_path):
+    import pilot.config
+    from pilot.security.validator import inside_heliox_private_dirs
+
+    monkeypatch.setattr(pilot.config, "CONFIG_DIR", tmp_path / "heliox-os")
+    monkeypatch.setattr(pilot.config, "RUNTIME_DIR", tmp_path / "runtime")
+
+    assert inside_heliox_private_dirs(str(tmp_path / "heliox-os" / "config.toml"))
+    assert not inside_heliox_private_dirs(str(tmp_path / "heliox-os-notes" / "todo.txt"))
+    assert not inside_heliox_private_dirs("")
