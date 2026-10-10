@@ -1343,8 +1343,9 @@ server marks the tool `readOnlyHint: true`.
 | `mcp_client_status` | `{}` | configured servers and tool counts |
 | `mcp_client_refresh` | `{}` | the same, after restarting every server |
 
-Status: `{ "status": "ok", "tool_count": 12, "servers": [{ "name": "github",
-"running": true, "tools": 12, "error": "", "server_info": { ... } }] }`.
+Status: `{ "status": "ok", "tool_count": 12, "config_path": "...mcp_servers.json",
+"servers": [{ "name": "github", "running": true, "tools": 12, "error": "",
+"server_info": { ... } }] }`. Settings shows this list with a Reload button.
 
 ### Durable Voice/Gesture Workflows
 

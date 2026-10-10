@@ -421,7 +421,11 @@ class McpClientManager:
                     "server_info": session.server_info if session else {},
                 }
             )
-        return {"servers": servers, "tool_count": len(self._tools)}
+        return {
+            "servers": servers,
+            "tool_count": len(self._tools),
+            "config_path": str(self._config_path or default_config_path()),
+        }
 
     async def _close_sessions(self) -> None:
         sessions, self._sessions = self._sessions, {}
