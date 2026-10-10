@@ -18,8 +18,6 @@ from pathlib import Path
 from urllib.parse import quote, urlsplit
 
 import numpy as np
-from playwright.sync_api import Error as PlaywrightError
-from playwright.sync_api import sync_playwright
 
 from scripts.collect_miniwob_branches import require_disjoint_prestates, visual_feature
 
@@ -183,6 +181,8 @@ def reset(browser, assets: PinnedSiteAssets, path: str, limit: int):
 
 
 def collect_page(browser, assets: PinnedSiteAssets, path: str, limit: int) -> tuple[list[dict], int]:
+    from playwright.sync_api import Error as PlaywrightError
+
     reference = None
     rows: list[dict] = []
     attempts = 0
@@ -241,6 +241,9 @@ def collect_page(browser, assets: PinnedSiteAssets, path: str, limit: int) -> tu
 
 
 def main() -> None:
+    # Optional dependency (pip install -e ".[browser]"); imported here so the helpers stay importable.
+    from playwright.sync_api import sync_playwright
+
     root = Path(__file__).resolve().parents[1] / "benchmarks/.bench-state"
     parser = argparse.ArgumentParser(description=__doc__)
     for split in ("train", "validation", "eval"):

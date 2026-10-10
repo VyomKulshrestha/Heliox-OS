@@ -5,11 +5,18 @@ import io
 import numpy as np
 import pytest
 from PIL import Image
-from playwright.sync_api import sync_playwright
 
 from scripts import collect_miniwob_branches as collector
 
+try:
+    from playwright.sync_api import sync_playwright
+except ImportError:  # optional extra: pip install -e ".[browser]" && playwright install chromium
+    sync_playwright = None
 
+needs_browser = pytest.mark.skipif(sync_playwright is None, reason="needs the optional browser extra")
+
+
+@needs_browser
 def test_candidate_centers_include_visible_pointer_affordances() -> None:
     with sync_playwright() as playwright, playwright.chromium.launch(headless=True) as browser:
         page = browser.new_page(viewport=collector.VIEWPORT)
@@ -26,6 +33,7 @@ def test_candidate_centers_include_visible_pointer_affordances() -> None:
         assert collector.candidate_centers(page) == [(30.0, 20.0), (100.0, 20.0)]
 
 
+@needs_browser
 def test_sparse_controls_add_painted_targets_and_neutral_probes() -> None:
     with sync_playwright() as playwright, playwright.chromium.launch(headless=True) as browser:
         page = browser.new_page(viewport=collector.VIEWPORT)
@@ -43,6 +51,7 @@ def test_sparse_controls_add_painted_targets_and_neutral_probes() -> None:
         assert (40.0, 45.0) in centers
 
 
+@needs_browser
 def test_visible_semantics_excludes_hidden_text_and_bounds_control_label() -> None:
     with sync_playwright() as playwright, playwright.chromium.launch(headless=True) as browser:
         page = browser.new_page(viewport=collector.VIEWPORT)
@@ -61,6 +70,7 @@ def test_visible_semantics_excludes_hidden_text_and_bounds_control_label() -> No
         assert "hidden source" not in result["text"]
 
 
+@needs_browser
 def test_visible_semantics_distinguishes_unlabeled_input_types() -> None:
     with sync_playwright() as playwright, playwright.chromium.launch(headless=True) as browser:
         page = browser.new_page(viewport=collector.VIEWPORT)

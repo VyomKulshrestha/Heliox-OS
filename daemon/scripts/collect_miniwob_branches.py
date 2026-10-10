@@ -21,7 +21,6 @@ from urllib.parse import urlsplit
 
 import numpy as np
 from PIL import Image
-from playwright.sync_api import sync_playwright
 
 from pilot.agents.screen_vision import _world_embedding_from_frame
 
@@ -310,6 +309,9 @@ def require_disjoint_prestates(rows: list[dict]) -> None:
 
 
 def main() -> None:
+    # Optional dependency (pip install -e ".[browser]"); imported here so the helpers stay importable.
+    from playwright.sync_api import sync_playwright
+
     root = Path(__file__).resolve().parents[1] / "benchmarks/.bench-state"
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--train-tasks", required=True)

@@ -15,8 +15,6 @@ from pathlib import Path
 from typing import Callable
 from urllib.request import Request, urlopen
 
-from playwright.sync_api import sync_playwright
-
 from scripts.collect_miniwob_branches import SOURCE_COMMIT, SOURCE_REPO, PinnedAssets, _reset, visual_feature
 from scripts.collect_miniwob_reward_actions import candidate_actions, goal_description
 from scripts.probe_miniwob_reward_qwen import MODEL_REVISIONS, parse_index
@@ -273,6 +271,9 @@ def run_episode(
 
 
 def main() -> None:
+    # Optional dependency (pip install -e ".[browser]"); imported here so the helpers stay importable.
+    from playwright.sync_api import sync_playwright
+
     root = Path(__file__).resolve().parents[1] / "benchmarks/.bench-state"
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tasks", required=True, help="Comma-separated pinned MiniWoB pages")

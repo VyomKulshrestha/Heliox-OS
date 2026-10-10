@@ -2,11 +2,18 @@
 
 import numpy as np
 import pytest
-from playwright.sync_api import sync_playwright
 
 from scripts import collect_miniwob_reward_actions as collector
 
+try:
+    from playwright.sync_api import sync_playwright
+except ImportError:  # optional extra: pip install -e ".[browser]" && playwright install chromium
+    sync_playwright = None
 
+needs_browser = pytest.mark.skipif(sync_playwright is None, reason="needs the optional browser extra")
+
+
+@needs_browser
 def test_visible_candidates_include_tabs_and_popup_hints_without_hidden_targets() -> None:
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
