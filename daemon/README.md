@@ -4,7 +4,7 @@ Python backend for the Heliox OS AI System Control Agent. It provides the
 append-only experience ledger, durable task loop, temporal context, companion
 coordination, hybrid world model, verified online learning, strategy/evolution
 harnesses, 21-specialist mesh, Planner/Executor/Verifier, security layers, and
-the 157-action system interface.
+the 158-action system interface.
 
 The interactive companion does not load a learned scope head by default. The
 historical output-derived checkpoint is disabled, and its trainer now refuses

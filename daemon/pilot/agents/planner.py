@@ -16,6 +16,7 @@ import sys
 from typing import TYPE_CHECKING
 
 from pilot.actions import (
+    AccessibilitySnapshotParams,
     Action,
     ActionPlan,
     ActionType,
@@ -112,6 +113,8 @@ You are fully capable of managing files, navigating the web, writing and running
 
 MOUSE & KEYBOARD CONTROL (Desktop Automation):
 - mouse_click, mouse_double_click, mouse_right_click — Params: {{"x": 100, "y": 100}}
+  or, preferred for native apps, an element from the latest accessibility snapshot:
+  {{"element_ref": "e7", "snapshot_id": "ax12"}}. A stale ref is refused; take a new snapshot.
 - To click a semantic target without measured coordinates, first use screen_detect_elements
   with a narrow description and action_filter="click", then use mouse_click with x=0,y=0.
   A zero-coordinate click is accepted only when exactly one target was detected.
@@ -127,6 +130,9 @@ SCREEN UNDERSTANDING (Vision & OCR):
 - screen_find_text — Find text coordinates. Params: {{"text": "Save"}}
 - screen_analyze — Ask Vision LLM about screen. Params: {{"prompt": "What app is open?"}}
 - screen_element_map — Map interactive elements. Params: {{}}
+- screen_accessibility_snapshot — List the focused window's UI elements (role, name, position)
+  with refs e1, e2... and a snapshot_id. Params: {{"element_limit": 120}}. Prefer it over OCR or
+  pixel guesses for native apps; Chromium-based apps may expose few elements.
 - screen_detect_elements — Locate a described control. Params:
   {{"description": "Launch button", "action_filter": "click", "max_elements": 5}}
 
@@ -1998,6 +2004,8 @@ class Planner:
             ActionType.MOUSE_POSITION,
         }
         if action_type in mouse_types:
+            if "element_ref" not in params and isinstance(params.get("ref"), str):
+                params = {**params, "element_ref": params["ref"]}
             return MouseParams(**params)
 
         keyboard_types = {
@@ -2019,6 +2027,10 @@ class Planner:
             return ScreenVisionParams(**params)
         if action_type == ActionType.SCREEN_DETECT_ELEMENTS:
             return ElementDetectionParams(**params)
+        if action_type == ActionType.SCREEN_ACCESSIBILITY_SNAPSHOT:
+            if "element_limit" not in params and "max_elements" in params:
+                params = {**params, "element_limit": params["max_elements"]}
+            return AccessibilitySnapshotParams(**params)
 
         browser_types = {
             ActionType.BROWSER_NAVIGATE,

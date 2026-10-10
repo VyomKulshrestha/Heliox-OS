@@ -17,6 +17,7 @@ from contextlib import nullcontext
 from typing import TYPE_CHECKING
 
 from pilot.actions import (
+    AccessibilitySnapshotParams,
     Action,
     ActionPlan,
     ActionResult,
@@ -132,6 +133,7 @@ class Executor:
             ActionType.SCREEN_FIND_TEXT,
             ActionType.SCREEN_ANALYZE,
             ActionType.SCREEN_ELEMENT_MAP,
+            ActionType.SCREEN_ACCESSIBILITY_SNAPSHOT,
             ActionType.SCREEN_DETECT_ELEMENTS,
         }
     )
@@ -300,6 +302,7 @@ class Executor:
             ActionType.SCREEN_FIND_TEXT: self._exec_screen_find_text,
             ActionType.SCREEN_ANALYZE: self._exec_screen_analyze,
             ActionType.SCREEN_ELEMENT_MAP: self._exec_screen_element_map,
+            ActionType.SCREEN_ACCESSIBILITY_SNAPSHOT: self._exec_screen_accessibility_snapshot,
             ActionType.SCREEN_DETECT_ELEMENTS: self._exec_screen_detect_elements,
             # -- Browser automation --
             ActionType.BROWSER_NAVIGATE: self._exec_browser_navigate,
@@ -2262,13 +2265,29 @@ class Executor:
     # TIER 1: MOUSE CONTROL
     # ======================================================================
 
+    @staticmethod
+    def _accessibility_target(p: MouseParams) -> tuple[int, int, str] | None:
+        """Resolve an element ref from screen_accessibility_snapshot, or refuse a stale one."""
+        if not p.element_ref:
+            return None
+        if not p.snapshot_id:
+            raise ValueError("element_ref requires the snapshot_id of the screen_accessibility_snapshot it came from")
+        from pilot.system.accessibility import default_store
+
+        element = default_store().resolve(p.snapshot_id, p.element_ref)
+        x, y = element.center
+        return x, y, f"{element.label} ({element.ref})"
+
     async def _exec_mouse_click(self, action: Action) -> str:
         from pilot.system.input_control import mouse_click
 
         p: MouseParams = action.parameters  # type: ignore[assignment]
         x, y = p.x, p.y
         target_label = ""
-        if x == 0 and y == 0:
+        grounded = self._accessibility_target(p)
+        if grounded is not None:
+            x, y, target_label = grounded
+        elif x == 0 and y == 0:
             if self._detected_click_target is None:
                 raise ValueError(
                     "mouse_click has no grounded coordinates; detect a single UI target "
@@ -2285,12 +2304,20 @@ class Executor:
         from pilot.system.input_control import mouse_double_click
 
         p: MouseParams = action.parameters  # type: ignore[assignment]
+        grounded = self._accessibility_target(p)
+        if grounded is not None:
+            x, y, label = grounded
+            return f"{await mouse_double_click(x, y)} (element: {label})"
         return await mouse_double_click(p.x, p.y)
 
     async def _exec_mouse_right_click(self, action: Action) -> str:
         from pilot.system.input_control import mouse_right_click
 
         p: MouseParams = action.parameters  # type: ignore[assignment]
+        grounded = self._accessibility_target(p)
+        if grounded is not None:
+            x, y, label = grounded
+            return f"{await mouse_right_click(x, y)} (element: {label})"
         return await mouse_right_click(p.x, p.y)
 
     async def _exec_mouse_move(self, action: Action) -> str:
@@ -2379,6 +2406,13 @@ class Executor:
         # Defensive: handle both ScreenVisionParams and ScreenshotParams gracefully
         prompt = getattr(action.parameters, "prompt", None) or "Describe what you see on the screen"
         return await screen_analyze(prompt)
+
+    async def _exec_screen_accessibility_snapshot(self, action: Action) -> str:
+        from pilot.system.accessibility import capture_snapshot
+
+        p: AccessibilitySnapshotParams = action.parameters  # type: ignore[assignment]
+        snapshot = await capture_snapshot(max_elements=p.element_limit)
+        return snapshot.describe(limit=p.element_limit)
 
     async def _exec_screen_element_map(self, action: Action) -> str:
         from pilot.system.vision import screen_element_map

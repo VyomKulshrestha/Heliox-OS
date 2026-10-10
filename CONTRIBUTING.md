@@ -16,7 +16,7 @@ heliox-os/
 │       ├── plugins/         # Capability validation and native/WASM brokers
 │       ├── security/        # Permission, gateway, audit, risk, and plugin policy
 │       ├── workflows/       # Durable tasks and voice/gesture workflows
-│       └── system/          # OS interfaces behind the 157-action catalog
+│       └── system/          # OS interfaces behind the 158-action catalog
 ├── tauri-app/               # Desktop GUI
 │   ├── ui/                  # Svelte 5 + Vite frontend
 │   │   └── src/lib/

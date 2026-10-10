@@ -168,6 +168,7 @@ class ActionType(StrEnum):
     SCREEN_FIND_TEXT = "screen_find_text"
     SCREEN_ANALYZE = "screen_analyze"
     SCREEN_ELEMENT_MAP = "screen_element_map"
+    SCREEN_ACCESSIBILITY_SNAPSHOT = "screen_accessibility_snapshot"
 
     # -- Browser automation --
     BROWSER_NAVIGATE = "browser_navigate"
@@ -314,6 +315,7 @@ READ_ONLY_ACTIONS = {
     ActionType.SCREEN_FIND_TEXT,
     ActionType.SCREEN_ANALYZE,
     ActionType.SCREEN_ELEMENT_MAP,
+    ActionType.SCREEN_ACCESSIBILITY_SNAPSHOT,
     ActionType.SCREEN_DETECT_ELEMENTS,
     ActionType.BROWSER_EXTRACT,
     ActionType.BROWSER_EXTRACT_TABLE,
@@ -664,6 +666,10 @@ class MouseParams(BaseModel):
     amount: int = 3  # For scroll
     relative: bool = False
     horizontal: bool = False  # For horizontal scroll
+    # Accessibility grounding: click an element from screen_accessibility_snapshot
+    # instead of coordinates; refused when the snapshot no longer matches the screen.
+    element_ref: str | None = None
+    snapshot_id: str | None = None
 
 
 class KeyboardParams(BaseModel):
@@ -699,6 +705,12 @@ class ElementDetectionParams(BaseModel):
     region: str | None = None  # "x,y,w,h" or None for full screen
     max_elements: int = 20  # cap on returned elements
     action_filter: str = ""  # "click" | "type" | "" (all)
+
+
+class AccessibilitySnapshotParams(BaseModel):
+    """For SCREEN_ACCESSIBILITY_SNAPSHOT: list the foreground window's UI elements with refs."""
+
+    element_limit: int = Field(default=120, ge=1, le=300)
 
 
 class BrowserParams(BaseModel):
@@ -930,6 +942,7 @@ ActionParameters = (
     | SshCommandParams
     | SshScriptParams
     | ElementDetectionParams
+    | AccessibilitySnapshotParams
     | WasmCallParams
     | SkillRunParams
     | GitParams

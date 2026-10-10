@@ -131,6 +131,7 @@ SYSTEM_ACTION_TYPES: set[ActionType] = {
     ActionType.SCREEN_FIND_TEXT,
     ActionType.SCREEN_ANALYZE,
     ActionType.SCREEN_ELEMENT_MAP,
+    ActionType.SCREEN_ACCESSIBILITY_SNAPSHOT,
     # Triggers
     ActionType.TRIGGER_CREATE,
     ActionType.TRIGGER_LIST,

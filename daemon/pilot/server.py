@@ -103,6 +103,17 @@ from pilot.workflows.durable_tasks import (
 logger = logging.getLogger("pilot.server")
 
 
+async def _accessibility_observation(limit: int = 40) -> str:
+    """Describe the focused window's UI elements for autonomous rounds, or "" when unavailable."""
+    from pilot.system.accessibility import AccessibilityUnavailable, capture_snapshot
+
+    try:
+        snapshot = await capture_snapshot(max_elements=limit)
+    except AccessibilityUnavailable:
+        return ""
+    return snapshot.describe(limit=limit) if snapshot.elements else ""
+
+
 def _resolve_dry_run(configured: bool, requested: object = False) -> bool:
     """Treat the global Dry Run setting as a safety floor clients cannot disable."""
     return bool(configured or requested)
@@ -1156,6 +1167,7 @@ class PilotServer:
                 memory=self._memory,
                 orchestrator=self._orchestrator,
                 multi_agent_router=self._multi_agent,
+                accessibility_observer=_accessibility_observation,
             )
             self._autonomous.set_broadcast(self._broadcast_notification)
             self._autonomous.set_speech(self._speak_companion_text)
@@ -1866,6 +1878,7 @@ class PilotServer:
             ActionType.SCREEN_ANALYZE,
             ActionType.SCREEN_FIND_TEXT,
             ActionType.SCREEN_ELEMENT_MAP,
+            ActionType.SCREEN_ACCESSIBILITY_SNAPSHOT,
             ActionType.SCREENSHOT,
             # Direct local fast paths should not pay for a remote advisory
             # round-trip. Deterministic permissions, world-model assessment,

@@ -65,6 +65,7 @@ SAFE_ACTIONS: set[ActionType] = {
     ActionType.SCREEN_ANALYZE,
     ActionType.SCREEN_FIND_TEXT,
     ActionType.SCREEN_ELEMENT_MAP,
+    ActionType.SCREEN_ACCESSIBILITY_SNAPSHOT,
     ActionType.BROWSER_EXTRACT,
     ActionType.BROWSER_EXTRACT_TABLE,
     ActionType.BROWSER_EXTRACT_LINKS,

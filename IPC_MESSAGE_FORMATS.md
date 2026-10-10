@@ -13,7 +13,7 @@ The Heliox OS UI and daemon communicate over a local WebSocket using the [JSON-R
 | Reconnect interval | 3 seconds (auto-reconnect on close) |
 
 The daemon currently registers **197 WebSocket RPC methods**. That is the API
-surface count, not the action catalog: Heliox exposes **157 action
+surface count, not the action catalog: Heliox exposes **158 action
 types** through the guarded planner/executor system. This document names every
 registered RPC method; grouped tables are used where several methods share one
 contract.
@@ -501,13 +501,13 @@ Return formatted host uptime such as `"3h 12m"` or `"2d 4h 8m"`.
 Return platform information.
 
 **Params:** `{}`
-**Result:** `{ "platform": { ... }, "capabilities_count": 157 }`
+**Result:** `{ "platform": { ... }, "capabilities_count": 158 }`
 
 #### `capabilities`
 List all available action types.
 
 **Params:** `{}`
-**Result:** `{ "action_types": ["file_read", "file_write", ...], "count": 157 }`
+**Result:** `{ "action_types": ["file_read", "file_write", ...], "count": 158 }`
 
 #### `list_ollama_models`
 Discover locally available Ollama models.
@@ -647,7 +647,7 @@ coverage contract.
 
 **Params:** `{}`
 
-The current `main` runtime reports 21 executable specialists, 157 declared and
+The current `main` runtime reports 21 executable specialists, 158 declared and
 available action types, and an empty `uncovered_action_types` list. Clients must
 surface exact uncovered names as a release-blocking warning rather than hiding
 coverage regression.
@@ -659,8 +659,8 @@ coverage regression.
   "enabled": true,
   "total_specialists": 21,
   "executable_specialists": 21,
-  "registered_action_types": 157,
-  "available_action_types": 157,
+  "registered_action_types": 158,
+  "available_action_types": 158,
   "coverage_complete": true,
   "uncovered_action_types": [],
   "specialists": []

@@ -63,8 +63,8 @@ async def test_mesh_covers_every_one_of_157_actions():
         status = mesh.status()
         assert registered == 21
         assert status["executable_specialists"] == 21
-        assert status["registered_action_types"] == 157
-        assert status["available_action_types"] == 157
+        assert status["registered_action_types"] == 158
+        assert status["available_action_types"] == 158
         assert status["coverage_complete"] is True
         assert status["uncovered_action_types"] == []
     finally:

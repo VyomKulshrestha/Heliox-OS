@@ -23,7 +23,7 @@ import uuid
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Coroutine
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Coroutine
 
 from pilot.actions import ActionPlan, ActionType
 from pilot.security.gateway import InvocationSource, TaskScopeOverride
@@ -65,6 +65,7 @@ _DESKTOP_LOOP_ACTIONS = frozenset(
         ActionType.SCREEN_FIND_TEXT,
         ActionType.SCREEN_ANALYZE,
         ActionType.SCREEN_ELEMENT_MAP,
+        ActionType.SCREEN_ACCESSIBILITY_SNAPSHOT,
         ActionType.SCREEN_DETECT_ELEMENTS,
     }
 )
@@ -185,8 +186,11 @@ class AutonomousExecutor:
         memory: MemoryStore | None = None,
         orchestrator: Any | None = None,
         multi_agent_router: Any | None = None,
+        accessibility_observer: Callable[[], Awaitable[str]] | None = None,
     ) -> None:
         self._planner = planner
+        # Returns the focused window's element list with refs, or "" when unavailable.
+        self._accessibility_observer = accessibility_observer
         self._executor = executor
         self._verifier = verifier
         self._decomposer = decomposer
@@ -575,6 +579,14 @@ class AutonomousExecutor:
                         completion_parts.append(f"Fresh local OCR: {visible_text[:4000]}")
                 except Exception:
                     logger.debug("Active-task OCR observation failed", exc_info=True)
+        if observation is not None and self._accessibility_observer is not None:
+            try:
+                elements = await self._accessibility_observer()
+            except Exception:
+                logger.debug("Accessibility observation failed", exc_info=True)
+                elements = ""
+            if elements:
+                context += "\n" + elements
         if target_window:
             try:
                 target_text = await self._read_target_window_text(target_window)
@@ -665,7 +677,9 @@ class AutonomousExecutor:
             "Do not use action results or inferred details as the quote. Otherwise plan only the next minimal, "
             "currently-grounded action or tightly coupled action pair. If the target app is not visible, "
             "only open or focus it; inspect the newly visible UI in the next round. Never invent click "
-            "coordinates. Use screen_detect_elements with a narrow description followed by mouse_click "
+            "coordinates. When the screen context lists an accessibility snapshot, click its elements with "
+            'mouse_click {"element_ref": "eN", "snapshot_id": ...}; a refused stale ref needs a fresh round. '
+            "Otherwise use screen_detect_elements with a narrow description followed by mouse_click "
             "at x=0,y=0 when coordinates are not already measured. Do not claim completion merely because "
             "an application opened or an input action returned success. Requirements containing 'exactly' "
             "are case-sensitive and must be visibly matched before claiming completion."

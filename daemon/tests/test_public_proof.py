@@ -33,7 +33,7 @@ def test_public_proof_exposes_evidence_boundaries(tmp_path: Path) -> None:
     _generate(repo_root, output)
     text = output.read_text(encoding="utf-8")
 
-    assert "157" in text
+    assert "158" in text
     assert "executor result without an independent post-condition" in text
     assert "not proven live brain control" in text
     assert "result is intentionally linked rather than copied as “green”" in text

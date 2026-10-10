@@ -28,7 +28,11 @@ from pilot.agents.registry import AgentRegistry  # noqa: E402
 from pilot.agents.verifier import POSTCONDITION_VERIFIERS  # noqa: E402
 
 ALL_PLATFORMS = ("windows", "macos", "linux")
-WINDOWS_ONLY = {ActionType.REGISTRY_READ, ActionType.REGISTRY_WRITE}
+WINDOWS_ONLY = {
+    ActionType.REGISTRY_READ,
+    ActionType.REGISTRY_WRITE,
+    ActionType.SCREEN_ACCESSIBILITY_SNAPSHOT,
+}
 LINUX_ONLY = {
     ActionType.GNOME_SETTING_READ,
     ActionType.GNOME_SETTING_WRITE,
