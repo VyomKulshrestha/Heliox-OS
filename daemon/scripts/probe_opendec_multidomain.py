@@ -35,8 +35,7 @@ def candidate_prompts(row: dict) -> list[tuple[str, str]]:
     state = json.loads(row["state_json"])
     rendered = state if isinstance(state, str) else json.dumps(state, ensure_ascii=False, sort_keys=True)
     context = f"Context:\n{rendered}\n\nQuestion: {row['question']}"
-    return [(context, f"Proposed answer: {option}\nIs this proposed answer correct?")
-            for option in row["options"]]
+    return [(context, f"Proposed answer: {option}\nIs this proposed answer correct?") for option in row["options"]]
 
 
 def load_split(name: str, *, per_source: int) -> tuple[list[dict], str]:
@@ -47,8 +46,9 @@ def load_split(name: str, *, per_source: int) -> tuple[list[dict], str]:
     from huggingface_hub import hf_hub_download
 
     filename = f"data/{CONFIG}/{name}-00000-of-00001.parquet"
-    path = Path(hf_hub_download(DATASET, filename, repo_type="dataset",
-                                revision=DATASET_REVISION, local_files_only=True))
+    path = Path(
+        hf_hub_download(DATASET, filename, repo_type="dataset", revision=DATASET_REVISION, local_files_only=True)
+    )
     columns = ("id", "group_id", "source", "question", "options", "target", "state_json")
     rows = parquet.read_table(path, columns=list(columns)).to_pylist()
     by_source: dict[str, list[dict]] = defaultdict(list)
@@ -60,22 +60,31 @@ def load_split(name: str, *, per_source: int) -> tuple[list[dict], str]:
             continue
         by_source[row["source"]].append(row)
     rng = random.Random(SEED)
-    sample = [row for source in sorted(by_source)
-              for row in rng.sample(sorted(by_source[source], key=lambda value: value["id"]),
-                                    min(per_source, len(by_source[source])))]
+    sample = [
+        row
+        for source in sorted(by_source)
+        for row in rng.sample(
+            sorted(by_source[source], key=lambda value: value["id"]), min(per_source, len(by_source[source]))
+        )
+    ]
     return sample, hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def encode_rows(rows: list[dict], cache: Path) -> tuple[np.ndarray, np.ndarray]:
-    identity = hashlib.sha256(json.dumps(
-        [(row["id"], row["state_json"], row["question"], row["options"]) for row in rows],
-        ensure_ascii=False,
-    ).encode("utf-8")).hexdigest()
+    identity = hashlib.sha256(
+        json.dumps(
+            [(row["id"], row["state_json"], row["question"], row["options"]) for row in rows],
+            ensure_ascii=False,
+        ).encode("utf-8")
+    ).hexdigest()
     offsets = np.concatenate(([0], np.cumsum([len(row["options"]) for row in rows])))
     if cache.exists():
         with np.load(cache, allow_pickle=False) as data:
-            if (str(data["input_sha256"]) != identity or str(data["backbone_revision"]) != REVISION
-                    or int(data["max_length"]) != MAX_LENGTH):
+            if (
+                str(data["input_sha256"]) != identity
+                or str(data["backbone_revision"]) != REVISION
+                or int(data["max_length"]) != MAX_LENGTH
+            ):
                 raise ValueError(f"Stale candidate feature cache: {cache}")
             features = np.asarray(data["features"], dtype=np.float32)
             saved_offsets = np.asarray(data["offsets"], dtype=np.int64)
@@ -86,25 +95,37 @@ def encode_rows(rows: list[dict], cache: Path) -> tuple[np.ndarray, np.ndarray]:
         prompts = [prompt for row in rows for prompt in candidate_prompts(row)]
         chunks = []
         for start in range(0, len(prompts), 64):
-            chunks.append(encoder.encode_prompts(prompts[start:start + 64]))
+            chunks.append(encoder.encode_prompts(prompts[start : start + 64]))
             if start % 512 == 0:
                 print(f"{cache.stem}: encoded {min(start + 64, len(prompts))}/{len(prompts)} candidates", flush=True)
         features = np.vstack(chunks)
         cache.parent.mkdir(parents=True, exist_ok=True)
-        np.savez_compressed(cache, features=features, offsets=offsets, input_sha256=identity,
-                            backbone_revision=REVISION, max_length=MAX_LENGTH)
+        np.savez_compressed(
+            cache,
+            features=features,
+            offsets=offsets,
+            input_sha256=identity,
+            backbone_revision=REVISION,
+            max_length=MAX_LENGTH,
+        )
     if features.shape != (int(offsets[-1]), HIDDEN_SIZE) or not np.all(np.isfinite(features)):
         raise ValueError("Invalid candidate representation cache")
     return features, offsets
 
 
-def objective(weights: np.ndarray, features: np.ndarray, offsets: np.ndarray,
-              targets: list[np.ndarray], *, regularization: float = 0.01) -> tuple[float, np.ndarray]:
+def objective(
+    weights: np.ndarray,
+    features: np.ndarray,
+    offsets: np.ndarray,
+    targets: list[np.ndarray],
+    *,
+    regularization: float = 0.01,
+) -> tuple[float, np.ndarray]:
     scores = features @ weights
     gradient = np.zeros_like(weights)
     loss = 0.0
     for index, target in enumerate(targets):
-        begin, end = offsets[index:index + 2]
+        begin, end = offsets[index : index + 2]
         row_scores = scores[begin:end]
         shifted = row_scores - row_scores.max()
         probabilities = np.exp(shifted)
@@ -117,8 +138,9 @@ def objective(weights: np.ndarray, features: np.ndarray, offsets: np.ndarray,
     return loss, gradient
 
 
-def predict(weights: np.ndarray, features: np.ndarray, offsets: np.ndarray,
-            *, temperature: float = 1.0) -> list[np.ndarray]:
+def predict(
+    weights: np.ndarray, features: np.ndarray, offsets: np.ndarray, *, temperature: float = 1.0
+) -> list[np.ndarray]:
     scores = features @ weights / temperature
     predictions = []
     for begin, end in zip(offsets[:-1], offsets[1:], strict=True):
@@ -128,23 +150,32 @@ def predict(weights: np.ndarray, features: np.ndarray, offsets: np.ndarray,
 
 
 def evaluate(rows: list[dict], predictions: list[np.ndarray]) -> dict:
-    correct = [int(np.argmax(row["target"]) == np.argmax(probability))
-               for row, probability in zip(rows, predictions, strict=True)]
-    brier = [float(np.mean((probability - row["target"]) ** 2))
-             for row, probability in zip(rows, predictions, strict=True)]
-    nll = [-float(np.asarray(row["target"]) @ np.log(np.clip(probability, 1e-12, 1.0)))
-           for row, probability in zip(rows, predictions, strict=True)]
+    correct = [
+        int(np.argmax(row["target"]) == np.argmax(probability))
+        for row, probability in zip(rows, predictions, strict=True)
+    ]
+    brier = [
+        float(np.mean((probability - row["target"]) ** 2)) for row, probability in zip(rows, predictions, strict=True)
+    ]
+    nll = [
+        -float(np.asarray(row["target"]) @ np.log(np.clip(probability, 1e-12, 1.0)))
+        for row, probability in zip(rows, predictions, strict=True)
+    ]
     sources = sorted({row["source"] for row in rows})
     return {
         "rows": len(rows),
         "top1_accuracy": float(np.mean(correct)),
         "mean_brier": float(np.mean(brier)),
         "mean_nll": float(np.mean(nll)),
-        "by_source": {source: {
-            "rows": sum(row["source"] == source for row in rows),
-            "top1_accuracy": float(np.mean([hit for row, hit in zip(rows, correct, strict=True)
-                                             if row["source"] == source])),
-        } for source in sources},
+        "by_source": {
+            source: {
+                "rows": sum(row["source"] == source for row in rows),
+                "top1_accuracy": float(
+                    np.mean([hit for row, hit in zip(rows, correct, strict=True) if row["source"] == source])
+                ),
+            }
+            for source in sources
+        },
     }
 
 
@@ -160,26 +191,41 @@ def run(cache_dir: Path, candidate: Path, output: Path) -> dict:
     if any(groups[left] & groups[right] for left in groups for right in groups if left < right):
         raise ValueError("Group leakage between sampled Open-Jev splits")
     target = [np.asarray(row["target"], dtype=np.float64) for row in splits["train"]]
-    optimized = minimize(objective, np.zeros(HIDDEN_SIZE),
-                         args=(features["train"], offsets["train"], target),
-                         method="L-BFGS-B", jac=True, options={"maxiter": 120})
+    optimized = minimize(
+        objective,
+        np.zeros(HIDDEN_SIZE),
+        args=(features["train"], offsets["train"], target),
+        method="L-BFGS-B",
+        jac=True,
+        options={"maxiter": 120},
+    )
     if not optimized.success or not np.all(np.isfinite(optimized.x)):
         raise RuntimeError(f"Shared scalar head did not converge: {optimized.message}")
     weights = optimized.x
-    calibration_targets = [np.asarray(row["target"], dtype=np.float64)
-                           for row in splits["calibration"]]
+    calibration_targets = [np.asarray(row["target"], dtype=np.float64) for row in splits["calibration"]]
 
     def calibration_loss(temperature: float) -> float:
-        probabilities = predict(weights, features["calibration"], offsets["calibration"],
-                                temperature=temperature)
-        return float(np.mean([-target @ np.log(np.clip(probability, 1e-12, 1.0))
-                              for target, probability in zip(calibration_targets, probabilities, strict=True)]))
+        probabilities = predict(weights, features["calibration"], offsets["calibration"], temperature=temperature)
+        return float(
+            np.mean(
+                [
+                    -target @ np.log(np.clip(probability, 1e-12, 1.0))
+                    for target, probability in zip(calibration_targets, probabilities, strict=True)
+                ]
+            )
+        )
 
     calibrated = minimize_scalar(calibration_loss, bounds=(0.25, 5.0), method="bounded")
     temperature = float(calibrated.x)
     candidate.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(candidate, weights=weights, temperature=temperature, version=VERSION,
-                        backbone_revision=REVISION, max_length=MAX_LENGTH)
+    np.savez_compressed(
+        candidate,
+        weights=weights,
+        temperature=temperature,
+        version=VERSION,
+        backbone_revision=REVISION,
+        max_length=MAX_LENGTH,
+    )
     report = {
         "version": VERSION,
         "dataset": DATASET,
@@ -197,10 +243,8 @@ def run(cache_dir: Path, candidate: Path, output: Path) -> dict:
         "calibration_temperature": temperature,
         "candidate_sha256": hashlib.sha256(candidate.read_bytes()).hexdigest(),
         "optimizer_iterations": int(optimized.nit),
-        "test": evaluate(splits["test"], predict(weights, features["test"], offsets["test"],
-                                                   temperature=temperature)),
-        "ood": evaluate(splits["ood"], predict(weights, features["ood"], offsets["ood"],
-                                                temperature=temperature)),
+        "test": evaluate(splits["test"], predict(weights, features["test"], offsets["test"], temperature=temperature)),
+        "ood": evaluate(splits["ood"], predict(weights, features["ood"], offsets["ood"], temperature=temperature)),
         "limitation": "Small frozen NLI backbone and sampled synthetic data; not Jev/Open-Jev parity or action authority.",
     }
     output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")

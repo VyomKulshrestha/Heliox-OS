@@ -48,16 +48,17 @@ def main() -> None:
     features, labels = load_features(args.feature_dir, source)
     extra_bytes = args.when2call_report.read_bytes()
     extra = json.loads(extra_bytes)
-    if (extra["purpose"] != "research_only_grouped_call_readiness_features"
-            or extra["model"] != source["model"] or extra["revision"] != source["revision"]
-            or set(extra["splits"]) != {"train", "calibration", "test"}):
+    if (
+        extra["purpose"] != "research_only_grouped_call_readiness_features"
+        or extra["model"] != source["model"]
+        or extra["revision"] != source["revision"]
+        or set(extra["splits"]) != {"train", "calibration", "test"}
+    ):
         raise ValueError("Unexpected When2Call feature source")
     manifest = {
         "rows": {key: value["rows"] for key, value in extra["splits"].items()},
         "excluded_overlong": {key: value["overlong"] for key, value in extra["splits"].items()},
-        "feature_checkpoint_sha256": {
-            key: value["checkpoint_sha256"] for key, value in extra["splits"].items()
-        },
+        "feature_checkpoint_sha256": {key: value["checkpoint_sha256"] for key, value in extra["splits"].items()},
     }
     extra_features, extra_labels = load_features(args.when2call_feature_dir, manifest)
     features.update({f"when2call_{key}": value for key, value in extra_features.items()})
@@ -80,7 +81,8 @@ def main() -> None:
         train_x = torch.as_tensor(normalized["train"], dtype=torch.float32, device=device)
         train_y = torch.as_tensor(
             np.concatenate([labels[f"{domain}_train"] for domain in train_domains]),
-            dtype=torch.float32, device=device,
+            dtype=torch.float32,
+            device=device,
         )
         train_weights = torch.as_tensor(balanced_weights(labels, train_domains), device=device)
         torch.manual_seed(SEED)
@@ -95,7 +97,9 @@ def main() -> None:
             model.train()
             optimizer.zero_grad(set_to_none=True)
             loss = torch.nn.functional.binary_cross_entropy_with_logits(
-                model(train_x).squeeze(1), train_y, reduction="none",
+                model(train_x).squeeze(1),
+                train_y,
+                reduction="none",
             )
             (loss * train_weights).mean().backward()
             optimizer.step()
@@ -115,15 +119,21 @@ def main() -> None:
         "source_report_sha256": hashlib.sha256(source_bytes).hexdigest(),
         "when2call_report_sha256": hashlib.sha256(extra_bytes).hexdigest(),
         "device": torch.cuda.get_device_name(device),
-        "architecture": {"hidden": HIDDEN, "seed": SEED, "epochs": EPOCHS,
-                         "dropout": 0.3, "optimizer": "AdamW", "learning_rate": 3e-4,
-                         "weight_decay": 0.1},
+        "architecture": {
+            "hidden": HIDDEN,
+            "seed": SEED,
+            "epochs": EPOCHS,
+            "dropout": 0.3,
+            "optimizer": "AdamW",
+            "learning_rate": 3e-4,
+            "weight_decay": 0.1,
+        },
         "protocol": "For each fold, train and normalize on other domains' training rows only; "
-                    "score the held-out domain test at fixed cutoffs without tuning.",
+        "score the held-out domain test at fixed cutoffs without tuning.",
         "folds": folds,
         "limitation": "Hyperparameters were previously explored on these domain families; "
-                      "this is a diagnostic transfer test, not a blind independent benchmark, "
-                      "Jev parity, or runtime authorization evidence.",
+        "this is a diagnostic transfer test, not a blind independent benchmark, "
+        "Jev parity, or runtime authorization evidence.",
     }
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")

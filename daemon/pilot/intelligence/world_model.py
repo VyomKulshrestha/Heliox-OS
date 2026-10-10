@@ -564,9 +564,7 @@ class UiJepaPredictor:
                 geometry_weight = data["action_geometry_weight"] if "action_geometry_weight" in data.files else None
                 bias = data["bias"]
                 prediction_contract = (
-                    str(data["prediction_contract"].item())
-                    if "prediction_contract" in data.files
-                    else "tanh-v1"
+                    str(data["prediction_contract"].item()) if "prediction_contract" in data.files else "tanh-v1"
                 )
                 if prediction_contract not in {"tanh-v1", "clipped-residual-v1"}:
                     self._load_error = "artifact prediction contract is unsupported"

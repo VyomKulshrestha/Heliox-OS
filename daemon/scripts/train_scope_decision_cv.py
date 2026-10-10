@@ -32,7 +32,14 @@ from benchmarks.scope_decision_experiment import (  # noqa: E402
 from scripts.train_scope_decision_challenge import _metrics, _rows  # noqa: E402
 
 
-def train(reports: tuple[Path, ...], weights_path: Path, metrics_path: Path, *, include_fresh: bool = False, include_random: bool = False) -> dict:
+def train(
+    reports: tuple[Path, ...],
+    weights_path: Path,
+    metrics_path: Path,
+    *,
+    include_fresh: bool = False,
+    include_random: bool = False,
+) -> dict:
     suites = (ORIGINAL_CASES, CHALLENGE_CASES, AUGMENTATION_CASES, STRESS_CASES)
     if include_fresh:
         suites += (FRESH_CASES,)
@@ -59,10 +66,12 @@ def train(reports: tuple[Path, ...], weights_path: Path, metrics_path: Path, *, 
         for threshold in (0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65):
             shifted = logits - np.log(threshold / (1 - threshold))
             raw = 1 / (1 + np.exp(-np.clip(shifted, -40, 40)))
-            probabilities = np.asarray([
-                apply_target_guard(case.request, case.action, float(value))
-                for case, value in zip(cases, raw, strict=True)
-            ])
+            probabilities = np.asarray(
+                [
+                    apply_target_guard(case.request, case.action, float(value))
+                    for case, value in zip(cases, raw, strict=True)
+                ]
+            )
             metrics = _metrics(cases, teacher, probabilities)
             errors = len(metrics["mismatches"])
             rank = (errors + metrics["false_allowances"], errors, metrics["brier_to_teacher_labels"])
@@ -95,16 +104,22 @@ def train(reports: tuple[Path, ...], weights_path: Path, metrics_path: Path, *, 
 
 def main() -> None:
     import sys
+
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from scripts.reference_output_policy import block_jev_output_use
+
     block_jev_output_use()
 
     root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--weights", type=Path, default=root / "benchmarks/scope_decision_candidate.npz")
     parser.add_argument("--metrics", type=Path, default=root / "benchmarks/scope_decision_cv_metrics.json")
-    parser.add_argument("--include-fresh", action="store_true", help="Use the already-inspected v5 fresh set for v6 training")
-    parser.add_argument("--include-random", action="store_true", help="Use the already-inspected v6 random set for v7 training")
+    parser.add_argument(
+        "--include-fresh", action="store_true", help="Use the already-inspected v5 fresh set for v6 training"
+    )
+    parser.add_argument(
+        "--include-random", action="store_true", help="Use the already-inspected v6 random set for v7 training"
+    )
     args = parser.parse_args()
     report_names = (
         "jev_scope_teacher.json",
@@ -117,7 +132,9 @@ def main() -> None:
     if args.include_random:
         report_names += ("jev_scope_random_teacher.json",)
     reports = tuple(root / f"benchmarks/{name}" for name in report_names)
-    report = train(reports, args.weights, args.metrics, include_fresh=args.include_fresh, include_random=args.include_random)
+    report = train(
+        reports, args.weights, args.metrics, include_fresh=args.include_fresh, include_random=args.include_random
+    )
     summary = {key: value for key, value in report.items() if key != "out_of_fold"}
     summary["out_of_fold"] = {key: value for key, value in report["out_of_fold"].items() if key != "mismatches"}
     print(json.dumps(summary, indent=2))

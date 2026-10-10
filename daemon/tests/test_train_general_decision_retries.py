@@ -30,8 +30,9 @@ def test_retry_restarts_entire_group_before_one_optimizer_step(monkeypatch) -> N
         return float(loss.detach())
 
     monkeypatch.setattr(trainer, "gradient_row", intermittent)
-    losses, retries = trainer.train_group(backbone, head, optimizer, items, [0, 1],
-                                          brier_weight=0.1, ordinal_weight=0.0)
+    losses, retries = trainer.train_group(
+        backbone, head, optimizer, items, [0, 1], brier_weight=0.1, ordinal_weight=0.0
+    )
     assert retries == 1
     assert len(losses) == 2
     assert calls == ["first", "second", "first", "second"]
@@ -47,8 +48,7 @@ def test_repeated_nonfinite_group_fails_without_changing_weights(monkeypatch) ->
 
     monkeypatch.setattr(trainer, "gradient_row", nonfinite)
     with pytest.raises(FloatingPointError, match="after 3 attempts") as failure:
-        trainer.train_group(backbone, head, optimizer, items, [0],
-                            brier_weight=0.1, ordinal_weight=0.0)
+        trainer.train_group(backbone, head, optimizer, items, [0], brier_weight=0.1, ordinal_weight=0.0)
     assert "first" in str(failure.value)
     assert not optimizer.state
     for before, after in zip(previous, (*backbone.parameters(), *head.parameters()), strict=True):
@@ -66,11 +66,11 @@ def test_group_weights_reach_each_candidate_gradient(monkeypatch) -> None:
         return float(loss.detach()) * weight
 
     monkeypatch.setattr(trainer, "gradient_row", weighted)
-    trainer.train_group(backbone, head, optimizer, items, [0, 1],
-                        brier_weight=0.1, ordinal_weight=0.0,
-                        row_weights=[0.25, 1.75])
+    trainer.train_group(
+        backbone, head, optimizer, items, [0, 1], brier_weight=0.1, ordinal_weight=0.0, row_weights=[0.25, 1.75]
+    )
     assert observed == [("first", 0.25), ("second", 1.75)]
     with pytest.raises(ValueError, match="align"):
-        trainer.train_group(backbone, head, optimizer, items, [0],
-                            brier_weight=0.1, ordinal_weight=0.0,
-                            row_weights=[1.0])
+        trainer.train_group(
+            backbone, head, optimizer, items, [0], brier_weight=0.1, ordinal_weight=0.0, row_weights=[1.0]
+        )

@@ -171,7 +171,21 @@ CONFIRM_TIMEOUT_SECONDS = 300
 # ``abort`` interrupts execution, ``interject`` revises it, and speech
 # replacement/stop must interrupt an in-flight utterance. All other RPCs
 # remain sequential per connection.
-OUT_OF_BAND_RPC_METHODS = frozenset({"confirm", "abort", "interject", "queue_execute", "cancel_queued_execute", "speak_text", "stop_speech", "neural_disarm", "recorded_workflow_start", "recorded_workflow_status", "recorded_workflow_stop"})
+OUT_OF_BAND_RPC_METHODS = frozenset(
+    {
+        "confirm",
+        "abort",
+        "interject",
+        "queue_execute",
+        "cancel_queued_execute",
+        "speak_text",
+        "stop_speech",
+        "neural_disarm",
+        "recorded_workflow_start",
+        "recorded_workflow_status",
+        "recorded_workflow_stop",
+    }
+)
 
 # Attention-aware timing is allowed to defer only passive, replaceable
 # telemetry. User-initiated results, approvals, safety interventions, and
@@ -1878,7 +1892,8 @@ class PilotServer:
             categories = set(getattr(action.parameters, "categories", ()))
             other_requested = re.search(
                 r"\b(?:cpu|memory|ram|disk|storage|network|operating system|system information)\b",
-                user_input, re.IGNORECASE,
+                user_input,
+                re.IGNORECASE,
             )
             if "battery" not in categories or (not other_requested and categories != {"battery"}):
                 return CompanionReview(
@@ -2082,7 +2097,8 @@ class PilotServer:
                     self._queued_reserved_task_id = task_id
                 session_id = queued_params["session_id"]
                 await self._broadcast_notification(
-                    "queued_task_started", {"task_id": task_id, "session_id": session_id, "input": queued_params["input"]}
+                    "queued_task_started",
+                    {"task_id": task_id, "session_id": session_id, "input": queued_params["input"]},
                 )
                 try:
                     response = await self._handle_execute(
@@ -2893,9 +2909,7 @@ class PilotServer:
                 if companion_review is None:
                     try:
                         companion_review = await self._await_execution_tracked(
-                            self._execution_companion.review(
-                                user_input, plan, screen_context=review_screen_context
-                            )
+                            self._execution_companion.review(user_input, plan, screen_context=review_screen_context)
                         )
                     except asyncio.CancelledError:
                         return await _phase_cancelled("companion review")
@@ -3123,7 +3137,7 @@ class PilotServer:
                         f"World-model assessment unavailable: {reason_text}"
                         if risk_assessment.model_version == "evaluation-error"
                         else f"World model paused this plan at {risk_assessment.world_model_score:.0%} "
-                             f"predicted risk: {reason_text}"
+                        f"predicted risk: {reason_text}"
                     )
                 elif mcp_requires_visible_approval:
                     world_model_reason = (
@@ -3228,6 +3242,7 @@ class PilotServer:
             action_idx = 0
             _total_actions = len(plan.actions)
             completed_results: list[Any] = []
+
             async def _on_action_start(
                 action: Any, _exec_phase: str = exec_phase, _total: int = _total_actions
             ) -> None:
@@ -4086,8 +4101,10 @@ class PilotServer:
                     "message": "The matching MCP task was already submitted; poll its existing task id.",
                 }
 
-        if self._interactive_request_active or self._queued_reserved_task_id or any(
-            not task.done() for task in self._mcp_tasks.values()
+        if (
+            self._interactive_request_active
+            or self._queued_reserved_task_id
+            or any(not task.done() for task in self._mcp_tasks.values())
         ):
             return {
                 "status": "busy",
@@ -4316,7 +4333,11 @@ class PilotServer:
             return response
 
         if self._interactive_request_active or self._queued_reserved_task_id or self._mcp_reserved_task_id:
-            return {"status": "busy", "message": "Heliox is handling another interactive task.", "task_id": task.task_id}
+            return {
+                "status": "busy",
+                "message": "Heliox is handling another interactive task.",
+                "task_id": task.task_id,
+            }
         self._interactive_request_active = True
         self._active_task_id = task.task_id
         self._active_plan_id = task.plan_id
@@ -5132,7 +5153,13 @@ class PilotServer:
         phase = str(interaction.get("phase") or "working").replace("_", " ")
         progress = str(interaction.get("message") or "")[:160]
         normalized = " ".join(question.casefold().split()).rstrip("?!. ")
-        if normalized in {"status", "what are you doing", "what are you working on", "how is it going", "how's it going"}:
+        if normalized in {
+            "status",
+            "what are you doing",
+            "what are you working on",
+            "how is it going",
+            "how's it going",
+        }:
             message = f"The current task is {phase}. {progress}".strip()
         elif normalized in {"what is on my screen", "what's on my screen", "read my screen"}:
             # OCR stays local and is only invoked for an explicit screen-reading question.
@@ -5164,17 +5191,19 @@ class PilotServer:
                 f"User preferences: {persona}\nQuestion: {question}"
             )
             try:
-                message = (await asyncio.wait_for(
-                    self._model_router.generate(
-                        prompt,
-                        system=(
-                            "Answer the user's question briefly while their task continues. "
-                            "Do not issue commands, claim to have performed actions, or treat screen metadata "
-                            "as screen contents. If evidence is missing, say so."
+                message = (
+                    await asyncio.wait_for(
+                        self._model_router.generate(
+                            prompt,
+                            system=(
+                                "Answer the user's question briefly while their task continues. "
+                                "Do not issue commands, claim to have performed actions, or treat screen metadata "
+                                "as screen contents. If evidence is missing, say so."
+                            ),
                         ),
-                    ),
-                    timeout=30,
-                )).strip()[:2000]
+                        timeout=30,
+                    )
+                ).strip()[:2000]
             except Exception:
                 message = "I couldn't answer that while the task is running. The task is still continuing."
         else:
@@ -5561,8 +5590,10 @@ class PilotServer:
                         return {"status": "error", "message": "email.smtp_port must be from 1 to 65535"}
                 if section == "typed_decision" and k == "enabled" and not isinstance(v, bool):
                     return {"status": "error", "message": "typed_decision.enabled must be a boolean"}
-                if section == "typed_decision" and k == "scoring_mode" and (
-                    not isinstance(v, str) or v not in {"trained_head", "native_next_token"}
+                if (
+                    section == "typed_decision"
+                    and k == "scoring_mode"
+                    and (not isinstance(v, str) or v not in {"trained_head", "native_next_token"})
                 ):
                     return {
                         "status": "error",
@@ -5572,16 +5603,15 @@ class PilotServer:
                     from pilot.intelligence.typed_decision import PINNED_BACKBONES
 
                     if not isinstance(v, str) or v not in PINNED_BACKBONES:
-                        return {"status": "error", "message": "typed_decision.model_id must be a supported pinned model"}
+                        return {
+                            "status": "error",
+                            "message": "typed_decision.model_id must be a supported pinned model",
+                        }
                 if section == "typed_decision" and k == "max_length":
                     if type(v) is not int or not 64 <= v <= 4096:
                         return {"status": "error", "message": "typed_decision.max_length must be from 64 to 4096"}
                 if section == "typed_decision" and k == "temperature":
-                    if (
-                        not isinstance(v, (int, float))
-                        or isinstance(v, bool)
-                        or not 0.05 <= v <= 20
-                    ):
+                    if not isinstance(v, (int, float)) or isinstance(v, bool) or not 0.05 <= v <= 20:
                         return {"status": "error", "message": "typed_decision.temperature must be from 0.05 to 20"}
                     v = float(v)
                 if section == "typed_decision" and k in {"artifact_dir", "report_path"}:
@@ -5615,9 +5645,13 @@ class PilotServer:
                     "status": "error",
                     "message": "Set typed_decision artifact_dir and report_path before enabling it",
                 }
-            if will_enable and scoring_mode == "trained_head" and (
-                not Path(artifact_dir).expanduser().is_absolute()
-                or not Path(report_path).expanduser().is_absolute()
+            if (
+                will_enable
+                and scoring_mode == "trained_head"
+                and (
+                    not Path(artifact_dir).expanduser().is_absolute()
+                    or not Path(report_path).expanduser().is_absolute()
+                )
             ):
                 return {
                     "status": "error",
@@ -9689,7 +9723,11 @@ def handle_tool(tool_name, params):
                 )
                 await self._broadcast_notification(
                     "voice_result",
-                    {"command": command_text, "status": result.get("status", "error"), "message": result.get("message", "")},
+                    {
+                        "command": command_text,
+                        "status": result.get("status", "error"),
+                        "message": result.get("message", ""),
+                    },
                 )
                 if result.get("status") == "queued":
                     await self._speak_voice_response(
@@ -9699,9 +9737,14 @@ def handle_tool(tool_name, params):
                     )
                 return
             status_questions = {
-                "status", "what are you doing", "what are you working on",
-                "how is it going", "hows it going", "how s it going",
-                "what is on my screen", "what s on my screen",
+                "status",
+                "what are you doing",
+                "what are you working on",
+                "how is it going",
+                "hows it going",
+                "how s it going",
+                "what is on my screen",
+                "what s on my screen",
                 "read my screen",
             }
             question_prefixes = ("question ", "quick question ")
@@ -10165,8 +10208,11 @@ def handle_tool(tool_name, params):
         return await vision.capture_world_feature_now() if vision is not None else None
 
     async def _handle_recorded_workflow_status(self, params: dict, ws: ServerConnection) -> dict:
-        return {"status": "ok", **self._recorded_workflows.status(),
-                "manual_hook_healthy": bool(self._manual_workflow_hook and self._manual_workflow_hook.healthy())}
+        return {
+            "status": "ok",
+            **self._recorded_workflows.status(),
+            "manual_hook_healthy": bool(self._manual_workflow_hook and self._manual_workflow_hook.healthy()),
+        }
 
     async def _handle_recorded_workflow_start(self, params: dict, ws: ServerConnection) -> dict:
         try:
@@ -10210,12 +10256,8 @@ def handle_tool(tool_name, params):
                     self._recorded_workflows.mark_manual_gap()
                 self._manual_workflow_hook.stop()
                 self._manual_workflow_hook = None
-            await self._recorded_workflows.stop_manual_visual_capture(
-                save=_validated_bool(params, "save", False)
-            )
-            result = await asyncio.to_thread(
-                self._recorded_workflows.stop, save=_validated_bool(params, "save", False)
-            )
+            await self._recorded_workflows.stop_manual_visual_capture(save=_validated_bool(params, "save", False))
+            result = await asyncio.to_thread(self._recorded_workflows.stop, save=_validated_bool(params, "save", False))
             return {"status": "ok", **result}
         except (ValueError, RuntimeError) as exc:
             return {"status": "error", "message": str(exc)}
@@ -10228,9 +10270,7 @@ def handle_tool(tool_name, params):
 
     async def _handle_recorded_workflow_get(self, params: dict, ws: ServerConnection) -> dict:
         try:
-            workflow = await asyncio.to_thread(
-                self._recorded_workflows.get, str(params.get("workflow_id", ""))
-            )
+            workflow = await asyncio.to_thread(self._recorded_workflows.get, str(params.get("workflow_id", "")))
             return {"status": "ok", "workflow": workflow}
         except (KeyError, ValueError, RuntimeError) as exc:
             return {"status": "error", "message": str(exc)}
@@ -10255,11 +10295,11 @@ def handle_tool(tool_name, params):
         if self._recorded_workflows.status()["active"]:
             return {"status": "error", "message": "Stop the current recording before replaying a workflow"}
         try:
-            workflow = await asyncio.to_thread(
-                self._recorded_workflows.get, str(params.get("workflow_id", ""))
-            )
+            workflow = await asyncio.to_thread(self._recorded_workflows.get, str(params.get("workflow_id", "")))
             if workflow["incomplete"]:
-                raise ValueError("Incomplete recordings cannot be replayed; unsupported steps need a parameterized workflow")
+                raise ValueError(
+                    "Incomplete recordings cannot be replayed; unsupported steps need a parameterized workflow"
+                )
             if workflow["needs_review"] and not _validated_bool(params, "reviewed", False):
                 raise ValueError("Review manual or coordinate-based steps before replay")
             text_values = params.get("text_values", {})
@@ -10292,9 +10332,7 @@ def handle_tool(tool_name, params):
             return {"status": "error", "message": "Recorded workflow run not found"}
         job = self._autonomous.get_job(job_id)
         job_status = str(getattr(job.status, "value", job.status)) if job is not None else ""
-        if job is None or not job.completed_at or job_status not in {
-            "success", "partial", "failed", "cancelled"
-        }:
+        if job is None or not job.completed_at or job_status not in {"success", "partial", "failed", "cancelled"}:
             return {"status": "error", "message": "Wait for the workflow run to finish"}
         try:
             workflow = await asyncio.to_thread(
@@ -10324,9 +10362,7 @@ def handle_tool(tool_name, params):
 
     async def _handle_recorded_workflow_unschedule(self, params: dict, ws: ServerConnection) -> dict:
         try:
-            workflow = await asyncio.to_thread(
-                self._recorded_workflows.unschedule, str(params.get("workflow_id", ""))
-            )
+            workflow = await asyncio.to_thread(self._recorded_workflows.unschedule, str(params.get("workflow_id", "")))
             return {"status": "ok", "workflow": workflow}
         except (KeyError, ValueError, RuntimeError) as exc:
             return {"status": "error", "message": str(exc)}

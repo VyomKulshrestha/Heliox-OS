@@ -32,9 +32,7 @@ class TinyBackbone(nn.Module):
 def main() -> None:
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is required")
-    for kind, target in (("noul", [0.25, 0.75]),
-                         ("choice", [0.1, 0.7, 0.2]),
-                         ("score", [0.15, 0.5, 0.35])):
+    for kind, target in (("noul", [0.25, 0.75]), ("choice", [0.1, 0.7, 0.2]), ("score", [0.15, 0.5, 0.35])):
         torch.manual_seed(17)
         backbone = TinyBackbone().cuda()
         head = nn.Linear(4, 1).cuda()
@@ -44,10 +42,8 @@ def main() -> None:
         serial = torch.stack([scalar_score(backbone, head, ids) for ids in sequences])
         torch.testing.assert_close(batched, serial)
         ordinal_weight = 0.2 if kind == "score" else 0.0
-        gradient_row(backbone, head, item, brier_weight=0.1,
-                     ordinal_weight=ordinal_weight, scale=1.0)
-        replayed = [parameter.grad.detach().clone()
-                    for parameter in (*backbone.parameters(), *head.parameters())]
+        gradient_row(backbone, head, item, brier_weight=0.1, ordinal_weight=ordinal_weight, scale=1.0)
+        replayed = [parameter.grad.detach().clone() for parameter in (*backbone.parameters(), *head.parameters())]
 
         backbone.zero_grad(set_to_none=True)
         head.zero_grad(set_to_none=True)
@@ -68,8 +64,16 @@ def main() -> None:
     expected_moments = [state["exp_avg"].detach().clone() for state in optimizer.state.values()]
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "checkpoint.pt"
-        save_checkpoint(path, backbone, head, optimizer, signature="tiny-run",
-                        next_position=4, elapsed_seconds=1.25, peak_vram_gib=0.1)
+        save_checkpoint(
+            path,
+            backbone,
+            head,
+            optimizer,
+            signature="tiny-run",
+            next_position=4,
+            elapsed_seconds=1.25,
+            peak_vram_gib=0.1,
+        )
         with torch.no_grad():
             for parameter in (*backbone.parameters(), *head.parameters()):
                 parameter.add_(1)
@@ -81,8 +85,7 @@ def main() -> None:
             pass
         else:
             raise AssertionError("Checkpoint signature mismatch was accepted")
-        assert load_checkpoint(path, backbone, head, optimizer,
-                               signature="tiny-run", total=8) == (4, 1.25, 0.1)
+        assert load_checkpoint(path, backbone, head, optimizer, signature="tiny-run", total=8) == (4, 1.25, 0.1)
         for actual, restored in zip(expected, (*backbone.parameters(), *head.parameters()), strict=True):
             torch.testing.assert_close(actual, restored)
         for actual, state in zip(expected_moments, optimizer.state.values(), strict=True):

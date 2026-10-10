@@ -44,9 +44,7 @@ def test_frozen_artifact_verifies_hashes_without_local_weights(tmp_path: Path) -
         "adapter_sha256": hashlib.sha256(adapter.read_bytes()).hexdigest(),
         "head_sha256": hashlib.sha256(head.read_bytes()).hexdigest(),
     }
-    (tmp_path / "benchmarks/qwen_scope_probe_v1.json").write_text(
-        json.dumps(frozen), encoding="utf-8"
-    )
+    (tmp_path / "benchmarks/qwen_scope_probe_v1.json").write_text(json.dumps(frozen), encoding="utf-8")
     assert verify_artifact(tmp_path, model_dir) == frozen
     head.write_bytes(b"changed")
     with pytest.raises(ValueError, match="Frozen model artifact changed"):

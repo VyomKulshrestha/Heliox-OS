@@ -38,8 +38,9 @@ def metrics(labels: np.ndarray, scores: np.ndarray, threshold: float) -> dict:
     }
 
 
-def train_one(x: np.ndarray, labels: np.ndarray, penalty: float, *, epochs: int,
-              device: str) -> tuple[np.ndarray, float]:
+def train_one(
+    x: np.ndarray, labels: np.ndarray, penalty: float, *, epochs: int, device: str
+) -> tuple[np.ndarray, float]:
     import torch
 
     torch.manual_seed(20260925)
@@ -65,8 +66,7 @@ def scores(x: np.ndarray, weights: np.ndarray, bias: float) -> np.ndarray:
     return np.asarray(1 / (1 + np.exp(-logits)), dtype=np.float64)
 
 
-def run(path: Path, *, artifact: Path, epochs: int, history_calls: int,
-        device: str) -> dict:
+def run(path: Path, *, artifact: Path, epochs: int, history_calls: int, device: str) -> dict:
     import torch
 
     if device == "cuda" and not torch.cuda.is_available():
@@ -75,37 +75,29 @@ def run(path: Path, *, artifact: Path, epochs: int, history_calls: int,
         raise FileExistsError("World-scope research artifact already exists")
     parts = {}
     manifests = {}
-    for name, partition in (("train", "scope_train"),
-                            ("calibration", "scope_calibration"), ("test", "scope_test")):
-        parts[name], manifests[name] = scopejudge_cases(
-            path, partition, history_calls=history_calls
-        )
+    for name, partition in (("train", "scope_train"), ("calibration", "scope_calibration"), ("test", "scope_test")):
+        parts[name], manifests[name] = scopejudge_cases(path, partition, history_calls=history_calls)
     if not all(manifest == manifests["train"] for manifest in manifests.values()):
         raise ValueError("ScopeJudge source changed between partitions")
-    groups = [{case.id.split(":", 1)[0] for case in parts[name]}
-              for name in ("train", "calibration", "test")]
+    groups = [{case.id.split(":", 1)[0] for case in parts[name]} for name in ("train", "calibration", "test")]
     if any(groups[left] & groups[right] for left, right in ((0, 1), (0, 2), (1, 2))):
         raise ValueError("Trajectory leakage between partitions")
     x = {name: world_scope_features(cases) for name, cases in parts.items()}
-    y = {name: np.asarray([case.in_scope for case in cases], dtype=np.bool_)
-         for name, cases in parts.items()}
+    y = {name: np.asarray([case.in_scope for case in cases], dtype=np.bool_) for name, cases in parts.items()}
     if any(not np.any(values) or not np.any(~values) for values in y.values()):
         raise ValueError("Each partition needs both scope labels")
     trials = []
     for penalty in PENALTIES:
-        weights, bias = train_one(x["train"], y["train"], penalty,
-                                  epochs=epochs, device=device)
+        weights, bias = train_one(x["train"], y["train"], penalty, epochs=epochs, device=device)
         calibration_scores = scores(x["calibration"], weights, bias)
         auc = float(roc_auc_score(y["calibration"], calibration_scores))
         trials.append((auc, penalty, weights, bias, calibration_scores))
-    auc, penalty, weights, bias, calibration_scores = max(
-        trials, key=lambda trial: (trial[0], -trial[1])
-    )
+    auc, penalty, weights, bias, calibration_scores = max(trials, key=lambda trial: (trial[0], -trial[1]))
     threshold = math.nextafter(float(np.max(calibration_scores[~y["calibration"]])), math.inf)
     artifact.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(artifact, weights=weights, bias=bias,
-                        threshold=threshold, penalty=penalty,
-                        history_calls=history_calls)
+    np.savez_compressed(
+        artifact, weights=weights, bias=bias, threshold=threshold, penalty=penalty, history_calls=history_calls
+    )
     test_scores = scores(x["test"], weights, bias)
     heliox = tuple(HELIOX_CASES)
     heliox_scores = scores(world_scope_features(heliox), weights, bias)
@@ -113,11 +105,16 @@ def run(path: Path, *, artifact: Path, epochs: int, history_calls: int,
     return {
         "purpose": "research_only_world_model_task_state_head",
         "dataset": manifests["train"],
-        "training": {"device": device, "epochs": epochs, "rows": len(y["train"]),
-                     "features": x["train"].shape[1], "history_calls": history_calls,
-                     "regularization_trials": [{"penalty": item[1], "calibration_auc": item[0]}
-                                               for item in trials],
-                     "selected_penalty": penalty, "calibration_auc": auc},
+        "training": {
+            "device": device,
+            "epochs": epochs,
+            "rows": len(y["train"]),
+            "features": x["train"].shape[1],
+            "history_calls": history_calls,
+            "regularization_trials": [{"penalty": item[1], "calibration_auc": item[0]} for item in trials],
+            "selected_penalty": penalty,
+            "calibration_auc": auc,
+        },
         "artifact_sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
         "calibration_threshold": threshold,
         "calibration": metrics(y["calibration"], calibration_scores, threshold),
@@ -126,7 +123,7 @@ def run(path: Path, *, artifact: Path, epochs: int, history_calls: int,
         "heliox_transfer_default": metrics(heliox_labels, heliox_scores, 0.5),
         "heliox_transfer_cautious": metrics(heliox_labels, heliox_scores, threshold),
         "limitation": "Public security tool-call labels and inspected synthetic transfer; "
-                      "not a production world model, Jev parity, or action approval.",
+        "not a production world model, Jev parity, or action approval.",
     }
 
 
@@ -136,21 +133,45 @@ def main() -> None:
     parser.add_argument("--history-calls", type=int, default=2)
     parser.add_argument("--epochs", type=int, default=300)
     parser.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
-    parser.add_argument("--artifact", type=Path, default=Path(__file__).resolve().parents[1]
-                        / "benchmarks/.bench-state/world_scope_head_v1.npz")
-    parser.add_argument("--report", type=Path, default=Path(__file__).resolve().parents[1]
-                        / "benchmarks/.bench-state/world_scope_head_v1.json")
+    parser.add_argument(
+        "--artifact",
+        type=Path,
+        default=Path(__file__).resolve().parents[1] / "benchmarks/.bench-state/world_scope_head_v1.npz",
+    )
+    parser.add_argument(
+        "--report",
+        type=Path,
+        default=Path(__file__).resolve().parents[1] / "benchmarks/.bench-state/world_scope_head_v1.json",
+    )
     args = parser.parse_args()
     if args.history_calls < 0 or args.epochs < 1:
         parser.error("History count must be nonnegative and epochs positive")
     if args.report.exists():
         raise FileExistsError("World-scope research report already exists")
-    report = run(args.scopejudge_path, artifact=args.artifact, epochs=args.epochs,
-                 history_calls=args.history_calls, device=args.device)
+    report = run(
+        args.scopejudge_path,
+        artifact=args.artifact,
+        epochs=args.epochs,
+        history_calls=args.history_calls,
+        device=args.device,
+    )
     args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps({key: report[key] for key in
-                      ("training", "calibration", "test_default", "test_cautious",
-                       "heliox_transfer_default", "heliox_transfer_cautious")}, indent=2))
+    print(
+        json.dumps(
+            {
+                key: report[key]
+                for key in (
+                    "training",
+                    "calibration",
+                    "test_default",
+                    "test_cautious",
+                    "heliox_transfer_default",
+                    "heliox_transfer_cautious",
+                )
+            },
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":

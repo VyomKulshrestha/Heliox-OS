@@ -268,9 +268,7 @@ async def test_desktop_goal_reobserves_after_open_and_requires_completion_eviden
     screen.read_visible_text_now.assert_awaited_once()
     assert "Fresh local OCR" in autonomous._planner.plan.await_args_list[1].kwargs["screen_context"]
     autonomous._focus_target_window.assert_awaited_once_with("Hermes")
-    first_query, second_query = [
-        call.kwargs["memory_query"] for call in autonomous._planner.plan.await_args_list
-    ]
+    first_query, second_query = [call.kwargs["memory_query"] for call in autonomous._planner.plan.await_args_list]
     assert "Task goal: Open Hermes" in first_query
     assert "Currently viewing: Heliox" in first_query
     assert "Currently viewing: Hermes" in second_query
@@ -295,10 +293,12 @@ async def test_prior_action_success_cannot_substitute_for_fresh_completion_evide
     open_plan = _open_app_plan()
     opened = ActionResult(action=open_plan.actions[0], success=True, output="Opened Hermes")
     screen = SimpleNamespace(
-        observe_now=AsyncMock(side_effect=[
-            SimpleNamespace(screen_hash="before-screen", active_app="Heliox", active_window_title="Heliox"),
-            RuntimeError("capture failed"),
-        ]),
+        observe_now=AsyncMock(
+            side_effect=[
+                SimpleNamespace(screen_hash="before-screen", active_app="Heliox", active_window_title="Heliox"),
+                RuntimeError("capture failed"),
+            ]
+        ),
         get_context_for_planner=MagicMock(side_effect=["Viewing Heliox", "Viewing Hermes"]),
     )
     autonomous = _autonomous(
@@ -346,7 +346,10 @@ async def test_disabled_screen_vision_is_not_restarted_by_autonomous_task():
 async def test_disabled_screen_vision_blocks_desktop_actions():
     screen = SimpleNamespace(is_running=False, observe_now=AsyncMock())
     autonomous = _autonomous(
-        plans=[_open_app_plan()], results=[], verifications=[], screen_vision=screen,
+        plans=[_open_app_plan()],
+        results=[],
+        verifications=[],
+        screen_vision=screen,
     )
     job = AutonomousJob(goal="Open Hermes", steps=[JobStep(index=0, title="Execute", description="")])
 
@@ -362,11 +365,13 @@ async def test_stale_screen_text_cannot_satisfy_exact_goal_when_target_text_is_f
     open_plan = _open_app_plan()
     opened = ActionResult(action=open_plan.actions[0], success=True, output="Opened Hermes")
     screen = SimpleNamespace(
-        observe_now=AsyncMock(side_effect=[
-            SimpleNamespace(active_app="Heliox", active_window_title="Heliox"),
-            RuntimeError("capture failed"),
-            RuntimeError("capture failed"),
-        ]),
+        observe_now=AsyncMock(
+            side_effect=[
+                SimpleNamespace(active_app="Heliox", active_window_title="Heliox"),
+                RuntimeError("capture failed"),
+                RuntimeError("capture failed"),
+            ]
+        ),
         get_context_for_planner=MagicMock(side_effect=["Viewing Heliox", "Stale SECRET", "Stale SECRET"]),
     )
     autonomous = _autonomous(
@@ -474,10 +479,14 @@ async def test_window_title_cannot_prove_exact_text_was_typed():
     open_plan = _open_app_plan()
     opened = ActionResult(action=open_plan.actions[0], success=True, output="Opened Hermes")
     screen = SimpleNamespace(
-        observe_now=AsyncMock(return_value=SimpleNamespace(
-            screen_hash="hermes-screen", active_app="Hermes",
-            active_window_title="SECRET - Hermes", description="SECRET is visible",
-        )),
+        observe_now=AsyncMock(
+            return_value=SimpleNamespace(
+                screen_hash="hermes-screen",
+                active_app="Hermes",
+                active_window_title="SECRET - Hermes",
+                description="SECRET is visible",
+            )
+        ),
         get_context_for_planner=MagicMock(return_value="Viewing SECRET - Hermes"),
         read_visible_text_now=AsyncMock(return_value="SECRET"),
     )
@@ -521,9 +530,11 @@ def test_keyboard_text_is_bound_to_opened_native_window():
 @pytest.mark.asyncio
 async def test_fresh_screen_can_verify_goal_was_already_complete():
     screen = SimpleNamespace(
-        observe_now=AsyncMock(return_value=SimpleNamespace(
-            screen_hash="hermes-screen", active_app="Hermes", description="requested record is complete"
-        )),
+        observe_now=AsyncMock(
+            return_value=SimpleNamespace(
+                screen_hash="hermes-screen", active_app="Hermes", description="requested record is complete"
+            )
+        ),
         get_context_for_planner=MagicMock(return_value="Viewing Hermes — requested record is complete"),
     )
     autonomous = _autonomous(
@@ -651,11 +662,13 @@ async def test_failed_verification_is_fed_into_next_adaptive_round():
     first_result = ActionResult(action=first_plan.actions[0], success=False, error="app not found")
     second_result = ActionResult(action=second_action, success=True, output="Opened Hermes")
     screen = SimpleNamespace(
-        observe_now=AsyncMock(side_effect=[
-            SimpleNamespace(screen_hash="before-screen", active_app="Heliox", active_window_title="Heliox"),
-            SimpleNamespace(screen_hash="still-before", active_app="Heliox", active_window_title="Heliox"),
-            SimpleNamespace(screen_hash="hermes-screen", active_app="Hermes", active_window_title="Hermes"),
-        ]),
+        observe_now=AsyncMock(
+            side_effect=[
+                SimpleNamespace(screen_hash="before-screen", active_app="Heliox", active_window_title="Heliox"),
+                SimpleNamespace(screen_hash="still-before", active_app="Heliox", active_window_title="Heliox"),
+                SimpleNamespace(screen_hash="hermes-screen", active_app="Hermes", active_window_title="Hermes"),
+            ]
+        ),
         get_context_for_planner=MagicMock(side_effect=["Viewing Heliox", "Viewing Heliox", "Viewing Hermes"]),
     )
     autonomous = _autonomous(

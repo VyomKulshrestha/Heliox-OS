@@ -95,16 +95,25 @@ class TestExecutorGatewayIntegration:
 class TestRiskGateOutage:
     @pytest.mark.asyncio
     async def test_executor_does_not_dispatch_autonomous_write_during_gate_outage(
-        self, tmp_path, gateway,
+        self,
+        tmp_path,
+        gateway,
     ):
         target = tmp_path / "must-not-write.txt"
-        plan = ActionPlan(actions=[Action(
-            action_type=ActionType.FILE_WRITE, target=str(target),
-            parameters=FileParams(content="test"),
-        )], raw_input="write a test file")
+        plan = ActionPlan(
+            actions=[
+                Action(
+                    action_type=ActionType.FILE_WRITE,
+                    target=str(target),
+                    parameters=FileParams(content="test"),
+                )
+            ],
+            raw_input="write a test file",
+        )
         with patch("pilot.security.risk_gate.get_risk_gate", side_effect=RuntimeError("boom")):
             results = await _executor(tmp_path, gateway).execute(
-                plan, invocation_source=InvocationSource.AUTONOMOUS,
+                plan,
+                invocation_source=InvocationSource.AUTONOMOUS,
             )
         assert len(results) == 1 and not results[0].success
         assert "Gateway denied" in (results[0].error or "")
@@ -113,12 +122,16 @@ class TestRiskGateOutage:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("already_reviewed", [False, True])
     async def test_autonomous_write_is_blocked_when_enabled_gate_fails(
-        self, gateway, already_reviewed,
+        self,
+        gateway,
+        already_reviewed,
     ):
         plan = _plan(ActionType.FILE_WRITE)
         with patch("pilot.security.risk_gate.get_risk_gate", side_effect=RuntimeError("boom")):
             decision = await gateway.authorize(
-                plan, InvocationSource.AUTONOMOUS, critic_already_reviewed=already_reviewed,
+                plan,
+                InvocationSource.AUTONOMOUS,
+                critic_already_reviewed=already_reviewed,
             )
         assert not decision.allowed
         assert "unavailable" in decision.reasons[0]
@@ -128,7 +141,8 @@ class TestRiskGateOutage:
     async def test_read_only_plan_is_not_blocked_by_gate_outage(self, gateway):
         with patch("pilot.security.risk_gate.get_risk_gate", side_effect=RuntimeError("boom")):
             decision = await gateway.authorize(
-                _plan(ActionType.SYSTEM_INFO), InvocationSource.AUTONOMOUS,
+                _plan(ActionType.SYSTEM_INFO),
+                InvocationSource.AUTONOMOUS,
             )
         assert decision.allowed
 
@@ -136,7 +150,8 @@ class TestRiskGateOutage:
     async def test_interactive_write_still_reaches_visible_approval_path(self, gateway):
         with patch("pilot.security.risk_gate.get_risk_gate", side_effect=RuntimeError("boom")):
             decision = await gateway.authorize(
-                _plan(ActionType.FILE_WRITE), InvocationSource.INTERACTIVE,
+                _plan(ActionType.FILE_WRITE),
+                InvocationSource.INTERACTIVE,
             )
         assert decision.allowed
         assert decision.critic_verdict["world_model"]["requires_confirmation"]

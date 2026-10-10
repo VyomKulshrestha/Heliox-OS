@@ -54,16 +54,17 @@ def main() -> None:
     features, labels = load_features(args.feature_dir, source)
     extra_bytes = args.when2call_report.read_bytes()
     extra = json.loads(extra_bytes)
-    if (extra["purpose"] != "research_only_grouped_call_readiness_features"
-            or extra["model"] != source["model"] or extra["revision"] != source["revision"]
-            or set(extra["splits"]) != {"train", "calibration", "test"}):
+    if (
+        extra["purpose"] != "research_only_grouped_call_readiness_features"
+        or extra["model"] != source["model"]
+        or extra["revision"] != source["revision"]
+        or set(extra["splits"]) != {"train", "calibration", "test"}
+    ):
         raise ValueError("Unexpected When2Call feature source")
     manifest = {
         "rows": {key: value["rows"] for key, value in extra["splits"].items()},
         "excluded_overlong": {key: value["overlong"] for key, value in extra["splits"].items()},
-        "feature_checkpoint_sha256": {
-            key: value["checkpoint_sha256"] for key, value in extra["splits"].items()
-        },
+        "feature_checkpoint_sha256": {key: value["checkpoint_sha256"] for key, value in extra["splits"].items()},
     }
     extra_features, extra_labels = load_features(args.when2call_feature_dir, manifest)
     features.update({f"when2call_{key}": value for key, value in extra_features.items()})
@@ -71,10 +72,9 @@ def main() -> None:
     domains = (*DOMAINS, "when2call")
     features["train"] = np.vstack([features[f"{domain}_train"] for domain in domains])
     normalized, mean, scale = normalize(features)
-    train_tasks = np.concatenate([
-        np.full(len(labels[f"{domain}_train"]), TASKS[task_for_domain(domain)], dtype=np.int64)
-        for domain in domains
-    ])
+    train_tasks = np.concatenate(
+        [np.full(len(labels[f"{domain}_train"]), TASKS[task_for_domain(domain)], dtype=np.int64) for domain in domains]
+    )
 
     import torch
 
@@ -89,8 +89,9 @@ def main() -> None:
         torch.nn.Linear(HIDDEN, len(TASKS)),
     ).to(device)
     train_x = torch.as_tensor(normalized["train"], dtype=torch.float32, device=device)
-    train_y = torch.as_tensor(np.concatenate([labels[f"{domain}_train"] for domain in domains]),
-                              dtype=torch.float32, device=device)
+    train_y = torch.as_tensor(
+        np.concatenate([labels[f"{domain}_train"] for domain in domains]), dtype=torch.float32, device=device
+    )
     train_task_ids = torch.as_tensor(train_tasks, dtype=torch.int64, device=device)
     train_weights = torch.as_tensor(balanced_weights(labels, domains), device=device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4, weight_decay=0.1)
@@ -99,7 +100,9 @@ def main() -> None:
         optimizer.zero_grad(set_to_none=True)
         logits = model(train_x).gather(1, train_task_ids[:, None]).squeeze(1)
         losses = torch.nn.functional.binary_cross_entropy_with_logits(
-            logits, train_y, reduction="none",
+            logits,
+            train_y,
+            reduction="none",
         )
         (losses * train_weights).mean().backward()
         optimizer.step()
@@ -122,18 +125,25 @@ def main() -> None:
             task_index = TASKS[task]
             test_x = torch.as_tensor(normalized[partition], dtype=torch.float32, device=device)
             gpu_scores = torch.sigmoid(model(test_x)[:, task_index]).cpu().numpy()
-            replay_scores = expit(infer_logits(features[partition], {
-                **common,
-                "w2": output_w[task_index:task_index + 1],
-                "b2": output_b[task_index:task_index + 1],
-            }))
+            replay_scores = expit(
+                infer_logits(
+                    features[partition],
+                    {
+                        **common,
+                        "w2": output_w[task_index : task_index + 1],
+                        "b2": output_b[task_index : task_index + 1],
+                    },
+                )
+            )
             np.testing.assert_allclose(replay_scores, gpu_scores, rtol=1e-5, atol=1e-6)
-            metrics[partition] = {"task": task,
-                                  **calibration_metrics(labels[partition], replay_scores)}
+            metrics[partition] = {"task": task, **calibration_metrics(labels[partition], replay_scores)}
 
     args.artifact.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(
-        args.artifact, **common, w2=output_w, b2=output_b,
+        args.artifact,
+        **common,
+        w2=output_w,
+        b2=output_b,
         task_names=np.asarray(tuple(TASKS)),
         source_report_sha256=hashlib.sha256(source_bytes).hexdigest(),
         when2call_report_sha256=hashlib.sha256(extra_bytes).hexdigest(),
@@ -144,9 +154,16 @@ def main() -> None:
         "source_report_sha256": hashlib.sha256(source_bytes).hexdigest(),
         "when2call_report_sha256": hashlib.sha256(extra_bytes).hexdigest(),
         "device": torch.cuda.get_device_name(device),
-        "architecture": {"shared_hidden": HIDDEN, "heads": TASKS, "seed": SEED,
-                         "epochs": EPOCHS, "dropout": 0.3, "optimizer": "AdamW",
-                         "learning_rate": 3e-4, "weight_decay": 0.1},
+        "architecture": {
+            "shared_hidden": HIDDEN,
+            "heads": TASKS,
+            "seed": SEED,
+            "epochs": EPOCHS,
+            "dropout": 0.3,
+            "optimizer": "AdamW",
+            "learning_rate": 3e-4,
+            "weight_decay": 0.1,
+        },
         "training_domains": list(domains),
         "selection": "Fixed settings; training partitions only; no test-driven candidate selection",
         "label_semantics": {
@@ -155,14 +172,24 @@ def main() -> None:
         },
         "metrics": metrics,
         "limitation": "The domain families and architecture were explored earlier. These are "
-                      "research results, not blind external validation, Jev parity, or an "
-                      "action-approval mechanism.",
+        "research results, not blind external validation, Jev parity, or an "
+        "action-approval mechanism.",
     }
     args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps({name: {"task": value["task"], "auc": value["auc"],
-                             "accuracy_at_0.5": value["accuracy_at_0.5"],
-                             "false_positives_at_0.5": value["false_positives_at_0.5"]}
-                      for name, value in metrics.items()}, indent=2))
+    print(
+        json.dumps(
+            {
+                name: {
+                    "task": value["task"],
+                    "auc": value["auc"],
+                    "accuracy_at_0.5": value["accuracy_at_0.5"],
+                    "false_positives_at_0.5": value["false_positives_at_0.5"],
+                }
+                for name, value in metrics.items()
+            },
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":

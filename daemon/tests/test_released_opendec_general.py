@@ -26,12 +26,10 @@ def test_archived_selection_is_pinned_without_teacher_report(monkeypatch: pytest
         {"id": "c", "kind": "choice", "options": ["x", "y"], "group_id": "gc"},
     ]
     manifest = {"sha256": "fixture"}
-    monkeypatch.setattr("scripts.evaluate_released_opendec_general.load_split",
-                        lambda *_args: (rows, manifest))
+    monkeypatch.setattr("scripts.evaluate_released_opendec_general.load_split", lambda *_args: (rows, manifest))
     digest = hashlib.sha256(b"a\nc").hexdigest()
 
-    selected, actual_manifest = select_archived_rows(
-        seed=1, pool=3, limit=2, expected_ids_sha256=digest)
+    selected, actual_manifest = select_archived_rows(seed=1, pool=3, limit=2, expected_ids_sha256=digest)
 
     assert [row["id"] for row in selected] == ["a", "c"]
     assert actual_manifest == manifest
@@ -42,8 +40,9 @@ def test_archived_selection_is_pinned_without_teacher_report(monkeypatch: pytest
 def test_fresh_selection_excludes_archived_groups(monkeypatch: pytest.MonkeyPatch) -> None:
     rows = [{"id": f"row-{index}", "group_id": f"group-{index}"} for index in range(5)]
     rows.insert(2, {"id": "duplicate", "group_id": "group-1"})
-    monkeypatch.setattr("scripts.evaluate_released_opendec_general.load_split",
-                        lambda *_args: (rows, {"sha256": "fixture"}))
+    monkeypatch.setattr(
+        "scripts.evaluate_released_opendec_general.load_split", lambda *_args: (rows, {"sha256": "fixture"})
+    )
     fresh, manifest = select_fresh_rows([rows[0]], seed=4, pool=5, limit=3)
     assert [row["id"] for row in fresh] == ["row-1", "row-2", "row-3"]
     assert manifest == {"sha256": "fixture"}
@@ -53,26 +52,35 @@ def test_fresh_selection_excludes_archived_groups(monkeypatch: pytest.MonkeyPatc
 
 def test_fresh_selection_excludes_pinned_source_groups(monkeypatch: pytest.MonkeyPatch) -> None:
     rows = [{"id": f"row-{index}", "group_id": f"group-{index}"} for index in range(5)]
-    monkeypatch.setattr("scripts.evaluate_released_opendec_general.load_split",
-                        lambda *_args: (rows, {"sha256": "fixture"}))
+    monkeypatch.setattr(
+        "scripts.evaluate_released_opendec_general.load_split", lambda *_args: (rows, {"sha256": "fixture"})
+    )
 
-    fresh, _ = select_fresh_rows([], seed=4, pool=5, limit=3,
-                                 excluded_group_ids={"group-0", "group-2"})
+    fresh, _ = select_fresh_rows([], seed=4, pool=5, limit=3, excluded_group_ids={"group-0", "group-2"})
 
     assert [row["id"] for row in fresh] == ["row-1", "row-3", "row-4"]
 
 
 def test_source_selection_manifest_replays_and_checksums_groups(tmp_path, monkeypatch) -> None:
     rows = [{"id": "a", "group_id": "ga"}, {"id": "b", "group_id": "gb"}]
-    monkeypatch.setattr("scripts.evaluate_released_opendec_general.load_split",
-                        lambda *_args: (rows, {"sha256": "fixture"}))
+    monkeypatch.setattr(
+        "scripts.evaluate_released_opendec_general.load_split", lambda *_args: (rows, {"sha256": "fixture"})
+    )
     ids_digest = hashlib.sha256(b"a\nb").hexdigest()
     groups_digest = hashlib.sha256(b"ga\ngb").hexdigest()
     content = {
         "schema_version": 1,
         "dataset_revision": DATASET_REVISION,
-        "source_selections": [{"split": "ood", "pool": 2, "seed": 9, "selected_rows": 2,
-                               "selected_ids_sha256": ids_digest, "group_ids_sha256": groups_digest}],
+        "source_selections": [
+            {
+                "split": "ood",
+                "pool": 2,
+                "seed": 9,
+                "selected_rows": 2,
+                "selected_ids_sha256": ids_digest,
+                "group_ids_sha256": groups_digest,
+            }
+        ],
         "unique_group_count": 2,
         "group_ids_sha256": groups_digest,
     }
@@ -90,12 +98,16 @@ def test_source_selection_manifest_replays_and_checksums_groups(tmp_path, monkey
 
 def test_nested_selection_manifest_adds_only_previously_scored_groups(tmp_path, monkeypatch) -> None:
     rows = [{"id": f"row-{index}", "group_id": f"group-{index}"} for index in range(4)]
-    monkeypatch.setattr("scripts.evaluate_released_opendec_general.load_split",
-                        lambda *_args: (rows, {"sha256": "fixture"}))
+    monkeypatch.setattr(
+        "scripts.evaluate_released_opendec_general.load_split", lambda *_args: (rows, {"sha256": "fixture"})
+    )
 
     base_groups = ["group-0"]
-    base_content = {"schema_version": 1, "group_ids": base_groups,
-                    "group_ids_sha256": hashlib.sha256(b"group-0").hexdigest()}
+    base_content = {
+        "schema_version": 1,
+        "group_ids": base_groups,
+        "group_ids_sha256": hashlib.sha256(b"group-0").hexdigest(),
+    }
     base_path = tmp_path / "base.json"
     base_path.write_text(json.dumps(base_content), encoding="utf-8")
     base_descriptor = {"path": "base.json", "sha256": hashlib.sha256(base_path.read_bytes()).hexdigest()}
@@ -108,10 +120,17 @@ def test_nested_selection_manifest_adds_only_previously_scored_groups(tmp_path, 
         "schema_version": 1,
         "dataset_revision": DATASET_REVISION,
         "base_manifest": base_descriptor,
-        "source_selections": [{"split": "ood", "pool": 4, "seed": 9, "selected_rows": 2,
-                               "exclude_group_manifest": base_descriptor,
-                               "selected_ids_sha256": chosen_ids_digest,
-                               "group_ids_sha256": chosen_groups_digest}],
+        "source_selections": [
+            {
+                "split": "ood",
+                "pool": 4,
+                "seed": 9,
+                "selected_rows": 2,
+                "exclude_group_manifest": base_descriptor,
+                "selected_ids_sha256": chosen_ids_digest,
+                "group_ids_sha256": chosen_groups_digest,
+            }
+        ],
         "unique_group_count": 3,
         "group_ids_sha256": hashlib.sha256("\n".join(combined_groups).encode()).hexdigest(),
     }
@@ -123,8 +142,16 @@ def test_nested_selection_manifest_adds_only_previously_scored_groups(tmp_path, 
 
 
 def test_checkpoint_signature_binds_inputs_and_model_limit() -> None:
-    rows = [{"id": "a", "state_json": "{}", "kind": "choice", "question": "Which?",
-             "options": ["one", "two"], "target": [0.0, 1.0]}]
+    rows = [
+        {
+            "id": "a",
+            "state_json": "{}",
+            "kind": "choice",
+            "question": "Which?",
+            "options": ["one", "two"],
+            "target": [0.0, 1.0],
+        }
+    ]
     first = input_signature(rows, {"sha256": "source-a"}, max_length=1024)
     assert first != input_signature(rows, {"sha256": "source-b"}, max_length=1024)
     assert first != input_signature(rows, {"sha256": "source-a"}, max_length=768)
@@ -133,8 +160,7 @@ def test_checkpoint_signature_binds_inputs_and_model_limit() -> None:
 
 
 def test_summary_keeps_public_error_ids() -> None:
-    rows = [{"id": "x", "source": "s", "kind": "choice", "options": ["a", "b"],
-             "target": [0.0, 1.0]}]
+    rows = [{"id": "x", "source": "s", "kind": "choice", "options": ["a", "b"], "target": [0.0, 1.0]}]
     result = summarize(rows, [np.array([2.0, 0.0])])
     assert result["top1_accuracy"] == 0.0
     assert result["wrong_ids"] == ["x"]
@@ -143,8 +169,9 @@ def test_summary_keeps_public_error_ids() -> None:
 def test_cached_logits_require_exact_selection(tmp_path) -> None:
     rows = [{"id": "a"}, {"id": "b"}]
     path = tmp_path / "logits.json"
-    path.write_text('{"schema_version":1,"signature":"frozen","ids":["a","b"],"logits":[[0,1],[2,3]]}',
-                    encoding="utf-8")
+    path.write_text(
+        '{"schema_version":1,"signature":"frozen","ids":["a","b"],"logits":[[0,1],[2,3]]}', encoding="utf-8"
+    )
 
     values = load_logits_checkpoint(path, rows, signature="frozen")
 

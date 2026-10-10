@@ -39,8 +39,10 @@ def load_action_scores(path: Path, trajectories: dict) -> tuple[np.ndarray, np.n
 
 
 def errors(labels: np.ndarray, scores: np.ndarray, threshold: float) -> dict:
-    return {"false_allowances": int(np.sum((scores >= threshold) & ~labels)),
-            "false_warnings": int(np.sum((scores < threshold) & labels))}
+    return {
+        "false_allowances": int(np.sum((scores >= threshold) & ~labels)),
+        "false_warnings": int(np.sum((scores < threshold) & labels)),
+    }
 
 
 def main() -> None:
@@ -60,18 +62,21 @@ def main() -> None:
     if cal_groups & test_groups:
         raise ValueError("Calibration and test trajectories overlap")
     cautious = math.nextafter(float(np.max(cal_scores[~cal_labels])), math.inf)
-    report = {"purpose": "research_only_calibration_threshold_check",
-              "dataset_sha256": DATASET_SHA256,
-              "calibration_sha256": hashlib.sha256(args.calibration.read_bytes()).hexdigest(),
-              "test_sha256": hashlib.sha256(args.test.read_bytes()).hexdigest(),
-              "calibration_rows": len(cal_labels), "test_rows": len(test_labels),
-              "calibration_auc": float(roc_auc_score(cal_labels, cal_scores)),
-              "test_auc": float(roc_auc_score(test_labels, test_scores)),
-              "calibration_cautious_threshold": cautious,
-              "calibration_cautious": errors(cal_labels, cal_scores, cautious),
-              "test_default": errors(test_labels, test_scores, 0.0),
-              "test_cautious": errors(test_labels, test_scores, cautious),
-              "limitation": "Post-hoc diagnostic on public held-out labels; no runtime promotion, safety guarantee, or Jev parity."}
+    report = {
+        "purpose": "research_only_calibration_threshold_check",
+        "dataset_sha256": DATASET_SHA256,
+        "calibration_sha256": hashlib.sha256(args.calibration.read_bytes()).hexdigest(),
+        "test_sha256": hashlib.sha256(args.test.read_bytes()).hexdigest(),
+        "calibration_rows": len(cal_labels),
+        "test_rows": len(test_labels),
+        "calibration_auc": float(roc_auc_score(cal_labels, cal_scores)),
+        "test_auc": float(roc_auc_score(test_labels, test_scores)),
+        "calibration_cautious_threshold": cautious,
+        "calibration_cautious": errors(cal_labels, cal_scores, cautious),
+        "test_default": errors(test_labels, test_scores, 0.0),
+        "test_cautious": errors(test_labels, test_scores, cautious),
+        "limitation": "Post-hoc diagnostic on public held-out labels; no runtime promotion, safety guarantee, or Jev parity.",
+    }
     args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report, indent=2))
 

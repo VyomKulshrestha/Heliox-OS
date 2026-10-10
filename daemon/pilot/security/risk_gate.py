@@ -85,7 +85,8 @@ class RiskGate:
         self._online_learner = learner
 
     def set_ui_observation_provider(
-        self, provider: Callable[[], dict[str, Any] | None] | None,
+        self,
+        provider: Callable[[], dict[str, Any] | None] | None,
     ) -> None:
         """Use an existing fresh screen observation; never capture in this gate."""
         self._ui_observation_provider = provider
@@ -97,9 +98,7 @@ class RiskGate:
         weight_loader: Callable[[Path], bytes] | None = None,
     ) -> None:
         """Load an optional visual candidate while preserving structured rules."""
-        self._world_model.set_visual_predictor(
-            UiJepaPredictor(weights_path, weight_loader=weight_loader)
-        )
+        self._world_model.set_visual_predictor(UiJepaPredictor(weights_path, weight_loader=weight_loader))
 
     def record_outcome(self, action_type: object, success: bool) -> None:
         """Feed only observed execution outcomes into historical caution."""
@@ -236,13 +235,16 @@ class RiskGate:
                 worst_risk = contract_evidence.score
                 worst_reasons = [contract_evidence.reason]
                 worst_action_type = action.action_type.value
-                worst_sources = sorted({
-                    *contract_prediction.sources,
-                    *(candidate.source for candidate in candidates),
-                    contract_evidence.source,
-                })
+                worst_sources = sorted(
+                    {
+                        *contract_prediction.sources,
+                        *(candidate.source for candidate in candidates),
+                        contract_evidence.source,
+                    }
+                )
                 worst_prediction_confidence = (
-                    None if contract_evidence.deterministic
+                    None
+                    if contract_evidence.deterministic
                     else max(0.0, min(1.0, 1.0 - contract_prediction.uncertainty))
                 )
 

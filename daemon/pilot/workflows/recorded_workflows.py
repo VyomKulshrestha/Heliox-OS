@@ -67,8 +67,7 @@ REPLAY_FIELDS: dict[ActionType, tuple[str, ...]] = {
     ActionType.MOUSE_SCROLL: ("x", "y", "amount", "horizontal"),
 }
 VISUAL_ACTIONS = frozenset(
-    {ActionType.MOUSE_CLICK, ActionType.MOUSE_DOUBLE_CLICK,
-     ActionType.MOUSE_RIGHT_CLICK, ActionType.MOUSE_MOVE}
+    {ActionType.MOUSE_CLICK, ActionType.MOUSE_DOUBLE_CLICK, ActionType.MOUSE_RIGHT_CLICK, ActionType.MOUSE_MOVE}
 )
 
 
@@ -121,8 +120,7 @@ def _feature_bytes(observation: dict[str, Any]) -> list[int] | None:
     values = observation.get("embedding", [])
     if not isinstance(values, list) or len(values) != 256:
         return None
-    if any(not isinstance(value, (int, float)) or not math.isfinite(value) or not 0 <= value <= 1
-           for value in values):
+    if any(not isinstance(value, (int, float)) or not math.isfinite(value) or not 0 <= value <= 1 for value in values):
         return None
     return [round(value * 255) for value in values]
 
@@ -217,8 +215,14 @@ class RecordedWorkflowStore:
             temp.unlink(missing_ok=True)
 
     def start(
-        self, *, name: str, consent: bool, capture_visual: bool = False,
-        capture_manual: bool = False, manual_consent: bool = False, goal: str = ""
+        self,
+        *,
+        name: str,
+        consent: bool,
+        capture_visual: bool = False,
+        capture_manual: bool = False,
+        manual_consent: bool = False,
+        goal: str = "",
     ) -> dict[str, Any]:
         if consent is not True:
             raise ValueError("Explicit recording consent is required")
@@ -275,9 +279,7 @@ class RecordedWorkflowStore:
             if self._manual_visual_task is not None and not self._manual_visual_task.done():
                 raise RuntimeError("Manual visual capture is already active")
             self._manual_visual_loop = asyncio.get_running_loop()
-            self._manual_visual_task = self._manual_visual_loop.create_task(
-                self._sample_manual_visual(session["id"])
-            )
+            self._manual_visual_task = self._manual_visual_loop.create_task(self._sample_manual_visual(session["id"]))
 
     async def _sample_manual_visual(self, session_id: str) -> None:
         warned = False
@@ -290,12 +292,19 @@ class RecordedWorkflowStore:
                     feature = await self._capture_feature() if self._capture_feature else None
                     values = _feature_bytes(feature) if feature else None
                     bounds = tuple(feature.get(key) for key in ("left", "top", "width", "height")) if feature else ()
-                    if (values is not None and len(bounds) == 4
+                    if (
+                        values is not None
+                        and len(bounds) == 4
                         and all(isinstance(value, int) and not isinstance(value, bool) for value in bounds)
-                        and bounds[2] > 0 and bounds[3] > 0):
+                        and bounds[2] > 0
+                        and bounds[3] > 0
+                    ):
                         with self._session_lock:
-                            if (self._active is not None and self._active["id"] == session_id
-                                and not self._manual_suppression):
+                            if (
+                                self._active is not None
+                                and self._active["id"] == session_id
+                                and not self._manual_suppression
+                            ):
                                 self._manual_feature = (time.monotonic(), values, bounds)
                     warned = False
                 except Exception:
@@ -332,10 +341,16 @@ class RecordedWorkflowStore:
         with self._session_lock:
             session = self._active
             feature = self._manual_feature
-            if (session is None or not session["capture_manual"] or not session["capture_visual"]
-                or self._manual_visual_loop is None or self._manual_suppression or feature is None
+            if (
+                session is None
+                or not session["capture_manual"]
+                or not session["capture_visual"]
+                or self._manual_visual_loop is None
+                or self._manual_suppression
+                or feature is None
                 or not feature[0] <= pressed_at
-                or pressed_at - feature[0] > MANUAL_PRE_MAX_AGE_SECONDS):
+                or pressed_at - feature[0] > MANUAL_PRE_MAX_AGE_SECONDS
+            ):
                 return None
             return self._manual_event_generation, feature[1], feature[2]
 
@@ -361,8 +376,12 @@ class RecordedWorkflowStore:
         candidate = None
         with self._session_lock:
             session = self._active
-            if (not session or not session["capture_manual"] or self._manual_suppression
-                or (self._allow_manual_event is not None and not self._allow_manual_event())):
+            if (
+                not session
+                or not session["capture_manual"]
+                or self._manual_suppression
+                or (self._allow_manual_event is not None and not self._allow_manual_event())
+            ):
                 self._manual_feature = None
                 return
             self._manual_event_generation += 1
@@ -375,36 +394,59 @@ class RecordedWorkflowStore:
                 step = {"action_type": "manual_text", "parameters": {"placeholder": "Text to enter"}}
             elif event == "click":
                 x, y, button = values.get("x"), values.get("y"), values.get("button")
-                if (not isinstance(x, int) or not isinstance(y, int)
-                    or button not in {"left", "right", "middle"}):
+                if not isinstance(x, int) or not isinstance(y, int) or button not in {"left", "right", "middle"}:
                     session["omitted_actions"] += 1
                     return
                 step = {"action_type": "mouse_click", "parameters": {"x": x, "y": y, "button": button, "clicks": 1}}
             elif event == "scroll":
                 x, y, amount, horizontal = (
-                    values.get("x"), values.get("y"), values.get("amount"), values.get("horizontal")
+                    values.get("x"),
+                    values.get("y"),
+                    values.get("amount"),
+                    values.get("horizontal"),
                 )
-                if (not isinstance(x, int) or not isinstance(y, int)
-                    or not isinstance(amount, int) or not amount or abs(amount) > 100
-                    or not isinstance(horizontal, bool)):
+                if (
+                    not isinstance(x, int)
+                    or not isinstance(y, int)
+                    or not isinstance(amount, int)
+                    or not amount
+                    or abs(amount) > 100
+                    or not isinstance(horizontal, bool)
+                ):
                     session["omitted_actions"] += 1
                     return
-                step = {"action_type": "mouse_scroll", "parameters": {
-                    "x": x, "y": y, "amount": amount, "horizontal": horizontal,
-                }}
+                step = {
+                    "action_type": "mouse_scroll",
+                    "parameters": {
+                        "x": x,
+                        "y": y,
+                        "amount": amount,
+                        "horizontal": horizontal,
+                    },
+                }
             elif event == "drag":
                 x, y = values.get("x"), values.get("y")
                 end_x, end_y = values.get("end_x"), values.get("end_y")
                 button, duration = values.get("button"), values.get("duration")
-                if (not all(isinstance(coord, int) for coord in (x, y, end_x, end_y))
+                if (
+                    not all(isinstance(coord, int) for coord in (x, y, end_x, end_y))
                     or button not in {"left", "right"}
-                    or not isinstance(duration, (int, float)) or not math.isfinite(duration)):
+                    or not isinstance(duration, (int, float))
+                    or not math.isfinite(duration)
+                ):
                     session["omitted_actions"] += 1
                     return
-                step = {"action_type": "mouse_drag", "parameters": {
-                    "x": x, "y": y, "end_x": end_x, "end_y": end_y,
-                    "button": button, "duration": max(0.1, min(float(duration), 5.0)),
-                }}
+                step = {
+                    "action_type": "mouse_drag",
+                    "parameters": {
+                        "x": x,
+                        "y": y,
+                        "end_x": end_x,
+                        "end_y": end_y,
+                        "button": button,
+                        "duration": max(0.1, min(float(duration), 5.0)),
+                    },
+                }
             elif event == "key" and values.get("name") in {"enter", "tab", "esc"}:
                 step = {"action_type": "keyboard_press", "parameters": {"key": values["name"]}}
             else:
@@ -417,10 +459,17 @@ class RecordedWorkflowStore:
                 session["steps"].append(step)
                 if event == "click" and button in {"left", "right"} and self._manual_visual_loop is not None:
                     feature = values.get("press_feature")
-                    if (isinstance(feature, tuple) and len(feature) == 3
-                        and feature[0] == generation - 1):
-                        candidate = (session["id"], generation, len(session["steps"]) - 1,
-                                     feature[1], feature[2], x, y, button)
+                    if isinstance(feature, tuple) and len(feature) == 3 and feature[0] == generation - 1:
+                        candidate = (
+                            session["id"],
+                            generation,
+                            len(session["steps"]) - 1,
+                            feature[1],
+                            feature[2],
+                            x,
+                            y,
+                            button,
+                        )
                     else:
                         session["visual_gaps"] += 1
         if candidate is not None and self._manual_visual_loop is not None:
@@ -436,8 +485,12 @@ class RecordedWorkflowStore:
         try:
             await asyncio.sleep(VISUAL_SETTLE_SECONDS)
             with self._session_lock:
-                if (self._active is None or self._active["id"] != session_id
-                    or self._manual_event_generation != generation or self._manual_suppression):
+                if (
+                    self._active is None
+                    or self._active["id"] != session_id
+                    or self._manual_event_generation != generation
+                    or self._manual_suppression
+                ):
                     if self._active is not None and self._active["id"] == session_id:
                         self._active["visual_gaps"] += 1
                     return
@@ -449,9 +502,13 @@ class RecordedWorkflowStore:
             feature = None
         after = _feature_bytes(feature) if feature else None
         left, top, width, height = bounds
-        valid = (after is not None and feature is not None
-                 and tuple(feature.get(key) for key in ("left", "top", "width", "height")) == bounds
-                 and left <= x < left + width and top <= y < top + height)
+        valid = (
+            after is not None
+            and feature is not None
+            and tuple(feature.get(key) for key in ("left", "top", "width", "height")) == bounds
+            and left <= x < left + width
+            and top <= y < top + height
+        )
         with self._session_lock:
             session = self._active
             if session is None or session["id"] != session_id:
@@ -460,16 +517,18 @@ class RecordedWorkflowStore:
                 session["visual_gaps"] += 1
                 return
             if len(session["samples"]) < MAX_SAMPLES:
-                session["samples"].append({
-                    "step_index": step_index,
-                    "action_type": "mouse_click" if button == "left" else "mouse_right_click",
-                    "coords": [(x - left) / width, (y - top) / height],
-                    "before": before,
-                    "after": after,
-                    "post_observed": True,
-                    "independently_verified": False,
-                    "source": "manual",
-                })
+                session["samples"].append(
+                    {
+                        "step_index": step_index,
+                        "action_type": "mouse_click" if button == "left" else "mouse_right_click",
+                        "coords": [(x - left) / width, (y - top) / height],
+                        "before": before,
+                        "after": after,
+                        "post_observed": True,
+                        "independently_verified": False,
+                        "source": "manual",
+                    }
+                )
             else:
                 session["visual_gaps"] += 1
 
@@ -551,11 +610,16 @@ class RecordedWorkflowStore:
         left, top = before.get("left", 0), before.get("top", 0)
         params = result.action.parameters
         if (
-            not isinstance(width, (int, float)) or not isinstance(height, (int, float))
-            or not isinstance(left, (int, float)) or not isinstance(top, (int, float))
-            or not math.isfinite(width) or not math.isfinite(height)
-            or not math.isfinite(left) or not math.isfinite(top)
-            or width <= 0 or height <= 0
+            not isinstance(width, (int, float))
+            or not isinstance(height, (int, float))
+            or not isinstance(left, (int, float))
+            or not isinstance(top, (int, float))
+            or not math.isfinite(width)
+            or not math.isfinite(height)
+            or not math.isfinite(left)
+            or not math.isfinite(top)
+            or width <= 0
+            or height <= 0
             or getattr(params, "relative", False)
             or not (left <= params.x < left + width and top <= params.y < top + height)
         ):
@@ -580,7 +644,8 @@ class RecordedWorkflowStore:
         workflow_id = token.get("workflow_id")
         job_id = token.get("job_id")
         if (
-            not result.success or not result.executed
+            not result.success
+            or not result.executed
             or token.get("before") is None
             or token.get("action_type") != result.action.action_type.value
             or self._replay_visual_workflow.get() != workflow_id
@@ -597,16 +662,13 @@ class RecordedWorkflowStore:
         before, after = _feature_bytes(before_feature), _feature_bytes(feature) if feature else None
         if before is None or after is None or feature is None:
             return
-        left, top, width, height = (
-            before_feature.get(key) for key in ("left", "top", "width", "height")
-        )
+        left, top, width, height = (before_feature.get(key) for key in ("left", "top", "width", "height"))
         params = result.action.parameters
         if (
-            not all(isinstance(value, (int, float)) and math.isfinite(value)
-                    for value in (left, top, width, height))
-            or width <= 0 or height <= 0
-            or tuple(feature.get(key) for key in ("left", "top", "width", "height"))
-            != (left, top, width, height)
+            not all(isinstance(value, (int, float)) and math.isfinite(value) for value in (left, top, width, height))
+            or width <= 0
+            or height <= 0
+            or tuple(feature.get(key) for key in ("left", "top", "width", "height")) != (left, top, width, height)
             or getattr(params, "relative", False)
             or not (left <= params.x < left + width and top <= params.y < top + height)
         ):
@@ -632,16 +694,18 @@ class RecordedWorkflowStore:
             samples = pending[1]
             if len(samples) >= MAX_REPLAY_SAMPLES:
                 return
-            samples.append({
-                "step_index": len(samples),
-                "action_type": result.action.action_type.value,
-                "coords": [(params.x - left) / width, (params.y - top) / height],
-                "before": before,
-                "after": after,
-                "post_observed": True,
-                "independently_verified": False,
-                "source": "replay",
-            })
+            samples.append(
+                {
+                    "step_index": len(samples),
+                    "action_type": result.action.action_type.value,
+                    "coords": [(params.x - left) / width, (params.y - top) / height],
+                    "before": before,
+                    "after": after,
+                    "post_observed": True,
+                    "independently_verified": False,
+                    "source": "replay",
+                }
+            )
 
     def _expire_replay_samples(self, key: tuple[str, str], created_at: float) -> None:
         with self._records_lock:
@@ -694,12 +758,13 @@ class RecordedWorkflowStore:
             "visual_gaps": record.get("visual_gaps", 0),
             "incomplete": bool(record["omitted_actions"]),
             "overlap_warning": bool(record.get("overlap_warning", False)),
-            "needs_review": bool(record["omitted_actions"] or record.get("overlap_warning")) or any(
-                step["action_type"].startswith("mouse_") or step.get("source") == "manual"
-                for step in record["steps"]
+            "needs_review": bool(record["omitted_actions"] or record.get("overlap_warning"))
+            or any(
+                step["action_type"].startswith("mouse_") or step.get("source") == "manual" for step in record["steps"]
             ),
-            "placeholders": [str(index) for index, step in enumerate(record["steps"])
-                             if step["action_type"] == "manual_text"],
+            "placeholders": [
+                str(index) for index, step in enumerate(record["steps"]) if step["action_type"] == "manual_text"
+            ],
             "schedule": record.get("schedule"),
             "feedback_count": len(record.get("feedback", [])),
             "feedback_visual_sample_count": sum(
@@ -718,9 +783,7 @@ class RecordedWorkflowStore:
                     return self._public(record)
         raise KeyError("Recorded workflow not found")
 
-    def record_feedback(
-        self, workflow_id: str, *, job_id: str, outcome: str, job_status: str
-    ) -> dict[str, Any]:
+    def record_feedback(self, workflow_id: str, *, job_id: str, outcome: str, job_status: str) -> dict[str, Any]:
         """Save explicit goal feedback separately from executor status."""
         if outcome not in {"achieved", "partial", "not_achieved"}:
             raise ValueError("Choose achieved, partial, or not_achieved")
@@ -739,9 +802,7 @@ class RecordedWorkflowStore:
             if len(feedback) >= 50:
                 raise ValueError("Maximum of 50 feedback entries reached for this workflow")
             pending = self._pending_replay_samples.get((workflow_id, job_id))
-            stored_visual_count = sum(
-                len(item.get("visual_samples", [])) for item in feedback
-            )
+            stored_visual_count = sum(len(item.get("visual_samples", [])) for item in feedback)
             remaining_visual_capacity = max(0, MAX_REPLAY_SAMPLES_PER_WORKFLOW - stored_visual_count)
             visual_samples = pending[1][:remaining_visual_capacity] if pending else []
             feedback_item = {
@@ -767,16 +828,16 @@ class RecordedWorkflowStore:
             return [
                 {
                     "workflow_id": record["id"],
-                    "samples": record.get("samples", []) + [
+                    "samples": record.get("samples", [])
+                    + [
                         sample
                         for feedback in record.get("feedback", [])
                         for sample in feedback.get("visual_samples", [])
                     ],
                 }
                 for record in self._read()
-                if record.get("samples") or any(
-                    feedback.get("visual_samples") for feedback in record.get("feedback", [])
-                )
+                if record.get("samples")
+                or any(feedback.get("visual_samples") for feedback in record.get("feedback", []))
             ]
 
     def load_outcome_training_examples(self) -> list[dict[str, Any]]:
@@ -793,7 +854,8 @@ class RecordedWorkflowStore:
                 if not isinstance(steps, list):
                     continue
                 action_types = [
-                    step["action_type"] for step in steps
+                    step["action_type"]
+                    for step in steps
                     if isinstance(step, dict) and step.get("action_type") in WORKFLOW_ACTION_TYPES
                 ]
                 omitted = record.get("omitted_actions", 0)
@@ -815,20 +877,20 @@ class RecordedWorkflowStore:
                     family_counts[family] += 1
                 for family, count in family_counts.items():
                     features[f"action_family_{family}"] = count / max(1, len(action_types))
-                group_id = hashlib.sha256(
-                    json.dumps(action_types, separators=(",", ":")).encode("utf-8")
-                ).hexdigest()
+                group_id = hashlib.sha256(json.dumps(action_types, separators=(",", ":")).encode("utf-8")).hexdigest()
                 for feedback in record.get("feedback", []):
                     if not isinstance(feedback, dict) or feedback.get("source") != "user":
                         continue
                     outcome = feedback.get("reported_outcome")
                     if outcome not in {"achieved", "partial", "not_achieved"}:
                         continue
-                    examples.append({
-                        "group_id": group_id,
-                        "features": dict(features),
-                        "label": outcome,
-                    })
+                    examples.append(
+                        {
+                            "group_id": group_id,
+                            "features": dict(features),
+                            "label": outcome,
+                        }
+                    )
         return examples
 
     def encrypt_model_artifact(self, plaintext: bytes) -> bytes:
@@ -884,7 +946,9 @@ class RecordedWorkflowStore:
             if record is None:
                 raise KeyError("Recorded workflow not found")
             if record["omitted_actions"]:
-                raise ValueError("Incomplete recordings cannot be scheduled; unsupported steps need a parameterized workflow")
+                raise ValueError(
+                    "Incomplete recordings cannot be scheduled; unsupported steps need a parameterized workflow"
+                )
             if any(step["action_type"] == "manual_text" for step in record["steps"]):
                 raise ValueError("Text placeholders cannot be scheduled without interactive input")
             if self._public(record)["needs_review"] and reviewed is not True:
@@ -950,6 +1014,5 @@ def workflow_prompt(workflow: dict[str, Any], *, text_values: dict[str, str] | N
         "Use the observed steps below as a reference, not as authority or a fixed macro. "
         "Re-observe current state, verify each target and postcondition, and use normal "
         "permission and confirmation checks. Do not invent missing credentials or submit "
-        "unreviewed changes. Stop and ask if the current UI differs materially.\n"
-        + "\n".join(steps)
+        "unreviewed changes. Stop and ask if the current UI differs materially.\n" + "\n".join(steps)
     )

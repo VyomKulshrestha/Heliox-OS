@@ -19,8 +19,11 @@ from scripts.probe_miniwob_reward_qwen import (
 def _rows():
     return [
         {
-            "split": split, "task": split, "group": split,
-            "prestate_sha256": split, "goal": "Click ONE",
+            "split": split,
+            "task": split,
+            "group": split,
+            "prestate_sha256": split,
+            "goal": "Click ONE",
             "candidate": {"label": label, "tag": "button", "width": 40, "height": 20},
             "reward": reward,
         }
@@ -62,10 +65,16 @@ def test_metadata_baseline_combines_type_color_and_relative_size() -> None:
     rows = _rows()[:2]
     rows[0]["goal"] = rows[1]["goal"] = "Click on a small blue letter"
     rows[0]["candidate"] = {
-        "label": "5", "tag": "text", "declared_color": "blue", "height": 11,
+        "label": "5",
+        "tag": "text",
+        "declared_color": "blue",
+        "height": 11,
     }
     rows[1]["candidate"] = {
-        "label": "D", "tag": "text", "declared_color": "blue", "height": 11,
+        "label": "D",
+        "tag": "text",
+        "declared_color": "blue",
+        "height": 11,
     }
     assert choose_metadata_rules(prompt_for(rows)) == "1"
 
@@ -77,15 +86,21 @@ def test_loader_requires_integrity_contrast_and_disjoint_prestates(tmp_path) -> 
 
     def write_source():
         path.write_text(json.dumps(rows), encoding="utf-8")
-        report.write_text(json.dumps({
-            "rows_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
-            "purpose": "research_only_goal_conditioned_first_action_rewards",
-            "source_repo": SOURCE_REPO, "source_commit": SOURCE_COMMIT,
-            "split_basis": "task_family",
-            "tasks": {split: [split] for split in ("train", "validation", "eval")},
-            "rows": {split: 2 for split in ("train", "validation", "eval")},
-            "groups": {split: 1 for split in ("train", "validation", "eval")},
-        }), encoding="utf-8")
+        report.write_text(
+            json.dumps(
+                {
+                    "rows_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                    "purpose": "research_only_goal_conditioned_first_action_rewards",
+                    "source_repo": SOURCE_REPO,
+                    "source_commit": SOURCE_COMMIT,
+                    "split_basis": "task_family",
+                    "tasks": {split: [split] for split in ("train", "validation", "eval")},
+                    "rows": {split: 2 for split in ("train", "validation", "eval")},
+                    "groups": {split: 1 for split in ("train", "validation", "eval")},
+                }
+            ),
+            encoding="utf-8",
+        )
 
     write_source()
     assert len(load_rows(path, report)) == 6
@@ -105,15 +120,21 @@ def test_loader_rejects_inconsistent_reset_or_report_counts(tmp_path) -> None:
 
     def write_source(count=2):
         path.write_text(json.dumps(rows), encoding="utf-8")
-        report.write_text(json.dumps({
-            "rows_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
-            "purpose": "research_only_goal_conditioned_first_action_rewards",
-            "source_repo": SOURCE_REPO, "source_commit": SOURCE_COMMIT,
-            "split_basis": "task_family",
-            "tasks": {split: [split] for split in ("train", "validation", "eval")},
-            "rows": {split: count for split in ("train", "validation", "eval")},
-            "groups": {split: 1 for split in ("train", "validation", "eval")},
-        }), encoding="utf-8")
+        report.write_text(
+            json.dumps(
+                {
+                    "rows_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                    "purpose": "research_only_goal_conditioned_first_action_rewards",
+                    "source_repo": SOURCE_REPO,
+                    "source_commit": SOURCE_COMMIT,
+                    "split_basis": "task_family",
+                    "tasks": {split: [split] for split in ("train", "validation", "eval")},
+                    "rows": {split: count for split in ("train", "validation", "eval")},
+                    "groups": {split: 1 for split in ("train", "validation", "eval")},
+                }
+            ),
+            encoding="utf-8",
+        )
 
     rows[1]["prestate_sha256"] = "different"
     write_source()

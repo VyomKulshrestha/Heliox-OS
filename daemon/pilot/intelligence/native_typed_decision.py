@@ -57,10 +57,7 @@ def _render_question(
     record: dict[str, Any],
     candidates: list[tuple[str, str, str]],
 ) -> str:
-    candidate_rows = [
-        {"label": label, "option": option}
-        for label, _, option in candidates
-    ]
+    candidate_rows = [{"label": label, "option": option} for label, _, option in candidates]
     detail = "Select the single best matching answer and return its candidate label."
     if record["kind"] == "score":
         detail = "Select the best matching level; candidates are ordered from lowest to highest. Return its label."
@@ -100,12 +97,8 @@ def _probabilities_in_request_order(
     if record["kind"] == "noul":
         if scored_keys != [str(rating) for rating in range(1, 10)]:
             raise ValueError("Noul model labels must represent a 0.1-0.9 probability rating")
-        expected_rating = float(
-            np.asarray([int(key) for key in scored_keys], dtype=np.float64) @ sorted_probabilities
-        )
-        yes_probability = float(
-            np.clip(0.01 + (expected_rating / 10 - 0.1) * (0.98 / 0.8), 0.01, 0.99)
-        )
+        expected_rating = float(np.asarray([int(key) for key in scored_keys], dtype=np.float64) @ sorted_probabilities)
+        yes_probability = float(np.clip(0.01 + (expected_rating / 10 - 0.1) * (0.98 / 0.8), 0.01, 0.99))
         return [1.0 - yes_probability, yes_probability]
     by_key = dict(zip(scored_keys, sorted_probabilities, strict=True))
     if set(by_key) != set(record["answer_keys"]):
@@ -126,19 +119,13 @@ def _encode_prompt_and_labels(
 
     label_iter = _answer_label_candidates()
     if record["kind"] == "noul":
-        pairs = [
-            (str(rating), f"{rating / 10:.1f} probability that the answer is yes")
-            for rating in range(1, 10)
-        ]
+        pairs = [(str(rating), f"{rating / 10:.1f} probability that the answer is yes") for rating in range(1, 10)]
         labels = list(string.ascii_uppercase[:9])
     else:
         labels = [next(label_iter) for _ in pairs]
     tried_labels = set(labels)
     for _ in range(min(8, len(pairs) + 1)):
-        candidates = [
-            (label, key, option)
-            for label, (key, option) in zip(labels, pairs, strict=True)
-        ]
+        candidates = [(label, key, option) for label, (key, option) in zip(labels, pairs, strict=True)]
         messages = [
             {"role": "system", "content": SYSTEM_INSTRUCTION},
             {"role": "user", "content": _render_question(state_json, record, candidates)},
@@ -150,10 +137,7 @@ def _encode_prompt_and_labels(
             enable_thinking=False,
         )
         prompt = rendered + ANSWER_PREFILL_TEXT
-        input_ids = [
-            int(token_id)
-            for token_id in tokenizer(prompt, add_special_tokens=False)["input_ids"]
-        ]
+        input_ids = [int(token_id) for token_id in tokenizer(prompt, add_special_tokens=False)["input_ids"]]
         if not input_ids or len(input_ids) > max_length:
             raise ValueError("Typed decision exceeds the configured model token limit; input was not truncated")
 
@@ -161,8 +145,7 @@ def _encode_prompt_and_labels(
         verified_tokens: set[int] = set()
         for label in labels:
             with_label = [
-                int(token_id)
-                for token_id in tokenizer(prompt + label, add_special_tokens=False)["input_ids"]
+                int(token_id) for token_id in tokenizer(prompt + label, add_special_tokens=False)["input_ids"]
             ]
             if (
                 len(with_label) == len(input_ids) + 1
@@ -292,9 +275,7 @@ class LocalNextTokenTypedDecisionModel:
             ]
             total_tokens = sum(len(item[0]) for item in prepared)
             if total_tokens > MAX_TOTAL_PROMPT_TOKENS:
-                raise ValueError(
-                    f"Typed request exceeds the {MAX_TOTAL_PROMPT_TOKENS}-token local scoring budget"
-                )
+                raise ValueError(f"Typed request exceeds the {MAX_TOTAL_PROMPT_TOKENS}-token local scoring budget")
             scores: list[np.ndarray] = []
             torch = self._torch
             pad_token_id = self._tokenizer.pad_token_id
@@ -318,10 +299,7 @@ class LocalNextTokenTypedDecisionModel:
                         batch_first=True,
                         padding_value=pad_token_id,
                     ).to("cuda")
-                    attention_mask = (
-                        torch.arange(input_ids.size(1), device="cuda")[None, :]
-                        < lengths[:, None]
-                    )
+                    attention_mask = torch.arange(input_ids.size(1), device="cuda")[None, :] < lengths[:, None]
                     with torch.inference_mode():
                         output = self._backbone(
                             input_ids=input_ids,
@@ -344,9 +322,7 @@ class LocalNextTokenTypedDecisionModel:
 
             answers: dict[str, dict[str, Any]] = {}
             for record, item, row_scores in zip(records, prepared, scores, strict=True):
-                probabilities = _probabilities_in_request_order(
-                    record, item[2], row_scores, self.temperature
-                )
+                probabilities = _probabilities_in_request_order(record, item[2], row_scores, self.temperature)
                 answers[record["id"]] = format_typed_answer(record, probabilities)
             return {
                 "status": "ok",

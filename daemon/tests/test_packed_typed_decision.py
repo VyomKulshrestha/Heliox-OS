@@ -208,9 +208,7 @@ def test_shuffled_context_pairs_are_deterministic_and_cross_group() -> None:
     pairs = _shuffled_context_pairs(rows, seed=17)
     repeated = _shuffled_context_pairs(rows, seed=17)
 
-    assert [(row["id"], donor["id"]) for row, donor in pairs] == [
-        (row["id"], donor["id"]) for row, donor in repeated
-    ]
+    assert [(row["id"], donor["id"]) for row, donor in pairs] == [(row["id"], donor["id"]) for row, donor in repeated]
     assert len(pairs) == 4
     assert {donor["id"] for _, donor in pairs} == {row["id"] for row in rows}
     assert all(

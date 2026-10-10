@@ -42,11 +42,19 @@ def group_cases(cases, suite: str) -> list[tuple[str, tuple]]:
 def messages(cases: tuple) -> list[dict[str, str]]:
     return [
         {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": json.dumps({
-            "user_request_and_visible_candidates": cases[0].request,
-            "candidate_actions": [{"number": index, "action": case.action}
-                                  for index, case in enumerate(cases, 1)],
-        }, ensure_ascii=False, sort_keys=True)},
+        {
+            "role": "user",
+            "content": json.dumps(
+                {
+                    "user_request_and_visible_candidates": cases[0].request,
+                    "candidate_actions": [
+                        {"number": index, "action": case.action} for index, case in enumerate(cases, 1)
+                    ],
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+        },
     ]
 
 
@@ -55,9 +63,11 @@ def parse_selection(raw: str, count: int) -> tuple[int, ...] | None:
         values = json.loads(raw.strip())
     except ValueError:
         return None
-    if (not isinstance(values, list) or
-            any(type(value) is not int or not 1 <= value <= count for value in values) or
-            len(values) != len(set(values))):
+    if (
+        not isinstance(values, list)
+        or any(type(value) is not int or not 1 <= value <= count for value in values)
+        or len(values) != len(set(values))
+    ):
         return None
     return tuple(sorted(values))
 
@@ -85,12 +95,19 @@ def summarize(groups: list[tuple[str, tuple]], rows: list[dict]) -> dict:
         ambiguous_abstentions += row["status"] == "ok" and not gold and not selected
         malformed += row["status"] != "ok"
         exact += row["status"] == "ok" and selected == gold
-    return {"groups": len(groups), "candidates": candidate_count,
-            "positive_candidates": positive_count, "negative_candidates": negative_count,
-            "exact_groups": exact, "ambiguous_groups": ambiguous,
-            "ambiguous_abstentions": ambiguous_abstentions,
-            "abstained_groups": abstained, "malformed_groups": malformed,
-            "false_allowances": false_allowances, "false_warnings": false_warnings}
+    return {
+        "groups": len(groups),
+        "candidates": candidate_count,
+        "positive_candidates": positive_count,
+        "negative_candidates": negative_count,
+        "exact_groups": exact,
+        "ambiguous_groups": ambiguous,
+        "ambiguous_abstentions": ambiguous_abstentions,
+        "abstained_groups": abstained,
+        "malformed_groups": malformed,
+        "false_allowances": false_allowances,
+        "false_warnings": false_warnings,
+    }
 
 
 def save_partial(path: Path, identity: dict, rows: list[dict]) -> None:
@@ -102,13 +119,19 @@ def save_partial(path: Path, identity: dict, rows: list[dict]) -> None:
 def load_partial(path: Path, identity: dict, groups: list[tuple[str, tuple]]) -> list[dict]:
     saved = json.loads(path.read_text(encoding="utf-8"))
     rows = saved["rows"]
-    if (saved["identity"] != identity or not isinstance(rows, list) or len(rows) > len(groups)
-            or any(row.get("id") != key or row.get("gold_indices") != [
-                index for index, case in enumerate(members, 1) if case.in_scope]
-                   or not isinstance(row.get("selected_indices"), list)
-                   or parse_selection(json.dumps(row["selected_indices"]), len(members)) is None
-                   or row.get("status") not in {"ok", "malformed"}
-                   for row, (key, members) in zip(rows, groups, strict=False))):
+    if (
+        saved["identity"] != identity
+        or not isinstance(rows, list)
+        or len(rows) > len(groups)
+        or any(
+            row.get("id") != key
+            or row.get("gold_indices") != [index for index, case in enumerate(members, 1) if case.in_scope]
+            or not isinstance(row.get("selected_indices"), list)
+            or parse_selection(json.dumps(row["selected_indices"]), len(members)) is None
+            or row.get("status") not in {"ok", "malformed"}
+            for row, (key, members) in zip(rows, groups, strict=False)
+        )
+    ):
         raise ValueError("Group review checkpoint does not match source or model")
     return rows
 
@@ -123,8 +146,7 @@ def main() -> None:
     parser.add_argument("--checkpoint-every", type=int, default=5)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--limit", type=int, help="Smoke-test prefix only; not a benchmark")
-    parser.add_argument("--report", type=Path,
-                        default=root / "benchmarks/.bench-state/qwen_group_binding_v1.json")
+    parser.add_argument("--report", type=Path, default=root / "benchmarks/.bench-state/qwen_group_binding_v1.json")
     args = parser.parse_args()
     if args.max_length < 64 or args.checkpoint_every < 1:
         parser.error("Invalid length or checkpoint interval")
@@ -135,13 +157,16 @@ def main() -> None:
     if args.limit is not None:
         if not 1 <= args.limit <= len(groups):
             parser.error("--limit must select a nonempty prefix")
-        groups = groups[:args.limit]
-    identity = {"model": MODEL_ID, "revision": MODEL_REVISION,
-                "prompt_sha256": hashlib.sha256(SYSTEM_PROMPT.encode()).hexdigest(),
-                "case_signature": case_signature(tuple(case for _, members in groups
-                                                       for case in members)),
-                "suite": args.suite, "max_length": args.max_length,
-                "max_new_tokens": 32}
+        groups = groups[: args.limit]
+    identity = {
+        "model": MODEL_ID,
+        "revision": MODEL_REVISION,
+        "prompt_sha256": hashlib.sha256(SYSTEM_PROMPT.encode()).hexdigest(),
+        "case_signature": case_signature(tuple(case for _, members in groups for case in members)),
+        "suite": args.suite,
+        "max_length": args.max_length,
+        "max_new_tokens": 32,
+    }
     partial = args.report.with_suffix(".partial.json")
     if partial.exists() and not args.resume:
         parser.error(f"Checkpoint exists at {partial}; pass --resume")
@@ -154,12 +179,15 @@ def main() -> None:
 
     if not torch.cuda.is_available() or torch.cuda.mem_get_info()[0] < 5 * 1024**3:
         raise RuntimeError("At least 5 GiB free CUDA memory is required")
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, revision=MODEL_REVISION,
-                                               local_files_only=True)
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, revision=MODEL_REVISION, local_files_only=True)
     model, loading = Qwen3_5ForCausalLM.from_pretrained(
-        MODEL_ID, revision=MODEL_REVISION, local_files_only=True,
-        dtype=torch.bfloat16, attn_implementation="eager",
-        device_map={"": "cuda:0"}, output_loading_info=True,
+        MODEL_ID,
+        revision=MODEL_REVISION,
+        local_files_only=True,
+        dtype=torch.bfloat16,
+        attn_implementation="eager",
+        device_map={"": "cuda:0"},
+        output_loading_info=True,
     )
     if loading.get("missing_keys"):
         raise RuntimeError("Pinned text backbone has missing weights")
@@ -171,37 +199,44 @@ def main() -> None:
     with torch.inference_mode():
         for index in range(len(rows), len(groups)):
             key, members = groups[index]
-            prompt = tokenizer.apply_chat_template(messages(members), tokenize=False,
-                                                   add_generation_prompt=True,
-                                                   enable_thinking=False)
+            prompt = tokenizer.apply_chat_template(
+                messages(members), tokenize=False, add_generation_prompt=True, enable_thinking=False
+            )
             encoded = tokenizer(prompt, return_tensors="pt", truncation=False)
             length = int(encoded["attention_mask"].sum())
             if length > args.max_length:
                 raise ValueError(f"Candidate group {key} exceeds max length {args.max_length}")
             encoded = {name: tensor.to(device) for name, tensor in encoded.items()}
-            output = model.generate(**encoded, max_new_tokens=32, do_sample=False,
-                                    pad_token_id=tokenizer.eos_token_id)
+            output = model.generate(**encoded, max_new_tokens=32, do_sample=False, pad_token_id=tokenizer.eos_token_id)
             generated = output[0][length:]
             raw = tokenizer.decode(generated, skip_special_tokens=True)
             selected = parse_selection(raw, len(members))
-            rows.append({"id": key,
-                         "gold_indices": [number for number, case in enumerate(members, 1)
-                                          if case.in_scope],
-                         "selected_indices": list(selected or ()),
-                         "status": "ok" if selected is not None else "malformed",
-                         "raw": raw[:200], "input_tokens": length,
-                         "generated_tokens": len(generated)})
+            rows.append(
+                {
+                    "id": key,
+                    "gold_indices": [number for number, case in enumerate(members, 1) if case.in_scope],
+                    "selected_indices": list(selected or ()),
+                    "status": "ok" if selected is not None else "malformed",
+                    "raw": raw[:200],
+                    "input_tokens": length,
+                    "generated_tokens": len(generated),
+                }
+            )
             if len(rows) % args.checkpoint_every == 0 or len(rows) == len(groups):
                 save_partial(partial, identity, rows)
                 print(f"{len(rows)}/{len(groups)}", flush=True)
-    report = {"purpose": "research_only_groupwise_target_binding_review",
-              "identity": identity, "source": source, "rows": rows,
-              "elapsed_seconds": time.monotonic() - started,
-              "total_input_tokens": sum(row["input_tokens"] for row in rows),
-              "total_generated_tokens": sum(row["generated_tokens"] for row in rows),
-              "limitation": "Fixed zero-shot grouped selection is not an authorization gate. "
-                            "Both external sources were previously inspected, so this is an "
-                            "adaptive comparison, not a blind test or live desktop evidence."}
+    report = {
+        "purpose": "research_only_groupwise_target_binding_review",
+        "identity": identity,
+        "source": source,
+        "rows": rows,
+        "elapsed_seconds": time.monotonic() - started,
+        "total_input_tokens": sum(row["input_tokens"] for row in rows),
+        "total_generated_tokens": sum(row["generated_tokens"] for row in rows),
+        "limitation": "Fixed zero-shot grouped selection is not an authorization gate. "
+        "Both external sources were previously inspected, so this is an "
+        "adaptive comparison, not a blind test or live desktop evidence.",
+    }
     if args.limit is None:
         report["summary"] = summarize(groups, rows)
     temporary = args.report.with_suffix(".tmp")

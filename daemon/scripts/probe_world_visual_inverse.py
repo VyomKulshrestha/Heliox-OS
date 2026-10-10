@@ -24,7 +24,10 @@ def inverse_features(partition: dict[str, np.ndarray], *, state_only: bool) -> n
 
 
 def score_inverse(
-    logits: np.ndarray, coords: np.ndarray, labels: np.ndarray, targets: np.ndarray,
+    logits: np.ndarray,
+    coords: np.ndarray,
+    labels: np.ndarray,
+    targets: np.ndarray,
     majority: int,
 ) -> dict[str, float]:
     predicted = np.argmax(logits, axis=1)
@@ -32,13 +35,10 @@ def score_inverse(
     click = labels != 0
     return {
         "action_accuracy": float(np.mean(predicted == labels)),
-        "action_macro_recall": float(np.mean([np.mean(predicted[labels == kind] == kind)
-                                             for kind in present])),
+        "action_macro_recall": float(np.mean([np.mean(predicted[labels == kind] == kind) for kind in present])),
         "majority_action_accuracy": float(np.mean(labels == majority)),
-        "click_coordinate_mae": float(np.abs(coords[click] - targets[click]).mean())
-        if np.any(click) else 0.0,
-        "center_coordinate_mae": float(np.abs(0.5 - targets[click]).mean())
-        if np.any(click) else 0.0,
+        "click_coordinate_mae": float(np.abs(coords[click] - targets[click]).mean()) if np.any(click) else 0.0,
+        "center_coordinate_mae": float(np.abs(0.5 - targets[click]).mean()) if np.any(click) else 0.0,
     }
 
 
@@ -48,8 +48,7 @@ def main() -> None:
     parser.add_argument("--source-report", type=Path, required=True)
     parser.add_argument("--report", type=Path, required=True)
     parser.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
-    parser.add_argument("--train-without-after", action="store_true",
-                        help="Fit a matched before-screen-only baseline")
+    parser.add_argument("--train-without-after", action="store_true", help="Fit a matched before-screen-only baseline")
     parser.add_argument("--epochs", type=int, default=60)
     parser.add_argument("--seed", type=int, default=20260926)
     args = parser.parse_args()
@@ -84,9 +83,11 @@ def main() -> None:
         output = model(batch["features"])
         click = batch["type"] != 0
         classification = nn.functional.cross_entropy(output[:, :9], batch["type"], weight=weights)
-        location = (nn.functional.smooth_l1_loss(
-            output[click, 9:].sigmoid(), batch["coords"][click]
-        ) if bool(click.any()) else output.sum() * 0)
+        location = (
+            nn.functional.smooth_l1_loss(output[click, 9:].sigmoid(), batch["coords"][click])
+            if bool(click.any())
+            else output.sum() * 0
+        )
         return classification + location
 
     best_loss, best_epoch, best_weights = float("inf"), 0, None
@@ -112,22 +113,24 @@ def main() -> None:
         for split in ("validation", "eval"):
             output = model(arrays[split]["features"])
             scores[split] = score_inverse(
-                output[:, :9].cpu().numpy(), output[:, 9:].sigmoid().cpu().numpy(),
-                arrays[split]["type"].cpu().numpy(), arrays[split]["coords"].cpu().numpy(),
+                output[:, :9].cpu().numpy(),
+                output[:, 9:].sigmoid().cpu().numpy(),
+                arrays[split]["type"].cpu().numpy(),
+                arrays[split]["coords"].cpu().numpy(),
                 majority,
             )
     report = {
         "purpose": "research_only_visual_inverse_dynamics_diagnostic",
-        "source_features_sha256": json.loads(args.source_report.read_text(encoding="utf-8"))[
-            "features_sha256"
-        ],
-        "device": str(device), "seed": args.seed, "selected_epoch": best_epoch,
-        "feature_shape": list(shape), "trained_without_after": args.train_without_after,
-        "training_action_counts": {str(index): int(count) for index, count in enumerate(counts.tolist())
-                                   if count},
+        "source_features_sha256": json.loads(args.source_report.read_text(encoding="utf-8"))["features_sha256"],
+        "device": str(device),
+        "seed": args.seed,
+        "selected_epoch": best_epoch,
+        "feature_shape": list(shape),
+        "trained_without_after": args.train_without_after,
+        "training_action_counts": {str(index): int(count) for index, count in enumerate(counts.tolist()) if count},
         "scores": scores,
         "limitation": f"Small inverse classifier on {shape} visual features. Not a joint "
-                      "forward/inverse model, a real desktop result, or a production artifact.",
+        "forward/inverse model, a real desktop result, or a production artifact.",
     }
     args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report, indent=2), flush=True)

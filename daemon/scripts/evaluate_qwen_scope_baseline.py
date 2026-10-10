@@ -30,11 +30,17 @@ def main() -> None:
         "existing_v5_raw": _metrics(list(CASES), teacher, scores[0]),
         "existing_v5_guarded": _metrics(list(CASES), teacher, scores[1]),
     }
-    (root / "benchmarks/qwen_scope_baseline_v1.json").write_text(
-        json.dumps(report, indent=2) + "\n", encoding="utf-8"
+    (root / "benchmarks/qwen_scope_baseline_v1.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    print(
+        json.dumps(
+            {
+                name: {key: value for key, value in result.items() if key != "mismatches"}
+                for name, result in report.items()
+                if isinstance(result, dict)
+            },
+            indent=2,
+        )
     )
-    print(json.dumps({name: {key: value for key, value in result.items() if key != "mismatches"}
-                      for name, result in report.items() if isinstance(result, dict)}, indent=2))
 
 
 if __name__ == "__main__":

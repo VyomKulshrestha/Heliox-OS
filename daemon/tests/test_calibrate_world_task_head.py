@@ -24,8 +24,7 @@ def test_infer_logits_matches_linear_gelu_linear():
         "b2": np.asarray([-0.25], dtype=np.float32),
     }
     hidden = np.asarray([-0.5, 3.5])
-    np.testing.assert_allclose(infer_logits(features, weights),
-                               3.0 * hidden * ndtr(hidden) - 0.25, rtol=1e-6)
+    np.testing.assert_allclose(infer_logits(features, weights), 3.0 * hidden * ndtr(hidden) - 0.25, rtol=1e-6)
     with pytest.raises(ValueError, match="incompatible shapes"):
         infer_logits(features[:, :1], weights)
 
@@ -36,9 +35,15 @@ def test_calibration_weights_equalize_domains_and_classes():
         "b_calibration": np.asarray([True, True, False]),
     }
     weights = balanced_calibration_weights(labels, ("a", "b"))
-    np.testing.assert_allclose([
-        weights[0], weights[1:3].sum(), weights[3:5].sum(), weights[5],
-    ], [0.25] * 4)
+    np.testing.assert_allclose(
+        [
+            weights[0],
+            weights[1:3].sum(),
+            weights[3:5].sum(),
+            weights[5],
+        ],
+        [0.25] * 4,
+    )
     with pytest.raises(ValueError, match="lacks a class"):
         balanced_calibration_weights({"a_calibration": np.asarray([True])}, ("a",))
 
@@ -57,11 +62,12 @@ def test_monotone_calibrators_reduce_fitting_nll_without_changing_ranking():
 
 
 def test_fixed_acceptance_grid_counts_negative_examples():
-    result = calibration_metrics(np.asarray([True, False, True, False]),
-                                 np.asarray([0.95, 0.91, 0.8, 0.1]))
+    result = calibration_metrics(np.asarray([True, False, True, False]), np.asarray([0.95, 0.91, 0.8, 0.1]))
     assert result["false_positives_at_0.5"] == 1
     assert result["acceptance"]["0.9"] == {
-        "accepted": 2, "positive_accepted": 1, "negative_accepted": 1,
+        "accepted": 2,
+        "positive_accepted": 1,
+        "negative_accepted": 1,
     }
     with pytest.raises(ValueError, match="Invalid probability"):
         calibration_metrics(np.asarray([True]), np.asarray([1.2]))

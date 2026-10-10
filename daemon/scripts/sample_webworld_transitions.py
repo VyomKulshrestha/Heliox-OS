@@ -40,11 +40,11 @@ def _read_json(url: str) -> dict:
             if exc.code not in {429, 502, 503, 504} or attempt == 3:
                 raise
             retry_after = exc.headers.get("Retry-After", "")
-            delay = int(retry_after) if retry_after.isdecimal() else 5 * (2 ** attempt)
+            delay = int(retry_after) if retry_after.isdecimal() else 5 * (2**attempt)
         except (urllib.error.URLError, TimeoutError):
             if attempt == 3:
                 raise
-            delay = 5 * (2 ** attempt)
+            delay = 5 * (2**attempt)
         time.sleep(min(30, max(1, delay)))
     raise RuntimeError("Unreachable WebWorld retry state")
 
@@ -56,7 +56,7 @@ def parse_trajectory(conversations: list[dict]) -> list[tuple[str, str, str]]:
     transitions: list[tuple[str, str, str]] = []
     previous_state = ""
     for turn in range(0, len(conversations), 2):
-        human, assistant = conversations[turn:turn + 2]
+        human, assistant = conversations[turn : turn + 2]
         if human.get("from") != "human" or assistant.get("from") != "gpt":
             return []
         prompt, after = human.get("value"), assistant.get("value")
@@ -96,7 +96,7 @@ def bound_action(before: str, action: str) -> str:
     if node is None:
         return action
     target = _NODE_ID.sub(" ", node.group(1))
-    remaining = action[match.end():].strip().removesuffix(")").strip()
+    remaining = action[match.end() :].strip().removesuffix(")").strip()
     remaining = remaining.removeprefix(",").strip()
     return f"{operation} target {target}" + (f" arguments {remaining}" if remaining else "")
 
@@ -126,8 +126,9 @@ def bound_action_path(before: str, action: str) -> str:
         ancestry.append(f"ancestor_{rank}_{parent.group(2).lower()}")
         label = re.search(r"'([^']+)'", line)
         if label is not None:
-            ancestry.extend(f"ancestor_{rank}_name_{word}"
-                            for word in re.findall(r"[a-z0-9]+", label.group(1).lower())[:3])
+            ancestry.extend(
+                f"ancestor_{rank}_name_{word}" for word in re.findall(r"[a-z0-9]+", label.group(1).lower())[:3]
+            )
         ancestor_count += 1
         if ancestor_count >= 3:
             break
@@ -137,16 +138,13 @@ def bound_action_path(before: str, action: str) -> str:
 def _features(texts: list[str], *, dimension: int) -> np.ndarray:
     from sklearn.feature_extraction.text import HashingVectorizer
 
-    vectorizer = HashingVectorizer(
-        n_features=dimension, alternate_sign=False, norm="l2", token_pattern=r"(?u)\b\w+\b"
-    )
+    vectorizer = HashingVectorizer(n_features=dimension, alternate_sign=False, norm="l2", token_pattern=r"(?u)\b\w+\b")
     return vectorizer.transform(_NODE_ID.sub(" ", text) for text in texts).toarray().astype(np.float32)
 
 
 def _state_digests(texts: list[str]) -> np.ndarray:
     """Keep exact pre-action identity without retaining the raw page tree."""
-    return np.stack([np.frombuffer(hashlib.sha256(text.encode("utf-8")).digest(), dtype=np.uint8)
-                     for text in texts])
+    return np.stack([np.frombuffer(hashlib.sha256(text.encode("utf-8")).digest(), dtype=np.uint8) for text in texts])
 
 
 def _state_connected_labels(states: np.ndarray, groups: np.ndarray) -> np.ndarray:
@@ -184,51 +182,74 @@ def _split_by_shared_state(states: np.ndarray, groups: np.ndarray, seed: int) ->
     validation_end = min(len(shuffled) - 1, max(train_end + 1, int(len(shuffled) * 0.85)))
     assignments = {
         group: ("train" if index < train_end else "validation" if index < validation_end else "eval")
-        for index, component in enumerate(shuffled) for group in component
+        for index, component in enumerate(shuffled)
+        for group in component
     }
     return np.asarray([assignments[group] for group in groups]), len(components)
 
 
 def _save_checkpoint(
-    path: Path, *, revision: str, total: int, offsets: list[int], pages_done: int,
-    arrays: dict[str, np.ndarray], exclusions: Counter[str], bound_rows: int,
+    path: Path,
+    *,
+    revision: str,
+    total: int,
+    offsets: list[int],
+    pages_done: int,
+    arrays: dict[str, np.ndarray],
+    exclusions: Counter[str],
+    bound_rows: int,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(".writing.npz")
     np.savez_compressed(
-        temporary, revision=np.asarray(revision), total=np.asarray(total),
-        offsets=np.asarray(offsets, dtype=np.int64), pages_done=np.asarray(pages_done),
-        exclusions=np.asarray(json.dumps(dict(exclusions))), bound_rows=np.asarray(bound_rows),
+        temporary,
+        revision=np.asarray(revision),
+        total=np.asarray(total),
+        offsets=np.asarray(offsets, dtype=np.int64),
+        pages_done=np.asarray(pages_done),
+        exclusions=np.asarray(json.dumps(dict(exclusions))),
+        bound_rows=np.asarray(bound_rows),
         **arrays,
     )
     os.replace(temporary, path)
 
 
 def _load_checkpoint(
-    path: Path, *, revision: str, total: int, offsets: list[int],
+    path: Path,
+    *,
+    revision: str,
+    total: int,
+    offsets: list[int],
 ) -> tuple[int, dict[str, np.ndarray], Counter[str], int]:
     with np.load(path, allow_pickle=False) as data:
-        if (str(data["revision"].item()) != revision or int(data["total"].item()) != total
-                or not np.array_equal(data["offsets"], offsets)):
+        if (
+            str(data["revision"].item()) != revision
+            or int(data["total"].item()) != total
+            or not np.array_equal(data["offsets"], offsets)
+        ):
             raise ValueError("WebWorld checkpoint does not match the requested source and sample")
         pages_done = int(data["pages_done"].item())
         if not 0 <= pages_done <= len(offsets):
             raise ValueError("Invalid WebWorld checkpoint progress")
         if "action_path" not in data.files or "state_digest" not in data.files:
             raise ValueError("WebWorld checkpoint predates exact pre-state identity; use a fresh checkpoint")
-        arrays = {key: data[key].copy() for key in
-                  ("state", "target", "action_type", "action_bound", "action_path",
-                   "state_digest", "group")}
+        arrays = {
+            key: data[key].copy()
+            for key in ("state", "target", "action_type", "action_bound", "action_path", "state_digest", "group")
+        }
         exclusions = Counter(json.loads(str(data["exclusions"].item())))
         bound_rows = int(data["bound_rows"].item())
     count = len(arrays["group"])
-    if (arrays["state"].shape != (count, 1024) or arrays["target"].shape != (count, 1024)
-            or arrays["action_type"].shape != (count, 256)
-            or arrays["action_bound"].shape != (count, 256)
-            or arrays["action_path"].shape != (count, 256)
-            or arrays["state_digest"].shape != (count, 32)
-            or arrays["state_digest"].dtype != np.uint8
-            or not 0 <= bound_rows <= count):
+    if (
+        arrays["state"].shape != (count, 1024)
+        or arrays["target"].shape != (count, 1024)
+        or arrays["action_type"].shape != (count, 256)
+        or arrays["action_bound"].shape != (count, 256)
+        or arrays["action_path"].shape != (count, 256)
+        or arrays["state_digest"].shape != (count, 32)
+        or arrays["state_digest"].dtype != np.uint8
+        or not 0 <= bound_rows <= count
+    ):
         raise ValueError("Invalid WebWorld checkpoint features")
     return pages_done, arrays, exclusions, bound_rows
 
@@ -243,32 +264,45 @@ def main() -> None:
     parser.add_argument("--report", type=Path, required=True)
     parser.add_argument("--checkpoint", type=Path)
     args = parser.parse_args()
-    if (args.features.exists() or args.report.exists() or not 3 <= args.pages <= 100
-            or not 1 <= args.page_length <= 10
-            or not 0 <= args.request_interval <= 10):
+    if (
+        args.features.exists()
+        or args.report.exists()
+        or not 3 <= args.pages <= 100
+        or not 1 <= args.page_length <= 10
+        or not 0 <= args.request_interval <= 10
+    ):
         parser.error("Use fresh output paths and bounded pages")
 
     metadata_url = "https://huggingface.co/api/datasets/" + DATASET
     metadata = _read_json(metadata_url)
     revision = metadata.get("sha")
-    if (metadata.get("cardData", {}).get("license") != "apache-2.0"
-            or not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{40}", revision)):
+    if (
+        metadata.get("cardData", {}).get("license") != "apache-2.0"
+        or not isinstance(revision, str)
+        or not re.fullmatch(r"[0-9a-f]{40}", revision)
+    ):
         raise ValueError("Dataset license or revision could not be verified")
 
     def page(offset: int, length: int) -> dict:
-        query = urllib.parse.urlencode({
-            "dataset": DATASET, "config": "default", "split": "train",
-            "offset": offset, "length": length,
-        })
+        query = urllib.parse.urlencode(
+            {
+                "dataset": DATASET,
+                "config": "default",
+                "split": "train",
+                "offset": offset,
+                "length": length,
+            }
+        )
         return _read_json("https://datasets-server.huggingface.co/rows?" + query)
 
     total = page(0, 1).get("num_rows_total")
     if not isinstance(total, int) or total < args.pages * args.page_length:
         raise ValueError("Dataset is smaller than the requested bounded sample")
     rng = random.Random(args.seed)
-    offsets = [rng.randint(i * total // args.pages,
-                           (i + 1) * total // args.pages - args.page_length)
-               for i in range(args.pages)]
+    offsets = [
+        rng.randint(i * total // args.pages, (i + 1) * total // args.pages - args.page_length)
+        for i in range(args.pages)
+    ]
     checkpoint = args.checkpoint or args.features.with_suffix(".partial.npz")
     if checkpoint.resolve() in {args.features.resolve(), args.report.resolve()}:
         parser.error("Checkpoint must have its own path")
@@ -291,8 +325,7 @@ def main() -> None:
         offset = offsets[page_index]
         response = page(offset, args.page_length)
         rows = response.get("rows")
-        if (response.get("num_rows_total") != total or not isinstance(rows, list)
-                or len(rows) != args.page_length):
+        if response.get("num_rows_total") != total or not isinstance(rows, list) or len(rows) != args.page_length:
             raise ValueError("Incomplete or changed WebWorld page")
         records: list[tuple[int, str, str, str]] = []
         for position, entry in enumerate(rows):
@@ -303,8 +336,7 @@ def main() -> None:
             if not transitions:
                 exclusions["unparsed_trajectory"] += 1
                 continue
-            records.extend((offset + position, before, action, after)
-                           for before, action, after in transitions)
+            records.extend((offset + position, before, action, after) for before, action, after in transitions)
         if records:
             action_bound = [bound_action(row[1], row[2]) for row in records]
             action_path = [bound_action_path(row[1], row[2]) for row in records]
@@ -312,9 +344,7 @@ def main() -> None:
             page_arrays = {
                 "state": _features([row[1] for row in records], dimension=1024),
                 "target": _features([row[3] for row in records], dimension=1024),
-                "action_type": _features(
-                    [row[2].split("(", 1)[0].strip().lower() for row in records], dimension=256
-                ),
+                "action_type": _features([row[2].split("(", 1)[0].strip().lower() for row in records], dimension=256),
                 "action_bound": _features(action_bound, dimension=256),
                 "action_path": _features(action_path, dimension=256),
                 "state_digest": _state_digests([row[1] for row in records]),
@@ -322,9 +352,14 @@ def main() -> None:
             }
             arrays = {key: np.concatenate((arrays[key], values)) for key, values in page_arrays.items()}
         _save_checkpoint(
-            checkpoint, revision=revision, total=total, offsets=offsets,
-            pages_done=page_index + 1, arrays=arrays,
-            exclusions=exclusions, bound_rows=bound_rows,
+            checkpoint,
+            revision=revision,
+            total=total,
+            offsets=offsets,
+            pages_done=page_index + 1,
+            arrays=arrays,
+            exclusions=exclusions,
+            bound_rows=bound_rows,
         )
         print(json.dumps({"pages_done": page_index + 1, "total_pages": len(offsets)}), flush=True)
         if page_index + 1 < len(offsets):
@@ -340,9 +375,7 @@ def main() -> None:
     if _read_json(metadata_url).get("sha") != revision:
         raise ValueError("Dataset revision changed during sampling")
 
-    splits, component_count = _split_by_shared_state(
-        arrays["state"], arrays["group"], args.seed + 1
-    )
+    splits, component_count = _split_by_shared_state(arrays["state"], arrays["group"], args.seed + 1)
     args.features.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(
         args.features,
@@ -351,10 +384,16 @@ def main() -> None:
     )
     report = {
         "purpose": "research_only_bounded_accessibility_transition_sample",
-        "dataset": DATASET, "revision": revision, "declared_license": "apache-2.0",
-        "split_basis": "trajectory_plus_identical_prestate_not_website", "seed": args.seed,
-        "pages": args.pages, "page_length": args.page_length, "offsets": offsets,
-        "transition_rows": len(arrays["group"]), "trajectories": len(set(arrays["group"])),
+        "dataset": DATASET,
+        "revision": revision,
+        "declared_license": "apache-2.0",
+        "split_basis": "trajectory_plus_identical_prestate_not_website",
+        "seed": args.seed,
+        "pages": args.pages,
+        "page_length": args.page_length,
+        "offsets": offsets,
+        "transition_rows": len(arrays["group"]),
+        "trajectories": len(set(arrays["group"])),
         "state_connected_components": component_count,
         "exact_prestate_identity": "sha256_of_raw_pre_action_tree",
         "bound_action_rows": bound_rows,
@@ -363,8 +402,8 @@ def main() -> None:
         "exclusions": dict(exclusions),
         "features_sha256": hashlib.sha256(args.features.read_bytes()).hexdigest(),
         "limitation": "The rows API is not commit-pinned; source SHA was checked before and after. "
-                      "No raw tree text is retained, but hashed features remain local and may still encode content. "
-                      "Trajectory-disjoint does not prove website transfer, causality, safe execution, or Jev parity.",
+        "No raw tree text is retained, but hashed features remain local and may still encode content. "
+        "Trajectory-disjoint does not prove website transfer, causality, safe execution, or Jev parity.",
     }
     args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report, indent=2), flush=True)

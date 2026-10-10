@@ -19,8 +19,10 @@ from scripts.train_scope_decision_challenge import _metrics, _rows  # noqa: E402
 
 def main() -> None:
     import sys
+
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from scripts.reference_output_policy import block_jev_output_use
+
     block_jev_output_use()
 
     root = Path(__file__).resolve().parents[1]
@@ -35,7 +37,9 @@ def main() -> None:
     teacher_path = args.teacher or root / f"benchmarks/jev_scope_semantic{version}_teacher.json"
     candidate_path = args.candidate or root / f"benchmarks/scope_semantic_candidate{version}.npz"
     training_path = args.training_metrics or root / (
-        f"benchmarks/scope_semantic{version}_cv_metrics.json" if version else "benchmarks/scope_semantic_cv_metrics.json"
+        f"benchmarks/scope_semantic{version}_cv_metrics.json"
+        if version
+        else "benchmarks/scope_semantic_cv_metrics.json"
     )
     output_path = args.output or root / f"benchmarks/scope_semantic{version}_holdout_metrics.json"
     cases = {"v2": CASES, "v3": V3_CASES, "v4": V4_CASES}[args.suite]

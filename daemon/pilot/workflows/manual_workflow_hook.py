@@ -107,8 +107,10 @@ class ManualWorkflowHook:
         if pressed:
             pressed_at = time.monotonic()
             self._pressed = (
-                x, y, button_name, pressed_at, self._store.manual_press_feature(pressed_at)
-            ) if isinstance(x, int) and isinstance(y, int) else None
+                (x, y, button_name, pressed_at, self._store.manual_press_feature(pressed_at))
+                if isinstance(x, int) and isinstance(y, int)
+                else None
+            )
             return
         origin = self._pressed
         self._pressed = None

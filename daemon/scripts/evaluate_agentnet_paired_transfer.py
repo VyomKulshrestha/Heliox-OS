@@ -26,39 +26,51 @@ def paired_auc_interval(labels: np.ndarray, post: np.ndarray, pre: np.ndarray) -
     random = np.random.default_rng(20260926)
     differences = []
     for _ in range(2_000):
-        indices = np.concatenate((random.choice(positive, len(positive)),
-                                  random.choice(negative, len(negative))))
-        differences.append(float(roc_auc_score(labels[indices], post[indices])
-                                 - roc_auc_score(labels[indices], pre[indices])))
+        indices = np.concatenate((random.choice(positive, len(positive)), random.choice(negative, len(negative))))
+        differences.append(
+            float(roc_auc_score(labels[indices], post[indices]) - roc_auc_score(labels[indices], pre[indices]))
+        )
     return [float(value) for value in np.quantile(differences, [0.025, 0.975])]
 
 
 def load_arm(
-    *, view: str, fit_manifest_hash: str, fresh_manifest: dict, fresh_manifest_hash: str,
-    features_path: Path, feature_report_path: Path, fit_report_path: Path,
-    artifact_path: Path, freeze_report_path: Path,
+    *,
+    view: str,
+    fit_manifest_hash: str,
+    fresh_manifest: dict,
+    fresh_manifest_hash: str,
+    features_path: Path,
+    feature_report_path: Path,
+    fit_report_path: Path,
+    artifact_path: Path,
+    freeze_report_path: Path,
 ) -> tuple[np.ndarray, float, dict]:
     feature_hash = sha256_file(features_path)
     artifact_hash = sha256_file(artifact_path)
     feature_report = json.loads(feature_report_path.read_text(encoding="utf-8"))
     fit_report = json.loads(fit_report_path.read_text(encoding="utf-8"))
     freeze = json.loads(freeze_report_path.read_text(encoding="utf-8"))
-    if (feature_report["source_sha256"] != SOURCE_SHA256
-            or feature_report["manifest_sha256"] != fresh_manifest_hash
-            or feature_report["features_sha256"] != feature_hash
-            or feature_report["model"] != MODEL or feature_report["revision"] != REVISION
-            or feature_report.get("input_view", "post_action") != view
-            or fit_report["source_sha256"] != SOURCE_SHA256
-            or fit_report["manifest_sha256"] != fit_manifest_hash
-            or fit_report["artifact_sha256"] != artifact_hash
-            or fit_report.get("input_view", "post_action") != view
-            or fit_report["final_and_ood_labels_opened"] is not False
-            or freeze.get("fit_selection_sha256", freeze.get("selection_sha256")) != fit_manifest_hash
-            or freeze["features_sha256"] != fit_report["feature_sha256"]
-            or freeze["head_sha256"] != artifact_hash
-            or freeze["promotion"] != "none"
-            or ("head_development_report_sha256" in freeze
-                and freeze["head_development_report_sha256"] != sha256_file(fit_report_path))):
+    if (
+        feature_report["source_sha256"] != SOURCE_SHA256
+        or feature_report["manifest_sha256"] != fresh_manifest_hash
+        or feature_report["features_sha256"] != feature_hash
+        or feature_report["model"] != MODEL
+        or feature_report["revision"] != REVISION
+        or feature_report.get("input_view", "post_action") != view
+        or fit_report["source_sha256"] != SOURCE_SHA256
+        or fit_report["manifest_sha256"] != fit_manifest_hash
+        or fit_report["artifact_sha256"] != artifact_hash
+        or fit_report.get("input_view", "post_action") != view
+        or fit_report["final_and_ood_labels_opened"] is not False
+        or freeze.get("fit_selection_sha256", freeze.get("selection_sha256")) != fit_manifest_hash
+        or freeze["features_sha256"] != fit_report["feature_sha256"]
+        or freeze["head_sha256"] != artifact_hash
+        or freeze["promotion"] != "none"
+        or (
+            "head_development_report_sha256" in freeze
+            and freeze["head_development_report_sha256"] != sha256_file(fit_report_path)
+        )
+    ):
         raise ValueError(f"{view} features or head do not match frozen provenance")
     with np.load(features_path, allow_pickle=False) as features:
         ids = features["ids"].tolist()
@@ -69,25 +81,34 @@ def load_arm(
         mean, scale = head["mean"], head["scale"]
         coefficient, intercept = head["coefficient"], head["intercept"]
         cautious = float(head["cautious_threshold"])
-        if (head["manifest_sha256"].item() != fit_manifest_hash
-                or head["feature_sha256"].item() != fit_report["feature_sha256"]):
+        if (
+            head["manifest_sha256"].item() != fit_manifest_hash
+            or head["feature_sha256"].item() != fit_report["feature_sha256"]
+        ):
             raise ValueError("Frozen head differs from its fit")
-    if (ids != fresh_manifest["case_ids"] or matrix.ndim != 2
-            or mean.shape != (matrix.shape[1],) or scale.shape != mean.shape
-            or coefficient.shape != (1, matrix.shape[1]) or intercept.shape != (1,)
-            or np.any(scale <= 0) or not 0 < cautious <= math.nextafter(1.0, math.inf)
-            or not all(np.isfinite(value).all() for value in
-                       (matrix, mean, scale, coefficient, intercept))):
+    if (
+        ids != fresh_manifest["case_ids"]
+        or matrix.ndim != 2
+        or mean.shape != (matrix.shape[1],)
+        or scale.shape != mean.shape
+        or coefficient.shape != (1, matrix.shape[1])
+        or intercept.shape != (1,)
+        or np.any(scale <= 0)
+        or not 0 < cautious <= math.nextafter(1.0, math.inf)
+        or not all(np.isfinite(value).all() for value in (matrix, mean, scale, coefficient, intercept))
+    ):
         raise ValueError("Frozen transfer features or head are invalid")
     logits = ((matrix - mean) / scale) @ coefficient.T + intercept
     probabilities = 1 / (1 + np.exp(-np.clip(logits[:, 0], -40, 40)))
-    provenance = {"features_sha256": feature_hash,
-                  "feature_report_sha256": sha256_file(feature_report_path),
-                  "fit_report_sha256": sha256_file(fit_report_path),
-                  "freeze_report_sha256": sha256_file(freeze_report_path),
-                  "artifact_sha256": artifact_hash,
-                  "prompt_sha256": feature_report["prompt_sha256"],
-                  "cautious_threshold": cautious}
+    provenance = {
+        "features_sha256": feature_hash,
+        "feature_report_sha256": sha256_file(feature_report_path),
+        "fit_report_sha256": sha256_file(fit_report_path),
+        "freeze_report_sha256": sha256_file(freeze_report_path),
+        "artifact_sha256": artifact_hash,
+        "prompt_sha256": feature_report["prompt_sha256"],
+        "cautious_threshold": cautious,
+    }
     return probabilities, cautious, provenance
 
 
@@ -111,19 +132,23 @@ def main() -> None:
     fresh_manifest = json.loads(args.fresh_manifest.read_text(encoding="utf-8"))
     fit_groups = {case_id.split(":", 1)[0] for case_id in fit_manifest["case_ids"]}
     fresh_groups = [case_id.split(":", 1)[0] for case_id in fresh_manifest["case_ids"]]
-    if (fit_manifest["source_sha256"] != SOURCE_SHA256
-            or fresh_manifest["source_sha256"] != SOURCE_SHA256
-            or fresh_manifest["previous_manifest_sha256"] != fit_hash
-            or not set(fresh_groups).isdisjoint(fit_groups)
-            or len(fresh_groups) != len(set(fresh_groups))
-            or set(fresh_manifest["splits"]) != {"final", "ood"}
-            or fresh_manifest["case_ids"] != [case_id for split in ("final", "ood")
-                                               for case_id in fresh_manifest["splits"][split]]):
+    if (
+        fit_manifest["source_sha256"] != SOURCE_SHA256
+        or fresh_manifest["source_sha256"] != SOURCE_SHA256
+        or fresh_manifest["previous_manifest_sha256"] != fit_hash
+        or not set(fresh_groups).isdisjoint(fit_groups)
+        or len(fresh_groups) != len(set(fresh_groups))
+        or set(fresh_manifest["splits"]) != {"final", "ood"}
+        or fresh_manifest["case_ids"]
+        != [case_id for split in ("final", "ood") for case_id in fresh_manifest["splits"][split]]
+    ):
         raise ValueError("Fresh transfer selection overlaps or has changed")
     arms = {}
     for short, view in (("post", "post_action"), ("pre", "pre_action")):
         arms[view] = load_arm(
-            view=view, fit_manifest_hash=fit_hash, fresh_manifest=fresh_manifest,
+            view=view,
+            fit_manifest_hash=fit_hash,
+            fresh_manifest=fresh_manifest,
             fresh_manifest_hash=fresh_hash,
             features_path=getattr(args, f"{short}_features"),
             feature_report_path=getattr(args, f"{short}_feature_report"),
@@ -140,26 +165,33 @@ def main() -> None:
         scored = {}
         for view, (probabilities, cautious, provenance) in arms.items():
             scores = probabilities[selected]
-            scored[view] = {"default": assess(labels, scores, 0.5),
-                            "calibration_cautious": assess(labels, scores, cautious),
-                            "provenance": provenance}
+            scored[view] = {
+                "default": assess(labels, scores, 0.5),
+                "calibration_cautious": assess(labels, scores, cautious),
+                "provenance": provenance,
+            }
         post_scores = arms["post_action"][0][selected]
         pre_scores = arms["pre_action"][0][selected]
-        scored["post_minus_pre_auc"] = float(roc_auc_score(labels, post_scores)
-                                              - roc_auc_score(labels, pre_scores))
-        scored["post_minus_pre_auc_bootstrap_95pct"] = paired_auc_interval(
-            labels, post_scores, pre_scores)
+        scored["post_minus_pre_auc"] = float(roc_auc_score(labels, post_scores) - roc_auc_score(labels, pre_scores))
+        scored["post_minus_pre_auc_bootstrap_95pct"] = paired_auc_interval(labels, post_scores, pre_scores)
         results[split] = scored
-    report = {"purpose": "one_shot_paired_agentnet_prospective_observed_transfer",
-              "source_sha256": SOURCE_SHA256, "fit_manifest_sha256": fit_hash,
-              "fresh_manifest_sha256": fresh_hash,
-              "label_provenance": fresh_manifest["label_provenance"],
-              "fresh_task_groups": len(fresh_groups), "results": results,
-              "promotion": "none",
-              "limitation": "Model-reflector labels, not human safety or live desktop outcomes. Post-action view has future observation; pre-action view does not. Bootstrap intervals resample only this corpus."}
+    report = {
+        "purpose": "one_shot_paired_agentnet_prospective_observed_transfer",
+        "source_sha256": SOURCE_SHA256,
+        "fit_manifest_sha256": fit_hash,
+        "fresh_manifest_sha256": fresh_hash,
+        "label_provenance": fresh_manifest["label_provenance"],
+        "fresh_task_groups": len(fresh_groups),
+        "results": results,
+        "promotion": "none",
+        "limitation": "Model-reflector labels, not human safety or live desktop outcomes. Post-action view has future observation; pre-action view does not. Bootstrap intervals resample only this corpus.",
+    }
     args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps({split: {view: result[view]["default"] for view in arms}
-                      for split, result in results.items()}, indent=2))
+    print(
+        json.dumps(
+            {split: {view: result[view]["default"] for view in arms} for split, result in results.items()}, indent=2
+        )
+    )
 
 
 if __name__ == "__main__":

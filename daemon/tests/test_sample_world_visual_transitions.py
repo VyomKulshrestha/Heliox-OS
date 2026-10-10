@@ -10,9 +10,12 @@ def _entry(index: int, episode: str = "task-a", action: int = 0) -> dict:
         "row_idx": index,
         "truncated_cells": [],
         "row": {
-            "episode_id": episode, "step_idx": index,
-            "action_type": action, "click_type": 1,
-            "mouse_x": 0.25, "mouse_y": 0.75,
+            "episode_id": episode,
+            "step_idx": index,
+            "action_type": action,
+            "click_type": 1,
+            "mouse_x": 0.25,
+            "mouse_y": 0.75,
         },
     }
 
@@ -42,6 +45,7 @@ def test_image_fetch_rejects_unpinned_or_foreign_source() -> None:
     with pytest.raises(ValueError, match="pinned dataset revision"):
         _image_feature({"row": {"image": {"src": "https://example.com/image.webp"}}}, "a" * 40)
     with pytest.raises(ValueError, match="pinned dataset revision"):
-        _image_feature({"row": {"image": {
-            "src": "https://datasets-server.huggingface.co/assets/" + "b" * 40 + "/image.webp"
-        }}}, "a" * 40)
+        _image_feature(
+            {"row": {"image": {"src": "https://datasets-server.huggingface.co/assets/" + "b" * 40 + "/image.webp"}}},
+            "a" * 40,
+        )

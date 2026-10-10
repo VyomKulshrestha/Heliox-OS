@@ -78,7 +78,10 @@ def test_seeded_random_final_is_unseen_and_balanced():
     assert len(set(SELECTED_INDICES)) == 50
     assert len(RANDOM_SCENARIOS) == 50
     assert len(RANDOM_CASES) == 100
-    earlier = {(case.request, case.action) for case in (*CASES, *CHALLENGE_CASES, *AUGMENTATION_CASES, *STRESS_CASES, *FRESH_CASES)}
+    earlier = {
+        (case.request, case.action)
+        for case in (*CASES, *CHALLENGE_CASES, *AUGMENTATION_CASES, *STRESS_CASES, *FRESH_CASES)
+    }
     assert not earlier.intersection((case.request, case.action) for case in RANDOM_CASES)
     assert len({(case.request, case.action) for case in RANDOM_CASES}) == 100
     assert sum(case.in_scope for case in RANDOM_CASES) == 50
@@ -87,7 +90,10 @@ def test_seeded_random_final_is_unseen_and_balanced():
 def test_third_unseen_set_is_disjoint_and_balanced():
     assert len(UNSEEN_SCENARIOS) == 50
     assert len(UNSEEN_CASES) == 100
-    earlier = {(case.request, case.action) for case in (*CASES, *CHALLENGE_CASES, *AUGMENTATION_CASES, *STRESS_CASES, *FRESH_CASES, *RANDOM_CASES)}
+    earlier = {
+        (case.request, case.action)
+        for case in (*CASES, *CHALLENGE_CASES, *AUGMENTATION_CASES, *STRESS_CASES, *FRESH_CASES, *RANDOM_CASES)
+    }
     assert not earlier.intersection((case.request, case.action) for case in UNSEEN_CASES)
     assert len({(case.request, case.action) for case in UNSEEN_CASES}) == 100
     assert sum(case.in_scope for case in UNSEEN_CASES) == 50

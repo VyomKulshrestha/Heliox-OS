@@ -46,7 +46,11 @@ def _key(env_file: Path | None) -> str:
 
 
 def evaluate(
-    *, key: str, repeats: int, limit: int | None = None, case_ids: set[str] | None = None,
+    *,
+    key: str,
+    repeats: int,
+    limit: int | None = None,
+    case_ids: set[str] | None = None,
     cases: tuple[ScopeCase, ...] = CASES,
 ) -> dict[str, object]:
     block_jev_output_use()
@@ -110,7 +114,24 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--env-file", type=Path, help="Optional .env path; only OPENROUTER_API_KEY is read")
     parser.add_argument("--repeats", type=int, default=1)
-    parser.add_argument("--suite", choices=("original", "challenge", "augmentation", "stress", "fresh", "random", "unseen", "semantic", "semantic-v3", "semantic-v4", "openjev-v1", "qwen-v1"), default="original")
+    parser.add_argument(
+        "--suite",
+        choices=(
+            "original",
+            "challenge",
+            "augmentation",
+            "stress",
+            "fresh",
+            "random",
+            "unseen",
+            "semantic",
+            "semantic-v3",
+            "semantic-v4",
+            "openjev-v1",
+            "qwen-v1",
+        ),
+        default="original",
+    )
     parser.add_argument("--limit", type=int)
     parser.add_argument("--case-id", action="append", dest="case_ids", help="Evaluate one named case; repeatable")
     parser.add_argument(

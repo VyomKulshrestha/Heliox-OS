@@ -21,8 +21,10 @@ from scripts.train_scope_decision_challenge import _metrics, _rows  # noqa: E402
 
 def main() -> None:
     import sys
+
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from scripts.reference_output_policy import block_jev_output_use
+
     block_jev_output_use()
 
     root = Path(__file__).resolve().parents[1]

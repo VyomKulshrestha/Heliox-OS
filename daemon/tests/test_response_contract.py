@@ -46,11 +46,12 @@ def test_reported_browser_effect_is_not_called_independently_verified():
 
 def test_mixed_execution_results_avoid_verified_heading_for_unobserved_effect():
     read = _action()
-    click = Action(action_type=ActionType.BROWSER_CLICK_TEXT, target="Submit",
-                   parameters=BrowserParams(text="Submit"))
+    click = Action(action_type=ActionType.BROWSER_CLICK_TEXT, target="Submit", parameters=BrowserParams(text="Submit"))
     plan = ActionPlan(actions=[read, click], explanation="Inspect and submit.")
-    results = [ActionResult(action=read, success=True, output="Windows"),
-               ActionResult(action=click, success=True, output="Clicked Submit")]
+    results = [
+        ActionResult(action=read, success=True, output="Windows"),
+        ActionResult(action=click, success=True, output="Clicked Submit"),
+    ]
 
     message = success_message(plan, results, VerificationResult(passed=True), dry_run=False)
 
@@ -59,8 +60,7 @@ def test_mixed_execution_results_avoid_verified_heading_for_unobserved_effect():
 
 
 def test_unobserved_exact_finding_does_not_use_verified_filler():
-    action = Action(action_type=ActionType.BROWSER_CLICK_TEXT, target="Submit",
-                    parameters=BrowserParams(text="Submit"))
+    action = Action(action_type=ActionType.BROWSER_CLICK_TEXT, target="Submit", parameters=BrowserParams(text="Submit"))
     plan = ActionPlan(actions=[action], raw_input="Return exactly one finding.")
     result = ActionResult(action=action, success=True, output="")
 

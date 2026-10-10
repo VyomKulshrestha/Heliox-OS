@@ -47,10 +47,8 @@ def prediction_metrics(rows: list[dict], predictions: list[dict]) -> dict:
             yes = float(answer["yes_probability"])
             values = np.asarray([1 - yes, yes], dtype=float)
         else:
-            values = np.asarray([answer["probabilities"][option] for option in row["options"]],
-                                dtype=float)
-        if (not np.all(np.isfinite(values)) or np.any(values < 0)
-                or not np.isclose(values.sum(), 1.0, atol=1e-5)):
+            values = np.asarray([answer["probabilities"][option] for option in row["options"]], dtype=float)
+        if not np.all(np.isfinite(values)) or np.any(values < 0) or not np.isclose(values.sum(), 1.0, atol=1e-5):
             raise ValueError("Invalid frozen prediction probabilities")
         logits.append(np.log(np.clip(values, 1e-12, 1.0)))
     return metrics(rows, logits, 1.0)
@@ -73,9 +71,13 @@ def load_partial(path: Path, *, signature: str, ids: list[str], resume: bool) ->
     if not resume:
         raise FileExistsError(f"Frozen evaluation cache already exists: {path}; pass --resume")
     saved = json.loads(path.read_text(encoding="utf-8"))
-    if (saved.get("schema_version") != 1 or saved.get("signature") != signature
-            or saved.get("ids") != ids or not isinstance(saved.get("predictions"), list)
-            or len(saved["predictions"]) > len(ids)):
+    if (
+        saved.get("schema_version") != 1
+        or saved.get("signature") != signature
+        or saved.get("ids") != ids
+        or not isinstance(saved.get("predictions"), list)
+        or len(saved["predictions"]) > len(ids)
+    ):
         raise ValueError("Frozen evaluation cache does not match selected rows or artifact")
     return saved["predictions"]
 
@@ -85,8 +87,9 @@ def main() -> None:
     parser.add_argument("--split", choices=("test", "ood"), default="ood")
     parser.add_argument("--limit", type=int, default=128)
     parser.add_argument("--seed", type=int, default=20260927)
-    parser.add_argument("--permute-options-seed", type=int,
-                        help="Reorder choice alternatives and labels without changing row selection")
+    parser.add_argument(
+        "--permute-options-seed", type=int, help="Reorder choice alternatives and labels without changing row selection"
+    )
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--model-report", type=Path, required=True)
     parser.add_argument("--report", type=Path, required=True)
@@ -103,24 +106,38 @@ def main() -> None:
     from huggingface_hub import snapshot_download
     from transformers import AutoTokenizer
 
-    model_path = snapshot_download(source_report["model"], revision=source_report["revision"],
-                                   local_files_only=True)
+    model_path = snapshot_download(source_report["model"], revision=source_report["revision"], local_files_only=True)
     tokenizer = AutoTokenizer.from_pretrained(model_path, local_files_only=True)
-    encoded, _ = encode_rows(tokenizer, selected_rows, source_report["max_length"],
-                             prompt_style=source_report.get("prompt_style", "candidate_v1"))
+    encoded, _ = encode_rows(
+        tokenizer,
+        selected_rows,
+        source_report["max_length"],
+        prompt_style=source_report.get("prompt_style", "candidate_v1"),
+    )
     rows, overlong_skipped = retain_tokenizable_rows(selected_rows, encoded)
     if not rows:
         raise ValueError("No selected decisions fit the frozen token limit")
-    payloads = [{"state": json.loads(row["state_json"]), "kind": row["kind"],
-                 "question": row["question"], "options": row["options"]} for row in rows]
+    payloads = [
+        {
+            "state": json.loads(row["state_json"]),
+            "kind": row["kind"],
+            "question": row["question"],
+            "options": row["options"],
+        }
+        for row in rows
+    ]
     ids = [row["id"] for row in rows]
-    identity = {"split": args.split, "seed": args.seed, "ids": ids,
-                "selected_ids": [row["id"] for row in selected_rows],
-                "overlong_skipped": overlong_skipped,
-                "dataset_sha256": manifest["sha256"],
-                "permute_options_seed": args.permute_options_seed,
-                "adapter_sha256": source_report["adapter_sha256"],
-                "head_sha256": source_report["head_sha256"]}
+    identity = {
+        "split": args.split,
+        "seed": args.seed,
+        "ids": ids,
+        "selected_ids": [row["id"] for row in selected_rows],
+        "overlong_skipped": overlong_skipped,
+        "dataset_sha256": manifest["sha256"],
+        "permute_options_seed": args.permute_options_seed,
+        "adapter_sha256": source_report["adapter_sha256"],
+        "head_sha256": source_report["head_sha256"],
+    }
     signature = hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     cache = args.report.with_suffix(".partial.json")
     predictions = load_partial(cache, signature=signature, ids=ids, resume=args.resume)
@@ -132,23 +149,31 @@ def main() -> None:
         predictions.append(prediction)
         cache.parent.mkdir(parents=True, exist_ok=True)
         temporary = cache.with_suffix(".tmp")
-        temporary.write_text(json.dumps({"schema_version": 1, "signature": signature,
-                                         "ids": ids, "predictions": predictions}, allow_nan=False),
-                             encoding="utf-8")
+        temporary.write_text(
+            json.dumps(
+                {"schema_version": 1, "signature": signature, "ids": ids, "predictions": predictions}, allow_nan=False
+            ),
+            encoding="utf-8",
+        )
         os.replace(temporary, cache)
 
     if start < len(payloads):
         score_requests(payloads[start:], args.output_dir, args.model_report, on_prediction=save)
-    report = {"purpose": "offline_frozen_artifact_comparison",
-              "dataset_revision": DATASET_REVISION, "dataset_manifest": manifest,
-              "split": args.split, "seed": args.seed,
-              "selected_rows": len(selected_rows), "rows": len(rows),
-              "overlong_skipped": overlong_skipped,
-              "permute_options_seed": args.permute_options_seed,
-              "adapter_sha256": source_report["adapter_sha256"],
-              "head_sha256": source_report["head_sha256"],
-              "metrics": prediction_metrics(rows, predictions),
-              "limitation": "Licensed public synthetic decisions; no Jev or desktop-safety proof."}
+    report = {
+        "purpose": "offline_frozen_artifact_comparison",
+        "dataset_revision": DATASET_REVISION,
+        "dataset_manifest": manifest,
+        "split": args.split,
+        "seed": args.seed,
+        "selected_rows": len(selected_rows),
+        "rows": len(rows),
+        "overlong_skipped": overlong_skipped,
+        "permute_options_seed": args.permute_options_seed,
+        "adapter_sha256": source_report["adapter_sha256"],
+        "head_sha256": source_report["head_sha256"],
+        "metrics": prediction_metrics(rows, predictions),
+        "limitation": "Licensed public synthetic decisions; no Jev or desktop-safety proof.",
+    }
     args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report["metrics"]["by_kind"], indent=2))
 

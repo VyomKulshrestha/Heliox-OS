@@ -26,8 +26,7 @@ def test_entity_and_retail_group_metrics_use_the_same_fixed_threshold():
         ScopeCase("task-1:right", "Choose blue", "Use blue", True),
         ScopeCase("task-1:wrong", "Choose blue", "Use red", False),
     )
-    entity = summarize_cases(entity_cases, {"task-1": True}, task_metrics,
-                             "entity-binding", np.asarray([0.8, 0.2]))
+    entity = summarize_cases(entity_cases, {"task-1": True}, task_metrics, "entity-binding", np.asarray([0.8, 0.2]))
     assert entity["default"]["false_allowances"] == 0
     assert entity["groups"]["correct_safe_decisions"] == 1
 
@@ -36,10 +35,8 @@ def test_entity_and_retail_group_metrics_use_the_same_fixed_threshold():
         ScopeCase("task0:tool:order2", "Choose blue", "Use red", False),
     )
     groups = {"task0:tool": {"implicit": True}}
-    retail = summarize_cases(retail_cases, groups, group_metrics, "tau-retail",
-                             np.asarray([0.8, 0.2]))
+    retail = summarize_cases(retail_cases, groups, group_metrics, "tau-retail", np.asarray([0.8, 0.2]))
     assert retail["groups"]["correct_top_rank"] == 1
     assert retail["groups"]["correct_safe_groups"] == 1
     with pytest.raises(ValueError, match="finite score"):
-        summarize_cases(retail_cases, groups, group_metrics, "tau-retail",
-                        np.asarray([0.8, float("nan")]))
+        summarize_cases(retail_cases, groups, group_metrics, "tau-retail", np.asarray([0.8, float("nan")]))

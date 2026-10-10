@@ -49,10 +49,17 @@ def main() -> None:
     args = parser.parse_args()
     if not args.recorded_store.is_file():
         parser.error(f"No encrypted local workflow store exists: {args.recorded_store}")
-    if (args.artifact.suffix != ".enc" or args.artifact.exists() or args.report.exists()
-            or args.artifact.resolve() == args.report.resolve()):
+    if (
+        args.artifact.suffix != ".enc"
+        or args.artifact.exists()
+        or args.report.exists()
+        or args.artifact.resolve() == args.report.resolve()
+    ):
         parser.error("Use a fresh .enc artifact path and a fresh report path")
-    if args.artifact.resolve() == args.recorded_store.resolve() or args.report.resolve() == args.recorded_store.resolve():
+    if (
+        args.artifact.resolve() == args.recorded_store.resolve()
+        or args.report.resolve() == args.recorded_store.resolve()
+    ):
         parser.error("Output paths must not overwrite the encrypted workflow store")
 
     store = RecordedWorkflowStore(args.recorded_store)
@@ -62,25 +69,32 @@ def main() -> None:
     if _sha256(args.recorded_store) != before_hash:
         raise RuntimeError("Encrypted workflow store changed during training; discard this candidate")
 
-    report.update({
-        "source_store_sha256": before_hash,
-        "candidate_file_encrypted": True,
-        "candidate_promoted": False,
-        "probability_calibration": "not fitted",
-    })
+    report.update(
+        {
+            "source_store_sha256": before_hash,
+            "candidate_file_encrypted": True,
+            "candidate_promoted": False,
+            "probability_calibration": "not fitted",
+        }
+    )
     encrypted_artifact = store.encrypt_model_artifact(
         json.dumps(artifact, separators=(",", ":"), allow_nan=False).encode("utf-8")
     )
     _write_new(args.artifact, encrypted_artifact)
     _write_new(args.report, (json.dumps(report, indent=2, allow_nan=False) + "\n").encode("utf-8"))
-    print(json.dumps({
-        "candidate_promoted": False,
-        "examples": report["examples"],
-        "recipe_groups": report["recipe_groups"],
-        "test_balanced_accuracy": report["candidate"]["balanced_accuracy"],
-        "artifact": str(args.artifact),
-        "report": str(args.report),
-    }, indent=2))
+    print(
+        json.dumps(
+            {
+                "candidate_promoted": False,
+                "examples": report["examples"],
+                "recipe_groups": report["recipe_groups"],
+                "test_balanced_accuracy": report["candidate"]["balanced_accuracy"],
+                "artifact": str(args.artifact),
+                "report": str(args.report),
+            },
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":

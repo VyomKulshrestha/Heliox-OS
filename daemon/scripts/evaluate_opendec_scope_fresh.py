@@ -23,9 +23,11 @@ def evaluate(candidate: Path, teacher_path: Path, output: Path) -> dict:
     block_jev_output_use()
     teacher = _rows(teacher_path, CASES)
     with np.load(candidate, allow_pickle=False) as data:
-        if (str(data["version"]) != "openjev-style-scope-v1"
-                or str(data["backbone_revision"]) != REVISION
-                or int(data["max_length"]) != MAX_LENGTH):
+        if (
+            str(data["version"]) != "openjev-style-scope-v1"
+            or str(data["backbone_revision"]) != REVISION
+            or int(data["max_length"]) != MAX_LENGTH
+        ):
             raise ValueError("Candidate identity does not match the frozen experiment")
         weights = np.asarray(data["weights"], dtype=np.float64)
     if weights.shape != (HIDDEN_SIZE,) or not np.all(np.isfinite(weights)):
@@ -61,8 +63,19 @@ def main() -> None:
     parser.add_argument("--output", type=Path, default=root / "benchmarks/openjev_scope_fresh_v1.json")
     args = parser.parse_args()
     report = evaluate(args.candidate, args.teacher, args.output)
-    print(json.dumps({key: ({metric: value for metric, value in data.items() if metric != "mismatches"}
-                            if isinstance(data, dict) else data) for key, data in report.items()}, indent=2))
+    print(
+        json.dumps(
+            {
+                key: (
+                    {metric: value for metric, value in data.items() if metric != "mismatches"}
+                    if isinstance(data, dict)
+                    else data
+                )
+                for key, data in report.items()
+            },
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":

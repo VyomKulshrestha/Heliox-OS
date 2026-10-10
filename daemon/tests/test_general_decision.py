@@ -44,11 +44,17 @@ from scripts.train_general_decision import (
 
 
 def row(kind: str = "choice") -> dict:
-    return {"id": "item", "group_id": "parent", "source": "source", "kind": kind,
-            "state_json": json.dumps({"counter": 3}), "question": "Select a result.",
-            "options": ["no", "yes"] if kind == "noul" else ["left", "right", "wait"],
-            "target": [0.0, 1.0] if kind == "noul" else [0.0, 1.0, 0.0],
-            "metadata_json": json.dumps({"provenance": {"license": "CC0-1.0"}})}
+    return {
+        "id": "item",
+        "group_id": "parent",
+        "source": "source",
+        "kind": kind,
+        "state_json": json.dumps({"counter": 3}),
+        "question": "Select a result.",
+        "options": ["no", "yes"] if kind == "noul" else ["left", "right", "wait"],
+        "target": [0.0, 1.0] if kind == "noul" else [0.0, 1.0, 0.0],
+        "metadata_json": json.dumps({"provenance": {"license": "CC0-1.0"}}),
+    }
 
 
 def test_gpu_training_preflight_accepts_sufficient_host_memory() -> None:
@@ -78,8 +84,9 @@ def test_candidate_prompts_share_context_without_labels(kind: str, count: int) -
     if kind == "noul":
         assert "Proposed answer" not in prompts[0]
     else:
-        assert all("Proposed answer: " + option in prompt
-                   for prompt, option in zip(prompts, example["options"], strict=True))
+        assert all(
+            "Proposed answer: " + option in prompt for prompt, option in zip(prompts, example["options"], strict=True)
+        )
 
 
 def test_full_option_prompts_share_choices_without_labels() -> None:
@@ -96,47 +103,71 @@ def test_full_option_prompts_share_choices_without_labels() -> None:
 def test_reject_unverified_rights_and_invalid_targets() -> None:
     example = row()
     assert licensed_row(example)
-    example["metadata_json"] = json.dumps({"provenance": {
-        "license": "Generated conversations: CC0-1.0; upstream question descriptions: license not verified"
-    }})
+    example["metadata_json"] = json.dumps(
+        {
+            "provenance": {
+                "license": "Generated conversations: CC0-1.0; upstream question descriptions: license not verified"
+            }
+        }
+    )
     assert not licensed_row(example)
     example["target"] = [0.1, 0.8, 0.0]
     with pytest.raises(ValueError, match="sum to one"):
         validate_row(example)
 
 
-@pytest.mark.parametrize("url", [
-    "https://typesafe.ai/evals/example",
-    "https://evals.typesafe.ai/customer_service",
-    "typesafe.ai/docs/example",
-])
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://typesafe.ai/evals/example",
+        "https://evals.typesafe.ai/customer_service",
+        "typesafe.ai/docs/example",
+    ],
+)
 def test_training_filter_excludes_provider_origin_sources(url: str) -> None:
     example = row()
-    example["metadata_json"] = json.dumps({"provenance": {
-        "license": "CC0-1.0", "source_url": url,
-    }})
+    example["metadata_json"] = json.dumps(
+        {
+            "provenance": {
+                "license": "CC0-1.0",
+                "source_url": url,
+            }
+        }
+    )
     assert not licensed_row(example)
 
 
-@pytest.mark.parametrize("url", [
-    "https://nottypesafe.ai/evals/example",
-    "https://typesafe.ai.attacker.example/evals/example",
-    "https://example.org/typesafe.ai/evals/example",
-])
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://nottypesafe.ai/evals/example",
+        "https://typesafe.ai.attacker.example/evals/example",
+        "https://example.org/typesafe.ai/evals/example",
+    ],
+)
 def test_training_filter_does_not_reject_unrelated_url_text(url: str) -> None:
     example = row()
-    example["metadata_json"] = json.dumps({"provenance": {
-        "license": "CC0-1.0", "source_url": url,
-    }})
+    example["metadata_json"] = json.dumps(
+        {
+            "provenance": {
+                "license": "CC0-1.0",
+                "source_url": url,
+            }
+        }
+    )
     assert licensed_row(example)
 
 
 def test_training_filter_searches_nested_provenance_urls() -> None:
     example = row()
-    example["metadata_json"] = json.dumps({"provenance": {
-        "license": "CC0-1.0",
-        "references": [{"uri": "https://docs.typesafe.ai/patterns/fan-out.md"}],
-    }})
+    example["metadata_json"] = json.dumps(
+        {
+            "provenance": {
+                "license": "CC0-1.0",
+                "references": [{"uri": "https://docs.typesafe.ai/patterns/fan-out.md"}],
+            }
+        }
+    )
     assert not licensed_row(example)
 
 
@@ -145,23 +176,35 @@ def test_group_disjoint_and_balanced_sampling() -> None:
     for source in ("a", "b"):
         for kind in ("choice", "score"):
             for index in range(3):
-                examples.append({**row(kind), "id": f"{source}:{kind}:{index}",
-                                 "group_id": f"{source}:{kind}:{index}", "source": source})
+                examples.append(
+                    {
+                        **row(kind),
+                        "id": f"{source}:{kind}:{index}",
+                        "group_id": f"{source}:{kind}:{index}",
+                        "source": source,
+                    }
+                )
     first = select_balanced(examples, 8, 12)
     second = select_balanced(examples, 8, 12)
     assert [entry["id"] for entry in first] == [entry["id"] for entry in second]
     assert {(entry["source"], entry["kind"]) for entry in first} == {
-        ("a", "choice"), ("a", "score"), ("b", "choice"), ("b", "score")}
+        ("a", "choice"),
+        ("a", "score"),
+        ("b", "choice"),
+        ("b", "score"),
+    }
     verify_disjoint({"train": first, "test": [examples[-1]]})
     with pytest.raises(ValueError, match="Group leakage"):
         verify_disjoint({"train": first, "test": [first[0]]})
 
 
 def test_balanced_sampler_is_reproducible_and_balances_categories() -> None:
-    examples = [{**row(kind), "id": f"{source}:{kind}:{index}",
-                 "group_id": f"{source}:{kind}:{index}", "source": source}
-                for source in ("a", "b") for kind in ("choice", "score")
-                for index in range(30)]
+    examples = [
+        {**row(kind), "id": f"{source}:{kind}:{index}", "group_id": f"{source}:{kind}:{index}", "source": source}
+        for source in ("a", "b")
+        for kind in ("choice", "score")
+        for index in range(30)
+    ]
     first = select_balanced(examples, 9, 19)
     second = select_balanced(examples, 9, 19)
     assert [entry["id"] for entry in first] == [entry["id"] for entry in second]
@@ -199,8 +242,7 @@ def test_source_holdout_rejects_invalid_or_unidentifiable_sources() -> None:
 
 
 def test_source_holdout_verifier_rejects_seen_source_leakage() -> None:
-    split_rows = {name: [{**row(), "source": "seen"}]
-                  for name in ("train", "calibration", "test", "ood")}
+    split_rows = {name: [{**row(), "source": "seen"}] for name in ("train", "calibration", "test", "ood")}
     split_rows["ood"] = [{**row(), "source": "held-out"}]
     verify_source_holdout(split_rows, {"held-out"})
     split_rows["test"] = [{**row(), "source": "held-out"}]
@@ -212,8 +254,7 @@ def test_source_holdout_verifier_rejects_seen_source_leakage() -> None:
 
 
 def test_split_hash_binds_sorted_ids_and_group_assignments() -> None:
-    items = [{"row": {"id": "b", "group_id": "g2"}},
-             {"row": {"id": "a", "group_id": "g1"}}]
+    items = [{"row": {"id": "b", "group_id": "g2"}}, {"row": {"id": "a", "group_id": "g1"}}]
     assert split_id_group_hash(items) == split_id_group_hash(list(reversed(items)))
     changed = [{"row": {"id": "b", "group_id": "g1"}}, items[1]]
     assert split_id_group_hash(items) != split_id_group_hash(changed)
@@ -262,8 +303,7 @@ def test_correctness_features_support_variable_option_counts() -> None:
 
 def test_correctness_scorer_learns_a_task_agnostic_selective_score() -> None:
     confidence = np.linspace(0.05, 0.95, 20)
-    features = np.column_stack((confidence, confidence / 2, 1 - confidence,
-                                np.full_like(confidence, np.log(3))))
+    features = np.column_stack((confidence, confidence / 2, 1 - confidence, np.full_like(confidence, np.log(3))))
     labels = [False] * 10 + [True] * 10
     scorer = fit_correctness_scorer(features, labels)
     predicted = predict_correctness(features, scorer)
@@ -279,8 +319,7 @@ def test_correctness_metrics_score_calibration_and_tie_aware_auroc() -> None:
     report = correctness_metrics([0.1, 0.9, 0.4, 0.6], [False, True, False, True])
     assert report["auroc"] == pytest.approx(1.0)
     assert report["brier"] == pytest.approx(0.085)
-    assert report["selective_prediction"]["selection_score"] == (
-        "estimated_probability_of_top_choice_correct")
+    assert report["selective_prediction"]["selection_score"] == ("estimated_probability_of_top_choice_correct")
     tied = correctness_metrics([0.5, 0.5, 0.1, 0.9], [True, False, False, True])
     assert tied["auroc"] == pytest.approx(0.875)
 
@@ -299,10 +338,8 @@ def test_paired_aurc_bootstrap_is_reproducible_and_paired() -> None:
 
 
 def test_paired_mean_bootstrap_is_reproducible() -> None:
-    result = paired_mean_bootstrap_delta([0.8, 0.9, 1.0], [0.5, 0.8, 0.9],
-                                         replicates=200, seed=12)
-    assert result == paired_mean_bootstrap_delta([0.8, 0.9, 1.0], [0.5, 0.8, 0.9],
-                                                  replicates=200, seed=12)
+    result = paired_mean_bootstrap_delta([0.8, 0.9, 1.0], [0.5, 0.8, 0.9], replicates=200, seed=12)
+    assert result == paired_mean_bootstrap_delta([0.8, 0.9, 1.0], [0.5, 0.8, 0.9], replicates=200, seed=12)
     assert result["mean_delta_95_percentile_interval"][0] > 0
     with pytest.raises(ValueError, match="inputs are invalid"):
         paired_mean_bootstrap_delta([1.0], [], replicates=200)
@@ -346,19 +383,21 @@ def test_binary_metrics_expose_both_error_directions() -> None:
     positive = row("noul")
     report = metrics([negative, positive], [np.array([0.0, 2.0]), np.array([1.0, 0.0])], 1.0)
     assert report["by_kind"]["noul"]["confusion"] == {
-        "true_positive": 0, "true_negative": 0, "false_positive": 1, "false_negative": 1}
+        "true_positive": 0,
+        "true_negative": 0,
+        "false_positive": 1,
+        "false_negative": 1,
+    }
     assert report["by_kind"]["noul"]["balanced_accuracy"] == 0.0
 
 
 def test_typed_answers_have_normalized_variable_option_probabilities() -> None:
     yes = format_answer("noul", ["no", "yes"], np.array([0.0, 1.0]))
     assert yes["yes_probability"] > 0.5
-    choice = format_answer("choice", ["left", "right", "wait"],
-                           np.array([0.0, 2.0, -1.0]))
+    choice = format_answer("choice", ["left", "right", "wait"], np.array([0.0, 2.0, -1.0]))
     assert choice["choice"] == "right"
     assert sum(choice["probabilities"].values()) == pytest.approx(1.0)
-    score = format_answer("score", ["low", "medium", "high"],
-                          np.array([-2.0, 0.0, 2.0]))
+    score = format_answer("score", ["low", "medium", "high"], np.array([-2.0, 0.0, 2.0]))
     assert 1.0 < score["expected_index"] < 2.0
     with pytest.raises(ValueError, match="Score count"):
         format_answer("choice", ["left", "right"], np.array([1.0]))
@@ -377,11 +416,21 @@ def test_invalid_option_types_fail_before_duplicate_check() -> None:
 
 
 def test_checkpoint_signature_binds_exact_tokenized_inputs() -> None:
-    args = argparse.Namespace(seed=1, max_length=128, lora_rank=8, attention="sdpa",
-                              accumulation=4, lr=2e-5, head_lr=5e-5,
-                              brier_weight=0.1, ordinal_weight=0.0,
-                              prompt_style="candidate_v1", source_holdout_fraction=0.2,
-                              source_holdout_seed=3, general_group_weighting="none")
+    args = argparse.Namespace(
+        seed=1,
+        max_length=128,
+        lora_rank=8,
+        attention="sdpa",
+        accumulation=4,
+        lr=2e-5,
+        head_lr=5e-5,
+        brier_weight=0.1,
+        ordinal_weight=0.0,
+        prompt_style="candidate_v1",
+        source_holdout_fraction=0.2,
+        source_holdout_seed=3,
+        general_group_weighting="none",
+    )
     encoded = {"train": [{"row": row(), "sequences": [[1, 2, 3]]}]}
     first = checkpoint_signature(args, encoded, {}, None)
     assert first == checkpoint_signature(args, encoded, {}, None)
@@ -412,7 +461,8 @@ def test_checkpoint_signature_binds_exact_tokenized_inputs() -> None:
     args.scope_group_weighting = "inverse_sqrt"
     assert first != checkpoint_signature(args, encoded, {}, None)
     assert checkpoint_signature(args, encoded, {}, None, [1.0, 0.5]) != checkpoint_signature(
-        args, encoded, {}, None, [1.0, 0.6])
+        args, encoded, {}, None, [1.0, 0.6]
+    )
     weighted = checkpoint_signature(args, encoded, {}, None, [1.0, 0.25])
     args.scope_row_weight = 0.25
     assert weighted != checkpoint_signature(args, encoded, {}, None, [1.0, 0.25])
@@ -420,15 +470,23 @@ def test_checkpoint_signature_binds_exact_tokenized_inputs() -> None:
     assert first != checkpoint_signature(args, encoded, {}, None)
     args.general_group_weighting = "inverse"
     assert checkpoint_signature(args, encoded, {}, None) != checkpoint_signature(
-        argparse.Namespace(**{**vars(args), "general_group_weighting": "inverse_sqrt"}),
-        encoded, {}, None)
+        argparse.Namespace(**{**vars(args), "general_group_weighting": "inverse_sqrt"}), encoded, {}, None
+    )
 
 
 def test_checkpoint_signature_binds_ordinal_loss_version(monkeypatch: pytest.MonkeyPatch) -> None:
-    args = argparse.Namespace(seed=1, max_length=128, lora_rank=8, attention="sdpa",
-                              accumulation=4, lr=2e-5, head_lr=5e-5,
-                              brier_weight=0.1, ordinal_weight=0.5,
-                              prompt_style="candidate_v1")
+    args = argparse.Namespace(
+        seed=1,
+        max_length=128,
+        lora_rank=8,
+        attention="sdpa",
+        accumulation=4,
+        lr=2e-5,
+        head_lr=5e-5,
+        brier_weight=0.1,
+        ordinal_weight=0.5,
+        prompt_style="candidate_v1",
+    )
     encoded = {"train": [{"row": row("score"), "sequences": [[1, 2, 3]]}]}
     current = checkpoint_signature(args, encoded, {}, None)
     monkeypatch.setattr(trainer, "ORDINAL_LOSS_VERSION", "different_ordinal_objective")
@@ -436,9 +494,11 @@ def test_checkpoint_signature_binds_ordinal_loss_version(monkeypatch: pytest.Mon
 
 
 def test_scope_weights_reduce_group_dominance_without_changing_class_mass() -> None:
-    rows = ([{"group_id": "large", "target": [1.0, 0.0]}] * 9 +
-            [{"group_id": "small", "target": [1.0, 0.0]}] +
-            [{"group_id": "allowed", "target": [0.0, 1.0]}] * 4)
+    rows = (
+        [{"group_id": "large", "target": [1.0, 0.0]}] * 9
+        + [{"group_id": "small", "target": [1.0, 0.0]}]
+        + [{"group_id": "allowed", "target": [0.0, 1.0]}] * 4
+    )
     weights = scope_group_weights(rows)
     assert sum(weights[:10]) == pytest.approx(10)
     assert sum(weights[10:]) == pytest.approx(4)
@@ -449,11 +509,9 @@ def test_scope_weights_reduce_group_dominance_without_changing_class_mass() -> N
 
 def test_scope_loss_weight_only_scales_action_rows() -> None:
     general = [{"row": row()}] * 2
-    scope = [{"row": {"group_id": "a", "target": [1.0, 0.0]}},
-             {"row": {"group_id": "b", "target": [0.0, 1.0]}}]
+    scope = [{"row": {"group_id": "a", "target": [1.0, 0.0]}}, {"row": {"group_id": "b", "target": [0.0, 1.0]}}]
     assert training_row_weights(general, scope, group_weighting="none", scope_row_weight=1.0) is None
-    assert training_row_weights(general, scope, group_weighting="none", scope_row_weight=0.25) == [
-        1.0, 1.0, 0.25, 0.25]
+    assert training_row_weights(general, scope, group_weighting="none", scope_row_weight=0.25) == [1.0, 1.0, 0.25, 0.25]
     assert training_row_weights(general, [], group_weighting="none", scope_row_weight=0.25) is None
 
 
@@ -474,8 +532,7 @@ def test_general_group_weighting_preserves_source_kind_loss_mass() -> None:
 
 
 def test_general_inverse_group_weighting_equalizes_episode_mass() -> None:
-    rows = [{"row": {"group_id": "repeated", "source": "source", "kind": "choice"}}
-            for _ in range(3)]
+    rows = [{"row": {"group_id": "repeated", "source": "source", "kind": "choice"}} for _ in range(3)]
     rows.append({"row": {"group_id": "single", "source": "source", "kind": "choice"}})
 
     weights = general_group_weights(rows, "inverse")
@@ -491,12 +548,12 @@ def test_general_group_weighting_keeps_missing_ids_row_unique() -> None:
 
 
 def test_training_row_weights_applies_general_episode_ablation() -> None:
-    general = [{"row": {"group_id": "repeated", "source": "source", "kind": "choice"}}
-               for _ in range(3)]
+    general = [{"row": {"group_id": "repeated", "source": "source", "kind": "choice"}} for _ in range(3)]
     general.append({"row": {"group_id": "single", "source": "source", "kind": "choice"}})
 
-    weights = training_row_weights(general, [], group_weighting="none", scope_row_weight=1.0,
-                                   general_group_weighting="inverse")
+    weights = training_row_weights(
+        general, [], group_weighting="none", scope_row_weight=1.0, general_group_weighting="inverse"
+    )
 
     assert weights is not None
     assert sum(weights[:3]) == pytest.approx(weights[3])

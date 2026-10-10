@@ -35,8 +35,12 @@ def test_pairs_latest_intent_and_deduplicates_candidate(tmp_path):
     assert "Read report" not in labels.read_text(encoding="utf-8")
     assert read_labels(labels, cases, reviewer="codex") == {}
     duplicate = type(cases[0])(
-        case_id="another-task", source_hash=cases[0].source_hash, task_id="task-2",
-        sequence=6, request=cases[0].request, action=cases[0].action,
+        case_id="another-task",
+        source_hash=cases[0].source_hash,
+        task_id="task-2",
+        sequence=6,
+        request=cases[0].request,
+        action=cases[0].action,
         action_type=cases[0].action_type,
     )
     assert read_labels(labels, [*cases, duplicate])[duplicate.case_id] == "in_scope"

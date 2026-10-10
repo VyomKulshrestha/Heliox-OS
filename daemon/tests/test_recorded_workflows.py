@@ -55,9 +55,7 @@ async def test_visual_samples_require_opt_in_and_never_appear_in_public_record(t
         captures += 1
         return {"embedding": [captures / 10] * 256, "width": 100, "height": 100}
 
-    store = RecordedWorkflowStore(
-        tmp_path / "recordings.enc", key_provider=lambda: b"k" * 32, capture_feature=capture
-    )
+    store = RecordedWorkflowStore(tmp_path / "recordings.enc", key_provider=lambda: b"k" * 32, capture_feature=capture)
     store.start(name="Click", consent=True, capture_visual=True)
     action = Action(action_type=ActionType.MOUSE_CLICK, parameters=MouseParams(x=25, y=75))
     token = await store.before(action, single_action_batch=True)
@@ -76,9 +74,7 @@ async def test_click_outside_captured_monitor_is_not_mislabeled(tmp_path) -> Non
     async def capture() -> dict:
         return {"embedding": [0.5] * 256, "left": 100, "top": 0, "width": 100, "height": 100}
 
-    store = RecordedWorkflowStore(
-        tmp_path / "recordings.enc", key_provider=lambda: b"k" * 32, capture_feature=capture
-    )
+    store = RecordedWorkflowStore(tmp_path / "recordings.enc", key_provider=lambda: b"k" * 32, capture_feature=capture)
     store.start(name="Different monitor", consent=True, capture_visual=True)
     action = Action(action_type=ActionType.MOUSE_CLICK, parameters=MouseParams(x=25, y=75))
     token = await store.before(action, single_action_batch=True)
@@ -137,9 +133,7 @@ async def test_incomplete_workflow_cannot_be_scheduled(tmp_path) -> None:
         await store.after(token, ActionResult(action=action, success=True))
     saved = store.stop(save=True)
     with pytest.raises(ValueError, match="Incomplete"):
-        store.schedule(
-            saved["id"], run_at=(datetime.now(UTC) + timedelta(hours=1)).isoformat(), reviewed=True
-        )
+        store.schedule(saved["id"], run_at=(datetime.now(UTC) + timedelta(hours=1)).isoformat(), reviewed=True)
 
 
 @pytest.mark.asyncio
@@ -158,9 +152,7 @@ async def test_repeat_schedule_survives_restart_but_recording_does_not(tmp_path)
     assert restarted.status()["active"] is False
     assert restarted.take_due(now=first)[0]["id"] == saved["id"]
     assert restarted.take_due(now=first) == []
-    assert restarted.get(saved["id"])["schedule"]["next_run_at"] == (
-        first + timedelta(days=1)
-    ).isoformat()
+    assert restarted.get(saved["id"])["schedule"]["next_run_at"] == (first + timedelta(days=1)).isoformat()
 
 
 def test_tampered_ciphertext_fails_closed(tmp_path) -> None:
@@ -182,9 +174,7 @@ async def test_explicit_goal_feedback_is_encrypted_and_distinct_from_job_status(
     workflow_id = store.stop(save=True)["id"]
     with pytest.raises(ValueError, match="completed"):
         store.record_feedback(workflow_id, job_id="job-1", outcome="not_achieved", job_status="running")
-    updated = store.record_feedback(
-        workflow_id, job_id="job-1", outcome="not_achieved", job_status="success"
-    )
+    updated = store.record_feedback(workflow_id, job_id="job-1", outcome="not_achieved", job_status="success")
     assert updated["feedback_count"] == 1
     assert store._read()[0]["feedback"][0]["reported_outcome"] == "not_achieved"
     assert store._read()[0]["feedback"][0]["executor_status"] == "success"
@@ -207,9 +197,7 @@ async def test_outcome_training_export_uses_only_deidentified_user_feedback(tmp_
     token = await store.before(action, single_action_batch=True)
     await store.after(token, ActionResult(action=action, success=True))
     workflow_id = store.stop(save=True)["id"]
-    store.record_feedback(
-        workflow_id, job_id="private-job-id", outcome="achieved", job_status="failed"
-    )
+    store.record_feedback(workflow_id, job_id="private-job-id", outcome="achieved", job_status="failed")
 
     examples = store.load_outcome_training_examples()
     assert len(examples) == 1
@@ -231,7 +219,10 @@ async def test_replay_visual_pairs_require_per_run_consent_and_feedback(tmp_path
         calls += 1
         return {
             "embedding": [0.25 if calls == 1 else 0.75] * 256,
-            "left": 0, "top": 0, "width": 100, "height": 100,
+            "left": 0,
+            "top": 0,
+            "width": 100,
+            "height": 100,
         }
 
     path = tmp_path / "recordings.enc"
@@ -239,8 +230,9 @@ async def test_replay_visual_pairs_require_per_run_consent_and_feedback(tmp_path
     demo = Action(action_type=ActionType.BROWSER_CLICK, parameters=BrowserParams(selector="#review"))
     token = await store.before(demo, single_action_batch=True)
     assert token is None
-    with pytest.raises(ValueError, match="Explicit replay-capture consent"), store.capture_replay_visual(
-        "missing", consent=False
+    with (
+        pytest.raises(ValueError, match="Explicit replay-capture consent"),
+        store.capture_replay_visual("missing", consent=False),
     ):
         pass
 
@@ -249,27 +241,36 @@ async def test_replay_visual_pairs_require_per_run_consent_and_feedback(tmp_path
     await store.after(demo_token, ActionResult(action=demo, success=True))
     workflow_id = store.stop(save=True)["id"]
     action = Action(action_type=ActionType.MOUSE_CLICK, parameters=MouseParams(x=25, y=75))
-    with store.capture_replay_visual(workflow_id, consent=True), experience_scope(
-        session_id=f"recorded:{workflow_id}", task_id="job-replay-1"
+    with (
+        store.capture_replay_visual(workflow_id, consent=True),
+        experience_scope(session_id=f"recorded:{workflow_id}", task_id="job-replay-1"),
     ):
         replay_token = await store.before(action, single_action_batch=True)
         await store.after(replay_token, ActionResult(action=action, success=True, executed=True))
 
     assert store._read()[0]["feedback"] == []
     assert len(store._pending_replay_samples[(workflow_id, "job-replay-1")][1]) == 1
-    feedback = store.record_feedback(
-        workflow_id, job_id="job-replay-1", outcome="not_achieved", job_status="success"
-    )
+    feedback = store.record_feedback(workflow_id, job_id="job-replay-1", outcome="not_achieved", job_status="success")
     assert feedback["feedback_visual_sample_count"] == 1
     assert b"visual_samples" not in path.read_bytes()
     samples = store.load_research_samples()
-    assert samples == [{"workflow_id": workflow_id, "samples": [
+    assert samples == [
         {
-            "step_index": 0, "action_type": "mouse_click", "coords": [0.25, 0.75],
-            "before": [64] * 256, "after": [191] * 256,
-            "post_observed": True, "independently_verified": False, "source": "replay",
+            "workflow_id": workflow_id,
+            "samples": [
+                {
+                    "step_index": 0,
+                    "action_type": "mouse_click",
+                    "coords": [0.25, 0.75],
+                    "before": [64] * 256,
+                    "after": [191] * 256,
+                    "post_observed": True,
+                    "independently_verified": False,
+                    "source": "replay",
+                }
+            ],
         }
-    ]}]
+    ]
     assert store._read()[0]["feedback"][0]["reported_outcome"] == "not_achieved"
 
 
@@ -303,15 +304,14 @@ def test_manual_actions_need_separate_consent_and_text_is_parameterized(tmp_path
     prompt = workflow_prompt(workflow, text_values={"1": "Project", "3": "Summary"})
     assert "keyboard_type(text='Project')" in prompt
     with pytest.raises(ValueError, match="Text placeholders"):
-        store.schedule(
-            workflow["id"], run_at=(datetime.now(UTC) + timedelta(hours=1)).isoformat(), reviewed=True
-        )
+        store.schedule(workflow["id"], run_at=(datetime.now(UTC) + timedelta(hours=1)).isoformat(), reviewed=True)
 
 
 def test_manual_events_suppressed_during_heliox_actions_and_approval(tmp_path) -> None:
     pending = False
     store = RecordedWorkflowStore(
-        tmp_path / "recordings.enc", key_provider=lambda: b"k" * 32,
+        tmp_path / "recordings.enc",
+        key_provider=lambda: b"k" * 32,
         allow_manual_event=lambda: not pending,
     )
     store.start(name="Manual", consent=True, capture_manual=True, manual_consent=True)
@@ -335,14 +335,14 @@ async def test_manual_click_visual_pair_is_opt_in_encrypted_and_thread_safe(tmp_
         captures += 1
         return {
             "embedding": [min(captures / 10, 1)] * 256,
-            "left": 0, "top": 0, "width": 100, "height": 100,
+            "left": 0,
+            "top": 0,
+            "width": 100,
+            "height": 100,
         }
 
-    store = RecordedWorkflowStore(
-        tmp_path / "recordings.enc", key_provider=lambda: b"k" * 32, capture_feature=capture
-    )
-    store.start(name="Manual visual", consent=True, capture_manual=True, manual_consent=True,
-                capture_visual=True)
+    store = RecordedWorkflowStore(tmp_path / "recordings.enc", key_provider=lambda: b"k" * 32, capture_feature=capture)
+    store.start(name="Manual visual", consent=True, capture_manual=True, manual_consent=True, capture_visual=True)
     store.start_manual_visual_capture()
     for _ in range(50):
         if captures:
@@ -351,9 +351,7 @@ async def test_manual_click_visual_pair_is_opt_in_encrypted_and_thread_safe(tmp_
     assert captures > 0
     press_feature = store.manual_press_feature(time.monotonic())
     assert press_feature is not None
-    await asyncio.to_thread(
-        store.record_manual_event, "click", x=25, y=75, button="left", press_feature=press_feature
-    )
+    await asyncio.to_thread(store.record_manual_event, "click", x=25, y=75, button="left", press_feature=press_feature)
     await store.stop_manual_visual_capture(save=True)
     saved = store.stop(save=True)
     assert saved["sample_count"] == 1
@@ -373,14 +371,10 @@ async def test_manual_visual_pair_drops_stale_and_interrupted_clicks(tmp_path) -
     async def capture() -> dict:
         nonlocal captures
         captures += 1
-        return {"embedding": [0.5] * 256, "left": 0, "top": 0,
-                "width": 100, "height": 100}
+        return {"embedding": [0.5] * 256, "left": 0, "top": 0, "width": 100, "height": 100}
 
-    store = RecordedWorkflowStore(
-        tmp_path / "recordings.enc", key_provider=lambda: b"k" * 32, capture_feature=capture
-    )
-    store.start(name="Interrupted", consent=True, capture_manual=True, manual_consent=True,
-                capture_visual=True)
+    store = RecordedWorkflowStore(tmp_path / "recordings.enc", key_provider=lambda: b"k" * 32, capture_feature=capture)
+    store.start(name="Interrupted", consent=True, capture_manual=True, manual_consent=True, capture_visual=True)
     store.start_manual_visual_capture()
     for _ in range(50):
         if captures:
@@ -411,9 +405,7 @@ async def test_manual_visual_sampler_never_starts_without_both_opt_ins(tmp_path)
         captures += 1
         return {"embedding": [0.5] * 256}
 
-    store = RecordedWorkflowStore(
-        tmp_path / "recordings.enc", key_provider=lambda: b"k" * 32, capture_feature=capture
-    )
+    store = RecordedWorkflowStore(tmp_path / "recordings.enc", key_provider=lambda: b"k" * 32, capture_feature=capture)
     store.start(name="No visual", consent=True, capture_manual=True, manual_consent=True)
     store.start_manual_visual_capture()
     await asyncio.sleep(0.05)
@@ -429,12 +421,9 @@ async def test_manual_visual_sampler_cannot_cross_recording_sessions(tmp_path) -
     async def capture() -> dict:
         nonlocal captures
         captures += 1
-        return {"embedding": [0.5] * 256, "left": 0, "top": 0,
-                "width": 100, "height": 100}
+        return {"embedding": [0.5] * 256, "left": 0, "top": 0, "width": 100, "height": 100}
 
-    store = RecordedWorkflowStore(
-        tmp_path / "recordings.enc", key_provider=lambda: b"k" * 32, capture_feature=capture
-    )
+    store = RecordedWorkflowStore(tmp_path / "recordings.enc", key_provider=lambda: b"k" * 32, capture_feature=capture)
     store.start(name="First", consent=True, capture_manual=True, manual_consent=True, capture_visual=True)
     store.start_manual_visual_capture()
     for _ in range(50):
@@ -444,8 +433,7 @@ async def test_manual_visual_sampler_cannot_cross_recording_sessions(tmp_path) -
     store.stop(save=False)
     await asyncio.wait_for(store._manual_visual_task, timeout=2)
     count_after_stop = captures
-    store.start(name="Second", consent=True, capture_manual=True, manual_consent=True,
-                capture_visual=True)
+    store.start(name="Second", consent=True, capture_manual=True, manual_consent=True, capture_visual=True)
     await asyncio.sleep(0.25)
     assert captures == count_after_stop
     store.start_manual_visual_capture()

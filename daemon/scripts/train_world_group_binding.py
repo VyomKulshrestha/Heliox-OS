@@ -33,8 +33,7 @@ def group_indices(cases: tuple, *, entity: bool) -> dict[str, list[int]]:
     return dict(sorted(grouped.items()))
 
 
-def split_entity_groups(rows: list[dict], cases: tuple,
-                        groups: dict[str, list[int]]) -> dict[str, list[str]]:
+def split_entity_groups(rows: list[dict], cases: tuple, groups: dict[str, list[int]]) -> dict[str, list[str]]:
     families: dict[tuple[str, str], list[str]] = defaultdict(list)
     if len(rows) != len(groups) or {row["task_id"] for row in rows} != set(groups):
         raise ValueError("Source tasks and candidate groups differ")
@@ -55,8 +54,10 @@ def split_entity_groups(rows: list[dict], cases: tuple,
     rng = random.Random(SEED)
     rng.shuffle(positive)
     rng.shuffle(ambiguous)
+
     def expand(selected: list[tuple[str, str]]) -> list[str]:
         return [key for family in selected for key in sorted(families[family])]
+
     return {
         "train": expand(positive[:5] + ambiguous[:1]),
         "calibration": expand(positive[5:6]),
@@ -68,10 +69,13 @@ def load_complete_features(path: Path, cases: tuple, max_tokens: int, batch_size
     processed, overlong, indices, vectors, labels = load_feature_checkpoint(
         path, feature_identity(cases, max_tokens, batch_size), cases
     )
-    if (processed != len(cases) or overlong or len(vectors) != len(cases)
-            or not np.array_equal(np.asarray(indices), np.arange(1, len(cases) + 1))
-            or not np.array_equal(np.asarray(labels, dtype=bool),
-                                  np.asarray([case.in_scope for case in cases], dtype=bool))):
+    if (
+        processed != len(cases)
+        or overlong
+        or len(vectors) != len(cases)
+        or not np.array_equal(np.asarray(indices), np.arange(1, len(cases) + 1))
+        or not np.array_equal(np.asarray(labels, dtype=bool), np.asarray([case.in_scope for case in cases], dtype=bool))
+    ):
         raise ValueError(f"Incomplete or mismatched feature checkpoint: {path}")
     features = np.asarray(vectors, dtype=np.float32)
     if features.ndim != 2 or not np.isfinite(features).all():
@@ -82,12 +86,12 @@ def load_complete_features(path: Path, cases: tuple, max_tokens: int, batch_size
 def normalize_features(train: np.ndarray, *others: np.ndarray) -> tuple[np.ndarray, ...]:
     mean = train.mean(axis=0)
     scale = np.maximum(train.std(axis=0), 0.1)
-    return (mean, scale, *(np.clip((values - mean) / scale, -5.0, 5.0).astype(np.float32)
-                           for values in others))
+    return (mean, scale, *(np.clip((values - mean) / scale, -5.0, 5.0).astype(np.float32) for values in others))
 
 
-def group_arrays(features: np.ndarray, cases: tuple, groups: dict[str, list[int]],
-                 keys: list[str], width: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def group_arrays(
+    features: np.ndarray, cases: tuple, groups: dict[str, list[int]], keys: list[str], width: int
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     values = np.zeros((len(keys), width, features.shape[1]), dtype=np.float32)
     mask = np.zeros((len(keys), width), dtype=bool)
     gold = np.full(len(keys), width, dtype=np.int64)
@@ -95,8 +99,8 @@ def group_arrays(features: np.ndarray, cases: tuple, groups: dict[str, list[int]
         indices = groups[key]
         if len(indices) > width:
             raise ValueError("Group exceeds candidate width")
-        values[row, :len(indices)] = features[indices]
-        mask[row, :len(indices)] = True
+        values[row, : len(indices)] = features[indices]
+        mask[row, : len(indices)] = True
         positives = [column for column, index in enumerate(indices) if cases[index].in_scope]
         if len(positives) > 1:
             raise ValueError("Grouped training requires at most one gold target")
@@ -105,8 +109,9 @@ def group_arrays(features: np.ndarray, cases: tuple, groups: dict[str, list[int]
     return values, mask, gold
 
 
-def group_metrics(cases: tuple, groups: dict[str, list[int]], keys: list[str],
-                  scores: np.ndarray, abstain: float) -> dict[str, int]:
+def group_metrics(
+    cases: tuple, groups: dict[str, list[int]], keys: list[str], scores: np.ndarray, abstain: float
+) -> dict[str, int]:
     correct = wrong_target = false_warning = false_allowance = 0
     correct_top_rank = resolvable = 0
     for key in keys:
@@ -125,9 +130,12 @@ def group_metrics(cases: tuple, groups: dict[str, list[int]], keys: list[str],
             wrong_target += bool(gold)
             false_allowance += not gold
     return {
-        "groups": len(keys), "resolvable": resolvable,
-        "correct_top_rank": correct_top_rank, "exact_or_valid_selection": correct,
-        "wrong_target": wrong_target, "false_warning": false_warning,
+        "groups": len(keys),
+        "resolvable": resolvable,
+        "correct_top_rank": correct_top_rank,
+        "exact_or_valid_selection": correct,
+        "wrong_target": wrong_target,
+        "false_warning": false_warning,
         "false_allowance_on_ambiguous": false_allowance,
     }
 
@@ -138,10 +146,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--entity-dataset", type=Path)
     parser.add_argument("--tau-source-root", type=Path, default=state / "tau-bench-source")
-    parser.add_argument("--entity-features", type=Path,
-                        default=state / "world_entity_binding_features_v1.npz")
-    parser.add_argument("--tau-features", type=Path,
-                        default=state / "world_tau_binding_features_v1.npz")
+    parser.add_argument("--entity-features", type=Path, default=state / "world_entity_binding_features_v1.npz")
+    parser.add_argument("--tau-features", type=Path, default=state / "world_tau_binding_features_v1.npz")
     parser.add_argument("--artifact", type=Path, default=state / "world_group_binding_family_v1.npz")
     parser.add_argument("--report", type=Path, default=state / "world_group_binding_family_v1.json")
     args = parser.parse_args()
@@ -199,8 +205,7 @@ def main() -> None:
         model.eval()
         with torch.inference_mode():
             calibration_logits, calibration_gold = logits("calibration")
-            calibration_loss = float(torch.nn.functional.cross_entropy(
-                calibration_logits, calibration_gold).item())
+            calibration_loss = float(torch.nn.functional.cross_entropy(calibration_logits, calibration_gold).item())
         if calibration_loss < best_loss - 1e-5:
             best_loss = calibration_loss
             best_state = (model.weight.detach().cpu().numpy().copy(), float(abstain.detach().cpu()))
@@ -218,18 +223,19 @@ def main() -> None:
     report = {
         "purpose": "research_only_grouped_world_task_binding_head",
         "model": "Qwen/Qwen3.5-2B frozen features; CUDA linear listwise head with abstention",
-        "seed": SEED, "selected_epoch": selected_epoch,
+        "seed": SEED,
+        "selected_epoch": selected_epoch,
         "selection": "minimum source-family-disjoint calibration cross-entropy; no holdout or tau selection",
         "splits": {name: len(keys) for name, keys in splits.items()},
-        "split_families": {name: sorted({
-            (row["domain"], row["ambiguity"])
-            for row in entity_rows if row["task_id"] in set(keys)
-        }) for name, keys in splits.items()},
-        "metrics": {name: group_metrics(entity_cases, groups, keys,
-                                        entity_scores, abstain_score)
-                    for name, keys in splits.items()},
-        "tau_transfer": group_metrics(tau_cases, tau_groups, list(tau_groups),
-                                      tau_scores, abstain_score),
+        "split_families": {
+            name: sorted({(row["domain"], row["ambiguity"]) for row in entity_rows if row["task_id"] in set(keys)})
+            for name, keys in splits.items()
+        },
+        "metrics": {
+            name: group_metrics(entity_cases, groups, keys, entity_scores, abstain_score)
+            for name, keys in splits.items()
+        },
+        "tau_transfer": group_metrics(tau_cases, tau_groups, list(tau_groups), tau_scores, abstain_score),
         "sources": {
             "entity_binding": "CC BY 4.0; pinned 60-task public source; previously inspected",
             "tau_retail": "MIT; pinned public source; previously inspected; transfer only",
@@ -237,16 +243,20 @@ def main() -> None:
             "tau_features_sha256": hashlib.sha256(args.tau_features.read_bytes()).hexdigest(),
         },
         "limitations": "Tiny adaptive public-data probe. Published retail actions may depend on earlier "
-                       "workflow steps. Scores are not calibrated execution probabilities; no live desktop "
-                       "validation, Jev parity, or runtime action authority.",
+        "workflow steps. Scores are not calibrated execution probabilities; no live desktop "
+        "validation, Jev parity, or runtime action authority.",
     }
     args.artifact.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(args.artifact, weight=weight.astype(np.float32),
-                        abstain=np.float32(abstain_score), mean=mean, scale=scale)
+    np.savez_compressed(
+        args.artifact, weight=weight.astype(np.float32), abstain=np.float32(abstain_score), mean=mean, scale=scale
+    )
     report["artifact_sha256"] = hashlib.sha256(args.artifact.read_bytes()).hexdigest()
     args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps({"selected_epoch": selected_epoch, **report["metrics"],
-                      "tau_transfer": report["tau_transfer"]}, indent=2))
+    print(
+        json.dumps(
+            {"selected_epoch": selected_epoch, **report["metrics"], "tau_transfer": report["tau_transfer"]}, indent=2
+        )
+    )
 
 
 if __name__ == "__main__":

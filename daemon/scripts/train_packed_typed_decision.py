@@ -110,9 +110,7 @@ def _encode_split(
                 raise
             skipped.append(row["id"])
         except RuntimeError as exc:
-            raise RuntimeError(
-                f"Feature extraction failed for {split} row {index}/{len(rows)} id={row['id']}"
-            ) from exc
+            raise RuntimeError(f"Feature extraction failed for {split} row {index}/{len(rows)} id={row['id']}") from exc
         if index % 64 == 0 or index == len(rows):
             print(
                 json.dumps(
@@ -224,9 +222,7 @@ def _shuffled_context_pairs(rows: list[dict], seed: int) -> list[tuple[dict, dic
     for row in rows:
         grouped.setdefault(row["kind"], []).append(row)
         try:
-            state_keys[row["id"]] = json.dumps(
-                json.loads(row["state_json"]), sort_keys=True, separators=(",", ":")
-            )
+            state_keys[row["id"]] = json.dumps(json.loads(row["state_json"]), sort_keys=True, separators=(",", ":"))
         except (KeyError, TypeError, json.JSONDecodeError) as exc:
             raise ValueError("Shuffled-context rows need valid state_json") from exc
 
@@ -251,16 +247,14 @@ def _shuffled_context_pairs(rows: list[dict], seed: int) -> list[tuple[dict, dic
             (
                 value
                 for value in offsets
-                if all(can_pair(row, candidates[(index + value) % len(candidates)])
-                       for index, row in enumerate(candidates))
+                if all(
+                    can_pair(row, candidates[(index + value) % len(candidates)]) for index, row in enumerate(candidates)
+                )
             ),
             None,
         )
         if offset is not None:
-            pairs.extend(
-                (row, candidates[(index + offset) % len(candidates)])
-                for index, row in enumerate(candidates)
-            )
+            pairs.extend((row, candidates[(index + offset) % len(candidates)]) for index, row in enumerate(candidates))
             continue
 
         for row in candidates:
@@ -327,9 +321,7 @@ def _shuffled_context_control(
 
     shuffled_logits = _logits(head, shuffled, device="cuda:0")
     rows = [item["row"] for item in shuffled]
-    logit_by_id = {
-        item["row"]["id"]: values for item, values in zip(items, original_logits, strict=True)
-    }
+    logit_by_id = {item["row"]["id"]: values for item, values in zip(items, original_logits, strict=True)}
     paired_original_logits = [logit_by_id[row["id"]] for row in rows]
     return {
         "seed": args.seed + 1,

@@ -29,21 +29,36 @@ def candidate_prompts(rows: list[dict]) -> list[str]:
     for indices in groups.values():
         group = [rows[index] for index in indices]
         options = [
-            {"index": index, **{key: row["candidate"].get(key) for key in
-                                ("label", "tag", "type", "role", "width", "height",
-                                 "background", "fill", "declared_color")}}
+            {
+                "index": index,
+                **{
+                    key: row["candidate"].get(key)
+                    for key in (
+                        "label",
+                        "tag",
+                        "type",
+                        "role",
+                        "width",
+                        "height",
+                        "background",
+                        "fill",
+                        "declared_color",
+                    )
+                },
+            }
             for index, row in enumerate(group)
         ]
-        shared = ("Goal: " + group[0]["goal"] + "\nVisible controls: "
-                  + json.dumps(options, ensure_ascii=False))
+        shared = "Goal: " + group[0]["goal"] + "\nVisible controls: " + json.dumps(options, ensure_ascii=False)
         for candidate_index, row_index in enumerate(indices):
-            prompts[row_index] = (shared + f"\nWould clicking control {candidate_index} "
-                                  "satisfy the goal? Answer yes or no.")
+            prompts[row_index] = (
+                shared + f"\nWould clicking control {candidate_index} satisfy the goal? Answer yes or no."
+            )
     return prompts
 
 
-def binary_loss_gradient(parameters: np.ndarray, matrix: np.ndarray,
-                         labels: np.ndarray, penalty: float) -> tuple[float, np.ndarray]:
+def binary_loss_gradient(
+    parameters: np.ndarray, matrix: np.ndarray, labels: np.ndarray, penalty: float
+) -> tuple[float, np.ndarray]:
     logits = matrix @ parameters[:-1] + parameters[-1]
     probabilities = 1 / (1 + np.exp(-np.clip(logits, -50, 50)))
     loss = np.logaddexp(0, logits).mean() - np.mean(labels * logits)
@@ -55,8 +70,14 @@ def binary_loss_gradient(parameters: np.ndarray, matrix: np.ndarray,
 
 def fit_head(matrix: np.ndarray, labels: np.ndarray, penalty: float) -> np.ndarray:
     initial = np.zeros(matrix.shape[1] + 1, dtype=np.float64)
-    result = minimize(binary_loss_gradient, initial, args=(matrix, labels, penalty),
-                      jac=True, method="L-BFGS-B", options={"maxiter": 300, "ftol": 1e-9})
+    result = minimize(
+        binary_loss_gradient,
+        initial,
+        args=(matrix, labels, penalty),
+        jac=True,
+        method="L-BFGS-B",
+        options={"maxiter": 300, "ftol": 1e-9},
+    )
     if not result.success or not np.isfinite(result.x).all():
         raise RuntimeError(f"Action-reward head fit failed: {result.message}")
     return result.x
@@ -75,25 +96,34 @@ def group_metrics(rows: list[dict], scores: np.ndarray, split: str) -> dict[str,
         chosen = indices[int(np.argmax(scores[indices]))]
         correct += rows[chosen]["reward"] == 1
         random_rate += sum(rows[index]["reward"] == 1 for index in indices) / len(indices)
-    return {"groups": len(groups), "correct": correct, "success_rate": correct / len(groups),
-            "random_success_rate": random_rate / len(groups)}
+    return {
+        "groups": len(groups),
+        "correct": correct,
+        "success_rate": correct / len(groups),
+        "random_success_rate": random_rate / len(groups),
+    }
 
 
 def main() -> None:
     root = Path(__file__).resolve().parents[1] / "benchmarks/.bench-state"
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--rows", type=Path, default=root / "miniwob_reward_actions_v1.json")
-    parser.add_argument("--source-report", type=Path,
-                        default=root / "miniwob_reward_actions_v1_report.json")
+    parser.add_argument("--source-report", type=Path, default=root / "miniwob_reward_actions_v1_report.json")
     parser.add_argument("--model-snapshot", type=Path, required=True)
     parser.add_argument("--weights", type=Path, default=root / "miniwob_reward_head_v1.npz")
     parser.add_argument("--report", type=Path, default=root / "miniwob_reward_head_v1.json")
     parser.add_argument("--max-length", type=int, default=1152)
     args = parser.parse_args()
-    if (not args.rows.is_file() or not args.source_report.is_file()
-            or args.model_snapshot.name != REVISION or not args.model_snapshot.is_dir()
-            or args.weights.suffix != ".npz" or args.weights.exists() or args.report.exists()
-            or not 128 <= args.max_length <= 2048):
+    if (
+        not args.rows.is_file()
+        or not args.source_report.is_file()
+        or args.model_snapshot.name != REVISION
+        or not args.model_snapshot.is_dir()
+        or args.weights.suffix != ".npz"
+        or args.weights.exists()
+        or args.report.exists()
+        or not 128 <= args.max_length <= 2048
+    ):
         parser.error("Use pinned input/model, bounded context, and fresh outputs")
     rows = load_rows(args.rows, args.source_report)
     prompts = candidate_prompts(rows)
@@ -114,16 +144,21 @@ def main() -> None:
     sequences = []
     for prompt in prompts:
         rendered = tokenizer.apply_chat_template(
-            [{"role": "user", "content": prompt}], tokenize=False,
-            add_generation_prompt=True, enable_thinking=False,
+            [{"role": "user", "content": prompt}],
+            tokenize=False,
+            add_generation_prompt=True,
+            enable_thinking=False,
         )
         tokens = tokenizer(rendered, add_special_tokens=False)["input_ids"]
         if not tokens or len(tokens) > args.max_length:
             raise ValueError("A candidate prompt exceeds the fixed context limit")
         sequences.append(tokens)
     base = AutoModelForCausalLM.from_pretrained(
-        args.model_snapshot, local_files_only=True, torch_dtype="auto",
-        device_map="cuda:0", attn_implementation="eager",
+        args.model_snapshot,
+        local_files_only=True,
+        torch_dtype="auto",
+        device_map="cuda:0",
+        attn_implementation="eager",
     )
     model = base.model.eval()
     features = []
@@ -153,23 +188,31 @@ def main() -> None:
     scores = normalized @ weights[:-1] + weights[-1]
     result = {split: group_metrics(rows, scores, split) for split in ("validation", "eval")}
     args.weights.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(args.weights, weights=weights, mean=mean, scale=scale,
-                        model_revision=np.asarray(REVISION), prompt_sha256=np.asarray(prompt_sha256))
+    np.savez_compressed(
+        args.weights,
+        weights=weights,
+        mean=mean,
+        scale=scale,
+        model_revision=np.asarray(REVISION),
+        prompt_sha256=np.asarray(prompt_sha256),
+    )
     report = {
         "purpose": "research_only_frozen_qwen_first_action_reward_head",
-        "model": MODEL, "revision": REVISION, "device": "cuda:0",
+        "model": MODEL,
+        "revision": REVISION,
+        "device": "cuda:0",
         "rows_sha256": hashlib.sha256(args.rows.read_bytes()).hexdigest(),
-        "prompt_sha256": prompt_sha256, "weights_sha256": hashlib.sha256(args.weights.read_bytes()).hexdigest(),
+        "prompt_sha256": prompt_sha256,
+        "weights_sha256": hashlib.sha256(args.weights.read_bytes()).hexdigest(),
         "feature_dimension": int(matrix.shape[1]),
-        "rows": {split: sum(row["split"] == split for row in rows)
-                 for split in ("train", "validation", "eval")},
+        "rows": {split: sum(row["split"] == split for row in rows) for split in ("train", "validation", "eval")},
         "regularization_selected_on_validation": penalty,
         "validation_binary_loss": validation_loss,
         "metrics": result,
         "limitation": "Small, contrastive, synthetic first-action corpus; task families were explored "
-                      "before this run. Evaluation was not used to fit the head, but is not a "
-                      "preregistered untouched benchmark. No Jev labels, multi-step autonomy, "
-                      "real desktop transfer, or runtime promotion.",
+        "before this run. Evaluation was not used to fit the head, but is not a "
+        "preregistered untouched benchmark. No Jev labels, multi-step autonomy, "
+        "real desktop transfer, or runtime promotion.",
     }
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")

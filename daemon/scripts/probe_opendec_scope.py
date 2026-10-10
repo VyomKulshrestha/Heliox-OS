@@ -52,20 +52,24 @@ def cached_features(pairs: list[tuple[str, str]], cache: Path) -> tuple[np.ndarr
     fingerprint = hashlib.sha256(json.dumps(pairs, ensure_ascii=False).encode("utf-8")).hexdigest()
     if cache.exists():
         with np.load(cache, allow_pickle=False) as data:
-            if (str(data["input_sha256"]) != fingerprint or str(data["backbone_revision"]) != REVISION
-                    or int(data["max_length"]) != MAX_LENGTH):
+            if (
+                str(data["input_sha256"]) != fingerprint
+                or str(data["backbone_revision"]) != REVISION
+                or int(data["max_length"]) != MAX_LENGTH
+            ):
                 raise ValueError("Candidate feature cache does not match the pinned input")
             features = np.asarray(data["features"], dtype=np.float32)
     else:
         encoder = CandidateEncoder()
         chunks = []
         for offset in range(0, len(pairs), 128):
-            chunks.append(encoder.transform(pairs[offset:offset + 128]))
+            chunks.append(encoder.transform(pairs[offset : offset + 128]))
             print(f"encoded {min(offset + 128, len(pairs))}/{len(pairs)} pairs", flush=True)
         features = np.vstack(chunks)
         cache.parent.mkdir(parents=True, exist_ok=True)
-        np.savez_compressed(cache, features=features, input_sha256=fingerprint,
-                            backbone_revision=REVISION, max_length=MAX_LENGTH)
+        np.savez_compressed(
+            cache, features=features, input_sha256=fingerprint, backbone_revision=REVISION, max_length=MAX_LENGTH
+        )
     if features.shape != (len(pairs), HIDDEN_SIZE) or not np.all(np.isfinite(features)):
         raise ValueError("Invalid candidate feature matrix")
     return features, fingerprint
@@ -85,24 +89,30 @@ def run(dataset: Path, root: Path, cache: Path, candidate: Path, output: Path) -
     comparison_pairs = [(case.request, case.action) for case in JEV_HOLDOUT]
     all_pairs = public_pairs + synthetic_pairs + comparison_pairs
     features, input_hash = cached_features(all_pairs, cache)
-    public_features = features[:len(public)]
-    synthetic_features = features[len(public):len(public) + len(synthetic_pairs)]
-    comparison_features = features[-len(JEV_HOLDOUT):]
+    public_features = features[: len(public)]
+    synthetic_features = features[len(public) : len(public) + len(synthetic_pairs)]
+    comparison_features = features[-len(JEV_HOLDOUT) :]
     train_features = np.vstack((public_features[train], synthetic_features))
-    train_labels = np.concatenate((
-        np.asarray([public[index].in_scope for index in train], dtype=bool), synthetic_labels
-    ))
+    train_labels = np.concatenate(
+        (np.asarray([public[index].in_scope for index in train], dtype=bool), synthetic_labels)
+    )
     # fit_intercept=False preserves one shared scalar head: a shared bias cancels
     # when the two candidate scores are subtracted. No test-set tuning.
-    model = LogisticRegression(C=0.1, class_weight="balanced", fit_intercept=False,
-                               solver="liblinear", max_iter=1000, random_state=SEED)
+    model = LogisticRegression(
+        C=0.1, class_weight="balanced", fit_intercept=False, solver="liblinear", max_iter=1000, random_state=SEED
+    )
     model.fit(train_features, train_labels)
     if not np.all(np.isfinite(model.coef_)):
         raise ValueError("Trained scorer is not finite")
     candidate.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(candidate, weights=model.coef_[0], version=VERSION,
-                        backbone_revision=REVISION, max_length=MAX_LENGTH,
-                        candidates=np.asarray(CANDIDATES))
+    np.savez_compressed(
+        candidate,
+        weights=model.coef_[0],
+        version=VERSION,
+        backbone_revision=REVISION,
+        max_length=MAX_LENGTH,
+        candidates=np.asarray(CANDIDATES),
+    )
     reports = {}
     for name, indices in (("validation", validation), ("test", test)):
         cases = [public[index] for index in indices]
@@ -142,8 +152,10 @@ def run(dataset: Path, root: Path, cache: Path, candidate: Path, output: Path) -
 
 def main() -> None:
     import sys
+
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from scripts.reference_output_policy import block_jev_output_use
+
     block_jev_output_use()
 
     root = Path(__file__).resolve().parents[1]
@@ -154,8 +166,19 @@ def main() -> None:
     parser.add_argument("--output", type=Path, default=root / "benchmarks/openjev_scope_probe_v1.json")
     args = parser.parse_args()
     report = run(args.dataset, root, args.cache, args.candidate, args.output)
-    print(json.dumps({key: ({k: v for k, v in value.items() if k not in {"mismatch_ids", "mismatches"}}
-                            if isinstance(value, dict) else value) for key, value in report.items()}, indent=2))
+    print(
+        json.dumps(
+            {
+                key: (
+                    {k: v for k, v in value.items() if k not in {"mismatch_ids", "mismatches"}}
+                    if isinstance(value, dict)
+                    else value
+                )
+                for key, value in report.items()
+            },
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":

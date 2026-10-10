@@ -9,14 +9,12 @@ from scripts.fit_general_frozen_head import fit_head, logits_for_rows, loss_grad
 
 
 def _row(kind: str, target: list[float]) -> dict:
-    return {"kind": kind, "target": target,
-            "options": ["no", "yes"] if kind == "noul" else ["left", "right"]}
+    return {"kind": kind, "target": target, "options": ["no", "yes"] if kind == "noul" else ["left", "right"]}
 
 
 def test_analytic_gradient_matches_finite_difference() -> None:
     rows = [_row("noul", [0.0, 1.0]), _row("choice", [1.0, 0.0])]
-    data = (np.array([[0.4, 0.2], [0.7, -0.3], [-0.2, 0.5]]),
-            np.array([0, 1, 3]))
+    data = (np.array([[0.4, 0.2], [0.7, -0.3], [-0.2, 0.5]]), np.array([0, 1, 3]))
     parameters = np.array([0.2, -0.4, 0.1])
     _, gradient = loss_gradient(parameters, rows, data, 0.01)
     for index in range(len(parameters)):
@@ -28,11 +26,10 @@ def test_analytic_gradient_matches_finite_difference() -> None:
 
 
 def test_shared_head_learns_binary_and_choice_without_test_labels() -> None:
-    rows = [_row("noul", [0.0, 1.0]), _row("noul", [1.0, 0.0]),
-            _row("choice", [1.0, 0.0]), _row("choice", [0.0, 1.0])]
-    data = (np.array([[2.0], [-2.0], [2.0], [-2.0], [-2.0], [2.0]]),
-            np.array([0, 1, 2, 4, 6]))
+    rows = [_row("noul", [0.0, 1.0]), _row("noul", [1.0, 0.0]), _row("choice", [1.0, 0.0]), _row("choice", [0.0, 1.0])]
+    data = (np.array([[2.0], [-2.0], [2.0], [-2.0], [-2.0], [2.0]]), np.array([0, 1, 2, 4, 6]))
     parameters, _ = fit_head(rows, data, 0.01)
     predicted = logits_for_rows(rows, data, parameters)
-    assert all(int(np.argmax(values)) == int(np.argmax(row["target"]))
-               for row, values in zip(rows, predicted, strict=True))
+    assert all(
+        int(np.argmax(values)) == int(np.argmax(row["target"])) for row, values in zip(rows, predicted, strict=True)
+    )

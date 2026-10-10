@@ -49,8 +49,14 @@ def training_rows(root: Path) -> list[dict]:
             continue
         teacher = _rows(root / "benchmarks" / name, suite)
         for case in suite:
-            rows.append({"id": case.id, "request": case.request, "action": case.action,
-                         "probability": float(teacher[case.id]["jev_probability"])})
+            rows.append(
+                {
+                    "id": case.id,
+                    "request": case.request,
+                    "action": case.action,
+                    "probability": float(teacher[case.id]["jev_probability"]),
+                }
+            )
     return rows
 
 
@@ -59,9 +65,7 @@ def group_split(rows: list[dict]) -> dict[str, np.ndarray]:
     groups = np.asarray([row["request"] for row in rows])
     splitter = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=SEED)
     development, validation = next(splitter.split(indices, groups=groups))
-    fit_relative, calibration_relative = next(splitter.split(
-        development, groups=groups[development]
-    ))
+    fit_relative, calibration_relative = next(splitter.split(development, groups=groups[development]))
     fit, calibration = development[fit_relative], development[calibration_relative]
     parts = {"fit": fit, "calibration": calibration, "validation": validation}
     group_sets = {name: set(groups[indices]) for name, indices in parts.items()}
@@ -76,12 +80,13 @@ def _encode(tokenizer, items: list[dict]) -> tuple[list[dict], int]:
     for row in items:
         rendered = tokenizer.apply_chat_template(
             [{"role": "user", "content": prompt(row["request"], row["action"])}],
-            tokenize=False, add_generation_prompt=True, enable_thinking=False,
+            tokenize=False,
+            add_generation_prompt=True,
+            enable_thinking=False,
         )
         tokens = tokenizer(rendered, add_special_tokens=False)["input_ids"]
         truncated += len(tokens) > MAX_LENGTH
-        encoded.append({"id": row["id"], "ids": tokens[:MAX_LENGTH],
-                        "target": row["probability"]})
+        encoded.append({"id": row["id"], "ids": tokens[:MAX_LENGTH], "target": row["probability"]})
     return encoded, truncated
 
 
@@ -114,11 +119,14 @@ def _summary(logits: np.ndarray, items: list[dict], *, temperature: float = 1.0)
     probabilities = _probabilities(logits, temperature)
     labels = target >= 0.5
     predicted = probabilities >= 0.5
-    return {"rows": len(items), "agreement": float(np.mean(predicted == labels)),
-            "false_allowances": int(np.sum(predicted & ~labels)),
-            "false_warnings": int(np.sum(~predicted & labels)),
-            "brier_to_teacher_labels": float(np.mean((probabilities - labels) ** 2)),
-            "mean_absolute_probability_gap": float(np.mean(abs(probabilities - target)))}
+    return {
+        "rows": len(items),
+        "agreement": float(np.mean(predicted == labels)),
+        "false_allowances": int(np.sum(predicted & ~labels)),
+        "false_warnings": int(np.sum(~predicted & labels)),
+        "brier_to_teacher_labels": float(np.mean((probabilities - labels) ** 2)),
+        "mean_absolute_probability_gap": float(np.mean(abs(probabilities - target))),
+    }
 
 
 def run(root: Path, output_dir: Path, report_path: Path) -> dict:
@@ -136,24 +144,36 @@ def run(root: Path, output_dir: Path, report_path: Path) -> dict:
     path = snapshot_download(MODEL, revision=REVISION, local_files_only=True)
     tokenizer = AutoTokenizer.from_pretrained(path, local_files_only=True)
     base = AutoModelForCausalLM.from_pretrained(
-        path, local_files_only=True, dtype=torch.bfloat16,
-        device_map={"": 0}, attn_implementation="eager",
+        path,
+        local_files_only=True,
+        dtype=torch.bfloat16,
+        device_map={"": 0},
+        attn_implementation="eager",
     )
     yes = tokenizer.encode("Yes", add_special_tokens=False)
     no = tokenizer.encode("No", add_special_tokens=False)
     if len(yes) != 1 or len(no) != 1:
         raise ValueError("Yes/No head initialization requires single-token labels")
-    initial = (base.get_output_embeddings().weight[yes[0]] -
-               base.get_output_embeddings().weight[no[0]]).detach().float().clone()
+    initial = (
+        (base.get_output_embeddings().weight[yes[0]] - base.get_output_embeddings().weight[no[0]])
+        .detach()
+        .float()
+        .clone()
+    )
     backbone = base.model
     del base
     backbone.requires_grad_(False)
     backbone.config.use_cache = False
-    backbone = get_peft_model(backbone, LoraConfig(
-        r=LORA_RANK, lora_alpha=LORA_RANK * 2,
-        target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
-        lora_dropout=0.0, bias="none",
-    ))
+    backbone = get_peft_model(
+        backbone,
+        LoraConfig(
+            r=LORA_RANK,
+            lora_alpha=LORA_RANK * 2,
+            target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
+            lora_dropout=0.0,
+            bias="none",
+        ),
+    )
     head = nn.Linear(len(initial), 1, dtype=torch.float32, device="cuda")
     with torch.no_grad():
         head.weight.copy_(initial[None, :])
@@ -164,19 +184,28 @@ def run(root: Path, output_dir: Path, report_path: Path) -> dict:
     parts = group_split(rows)
     encoded, truncated = _encode(tokenizer, rows)
     comparison_teacher = _rows(root / "benchmarks/jev_scope_openjev_v1_teacher.json", COMPARISON_CASES)
-    comparison_rows = [{"id": case.id, "request": case.request, "action": case.action,
-                        "probability": float(comparison_teacher[case.id]["jev_probability"])}
-                       for case in COMPARISON_CASES]
+    comparison_rows = [
+        {
+            "id": case.id,
+            "request": case.request,
+            "action": case.action,
+            "probability": float(comparison_teacher[case.id]["jev_probability"]),
+        }
+        for case in COMPARISON_CASES
+    ]
     comparison, comparison_truncated = _encode(tokenizer, comparison_rows)
     validation = [encoded[index] for index in parts["validation"]]
     calibration = [encoded[index] for index in parts["calibration"]]
     before = _summary(_evaluate(backbone, head, validation), validation)
     print("baseline", json.dumps(before), flush=True)
 
-    optimizer = torch.optim.AdamW([
-        {"params": [parameter for parameter in backbone.parameters() if parameter.requires_grad], "lr": 2e-5},
-        {"params": head.parameters(), "lr": 5e-5},
-    ], weight_decay=0.01)
+    optimizer = torch.optim.AdamW(
+        [
+            {"params": [parameter for parameter in backbone.parameters() if parameter.requires_grad], "lr": 2e-5},
+            {"params": head.parameters(), "lr": 5e-5},
+        ],
+        weight_decay=0.01,
+    )
     backbone.train()
     head.train()
     fit_indices = list(parts["fit"])
@@ -188,18 +217,23 @@ def run(root: Path, output_dir: Path, report_path: Path) -> dict:
         logit = _logit(backbone, head, row["ids"])
         target = torch.tensor(row["target"], dtype=torch.float32, device="cuda")
         probability = logit.sigmoid()
-        loss = (torch.nn.functional.binary_cross_entropy_with_logits(logit, target)
-                + 0.1 * (probability - target).square()) / 4
+        loss = (
+            torch.nn.functional.binary_cross_entropy_with_logits(logit, target) + 0.1 * (probability - target).square()
+        ) / 4
         loss.backward()
         if step % 4 == 0 or step == len(fit_indices):
             torch.nn.utils.clip_grad_norm_(
-                [parameter for parameter in backbone.parameters() if parameter.requires_grad] + list(head.parameters()), 1.0
+                [parameter for parameter in backbone.parameters() if parameter.requires_grad] + list(head.parameters()),
+                1.0,
             )
             optimizer.step()
             optimizer.zero_grad(set_to_none=True)
         if step % 64 == 0 or step == len(fit_indices):
-            print(f"trained {step}/{len(fit_indices)} rows; elapsed={time.monotonic()-started:.1f}s; "
-                  f"peak_vram_gib={torch.cuda.max_memory_allocated()/1024**3:.2f}", flush=True)
+            print(
+                f"trained {step}/{len(fit_indices)} rows; elapsed={time.monotonic() - started:.1f}s; "
+                f"peak_vram_gib={torch.cuda.max_memory_allocated() / 1024**3:.2f}",
+                flush=True,
+            )
 
     validation_logits = _evaluate(backbone, head, validation)
     calibration_logits = _evaluate(backbone, head, calibration)
@@ -207,23 +241,33 @@ def run(root: Path, output_dir: Path, report_path: Path) -> dict:
 
     def calibration_loss(temperature: float) -> float:
         values = np.clip(_probabilities(calibration_logits, temperature), 1e-6, 1 - 1e-6)
-        return float(np.mean(-calibration_target * np.log(values)
-                             - (1 - calibration_target) * np.log(1 - values)))
+        return float(np.mean(-calibration_target * np.log(values) - (1 - calibration_target) * np.log(1 - values)))
 
     temperature = float(minimize_scalar(calibration_loss, bounds=(0.25, 5.0), method="bounded").x)
     comparison_logits = _evaluate(backbone, head, comparison)
     comparison_probabilities = _probabilities(comparison_logits, temperature)
     output_dir.mkdir(parents=True, exist_ok=True)
     backbone.save_pretrained(output_dir / "adapter")
-    np.savez_compressed(output_dir / "head.npz", weights=head.weight.detach().cpu().numpy(),
-                        bias=head.bias.detach().cpu().numpy(), temperature=temperature,
-                        model_revision=REVISION, max_length=MAX_LENGTH, lora_rank=LORA_RANK)
+    np.savez_compressed(
+        output_dir / "head.npz",
+        weights=head.weight.detach().cpu().numpy(),
+        bias=head.bias.detach().cpu().numpy(),
+        temperature=temperature,
+        model_revision=REVISION,
+        max_length=MAX_LENGTH,
+        lora_rank=LORA_RANK,
+    )
     report = {
-        "model": MODEL, "revision": REVISION, "training_method": "Qwen3-0.6B frozen base + rank-8 LoRA + Noul scalar head",
+        "model": MODEL,
+        "revision": REVISION,
+        "training_method": "Qwen3-0.6B frozen base + rank-8 LoRA + Noul scalar head",
         "candidate_prompt": "Open-Jev Noul-style single candidate, Yes/No readout initialization",
-        "fit_rows": len(parts["fit"]), "calibration_rows": len(calibration),
-        "validation_rows": len(validation), "comparison_rows": len(comparison),
-        "truncated_training_rows": truncated, "truncated_comparison_rows": comparison_truncated,
+        "fit_rows": len(parts["fit"]),
+        "calibration_rows": len(calibration),
+        "validation_rows": len(validation),
+        "comparison_rows": len(comparison),
+        "truncated_training_rows": truncated,
+        "truncated_comparison_rows": comparison_truncated,
         "head_temperature": temperature,
         "baseline_validation": before,
         "trained_validation": _summary(validation_logits, validation, temperature=temperature),
@@ -240,8 +284,10 @@ def run(root: Path, output_dir: Path, report_path: Path) -> dict:
 
 def main() -> None:
     import sys
+
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from scripts.reference_output_policy import block_jev_output_use
+
     block_jev_output_use()
 
     root = Path(__file__).resolve().parents[1]

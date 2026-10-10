@@ -29,23 +29,30 @@ MODEL_REVISIONS = {
 def load_rows(path: Path, source_report: Path) -> list[dict]:
     raw = path.read_bytes()
     report = json.loads(source_report.read_text(encoding="utf-8"))
-    if (hashlib.sha256(raw).hexdigest() != report.get("rows_sha256")
-            or report.get("purpose") != "research_only_goal_conditioned_first_action_rewards"
-            or report.get("source_repo") != SOURCE_REPO
-            or report.get("source_commit") != SOURCE_COMMIT
-            or report.get("split_basis") != "task_family"):
+    if (
+        hashlib.sha256(raw).hexdigest() != report.get("rows_sha256")
+        or report.get("purpose") != "research_only_goal_conditioned_first_action_rewards"
+        or report.get("source_repo") != SOURCE_REPO
+        or report.get("source_commit") != SOURCE_COMMIT
+        or report.get("split_basis") != "task_family"
+    ):
         raise ValueError("Reward rows differ from their pinned source report")
     rows = json.loads(raw)
-    if (not isinstance(rows, list) or not rows
-            or any(not isinstance(row, dict) for row in rows)
-            or any(row.get("split") not in {"train", "validation", "eval"}
-                   or row.get("reward") not in (-1, 1)
-                   or not isinstance(row.get("goal"), str)
-                   or not isinstance(row.get("group"), str)
-                   or not isinstance(row.get("task"), str)
-                   or not isinstance(row.get("prestate_sha256"), str)
-                   or not isinstance(row.get("candidate"), dict)
-                   for row in rows)):
+    if (
+        not isinstance(rows, list)
+        or not rows
+        or any(not isinstance(row, dict) for row in rows)
+        or any(
+            row.get("split") not in {"train", "validation", "eval"}
+            or row.get("reward") not in (-1, 1)
+            or not isinstance(row.get("goal"), str)
+            or not isinstance(row.get("group"), str)
+            or not isinstance(row.get("task"), str)
+            or not isinstance(row.get("prestate_sha256"), str)
+            or not isinstance(row.get("candidate"), dict)
+            for row in rows
+        )
+    ):
         raise ValueError("Invalid reward rows")
     tasks = report.get("tasks", {})
     if any(row["task"] not in tasks.get(row["split"], []) for row in rows):
@@ -54,33 +61,43 @@ def load_rows(path: Path, source_report: Path) -> list[dict]:
     groups: dict[str, list[dict]] = defaultdict(list)
     for row in rows:
         groups[row["group"]].append(row)
-    if any(len({row["task"] for row in group}) != 1
-           or len({row["split"] for row in group}) != 1
-           or len({row["goal"] for row in group}) != 1
-           or len({row["prestate_sha256"] for row in group}) != 1
-           or {row["reward"] for row in group} != {-1, 1}
-           for group in groups.values()):
+    if any(
+        len({row["task"] for row in group}) != 1
+        or len({row["split"] for row in group}) != 1
+        or len({row["goal"] for row in group}) != 1
+        or len({row["prestate_sha256"] for row in group}) != 1
+        or {row["reward"] for row in group} != {-1, 1}
+        for group in groups.values()
+    ):
         raise ValueError("Reward groups must be single-task contrastive resets")
-    if (report.get("rows") != {split: sum(row["split"] == split for row in rows)
-            for split in ("train", "validation", "eval")}
-            or report.get("groups") != {split: len({row["group"] for row in rows
-                                                   if row["split"] == split})
-                                        for split in ("train", "validation", "eval")}):
+    if report.get("rows") != {
+        split: sum(row["split"] == split for row in rows) for split in ("train", "validation", "eval")
+    } or report.get("groups") != {
+        split: len({row["group"] for row in rows if row["split"] == split}) for split in ("train", "validation", "eval")
+    }:
         raise ValueError("Reward counts differ from their pinned source report")
     return rows
 
 
 def prompt_for(group: list[dict]) -> str:
     candidates = [
-        {"index": index, **{key: row["candidate"].get(key) for key in
-                            ("label", "tag", "type", "role", "width", "height",
-                             "background", "fill", "declared_color")}}
+        {
+            "index": index,
+            **{
+                key: row["candidate"].get(key)
+                for key in ("label", "tag", "type", "role", "width", "height", "background", "fill", "declared_color")
+            },
+        }
         for index, row in enumerate(group)
     ]
-    return ("Choose the visible GUI control most likely to satisfy the goal. "
-            "Return only its integer index.\nGoal: " + group[0]["goal"]
-            + "\nControls: " + json.dumps(candidates, ensure_ascii=False)
-            + "\nIndex:")
+    return (
+        "Choose the visible GUI control most likely to satisfy the goal. "
+        "Return only its integer index.\nGoal: "
+        + group[0]["goal"]
+        + "\nControls: "
+        + json.dumps(candidates, ensure_ascii=False)
+        + "\nIndex:"
+    )
 
 
 def parse_index(answer: str, count: int) -> int | None:
@@ -96,8 +113,10 @@ def choose_literal_match(prompt: str) -> str:
     for control in controls:
         for field in ("label", "declared_color"):
             value = control.get(field)
-            if isinstance(value, str) and value.strip() and re.search(
-                rf"(?<!\w){re.escape(value.strip().casefold())}(?!\w)", goal
+            if (
+                isinstance(value, str)
+                and value.strip()
+                and re.search(rf"(?<!\w){re.escape(value.strip().casefold())}(?!\w)", goal)
             ):
                 return str(control["index"])
     return "0"
@@ -117,10 +136,13 @@ def choose_metadata_rules(prompt: str) -> str:
             matches = [control for control in remaining if predicate(control)]
             if matches:
                 remaining = matches
-    colors = [control for control in remaining
-              if isinstance(control.get("declared_color"), str)
-              and control["declared_color"].strip()
-              and re.search(rf"(?<!\w){re.escape(control['declared_color'].casefold())}(?!\w)", goal)]
+    colors = [
+        control
+        for control in remaining
+        if isinstance(control.get("declared_color"), str)
+        and control["declared_color"].strip()
+        and re.search(rf"(?<!\w){re.escape(control['declared_color'].casefold())}(?!\w)", goal)
+    ]
     if colors:
         remaining = colors
     for size, select in (("small", min), ("large", max)):
@@ -144,11 +166,15 @@ def evaluate(rows: list[dict], split: str, choose: Callable[[str], str]) -> dict
         prompts.append(prompt)
         answer = choose(prompt)
         selected = parse_index(answer, len(group))
-        outcomes.append({
-            "group": group_id, "task": group[0]["task"], "selected_index": selected,
-            "correct": selected is not None and group[selected]["reward"] == 1,
-            "random_success_probability": sum(row["reward"] == 1 for row in group) / len(group),
-        })
+        outcomes.append(
+            {
+                "group": group_id,
+                "task": group[0]["task"],
+                "selected_index": selected,
+                "correct": selected is not None and group[selected]["reward"] == 1,
+                "random_success_probability": sum(row["reward"] == 1 for row in group) / len(group),
+            }
+        )
     return {
         "groups": len(outcomes),
         "correct": sum(row["correct"] for row in outcomes),
@@ -165,15 +191,18 @@ def main() -> None:
     root = Path(__file__).resolve().parents[1] / "benchmarks/.bench-state"
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--rows", type=Path, default=root / "miniwob_reward_actions_v1.json")
-    parser.add_argument("--source-report", type=Path,
-                        default=root / "miniwob_reward_actions_v1_report.json")
+    parser.add_argument("--source-report", type=Path, default=root / "miniwob_reward_actions_v1_report.json")
     parser.add_argument("--model-snapshot", type=Path, required=True)
     parser.add_argument("--split", choices=("validation", "eval"), default="eval")
     parser.add_argument("--report", type=Path, default=root / "miniwob_reward_qwen_v1.json")
     args = parser.parse_args()
-    if (not args.rows.is_file() or not args.source_report.is_file()
-            or args.model_snapshot.name not in MODEL_REVISIONS or not args.model_snapshot.is_dir()
-            or args.report.exists()):
+    if (
+        not args.rows.is_file()
+        or not args.source_report.is_file()
+        or args.model_snapshot.name not in MODEL_REVISIONS
+        or not args.model_snapshot.is_dir()
+        or args.report.exists()
+    ):
         parser.error("Use existing pinned rows/model snapshot and a fresh report path")
     rows = load_rows(args.rows, args.source_report)
 
@@ -187,34 +216,41 @@ def main() -> None:
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is required for this probe")
     model = AutoModelForCausalLM.from_pretrained(
-        args.model_snapshot, local_files_only=True, torch_dtype="auto",
-        device_map="cuda:0", attn_implementation="eager",
+        args.model_snapshot,
+        local_files_only=True,
+        torch_dtype="auto",
+        device_map="cuda:0",
+        attn_implementation="eager",
     )
     tokenizer = AutoTokenizer.from_pretrained(args.model_snapshot, local_files_only=True)
     model.eval()
 
     def choose(prompt: str) -> str:
         encoded = tokenizer.apply_chat_template(
-            [{"role": "user", "content": prompt}], tokenize=True,
-            add_generation_prompt=True, enable_thinking=False,
-            return_tensors="pt", return_dict=True,
+            [{"role": "user", "content": prompt}],
+            tokenize=True,
+            add_generation_prompt=True,
+            enable_thinking=False,
+            return_tensors="pt",
+            return_dict=True,
         ).to("cuda:0")
         with torch.inference_mode():
-            output = model.generate(**encoded, max_new_tokens=12, do_sample=False,
-                                    pad_token_id=tokenizer.eos_token_id)
-        return tokenizer.decode(output[0, encoded["input_ids"].shape[1]:],
-                                skip_special_tokens=True).strip()
+            output = model.generate(**encoded, max_new_tokens=12, do_sample=False, pad_token_id=tokenizer.eos_token_id)
+        return tokenizer.decode(output[0, encoded["input_ids"].shape[1] :], skip_special_tokens=True).strip()
 
     result = evaluate(rows, args.split, choose)
     revision = args.model_snapshot.name
     report = {
         "purpose": "research_only_frozen_local_goal_action_probe",
-        "model": MODEL_REVISIONS[revision], "revision": revision, "device": "cuda:0",
+        "model": MODEL_REVISIONS[revision],
+        "revision": revision,
+        "device": "cuda:0",
         "rows_sha256": hashlib.sha256(args.rows.read_bytes()).hexdigest(),
-        "split": args.split, **result,
+        "split": args.split,
+        **result,
         "limitation": "Exploratory zero-shot first-action choices on synthetic task-disjoint MiniWoB. "
-                      "No training, multi-step execution, real desktop transfer, Jev parity, "
-                      "or Heliox runtime promotion.",
+        "No training, multi-step execution, real desktop transfer, Jev parity, "
+        "or Heliox runtime promotion.",
     }
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")

@@ -30,16 +30,21 @@ def test_public_scope_loader_requires_pinned_disjoint_cache(tmp_path):
         excluded[name] = 0
 
     report_path = tmp_path / "source.json"
-    report_path.write_text(json.dumps({
-        "scopejudge": {
-            "dataset": "dreadnode/scopejudge",
-            "license": "MIT",
-            "selection": "trajectory-disjoint",
-        },
-        "feature_checkpoint_sha256": hashes,
-        "rows": rows,
-        "excluded_overlong": excluded,
-    }), encoding="utf-8")
+    report_path.write_text(
+        json.dumps(
+            {
+                "scopejudge": {
+                    "dataset": "dreadnode/scopejudge",
+                    "license": "MIT",
+                    "selection": "trajectory-disjoint",
+                },
+                "feature_checkpoint_sha256": hashes,
+                "rows": rows,
+                "excluded_overlong": excluded,
+            }
+        ),
+        encoding="utf-8",
+    )
 
     splits, source = load_public_splits(cache, report_path)
     assert source["license"] == "MIT"

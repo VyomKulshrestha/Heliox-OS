@@ -37,8 +37,9 @@ def _iter_url_fields(value: object) -> Iterator[str]:
     if isinstance(value, dict):
         for key, nested in value.items():
             normalized_key = key.lower() if isinstance(key, str) else ""
-            if ((normalized_key in {"url", "uri"} or normalized_key.endswith(("_url", "_uri")))
-                    and isinstance(nested, str)):
+            if (normalized_key in {"url", "uri"} or normalized_key.endswith(("_url", "_uri"))) and isinstance(
+                nested, str
+            ):
                 yield nested
             yield from _iter_url_fields(nested)
     elif isinstance(value, list):
@@ -51,8 +52,10 @@ def _has_restricted_training_source(metadata: dict) -> bool:
         host = urlparse(url).hostname
         if host is None:
             host = urlparse(f"//{url}").hostname
-        if host and any(host.lower() == domain or host.lower().endswith(f".{domain}")
-                        for domain in RESTRICTED_TRAINING_SOURCE_DOMAINS):
+        if host and any(
+            host.lower() == domain or host.lower().endswith(f".{domain}")
+            for domain in RESTRICTED_TRAINING_SOURCE_DOMAINS
+        ):
             return True
     return False
 
@@ -79,8 +82,7 @@ def validate_decision(kind: str, question: str, options: list[str]) -> None:
         raise ValueError("Invalid decision question or kind")
     if not isinstance(options, list) or not 2 <= len(options) <= 255:
         raise ValueError("Decision needs 2-255 options")
-    if (any(not isinstance(value, str) or not value.strip() for value in options)
-            or len(options) != len(set(options))):
+    if any(not isinstance(value, str) or not value.strip() for value in options) or len(options) != len(set(options)):
         raise ValueError("Decision options must be unique nonempty strings")
     if kind == "noul" and options != ["no", "yes"]:
         raise ValueError("Noul target order must be no, yes")
@@ -109,8 +111,10 @@ def candidate_prompts(row: dict, *, style: str = "candidate_v1") -> list[str]:
     if style == "full_options_v2":
         choices = "\n".join(f"{index + 1}. {option}" for index, option in enumerate(row["options"]))
         prefix += f"Available answers:\n{choices}\n"
-    return [prefix + f"Proposed answer: {option}\nIs this proposed answer correct? Answer Yes or No."
-            for option in row["options"]]
+    return [
+        prefix + f"Proposed answer: {option}\nIs this proposed answer correct? Answer Yes or No."
+        for option in row["options"]
+    ]
 
 
 def select_balanced(rows: list[dict], limit: int, seed: int) -> list[dict]:
@@ -150,20 +154,18 @@ def load_clean_source_counts() -> dict[str, dict[str, int]]:
     result = {}
     for split in ("train", "calibration", "test", "ood"):
         filename = f"data/{DATASET_CONFIG}/{split}-00000-of-00001.parquet"
-        path = Path(hf_hub_download(DATASET, filename, repo_type="dataset",
-                                    revision=DATASET_REVISION, local_files_only=True))
+        path = Path(
+            hf_hub_download(DATASET, filename, repo_type="dataset", revision=DATASET_REVISION, local_files_only=True)
+        )
         counts = Counter()
         parquet_file = parquet.ParquetFile(path)
-        for batch in parquet_file.iter_batches(batch_size=512,
-                                               columns=["source", "metadata_json"]):
-            counts.update(row["source"] for row in batch.to_pylist()
-                          if training_exclusion_reason(row) is None)
+        for batch in parquet_file.iter_batches(batch_size=512, columns=["source", "metadata_json"]):
+            counts.update(row["source"] for row in batch.to_pylist() if training_exclusion_reason(row) is None)
         result[split] = dict(counts)
     return result
 
 
-def select_source_holdout(source_counts: Mapping[str, Mapping[str, int]],
-                          fraction: float, seed: int) -> dict:
+def select_source_holdout(source_counts: Mapping[str, Mapping[str, int]], fraction: float, seed: int) -> dict:
     """Choose held-out source categories shared by every evaluation partition."""
     if not math.isfinite(fraction) or not 0.0 <= fraction < 1.0:
         raise ValueError("Source holdout fraction must be in [0, 1)")
@@ -173,18 +175,27 @@ def select_source_holdout(source_counts: Mapping[str, Mapping[str, int]],
     common = set(source_counts[required[0]])
     for name in required[1:]:
         common.intersection_update(source_counts[name])
-    common = {source for source in common
-              if all(source_counts[name][source] > 0 for name in required)}
+    common = {source for source in common if all(source_counts[name][source] > 0 for name in required)}
     if fraction == 0.0:
-        return {"fraction": 0.0, "seed": seed, "common_sources": sorted(common),
-                "seen_sources": sorted(common), "held_out_sources": []}
+        return {
+            "fraction": 0.0,
+            "seed": seed,
+            "common_sources": sorted(common),
+            "seen_sources": sorted(common),
+            "held_out_sources": [],
+        }
     if len(common) < 2:
         raise ValueError("Source holdout needs at least two source categories shared by all splits")
     count = min(len(common) - 1, max(1, math.ceil(len(common) * fraction)))
     held_out = sorted(random.Random(seed).sample(sorted(common), count))
     seen = sorted(common.difference(held_out))
-    return {"fraction": fraction, "seed": seed, "common_sources": sorted(common),
-            "seen_sources": seen, "held_out_sources": held_out}
+    return {
+        "fraction": fraction,
+        "seed": seed,
+        "common_sources": sorted(common),
+        "seen_sources": seen,
+        "held_out_sources": held_out,
+    }
 
 
 def verify_source_holdout(splits: Mapping[str, list[dict]], held_out_sources: set[str]) -> None:
@@ -200,19 +211,19 @@ def verify_source_holdout(splits: Mapping[str, list[dict]], held_out_sources: se
         raise ValueError("OOD rows must use held-out source categories only")
 
 
-def load_split(split: str, limit: int, seed: int, *,
-               allowed_sources: set[str] | None = None,
-               config: str = DATASET_CONFIG) -> tuple[list[dict], dict]:
+def load_split(
+    split: str, limit: int, seed: int, *, allowed_sources: set[str] | None = None, config: str = DATASET_CONFIG
+) -> tuple[list[dict], dict]:
     import pyarrow.parquet as parquet
     from huggingface_hub import hf_hub_download
 
     if config != DATASET_CONFIG and config not in EXTRA_TRAINING_CONFIGS:
         raise ValueError(f"Unsupported Open-Jev config: {config}")
     filename = f"data/{config}/{split}-00000-of-00001.parquet"
-    path = Path(hf_hub_download(DATASET, filename, repo_type="dataset",
-                                revision=DATASET_REVISION, local_files_only=True))
-    metadata_columns = ("id", "group_id", "source", "kind", "question", "options",
-                        "target", "metadata_json")
+    path = Path(
+        hf_hub_download(DATASET, filename, repo_type="dataset", revision=DATASET_REVISION, local_files_only=True)
+    )
+    metadata_columns = ("id", "group_id", "source", "kind", "question", "options", "target", "metadata_json")
     columns = (*metadata_columns[:7], "state_json", "metadata_json")
     parquet_file = parquet.ParquetFile(path)
     excluded = defaultdict(int)
@@ -299,8 +310,9 @@ def ranked_probability_score(forecast, target):
     return np.square(cumulative).mean()
 
 
-def selective_risk_metrics(selection_scores: list[float], correct: list[bool], *,
-                           selection_score: str = "maximum_candidate_probability") -> dict:
+def selective_risk_metrics(
+    selection_scores: list[float], correct: list[bool], *, selection_score: str = "maximum_candidate_probability"
+) -> dict:
     """Measure whether a score ranks correct decisions ahead of errors.
 
     Equal-score groups use expected risk under a random ordering, so ties do
@@ -362,25 +374,36 @@ def selective_risk_metrics(selection_scores: list[float], correct: list[bool], *
 def correctness_features(probabilities_: np.ndarray) -> np.ndarray:
     """Summarize any option distribution for a task-agnostic correctness scorer."""
     values = np.asarray(probabilities_, dtype=np.float64)
-    if (values.ndim != 1 or len(values) < 2 or not np.isfinite(values).all()
-            or np.any(values < 0) or np.any(values > 1)
-            or not math.isclose(float(values.sum()), 1.0, rel_tol=1e-5, abs_tol=1e-5)):
+    if (
+        values.ndim != 1
+        or len(values) < 2
+        or not np.isfinite(values).all()
+        or np.any(values < 0)
+        or np.any(values > 1)
+        or not math.isclose(float(values.sum()), 1.0, rel_tol=1e-5, abs_tol=1e-5)
+    ):
         raise ValueError("Correctness features need a normalized probability vector")
     ranked = np.sort(values)[::-1]
     entropy = -float(np.sum(values * np.log(np.clip(values, 1e-12, 1.0))))
     normalized_entropy = entropy / math.log(len(values))
-    return np.asarray([ranked[0], ranked[0] - ranked[1], normalized_entropy,
-                       math.log(len(values))], dtype=np.float64)
+    return np.asarray([ranked[0], ranked[0] - ranked[1], normalized_entropy, math.log(len(values))], dtype=np.float64)
 
 
 def fit_correctness_scorer(features: np.ndarray, correct: list[bool], *, l2: float = 0.01) -> dict:
     """Fit a regularized logistic correctness scorer on held-out model outputs."""
     inputs = np.asarray(features, dtype=np.float64)
     labels = np.asarray(correct)
-    if (inputs.ndim != 2 or not len(inputs) or labels.shape != (len(inputs),)
-            or not inputs.shape[1] or not np.isfinite(inputs).all()
-            or not np.isin(labels, [False, True]).all()
-            or len(np.unique(labels)) != 2 or not math.isfinite(l2) or l2 < 0):
+    if (
+        inputs.ndim != 2
+        or not len(inputs)
+        or labels.shape != (len(inputs),)
+        or not inputs.shape[1]
+        or not np.isfinite(inputs).all()
+        or not np.isin(labels, [False, True]).all()
+        or len(np.unique(labels)) != 2
+        or not math.isfinite(l2)
+        or l2 < 0
+    ):
         raise ValueError("Correctness training data must contain finite features and both labels")
 
     labels = labels.astype(np.float64)
@@ -396,18 +419,24 @@ def fit_correctness_scorer(features: np.ndarray, correct: list[bool], *, l2: flo
         loss = np.logaddexp(0.0, logits) - labels * logits
         value = float(loss.mean() + 0.5 * l2 * (weights @ weights))
         residual = (predicted - labels) / len(labels)
-        gradient = np.concatenate((normalized.T @ residual + l2 * weights,
-                                   np.asarray([residual.sum()])))
+        gradient = np.concatenate((normalized.T @ residual + l2 * weights, np.asarray([residual.sum()])))
         return value, gradient
 
     from scipy.optimize import minimize
 
-    result = minimize(objective, np.zeros(inputs.shape[1] + 1), jac=True,
-                      method="L-BFGS-B", options={"maxiter": 500, "ftol": 1e-12})
+    result = minimize(
+        objective, np.zeros(inputs.shape[1] + 1), jac=True, method="L-BFGS-B", options={"maxiter": 500, "ftol": 1e-12}
+    )
     if not result.success or not np.isfinite(result.x).all():
         raise RuntimeError(f"Correctness scorer optimization failed: {result.message}")
-    return {"schema_version": 1, "mean": mean, "scale": scale,
-            "weights": result.x[:-1], "bias": float(result.x[-1]), "l2": float(l2)}
+    return {
+        "schema_version": 1,
+        "mean": mean,
+        "scale": scale,
+        "weights": result.x[:-1],
+        "bias": float(result.x[-1]),
+        "l2": float(l2),
+    }
 
 
 def predict_correctness(features: np.ndarray, scorer: dict) -> np.ndarray:
@@ -417,25 +446,41 @@ def predict_correctness(features: np.ndarray, scorer: dict) -> np.ndarray:
     scale = np.asarray(scorer.get("scale"), dtype=np.float64)
     weights = np.asarray(scorer.get("weights"), dtype=np.float64)
     bias = scorer.get("bias")
-    if (inputs.ndim != 2 or mean.ndim != 1 or scale.shape != mean.shape
-            or weights.shape != mean.shape or inputs.shape[1] != len(mean)
-            or not len(inputs) or not np.isfinite(inputs).all()
-            or not np.isfinite(mean).all() or not np.isfinite(scale).all()
-            or np.any(scale <= 0) or not np.isfinite(weights).all()
-            or not isinstance(bias, (float, int)) or not math.isfinite(bias)):
+    if (
+        inputs.ndim != 2
+        or mean.ndim != 1
+        or scale.shape != mean.shape
+        or weights.shape != mean.shape
+        or inputs.shape[1] != len(mean)
+        or not len(inputs)
+        or not np.isfinite(inputs).all()
+        or not np.isfinite(mean).all()
+        or not np.isfinite(scale).all()
+        or np.any(scale <= 0)
+        or not np.isfinite(weights).all()
+        or not isinstance(bias, (float, int))
+        or not math.isfinite(bias)
+    ):
         raise ValueError("Correctness scorer or features are invalid")
     logits = ((inputs - mean) / scale) @ weights + bias
     return 1.0 / (1.0 + np.exp(-np.clip(logits, -60.0, 60.0)))
 
 
-def correctness_metrics(scores: list[float], correct: list[bool], *,
-                        selection_score: str = "estimated_probability_of_top_choice_correct") -> dict:
+def correctness_metrics(
+    scores: list[float], correct: list[bool], *, selection_score: str = "estimated_probability_of_top_choice_correct"
+) -> dict:
     """Evaluate correctness probabilities and their selective-risk ranking."""
     values = np.asarray(scores, dtype=np.float64)
     labels = np.asarray(correct)
-    if (values.ndim != 1 or labels.shape != values.shape or not len(values)
-            or not np.isfinite(values).all() or np.any(values < 0) or np.any(values > 1)
-            or not np.isin(labels, [False, True]).all()):
+    if (
+        values.ndim != 1
+        or labels.shape != values.shape
+        or not len(values)
+        or not np.isfinite(values).all()
+        or np.any(values < 0)
+        or np.any(values > 1)
+        or not np.isin(labels, [False, True]).all()
+    ):
         raise ValueError("Correctness scores or labels are invalid")
     labels = labels.astype(bool)
     clipped = np.clip(values, 1e-12, 1.0 - 1e-12)
@@ -444,10 +489,10 @@ def correctness_metrics(scores: list[float], correct: list[bool], *,
         "observed_accuracy": float(labels.mean()),
         "mean_predicted_correctness": float(values.mean()),
         "brier": float(np.mean((values - labels) ** 2)),
-        "log_loss": float(np.mean(-(labels * np.log(clipped)
-                                    + (~labels) * np.log1p(-clipped)))),
+        "log_loss": float(np.mean(-(labels * np.log(clipped) + (~labels) * np.log1p(-clipped)))),
         "selective_prediction": selective_risk_metrics(
-            values.tolist(), labels.tolist(), selection_score=selection_score),
+            values.tolist(), labels.tolist(), selection_score=selection_score
+        ),
     }
     positives, negatives = int(labels.sum()), int((~labels).sum())
     if positives and negatives:
@@ -461,25 +506,35 @@ def correctness_metrics(scores: list[float], correct: list[bool], *,
                 end += 1
             ranks[order[start:end]] = (start + 1 + end) / 2
             start = end
-        result["auroc"] = float((ranks[labels].sum() - positives * (positives + 1) / 2)
-                                / (positives * negatives))
+        result["auroc"] = float((ranks[labels].sum() - positives * (positives + 1) / 2) / (positives * negatives))
     else:
         result["auroc"] = None
     return result
 
 
-def paired_aurc_bootstrap_delta(raw_scores: list[float], learned_scores: list[float],
-                                correct: list[bool], *, replicates: int = 2000,
-                                seed: int = 0) -> dict:
+def paired_aurc_bootstrap_delta(
+    raw_scores: list[float], learned_scores: list[float], correct: list[bool], *, replicates: int = 2000, seed: int = 0
+) -> dict:
     """Estimate uncertainty in learned-minus-raw AURC on paired held-out rows."""
     raw = np.asarray(raw_scores, dtype=np.float64)
     learned = np.asarray(learned_scores, dtype=np.float64)
     labels = np.asarray(correct)
-    if (raw.ndim != 1 or learned.shape != raw.shape or labels.shape != raw.shape or not len(raw)
-            or not np.isfinite(raw).all() or not np.isfinite(learned).all()
-            or np.any(raw < 0) or np.any(raw > 1) or np.any(learned < 0) or np.any(learned > 1)
-            or not np.isin(labels, [False, True]).all()
-            or type(replicates) is not int or replicates < 100 or type(seed) is not int):
+    if (
+        raw.ndim != 1
+        or learned.shape != raw.shape
+        or labels.shape != raw.shape
+        or not len(raw)
+        or not np.isfinite(raw).all()
+        or not np.isfinite(learned).all()
+        or np.any(raw < 0)
+        or np.any(raw > 1)
+        or np.any(learned < 0)
+        or np.any(learned > 1)
+        or not np.isin(labels, [False, True]).all()
+        or type(replicates) is not int
+        or replicates < 100
+        or type(seed) is not int
+    ):
         raise ValueError("Paired AURC bootstrap inputs are invalid")
     labels = labels.astype(bool)
     rng = np.random.default_rng(seed)
@@ -495,22 +550,27 @@ def paired_aurc_bootstrap_delta(raw_scores: list[float], learned_scores: list[fl
         "replicates": replicates,
         "seed": seed,
         "confidence_level": 0.95,
-        "delta_aurc_95_percentile_interval": [
-            float(value) for value in np.quantile(deltas, [0.025, 0.975])
-        ],
+        "delta_aurc_95_percentile_interval": [float(value) for value in np.quantile(deltas, [0.025, 0.975])],
         "bootstrap_fraction_learned_lower_aurc": float(np.mean(deltas < 0)),
     }
 
 
-def paired_mean_bootstrap_delta(candidate: list[float], baseline: list[float], *,
-                                replicates: int = 2000, seed: int = 0) -> dict:
+def paired_mean_bootstrap_delta(
+    candidate: list[float], baseline: list[float], *, replicates: int = 2000, seed: int = 0
+) -> dict:
     """Bootstrap the paired mean candidate-minus-baseline difference."""
     candidate_values = np.asarray(candidate, dtype=np.float64)
     baseline_values = np.asarray(baseline, dtype=np.float64)
-    if (candidate_values.ndim != 1 or baseline_values.shape != candidate_values.shape
-            or not len(candidate_values) or not np.isfinite(candidate_values).all()
-            or not np.isfinite(baseline_values).all()
-            or type(replicates) is not int or replicates < 100 or type(seed) is not int):
+    if (
+        candidate_values.ndim != 1
+        or baseline_values.shape != candidate_values.shape
+        or not len(candidate_values)
+        or not np.isfinite(candidate_values).all()
+        or not np.isfinite(baseline_values).all()
+        or type(replicates) is not int
+        or replicates < 100
+        or type(seed) is not int
+    ):
         raise ValueError("Paired mean bootstrap inputs are invalid")
     rng = np.random.default_rng(seed)
     deltas = np.empty(replicates, dtype=np.float64)
@@ -521,25 +581,28 @@ def paired_mean_bootstrap_delta(candidate: list[float], baseline: list[float], *
         "replicates": replicates,
         "seed": seed,
         "confidence_level": 0.95,
-        "mean_delta_95_percentile_interval": [
-            float(value) for value in np.quantile(deltas, [0.025, 0.975])
-        ],
+        "mean_delta_95_percentile_interval": [float(value) for value in np.quantile(deltas, [0.025, 0.975])],
         "bootstrap_fraction_positive_delta": float(np.mean(deltas > 0)),
     }
 
 
-def grouped_mean_bootstrap_delta(group_ids: list[str], candidate: list[float],
-                                 baseline: list[float], *,
-                                 replicates: int = 2000, seed: int = 0) -> dict:
+def grouped_mean_bootstrap_delta(
+    group_ids: list[str], candidate: list[float], baseline: list[float], *, replicates: int = 2000, seed: int = 0
+) -> dict:
     """Bootstrap paired row deltas by independent group, preserving clusters."""
     candidate_values = np.asarray(candidate, dtype=np.float64)
     baseline_values = np.asarray(baseline, dtype=np.float64)
-    if (not group_ids or len(group_ids) != len(candidate_values)
-            or baseline_values.shape != candidate_values.shape
-            or any(not isinstance(group, str) or not group for group in group_ids)
-            or not np.isfinite(candidate_values).all()
-            or not np.isfinite(baseline_values).all()
-            or type(replicates) is not int or replicates < 100 or type(seed) is not int):
+    if (
+        not group_ids
+        or len(group_ids) != len(candidate_values)
+        or baseline_values.shape != candidate_values.shape
+        or any(not isinstance(group, str) or not group for group in group_ids)
+        or not np.isfinite(candidate_values).all()
+        or not np.isfinite(baseline_values).all()
+        or type(replicates) is not int
+        or replicates < 100
+        or type(seed) is not int
+    ):
         raise ValueError("Grouped paired bootstrap inputs are invalid")
 
     grouped_indices: dict[str, list[int]] = {}
@@ -562,21 +625,21 @@ def grouped_mean_bootstrap_delta(group_ids: list[str], candidate: list[float],
         "seed": seed,
         "confidence_level": 0.95,
         "mean_delta": float(np.mean(row_deltas)),
-        "mean_delta_95_percentile_interval": [
-            float(value) for value in np.quantile(deltas, [0.025, 0.975])
-        ],
+        "mean_delta_95_percentile_interval": [float(value) for value in np.quantile(deltas, [0.025, 0.975])],
         "bootstrap_fraction_positive_delta": float(np.mean(deltas > 0)),
         "resampling_unit": "group_id",
         "aggregation": "row-weighted within each sampled group set",
     }
 
 
-def format_answer(kind: str, options: list[str], logits: np.ndarray,
-                  temperature: float = 1.0) -> dict:
+def format_answer(kind: str, options: list[str], logits: np.ndarray, temperature: float = 1.0) -> dict:
     """Convert model scores to a typed decision without executing anything."""
-    if (kind not in KINDS or not options
-            or any(not isinstance(option, str) or not option.strip() for option in options)
-            or len(options) != len(set(options))):
+    if (
+        kind not in KINDS
+        or not options
+        or any(not isinstance(option, str) or not option.strip() for option in options)
+        or len(options) != len(set(options))
+    ):
         raise ValueError("Unknown kind or duplicate/empty option list")
     if kind == "noul" and options != ["no", "yes"]:
         raise ValueError("Noul options must be no, yes")
@@ -588,10 +651,18 @@ def format_answer(kind: str, options: list[str], logits: np.ndarray,
     distribution = {option: float(value) for option, value in zip(options, values, strict=True)}
     selected = int(np.argmax(values))
     if kind == "choice":
-        return {"type": kind, "choice": options[selected], "probabilities": distribution,
-                "max_probability": float(values[selected])}
-    return {"type": kind, "expected_index": float(np.arange(len(values)) @ values),
-            "most_likely": options[selected], "probabilities": distribution}
+        return {
+            "type": kind,
+            "choice": options[selected],
+            "probabilities": distribution,
+            "max_probability": float(values[selected]),
+        }
+    return {
+        "type": kind,
+        "expected_index": float(np.arange(len(values)) @ values),
+        "most_likely": options[selected],
+        "probabilities": distribution,
+    }
 
 
 def metrics(rows: list[dict], logits: list[np.ndarray], temperature: float) -> dict:
@@ -604,7 +675,8 @@ def metrics(rows: list[dict], logits: list[np.ndarray], temperature: float) -> d
         if len(target) != len(predicted):
             raise ValueError("Prediction and target option counts differ")
         item = {
-            "source": row["source"], "kind": row["kind"],
+            "source": row["source"],
+            "kind": row["kind"],
             "top1": int(np.argmax(target) == np.argmax(predicted)),
             "gold_index": int(np.argmax(target)),
             "predicted_index": int(np.argmax(predicted)),
@@ -631,26 +703,38 @@ def metrics(rows: list[dict], logits: list[np.ndarray], temperature: float) -> d
         }
         if all(item["kind"] == "score" for item in items):
             result["mean_rank_error"] = float(np.mean([item["rank_error"] for item in items]))
-            result["mean_ranked_probability_score"] = float(np.mean(
-                [item["ranked_probability_score"] for item in items]))
+            result["mean_ranked_probability_score"] = float(
+                np.mean([item["ranked_probability_score"] for item in items])
+            )
         if all(item["kind"] == "noul" for item in items):
             true_positive = sum(item["gold_index"] == 1 and item["predicted_index"] == 1 for item in items)
             true_negative = sum(item["gold_index"] == 0 and item["predicted_index"] == 0 for item in items)
             false_positive = sum(item["gold_index"] == 0 and item["predicted_index"] == 1 for item in items)
             false_negative = sum(item["gold_index"] == 1 and item["predicted_index"] == 0 for item in items)
-            result["confusion"] = {"true_positive": true_positive, "true_negative": true_negative,
-                                   "false_positive": false_positive, "false_negative": false_negative}
+            result["confusion"] = {
+                "true_positive": true_positive,
+                "true_negative": true_negative,
+                "false_positive": false_positive,
+                "false_negative": false_negative,
+            }
             positives = true_positive + false_negative
             negatives = true_negative + false_positive
-            result["balanced_accuracy"] = (0.5 * (true_positive / positives + true_negative / negatives)
-                                           if positives and negatives else None)
+            result["balanced_accuracy"] = (
+                0.5 * (true_positive / positives + true_negative / negatives) if positives and negatives else None
+            )
         return result
 
-    return {**aggregate(per_row),
-            "by_kind": {kind: aggregate([item for item in per_row if item["kind"] == kind])
-                        for kind in sorted({item["kind"] for item in per_row})},
-            "by_source": {source: aggregate([item for item in per_row if item["source"] == source])
-                          for source in sorted({item["source"] for item in per_row})}}
+    return {
+        **aggregate(per_row),
+        "by_kind": {
+            kind: aggregate([item for item in per_row if item["kind"] == kind])
+            for kind in sorted({item["kind"] for item in per_row})
+        },
+        "by_source": {
+            source: aggregate([item for item in per_row if item["source"] == source])
+            for source in sorted({item["source"] for item in per_row})
+        },
+    }
 
 
 def uniform_baseline(rows: list[dict]) -> dict:

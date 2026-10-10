@@ -181,8 +181,11 @@ class ExecutionCompanion:
     def _add_local_scope_advisory(self, user_input: str, plan: ActionPlan, review: CompanionReview) -> CompanionReview:
         """Flag narrow high-risk scope disagreement; never grant or block."""
         scope_advisor = self._scope_advisor
-        if (scope_advisor is None or not bool(getattr(scope_advisor, "available", False))
-                or review.decision in {"REVISE", "STOP"}):
+        if (
+            scope_advisor is None
+            or not bool(getattr(scope_advisor, "available", False))
+            or review.decision in {"REVISE", "STOP"}
+        ):
             return review
         for action in plan.actions:
             action_type = action.action_type.value

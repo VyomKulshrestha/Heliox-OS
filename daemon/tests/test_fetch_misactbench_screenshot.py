@@ -25,7 +25,7 @@ def _archive(name: str) -> tuple[bytes, bytes]:
     marker = data.rfind(b"PK\x05\x06")
     _, _, _, _, entries, size, offset, _ = struct.unpack_from("<4s4H2LH", data, marker)
     assert entries == 1
-    return data, data[offset:offset + size]
+    return data, data[offset : offset + size]
 
 
 def test_central_and_member_crc_with_bounded_ranges(monkeypatch) -> None:
@@ -33,8 +33,7 @@ def test_central_and_member_crc_with_bounded_ranges(monkeypatch) -> None:
     archive, central = _archive(name)
     index = fetch.parse_central(central, 1)
     monkeypatch.setattr(fetch, "ARCHIVE_BYTES", len(archive))
-    monkeypatch.setattr(fetch, "get_range",
-                        lambda start, end, *, max_bytes: archive[start:end + 1])
+    monkeypatch.setattr(fetch, "get_range", lambda start, end, *, max_bytes: archive[start : end + 1])
     assert fetch.member_bytes(name, index[name]) == PNG
     changed = {**index[name], "crc32": 0}
     with pytest.raises(ValueError, match="CRC"):

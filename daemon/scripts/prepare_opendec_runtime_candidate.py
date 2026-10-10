@@ -37,22 +37,27 @@ def head_arrays(state: Any) -> tuple[np.ndarray, np.ndarray]:
     """Validate a released scalar linear head and return safe numeric arrays."""
     if not isinstance(state, dict) or set(state) != {"weight", "bias"}:
         raise ValueError("Open-Jev head must contain only linear weight and bias")
-    weight = np.asarray(state["weight"].detach().cpu() if hasattr(state["weight"], "detach")
-                        else state["weight"], dtype=np.float32)
-    bias = np.asarray(state["bias"].detach().cpu() if hasattr(state["bias"], "detach")
-                      else state["bias"], dtype=np.float32)
-    if (weight.ndim != 2 or weight.shape[0] != 1 or bias.shape != (1,)
-            or weight.shape[1] < 1 or not np.isfinite(weight).all()
-            or not np.isfinite(bias).all()):
+    weight = np.asarray(
+        state["weight"].detach().cpu() if hasattr(state["weight"], "detach") else state["weight"], dtype=np.float32
+    )
+    bias = np.asarray(
+        state["bias"].detach().cpu() if hasattr(state["bias"], "detach") else state["bias"], dtype=np.float32
+    )
+    if (
+        weight.ndim != 2
+        or weight.shape[0] != 1
+        or bias.shape != (1,)
+        or weight.shape[1] < 1
+        or not np.isfinite(weight).all()
+        or not np.isfinite(bias).all()
+    ):
         raise ValueError("Open-Jev scalar head has invalid dimensions or non-finite values")
     return weight, bias
 
 
-def scorer_provenance(repo: str, revision: str, adapter_sha256: str,
-                      head_sha256: str) -> dict[str, Any]:
+def scorer_provenance(repo: str, revision: str, adapter_sha256: str, head_sha256: str) -> dict[str, Any]:
     """Emit the warm-start fields required by Heliox's artifact verifier."""
-    if any(not isinstance(value, str) or not value for value in
-           (repo, revision, adapter_sha256, head_sha256)):
+    if any(not isinstance(value, str) or not value for value in (repo, revision, adapter_sha256, head_sha256)):
         raise ValueError("Open-Jev warm-start provenance must be complete")
     return {
         "backbone_quantization": "NF4 double quantization",
@@ -125,17 +130,14 @@ def prepare(output_dir: Path) -> dict:
             "prompt_style": "candidate_v1",
             "model_dtype": "bfloat16",
             "source_checkpoint": f"{OPENJEV_REPO}@{OPENJEV_REVISION}",
-            **scorer_provenance(OPENJEV_REPO, OPENJEV_REVISION,
-                                OPENJEV_ADAPTER_SHA256, OPENJEV_HEAD_SHA256),
+            **scorer_provenance(OPENJEV_REPO, OPENJEV_REVISION, OPENJEV_ADAPTER_SHA256, OPENJEV_HEAD_SHA256),
             "source_license": "Apache-2.0",
             "source_head_sha256": OPENJEV_HEAD_SHA256,
             "adapter_config_sha256": hashlib.sha256(adapter_config.read_bytes()).hexdigest(),
             "research_only": True,
             "execution_authority": False,
         }
-        (staged / "report.json").write_text(
-            json.dumps(report, indent=2, allow_nan=False) + "\n", encoding="utf-8"
-        )
+        (staged / "report.json").write_text(json.dumps(report, indent=2, allow_nan=False) + "\n", encoding="utf-8")
         os.replace(staged, output_dir)
     return report
 

@@ -37,7 +37,8 @@ def validate_training_versions(actual: Mapping[str, str]) -> None:
 
     if problems:
         raise RuntimeError(
-            "Unsupported Open-Jev/Qwen3.5 training stack: " + "; ".join(problems)
+            "Unsupported Open-Jev/Qwen3.5 training stack: "
+            + "; ".join(problems)
             + ". Use the versions in Open-Jev's [train] extra."
         )
 

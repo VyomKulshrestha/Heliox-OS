@@ -38,9 +38,15 @@ def summarize(results: list[dict]) -> dict:
     negative = [row for row in results if not row["gold_in_scope"]]
     return {
         "accuracy": correct / len(results) if results else None,
-        "balanced_accuracy": ((sum(row["predicted_in_scope"] for row in positive) / len(positive)
-                              + sum(not row["predicted_in_scope"] for row in negative) / len(negative)) / 2
-                              if positive and negative else None),
+        "balanced_accuracy": (
+            (
+                sum(row["predicted_in_scope"] for row in positive) / len(positive)
+                + sum(not row["predicted_in_scope"] for row in negative) / len(negative)
+            )
+            / 2
+            if positive and negative
+            else None
+        ),
         "gold_in_scope": len(positive),
         "gold_out_of_scope": len(negative),
         "false_allowances": sum(row["predicted_in_scope"] and not row["gold_in_scope"] for row in results),
@@ -74,36 +80,47 @@ def prior_call_context(path: Path, selected_ids: set[str], count: int) -> dict[s
                     case_id = f"{trajectory_id}:{step['step_id']}:{call['tool_call_id']}"
                     if case_id in selected_ids:
                         context[case_id] = tuple(previous[-count:])
-                    previous.append(call["function_name"] + " " + json.dumps(
-                        call["arguments"], sort_keys=True, ensure_ascii=False, separators=(",", ":")
-                    ))
+                    previous.append(
+                        call["function_name"]
+                        + " "
+                        + json.dumps(call["arguments"], sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+                    )
     if set(context) != selected_ids:
         raise ValueError("Selected ScopeJudge calls are missing transcript context")
     return context
 
 
-def scopejudge_cases(path: Path, partition: str = "scope_test", *,
-                     history_calls: int = 0) -> tuple[tuple[ScopeCase, ...], dict]:
+def scopejudge_cases(
+    path: Path, partition: str = "scope_test", *, history_calls: int = 0
+) -> tuple[tuple[ScopeCase, ...], dict]:
     if history_calls < 0:
         raise ValueError("history_calls must be non-negative")
     seed = 20260927
-    parts, manifest = load_scope_parts(path, seed=seed, limits={
-        "scope_train": 512, "scope_calibration": 80, "scope_test": 100000,
-    })
+    parts, manifest = load_scope_parts(
+        path,
+        seed=seed,
+        limits={
+            "scope_train": 512,
+            "scope_calibration": 80,
+            "scope_test": 100000,
+        },
+    )
     manifest["selection_seed"] = seed
     cases = []
     for row in parts[partition]:
         state = json.loads(row["state_json"])
-        cases.append(ScopeCase(row["id"], state["user_request"], state["proposed_action"],
-                               row["target"][1] >= 0.5, partition))
+        cases.append(
+            ScopeCase(row["id"], state["user_request"], state["proposed_action"], row["target"][1] >= 0.5, partition)
+        )
     if history_calls:
         context = prior_call_context(path, {case.id for case in cases}, history_calls)
         cases = [replace(case, prior_tool_calls=context[case.id]) for case in cases]
     return tuple(cases), manifest
 
 
-def evaluate(cases: tuple[ScopeCase, ...], *, endpoint: str = ENDPOINT,
-             skip_overlong: bool = False, progress_every: int = 25) -> dict:
+def evaluate(
+    cases: tuple[ScopeCase, ...], *, endpoint: str = ENDPOINT, skip_overlong: bool = False, progress_every: int = 25
+) -> dict:
     results = []
     excluded_overlong = []
     identity = None
@@ -127,14 +144,16 @@ def evaluate(cases: tuple[ScopeCase, ...], *, endpoint: str = ENDPOINT,
             elif current_identity != identity:
                 raise ValueError("Checkpoint identity changed during evaluation")
             predicted = probability >= 0.5
-            results.append({
-                "id": case.id,
-                "gold_in_scope": case.in_scope,
-                "predicted_in_scope": predicted,
-                "probability": probability,
-                "input_tokens": int(payload["usage"]["input_tokens"]),
-                "inference_seconds": float(metadata["inference_seconds"]),
-            })
+            results.append(
+                {
+                    "id": case.id,
+                    "gold_in_scope": case.in_scope,
+                    "predicted_in_scope": predicted,
+                    "probability": probability,
+                    "input_tokens": int(payload["usage"]["input_tokens"]),
+                    "inference_seconds": float(metadata["inference_seconds"]),
+                }
+            )
             if index % progress_every == 0 or index == len(cases):
                 print(f"{index}/{len(cases)} {case.id} gold={int(case.in_scope)} p={probability:.3f}", flush=True)
     suite_identity = [(case.id, case.request, case.action, case.in_scope) for case in cases]
@@ -154,13 +173,15 @@ def evaluate(cases: tuple[ScopeCase, ...], *, endpoint: str = ENDPOINT,
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--suite", choices=(*SUITES, "scopejudge-calibration", "scopejudge-test"),
-                        default="qwen-v1")
+    parser.add_argument("--suite", choices=(*SUITES, "scopejudge-calibration", "scopejudge-test"), default="qwen-v1")
     parser.add_argument("--scopejudge-path", type=Path, help="Pinned public train.jsonl for ScopeJudge suites")
     parser.add_argument("--limit", type=int)
     parser.add_argument("--progress-every", type=int, default=25)
-    parser.add_argument("--report", type=Path, default=Path(__file__).resolve().parents[1]
-                        / "benchmarks/opendec_2b_scope_transfer_v1.json")
+    parser.add_argument(
+        "--report",
+        type=Path,
+        default=Path(__file__).resolve().parents[1] / "benchmarks/opendec_2b_scope_transfer_v1.json",
+    )
     args = parser.parse_args()
     if args.progress_every < 1:
         parser.error("--progress-every must be positive")
@@ -175,9 +196,8 @@ def main() -> None:
     if args.limit is not None:
         if not 1 <= args.limit <= len(cases):
             parser.error("--limit must be within the selected suite")
-        cases = cases[:args.limit]
-    report = evaluate(cases, skip_overlong=args.suite.startswith("scopejudge-"),
-                      progress_every=args.progress_every)
+        cases = cases[: args.limit]
+    report = evaluate(cases, skip_overlong=args.suite.startswith("scopejudge-"), progress_every=args.progress_every)
     if report["evaluated_count"] == 0:
         raise ValueError("No cases were eligible for evaluation")
     report["suite"] = args.suite

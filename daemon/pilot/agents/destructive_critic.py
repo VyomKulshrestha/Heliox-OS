@@ -38,8 +38,7 @@ def plan_changes_state(plan: ActionPlan) -> bool:
     """Identify writes even where legacy permission tiers label reads USER_WRITE."""
     return any(
         action.permission_tier >= PermissionTier.SYSTEM_MODIFY
-        or (action.permission_tier > PermissionTier.READ_ONLY
-            and action.action_type not in READ_ONLY_ACTIONS)
+        or (action.permission_tier > PermissionTier.READ_ONLY and action.action_type not in READ_ONLY_ACTIONS)
         for action in plan.actions
     )
 
@@ -144,7 +143,8 @@ def assess_plan_risk(
             world_model_score=unavailable_score,
             combined_score=max(base, unavailable_score),
             reasons=["World-model assessment unavailable; review state-changing actions before execution."]
-            if state_changing else [],
+            if state_changing
+            else [],
             prediction_sources=["evaluation_error"] if state_changing else [],
             model_version="evaluation-error",
         )

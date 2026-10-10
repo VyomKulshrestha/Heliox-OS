@@ -192,9 +192,7 @@ def test_validated_visual_risk_reaches_gate_without_replacing_deterministic_rule
     payload = weights.getvalue()
     gate = RiskGate(weights_path="/nonexistent.npz")
     gate.configure_ui_jepa_artifact("/unused.npz", weight_loader=lambda _path: payload)
-    gate.set_ui_observation_provider(
-        lambda: {"latent_embedding": [0.5] * 256, "screen_bounds": (0, 0, 100, 100)}
-    )
+    gate.set_ui_observation_provider(lambda: {"latent_embedding": [0.5] * 256, "screen_bounds": (0, 0, 100, 100)})
     plan = ActionPlan(
         actions=[Action(action_type=ActionType.MOUSE_CLICK, parameters=MouseParams(x=50, y=50))],
         raw_input="click measured target",
@@ -209,9 +207,7 @@ def test_validated_visual_risk_reaches_gate_without_replacing_deterministic_rule
     assert visual_evidence["reason"] in reasons
     assert "ui_jepa" in gate.last_evaluation["prediction_sources"]
     assert not any(
-        item["source"] == "risk_transition"
-        and item["deterministic"]
-        and item["reason"] == visual_evidence["reason"]
+        item["source"] == "risk_transition" and item["deterministic"] and item["reason"] == visual_evidence["reason"]
         for item in prediction["risk_evidence"]
     )
 

@@ -198,19 +198,17 @@ def run(args: argparse.Namespace) -> dict:
     split_seed = args.seed if args.split_seed is None else args.split_seed
     source_holdout = None
     if args.source_holdout_fraction > 0:
-        source_holdout_seed = (split_seed if args.source_holdout_seed is None
-                               else args.source_holdout_seed)
+        source_holdout_seed = split_seed if args.source_holdout_seed is None else args.source_holdout_seed
         source_holdout = select_source_holdout(
-            load_clean_source_counts(), args.source_holdout_fraction, source_holdout_seed)
+            load_clean_source_counts(), args.source_holdout_fraction, source_holdout_seed
+        )
     rows, manifests = {}, {}
     for offset, (split, limit) in enumerate(split_limits.items()):
         allowed_sources = None
         if source_holdout is not None:
-            allowed = (source_holdout["held_out_sources"] if split == "ood"
-                       else source_holdout["seen_sources"])
+            allowed = source_holdout["held_out_sources"] if split == "ood" else source_holdout["seen_sources"]
             allowed_sources = set(allowed)
-        rows[split], manifests[split] = load_split(
-            split, limit, split_seed + offset, allowed_sources=allowed_sources)
+        rows[split], manifests[split] = load_split(split, limit, split_seed + offset, allowed_sources=allowed_sources)
     verify_disjoint(rows)
     if source_holdout is not None:
         verify_source_holdout(rows, set(source_holdout["held_out_sources"]))
@@ -346,10 +344,15 @@ def main() -> None:
         default=None,
         help="Fix dataset sampling independently of model initialization; defaults to --seed.",
     )
-    parser.add_argument("--source-holdout-fraction", type=float, default=0.2,
-                        help="Fraction of shared licensed source categories reserved for OOD; 0 disables")
-    parser.add_argument("--source-holdout-seed", type=int,
-                        help="Choose held-out categories independently of row-sampling seed")
+    parser.add_argument(
+        "--source-holdout-fraction",
+        type=float,
+        default=0.2,
+        help="Fraction of shared licensed source categories reserved for OOD; 0 disables",
+    )
+    parser.add_argument(
+        "--source-holdout-seed", type=int, help="Choose held-out categories independently of row-sampling seed"
+    )
     args = parser.parse_args()
     if args.patience < 1:
         raise ValueError("patience must be positive")

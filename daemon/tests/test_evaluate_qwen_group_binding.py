@@ -22,31 +22,39 @@ def test_group_prompt_contains_all_candidates_but_not_labels():
     )
     assert group_cases(cases, "entity-binding") == [("task", cases)]
     payload = json.loads(messages(cases)[1]["content"])
-    assert payload["candidate_actions"] == [
-        {"number": 1, "action": "Use blue"}, {"number": 2, "action": "Use red"}]
+    assert payload["candidate_actions"] == [{"number": 1, "action": "Use blue"}, {"number": 2, "action": "Use red"}]
     assert "in_scope" not in json.dumps(payload)
     with pytest.raises(ValueError, match="mismatched requests"):
-        group_cases((cases[0], ScopeCase("task:red", "Select red", "Use red", False)),
-                    "entity-binding")
+        group_cases((cases[0], ScopeCase("task:red", "Select red", "Use red", False)), "entity-binding")
 
 
-@pytest.mark.parametrize(("raw", "count", "expected"), [
-    ("[2,1]", 2, (1, 2)), ("[]", 2, ()), ("[0]", 2, None),
-    ("[3]", 2, None), ("[1,1]", 2, None), ("[true]", 2, None),
-    ("[1] because", 2, None),
-])
+@pytest.mark.parametrize(
+    ("raw", "count", "expected"),
+    [
+        ("[2,1]", 2, (1, 2)),
+        ("[]", 2, ()),
+        ("[0]", 2, None),
+        ("[3]", 2, None),
+        ("[1,1]", 2, None),
+        ("[true]", 2, None),
+        ("[1] because", 2, None),
+    ],
+)
 def test_only_exact_valid_candidate_arrays_are_accepted(raw, count, expected):
     assert parse_selection(raw, count) == expected
 
 
 def test_group_summary_and_checkpoint_integrity(tmp_path):
-    members = (ScopeCase("task:right", "Choose right", "Use right", True),
-               ScopeCase("task:wrong", "Choose right", "Use wrong", False))
-    ambiguous = (ScopeCase("amb:a", "Unclear", "Use a", False),
-                 ScopeCase("amb:b", "Unclear", "Use b", False))
+    members = (
+        ScopeCase("task:right", "Choose right", "Use right", True),
+        ScopeCase("task:wrong", "Choose right", "Use wrong", False),
+    )
+    ambiguous = (ScopeCase("amb:a", "Unclear", "Use a", False), ScopeCase("amb:b", "Unclear", "Use b", False))
     groups = [("task", members), ("amb", ambiguous)]
-    rows = [{"id": "task", "gold_indices": [1], "selected_indices": [1], "status": "ok"},
-            {"id": "amb", "gold_indices": [], "selected_indices": [], "status": "ok"}]
+    rows = [
+        {"id": "task", "gold_indices": [1], "selected_indices": [1], "status": "ok"},
+        {"id": "amb", "gold_indices": [], "selected_indices": [], "status": "ok"},
+    ]
     result = summarize(groups, rows)
     assert result["exact_groups"] == 2
     assert result["ambiguous_groups"] == 1

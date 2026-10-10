@@ -12,11 +12,12 @@ from scripts.fit_miniwob_reward_head import (
 
 def test_interleaved_group_prompts_remain_aligned_without_reward_leakage() -> None:
     rows = [
-        {"group": group, "goal": "Click ONE", "candidate": {"label": label},
-         "split": "train", "reward": reward}
+        {"group": group, "goal": "Click ONE", "candidate": {"label": label}, "split": "train", "reward": reward}
         for group, label, reward in (
-            ("a", "ONE", 1), ("b", "TWO", -1),
-            ("a", "TWO", -1), ("b", "ONE", 1),
+            ("a", "ONE", 1),
+            ("b", "TWO", -1),
+            ("a", "TWO", -1),
+            ("b", "ONE", 1),
         )
     ]
     prompts = candidate_prompts(rows)

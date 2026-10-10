@@ -68,8 +68,10 @@ def selected_prompts(source: Path, manifest: dict, *, view: str = "post_action")
                 if following["index"] != current["index"] + 1 or case_id in found:
                     raise ValueError("Selected action is not a unique consecutive transition")
                 found[case_id] = template.format(
-                    task=trajectory["instruction"], before=before["observation"],
-                    action=before["action"], code=before["code"],
+                    task=trajectory["instruction"],
+                    before=before["observation"],
+                    action=before["action"],
+                    code=before["code"],
                     after=after["observation"],
                 )
     if set(found) != requested:
@@ -80,8 +82,9 @@ def selected_prompts(source: Path, manifest: dict, *, view: str = "post_action")
 def save(path: Path, signature: str, ids: list[str], features: list[np.ndarray]) -> None:
     temporary = path.with_suffix(".tmp")
     with temporary.open("wb") as output:
-        np.savez_compressed(output, signature=signature, ids=np.asarray(ids),
-                            features=np.asarray(features, dtype=np.float16))
+        np.savez_compressed(
+            output, signature=signature, ids=np.asarray(ids), features=np.asarray(features, dtype=np.float16)
+        )
     os.replace(temporary, path)
 
 
@@ -96,15 +99,18 @@ def main() -> None:
     parser.add_argument("--view", choices=("post_action", "pre_action"), default="post_action")
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
-    if (args.max_length < 128 or args.checkpoint_every < 1 or args.report.exists()
-            or (args.output.exists() and not args.resume)):
+    if (
+        args.max_length < 128
+        or args.checkpoint_every < 1
+        or args.report.exists()
+        or (args.output.exists() and not args.resume)
+    ):
         parser.error("Use a fresh report, max length >=128, and a valid checkpoint path")
     if sha256_file(args.source) != SOURCE_SHA256:
         raise ValueError("AgentNet source differs from the pinned release")
     manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
     ids = manifest["case_ids"]
-    if (manifest["source_sha256"] != SOURCE_SHA256
-            or len(ids) != len(set(ids)) or len(ids) < 1):
+    if manifest["source_sha256"] != SOURCE_SHA256 or len(ids) != len(set(ids)) or len(ids) < 1:
         raise ValueError("Invalid or changed AgentNet selection")
     prompts = selected_prompts(args.source, manifest, view=args.view)
 
@@ -122,21 +128,25 @@ def main() -> None:
     token_hash = hashlib.sha256()
     for case_id, prompt in zip(ids, prompts, strict=True):
         rendered = tokenizer.apply_chat_template(
-            [{"role": "user", "content": prompt}], tokenize=False,
-            add_generation_prompt=True, enable_thinking=False)
+            [{"role": "user", "content": prompt}], tokenize=False, add_generation_prompt=True, enable_thinking=False
+        )
         encoded = tokenizer(rendered, add_special_tokens=False)["input_ids"]
         if not encoded or len(encoded) > args.max_length:
             raise ValueError(f"Selected action exceeds the untruncated token limit: {case_id}")
         token_hash.update(json.dumps([case_id, encoded], separators=(",", ":")).encode())
         tokens.append(encoded)
     template = PRE_ACTION_PROMPT if args.view == "pre_action" else PROMPT
-    identity = {"model": MODEL, "revision": REVISION,
-                "source_sha256": SOURCE_SHA256,
-                "manifest_sha256": sha256_file(args.manifest),
-                "prompt_sha256": hashlib.sha256(template.encode()).hexdigest(),
-                "token_sha256": token_hash.hexdigest(),
-                "max_length": args.max_length, "attention": "eager",
-                "representation": "last_hidden_state_final_token_bf16"}
+    identity = {
+        "model": MODEL,
+        "revision": REVISION,
+        "source_sha256": SOURCE_SHA256,
+        "manifest_sha256": sha256_file(args.manifest),
+        "prompt_sha256": hashlib.sha256(template.encode()).hexdigest(),
+        "token_sha256": token_hash.hexdigest(),
+        "max_length": args.max_length,
+        "attention": "eager",
+        "representation": "last_hidden_state_final_token_bf16",
+    }
     if args.view == "pre_action":
         identity["input_view"] = "pre_action"
     signature = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
@@ -144,18 +154,29 @@ def main() -> None:
     if args.output.exists():
         with np.load(args.output, allow_pickle=False) as saved:
             matrix = saved["features"]
-            if (saved["signature"].item() != signature
-                    or saved["ids"].tolist() != ids[:len(matrix)]
-                    or matrix.ndim != 2 or len(matrix) > len(ids)
-                    or not np.isfinite(matrix).all()):
+            if (
+                saved["signature"].item() != signature
+                or saved["ids"].tolist() != ids[: len(matrix)]
+                or matrix.ndim != 2
+                or len(matrix) > len(ids)
+                or not np.isfinite(matrix).all()
+            ):
                 raise ValueError("Checkpoint does not match the pinned inputs")
             features = list(matrix)
-    print(json.dumps({"event": "encoded", "rows": len(ids),
-                      "max_tokens": max(map(len, tokens)),
-                      "resuming_at": len(features)}), flush=True)
+    print(
+        json.dumps(
+            {"event": "encoded", "rows": len(ids), "max_tokens": max(map(len, tokens)), "resuming_at": len(features)}
+        ),
+        flush=True,
+    )
     base, loading = AutoModelForCausalLM.from_pretrained(
-        path, local_files_only=True, dtype=torch.bfloat16,
-        device_map={"": 0}, attn_implementation="eager", output_loading_info=True)
+        path,
+        local_files_only=True,
+        dtype=torch.bfloat16,
+        device_map={"": 0},
+        attn_implementation="eager",
+        output_loading_info=True,
+    )
     if loading.get("missing_keys") or any(parameter.is_meta for parameter in base.parameters()):
         raise RuntimeError("Frozen backbone has missing model parameters")
     model = base.model
@@ -164,22 +185,32 @@ def main() -> None:
     with torch.inference_mode():
         for index in range(len(features), len(ids)):
             input_ids = torch.tensor([tokens[index]], dtype=torch.long, device="cuda")
-            hidden = model(input_ids=input_ids, use_cache=False,
-                           return_dict=True).last_hidden_state[0, -1]
+            hidden = model(input_ids=input_ids, use_cache=False, return_dict=True).last_hidden_state[0, -1]
             feature = hidden.float().cpu().numpy().astype(np.float16)
             if not np.isfinite(feature).all():
                 raise ValueError("Outcome feature contains non-finite values")
             features.append(feature)
             if (index + 1) % args.checkpoint_every == 0 or index + 1 == len(ids):
-                save(args.output, signature, ids[:index + 1], features)
-                print(json.dumps({"completed": index + 1, "total": len(ids),
-                                  "peak_vram_gib": round(
-                                      torch.cuda.max_memory_allocated() / 1024**3, 3)}), flush=True)
-    report = {**identity, "signature": signature, "rows": len(ids),
-              "feature_dim": len(features[0]),
-              "features_sha256": sha256_file(args.output),
-              "peak_vram_gib": round(torch.cuda.max_memory_allocated() / 1024**3, 3),
-              "limitation": "Model-generated outcome labels are not used during extraction; no runtime authority."}
+                save(args.output, signature, ids[: index + 1], features)
+                print(
+                    json.dumps(
+                        {
+                            "completed": index + 1,
+                            "total": len(ids),
+                            "peak_vram_gib": round(torch.cuda.max_memory_allocated() / 1024**3, 3),
+                        }
+                    ),
+                    flush=True,
+                )
+    report = {
+        **identity,
+        "signature": signature,
+        "rows": len(ids),
+        "feature_dim": len(features[0]),
+        "features_sha256": sha256_file(args.output),
+        "peak_vram_gib": round(torch.cuda.max_memory_allocated() / 1024**3, 3),
+        "limitation": "Model-generated outcome labels are not used during extraction; no runtime authority.",
+    }
     args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
 
 

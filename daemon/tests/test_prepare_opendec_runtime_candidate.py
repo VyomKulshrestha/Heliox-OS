@@ -63,8 +63,7 @@ def test_prepared_report_contains_provenance_accepted_by_local_scorer(tmp_path):
         "revision": BASE_REVISION,
         "adapter_sha256": hashlib.sha256(adapter.read_bytes()).hexdigest(),
         "head_sha256": hashlib.sha256(head.read_bytes()).hexdigest(),
-        **scorer_provenance(OPENJEV_REPO, OPENJEV_REVISION,
-                            OPENJEV_ADAPTER_SHA256, OPENJEV_HEAD_SHA256),
+        **scorer_provenance(OPENJEV_REPO, OPENJEV_REVISION, OPENJEV_ADAPTER_SHA256, OPENJEV_HEAD_SHA256),
     }
     assert (report["model"], report["revision"]) == (MODEL_ID, MODEL_REVISION)
     report_path = tmp_path / "report.json"

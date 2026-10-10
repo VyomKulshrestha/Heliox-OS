@@ -49,8 +49,11 @@ def evaluate(root: Path, model_dir: Path, teacher_path: Path, output: Path) -> d
     base_path = snapshot_download(MODEL, revision=REVISION, local_files_only=True)
     tokenizer = AutoTokenizer.from_pretrained(base_path, local_files_only=True)
     base = AutoModelForCausalLM.from_pretrained(
-        base_path, local_files_only=True, dtype=torch.bfloat16,
-        device_map={"": 0}, attn_implementation="eager",
+        base_path,
+        local_files_only=True,
+        dtype=torch.bfloat16,
+        device_map={"": 0},
+        attn_implementation="eager",
     )
     backbone = PeftModel.from_pretrained(base.model, model_dir / "adapter", is_trainable=False)
     del base
@@ -58,17 +61,24 @@ def evaluate(root: Path, model_dir: Path, teacher_path: Path, output: Path) -> d
         weights = np.asarray(saved["weights"], dtype=np.float32)
         bias = np.asarray(saved["bias"], dtype=np.float32)
         temperature = float(saved["temperature"])
-        if (str(saved["model_revision"]) != REVISION or
-                temperature != frozen["head_temperature"] or
-                not np.isfinite(temperature) or temperature <= 0):
+        if (
+            str(saved["model_revision"]) != REVISION
+            or temperature != frozen["head_temperature"]
+            or not np.isfinite(temperature)
+            or temperature <= 0
+        ):
             raise ValueError("Frozen head configuration changed")
     head = nn.Linear(weights.shape[1], 1, dtype=torch.float32, device="cuda")
     with torch.no_grad():
         head.weight.copy_(torch.from_numpy(weights).to("cuda"))
         head.bias.copy_(torch.from_numpy(bias).to("cuda"))
     rows = [
-        {"id": case.id, "request": case.request, "action": case.action,
-         "probability": float(teacher[case.id]["jev_probability"])}
+        {
+            "id": case.id,
+            "request": case.request,
+            "action": case.action,
+            "probability": float(teacher[case.id]["jev_probability"]),
+        }
         for case in CASES
     ]
     encoded, truncated = _encode(tokenizer, rows)
@@ -88,8 +98,10 @@ def evaluate(root: Path, model_dir: Path, teacher_path: Path, output: Path) -> d
 
 def main() -> None:
     import sys
+
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from scripts.reference_output_policy import block_jev_output_use
+
     block_jev_output_use()
 
     root = Path(__file__).resolve().parents[1]
@@ -99,8 +111,19 @@ def main() -> None:
     parser.add_argument("--output", type=Path, default=root / "benchmarks/qwen_scope_fresh_v1.json")
     args = parser.parse_args()
     report = evaluate(root, args.model_dir, args.teacher, args.output)
-    print(json.dumps({key: ({name: value for name, value in data.items() if name != "mismatches"}
-                            if isinstance(data, dict) else data) for key, data in report.items()}, indent=2))
+    print(
+        json.dumps(
+            {
+                key: (
+                    {name: value for name, value in data.items() if name != "mismatches"}
+                    if isinstance(data, dict)
+                    else data
+                )
+                for key, data in report.items()
+            },
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":

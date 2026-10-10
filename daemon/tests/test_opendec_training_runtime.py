@@ -8,12 +8,14 @@ from scripts.opendec_training_runtime import validate_training_versions
 
 
 def test_accepts_pinned_openjev_training_stack_with_cuda_torch_suffix():
-    validate_training_versions({
-        "torch": "2.8.0+cu128",
-        "transformers": "5.10.2",
-        "peft": "0.19.1",
-        "accelerate": "1.13.0",
-    })
+    validate_training_versions(
+        {
+            "torch": "2.8.0+cu128",
+            "transformers": "5.10.2",
+            "peft": "0.19.1",
+            "accelerate": "1.13.0",
+        }
+    )
 
 
 @pytest.mark.parametrize(
@@ -55,8 +57,9 @@ def test_openjev_scoring_entry_points_fail_before_loading_a_model(monkeypatch, t
 
     monkeypatch.setattr(evaluate_world_general_qlora, "block_jev_output_use", lambda: None)
     with pytest.raises(RuntimeError, match="unsupported research runtime"):
-        evaluate_world_general_qlora.evaluate(tmp_path / "adapter", tmp_path / "report.json",
-                                              tmp_path / "reference.json")
+        evaluate_world_general_qlora.evaluate(
+            tmp_path / "adapter", tmp_path / "report.json", tmp_path / "reference.json"
+        )
 
     request = {"state": {}, "kind": "noul", "question": "Is this safe?", "options": ["no", "yes"]}
     with pytest.raises(RuntimeError, match="unsupported research runtime"):

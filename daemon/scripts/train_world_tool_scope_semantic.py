@@ -43,20 +43,20 @@ def load_cases(path: Path, expected_sha256: str, split: str) -> tuple[ScopeCase,
         identifier = row["id"]
         request = row["request"]
         tool = request["tool"]
-        if identifier in seen or not all(isinstance(value, str) and value.strip() for value in
-                                      (identifier, request["task"], tool["name"], tool["description"])):
+        if identifier in seen or not all(
+            isinstance(value, str) and value.strip()
+            for value in (identifier, request["task"], tool["name"], tool["description"])
+        ):
             raise ValueError(f"Invalid or duplicate TBAC {split} row")
         if type(row["label"]["relevant"]) is not bool:
             raise ValueError(f"Nonboolean TBAC {split} label")
         seen.add(identifier)
         action = f"Invoke MCP tool {tool['name']}: {tool['description']}"
-        cases.append(ScopeCase(identifier, request["task"], action,
-                               row["label"]["relevant"], split))
+        cases.append(ScopeCase(identifier, request["task"], action, row["label"]["relevant"], split))
     return tuple(cases)
 
 
-def split_validation(cases: tuple[ScopeCase, ...]) -> tuple[tuple[ScopeCase, ...],
-                                                            tuple[ScopeCase, ...]]:
+def split_validation(cases: tuple[ScopeCase, ...]) -> tuple[tuple[ScopeCase, ...], tuple[ScopeCase, ...]]:
     """Keep every tool candidate for one user task in the same partition."""
     train, calibration = [], []
     for case in cases:
@@ -80,55 +80,69 @@ def main() -> None:
     args = parser.parse_args()
     if args.max_length < 64 or args.artifact.exists() or args.report.exists():
         parser.error("Use max-length >=64 and fresh artifact/report paths")
-    validation = load_cases(args.dataset_dir / "validation.json", DATASET_HASHES["validation"],
-                            "validation")
+    validation = load_cases(args.dataset_dir / "validation.json", DATASET_HASHES["validation"], "validation")
     test = load_cases(args.dataset_dir / "test.json", DATASET_HASHES["test"], "test")
     train, calibration = split_validation(validation)
-    if {case.id for case in validation} & {case.id for case in test} or \
-            {case.request for case in validation} & {case.request for case in test}:
+    if {case.id for case in validation} & {case.id for case in test} or {case.request for case in validation} & {
+        case.request for case in test
+    }:
         raise ValueError("TBAC source test overlaps validation")
-    cases = {"train": train, "calibration": calibration, "test": test,
-             "heliox": tuple(HELIOX_CASES)}
+    cases = {"train": train, "calibration": calibration, "test": test, "heliox": tuple(HELIOX_CASES)}
 
     import torch
     from transformers import AutoTokenizer, Qwen3_5ForCausalLM
 
     if not torch.cuda.is_available() or torch.cuda.mem_get_info()[0] < 5 * 1024**3:
         raise RuntimeError("At least 5 GiB free CUDA memory is required")
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, revision=MODEL_REVISION,
-                                               local_files_only=True)
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, revision=MODEL_REVISION, local_files_only=True)
     model, loading = Qwen3_5ForCausalLM.from_pretrained(
-        MODEL_ID, revision=MODEL_REVISION, local_files_only=True,
-        dtype=torch.bfloat16, attn_implementation="eager",
-        device_map={"": "cuda:0"}, output_loading_info=True)
+        MODEL_ID,
+        revision=MODEL_REVISION,
+        local_files_only=True,
+        dtype=torch.bfloat16,
+        attn_implementation="eager",
+        device_map={"": "cuda:0"},
+        output_loading_info=True,
+    )
     if loading.get("missing_keys"):
         raise RuntimeError("Pinned text backbone has missing weights")
     model.eval()
     features, labels, excluded = {}, {}, {}
     for name, part in cases.items():
-        features[name], labels[name], excluded[name] = embed_cases(
-            model, tokenizer, part, args.max_length, name)
+        features[name], labels[name], excluded[name] = embed_cases(model, tokenizer, part, args.max_length, name)
     del model
     normalized, mean, scale = normalize(features)
-    head, threshold, trials = select_head(normalized["train"], labels["train"],
-                                           normalized["calibration"], labels["calibration"])
+    head, threshold, trials = select_head(
+        normalized["train"], labels["train"], normalized["calibration"], labels["calibration"]
+    )
     args.artifact.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(args.artifact, weights=head.coef_.astype(np.float32),
-                        bias=head.intercept_.astype(np.float32), mean=mean.astype(np.float32),
-                        scale=scale.astype(np.float32), threshold=threshold,
-                        model_revision=MODEL_REVISION)
+    np.savez_compressed(
+        args.artifact,
+        weights=head.coef_.astype(np.float32),
+        bias=head.intercept_.astype(np.float32),
+        mean=mean.astype(np.float32),
+        scale=scale.astype(np.float32),
+        threshold=threshold,
+        model_revision=MODEL_REVISION,
+    )
     scores = {name: head.predict_proba(values)[:, 1] for name, values in normalized.items()}
     report = {
         "purpose": "research_only_world_task_to_tool_scope_head",
-        "model": MODEL_ID, "revision": MODEL_REVISION,
+        "model": MODEL_ID,
+        "revision": MODEL_REVISION,
         "prompt_sha256": hashlib.sha256(SYSTEM_PROMPT.encode()).hexdigest(),
-        "dataset": {"url": "https://github.com/outshift-open/tbac-research-datasets",
-                    "revision": DATASET_REVISION, "sha256": DATASET_HASHES,
-                    "license": "Apache-2.0"},
+        "dataset": {
+            "url": "https://github.com/outshift-open/tbac-research-datasets",
+            "revision": DATASET_REVISION,
+            "sha256": DATASET_HASHES,
+            "license": "Apache-2.0",
+        },
         "max_length": args.max_length,
         "rows": {name: len(part) for name, part in cases.items()},
-        "excluded_overlong": excluded, "regularization_trials": trials,
-        "selected_C": float(head.C), "calibration_threshold": threshold,
+        "excluded_overlong": excluded,
+        "regularization_trials": trials,
+        "selected_C": float(head.C),
+        "calibration_threshold": threshold,
         "calibration": metrics(labels["calibration"], scores["calibration"], threshold),
         "test_default": metrics(labels["test"], scores["test"], 0.5),
         "test_cautious": metrics(labels["test"], scores["test"], threshold),
@@ -136,11 +150,14 @@ def main() -> None:
         "heliox_transfer_cautious": metrics(labels["heliox"], scores["heliox"], threshold),
         "artifact_sha256": hashlib.sha256(args.artifact.read_bytes()).hexdigest(),
         "limitation": "Public task-tool relevance and inspected synthetic Heliox transfer only; "
-                      "no Jev parity, live desktop evidence, world-model promotion, or execution authority.",
+        "no Jev parity, live desktop evidence, world-model promotion, or execution authority.",
     }
     args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps({name: report[name] for name in
-                      ("test_default", "test_cautious", "heliox_transfer_cautious")}, indent=2))
+    print(
+        json.dumps(
+            {name: report[name] for name in ("test_default", "test_cautious", "heliox_transfer_cautious")}, indent=2
+        )
+    )
 
 
 if __name__ == "__main__":

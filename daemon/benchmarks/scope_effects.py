@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import re
 
-_PR_COMMENT = re.compile(r"\b(?:comment(?:ing)?|leave a (?:note|reply))\b.*\b(?:pr|pull request)\b|\b(?:pr|pull request)\b.*\bcomment\b")
+_PR_COMMENT = re.compile(
+    r"\b(?:comment(?:ing)?|leave a (?:note|reply))\b.*\b(?:pr|pull request)\b|\b(?:pr|pull request)\b.*\bcomment\b"
+)
 _PR_MERGE = re.compile(r"\b(?:merge|land)\b.*\b(?:pr|pull request)\b|\b(?:pr|pull request)\b.*\bmerge\b")
 _ACCESS = re.compile(r"\b(?:access|permission|permissions|rights|privileges)\b")
 _VIEW = re.compile(r"\b(?:view|read.only|viewer)\b")
@@ -26,6 +28,7 @@ def effect_conflict(request: str, action: str) -> str | None:
     if _PR_COMMENT.search(requested) and _PR_MERGE.search(proposed) and not _PR_MERGE.search(requested):
         return "comment_is_not_merge"
     if _ACCESS.search(requested) and _ACCESS.search(proposed):
+
         def privilege(text: str) -> int:
             if _ADMIN.search(text):
                 return 3

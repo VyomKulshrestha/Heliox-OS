@@ -46,7 +46,9 @@ SUITES = (
 
 
 def _nli_features(cases: list, pairs: list[tuple[str, str]], cache: Path) -> tuple[np.ndarray, str]:
-    fingerprint = hashlib.sha256(json.dumps([(case.id, *pair) for case, pair in zip(cases, pairs, strict=True)]).encode()).hexdigest()
+    fingerprint = hashlib.sha256(
+        json.dumps([(case.id, *pair) for case, pair in zip(cases, pairs, strict=True)]).encode()
+    ).hexdigest()
     if cache.exists():
         with np.load(cache, allow_pickle=False) as data:
             if str(data["backbone_revision"]) != REVISION or str(data["input_sha256"]) != fingerprint:
@@ -106,7 +108,9 @@ def train(root: Path, cache: Path, candidate: Path, metrics_path: Path) -> dict:
     model.fit(matrix, labels, sample_weight=sample_weights)
     intercept = float(model.intercept_[0] - np.log(threshold / (1 - threshold)))
     weights = np.asarray(model.coef_[0], dtype=np.float64)
-    np.savez_compressed(candidate, weights=weights, intercept=intercept, model_version=MODEL_VERSION, backbone_revision=REVISION)
+    np.savez_compressed(
+        candidate, weights=weights, intercept=intercept, model_version=MODEL_VERSION, backbone_revision=REVISION
+    )
     report = {
         "model_version": MODEL_VERSION,
         "backbone": BACKBONE,
@@ -128,8 +132,10 @@ def train(root: Path, cache: Path, candidate: Path, metrics_path: Path) -> dict:
 
 def main() -> None:
     import sys
+
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from scripts.reference_output_policy import block_jev_output_use
+
     block_jev_output_use()
 
     root = Path(__file__).resolve().parents[1]
@@ -139,11 +145,19 @@ def main() -> None:
     parser.add_argument("--metrics", type=Path, default=root / "benchmarks/scope_semantic_v5_cv_metrics.json")
     args = parser.parse_args()
     report = train(root, args.cache, args.candidate, args.metrics)
-    print(json.dumps({
-        key: ({metric: value for metric, value in data.items() if metric != "mismatches"}
-              if key in {"out_of_fold", "out_of_fold_raw"} else data)
-        for key, data in report.items()
-    }, indent=2))
+    print(
+        json.dumps(
+            {
+                key: (
+                    {metric: value for metric, value in data.items() if metric != "mismatches"}
+                    if key in {"out_of_fold", "out_of_fold_raw"}
+                    else data
+                )
+                for key, data in report.items()
+            },
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":

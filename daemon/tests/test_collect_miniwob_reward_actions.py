@@ -27,13 +27,15 @@ def test_visible_candidates_include_tabs_and_popup_hints_without_hidden_targets(
                 </div>
             """)
             candidates = collector.candidate_actions(page)
-            assert any(row["role"] == "tab" and row["label"] == "Section 1"
-                       for row in candidates)
-            assert any(row["role"] == "menuitem" and row["has_popup"] == "true"
-                       and row["icon_hint"] == "ui-icon ui-icon-play"
-                       and "Hidden target" not in row["label"] for row in candidates)
-            assert all(row["role"] != "menu" and row["label"] != "Disabled"
-                       for row in candidates)
+            assert any(row["role"] == "tab" and row["label"] == "Section 1" for row in candidates)
+            assert any(
+                row["role"] == "menuitem"
+                and row["has_popup"] == "true"
+                and row["icon_hint"] == "ui-icon ui-icon-play"
+                and "Hidden target" not in row["label"]
+                for row in candidates
+            )
+            assert all(row["role"] != "menu" and row["label"] != "Disabled" for row in candidates)
             assert "ui-icon-stop" in collector.goal_description(page)
         finally:
             browser.close()
@@ -76,9 +78,14 @@ def test_collects_contrastive_terminal_actions_from_fresh_resets(monkeypatch) ->
     monkeypatch.setattr(collector, "_reset", reset)
     monkeypatch.setattr(collector, "visual_feature", lambda _: np.zeros(256, dtype=np.float32))
     monkeypatch.setattr(collector, "goal_description", lambda _: "Click ONE")
-    monkeypatch.setattr(collector, "candidate_actions", lambda _: [
-        {"x": 10, "y": 20, "label": "ONE"}, {"x": 30, "y": 40, "label": "TWO"},
-    ])
+    monkeypatch.setattr(
+        collector,
+        "candidate_actions",
+        lambda _: [
+            {"x": 10, "y": 20, "label": "ONE"},
+            {"x": 30, "y": 40, "label": "TWO"},
+        ],
+    )
     rows, attempted = collector.collect_group(None, None, "task", "seed", 2)
     assert attempted == 2
     assert [row["reward"] for row in rows] == [1, -1]
@@ -96,13 +103,16 @@ def test_rejects_mismatched_reset_and_cross_split_state(monkeypatch) -> None:
         return context, _Page(), [], bytes([len(contexts)]), "same DOM"
 
     monkeypatch.setattr(collector, "_reset", reset)
-    monkeypatch.setattr(
-        collector, "visual_feature", lambda png: np.full(256, png[0], dtype=np.float32)
-    )
+    monkeypatch.setattr(collector, "visual_feature", lambda png: np.full(256, png[0], dtype=np.float32))
     monkeypatch.setattr(collector, "goal_description", lambda _: "Click ONE")
-    monkeypatch.setattr(collector, "candidate_actions", lambda _: [
-        {"x": 10, "y": 20}, {"x": 30, "y": 40},
-    ])
+    monkeypatch.setattr(
+        collector,
+        "candidate_actions",
+        lambda _: [
+            {"x": 10, "y": 20},
+            {"x": 30, "y": 40},
+        ],
+    )
     with pytest.raises(ValueError, match="exact measured state"):
         collector.collect_group(None, None, "task", "seed", 2)
     assert all(context.closed for context in contexts)

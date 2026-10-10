@@ -29,12 +29,10 @@ def test_outcome_selection_is_group_disjoint_and_ood() -> None:
 
 def test_selector_balances_classes_without_reusing_tasks() -> None:
     candidates = [
-        {"id": f"base-{index}:{index}", "group": f"base-{index}",
-         "domain": "base", "correct": index % 2 == 0}
+        {"id": f"base-{index}:{index}", "group": f"base-{index}", "domain": "base", "correct": index % 2 == 0}
         for index in range(20)
     ] + [
-        {"id": f"new-{index}:{index}", "group": f"new-{index}",
-         "domain": "new", "correct": index % 2 == 0}
+        {"id": f"new-{index}:{index}", "group": f"new-{index}", "domain": "new", "correct": index % 2 == 0}
         for index in range(4)
     ]
     sizes = {"train": 4, "calibration": 2, "development": 2, "final": 2, "ood": 4}
@@ -43,8 +41,6 @@ def test_selector_balances_classes_without_reusing_tasks() -> None:
     ids = [case_id for rows in first.values() for case_id in rows]
     assert len(ids) == len(set(ids)) == sum(sizes.values())
     assert all(case_id.startswith("new-") for case_id in first["ood"])
-    assert all(not case_id.startswith("new-") for name in first if name != "ood"
-               for case_id in first[name])
+    assert all(not case_id.startswith("new-") for name in first if name != "ood" for case_id in first[name])
     lookup = {row["id"]: row["correct"] for row in candidates}
-    assert all(sum(lookup[case_id] for case_id in rows) * 2 == len(rows)
-               for rows in first.values())
+    assert all(sum(lookup[case_id] for case_id in rows) * 2 == len(rows) for rows in first.values())

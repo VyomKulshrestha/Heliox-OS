@@ -17,12 +17,12 @@ def world_scope_features(cases) -> np.ndarray:
     if not cases:
         raise ValueError("At least one scope case is required")
     request_action = feature_matrix([(case.request, case.action) for case in cases])
-    history_action = feature_matrix(
-        [(" ".join(case.prior_tool_calls), case.action) for case in cases]
+    history_action = feature_matrix([(" ".join(case.prior_tool_calls), case.action) for case in cases])
+    counts = csr_matrix(
+        np.asarray(
+            [[min(len(case.prior_tool_calls), 2) / 2, float(bool(case.prior_tool_calls))] for case in cases],
+            dtype=np.float32,
+        )
     )
-    counts = csr_matrix(np.asarray([
-        [min(len(case.prior_tool_calls), 2) / 2, float(bool(case.prior_tool_calls))]
-        for case in cases
-    ], dtype=np.float32))
     combined = hstack((request_action, history_action, counts), format="csr")
     return np.asarray(combined.toarray(), dtype=np.float32)

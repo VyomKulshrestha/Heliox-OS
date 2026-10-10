@@ -12,14 +12,12 @@ from scripts.train_world_latent_transition import (
 )
 
 
-def _row(group: str, state: str = "screen", action: str = "click",
-         target: str = "window") -> dict:
+def _row(group: str, state: str = "screen", action: str = "click", target: str = "window") -> dict:
     return {
         "group_sha256": group,
         "messages": [
             {"role": "system", "content": "predict"},
-            {"role": "user", "content": f"Current state:\n{state}\n\nAction:\n{action}"
-             "\n\nNext observed screen state:"},
+            {"role": "user", "content": f"Current state:\n{state}\n\nAction:\n{action}\n\nNext observed screen state:"},
             {"role": "assistant", "content": target},
         ],
     }
@@ -37,9 +35,7 @@ def test_shared_text_space_and_group_disjoint_validation() -> None:
     assert np.array_equal(text_vector("Window opened", 64), text_vector("window OPENED", 64))
     rows = [_row("a"), _row("a"), _row("b"), _row("c")]
     fit, validation = task_group_split(rows, seed=7)
-    assert {row["group_sha256"] for row in fit}.isdisjoint(
-        {row["group_sha256"] for row in validation}
-    )
+    assert {row["group_sha256"] for row in fit}.isdisjoint({row["group_sha256"] for row in validation})
     assert len(fit) + len(validation) == len(rows)
     state, action, target = encode_rows(rows[:1], 64)
     assert state.shape == action.shape == target.shape == (1, 64)

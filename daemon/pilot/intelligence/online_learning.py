@@ -103,9 +103,7 @@ class _VerifiedClassifier:
         self.negative = 0
         self.drift_events = 0
 
-    def learn(
-        self, features: dict[str, float], label: bool, occurred_at: str, *, group_id: str = ""
-    ) -> None:
+    def learn(self, features: dict[str, float], label: bool, occurred_at: str, *, group_id: str = "") -> None:
         probability = float(self.model.predict_proba_one(features).get(True, 0.5))
         self.detector.update(abs(float(label) - probability))
         self.model.learn_one(features, label)
@@ -246,10 +244,13 @@ class VerifiedOnlineLearner:
         )
         action_key = f"action={_safe_bucket(action_type)}"
         source_key = f"source={_safe_bucket(source)}"
-        support = len({
-            sample.group_id for sample in self._transitions.samples
-            if action_key in sample.features and source_key in sample.features
-        })
+        support = len(
+            {
+                sample.group_id
+                for sample in self._transitions.samples
+                if action_key in sample.features and source_key in sample.features
+            }
+        )
         if support < MINIMUM_PROMOTION_LABELS:
             return AdaptationScore(0.5, support, "candidate")
         scored = self._transitions.score(features)
@@ -342,8 +343,14 @@ class VerifiedOnlineLearner:
             action_data = action if isinstance(action, dict) else {}
             action_type = str(action_data.get("action_type") or payload.get("action_type") or "")
             index = payload.get("index")
-            if (event.plan_id and event.action_id and action_type
-                    and isinstance(index, int) and not isinstance(index, bool) and index >= 0):
+            if (
+                event.plan_id
+                and event.action_id
+                and action_type
+                and isinstance(index, int)
+                and not isinstance(index, bool)
+                and index >= 0
+            ):
                 if event.plan_id not in self._plan_actions and len(self._plan_actions) >= MAX_PENDING_PLANS:
                     self._forget_plan(next(iter(self._plan_actions)))
                 self._plan_actions.setdefault(event.plan_id, {})[index] = (event.action_id, _safe_bucket(action_type))
@@ -361,12 +368,18 @@ class VerifiedOnlineLearner:
             if str(payload.get("output_excerpt", "")).startswith("(dry run)"):
                 return
             index = payload.get("index")
-            if (event.plan_id and event.action_id in self._action_features
-                    and isinstance(index, int) and not isinstance(index, bool) and index >= 0):
+            if (
+                event.plan_id
+                and event.action_id in self._action_features
+                and isinstance(index, int)
+                and not isinstance(index, bool)
+                and index >= 0
+            ):
                 planned = self._plan_actions.get(event.plan_id, {}).get(index)
                 if planned is not None and planned[0] == event.action_id:
                     self._completed_actions.setdefault(event.plan_id, {})[index] = (
-                        event.action_id, payload.get("success") is True,
+                        event.action_id,
+                        payload.get("success") is True,
                     )
         elif event_type == ExperienceEventType.OBSERVATION:
             observation_time = _parse_time(event.occurred_at)
@@ -425,19 +438,29 @@ class VerifiedOnlineLearner:
         verification = event.payload.get("verification")
         result_count = event.payload.get("result_count")
         try:
-            if (not isinstance(verification, dict) or not isinstance(result_count, int)
-                    or isinstance(result_count, bool) or result_count <= 0
-                    or set(plan_actions) != set(range(result_count))):
+            if (
+                not isinstance(verification, dict)
+                or not isinstance(result_count, int)
+                or isinstance(result_count, bool)
+                or result_count <= 0
+                or set(plan_actions) != set(range(result_count))
+            ):
                 return
             failed = verification.get("failed_actions")
             observed = verification.get("independently_observed_actions")
             passed = verification.get("passed")
-            if (not isinstance(failed, list) or not isinstance(observed, list)
-                    or not isinstance(passed, bool)
-                    or any(not isinstance(index, int) or isinstance(index, bool)
-                           or index not in plan_actions for index in (*failed, *observed))
-                    or len(set(failed)) != len(failed) or len(set(observed)) != len(observed)
-                    or passed != (not failed)):
+            if (
+                not isinstance(failed, list)
+                or not isinstance(observed, list)
+                or not isinstance(passed, bool)
+                or any(
+                    not isinstance(index, int) or isinstance(index, bool) or index not in plan_actions
+                    for index in (*failed, *observed)
+                )
+                or len(set(failed)) != len(failed)
+                or len(set(observed)) != len(observed)
+                or passed != (not failed)
+            ):
                 return
             failed_indices = set(failed)
             for index in observed:

@@ -55,8 +55,15 @@ def main() -> None:
     previous = json.loads(args.previous_manifest.read_text(encoding="utf-8"))
     manifest = reserve(args.source, previous, sha256_file(args.previous_manifest))
     args.output.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps({"groups_excluded": manifest["previous_task_groups"],
-                      "splits": {name: len(ids) for name, ids in manifest["splits"].items()}}, indent=2))
+    print(
+        json.dumps(
+            {
+                "groups_excluded": manifest["previous_task_groups"],
+                "splits": {name: len(ids) for name, ids in manifest["splits"].items()},
+            },
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":

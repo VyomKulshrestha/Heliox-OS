@@ -54,24 +54,29 @@ def load_cases(path: Path, *, history_calls: int = 0) -> list[ExternalCase]:
                     calls[key] = call
                     history[key] = prior
                 completed_actions.extend(
-                    call["function_name"] + " " + json.dumps(
-                        call["arguments"], sort_keys=True, ensure_ascii=False, separators=(",", ":")
-                    ) for call in step_calls
+                    call["function_name"]
+                    + " "
+                    + json.dumps(call["arguments"], sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+                    for call in step_calls
                 )
             for label in scope["labels"]:
                 if label["golden_label"] not in {"in_scope", "out_of_scope"}:
                     raise ValueError("Unknown expert scope label")
                 call = calls[(label["step_id"], label["tool_call_id"])]
-                action = call["function_name"] + " " + json.dumps(
-                    call["arguments"], sort_keys=True, ensure_ascii=False, separators=(",", ":")
+                action = (
+                    call["function_name"]
+                    + " "
+                    + json.dumps(call["arguments"], sort_keys=True, ensure_ascii=False, separators=(",", ":"))
                 )
-                cases.append(ExternalCase(
-                    case_id=f"{scope['trajectory_id']}:{label['step_id']}:{label['tool_call_id']}",
-                    request=request,
-                    action=action,
-                    in_scope=label["golden_label"] == "in_scope",
-                    prior_actions=history[(label["step_id"], label["tool_call_id"])],
-                ))
+                cases.append(
+                    ExternalCase(
+                        case_id=f"{scope['trajectory_id']}:{label['step_id']}:{label['tool_call_id']}",
+                        request=request,
+                        action=action,
+                        in_scope=label["golden_label"] == "in_scope",
+                        prior_actions=history[(label["step_id"], label["tool_call_id"])],
+                    )
+                )
     if len({case.case_id for case in cases}) != len(cases):
         raise ValueError("Duplicate external call ID")
     return cases
@@ -89,8 +94,11 @@ def balanced_sample(cases: list[ExternalCase], *, per_class: int, seed: int) -> 
 
 
 def evaluate(cases: list[ExternalCase], probabilities: np.ndarray) -> dict:
-    if (probabilities.shape != (len(cases),) or not np.all(np.isfinite(probabilities))
-            or np.any((probabilities < 0) | (probabilities > 1))):
+    if (
+        probabilities.shape != (len(cases),)
+        or not np.all(np.isfinite(probabilities))
+        or np.any((probabilities < 0) | (probabilities > 1))
+    ):
         raise ValueError("Expected one finite probability per external case")
     labels = np.asarray([case.in_scope for case in cases], dtype=bool)
     if not np.any(labels) or not np.any(~labels):
@@ -137,9 +145,9 @@ def main() -> None:
 
     untruncated = Tokenizer.from_file(str(tokenizer_path))
     lengths = [len(untruncated.encode(case.request, case.action).ids) for case in sample]
-    head = SemanticScopeHead(args.candidate, extractor=NliFeatureExtractor(
-        model_path, tokenizer_path, max_length=args.max_length
-    ))
+    head = SemanticScopeHead(
+        args.candidate, extractor=NliFeatureExtractor(model_path, tokenizer_path, max_length=args.max_length)
+    )
     if not head.available:
         raise ValueError("Incompatible semantic scope candidate")
     scores = head.predict_many_with_raw([(case.request, case.action) for case in sample])
@@ -165,11 +173,19 @@ def main() -> None:
         "limitation": "Expert-labeled offensive-security tool calls; not Jev agreement or general desktop safety.",
     }
     args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps({
-        key: ({metric: value for metric, value in data.items() if metric != "mismatch_ids"}
-              if key in {"result", "raw_result"} else data)
-        for key, data in report.items()
-    }, indent=2))
+    print(
+        json.dumps(
+            {
+                key: (
+                    {metric: value for metric, value in data.items() if metric != "mismatch_ids"}
+                    if key in {"result", "raw_result"}
+                    else data
+                )
+                for key, data in report.items()
+            },
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":

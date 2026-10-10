@@ -148,11 +148,16 @@ def test_branch_pairs_require_identical_prestate_and_distinct_outcome(monkeypatc
     assert [row["reward"] for row in pair] == [1, -1]
     assert all(context.closed for context in contexts)
 
-    monkeypatch.setattr(collector, "visible_semantics", lambda page, point=None: {
-        "text": "after" if point is None else "before", "target": "click"})
+    monkeypatch.setattr(
+        collector,
+        "visible_semantics",
+        lambda page, point=None: {"text": "after" if point is None else "before", "target": "click"},
+    )
     pair, _ = collector.collect_group(None, None, "task", "seed", 2, include_semantics=True)
-    assert all(row["state_text"] == "before" and row["target_text"] == "after"
-               and row["action_label"] == "click" for row in pair)
+    assert all(
+        row["state_text"] == "before" and row["target_text"] == "after" and row["action_label"] == "click"
+        for row in pair
+    )
 
     def changed_reset(*_args):
         context = _Context()
@@ -170,13 +175,15 @@ def test_nonterminal_only_excludes_terminal_overlay_branches(monkeypatch) -> Non
         def evaluate(self, _script: str) -> dict:
             return {"done": self.x == 10, "reward": -1 if self.x == 10 else None}
 
-    monkeypatch.setattr(collector, "_reset", lambda *_args: (
-        _Context(), MixedPage(), [(10, 20), (30, 40), (50, 60)], b"before", "same DOM"))
+    monkeypatch.setattr(
+        collector,
+        "_reset",
+        lambda *_args: (_Context(), MixedPage(), [(10, 20), (30, 40), (50, 60)], b"before", "same DOM"),
+    )
     monkeypatch.setattr(
         collector, "visual_feature", lambda png, size=16: np.full(size * size, png[0], dtype=np.float32)
     )
-    pair, attempted = collector.collect_group(
-        None, None, "task", "seed", 3, nonterminal_only=True)
+    pair, attempted = collector.collect_group(None, None, "task", "seed", 3, nonterminal_only=True)
     assert attempted == 3
     assert len(pair) == 2
     assert all(row["done"] is False for row in pair)
@@ -184,18 +191,21 @@ def test_nonterminal_only_excludes_terminal_overlay_branches(monkeypatch) -> Non
 
 
 def test_semantic_difference_rejects_focus_only_visual_branches(monkeypatch) -> None:
-    monkeypatch.setattr(collector, "_reset", lambda *_args: (
-        _Context(), _Page(), [(10, 20), (30, 40), (50, 60)], b"before", "same DOM"))
+    monkeypatch.setattr(
+        collector, "_reset", lambda *_args: (_Context(), _Page(), [(10, 20), (30, 40), (50, 60)], b"before", "same DOM")
+    )
     monkeypatch.setattr(
         collector, "visual_feature", lambda png, size=16: np.full(size * size, png[0], dtype=np.float32)
     )
-    monkeypatch.setattr(collector, "visible_semantics", lambda page, point=None: {
-        "text": "changed" if point is None and page.x == 50 else "same",
-        "target": "click",
-    })
-    pair, attempted = collector.collect_group(
-        None, None, "task", "seed", 3, require_semantic_difference=True
+    monkeypatch.setattr(
+        collector,
+        "visible_semantics",
+        lambda page, point=None: {
+            "text": "changed" if point is None and page.x == 50 else "same",
+            "target": "click",
+        },
     )
+    pair, attempted = collector.collect_group(None, None, "task", "seed", 3, require_semantic_difference=True)
     assert attempted == 3
     assert [row["coords"][0] for row in pair] == [10 / 320, 50 / 320]
     assert pair[0]["target_text"] != pair[1]["target_text"]

@@ -39,9 +39,7 @@ def rouge_l_f1(predicted: str, reference: str) -> float:
     for word in prediction:
         current = [0] * (len(truth) + 1)
         for index, expected in enumerate(truth, start=1):
-            current[index] = previous[index - 1] + 1 if word == expected else max(
-                previous[index], current[index - 1]
-            )
+            current[index] = previous[index - 1] + 1 if word == expected else max(previous[index], current[index - 1])
         previous = current
     return 2 * previous[-1] / (len(prediction) + len(truth))
 
@@ -65,10 +63,13 @@ def load_checkpoint(path: Path, selected: list[dict], signature: str) -> list[di
     for line in path.read_text(encoding="utf-8").splitlines():
         item = json.loads(line)
         index = len(completed)
-        if (index >= len(selected) or item.get("signature") != signature
-                or item.get("case_index") != index
-                or item.get("group_sha256") != selected[index]["group_sha256"]
-                or item.get("row_index") != selected[index]["row_index"]):
+        if (
+            index >= len(selected)
+            or item.get("signature") != signature
+            or item.get("case_index") != index
+            or item.get("group_sha256") != selected[index]["group_sha256"]
+            or item.get("row_index") != selected[index]["row_index"]
+        ):
             raise ValueError("Checkpoint does not match selected held-out cases or adapter")
         completed.append(item)
     return completed
@@ -84,15 +85,22 @@ def main() -> None:
     parser.add_argument("--checkpoint", type=Path)
     parser.add_argument("--max-cases", type=int, default=12)
     parser.add_argument("--case-index", type=int)
-    parser.add_argument("--include-text", action="store_true",
-                        help="Store source reference and generated text locally for an explicit audit")
+    parser.add_argument(
+        "--include-text",
+        action="store_true",
+        help="Store source reference and generated text locally for an explicit audit",
+    )
     parser.add_argument("--max-input-tokens", type=int, default=1536)
     parser.add_argument("--max-target-tokens", type=int, default=384)
     parser.add_argument("--seed", type=int, default=20260925)
     args = parser.parse_args()
     adapter_weights = args.adapter / "adapter_model.safetensors"
-    if (not args.rows.is_file() or not adapter_weights.is_file() or args.report.exists()
-            or min(args.max_cases, args.max_input_tokens, args.max_target_tokens) < 1):
+    if (
+        not args.rows.is_file()
+        or not adapter_weights.is_file()
+        or args.report.exists()
+        or min(args.max_cases, args.max_input_tokens, args.max_target_tokens) < 1
+    ):
         parser.error("Use existing rows and adapter, a fresh report, and positive limits")
     checkpoint = args.checkpoint or args.report.with_suffix(".partial.jsonl")
     if checkpoint == args.report:
@@ -113,12 +121,13 @@ def main() -> None:
     candidates = []
     for row in partitions["eval"]:
         prompt = tokenizer.apply_chat_template(
-            row["messages"][:2], tokenize=False, add_generation_prompt=True,
+            row["messages"][:2],
+            tokenize=False,
+            add_generation_prompt=True,
             enable_thinking=False,
         )
         ids = tokenizer(prompt, add_special_tokens=False)["input_ids"]
-        target_ids = tokenizer(row["messages"][2]["content"],
-                               add_special_tokens=False)["input_ids"]
+        target_ids = tokenizer(row["messages"][2]["content"], add_special_tokens=False)["input_ids"]
         if len(ids) <= args.max_input_tokens and len(target_ids) <= args.max_target_tokens:
             candidates.append({**row, "prompt_ids": ids})
     selected = select_cases(candidates, seed=args.seed, max_cases=args.max_cases)
@@ -131,22 +140,36 @@ def main() -> None:
     source_hash = hashlib.sha256(args.rows.read_bytes()).hexdigest()
     with adapter_weights.open("rb") as weights_file:
         adapter_hash = hashlib.file_digest(weights_file, "sha256").hexdigest()
-    signature = hashlib.sha256(json.dumps({
-        "source": source_hash, "adapter": adapter_hash, "seed": args.seed,
-        "max_cases": args.max_cases, "max_input_tokens": args.max_input_tokens,
-        "max_target_tokens": args.max_target_tokens, "base_revision": REVISION,
-        "case_index": args.case_index, "include_text": args.include_text,
-    }, sort_keys=True).encode()).hexdigest()
+    signature = hashlib.sha256(
+        json.dumps(
+            {
+                "source": source_hash,
+                "adapter": adapter_hash,
+                "seed": args.seed,
+                "max_cases": args.max_cases,
+                "max_input_tokens": args.max_input_tokens,
+                "max_target_tokens": args.max_target_tokens,
+                "base_revision": REVISION,
+                "case_index": args.case_index,
+                "include_text": args.include_text,
+            },
+            sort_keys=True,
+        ).encode()
+    ).hexdigest()
     report_rows = load_checkpoint(checkpoint, selected, signature)
-    print(json.dumps({"event": "resumed", "completed": len(report_rows),
-                      "total": len(selected)}), flush=True)
+    print(json.dumps({"event": "resumed", "completed": len(report_rows), "total": len(selected)}), flush=True)
     model = AutoModelForCausalLM.from_pretrained(
-        snapshot, local_files_only=True,
+        snapshot,
+        local_files_only=True,
         quantization_config=BitsAndBytesConfig(
-            load_in_4bit=True, bnb_4bit_quant_type="nf4", bnb_4bit_use_double_quant=True,
+            load_in_4bit=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_use_double_quant=True,
             bnb_4bit_compute_dtype=torch.bfloat16,
         ),
-        dtype=torch.bfloat16, device_map={"": "cuda:0"}, attn_implementation="eager",
+        dtype=torch.bfloat16,
+        device_map={"": "cuda:0"},
+        attn_implementation="eager",
     )
     model = PeftModel.from_pretrained(model, args.adapter, is_trainable=False)
     model.eval()
@@ -162,25 +185,35 @@ def main() -> None:
                 if name == "base":
                     with model.disable_adapter():
                         output = model.generate(
-                            input_ids, attention_mask=torch.ones_like(input_ids),
-                            max_new_tokens=args.max_target_tokens, do_sample=False,
+                            input_ids,
+                            attention_mask=torch.ones_like(input_ids),
+                            max_new_tokens=args.max_target_tokens,
+                            do_sample=False,
                             pad_token_id=tokenizer.eos_token_id,
                         )
                 else:
                     output = model.generate(
-                        input_ids, attention_mask=torch.ones_like(input_ids),
-                        max_new_tokens=args.max_target_tokens, do_sample=False,
+                        input_ids,
+                        attention_mask=torch.ones_like(input_ids),
+                        max_new_tokens=args.max_target_tokens,
+                        do_sample=False,
                         pad_token_id=tokenizer.eos_token_id,
                     )
-            text = tokenizer.decode(output[0, input_ids.shape[1]:], skip_special_tokens=True)
-            scores[name] = {"rouge_l_f1": rouge_l_f1(text, reference),
-                            "token_f1": token_f1(text, reference),
-                            "generated_tokens": int(output.shape[1] - input_ids.shape[1])}
+            text = tokenizer.decode(output[0, input_ids.shape[1] :], skip_special_tokens=True)
+            scores[name] = {
+                "rouge_l_f1": rouge_l_f1(text, reference),
+                "token_f1": token_f1(text, reference),
+                "generated_tokens": int(output.shape[1] - input_ids.shape[1]),
+            }
             if args.include_text:
                 generated[name] = text
-        item = {"signature": signature, "case_index": case_index,
-                "row_index": row["row_index"], "group_sha256": row["group_sha256"],
-                "scores": scores}
+        item = {
+            "signature": signature,
+            "case_index": case_index,
+            "row_index": row["row_index"],
+            "group_sha256": row["group_sha256"],
+            "scores": scores,
+        }
         if args.include_text:
             item["reference"] = reference
             item["generated"] = generated
@@ -190,25 +223,30 @@ def main() -> None:
             output.flush()
             os.fsync(output.fileno())
         report_rows.append(item)
-        print(json.dumps({"event": "evaluated", "completed": len(report_rows),
-                          "total": len(selected)}), flush=True)
+        print(json.dumps({"event": "evaluated", "completed": len(report_rows), "total": len(selected)}), flush=True)
     report = {
         "purpose": "research_only_grouped_ui_transition_generation_check",
         "source_rows_sha256": source_hash,
         "base_model": {"id": MODEL, "revision": REVISION},
-        "adapter": str(args.adapter), "adapter_sha256": adapter_hash,
-        "seed": args.seed, "run_signature": signature,
-        "audited_case_index": args.case_index, "includes_source_text": args.include_text,
+        "adapter": str(args.adapter),
+        "adapter_sha256": adapter_hash,
+        "seed": args.seed,
+        "run_signature": signature,
+        "audited_case_index": args.case_index,
+        "includes_source_text": args.include_text,
         "eligible_groups": len({row["group_sha256"] for row in candidates}),
         "evaluated_groups": len(report_rows),
-        "mean_scores": {name: {
-            metric: sum(row["scores"][name][metric] for row in report_rows) / len(report_rows)
-            for metric in ("rouge_l_f1", "token_f1")
-        } for name in ("base", "adapter")},
+        "mean_scores": {
+            name: {
+                metric: sum(row["scores"][name][metric] for row in report_rows) / len(report_rows)
+                for metric in ("rouge_l_f1", "token_f1")
+            }
+            for name in ("base", "adapter")
+        },
         "cases": report_rows,
         "limitation": "Lexical overlap with source descriptions is not semantic or next-screen fidelity. "
-                      "Small, text-only task-disjoint sample; no environment-disjoint or live Heliox "
-                      "evaluation, safety claim, Jev parity, or runtime integration.",
+        "Small, text-only task-disjoint sample; no environment-disjoint or live Heliox "
+        "evaluation, safety claim, Jev parity, or runtime integration.",
     }
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")

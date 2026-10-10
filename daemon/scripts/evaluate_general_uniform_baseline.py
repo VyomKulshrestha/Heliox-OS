@@ -16,8 +16,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--limit", type=int, default=256)
     parser.add_argument("--seed", type=int, default=20260925)
-    parser.add_argument("--report", type=Path,
-                        default=root / "benchmarks/qwen_general_uniform_baseline_v2.json")
+    parser.add_argument("--report", type=Path, default=root / "benchmarks/qwen_general_uniform_baseline_v2.json")
     args = parser.parse_args()
     if not 1 <= args.limit <= 4096:
         parser.error("--limit must be 1-4096")
@@ -27,10 +26,14 @@ def main() -> None:
         if len(rows) != args.limit:
             raise ValueError(f"Not enough licensed {name} decisions")
         splits[name] = {"manifest": manifest, "metrics": uniform_baseline(rows)}
-    report = {"purpose": "label_blind_uniform_option_baseline",
-              "dataset_revision": DATASET_REVISION, "selection_seed": args.seed,
-              "limit_per_split": args.limit, "splits": splits,
-              "limitation": "Uniform ties select the first option; this is not a semantic model."}
+    report = {
+        "purpose": "label_blind_uniform_option_baseline",
+        "dataset_revision": DATASET_REVISION,
+        "selection_seed": args.seed,
+        "limit_per_split": args.limit,
+        "splits": splits,
+        "limitation": "Uniform ties select the first option; this is not a semantic model.",
+    }
     args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({name: entry["metrics"]["by_kind"] for name, entry in splits.items()}, indent=2))
 

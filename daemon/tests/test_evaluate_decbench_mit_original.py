@@ -24,9 +24,13 @@ def _task(kind: str, criteria, expected):
 
 
 def test_choice_mapping_keeps_descriptions_and_hides_gold_from_input():
-    row = evaluator.task_to_row(_task(
-        "choice", {"alpha": "First action", "beta": "Second action"}, "beta",
-    ))
+    row = evaluator.task_to_row(
+        _task(
+            "choice",
+            {"alpha": "First action", "beta": "Second action"},
+            "beta",
+        )
+    )
 
     assert row["options"] == ["alpha: First action", "beta: Second action"]
     assert row["target"] == [0.0, 1.0]
@@ -41,9 +45,13 @@ def test_choice_mapping_keeps_descriptions_and_hides_gold_from_input():
 
 
 def test_noul_mapping_preserves_both_rubric_definitions():
-    row = evaluator.task_to_row(_task(
-        "noul", {"false": "A requirement is missing", "true": "All requirements hold"}, "yes",
-    ))
+    row = evaluator.task_to_row(
+        _task(
+            "noul",
+            {"false": "A requirement is missing", "true": "All requirements hold"},
+            "yes",
+        )
+    )
 
     assert row["options"] == ["no", "yes"]
     assert "no means A requirement is missing" in row["question"]

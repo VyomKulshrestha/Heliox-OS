@@ -54,8 +54,7 @@ def _metadata(path: Path) -> dict[str, dict]:
     if any(not isinstance(record, dict) for record in records):
         raise ValueError("Metadata rows must be objects")
     ids = [record.get("sample_id") for record in records]
-    if (len(records) > 1000 or any(not isinstance(identifier, str) for identifier in ids)
-            or len(ids) != len(set(ids))):
+    if len(records) > 1000 or any(not isinstance(identifier, str) for identifier in ids) or len(ids) != len(set(ids)):
         raise ValueError("Metadata has too many or duplicate sample IDs")
     return dict(zip(ids, records))
 
@@ -67,10 +66,12 @@ def import_pairs(root: Path, selection: dict, *, representation: str = "gray16")
     if _file_sha256(metadata_path) != selection["offline_samples_sha256"]:
         raise ValueError("Offline metadata does not match the frozen selection")
     sample_ids = selection["sample_ids"]
-    if (not isinstance(sample_ids, list) or not 3 <= len(sample_ids) <= 100
-            or any(not isinstance(sample, str) or re.fullmatch(r"[0-9]{3}", sample) is None
-                   for sample in sample_ids)
-            or len(set(sample_ids)) != len(sample_ids)):
+    if (
+        not isinstance(sample_ids, list)
+        or not 3 <= len(sample_ids) <= 100
+        or any(not isinstance(sample, str) or re.fullmatch(r"[0-9]{3}", sample) is None for sample in sample_ids)
+        or len(set(sample_ids)) != len(sample_ids)
+    ):
         raise ValueError("Selection must contain distinct bounded sample IDs")
     metadata = _metadata(metadata_path)
     rows: list[dict] = []
@@ -82,9 +83,13 @@ def import_pairs(root: Path, selection: dict, *, representation: str = "gray16")
         record = metadata[sample]
         task = record.get("task_meta")
         step_count = record.get("n_steps")
-        if (not isinstance(task, str) or not task.strip()
-                or not isinstance(step_count, int) or isinstance(step_count, bool)
-                or not 1 <= step_count <= 100):
+        if (
+            not isinstance(task, str)
+            or not task.strip()
+            or not isinstance(step_count, int)
+            or isinstance(step_count, bool)
+            or not 1 <= step_count <= 100
+        ):
             raise ValueError(f"Invalid metadata for sample {sample}")
         directory = root / "offline_data" / sample
         reference = directory / "reference_trajectory.jsonl"
@@ -103,8 +108,11 @@ def import_pairs(root: Path, selection: dict, *, representation: str = "gray16")
                 reasons[f"unsupported_{action.get('type', 'unknown') if isinstance(action, dict) else 'unknown'}"] += 1
                 continue
             coords = action.get("source_coord")
-            if (not isinstance(coords, list) or len(coords) != 2
-                    or any(not isinstance(value, int) or isinstance(value, bool) for value in coords)):
+            if (
+                not isinstance(coords, list)
+                or len(coords) != 2
+                or any(not isinstance(value, int) or isinstance(value, bool) for value in coords)
+            ):
                 reasons["invalid_coordinate_or_size"] += 1
                 continue
             before = "initial.png" if index == 0 else f"step_{index - 1:03d}_after.png"
@@ -125,10 +133,17 @@ def import_pairs(root: Path, selection: dict, *, representation: str = "gray16")
             if (width, height) != (next_width, next_height) or not (0 <= x < width and 0 <= y < height):
                 reasons["invalid_coordinate_or_size"] += 1
                 continue
-            rows.append({"group": group, "episode": episode, "state": state,
-                         "target": target, "action": 1,
-                         "coords": [x / width, y / height],
-                         "image_hashes": (before_hash, after_hash)})
+            rows.append(
+                {
+                    "group": group,
+                    "episode": episode,
+                    "state": state,
+                    "target": target,
+                    "action": 1,
+                    "coords": [x / width, y / height],
+                    "image_hashes": (before_hash, after_hash),
+                }
+            )
     return rows, reasons, hashlib.sha256("".join(reference_hashes).encode("ascii")).hexdigest()
 
 
@@ -141,8 +156,13 @@ def main() -> None:
     parser.add_argument("--features", type=Path, default=state / "gui_cc_tap_transitions_v1.npz")
     parser.add_argument("--report", type=Path, default=state / "gui_cc_tap_transitions_v1.json")
     args = parser.parse_args()
-    if (not args.root.is_dir() or not args.selection.is_file() or args.features.exists()
-            or args.report.exists() or args.features.resolve() == args.report.resolve()):
+    if (
+        not args.root.is_dir()
+        or not args.selection.is_file()
+        or args.features.exists()
+        or args.report.exists()
+        or args.features.resolve() == args.report.resolve()
+    ):
         parser.error("Supply a local dataset, frozen selection, and fresh output paths")
     selection = json.loads(args.selection.read_text(encoding="utf-8"))
     rows, reasons, references_hash = import_pairs(args.root, selection, representation=args.representation)
@@ -163,26 +183,30 @@ def main() -> None:
     )
     report = {
         "purpose": "research_only_preselected_gui_cc_offline_tap_transitions",
-        "dataset": selection["dataset"], "revision": selection["revision"],
+        "dataset": selection["dataset"],
+        "revision": selection["revision"],
         "selection_sha256": _file_sha256(args.selection),
         "offline_samples_sha256": _file_sha256(args.root / "offline_samples.jsonl"),
         "sampled_references_sha256": references_hash,
-        "sampled_images_sha256": hashlib.sha256("".join(
-            image_hash for row in rows for image_hash in row["image_hashes"]
-        ).encode("ascii")).hexdigest(),
+        "sampled_images_sha256": hashlib.sha256(
+            "".join(image_hash for row in rows for image_hash in row["image_hashes"]).encode("ascii")
+        ).hexdigest(),
         "sample_count": len(selection["sample_ids"]),
         "accepted": dict(Counter(row["split"] for row in rows)),
         "groups": dict(Counter(assignments.values())),
         "split_basis": "casefolded_task_meta",
         "representation": args.representation,
-        "feature_shape": ([1, 16, 16] if args.representation == "gray16" else
-                          [3, int(args.representation[3:]), int(args.representation[3:])]),
+        "feature_shape": (
+            [1, 16, 16]
+            if args.representation == "gray16"
+            else [3, int(args.representation[3:]), int(args.representation[3:])]
+        ),
         "action_filter": "tap_with_pixel_coordinates_only",
         "exclusions": dict(reasons),
         "features_sha256": _file_sha256(args.features),
         "limitation": "Ordered mobile GUI observations are not independently verified action effects. "
-                      "Downsampled pixels omit readable text and semantics; unsupported actions are excluded. "
-                      "No desktop transfer, safety, Jev parity, or live runtime loading claim.",
+        "Downsampled pixels omit readable text and semantics; unsupported actions are excluded. "
+        "No desktop transfer, safety, Jev parity, or live runtime loading claim.",
     }
     args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report, indent=2), flush=True)

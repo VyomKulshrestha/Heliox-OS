@@ -114,12 +114,14 @@ def test_training_saves_the_model_that_was_validated(tmp_path, monkeypatch):
 
     dataset = tmp_path / "transitions.jsonl"
     rows = [
-        json.dumps({
-            "embedding": [0.0] * EMBEDDING_SIZE,
-            "disk_delta": 0.0,
-            "proc_delta": 0.0,
-            "action_type": action_type.value,
-        })
+        json.dumps(
+            {
+                "embedding": [0.0] * EMBEDDING_SIZE,
+                "disk_delta": 0.0,
+                "proc_delta": 0.0,
+                "action_type": action_type.value,
+            }
+        )
         for action_type in LEARNABLE_ACTION_TYPE_ORDER
         for _ in range(10)
     ]
@@ -137,8 +139,9 @@ def test_training_saves_the_model_that_was_validated(tmp_path, monkeypatch):
         )
 
     monkeypatch.setattr(train_risk_gate, "train", train_once)
-    monkeypatch.setattr(sys, "argv", ["train_risk_gate", "--dataset", str(dataset),
-                                   "--out", str(artifact), "--epochs", "1"])
+    monkeypatch.setattr(
+        sys, "argv", ["train_risk_gate", "--dataset", str(dataset), "--out", str(artifact), "--epochs", "1"]
+    )
     train_risk_gate.main()
 
     assert calls == [96]

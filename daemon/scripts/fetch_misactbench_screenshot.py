@@ -65,14 +65,17 @@ def parse_central(data: bytes, expected_entries: int) -> dict[str, dict]:
         next_position = position + header_size + name_length + extra_length + comment_length
         if next_position > len(data):
             raise ValueError("ZIP central entry exceeds directory")
-        name = data[position + header_size:position + header_size + name_length].decode("utf-8")
+        name = data[position + header_size : position + header_size + name_length].decode("utf-8")
         member = PurePosixPath(name)
-        if (member.is_absolute() or ".." in member.parts or name in result
-                or fields[3] & 1 or fields[4] not in (0, 8)):
+        if member.is_absolute() or ".." in member.parts or name in result or fields[3] & 1 or fields[4] not in (0, 8):
             raise ValueError("Unsafe, duplicate, or unsupported ZIP member")
-        result[name] = {"compression": fields[4], "crc32": fields[7],
-                        "compressed": fields[8], "uncompressed": fields[9],
-                        "offset": fields[16]}
+        result[name] = {
+            "compression": fields[4],
+            "crc32": fields[7],
+            "compressed": fields[8],
+            "uncompressed": fields[9],
+            "offset": fields[16],
+        }
         position = next_position
     if position != len(data):
         raise ValueError("ZIP central directory has trailing bytes")
@@ -81,17 +84,24 @@ def parse_central(data: bytes, expected_entries: int) -> dict[str, dict]:
 
 def read_index() -> dict[str, dict]:
     tail_size = 65_557
-    tail = get_range(ARCHIVE_BYTES - tail_size, ARCHIVE_BYTES - 1,
-                     max_bytes=tail_size)
+    tail = get_range(ARCHIVE_BYTES - tail_size, ARCHIVE_BYTES - 1, max_bytes=tail_size)
     marker = tail.rfind(b"PK\x05\x06")
     if marker < 0 or marker + 22 > len(tail):
         raise ValueError("ZIP end record not found")
     signature, disk, central_disk, disk_entries, entries, size, offset, comment = struct.unpack_from(
-        "<4s4H2LH", tail, marker)
-    if (signature != b"PK\x05\x06" or disk or central_disk or disk_entries != entries
-            or entries == 0xffff or size == 0xffffffff or offset == 0xffffffff
-            or marker + 22 + comment != len(tail)
-            or offset + size != ARCHIVE_BYTES - tail_size + marker):
+        "<4s4H2LH", tail, marker
+    )
+    if (
+        signature != b"PK\x05\x06"
+        or disk
+        or central_disk
+        or disk_entries != entries
+        or entries == 0xFFFF
+        or size == 0xFFFFFFFF
+        or offset == 0xFFFFFFFF
+        or marker + 22 + comment != len(tail)
+        or offset + size != ARCHIVE_BYTES - tail_size + marker
+    ):
         raise ValueError("Unsupported or inconsistent ZIP end record")
     central = get_range(offset, offset + size - 1, max_bytes=2_000_000)
     if hashlib.sha256(central).hexdigest() != CENTRAL_SHA256:
@@ -108,13 +118,11 @@ def member_bytes(name: str, metadata: dict) -> bytes:
     if fields[0] != b"PK\x03\x04" or fields[3] != metadata["compression"] or fields[2] & 1:
         raise ValueError("ZIP local header differs from central directory")
     name_length, extra_length = fields[9:11]
-    local_name = get_range(start + 30, start + 29 + name_length,
-                           max_bytes=4_096).decode("utf-8")
+    local_name = get_range(start + 30, start + 29 + name_length, max_bytes=4_096).decode("utf-8")
     if local_name != name:
         raise ValueError("ZIP local filename differs from central directory")
     payload_start = start + 30 + name_length + extra_length
-    compressed = get_range(payload_start, payload_start + metadata["compressed"] - 1,
-                           max_bytes=MAX_ENTRY_BYTES)
+    compressed = get_range(payload_start, payload_start + metadata["compressed"] - 1, max_bytes=MAX_ENTRY_BYTES)
     if metadata["compression"] == 8:
         decoder = zlib.decompressobj(-zlib.MAX_WBITS)
         content = decoder.decompress(compressed, MAX_ENTRY_BYTES + 1)
@@ -122,9 +130,12 @@ def member_bytes(name: str, metadata: dict) -> bytes:
             raise ValueError("ZIP deflate stream is invalid")
     else:
         content = compressed
-    if (len(content) != metadata["uncompressed"] or len(content) > MAX_ENTRY_BYTES
-            or zlib.crc32(content) != metadata["crc32"]
-            or not content.startswith(b"\x89PNG\r\n\x1a\n")):
+    if (
+        len(content) != metadata["uncompressed"]
+        or len(content) > MAX_ENTRY_BYTES
+        or zlib.crc32(content) != metadata["crc32"]
+        or not content.startswith(b"\x89PNG\r\n\x1a\n")
+    ):
         raise ValueError("Screenshot CRC, size, or PNG signature is invalid")
     return content
 
@@ -136,8 +147,9 @@ def main() -> None:
     selection.add_argument("--case-id", help="Annotated trajectory UUID:step index")
     selection.add_argument("--manifest", type=Path, help="Pre-registered case ID list")
     parser.add_argument("--output-dir", type=Path)
-    parser.add_argument("--prior-steps", action="store_true",
-                        help="Fetch the screenshot before each manifest action's preceding step")
+    parser.add_argument(
+        "--prior-steps", action="store_true", help="Fetch the screenshot before each manifest action's preceding step"
+    )
     parser.add_argument("--list-first", type=int, default=0)
     parser.add_argument("--progress-every", type=int, default=1)
     parser.add_argument("--workers", type=int, default=1)
@@ -158,7 +170,7 @@ def main() -> None:
         raise ValueError("MisActBench annotations differ from the pinned release")
     index = read_index()
     if args.list_first:
-        print(json.dumps(list(index)[:args.list_first], indent=2))
+        print(json.dumps(list(index)[: args.list_first], indent=2))
     case_ids = [args.case_id] if args.case_id else []
     if args.manifest:
         manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
@@ -166,12 +178,15 @@ def main() -> None:
         if not 1 <= len(case_ids) <= 512 or len(set(case_ids)) != len(case_ids):
             raise ValueError("Manifest must contain 1-512 unique cases")
         if args.prior_steps:
-            case_ids = [f"{trajectory_id}:{int(step_id) - 1}"
-                        for trajectory_id, step_id in (case_id.split(":", 1) for case_id in case_ids)]
+            case_ids = [
+                f"{trajectory_id}:{int(step_id) - 1}"
+                for trajectory_id, step_id in (case_id.split(":", 1) for case_id in case_ids)
+            ]
     if case_ids:
         records = json.loads(args.dataset.read_text(encoding="utf-8"))
         output_dir = args.output_dir.resolve()
         output_dir.mkdir(parents=True, exist_ok=True)
+
     def fetch_case(case_id: str) -> dict:
         if not re.fullmatch(r"[0-9a-f-]+:[0-9]+", case_id):
             raise ValueError("Invalid case ID")
@@ -186,16 +201,22 @@ def main() -> None:
         target = output_dir / (case_id.replace(":", "_") + ".png")
         if target.exists():
             content = target.read_bytes()
-            if (len(content) != metadata["uncompressed"]
-                    or zlib.crc32(content) != metadata["crc32"]
-                    or not content.startswith(b"\x89PNG\r\n\x1a\n")):
+            if (
+                len(content) != metadata["uncompressed"]
+                or zlib.crc32(content) != metadata["crc32"]
+                or not content.startswith(b"\x89PNG\r\n\x1a\n")
+            ):
                 raise FileExistsError("Existing screenshot fails pinned ZIP checks")
         else:
             content = member_bytes(name, metadata)
             target.write_bytes(content)
-        return {"case_id": case_id, "member": name,
-                "sha256": hashlib.sha256(content).hexdigest(),
-                "bytes": len(content), "path": str(target)}
+        return {
+            "case_id": case_id,
+            "member": name,
+            "sha256": hashlib.sha256(content).hexdigest(),
+            "bytes": len(content),
+            "path": str(target),
+        }
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as executor:
         results = executor.map(fetch_case, case_ids)

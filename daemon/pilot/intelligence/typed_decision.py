@@ -1,4 +1,5 @@
 """Local, non-authoritative typed decisions for research and inspection."""
+
 from __future__ import annotations
 
 import hashlib
@@ -63,12 +64,7 @@ def validate_decision(kind: str, question: str, options: list[str]) -> None:
         raise ValueError(f"Question exceeds {MAX_QUESTION_CHARS} characters")
     if not isinstance(options, list) or not 2 <= len(options) <= MAX_OPTIONS:
         raise ValueError(f"Decision needs 2-{MAX_OPTIONS} options")
-    if any(
-        not isinstance(option, str)
-        or not option.strip()
-        or len(option) > MAX_OPTION_CHARS
-        for option in options
-    ):
+    if any(not isinstance(option, str) or not option.strip() or len(option) > MAX_OPTION_CHARS for option in options):
         raise ValueError(f"Options must be nonempty strings up to {MAX_OPTION_CHARS} characters")
     if len(options) != len(set(options)):
         raise ValueError("Decision options must be unique")
@@ -106,8 +102,8 @@ def _render_typed_value(value: Any, *, optional: bool = False) -> str | None:
     if not isinstance(value, (str, dict, list)):
         raise ValueError("Instructions and descriptions must be text, an object, or an array")
     try:
-        return value if isinstance(value, str) else json.dumps(
-            value, ensure_ascii=False, sort_keys=True, allow_nan=False
+        return (
+            value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, sort_keys=True, allow_nan=False)
         )
     except (TypeError, ValueError) as exc:
         raise ValueError("Instructions and descriptions must contain JSON values") from exc
@@ -129,8 +125,7 @@ def compile_typed_questions(state: Any, questions: Any) -> list[dict[str, Any]]:
     compiled = []
     total_options = 0
     for question_id, definition in questions.items():
-        if (not isinstance(question_id, str) or not question_id.strip()
-                or len(question_id) > MAX_QUESTION_ID_CHARS):
+        if not isinstance(question_id, str) or not question_id.strip() or len(question_id) > MAX_QUESTION_ID_CHARS:
             raise ValueError("Question IDs must be nonempty strings within the size limit")
         if not isinstance(definition, dict) or set(definition) - {"type", "instructions", "criteria"}:
             raise ValueError("Question definitions may contain only type, instructions, and criteria")
@@ -172,14 +167,16 @@ def compile_typed_questions(state: Any, questions: Any) -> list[dict[str, Any]]:
         total_options += len(options)
         if total_options > MAX_TOTAL_OPTIONS:
             raise ValueError(f"A typed request may contain at most {MAX_TOTAL_OPTIONS} candidate options")
-        compiled.append({
-            "id": question_id,
-            "kind": kind,
-            "question": question,
-            "options": options,
-            "answer_keys": answer_keys,
-            "legend": legend,
-        })
+        compiled.append(
+            {
+                "id": question_id,
+                "kind": kind,
+                "question": question,
+                "options": options,
+                "answer_keys": answer_keys,
+                "legend": legend,
+            }
+        )
     return compiled
 
 
@@ -188,8 +185,13 @@ def format_typed_answer(record: dict[str, Any], probabilities: list[float] | np.
     values = np.asarray(probabilities, dtype=np.float64)
     options = record["options"]
     keys = record["answer_keys"]
-    if (values.ndim != 1 or len(values) != len(options) or len(keys) != len(options)
-            or not np.all(np.isfinite(values)) or np.any(values < 0)):
+    if (
+        values.ndim != 1
+        or len(values) != len(options)
+        or len(keys) != len(options)
+        or not np.all(np.isfinite(values))
+        or np.any(values < 0)
+    ):
         raise ValueError("Model returned invalid typed-decision probabilities")
     total = float(values.sum())
     if not np.isclose(total, 1.0, rtol=1e-6, atol=1e-6):
@@ -232,9 +234,7 @@ def format_typed_answer(record: dict[str, Any], probabilities: list[float] | np.
 def _validate_prompt_budget(sequences: list[list[int]]) -> None:
     total = sum(len(sequence) for sequence in sequences)
     if total > MAX_TOTAL_PROMPT_TOKENS:
-        raise ValueError(
-            f"Typed request exceeds the {MAX_TOTAL_PROMPT_TOKENS}-token local scoring budget"
-        )
+        raise ValueError(f"Typed request exceeds the {MAX_TOTAL_PROMPT_TOKENS}-token local scoring budget")
 
 
 def candidate_prompts(row: dict[str, Any], *, style: str) -> list[str]:
@@ -243,17 +243,13 @@ def candidate_prompts(row: dict[str, Any], *, style: str) -> list[str]:
         raise ValueError("Unknown typed-decision prompt style")
     state = json.loads(row["state_json"])
     rendered_state = (
-        state
-        if isinstance(state, str)
-        else json.dumps(state, sort_keys=True, ensure_ascii=False, allow_nan=False)
+        state if isinstance(state, str) else json.dumps(state, sort_keys=True, ensure_ascii=False, allow_nan=False)
     )
     prefix = f"Context:\n{rendered_state}\n\nQuestion: {row['question']}\n"
     if row["kind"] == "noul":
         return [prefix + "Is the answer to this question yes? Answer Yes or No."]
     if style == "full_options_v2":
-        choices = "\n".join(
-            f"{index + 1}. {option}" for index, option in enumerate(row["options"])
-        )
+        choices = "\n".join(f"{index + 1}. {option}" for index, option in enumerate(row["options"]))
         prefix += f"Available answers:\n{choices}\n"
     return [
         prefix + f"Proposed answer: {option}\nIs this proposed answer correct? Answer Yes or No."
@@ -274,10 +270,7 @@ def format_answer(kind: str, options: list[str], logits: np.ndarray, temperature
     probabilities = exp_values / exp_values.sum()
     if kind == "noul":
         return {"type": kind, "yes_probability": float(probabilities[1])}
-    distribution = {
-        option: float(probability)
-        for option, probability in zip(options, probabilities, strict=True)
-    }
+    distribution = {option: float(probability) for option, probability in zip(options, probabilities, strict=True)}
     selected = int(np.argmax(probabilities))
     if kind == "choice":
         return {
@@ -363,9 +356,7 @@ class LocalTypedDecisionModel:
                 }
                 for record in records
             ]
-            prompts_by_record = [
-                candidate_prompts(row, style=self._prompt_style) for row in rows
-            ]
+            prompts_by_record = [candidate_prompts(row, style=self._prompt_style) for row in rows]
             prompts = [prompt for group in prompts_by_record for prompt in group]
             sequences = self._encode(prompts)
             _validate_prompt_budget(sequences)
@@ -377,13 +368,9 @@ class LocalTypedDecisionModel:
                 scores = candidate_scores[offset : offset + count]
                 offset += count
                 logits = (
-                    np.concatenate((np.zeros(1, dtype=np.float64), scores[:1]))
-                    if record["kind"] == "noul"
-                    else scores
+                    np.concatenate((np.zeros(1, dtype=np.float64), scores[:1])) if record["kind"] == "noul" else scores
                 )
-                answer = format_answer(
-                    record["kind"], record["options"], logits, self._temperature_for(record["kind"])
-                )
+                answer = format_answer(record["kind"], record["options"], logits, self._temperature_for(record["kind"]))
                 if record["kind"] == "noul":
                     yes_probability = answer["yes_probability"]
                     probabilities = [1.0 - yes_probability, yes_probability]

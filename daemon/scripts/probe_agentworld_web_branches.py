@@ -20,9 +20,7 @@ DATASET = "Qwen/AgentWorldBench"
 DATASET_REVISION = "6b8d28437042434dcdd168434227ca0de408c5ba"
 MODEL = "Qwen/Qwen3.5-2B"
 REVISION = "15852e8c16360a2fea060d615a32b45270f8a8fc"
-STATE_ACTION = re.compile(
-    r"\*\*Current State:\*\*\n(.*?)\n\*\*Action:\*\*\n```(?:text)?\n(.*?)\n```", re.S
-)
+STATE_ACTION = re.compile(r"\*\*Current State:\*\*\n(.*?)\n\*\*Action:\*\*\n```(?:text)?\n(.*?)\n```", re.S)
 REF = re.compile(r"\s*\[ref=[^]]+\]")
 SYSTEM = (
     "You predict browser action outcomes. Match the two actions to the two possible "
@@ -63,17 +61,35 @@ def visible_lines(value: str) -> frozenset[str]:
     lines = []
     for line in value.splitlines():
         line = REF.sub("", line).strip()
-        if line.startswith(("- Page URL:", "- Page Title:", "- button ", "- link ",
-                            "- textbox ", "- heading ", "- text:", "- menuitem ",
-                            "- dialog ", "- alert ", "- checkbox ", "- option ",
-                            "- paragraph:", "- row ", "- cell ")):
+        if line.startswith(
+            (
+                "- Page URL:",
+                "- Page Title:",
+                "- button ",
+                "- link ",
+                "- textbox ",
+                "- heading ",
+                "- text:",
+                "- menuitem ",
+                "- dialog ",
+                "- alert ",
+                "- checkbox ",
+                "- option ",
+                "- paragraph:",
+                "- row ",
+                "- cell ",
+            )
+        ):
             lines.append(line[:240])
     return frozenset(lines)
 
 
 def complete_page(value: str) -> bool:
-    return ("### Page" in value and "### Snapshot" in value
-            and any(line.startswith("- Page URL:") for line in visible_lines(value)))
+    return (
+        "### Page" in value
+        and "### Snapshot" in value
+        and any(line.startswith("- Page URL:") for line in visible_lines(value))
+    )
 
 
 def change_summary(state: str, outcome: str) -> tuple[str, int]:
@@ -109,40 +125,46 @@ def select_branches(path: Path, limit: int) -> tuple[list[Branch], dict[str, int
             first_summary, first_changes = change_summary(state, first.outcome)
             if first_changes < 4:
                 continue
-            for second in transitions[index + 1:]:
+            for second in transitions[index + 1 :]:
                 if not complete_page(second.outcome):
                     continue
                 second_summary, second_changes = change_summary(state, second.outcome)
-                if (first.action != second.action and second_changes >= 4
-                        and first_summary != second_summary):
-                    selected = Branch(digest(state), first, second,
-                                      first_summary, second_summary)
+                if first.action != second.action and second_changes >= 4 and first_summary != second_summary:
+                    selected = Branch(digest(state), first, second, first_summary, second_summary)
                     break
             if selected is not None:
                 break
         if selected is not None:
             branches.append(selected)
     branches.sort(key=lambda branch: branch.state_sha256)
-    navigation = sum(any(transition.action.startswith("browser_navigate") for transition in
-                         (branch.first, branch.second)) for branch in branches)
-    return branches[:limit], {"source_rows": rows, "visible_state_groups": len(groups),
-                             "eligible_branch_groups": len(branches),
-                             "navigation_branch_groups": navigation,
-                             "non_navigation_branch_groups": len(branches) - navigation}
+    navigation = sum(
+        any(transition.action.startswith("browser_navigate") for transition in (branch.first, branch.second))
+        for branch in branches
+    )
+    return branches[:limit], {
+        "source_rows": rows,
+        "visible_state_groups": len(groups),
+        "eligible_branch_groups": len(branches),
+        "navigation_branch_groups": navigation,
+        "non_navigation_branch_groups": len(branches) - navigation,
+    }
 
 
 def messages(branch: Branch, swapped: bool) -> list[dict[str, str]]:
     state_lines = sorted(visible_lines(branch.first.state))
     page = [line for line in state_lines if line.startswith(("- Page URL:", "- Page Title:"))]
     controls = [line for line in state_lines if line not in page]
-    first, second = (branch.second_summary, branch.first_summary) if swapped else (
-        branch.first_summary, branch.second_summary)
-    payload = {"visible_state": "\n".join(page[:2] + controls[:28])[:1500],
-               "action_1": branch.first.action[:450],
-               "action_2": branch.second.action[:450],
-               "outcome_A": first, "outcome_B": second}
-    return [{"role": "system", "content": SYSTEM},
-            {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}]
+    first, second = (
+        (branch.second_summary, branch.first_summary) if swapped else (branch.first_summary, branch.second_summary)
+    )
+    payload = {
+        "visible_state": "\n".join(page[:2] + controls[:28])[:1500],
+        "action_1": branch.first.action[:450],
+        "action_2": branch.second.action[:450],
+        "outcome_A": first,
+        "outcome_B": second,
+    }
+    return [{"role": "system", "content": SYSTEM}, {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}]
 
 
 def main() -> None:
@@ -171,8 +193,14 @@ def main() -> None:
     if any(len(item) != 1 for item in ids):
         raise RuntimeError("A and B must each be one token")
     model, loading = Qwen3_5ForCausalLM.from_pretrained(
-        MODEL, revision=REVISION, local_files_only=True, dtype=torch.bfloat16,
-        attn_implementation="eager", device_map={"": "cuda:0"}, output_loading_info=True)
+        MODEL,
+        revision=REVISION,
+        local_files_only=True,
+        dtype=torch.bfloat16,
+        attn_implementation="eager",
+        device_map={"": "cuda:0"},
+        output_loading_info=True,
+    )
     if loading.get("missing_keys"):
         raise RuntimeError("Model load left missing weights")
     model.eval()
@@ -183,15 +211,17 @@ def main() -> None:
             swapped = bool(index % 2)
             encodings = []
             for order in (swapped, not swapped):
-                prompt = tokenizer.apply_chat_template(messages(branch, order), tokenize=False,
-                                                       add_generation_prompt=True,
-                                                       enable_thinking=False)
+                prompt = tokenizer.apply_chat_template(
+                    messages(branch, order), tokenize=False, add_generation_prompt=True, enable_thinking=False
+                )
                 encodings.append(tokenizer(prompt, return_tensors="pt", truncation=False))
             lengths = [int(encoded["attention_mask"].sum()) for encoded in encodings]
-            row = {"state_sha256": branch.state_sha256,
-                   "source": [[branch.first.row_id, branch.first.turn],
-                              [branch.second.row_id, branch.second.turn]],
-                   "correct": "B" if swapped else "A", "input_tokens": lengths}
+            row = {
+                "state_sha256": branch.state_sha256,
+                "source": [[branch.first.row_id, branch.first.turn], [branch.second.row_id, branch.second.turn]],
+                "correct": "B" if swapped else "A",
+                "input_tokens": lengths,
+            }
             if max(lengths) > args.max_tokens:
                 row.update({"predicted": None, "status": "overlong"})
             else:
@@ -201,28 +231,43 @@ def main() -> None:
                     logits = model(**encoded, logits_to_keep=1, use_cache=False).logits[0, -1]
                     odds.append(float((logits[ids[0][0]] - logits[ids[1][0]]).float()))
                 corrected_margin = (odds[0] - odds[1]) / 2
-                row.update({"predicted": "A" if corrected_margin >= 0 else "B",
-                            "raw_a_log_odds": odds[0], "reversed_a_log_odds": odds[1],
-                            "position_corrected_margin": corrected_margin,
-                            "status": "scored"})
+                row.update(
+                    {
+                        "predicted": "A" if corrected_margin >= 0 else "B",
+                        "raw_a_log_odds": odds[0],
+                        "reversed_a_log_odds": odds[1],
+                        "position_corrected_margin": corrected_margin,
+                        "status": "scored",
+                    }
+                )
             results.append(row)
             print(f"{index + 1}/{len(branches)} {row['status']}", flush=True)
     scored = [row for row in results if row["status"] == "scored"]
-    report = {"schema_version": 1, "purpose": "evaluation_only_visible_branch_matching",
-              "dataset": DATASET, "dataset_revision": DATASET_REVISION,
-              "dataset_sha256": hashlib.sha256(args.dataset.read_bytes()).hexdigest(),
-              "model": MODEL, "revision": REVISION, "system_prompt_sha256": digest(SYSTEM),
-              "selection": selection, "requested": args.limit, "scored": len(scored),
-              "correct": sum(row["correct"] == row["predicted"] for row in scored),
-              "elapsed_seconds": time.monotonic() - started, "results": results,
-              "limitations": [
-                  "Exact visible browser state may conceal different session or server state.",
-                  "The source is a public test set; it was not used for fitting or calibration.",
-                  "Outcome summaries are truncated semantic diffs, not full next-state prediction.",
-                  "Most eligible branches are direct navigation, a narrow and potentially trivial action class.",
-                  "Mirrored first-token log-odds remove a fixed A/B position bias but are not calibrated probabilities.",
-                  "No real Heliox desktop, multi-step success, safety, or Jev parity is measured."],
-              "promoted_to_runtime": False}
+    report = {
+        "schema_version": 1,
+        "purpose": "evaluation_only_visible_branch_matching",
+        "dataset": DATASET,
+        "dataset_revision": DATASET_REVISION,
+        "dataset_sha256": hashlib.sha256(args.dataset.read_bytes()).hexdigest(),
+        "model": MODEL,
+        "revision": REVISION,
+        "system_prompt_sha256": digest(SYSTEM),
+        "selection": selection,
+        "requested": args.limit,
+        "scored": len(scored),
+        "correct": sum(row["correct"] == row["predicted"] for row in scored),
+        "elapsed_seconds": time.monotonic() - started,
+        "results": results,
+        "limitations": [
+            "Exact visible browser state may conceal different session or server state.",
+            "The source is a public test set; it was not used for fitting or calibration.",
+            "Outcome summaries are truncated semantic diffs, not full next-state prediction.",
+            "Most eligible branches are direct navigation, a narrow and potentially trivial action class.",
+            "Mirrored first-token log-odds remove a fixed A/B position bias but are not calibrated probabilities.",
+            "No real Heliox desktop, multi-step success, safety, or Jev parity is measured.",
+        ],
+        "promoted_to_runtime": False,
+    }
     args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({"scored": len(scored), "correct": report["correct"]}))
 

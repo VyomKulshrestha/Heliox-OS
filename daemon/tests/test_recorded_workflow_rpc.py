@@ -40,9 +40,7 @@ class _Autonomous:
 @pytest.mark.asyncio
 async def test_ui_only_start_and_guarded_replay(tmp_path) -> None:
     server = PilotServer(PilotConfig())
-    server._recorded_workflows = RecordedWorkflowStore(
-        tmp_path / "recordings.enc", key_provider=lambda: b"k" * 32
-    )
+    server._recorded_workflows = RecordedWorkflowStore(tmp_path / "recordings.enc", key_provider=lambda: b"k" * 32)
     server._autonomous = _Autonomous()
     assert not rpc_method_allowed(RpcClientRole.MCP_LOCAL, "recorded_workflow_start")
     assert not rpc_method_allowed(RpcClientRole.NEURAL_SIDECAR, "recorded_workflow_start")
@@ -79,23 +77,17 @@ async def test_ui_only_start_and_guarded_replay(tmp_path) -> None:
 @pytest.mark.asyncio
 async def test_manual_recording_requires_separate_consent_and_run_time_text(tmp_path) -> None:
     server = PilotServer(PilotConfig())
-    server._recorded_workflows = RecordedWorkflowStore(
-        tmp_path / "recordings.enc", key_provider=lambda: b"k" * 32
-    )
+    server._recorded_workflows = RecordedWorkflowStore(tmp_path / "recordings.enc", key_provider=lambda: b"k" * 32)
     server._autonomous = _Autonomous()
     denied = await server._handle_recorded_workflow_start(
         {"name": "Manual", "consent": True, "capture_manual": True}, None
     )
     assert denied["status"] == "error"
     assert server._recorded_workflows.status()["active"] is False
-    server._recorded_workflows.start(
-        name="Manual", consent=True, capture_manual=True, manual_consent=True
-    )
+    server._recorded_workflows.start(name="Manual", consent=True, capture_manual=True, manual_consent=True)
     server._recorded_workflows.record_manual_event("text")
     saved = server._recorded_workflows.stop(save=True)
-    missing = await server._handle_recorded_workflow_run(
-        {"workflow_id": saved["id"], "reviewed": True}, None
-    )
+    missing = await server._handle_recorded_workflow_run({"workflow_id": saved["id"], "reviewed": True}, None)
     assert missing["status"] == "error"
     submitted = await server._handle_recorded_workflow_run(
         {"workflow_id": saved["id"], "reviewed": True, "text_values": {"0": "status report"}}, None
@@ -107,9 +99,7 @@ async def test_manual_recording_requires_separate_consent_and_run_time_text(tmp_
 @pytest.mark.asyncio
 async def test_manual_hook_failure_leaves_recording_off(tmp_path, monkeypatch) -> None:
     server = PilotServer(PilotConfig())
-    server._recorded_workflows = RecordedWorkflowStore(
-        tmp_path / "recordings.enc", key_provider=lambda: b"k" * 32
-    )
+    server._recorded_workflows = RecordedWorkflowStore(tmp_path / "recordings.enc", key_provider=lambda: b"k" * 32)
 
     def fail_start(_self):
         raise RuntimeError("OS hook unavailable")
@@ -129,8 +119,7 @@ async def test_manual_visual_rpc_starts_and_stops_rolling_capture(tmp_path, monk
     async def capture() -> dict:
         nonlocal captures
         captures += 1
-        return {"embedding": [0.5] * 256, "left": 0, "top": 0,
-                "width": 100, "height": 100}
+        return {"embedding": [0.5] * 256, "left": 0, "top": 0, "width": 100, "height": 100}
 
     monkeypatch.setattr(ManualWorkflowHook, "start", lambda self: None)
     monkeypatch.setattr(ManualWorkflowHook, "stop", lambda self: None)
@@ -139,10 +128,16 @@ async def test_manual_visual_rpc_starts_and_stops_rolling_capture(tmp_path, monk
     server._recorded_workflows = RecordedWorkflowStore(
         tmp_path / "recordings.enc", key_provider=lambda: b"k" * 32, capture_feature=capture
     )
-    started = await server._handle_recorded_workflow_start({
-        "name": "Manual visual", "consent": True, "capture_manual": True,
-        "manual_consent": True, "capture_visual": True,
-    }, None)
+    started = await server._handle_recorded_workflow_start(
+        {
+            "name": "Manual visual",
+            "consent": True,
+            "capture_manual": True,
+            "manual_consent": True,
+            "capture_visual": True,
+        },
+        None,
+    )
     assert started["status"] == "ok"
     for _ in range(50):
         if captures:
@@ -151,9 +146,7 @@ async def test_manual_visual_rpc_starts_and_stops_rolling_capture(tmp_path, monk
     assert captures > 0
     press_feature = server._recorded_workflows.manual_press_feature(time.monotonic())
     assert press_feature is not None
-    server._recorded_workflows.record_manual_event(
-        "click", x=25, y=75, button="left", press_feature=press_feature
-    )
+    server._recorded_workflows.record_manual_event("click", x=25, y=75, button="left", press_feature=press_feature)
     saved = await server._handle_recorded_workflow_stop({"save": True}, None)
     assert saved["status"] == "ok"
     assert saved["sample_count"] == 1
@@ -163,9 +156,7 @@ async def test_manual_visual_rpc_starts_and_stops_rolling_capture(tmp_path, monk
 @pytest.mark.asyncio
 async def test_feedback_requires_matching_completed_workflow_job(tmp_path) -> None:
     server = PilotServer(PilotConfig())
-    server._recorded_workflows = RecordedWorkflowStore(
-        tmp_path / "recordings.enc", key_provider=lambda: b"k" * 32
-    )
+    server._recorded_workflows = RecordedWorkflowStore(tmp_path / "recordings.enc", key_provider=lambda: b"k" * 32)
     server._autonomous = _Autonomous()
     assert not rpc_method_allowed(RpcClientRole.MCP_LOCAL, "recorded_workflow_feedback")
     server._recorded_workflows.start(name="Review", consent=True)
@@ -210,9 +201,7 @@ async def test_replay_visual_capture_is_scoped_and_opt_in(tmp_path) -> None:
 
     server._autonomous.submit = submit
     ordinary = await server._handle_recorded_workflow_run({"workflow_id": workflow_id}, None)
-    opted_in = await server._handle_recorded_workflow_run(
-        {"workflow_id": workflow_id, "capture_visual": True}, None
-    )
+    opted_in = await server._handle_recorded_workflow_run({"workflow_id": workflow_id, "capture_visual": True}, None)
     assert ordinary["status"] == opted_in["status"] == "submitted"
     assert observed == ["", workflow_id]
     assert store._replay_visual_workflow.get() == ""

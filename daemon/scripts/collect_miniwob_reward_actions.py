@@ -98,8 +98,7 @@ def goal_description(page) -> str:
     return page.evaluate(_GOAL_JS)
 
 
-def collect_group(browser, assets: PinnedAssets, task: str, seed: str,
-                  max_candidates: int) -> tuple[list[dict], int]:
+def collect_group(browser, assets: PinnedAssets, task: str, seed: str, max_candidates: int) -> tuple[list[dict], int]:
     reference = None
     rows = []
     attempted = 0
@@ -121,12 +120,14 @@ def collect_group(browser, assets: PinnedAssets, task: str, seed: str,
             outcome = page.evaluate("({done: WOB_DONE_GLOBAL, reward: WOB_RAW_REWARD_GLOBAL})")
             attempted += 1
             if outcome["done"] and outcome["reward"] in (-1, 1):
-                rows.append({
-                    "goal": goal,
-                    "candidate": candidate,
-                    "reward": int(outcome["reward"]),
-                    "prestate_sha256": hashlib.sha256(state.tobytes()).hexdigest(),
-                })
+                rows.append(
+                    {
+                        "goal": goal,
+                        "candidate": candidate,
+                        "reward": int(outcome["reward"]),
+                        "prestate_sha256": hashlib.sha256(state.tobytes()).hexdigest(),
+                    }
+                )
         finally:
             context.close()
     if not ({-1, 1} <= {row["reward"] for row in rows}):
@@ -135,10 +136,14 @@ def collect_group(browser, assets: PinnedAssets, task: str, seed: str,
 
 
 def require_disjoint_prestates(rows: list[dict]) -> None:
-    states = {split: {row["prestate_sha256"] for row in rows if row["split"] == split}
-              for split in ("train", "validation", "eval")}
-    if any(states[left] & states[right] for left, right in
-           (("train", "validation"), ("train", "eval"), ("validation", "eval"))):
+    states = {
+        split: {row["prestate_sha256"] for row in rows if row["split"] == split}
+        for split in ("train", "validation", "eval")
+    }
+    if any(
+        states[left] & states[right]
+        for left, right in (("train", "validation"), ("train", "eval"), ("validation", "eval"))
+    ):
         raise ValueError("Identical modeled pre-action state leaked across task splits")
 
 
@@ -156,16 +161,18 @@ def main() -> None:
     parser.add_argument("--report", type=Path, default=root / "miniwob_reward_actions_v1_report.json")
     args = parser.parse_args()
     try:
-        tasks = {split: parse_tasks(getattr(args, f"{split}_tasks"))
-                 for split in ("train", "validation", "eval")}
+        tasks = {split: parse_tasks(getattr(args, f"{split}_tasks")) for split in ("train", "validation", "eval")}
     except ValueError as exc:
         parser.error(str(exc))
-    if (len(set(task for names in tasks.values() for task in names)) != sum(map(len, tasks.values()))
-            or not 2 <= args.samples_per_task <= 100 or not 2 <= args.max_candidates <= 16
-            or (args.eval_samples_per_task is not None
-                and not 2 <= args.eval_samples_per_task <= 100)
-            or not 0 <= args.seed_start <= 1000000
-            or args.rows.exists() or args.report.exists()):
+    if (
+        len(set(task for names in tasks.values() for task in names)) != sum(map(len, tasks.values()))
+        or not 2 <= args.samples_per_task <= 100
+        or not 2 <= args.max_candidates <= 16
+        or (args.eval_samples_per_task is not None and not 2 <= args.eval_samples_per_task <= 100)
+        or not 0 <= args.seed_start <= 1000000
+        or args.rows.exists()
+        or args.report.exists()
+    ):
         parser.error("Use task-disjoint splits, bounded settings, and fresh output paths")
 
     assets = PinnedAssets(SOURCE_COMMIT)
@@ -177,9 +184,11 @@ def main() -> None:
         try:
             for split, names in tasks.items():
                 for task in names:
-                    sample_count = (args.eval_samples_per_task if split == "eval"
-                                    and args.eval_samples_per_task is not None
-                                    else args.samples_per_task)
+                    sample_count = (
+                        args.eval_samples_per_task
+                        if split == "eval" and args.eval_samples_per_task is not None
+                        else args.samples_per_task
+                    )
                     for index in range(args.seed_start, args.seed_start + sample_count):
                         seed = f"{SOURCE_COMMIT}:{task}:{index}"
                         group_rows, count = collect_group(browser, assets, task, seed, args.max_candidates)
@@ -188,10 +197,16 @@ def main() -> None:
                             skipped[task] += 1
                             continue
                         group = hashlib.sha256(seed.encode()).hexdigest()
-                        rows.extend({**row, "group": group, "task": task, "split": split}
-                                    for row in group_rows)
-                    print(json.dumps({"task": task, "accepted_groups": len(
-                        {row["group"] for row in rows if row["task"] == task})}), flush=True)
+                        rows.extend({**row, "group": group, "task": task, "split": split} for row in group_rows)
+                    print(
+                        json.dumps(
+                            {
+                                "task": task,
+                                "accepted_groups": len({row["group"] for row in rows if row["task"] == task}),
+                            }
+                        ),
+                        flush=True,
+                    )
         finally:
             browser.close()
     if any(not any(row["split"] == split for row in rows) for split in tasks):
@@ -202,23 +217,31 @@ def main() -> None:
     args.rows.write_text(payload, encoding="utf-8")
     report = {
         "purpose": "research_only_goal_conditioned_first_action_rewards",
-        "source_repo": SOURCE_REPO, "source_commit": SOURCE_COMMIT, "source_license": "MIT",
+        "source_repo": SOURCE_REPO,
+        "source_commit": SOURCE_COMMIT,
+        "source_license": "MIT",
         "representation": "Visible goal text plus inline visual hints; clickable or painted control "
-                          "text, role, type, geometry, CSS color, icon, and accessibility state. "
-                          "No screenshots stored.",
-        "asset_sha256": assets.hashes(), "rows_sha256": hashlib.sha256(args.rows.read_bytes()).hexdigest(),
-        "tasks": tasks, "split_basis": "task_family", "samples_per_task": args.samples_per_task,
-        "eval_samples_per_task": args.eval_samples_per_task, "seed_start": args.seed_start,
-        "max_candidates": args.max_candidates, "cross_split_identical_prestates": 0,
+        "text, role, type, geometry, CSS color, icon, and accessibility state. "
+        "No screenshots stored.",
+        "asset_sha256": assets.hashes(),
+        "rows_sha256": hashlib.sha256(args.rows.read_bytes()).hexdigest(),
+        "tasks": tasks,
+        "split_basis": "task_family",
+        "samples_per_task": args.samples_per_task,
+        "eval_samples_per_task": args.eval_samples_per_task,
+        "seed_start": args.seed_start,
+        "max_candidates": args.max_candidates,
+        "cross_split_identical_prestates": 0,
         "rows": dict(Counter(row["split"] for row in rows)),
-        "groups": {split: len({row["group"] for row in rows if row["split"] == split})
-                   for split in tasks},
-        "rewards": {split: dict(Counter(str(row["reward"]) for row in rows if row["split"] == split))
-                    for split in tasks},
-        "candidate_attempts": dict(attempts), "skipped_noncontrastive_groups": dict(skipped),
+        "groups": {split: len({row["group"] for row in rows if row["split"] == split}) for split in tasks},
+        "rewards": {
+            split: dict(Counter(str(row["reward"]) for row in rows if row["split"] == split)) for split in tasks
+        },
+        "candidate_attempts": dict(attempts),
+        "skipped_noncontrastive_groups": dict(skipped),
         "limitations": "Synthetic first actions selected for both terminal reward classes; "
-                       "not unbiased task success, multi-step competence, real desktop transfer, "
-                       "safety, or Jev parity. Model input and runtime promotion require separate tests.",
+        "not unbiased task success, multi-step competence, real desktop transfer, "
+        "safety, or Jev parity. Model input and runtime promotion require separate tests.",
     }
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")

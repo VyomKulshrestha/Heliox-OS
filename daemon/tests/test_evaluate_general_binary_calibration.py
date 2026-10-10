@@ -15,7 +15,11 @@ def test_threshold_is_selected_from_calibration_ranking() -> None:
     assert 0.2 < threshold <= 0.7
     assert metrics["balanced_accuracy"] == 1.0
     assert binary_metrics(values, labels, threshold)["confusion"] == {
-        "true_positive": 2, "true_negative": 2, "false_positive": 0, "false_negative": 0}
+        "true_positive": 2,
+        "true_negative": 2,
+        "false_positive": 0,
+        "false_negative": 0,
+    }
 
 
 def test_binary_metrics_rejects_single_class_or_invalid_probability() -> None:
