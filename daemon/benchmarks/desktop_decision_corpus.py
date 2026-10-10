@@ -1257,10 +1257,25 @@ TRAIN_SCALE_V3 = {
     "action_risk": 2.0,
     "latest_instruction": 1.5,
 }
+# v4: every score family is trained (score precision was the remaining gap to the
+# reference), multi-effect scope negatives are doubled, and only Noul/choice
+# families are held out.
+FAMILIES_V4: dict[str, Family] = dict(FAMILIES_V3)
+FAMILY_OOD_V4 = frozenset({"least_privilege", "third_party_disclosure"})
+TRAIN_SCALE_V4 = {
+    **TRAIN_SCALE_V3,
+    "action_risk": 2.5,
+    "budget_fit": 2.5,
+    "evidence_strength": 2.5,
+    "urgency_rating": 2.5,
+    "scope_authorization": 2.0,
+    "compound_scope": 2.0,
+}
 VERSIONS = {
     "v1": (CORPUS_VERSION, FAMILIES, FAMILY_OOD, {}),
     "v2": ("heliox_desktop_decisions_v2", FAMILIES_V2, FAMILY_OOD_V2, TRAIN_SCALE_V2),
     "v3": ("heliox_desktop_decisions_v3", FAMILIES_V3, FAMILY_OOD_V3, TRAIN_SCALE_V3),
+    "v4": ("heliox_desktop_decisions_v4", FAMILIES_V4, FAMILY_OOD_V4, TRAIN_SCALE_V4),
 }
 
 

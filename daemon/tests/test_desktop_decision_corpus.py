@@ -228,3 +228,18 @@ def test_v3_corpus_trains_risk_ratings_and_holds_out_urgency() -> None:
                 assert row["target"] == [1.0, 0.0]
         if row["family"] == "action_risk" and "password" in state["proposed_action"].lower():
             assert row["options"] == RISK_LEVELS and row["target"].index(1.0) == 3
+
+
+def test_v4_corpus_trains_every_score_family_and_holds_out_only_noul_and_choice() -> None:
+    from benchmarks.desktop_decision_corpus import FAMILY_OOD_V4
+
+    parts = generate(version="v4")
+    groups: dict[str, str] = {}
+    for split, rows in parts.items():
+        for row in rows:
+            validate_row(row)
+            assert groups.setdefault(row["group_id"], split) == split
+    trained = {row["family"] for row in parts["train"]}
+    assert {"action_risk", "budget_fit", "evidence_strength", "urgency_rating"} <= trained
+    assert trained.isdisjoint(FAMILY_OOD_V4)
+    assert {row["kind"] for row in parts["family_ood"]} == {"noul", "choice"}
