@@ -1354,9 +1354,18 @@ def manifest(parts: dict[str, list[dict]], seed: int, version: str = "v1") -> di
     return summary
 
 
-def evaluation_cases(parts: dict[str, list[dict]], limit: int = 128, seed: int = 20261002) -> list[dict]:
-    """Select a family-balanced held-out evaluation set in the comparison-case format."""
-    rows = parts["test"] + parts["family_ood"]
+def evaluation_cases(
+    parts: dict[str, list[dict]],
+    limit: int = 128,
+    seed: int = 20261002,
+    exclude_states: frozenset[str] = frozenset(),
+) -> list[dict]:
+    """Select a family-balanced held-out evaluation set in the comparison-case format.
+
+    Rows whose state exactly matches any state in ``exclude_states`` (for example
+    the fitting and calibration rows of a training run) are skipped.
+    """
+    rows = [row for row in parts["test"] + parts["family_ood"] if row["state_json"] not in exclude_states]
     by_family: dict[str, list[dict]] = {}
     for row in sorted(rows, key=lambda item: item["id"]):
         by_family.setdefault(row["family"], []).append(row)
@@ -1390,10 +1399,22 @@ if __name__ == "__main__":
     parser.add_argument("--limit", type=int, default=128)
     parser.add_argument("--seed", type=int, default=20261002)
     parser.add_argument("--version", choices=sorted(VERSIONS), default="v1")
+    parser.add_argument(
+        "--exclude-fitting-scenarios",
+        type=int,
+        help="Skip states that appear in fitting/calibration rows generated with the default seed and this many "
+        "training scenarios",
+    )
     arguments = parser.parse_args()
     if arguments.output.exists():
         parser.error("Use a fresh output path")
-    cases = evaluation_cases(generate(arguments.seed, version=arguments.version), arguments.limit)
+    excluded: frozenset[str] = frozenset()
+    if arguments.exclude_fitting_scenarios:
+        fitting = generate(scenarios={"train": arguments.exclude_fitting_scenarios}, version=arguments.version)
+        excluded = frozenset(row["state_json"] for row in fitting["train"] + fitting["calibration"])
+    cases = evaluation_cases(
+        generate(arguments.seed, version=arguments.version), arguments.limit, exclude_states=excluded
+    )
     arguments.output.write_text(
         "[\n" + ",\n".join(json.dumps(case, ensure_ascii=False, sort_keys=True) for case in cases) + "\n]\n",
         encoding="utf-8",
