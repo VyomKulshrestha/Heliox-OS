@@ -58,6 +58,9 @@ from scripts.evaluate_qwen_instruct_scope import MODEL_REVISION as OPENJEV_BASE_
 from scripts.qwen_model_pin import MODEL, REVISION  # noqa: E402
 
 ORDINAL_LOSS_VERSION = "ranked_probability_score_v1"
+# Same range the runtime accepts for stored temperatures; the old 0.25 floor
+# left under-confident score heads blurred after calibration.
+TEMPERATURE_BOUNDS = (0.05, 20.0)
 DEFAULT_MIN_FREE_HOST_RAM_GIB = 2.5
 
 
@@ -401,7 +404,7 @@ def fit_temperature(logits: list[np.ndarray], rows: list[dict]) -> float:
             )
         )
 
-    result = minimize_scalar(loss, bounds=(0.25, 5.0), method="bounded")
+    result = minimize_scalar(loss, bounds=TEMPERATURE_BOUNDS, method="bounded")
     if not result.success:
         raise RuntimeError("Calibration did not converge")
     return float(result.x)
