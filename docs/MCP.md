@@ -55,7 +55,7 @@ probabilities that the answer is correct. For choice and ordered-score answers, 
 describes how concentrated the returned distribution is; it is not a calibrated correctness
 probability. Validate any threshold against representative labeled tasks, and keep execution and
 approvals in Heliox.
-For Jev-style use, retrieve only relevant state, ask one focused judgment per question, and give
+For reference-style use, retrieve only relevant state, ask one focused judgment per question, and give
 the scorer explicit candidates; batch independent questions against the shared state.
 
 Submitting is not the same as completing. The tool returns a task identifier;
@@ -72,7 +72,7 @@ Requests are bounded to 255 options for one choice, or 64 questions and 256
 total candidate options for a typed batch, with a 64,000-token local scoring
 budget. They are evaluated locally and are not saved or uploaded. Scores never
 enter planning, the world-model risk gate, approval, or execution. This is an
-experimental research interface, not a Jev-parity or desktop-task-success
+experimental research interface, not a reference-model parity or desktop-task-success
 claim.
 
 Hosts should send a stable optional `request_id` when retrying a submission;

@@ -1,4 +1,4 @@
-# Open-Jev correctness scorer v2 — fresh group-held-out evaluation
+# Public-corpus correctness scorer v2 — fresh group-held-out evaluation
 
 Date: 2026-09-29
 
@@ -13,7 +13,7 @@ prior exposures, and selects disjoint task groups from a calibration fit split
 and an OOD evaluation split. See the frozen
 [`opendec_correctness_head_v2.json`](opendec_correctness_head_v2.json).
 
-- Dataset: `ZefanCai/Open-Jev`, release-v2-redistributable, revision
+- Dataset: the pinned public decision corpus, release-v2-redistributable, revision
   `c67699e13d0ae25e35b77165a4b6b079bedc8aba`.
 - Previously exposed groups excluded before selection: 2,696.
 - Correctness fit: 128 selected calibration rows; 121 scored after seven rows
@@ -25,17 +25,17 @@ and an OOD evaluation split. See the frozen
 - The Heliox model weights were the already-trained 1,024-row RPS candidate;
   this run fit only the post-hoc correctness scorer on the 121 calibration
   examples. No model checkpoint was updated.
-- Candidate and released Open-Jev were scored on the exact same 256 test rows.
-  No TypeSafe Jev API outputs were used. The direct API comparison harness is
+- Candidate and released public baseline were scored on the exact same 256 test rows.
+  No the hosted reference model API outputs were used. The direct API comparison harness is
   currently disabled pending verified written authorization.
 - The complete machine report is stored locally at
-  `benchmarks/.bench-state/openjev_correctness_head_v2/report.json` and is
+  `benchmarks/.bench-state/opendec_correctness_head_v2/report.json` and is
   intentionally ignored; report SHA-256:
   `4a0126cb3e9aa9453c298c3b4294a05d227b06ec16fed7ba126d45795a9a64ed`.
 
-## Candidate versus released Open-Jev
+## Candidate versus released public baseline
 
-| Metric on the same 256 OOD decisions | Released Open-Jev | Heliox RPS candidate | Paired bootstrap, candidate − baseline |
+| Metric on the same 256 OOD decisions | Released public baseline | Heliox RPS candidate | Paired bootstrap, candidate − baseline |
 | --- | ---: | ---: | ---: |
 | Top-1 accuracy | 81.64% | 82.81% | +1.17 pp; 95% CI −1.57 to +4.30 pp |
 | Mean NLL | 0.4458 | 0.4041 | −0.0417; 95% CI −0.1035 to +0.0248 |
@@ -48,12 +48,12 @@ selective-risk ranking and source skew prevent a general improvement claim.
 
 The same paired rows are source-skewed in different directions:
 
-| Source | Rows | Released Open-Jev | Heliox candidate | Delta |
+| Source | Rows | Released public baseline | Heliox candidate | Delta |
 | --- | ---: | ---: | ---: | ---: |
 | `snake-v1` | 245 | 82.04% | 83.67% | +1.63 pp |
 | `reasoning-control-v1` | 11 | 72.73% | 63.64% | −9.09 pp |
 
-The simple two-source macro is 77.38% for Open-Jev and 73.65% for Heliox.
+The simple two-source macro is 77.38% for public-corpus and 73.65% for Heliox.
 That macro is descriptive—not a stable estimate with only 11 reasoning rows—
 but it makes clear that the overall row-weighted lead is not consistent across
 the available sources. The next comparison should add untouched task families,
@@ -81,10 +81,10 @@ execution authority.
 
 ## What current research changes
 
-Open-Jev's updated public results show why a 2B adapter alone should not be
-called Jev-equivalent: on its 231-task public subset, Open-Jev-2B scored
-150/231, Open-Jev-9B 179/231, and its independently audited 27B v1.1 scored
-197/231 versus Jev's 200/231 (80/111 vs. 81/111 on Hard). The completed 27B
+the public baseline's updated public results show why a 2B adapter alone should not be
+called reference-equivalent: on its 231-task public subset, public 2B baseline scored
+150/231, the public baseline-9B 179/231, and its independently audited 27B v1.1 scored
+197/231 versus the reference model's 200/231 (80/111 vs. 81/111 on Hard). The completed 27B
 checkpoint used a frozen 328,672-row mixture containing 148,639 training rows;
 its public benchmark report explicitly limits the comparison to 231 available
 tasks, not the full 534-task benchmark. The recipe uses a shared scalar scorer
@@ -94,10 +94,10 @@ the protocols are not interchangeable. Reproducing the 27B run required four
 H100 GPUs, so it is not a practical local-training target for Heliox's 8 GB
 RTX 4060.
 
-See the [audited public JevBench report](https://github.com/Zefan-Cai/Open-Jev/blob/main/docs/jevbench-public.md),
-[shared-scoring and training method](https://github.com/Zefan-Cai/Open-Jev/blob/main/docs/multidomain-training.md),
-[internal evaluation protocol](https://github.com/Zefan-Cai/Open-Jev/blob/main/docs/internal-evaluation.md),
-and [Open-Jev project history](https://zefan-cai.github.io/open-jev/story/).
+See the audited public the public decision benchmark report,
+shared-scoring and training method,
+internal evaluation protocol,
+and public decision project history.
 
 For Heliox's world model, [WorldEvolver](https://arxiv.org/abs/2606.30639)
 suggests a lower-cost complementary direction: retain observed action/state
@@ -120,8 +120,8 @@ an untouched task-family test.
 ## Disposition and next evidence
 
 No candidate, correctness scorer, threshold, approval rule, or world-model
-artifact is promoted. Do not train on TypeSafe Jev outputs; the existing
-repository guard blocks direct Jev comparisons pending verified written
+artifact is promoted. Do not train on the hosted reference model outputs; the existing
+repository guard blocks direct the reference-model comparisons pending verified written
 authorization, and this run respected that guard. Continue training only from
 redistributable public data or explicitly consented Heliox observations.
 

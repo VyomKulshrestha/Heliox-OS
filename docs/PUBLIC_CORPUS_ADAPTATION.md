@@ -1,13 +1,13 @@
-# Open-Jev architecture study for Heliox decisions
+# Public decision-corpus architecture study for Heliox decisions
 
 Status: **research only; no new decision model is enabled in Heliox**.
 
 > **Compliance hold (2026-09-27):** This historical study contains TypeSafe
-> Jev outputs and output-based comparisons. TypeSafe's current
+> reference-model outputs and output-based comparisons. TypeSafe's current
 > [Master Customer Agreement, section 2.3(b)](https://typesafe.ai/legal/mca)
 > restricts using Services or outputs to distill/train imitation models or
 > develop similar or competing products without written authorization. No
-> verified written authorization is recorded here. Treat every Jev-labeled
+> verified written authorization is recorded here. Treat every the reference model-labeled
 > cache and archived comparison as quarantined: do not call, load, train from,
 > tune on, compare against, or use those outputs for product decisions. The
 > live agreement checked on 2026-09-30 does not contain the previously claimed
@@ -24,27 +24,27 @@ The separate [visual world-model branch probe](../daemon/benchmarks/miniwob_sema
 found action grounding on synthetic checkbox variants, but its
 [non-checkbox follow-up](../daemon/benchmarks/miniwob_semantic_branch_seed3400_results_v1.md)
 failed the tab coverage gate. Neither result promotes a runtime model or
-establishes Jev-like decision behavior.
+establishes reference-style decision behavior.
 
-## What Open-Jev actually trains
+## What the public decision-corpus recipe actually trains
 
-[Open-Jev](https://github.com/Zefan-Cai/Open-Jev) is an independent
-implementation inspired by TypeSafe's Jev, not the proprietary Jev model or
-its training pipeline. Its [model](https://github.com/Zefan-Cai/Open-Jev/blob/main/jev/model.py)
+The public decision-corpus project is an independent
+implementation inspired by the hosted reference model, not the proprietary model or
+its training pipeline. Its model
 freezes a language-model base, trains a low-rank adapter and one shared scalar
 head, scores each candidate from a candidate-conditioned prompt, and normalizes
 scores within that question. Its yes/no (“Noul”) path uses one candidate score
 against a zero baseline. It initializes the scalar from the base model's
 single-token Yes-minus-No output weights. A separate calibration split fits
 temperature; grouped test and OOD splits are not training inputs. See the
-[training design](https://github.com/Zefan-Cai/Open-Jev/blob/main/docs/multidomain-training.md)
-and [public dataset card](https://huggingface.co/datasets/ZefanCai/Open-Jev).
+training design
+and public dataset card.
 
 This differs from Heliox's earlier fixed-numeric-feature scope experiments.
 The historical learned scope head is not loaded by default, and its legacy
 checkpoint is unavailable under the current model version; see the current
 [scope-advisory status](INTELLIGENCE_EVALUATION.md#scope-advisory-research-and-current-state).
-Open-Jev also requires a capable backbone and diverse, well-separated
+Public-corpus also requires a capable backbone and diverse, well-separated
 supervision; copying the scalar formula alone is not enough.
 
 ## Bounded local probes
@@ -52,28 +52,28 @@ supervision; copying the scalar formula alone is not enough.
 We first adapted the shared candidate head to a cached, frozen Apache-2.0 NLI
 encoder. Its pooled 768-dimensional representation is read from the pinned ONNX
 graph; only a numeric scalar head is fitted. This is an architectural ablation,
-**not LoRA training or an Open-Jev checkpoint**. All data below are public or
+**not LoRA training or a public-corpus checkpoint**. All data below are public or
 authored synthetic cases. No user screen, task, or private execution trace was
-sent to Jev or used in fitting.
+sent to the reference model or used in fitting.
 
 | Probe | Train / calibration | Held-out result | Interpretation |
 | --- | --- | --- | --- |
-| Heliox scope, mixed ScopeJudge and Jev labels | 3,221 expert-labeled public calls + 816 synthetic Jev pairs; grouped by trajectory/request | ScopeJudge test: 0.482 balanced accuracy, 33 false allowances / 785 calls. Fresh Jev suite: 30/60 agreement, three false allowances. | Fails transfer and safety gate. |
-| Same scope head with existing deterministic guard | Same weights | Fresh Jev suite: 33/60 agreement, zero false allowances but 27 false warnings. | Guard is not a cure for missing semantic recall. |
-| Existing Heliox semantic-v5 baseline | 916 synthetic Jev pairs, developed previously | Fresh Jev suite: 53/60 agreement, zero false allowances. | Better than the candidate-head ablation, but not Jev parity or real-world proof. |
-| Open-Jev public multidomain sample | 1,128 train / 332 calibration, source-balanced sample; shared 768-parameter head | 246/444 top-1 test (55.4%); 227/360 OOD (63.1%). Workflow domains 82.5–95% on test, while several game/spatial domains were 10–52.5%. | Small text NLI backbone and 256-token cap do not support broad decisions. |
+| Heliox scope, mixed ScopeJudge and reference-model labels | 3,221 expert-labeled public calls + 816 synthetic reference-model pairs; grouped by trajectory/request | ScopeJudge test: 0.482 balanced accuracy, 33 false allowances / 785 calls. Fresh reference-model suite: 30/60 agreement, three false allowances. | Fails transfer and safety gate. |
+| Same scope head with existing deterministic guard | Same weights | Fresh reference-model suite: 33/60 agreement, zero false allowances but 27 false warnings. | Guard is not a cure for missing semantic recall. |
+| Existing Heliox semantic-v5 baseline | 916 synthetic reference-model pairs, developed previously | Fresh reference-model suite: 53/60 agreement, zero false allowances. | Better than the candidate-head ablation, but not reference-model parity or real-world proof. |
+| Public-corpus multidomain sample | 1,128 train / 332 calibration, source-balanced sample; shared 768-parameter head | 246/444 top-1 test (55.4%); 227/360 OOD (63.1%). Workflow domains 82.5–95% on test, while several game/spatial domains were 10–52.5%. | Small text NLI backbone and 256-token cap do not support broad decisions. |
 
 The fresh 60-case scope suite was committed **after** the scope-head artifact
-froze and before the Jev calls. Jev answered 60/60 of these synthetic cases
+froze and before the reference-model calls. The reference model answered 60/60 of these synthetic cases
 consistently with the authored labels. This suite is now inspected development
 evidence, not an untouched final test for future iterations. The older v4
 suite is also no longer a fresh holdout. The exact numeric results and hashes
-are in [`openjev_scope_probe_v1.json`](../daemon/benchmarks/openjev_scope_probe_v1.json),
-[`openjev_scope_fresh_v1.json`](../daemon/benchmarks/openjev_scope_fresh_v1.json),
+are in `opendec_scope_probe_v1.json`,
+`opendec_scope_fresh_v1.json`,
 and [`opendec_multidomain_probe_v1.json`](../daemon/benchmarks/opendec_multidomain_probe_v1.json).
 
 The public scope validation AUC was 0.861, but its trajectory-held-out test
-AUC was 0.502. Training the same head on synthetic Jev pairs only improved the
+AUC was 0.502. Training the same head on synthetic reference-model pairs only improved the
 already-inspected fresh suite to 44/60, but produced eight false allowances.
 This points to both domain shift and an inadequate frozen representation. It
 does not justify tuning a threshold on the test set or shipping the head.
@@ -82,48 +82,48 @@ does not justify tuning a threshold on the test set or shipping the head.
 
 [`train_qwen_scope_noul.py`](../daemon/scripts/train_qwen_scope_noul.py) uses a
 pinned [Qwen3-0.6B](https://huggingface.co/Qwen/Qwen3-0.6B)
-base, rank-8 LoRA, Open-Jev-style Noul prompt, Yes-minus-No scalar
+base, rank-8 LoRA, public-baseline-style Noul prompt, Yes-minus-No scalar
 initialization, a one-pass soft-label loss, and separate request-group fit,
 calibration, and validation partitions. It trained 520 rows on an 8 GB RTX
 4060 Laptop GPU, peaking at 1.401 GiB of allocated CUDA memory. Its untouched
 request-group validation was 149/164 agreement, with two false allowances.
-The prior 60-case Jev suite scored 54/60, zero false allowances, but had been
+The prior 60-case reference-model suite scored 54/60, zero false allowances, but had been
 inspected during earlier model development and is **not** an independent final
 test for this adapter. The adapter and scalar head remain local under ignored
 `daemon/benchmarks/.bench-state/qwen_scope_v1/`, with frozen file hashes in
-[`qwen_scope_probe_v1.json`](../daemon/benchmarks/qwen_scope_probe_v1.json).
+`qwen_scope_probe_v1.json` (kept local: it embeds reference-model labels).
 The 1.5 GB base model is not bundled. This smaller base and training dataset
-cannot establish Jev parity.
+cannot establish reference-model parity.
 
 The independent 60-case comparison suite in
 [`refscope_qwen_v1_holdout.py`](../daemon/benchmarks/refscope_qwen_v1_holdout.py)
-and the adapter hashes were committed before Jev was queried. The weights
-themselves are not tracked due to unverified Jev-output redistribution rights.
+and the adapter hashes were committed before the reference model was queried. The weights
+themselves are not tracked due to unverified reference-output redistribution rights.
 The frozen evaluator verifies both model-file hashes and does not train or
-select a threshold from this suite. Jev agreed with all 60 authored labels. On these
-same cases, the adapter agreed with Jev on **51/60 (85%)**, with zero false
+select a threshold from this suite. The reference model agreed with all 60 authored labels. On these
+same cases, the adapter agreed with the reference model on **51/60 (85%)**, with zero false
 allowances and nine false warnings. The existing Heliox semantic-v5 head scored
 **45/60 (75%)** with one false allowance and 14 false warnings after its guard.
 Thus the trainable adapter improved this narrow synthetic comparison, but did
-not match Jev and remains unpromoted. These paired cases are intentionally
+not match the reference model and remains unpromoted. These paired cases are intentionally
 simple; zero false allowances here says nothing conclusive about safety in
 uncontrolled desktop tasks.
 
 The full results, including every mismatch and artifact hash, are in
-[`qwen_scope_fresh_v1.json`](../daemon/benchmarks/qwen_scope_fresh_v1.json),
-[`qwen_scope_baseline_v1.json`](../daemon/benchmarks/qwen_scope_baseline_v1.json),
-and [`jev_scope_qwen_v1_teacher.json`](../daemon/benchmarks/jev_scope_qwen_v1_teacher.json).
+`qwen_scope_fresh_v1.json`, `qwen_scope_baseline_v1.json` and the reference
+label file. All three embed reference-model outputs, so they are kept local and
+are not part of the repository.
 
 ## Licensed multi-domain GPU follow-up
 
 The scope adapter above handles only binary action-scope questions. A separate
 research model now trains **one candidate-conditioned scalar head** across
-Open-Jev's `noul`, variable-option `choice`, and ordinal `score` records. It
+the public baseline's `noul`, variable-option `choice`, and ordinal `score` records. It
 uses the pinned Qwen3-0.6B base, rank-8 LoRA, no prompt labels or source IDs,
 and group-disjoint train/calibration/test/OOD partitions. The loader accepts
 only records whose per-row provenance is CC0-1.0; it excludes 4,206 training
 records with unverified upstream description rights, plus corresponding
-calibration/test/OOD records. There are no proprietary Jev outputs in this
+calibration/test/OOD records. There are no the proprietary reference model outputs in this
 experiment. The base model stays frozen; the adapter and one shared head are
 trained on the GPU. Candidate gradients are replayed one at a time to keep
 memory bounded when option counts vary.
@@ -137,7 +137,7 @@ from 2.117 to 1.024; OOD from 2.691 to 0.941 after calibration. The full
 [report](../daemon/benchmarks/qwen_general_probe_v1.json) contains per-kind
 and per-source results and artifact hashes. Importantly, OOD choice accuracy
 is only **34.3%** and OOD score accuracy **38.5%**; these are broad synthetic
-decision weaknesses, not Jev parity. The pilot model remains the old,
+decision weaknesses, not reference-model parity. The pilot model remains the old,
 independent production path. This experiment grants no action authority.
 
 With cached public data and pinned base model, reproduce using:
@@ -171,22 +171,22 @@ samples differ from the 512-row run, so the two trained percentages are not a
 controlled head-to-head comparison. The larger run still had 46.8% test
 choice accuracy and 43.1% OOD score accuracy. Its saved adapter again favored
 **deleting** the file over reading it on the fixture (46.5% versus 44.3%).
-On the previously frozen 60-case Heliox scope suite, it agreed with Jev on
+On the previously frozen 60-case Heliox scope suite, it agreed with the reference model on
 only **29/60**, with two false allowances. A separate evaluation-only sample
-of 24 licensed public OOD questions cost $0.000609 in Jev API calls: agreement
+of 24 licensed public OOD questions cost $0.000609 in the reference-model API calls: agreement
 was 7/11 Noul and 7/8 choice; mean score gap was 1.05 levels across five
 score questions. The small samples and constructed criteria do not establish
-general Jev parity. Reports: [larger GPU probe](../daemon/benchmarks/qwen_general_probe_v2.json),
+general reference-model parity. Reports: [larger GPU probe](../daemon/benchmarks/qwen_general_probe_v2.json),
 [scope transfer](../daemon/benchmarks/qwen_general_scope_transfer_v2.json),
-and [public Jev comparison](../daemon/benchmarks/qwen_general_reference_comparison_v2.json).
+and [public reference-model comparison](../daemon/benchmarks/qwen_general_reference_comparison_v2.json).
 The adapter remains local and disabled in Heliox.
 
 A second, independently seeded evaluation-only sample of 48 licensed public
-OOD questions used 48 live Jev calls ($0.001241). The same frozen local adapter
-agreed with Jev on 20/25 Noul and 9/13 choice questions. Against the public
-labels, local versus Jev accuracy was 22/25 versus 21/25 for Noul and 9/13
+OOD questions used 48 live reference-model calls ($0.001241). The same frozen local adapter
+agreed with the reference model on 20/25 Noul and 9/13 choice questions. Against the public
+labels, local versus the reference-model accuracy was 22/25 versus 21/25 for Noul and 9/13
 versus 11/13 for choice. On ten ordinal score questions, mean absolute error
-against the public target expectation was 0.861 locally versus 0.445 for Jev.
+against the public target expectation was 0.861 locally versus 0.445 for the reference model.
 The sample is still small and synthetic; it does not establish parity, desktop
 transfer, or execution authority. See the [frozen comparison](../daemon/benchmarks/qwen_general_reference_comparison_v3.json).
 
@@ -202,9 +202,9 @@ versus a **44.7%** uniform baseline, but just **45.4%** OOD top-1 versus
 was **31.4%**. These mixed metrics do not support a general-purpose model or
 runtime promotion. The [held-out report](../daemon/benchmarks/qwen2b_frozen_general_v1.json)
 records the pinned source, selection, hashes, and per-kind results; weights
-remain local and ignored. A fresh matched Jev comparison could not run because
+remain local and ignored. A fresh matched reference-model comparison could not run because
 the otherwise valid OpenRouter key received `403 RBAC: access denied` from the
-Decisions endpoint. This is an access limit, not a Jev result.
+Decisions endpoint. This is an access limit, not the reference-model result.
 
 The resumed 4,096-train / 256-calibration / 256-test / 256-OOD Qwen3-0.6B
 LoRA study completed on a separately seeded public sample after several GPU
@@ -247,7 +247,7 @@ Focused tests cover 2-, 3-, and 11-option distributions (22 passed, 1 skipped),
 and the RTX 4060 gradient-replay check confirms the RPS two-pass gradient
 matches direct autograd for the ordered-score case. A new adapter has not been
 trained: the installed Windows runtime (Torch 2.6.0, Transformers 5.2.0, PEFT
-0.18.1) is below the repository's declared Open-Jev training stack, Ubuntu WSL
+0.18.1) is below the repository's declared public-corpus training stack, Ubuntu WSL
 has no ML packages installed, and I have not installed a second multi-gigabyte
 environment on the nearly-full system drive.
 
@@ -266,8 +266,8 @@ The repository also provides a separate, unpromoted scaling experiment using
 frozen [Qwen3.5-2B](https://huggingface.co/Qwen/Qwen3.5-2B) features. It extracts
 candidate representations on the GPU with row-level checkpoints, fits a shared
 regularized decision head on CPU, selects regularization and temperature on
-calibration rows, then evaluates disjoint test and OOD rows. A matched Jev
-comparison can subsequently call Jev on those same public OOD rows; its
+calibration rows, then evaluates disjoint test and OOD rows. A matched the reference model
+comparison can subsequently call the reference model on those same public OOD rows; its
 responses are aggregated for evaluation only and never used as training
 labels. The implementation is in
 [`extract_general_frozen_features.py`](../daemon/scripts/extract_general_frozen_features.py),
@@ -275,7 +275,7 @@ labels. The implementation is in
 [`compare_frozen_general_reference.py`](../daemon/scripts/compare_frozen_general_reference.py).
 This path is a reproducible research candidate, **not** a completed quality
 result or a Heliox runtime model. The small pipeline smoke test does not
-establish Jev parity. All feature and weight files remain in ignored local
+establish reference-model parity. All feature and weight files remain in ignored local
 benchmark state; an interrupted extraction must resume with matching rows,
 model revision, and tokenization.
 
@@ -285,7 +285,7 @@ of 225 eligible 2B training feature rows. Both longer workloads then failed
 with CUDA errors and contemporaneous Windows `nvlddmkm` resets, while short
 CUDA stress and a small 2B extraction passed. Both checkpoints were checked
 against their saved identities; neither run has final held-out metrics or a
-Jev comparison. Resume only after the GPU execution path is stable. These
+The reference-model comparison. Resume only after the GPU execution path is stable. These
 observations do not distinguish a driver, hardware, WSL, power, or model-kernel
 fault.
 
@@ -295,7 +295,7 @@ used the same checkpoint and pinned selection outside WSL. It completed the
 before another CUDA failure with a contemporaneous NVIDIA driver event. A
 separate Python DLL import crash was resolved by import order and is not GPU
 evidence. Since the model fault also occurs natively, WSL alone cannot explain
-it. The frozen head, complete held-out evaluation, and Jev comparison remain
+it. The frozen head, complete held-out evaluation, and reference-model comparison remain
 unrun; the validated partial feature files are local and ignored.
 
 A label-blind [uniform-option baseline](../daemon/benchmarks/qwen_general_uniform_baseline_v2.json)
@@ -305,15 +305,15 @@ because the public labels are imbalanced; the trained adapter gets **99/136
 (72.8%)**. The adapter does beat this blind comparator on OOD choice
 (39/69 versus 25/69) and score top-1 (22/51 versus 11/51). Overall accuracy
 alone therefore hides a binary-decision failure, and this synthetic baseline
-is not a Jev or live-desktop comparator.
+is not the reference model or live-desktop comparator.
 
 A fresh [128-call public OOD comparison](../daemon/benchmarks/qwen_general_reference_comparison_v4.json)
-made the gap clearer. Against licensed public labels, Jev versus the frozen
+made the gap clearer. Against licensed public labels, the reference model versus the frozen
 local adapter scored **55/67 versus 44/67** on Noul and **28/35 versus
 13/35** on choice; mean score expected-rank error was **0.394 versus 1.013**
 across 26 questions. On this exact selection, equal option probabilities
 would score 53/67 on Noul and 0.923 expected-rank error on score, both better
-than the trained adapter. The comparison cost $0.003250 in Jev API calls;
+than the trained adapter. The comparison cost $0.003250 in the reference-model API calls;
 responses were used only for aggregate evaluation, not fitting. The sample
 is synthetic and still cannot establish desktop performance or safety.
 
@@ -366,15 +366,15 @@ Silently lowering the token limit is not an equivalent fix: a 512-token cap
 would exclude 278 of the 608 selected ScopeJudge test calls, materially
 changing the evaluation population.
 
-## Released Open-Jev checkpoint transfer
+## Released public baseline checkpoint transfer
 
-Open-Jev has since published an [Apache-2.0 2B adapter and scalar head](https://huggingface.co/ZefanCai/Open-Jev-2B)
-for pinned Qwen3.5-2B. This is Open-Jev's trained model, **not** a Heliox
-model or TypeSafe's proprietary Jev. The local GPU evaluation pinned the
+The public decision-corpus project has since published an Apache-2.0 2B adapter and scalar head
+for pinned Qwen3.5-2B. This is the public baseline's trained model, **not** a Heliox
+model or the proprietary hosted reference model. The local GPU evaluation pinned the
 adapter repository to `0c7aa498b1627be8da4acf34c863ff0ee0a92785`,
-the base to `15852e8c16360a2fea060d615a32b45270f8a8fc`, and Open-Jev
+the base to `15852e8c16360a2fea060d615a32b45270f8a8fc`, and the public baseline
 loader code to `3308a15ccd7eea1df7a37d6ddc39b023b801ba16`.
-The adapter file matched its published SHA-256. No user data or Jev API key
+The adapter file matched its published SHA-256. No user data or reference-model API key
 was sent to this localhost-only evaluation.
 
 On the previously inspected 60-case synthetic scope suite, the released
@@ -428,7 +428,7 @@ zero observed false allowances is a weak safety estimate. The public suite was
 inspected during development; this is not an untouched desktop holdout. The
 local head is research-only and is not connected to Heliox execution.
 
-A cross-domain check on the already-inspected 60-case synthetic Jev comparison
+A cross-domain check on the already-inspected 60-case synthetic reference-model comparison
 suite is more decisive: the frozen head ranked answers with 0.911 AUC but its
 ScopeJudge-calibrated threshold made **20 false allowances** and two false
 warnings (38/60 agreement). At the default 0.5 threshold it allowed every
@@ -442,7 +442,7 @@ The GPU extraction and head fit are reproducible with
 [`extract_opendec_scope_features.py`](../daemon/scripts/extract_opendec_scope_features.py)
 and [`fit_opendec_scope_head.py`](../daemon/scripts/fit_opendec_scope_head.py).
 They verify pinned input provenance, keep large feature/weight artifacts under
-ignored `.bench-state`, and do not train on or export proprietary Jev outputs.
+ignored `.bench-state`, and do not train on or export the proprietary reference model outputs.
 The synthetic transfer is scored by
 [`evaluate_opendec_scope_head_transfer.py`](../daemon/scripts/evaluate_opendec_scope_head_transfer.py)
 using the already-frozen scaler, weights, and threshold.
@@ -457,7 +457,7 @@ Its label means **tool relevance, not permission to execute**. The official
 test has disjoint task text and tool names from validation; repeated validation
 tasks stay in one fit or calibration group.
 
-The released Open-Jev 2B base and adapter were frozen while GPU features were
+The released public 2B baseline base and adapter were frozen while GPU features were
 extracted with resumable 50-case checkpoints. Windows reported `nvlddmkm`
 events alongside two CUDA illegal-instruction failures during validation;
 resuming the same pinned job completed all 1,136 validation and 935 test rows.
@@ -476,13 +476,13 @@ record the hashes, partitions, threshold, and per-case scores.
 
 The mixed head's remaining Heliox false allowance would replace a source
 document even though the user requested a translation **in chat only**. The
-released Open-Jev checkpoint at its default threshold made **zero** false
+Released public baseline checkpoint at its default threshold made **zero** false
 allowances on this same inspected suite, albeit with 15 false warnings; the
 mixed head is not an improvement on that safety measure. TBAC relevance and
 scope are different targets, and mixing them trades away substantial legitimate
 scope recall. The [synthetic transfer report](../daemon/benchmarks/opendec_2b_multidomain_transfer_v1.json)
 is not a fresh holdout. This head is **not** connected to Heliox execution,
-is not a production policy, and does not establish Jev parity.
+is not a production policy, and does not establish reference-model parity.
 
 A second, hypothesis-driven check kept the two targets separate: a TBAC-only
 relevance head was calibrated on TBAC validation, then conjoined with the
@@ -491,7 +491,7 @@ shows zero false allowances on the inspected Heliox suite, but **22/30**
 legitimate actions were rejected. On ScopeJudge test it rejected **all 517**
 legitimate calls. The relevance-only head's official TBAC test had one false
 positive and 407 false negatives. This gate cannot be shipped either: low false
-allowance at the cost of disabling useful execution is not Jev-like behavior.
+allowance at the cost of disabling useful execution is not reference-style behavior.
 
 ### Soup fit assessment
 
@@ -501,7 +501,7 @@ path and a separate experimental low-VRAM layer-streaming path. Its
 [streaming task gate](https://github.com/MakazhanAlpamys/Soup/blob/f0d7696f1da1f86f965309b2d22e5fb48afb4fae/src/soup_cli/config/schema.py#L5798-L5812)
 permits SFT and several preference losses, **not classifier training**; its
 [classifier trainer](https://github.com/MakazhanAlpamys/Soup/blob/f0d7696f1da1f86f965309b2d22e5fb48afb4fae/src/soup_cli/trainer/classifier.py)
-loads a new sequence-classification model rather than Open-Jev's released
+loads a new sequence-classification model rather than the public baseline's released
 candidate-conditioned scalar checkpoint. Thus `soup train` cannot reproduce
 this adaptation or solve the earlier CUDA launch failure by selecting
 `stream_layers=true`. Soup's source-level Windows/VRAM measurement practices
@@ -516,13 +516,13 @@ not be projected onto this GPU or task.
 [`evaluate_qwen_instruct_scope.py`](../daemon/scripts/evaluate_qwen_instruct_scope.py)
 adds a pinned, zero-shot text-only Qwen3.5-2B baseline for the same synthetic
 scope suite and the separately partitioned public ScopeJudge test. It uses a
-fixed prompt, strict YES/NO parsing (malformed answers deny), no Jev outputs
+fixed prompt, strict YES/NO parsing (malformed answers deny), no reference-model outputs
 for training, no action execution, and identity-checked resumable reports.
 The text-only loader follows the official
 [Transformers Qwen3.5 guidance](https://huggingface.co/docs/transformers/main/model_doc/qwen3_5)
 and its [integration test](https://github.com/huggingface/transformers/blob/main/tests/models/qwen3_5/test_modeling_qwen3_5.py)
 for `Qwen3_5ForCausalLM`. It is an instruction-following comparison, not a
-replacement for a calibrated safety policy or a claim of Jev parity.
+replacement for a calibrated safety policy or a claim of reference-model parity.
 
 The earlier full multimodal wrapper completed only a three-case smoke run
 before a CUDA error. After the host restart, the smaller text-only path loaded
@@ -548,8 +548,8 @@ live process endpoint reported the model **100% GPU-resident**. This is a
 different, quantized model from the 2B research checkpoint above. Its
 [60-case report](../daemon/benchmarks/ollama_qwen3_5_4b_scope_v1.json) records
 **54/60**, zero false allowances, and six false warnings on the already-
-inspected synthetic suite. Jev answered 60/60 of those authored cases. The
-4B result is neither Jev parity nor fresh real-world validation, and it was
+inspected synthetic suite. The reference model answered 60/60 of those authored cases. The
+4B result is neither reference-model parity nor fresh real-world validation, and it was
 not connected to Heliox execution.
 
 The disjoint public ScopeJudge test selected 608 calls. Ollama checkpointed
@@ -617,12 +617,12 @@ or the execution companion.
 
 The two-call variant is worse in-domain and still unsafe on Heliox transfer.
 The cautious threshold also prevents most legitimate calls. This is an
-offline training result, **not** a promoted world-model capability, Jev parity,
+offline training result, **not** a promoted world-model capability, reference-model parity,
 or live desktop safety evidence. The small numeric head artifacts remain in
 ignored local benchmark state; the linked reports contain their hashes.
 
 A further GPU attempt with the existing shared Qwen3-0.6B decision trainer
-combined licensed Open-Jev general-decision rows and ScopeJudge labels. It
+combined licensed public-corpus general-decision rows and ScopeJudge labels. It
 [failed during baseline inference](../daemon/benchmarks/qwen_general_scope_gpu_attempt_v4.json)
 at row 29, before any gradient or optimizer step, with a CUDA illegal
 instruction. Windows recorded `nvlddmkm` events 13 and 153 at that time.
@@ -655,7 +655,7 @@ for reproducible calibration experiments, but the candidate remains offline.
 
 ### Shared GPU retry and world/task-state transfer
 
-The shared Open-Jev-style candidate model was retrained on 256 licensed general
+The shared public-baseline-style candidate model was retrained on 256 licensed general
 decisions plus 491 token-eligible ScopeJudge calls. Windows CUDA interrupted
 training after checkpoints at rows 64 and 352, with `nvlddmkm` events 13/153.
 An isolated Ubuntu/WSL2 CUDA environment loaded the **same row-352 checkpoint**
@@ -667,13 +667,13 @@ The resumed report correctly marks the skipped baseline as unavailable.
 The result is **not usable for Heliox scope decisions**. On 700 eligible,
 trajectory-held-out public calls, its 90.3% overall agreement hid 49.5%
 balanced accuracy: it falsely allowed **48 of 49** out-of-scope calls. On the
-previously inspected 60-case Heliox/Jev suite it falsely allowed all 30
+previously inspected 60-case Heliox reference suite it falsely allowed all 30
 out-of-scope cases at the default threshold. A threshold fixed solely from
 public calibration negatives reduced that transfer count to one, but falsely
 warned on 29 legitimate cases. The 128-row general test and OOD top-1 scores
 were 62.5% and 59.4%. A fresh, evaluation-only 24-call public OOD comparison
-favored Jev on the 11 binary and eight choice cases; neither those calls nor
-the older synthetic Jev labels entered this model's training. Counts, hashes,
+favored the reference model on the 11 binary and eight choice cases; neither those calls nor
+the older synthetic reference-model labels entered this model's training. Counts, hashes,
 and limitations are in [the frozen summary](../daemon/benchmarks/qwen_general_scope_wsl_v7.json).
 The adapter remains in ignored local benchmark state and is **not** loaded by
 Heliox's world model, companion, or approval path.
@@ -786,7 +786,7 @@ suite, caution still allowed 2/30 out-of-scope actions. The
 is therefore **rejected for runtime**. Error inspection found wrong but
 semantically related tools, cross-tenant scope, and unauthorized target or
 output expansion. Better dialogue ranking is not a generalized world model,
-Jev parity, or permission to execute. The tests were excluded from this fit,
+reference-model parity, or permission to execute. The tests were excluded from this fit,
 but earlier results on those tests informed this adaptive research; none is a
 fresh blind validation.
 
@@ -817,9 +817,9 @@ three domains. On the already-inspected Heliox synthetic suite it blocked
 27/30 legitimate actions. The [frozen nonlinear result](../daemon/benchmarks/world_multidomain_mlp_v1.json)
 is rejected. More capacity alone did not solve calibrated scope or the
 wrong-tool problem. Like the earlier runs, this is adaptive public research,
-not a blind safety or Jev-parity claim.
+not a blind safety or reference-model parity claim.
 
-Because Open-Jev scores alternatives relative to one question, a
+Because the public-corpus recipe scores alternatives relative to one question, a
 [pairwise training probe](../daemon/scripts/train_world_pairwise_scope.py)
 added within-task relevant-versus-irrelevant ranking loss to the same frozen
 features, alongside expert-scope binary loss. The public training partition
@@ -834,8 +834,8 @@ one false allowance among 398 irrelevant dialogue tools and warned on
 reported metrics exactly through the independent, shape-checked
 [scorer](../daemon/scripts/score_world_mlp_artifact.py). The [frozen pairwise
 result](../daemon/benchmarks/world_pairwise_scope_v1.json) is rejected too.
-Copying Jev's relative-loss idea without better task/target supervision does
-not make this a Jev-equivalent world model.
+Copying the reference model's relative-loss idea without better task/target supervision does
+not make this a reference-equivalent world model.
 
 We froze both nonlinear heads before reading the [EntityBindingFailures
 benchmark](https://github.com/R-Suresh/EntityBindingFailures), then tested
@@ -851,7 +851,7 @@ wrong or ambiguous actions. At their preselected cautious thresholds they
 still allowed **12/94** and **11/94**, while rejecting **all 55** valid
 actions. Both correctly ranked the gold binding for only **39/55** resolvable
 tasks. This fresh external test therefore rejects both heads for runtime;
-it is not a training set, a Jev comparison, or a test of the separately
+it is not a training set, the reference-model comparison, or a test of the separately
 shipped OS-transition world model. Reproduce against the pinned public data
 with `python -m scripts.evaluate_world_entity_binding` from `daemon` after
 extracting the frozen features, or replay another frozen head with
@@ -961,7 +961,7 @@ and abstained on **none** of five ambiguous entity tasks. Groupwise prompting
 alone made over-selection worse. The
 [comparison report](../daemon/benchmarks/qwen_binding_review_v1.json) pins
 both prompts, sources, and complete raw-result hashes. Neither review mode is
-loaded by Heliox or comparable to a Jev deployment. The findings point to
+loaded by Heliox or comparable to the reference-model deployment. The findings point to
 missing target/state supervision and calibrated abstention, not merely a
 smaller binary head. Both external sources were inspected before these
 comparisons, so future model selection needs genuinely fresh held-out tasks.
@@ -1002,7 +1002,7 @@ cases, the head selected a valid target in **0/37** groups: it abstained on
 candidate first in **23/37** groups. The
 [pinned result](../daemon/benchmarks/world_group_binding_family_v1.json)
 therefore rejects runtime promotion. It neither outperforms the frozen
-direct-review probe on transfer nor justifies a Jev-like or live-desktop
+direct-review probe on transfer nor justifies a reference-style or live-desktop
 claim. The local weights remain ignored under `benchmarks/.bench-state/`.
 Reproduce from `daemon` with the pinned public sources and cached features:
 
@@ -1050,7 +1050,7 @@ balanced-accuracy difference crosses zero. A cutoff selected solely from
 public calibration negatives still allowed five held-out violations and
 rejected 57 of 59 valid calls. The read-only fixture was ranked first, but its
 probability was only 40.7% in the history variant. These are pilot results,
-not safety, Jev-parity, or live-desktop evidence; neither adapter is promoted.
+not safety, reference-model parity, or live-desktop evidence; neither adapter is promoted.
 
 We attempted a larger matched comparison on a fresh random-trajectory split.
 The no-history control completed 756 training rows after an identity-checked
@@ -1067,15 +1067,15 @@ GPU fault is the root cause; the no-caching setting is diagnostic, not a fix.
 We did not treat partial training as a comparison. See the
 [scaled-attempt report](../daemon/benchmarks/qwen_scope_history_scaled_attempt_v1.json).
 
-The Jev Decisions endpoint subsequently responded again. A new
+The reference model Decisions endpoint subsequently responded again. A new
 [matched public comparison](../daemon/benchmarks/qwen_scope_reference_matched_v1.json)
 preselected a label-balanced 46-call subset of the completed no-history
 control's 711 eligible held-out ScopeJudge calls, without inspecting either
 model's predictions for selection. On 23 out-of-scope calls the local control
-falsely allowed 19 while Jev falsely allowed four; on 23 in-scope calls the
-local control falsely warned once while Jev warned 12 times. They agreed on
+falsely allowed 19 while the reference model falsely allowed four; on 23 in-scope calls the
+local control falsely warned once while the reference model warned 12 times. They agreed on
 only 14/46 decisions. This is an evaluation-only, previously inspected public
-split, not a fresh blind safety benchmark, model-training input, Jev parity,
+split, not a fresh blind safety benchmark, model-training input, reference-model parity,
 or permission to execute. The history arm remains incomplete.
 
 Exploratory threshold checks on the completed no-history control did not find
@@ -1123,7 +1123,7 @@ cell while preserving each label class's total training weight, and the exact
 weight vector is bound to the saved checkpoint identity. A 16 general + 16
 ScopeJudge row GPU smoke test completed training, calibration, held-out scoring,
 and artifact saving. Its eight scope test calls are far too few for a quality
-claim. On already cached frozen Open-Jev 2B features, an analogous weighted
+claim. On already cached frozen public 2B baseline features, an analogous weighted
 head raised ScopeJudge test AUC from 0.905 to 0.926, but default false
 allowances only moved from nine to eight and the calibration cutoff rejected
 300/517 valid calls. On the separately inspected 60-case Heliox-style suite,
@@ -1256,12 +1256,12 @@ diagnostic. The scripts refuse a changed annotation or ZIP index;
 screenshots and full case-level output belong under the ignored
 `.bench-state` directory. This small screenshot-only probe omits observed
 history and is not a full MisActBench score, a live-desktop safety result,
-or evidence of Jev parity.
+or evidence of reference-model parity.
 
 ### Later GPU training check
 
 With the current RTX 4060/driver 617.14 setup, we retried the isolated
-FP16 rank-4 Qwen3-0.6B LoRA path using licensed Open-Jev examples and
+FP16 rank-4 Qwen3-0.6B LoRA path using licensed public-corpus examples and
 MisActBench human action labels. A 73-row training/evaluation smoke passed
 the earlier 16- and 32-row failure points, then a separate-seed 354-row run
 completed training and held-out evaluation at 2.772 GiB peak allocated VRAM.
@@ -1273,7 +1273,7 @@ larger run's 64-action test went to the opposite extreme: **0/32 false
 allowances but 32/32 false warnings**; its aligned-action ranking AUC was
 only 0.600. A cutoff chosen from 32 calibration actions alone still falsely
 allowed **1/32** held-out off-task actions and warned on **27/32** valid ones;
-the calibration AUC was 0.703. Open-Jev held-out top-1 was 0.500 on 58
+the calibration AUC was 0.703. Public-corpus held-out top-1 was 0.500 on 58
 actions and 0.704 on 27 OOD actions. Different seeds and sample sizes make
 the two runs' scores non-comparable. The [post-update GPU report](../daemon/benchmarks/qwen_misact_post_update_gpu_v1.json)
 pins raw local report and artifact hashes. The adapters remain ignored local
@@ -1475,7 +1475,7 @@ Its frozen dark-theme error was far worse than an unchanged-screen baseline,
 so the research weights remain local and are not loaded into Heliox. The paired
 action-swap control is motivated by action-conditioned consistency work such as
 [ACPC](https://arxiv.org/abs/2608.12939); it does not implement that paper's
-full evaluation protocol or establish Jev parity.
+full evaluation protocol or establish reference-model parity.
 
 The later [mixed-appearance probe](../daemon/benchmarks/world_visual_multitheme_probe_v1.json)
 fit light and dark observations with scale-normalized transition loss. A
@@ -1579,7 +1579,7 @@ diagnostic, not evidence for promotion.
 
 The offline probes need `onnx`, `onnxruntime`, `pyarrow`, `tokenizers`,
 `huggingface_hub`, NumPy, SciPy, and scikit-learn. They use cached model/data
-snapshots and do not silently fetch a model during scoring. The Open-Jev data
+snapshots and do not silently fetch a model during scoring. The public decision data
 probe pins dataset revision `c67699e13d0ae25e35b77165a4b6b079bedc8aba`.
 The ScopeJudge input is the public `dreadnode/scopejudge` `train.jsonl`; each
 report records its SHA-256. The Qwen follow-up requires CUDA plus optional
@@ -1603,7 +1603,7 @@ not test or enable the research scope head.
 OpenRouter's [distillation guidance](https://openrouter.ai/docs/cookbook/evaluate-and-optimize/distillation)
 requires explicit model-provider permission and identifies `is_trainable_text`
 as the opt-in signal. The current OpenRouter catalog entry for
-[`typesafe/jev-router`](https://openrouter.ai/typesafe/jev-1.13) returned
+the hosted reference router returned
 `is_trainable_text: null`; that is not permission. TypeSafe's current
 [Master Customer Agreement, section 2.3(b)](https://typesafe.ai/legal/mca)
 states that customers may not use the Services or their outputs to distill,
@@ -1611,19 +1611,18 @@ train a model to imitate the outputs, or develop a similar or competing
 product or service. The previously cited `/terms-and-conditions` URL now
 returns 404, and the current agreement text checked on 2026-09-27 does not
 contain the earlier claimed benchmark-publication restriction. Because Heliox
-would be developed using Jev outputs, the project gate is to make no further
-Jev calls for development and not use those outputs for training unless
+would be developed using reference-model outputs, the project gate is to make no further
+The reference-model calls for development and not use those outputs for training unless
 TypeSafe gives written authorization that covers this use. The Apache-2.0
-license of Open-Jev/Qwen weights and independently licensed public data is a
+license of the public baseline/Qwen weights and independently licensed public data is a
 separate research path; it does not grant rights to TypeSafe service outputs.
 
-Earlier sections in this document and
-[`JEV_SCOPE_STUDY.md`](JEV_SCOPE_STUDY.md) record historical output-based
+Earlier sections in this document and the local-only scope study record historical output-based
 experiments. They are not approved training evidence or a basis for further
 development; do not reuse their outputs for that purpose without written
 authorization. The separate public-label evaluation below does not use them.
 
-The separate [Open-Jev 2B public-label baseline](PUBLIC_CORPUS_GENERAL_RESULT_V2.md)
+The separate [public 2B baseline public-label baseline](PUBLIC_CORPUS_GENERAL_RESULT_V2.md)
 is a frozen, group-disjoint evaluation of that published checkpoint. On its
 fresh split it beat an equal-probability, label-blind baseline for binary,
 choice, and ordinal decisions. This is not a Heliox model or a live-task
@@ -1643,7 +1642,7 @@ No experiment here can override the deterministic gateway, user approvals, or
 least-privilege execution boundaries. Promotion requires a fresh, consented
 and de-identified desktop workload, grouped held-out validation, calibrated
 uncertainty, a strict false-allowance gate, and a runtime latency/resource
-check. Public synthetic accuracy or Jev agreement alone is not authorization.
+check. Public synthetic accuracy or reference-model agreement alone is not authorization.
 
 The pinned MiniWoB hybrid visual/semantic offline probe did not pass its
 preregistered new-seed gate. On 32 selected `click-button` branch pairs at
@@ -1663,7 +1662,7 @@ clarification made the current zero-based index range explicit. On [new
 seeds](../daemon/benchmarks/miniwob_qwen8b_index_retest_result_v1.json),
 invalid indices dropped to zero and the sequence task tied the baseline at
 3/4, but total model success was 7/12 versus 11/12. These are small synthetic
-task-family retests, not a production or Jev comparison. Neither the 8B
+task-family retests, not a production or reference-model comparison. Neither the 8B
 policy nor the latent checkpoints is enabled in Heliox.
 
 The [InfiniteWeb paper](https://arxiv.org/abs/2601.04126) and
@@ -1703,7 +1702,7 @@ on validation and reached 30/40 versus 24/40 fixed-first on held-out pairs.
 However, the label-only policy also reached 30/40, and the gain was confined
 to link labels; the new DOM-kind feature provided no held-out lift. The probe
 uses no private desktop data and trains no weights. It does not reproduce
-Dream-RSI's long-horizon loop or establish Jev parity, desktop transfer, or
+Dream-RSI's long-horizon loop or establish reference-model parity, desktop transfer, or
 any grounds for live-model promotion.
 
 ## Bounded Heliox local MCP integration
@@ -1745,14 +1744,14 @@ The three-case local runtime smoke was only a plumbing check, not a benchmark:
 the yes/no probe and choice probe selected the expected outcomes, but the
 ordered-score probe did not (expected “fully”; top option was “not at all,”
 with expected index 1.203/3). This weak score result is a quality blocker; no
-claim of Jev parity or generalized decision quality is justified.
+claim of reference-model parity or generalized decision quality is justified.
 
 This is a research convenience, not a promotion into Heliox's planner, world
 model, deterministic gateway, approvals, or executor. It does not establish
-Jev parity or real desktop-workflow quality. The model files remain ignored
+reference-model parity or real desktop-workflow quality. The model files remain ignored
 local artifacts and are not included in the release package.
 
-## Matched likelihood and Open-Jev runtime check (2026-09-28)
+## Matched likelihood and public-corpus runtime check (2026-09-28)
 
 To test whether raw next-token likelihood could replace the trained decision
 head cheaply, the pinned Qwen3-0.6B base was scored on the 256-row public OOD
@@ -1764,7 +1763,7 @@ The reusable [evaluator](../daemon/scripts/evaluate_base_option_likelihood.py)
 and focused tests are local research utilities; reports and model artifacts
 stay under ignored `.bench-state/`.
 
-| OOD metric | Uniform | Raw Qwen3-0.6B | Raw Qwen3.5-2B NF4 | Open-Jev checkpoint via Heliox runtime | Heliox-trained Qwen3-0.6B head |
+| OOD metric | Uniform | Raw Qwen3-0.6B | Raw Qwen3.5-2B NF4 | Public-corpus checkpoint via Heliox runtime | Heliox-trained Qwen3-0.6B head |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | Choice top-1 | 36.2% | 21.7% | 30.4% | **63.8%** | 31.9% |
 | Choice NLL | 1.567 | 2.829 | 1.788 | 1.276 | **1.068** |
@@ -1780,29 +1779,29 @@ on all three top-1 metrics and is rejected as a shortcut. The existing Heliox
 adapter/head improves choice calibration but remains weak on choice ranking
 and binary balance.
 
-The released Open-Jev Apache-2.0 adapter/head was then converted from its
+The released public baseline Apache-2.0 adapter/head was then converted from its
 hash-pinned local cache and scored through Heliox's actual
 `LocalTypedDecisionModel` on the **same ordered 256 row IDs**. The pinned
 Qwen3.5-2B NF4 model used the torch fallback (the optional fused kernels are
 not installed); this completed in 179.0 seconds including model load with
 1.739 GiB peak allocated GPU memory. The full local report is ignored at
-`daemon/benchmarks/.bench-state/openjev_runtime_candidate_ood_256.json`; the
+`daemon/benchmarks/.bench-state/opendec_runtime_candidate_ood_256.json`; the
 reproducible, no-overwrite converter is
 [`prepare_opendec_runtime_candidate.py`](../daemon/scripts/prepare_opendec_runtime_candidate.py).
-With the already-cached Open-Jev files, prepare the artifact using:
+With the already-cached public-corpus files, prepare the artifact using:
 
 ```powershell
 cd daemon
-& benchmarks/.bench-state/openjev-pinned-env/Scripts/python.exe scripts/prepare_opendec_runtime_candidate.py
+& benchmarks/.bench-state/opendec-pinned-env/Scripts/python.exe scripts/prepare_opendec_runtime_candidate.py
 ```
 
 The resulting artifact is not automatically enabled. It can be selected in
 Heliox Settings → **Typed decision model · research** by setting its artifact
 directory and `report.json`; scoring remains advisory-only and is never passed
 to the planner or executor. This is promising public-benchmark transfer, not
-Jev parity, real desktop evidence, or permission to execute actions.
+reference-model parity, real desktop evidence, or permission to execute actions.
 
-The [current Open-Jev engineering story](https://zefan-cai.github.io/open-jev/story/)
+The current public-corpus engineering story
 supports retaining a shared scalar score per candidate, mixing independently
 licensed decision rows, and fitting temperature only on a separate calibration
 split. It also reports that shared-prefix cache expansion exceeded the
@@ -1823,9 +1822,9 @@ row-ID hash, group-ID hash, checkpoint, and report digest were revalidated
 locally. The model-independent evaluation report scored logits at temperature
 1.0. A final run through Heliox's actual `LocalTypedDecisionModel.score` path,
 using the published temperature and adaptive batches, is the product-relevant
-measurement below. Neither is a Jev comparison or desktop-workflow test.
+measurement below. Neither is a reference-model comparison or desktop-workflow test.
 
-| Fresh public OOD metric | Rows | Open-Jev 2B via Heliox runtime |
+| Fresh public OOD metric | Rows | public 2B baseline via Heliox runtime |
 | --- | ---: | ---: |
 | Choice top-1 | 229 | 75.5% |
 | Yes/no top-1 | 216 | 88.0% |
@@ -1834,7 +1833,7 @@ measurement below. Neither is a Jev comparison or desktop-workflow test.
 | Ordered score mean rank error | 67 | 0.362 |
 | Overall top-1 | 512 | 80.5% |
 
-For a faster readout, [Open Alternative to Jev](https://github.com/ikermoel/open-alternative-jev)
+For a faster readout, Open Alternative to the reference model
 uses next-token logits over single-token option labels; its packed mode can
 share a state across several questions in one forward pass. A cache-only pilot
 on the first 32 rows of the already-inspected OOD sample tested that idea with
@@ -1845,7 +1844,7 @@ head; the sample is only a quick rejection signal, not a general failure claim.
 The larger-model results in that repository do not transfer automatically to
 Heliox's 8 GiB laptop GPU.
 
-The same 256-row OOD selection was then rescored with the existing Open-Jev
+The same 256-row OOD selection was then rescored with the existing the public baseline
 adapter/head through Heliox's production research wrapper. The initial
 length-aware policy used batches of 8 through 512 tokens, 4 for 513–768, and 2
 for longer prompts. Compared with the earlier batch-2 run, it completed in
@@ -1868,7 +1867,7 @@ row-level microbatch-policy counts are in
 [`opendec_runtime_microbatch16_20260928.json`](../daemon/benchmarks/opendec_runtime_microbatch16_20260928.json).
 
 The released checkpoint's published temperature (1.518796342858676; see the
-[Open-Jev-2B model card](https://huggingface.co/ZefanCai/Open-Jev-2B)) was then
+public 2B baseline model card) was then
 applied unchanged to the same fresh 512 rows. No fresh labels were used to fit
 or select calibration. Top-1 stayed fixed, while held-out NLL and Brier score
 improved for all three kinds; ordered-score mean rank error moved slightly in
@@ -1891,28 +1890,28 @@ claimed to be bitwise-reproduced. The full hashed run report is
 The 16-item length-aware setting is now the default for the opt-in local
 scorer. It does not change model weights, prompts, calibration, the approval
 system, or execution authority. The current result is a local speed/quality
-trade, not “Jev parity”: a licensed, matched, independently reviewed Jev
+trade, not “reference-model parity”: a licensed, matched, independently reviewed the reference model
 benchmark and real desktop task evaluation are still required before such a
 claim.
 
 An additional research lead is the published
-[`jevre` scorer implementation](https://huggingface.co/di-zhang-fdu/jevre/blob/main/modeling.py),
+packed-span scorer implementation,
 which packs context and candidate spans into one sequence and isolates
 candidate attention; its model card describes Plackett–Luce ranking plus a
-Brier term. The card's 93.23% result is on its own `jevre-mix` test split and
-is not comparable to this Open-Jev OOD benchmark. Its linked GitHub repository
+Brier term. The card's 93.23% result is on its own its own mixed test split and
+is not comparable to this public-corpus OOD benchmark. Its linked GitHub repository
 was unavailable during this review, its checkpoint is not in the local cache,
 and no weights or data were downloaded. Treat this as a candidate architecture
 for a separately trained, matching-split experiment—not as a Heliox result.
 
-## Open-Jev warm-start adaptation on RTX 4060 (2026-09-29)
+## Public-corpus warm-start adaptation on RTX 4060 (2026-09-29)
 
 A local, research-only LoRA adaptation was run from the cached
-[Apache-2.0 Open-Jev-2B checkpoint](https://huggingface.co/ZefanCai/Open-Jev-2B)
+Apache-2.0 public 2B baseline checkpoint
 on the pinned Qwen3.5-2B base. Training examples came only from the
 `release-v2-redistributable` configuration of the
-[CC0 Open-Jev dataset](https://huggingface.co/datasets/ZefanCai/Open-Jev);
-the run made no OpenRouter or hosted TypeSafe Jev requests and did not read an
+CC0 public decision dataset;
+the run made no OpenRouter or hosted reference-model requests and did not read an
 API key. This distinction matters: the current
 [TypeSafe MCA, section 2.3(b)](https://typesafe.ai/legal/mca) prohibits using
 its hosted Service or Output for imitation/distillation training or developing
@@ -1927,7 +1926,7 @@ LoRA, NF4 double quantization, bfloat16, and reached 3.503 GiB peak allocated
 VRAM on the RTX 4060 Laptop GPU. Fine-tuning, calibration, and adapted test/OOD
 scoring took 93.5 minutes, excluding model/data loading, tokenization, and the
 pre-training baseline scoring. The report records dataset revision
-`c67699e13d0ae25e35b77165a4b6b079bedc8aba`, Open-Jev checkpoint revision
+`c67699e13d0ae25e35b77165a4b6b079bedc8aba`, public-corpus checkpoint revision
 `0c7aa498b1627be8da4acf34c863ff0ee0a92785`, Qwen3.5-2B revision
 `15852e8c16360a2fea060d615a32b45270f8a8fc`, and artifact hashes.
 
@@ -1942,11 +1941,11 @@ The test result is a positive signal on this public synthetic benchmark:
 The OOD interval includes zero; its 5,000 replicates used seed `20260933`, so
 the small aggregate gain is inconclusive. By OOD decision kind, choice accuracy
 fell 3.6 points while yes/no rose 4.0 points and score ranking rose 1.0 point.
-Do not describe this as robust OOD transfer, Jev parity, or improvement on real
+Do not describe this as robust OOD transfer, reference-model parity, or improvement on real
 Heliox tasks.
 
 The local report is
-`daemon/benchmarks/.bench-state/heliox_openjev_warmstart_1k_seed20260930.json`;
+`daemon/benchmarks/.bench-state/heliox_opendec_warmstart_1k_seed20260930.json`;
 the adapter and scalar head are alongside it under the same ignored
 `.bench-state` directory. They were not copied into a runtime artifact path,
 loaded by the application, or granted execution authority. This experiment used
@@ -1956,16 +1955,16 @@ skipped across the decision metrics, training retry, and resumable evaluation
 tests. Adapter SHA-256: `f5c2d3c815bd281bdf22c217bcbd476b258514ee367672ba002c675ec457b687`;
 scalar-head SHA-256: `cc3d73473e32776fbd458395d0878141cb7d3967ff7ee706f794aa5d4cced875`.
 
-## Candidate-specific fresh comparison with released Open-Jev (2026-09-29)
+## Candidate-specific fresh comparison with released public baseline (2026-09-29)
 
 The frozen warm-start adapter was next compared with the pinned released
-Open-Jev checkpoint on candidate-independent public rows. Selection excluded
+Public-corpus checkpoint on candidate-independent public rows. Selection excluded
 all groups used by this adapter's train, calibration, test, and OOD splits.
 Of 341 selected rows, 10 exceeded the adapter's 512-token limit and were
 excluded without truncation; both models were therefore scored on the same 331
 independent groups. No model or calibration changes were made using these rows.
 
-| Metric | Released Open-Jev | Heliox adapter | Difference |
+| Metric | Released public baseline | Heliox adapter | Difference |
 | --- | ---: | ---: | ---: |
 | Top-1 accuracy (331 rows) | 77.64% | 79.15% | +1.51 pp |
 | Mean NLL | 0.5358 | 0.4392 | -0.0966 |
@@ -1975,11 +1974,11 @@ independent groups. No model or calibration changes were made using these rows.
 The paired group bootstrap used 5,000 replicates (seed `20261011`); its 95%
 interval for top-1 change was `[-1.21, +4.23]` percentage points and includes
 zero. The observed gains are promising but inconclusive, so this adapter is
-not promoted. This is a comparison to released Open-Jev—not TypeSafe Jev—and
+not promoted. This is a comparison to released public baseline—not the hosted reference model—and
 does not measure real desktop task success, multi-step execution, or safety.
 
 The frozen local report is
-`daemon/benchmarks/.bench-state/openjev_candidate_subset_v2_20260929/candidate_vs_released_report.json`.
+`daemon/benchmarks/.bench-state/opendec_candidate_subset_v2_20260929/candidate_vs_released_report.json`.
 Protocol SHA-256 is
 `8f1f166c2d570a9bdde8ca7157e352177585e903f390423a46f97f2ffc806f18`; the
 scored-row ID SHA-256 is
@@ -2000,13 +1999,13 @@ separate investigation.
 
 ## Group-disjoint fresh replication (2026-09-29)
 
-The frozen candidate was additionally compared with the released Open-Jev
+The frozen candidate was additionally compared with the released public baseline
 checkpoint on 482 rows from 482 previously unseen public-data groups. The
 512-row selection was frozen before candidate scoring; 30 rows exceeded the
 candidate's token limit and were excluded without truncation. No parameters,
 calibration, or thresholds were changed using these rows.
 
-| Metric | Released Open-Jev | Heliox candidate | Difference |
+| Metric | Released public baseline | Heliox candidate | Difference |
 | --- | ---: | ---: | ---: |
 | Top-1 accuracy | 78.84% | 80.71% | +1.87 pp |
 | Mean NLL | 0.5308 | 0.4477 | -0.0831 |
@@ -2023,7 +2022,7 @@ The frozen local report is
 `daemon/benchmarks/opendec_scale_1024_rps_fresh_v3.json`; the paired group
 bootstrap is recorded in
 `daemon/benchmarks/opendec_scale_1024_rps_fresh_v3_group_bootstrap_exploratory.json`.
-This is still a comparison to released Open-Jev—not TypeSafe Jev—and uses
+This is still a comparison to released public baseline—not the hosted reference model—and uses
 public synthetic decisions only. It does not establish real desktop-task
 success, multi-step execution quality, or action safety. The candidate remains
 research-only and is not automatically loaded into the planner.
@@ -2077,7 +2076,7 @@ Reports and weights remain in the ignored local `.bench-state` directory:
 `tess_visual_48p_joint_inverse_seed20261004_v1.json`. No runtime-compatible
 artifact was emitted or loaded. These are one-dataset, episode-disjoint
 research results—not environment-independent world modeling, live Heliox
-success, multi-step autonomy, action safety, or Jev parity.
+success, multi-step autonomy, action safety, or reference-model parity.
 
 ## Controlled-UI counterfactual loss ablation (2026-09-30)
 
@@ -2113,7 +2112,7 @@ and `.pt`; the original matched baseline is
 `daemon/benchmarks/.bench-state/controlled_ui_pairs_spatial_action_v4.json`.
 All remain local research artifacts. This evaluation does not establish
 cross-application transfer, real desktop task success, multi-step execution,
-action safety, or Jev parity.
+action safety, or reference-model parity.
 
 ## Inverse-action auxiliary-loss ablation (2026-09-30)
 
@@ -2146,7 +2145,7 @@ The frozen local reports and weights are
 `controlled_ui_spatial_joint_inv005_ci_seed20260930` under the ignored
 `.bench-state` directory. No real-desktop recorder corpus was present for this
 run. The result therefore says nothing about application transfer, multi-step
-desktop success, safety, or Jev parity.
+desktop success, safety, or reference-model parity.
 
 ## Independent successor-retrieval objective (2026-09-30)
 
@@ -2185,20 +2184,20 @@ retrieval was also unchanged. The baseline's 48-group bootstrap estimated a
 7.29 percentage-point retrieval lift over group chance (95% CI 3.13 to 12.50
 points), but that is a one-seed result on one browser benchmark, not evidence
 that ranking training caused the lift. Keep the loss as an opt-in research
-probe, not as a better model. The historical Jev-output studies above are
-quarantined and were not used in these runs; there were no Jev service calls,
-Jev examples, or real Heliox recordings in this experiment. No result here
-establishes broad desktop transfer, multi-step task success, or Jev parity.
+probe, not as a better model. The historical reference-output studies above are
+quarantined and were not used in these runs; there were no reference-model service calls,
+The reference model examples, or real Heliox recordings in this experiment. No result here
+establishes broad desktop transfer, multi-step task success, or reference-model parity.
 
 The ignored local reports and weights are
 `miniwob_successor_rank_matched_baseline_seed20260930_v2` and
 `miniwob_successor_rank_w003_t001_seed20260930` under
 `daemon/benchmarks/.bench-state`.
 
-## Open-Jev checkpoint data-provenance clarification (2026-09-30)
+## Public-corpus checkpoint data-provenance clarification (2026-09-30)
 
-A live review of the current [Open-Jev-2B model card](https://huggingface.co/ZefanCai/Open-Jev-2B)
-and [Open-Jev dataset card](https://huggingface.co/datasets/ZefanCai/Open-Jev)
+A live review of the current public 2B baseline model card
+and public decision dataset card
 adds a provenance caveat to the warm-start experiment above. The published
 2B checkpoint was trained on the original `release-v2` mixture (80,816 train
 rows), not the byte-identical `release-v2-redistributable` projection (79,116
@@ -2222,13 +2221,13 @@ benchmark rather than a deployed Heliox model.
 
 ## Clean-source Qwen decision runs (2026-09-30)
 
-To avoid the unresolved provenance of the Open-Jev warm-start, three adapters
+To avoid the unresolved provenance of the public-corpus warm-start, three adapters
 were trained from the pinned `Qwen/Qwen3-0.6B` base using only rows accepted by
 Heliox's clean-source filter at dataset revision
 `c67699e13d0ae25e35b77165a4b6b079bedc8aba`. The fixed group/source split was
 512 training, 96 calibration, 128 test, and 128 source-held-out OOD rows;
-training seeds were 11, 29, and 47. No TypeSafe Jev service calls or outputs,
-Open-Jev checkpoint weights, private task data, or screen recordings were
+training seeds were 11, 29, and 47. No the hosted reference model service calls or outputs,
+Public-corpus checkpoint weights, private task data, or screen recordings were
 used. CUDA peak memory was 3.82 GiB per run. Reports and weights remain in
 ignored local benchmark state.
 
@@ -2246,7 +2245,7 @@ helps this typed benchmark, not that Heliox can reliably operate arbitrary
 desktop software. These same OOD rows have now been reviewed during
 experimentation, so they are development evidence and must not be reused as a
 confirmatory holdout. The adapters are not runtime-loaded, and no result
-establishes Jev parity, live task success, or action authority.
+establishes reference-model parity, live task success, or action authority.
 
 The local Heliox encrypted recorded-workflow store was absent when this result
 was reviewed. Consequently, there are not yet consented Heliox task-outcome

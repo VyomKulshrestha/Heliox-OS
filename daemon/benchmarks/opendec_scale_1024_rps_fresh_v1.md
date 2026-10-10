@@ -1,9 +1,9 @@
-# Exploratory group-filtered Open-Jev candidate comparison
+# Exploratory group-filtered public-corpus candidate comparison
 
 Status: exploratory research evidence only; candidate remains unpromoted.
 
 The current RPS candidate was scored on the exact public OOD selection used by
-the pinned released-Open-Jev comparison. The cached baseline logits were
+the pinned released-public-corpus comparison. The cached baseline logits were
 verified against the row IDs and selection signature before comparing. Review
 after the run found that 38 of the 128 selected groups also appear in the
 candidate's earlier OOD selection (seed 482176). Thus, despite being disjoint
@@ -17,7 +17,7 @@ but aggregate results could still reflect prior candidate selection. See the fro
 
 ## Results
 
-| Metric | Released Open-Jev | RPS candidate | Candidate − released |
+| Metric | Released public baseline | RPS candidate | Candidate − released |
 | --- | ---: | ---: | ---: |
 | Top-1 accuracy, 112 rows | 79.46% | 82.14% | +2.68 pp |
 | Mean NLL | 0.63792 | 0.52609 | −0.11183 |
@@ -34,16 +34,16 @@ claim. The Score subset is especially small, so its RPS difference is uncertain.
 On this overlapping retrospective slice, the candidate improved all four
 aggregate point estimates and did not reduce top-1 in any decision type. These
 metrics are descriptive only: they do not establish general improvement or
-closeness to proprietary TypeSafe Jev. A genuinely new group-disjoint
+closeness to the proprietary hosted reference model. A genuinely new group-disjoint
 selection—excluding both earlier candidate OOD groups and baseline groups, and
 chosen before either model is scored—is still required before promotion.
 
 This remains a public synthetic benchmark only. It says nothing about Heliox
-desktop task completion, permissions, or action safety. No TypeSafe Jev API
+desktop task completion, permissions, or action safety. No the hosted reference model API
 outputs were requested, stored, used as labels, or used for tuning. The model
 stays outside Heliox's runtime and execution authority.
 
-The implementation follows the documented open Open-Jev pattern—candidates
+The implementation follows the documented open public-corpus pattern—candidates
 are explicit inputs, a shared scalar head scores each candidate, and scores are
-normalized into probabilities—rather than claiming to reproduce Jev's private
-method. See the [Open-Jev method notes](https://zefan-cai.github.io/open-jev/story/).
+normalized into probabilities—rather than claiming to reproduce the reference model's private
+method. See the public-corpus method notes.

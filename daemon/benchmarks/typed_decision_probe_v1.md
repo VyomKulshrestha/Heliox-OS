@@ -1,8 +1,8 @@
-# Jev-inspired typed-decision probe (local, experimental)
+# Typed-decision probe (local, experimental)
 
 ## Method
 
-Open-Jev's public training guide recommends a frozen language-model backbone,
+the public baseline's public training guide recommends a frozen language-model backbone,
 cached features, a small listwise decision head, and a shuffled-context control.
 This probe adapts that shape to Heliox's typed decision contract: a frozen local
 Qwen3-0.6B backbone with an isolated packed state/question/candidate attention
@@ -11,11 +11,11 @@ re-encodes each question and its options against another same-kind example's
 state; swapping only pooled vectors would be invalid because the packed
 candidate vectors are contextualized.
 
-Reference: [Open-Jev training and evaluation](https://github.com/daseinlabs/open-jev/blob/main/docs/training.md).
+Reference: public-corpus training and evaluation.
 
 ## Run
 
-- Dataset: `ZefanCai/Open-Jev` at revision
+- Dataset: the pinned public decision corpus at revision
   `c67699e13d0ae25e35b77165a4b6b079bedc8aba`,
   restricted by the loader to verified CC0-1.0 rows.
 - Split seed: `20260930`; 960 train, 188 calibration, 121 test, and 116 OOD
@@ -56,10 +56,10 @@ does not improve over the default argmax balanced accuracy of 54.7%, so the
 threshold is not promoted.
 
 An earlier local Qwen3.5-2B zero-shot next-token experiment did not produce a
-reliable all-task improvement. Neither experiment establishes Jev parity,
+reliable all-task improvement. Neither experiment establishes reference-model parity,
 real-desktop generalization, safety, or execution authority. The scorer remains
 opt-in/research-only; production decisions and approvals continue through
-Heliox's existing deterministic policy path. Jev/TypeSafe provider outputs were
+Heliox's existing deterministic policy path. reference-model provider outputs were
 not used as training targets or evaluation labels.
 
 ## Reproduction

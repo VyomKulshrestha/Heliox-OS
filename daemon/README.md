@@ -52,12 +52,14 @@ Claude runs without tools, browser integration, slash commands, or persistent
 sessions. Returned plans still pass through the normal policy, approval,
 execution, and verification pipeline.
 
-The runtime offers an opt-in local next-token typed-decision scorer. Separate
-research-only Jev-like option-ranker probes are documented in the
-[current compact scorer report](benchmarks/typed_decision_probe_v2.md) and
+The runtime offers an opt-in local typed-decision scorer. Its trained engine,
+Gnomon, is a QLoRA adapter and scalar head on Qwen3.5-2B; training data,
+promotion gates and results are in [Gnomon](../docs/GNOMON_TRAINING.md).
+Earlier research-only option-ranker probes are documented in the
+[compact scorer report](benchmarks/typed_decision_probe_v2.md) and
 [historical frozen-backbone report](benchmarks/typed_decision_probe_v1.md).
-Neither is Jev parity or execution authority; no Jev/TypeSafe outputs are used
-as training or evaluation targets.
+None of these claims parity with the hosted reference model or receives
+execution authority, and no reference-model outputs are used as training targets.
 
 An opt-in benchmark measures this path without executing actions:
 

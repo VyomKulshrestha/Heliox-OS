@@ -1,4 +1,4 @@
-# Compact Jev-like option scorer (research-only)
+# Compact reference-style option scorer (research-only)
 
 ## Provenance correction — 2026-09-30
 
@@ -14,12 +14,12 @@ unverified were already excluded by the original filter.
 
 ## What the internet research changed
 
-[Open-Jev's training guide](https://github.com/daseinlabs/open-jev/blob/main/docs/training.md)
+the public baseline's training guide
 describes two efficient patterns: score a supplied candidate set in one pass instead of generating a
 free-form answer, and train a small listwise head over cached context/option
-features. [jevlike](https://github.com/vinnylarouge/jevlike) provides a
+features. Minimal Labs' MIT-licensed TinyScorer provides a
 permissively licensed byte-level version of the same input/output shape. A
-newer independent [ODM Mini model card](https://huggingface.co/samatv256/mini-Jev)
+newer independent ODM Mini model card
 also reports that strong single-step scores do not guarantee reliable
 multi-step control: its shadow trajectories expose premature `finish`
 decisions. Heliox therefore keeps this scorer out of execution and approval.
@@ -27,15 +27,15 @@ decisions. Heliox therefore keeps this scorer out of execution and approval.
 Further public-repo research found [Kev](https://github.com/jaredpalmer/kev),
 an Apache-2.0 typed-decision model. Its documented adaptation recipe warm-starts
 a released checkpoint, replays prior examples, and reserves untouched data for
-evaluation; its model card states that no Jev outputs were used for training.
+evaluation; its model card states that no reference-model outputs were used for training.
 The larger [Decider](https://github.com/Mapika/decider) recipe covers about 95
 public datasets and 1.47M examples but reports a 5.3-hour GH200 training run,
 so it is not a sensible local-laptop reproduction. These projects reinforce
 the practical route for Heliox: learn from licensed data and Heliox-owned
 outcomes, then test on held-out tasks.
 
-This probe applies jevlike's tiny, no-pretrained-backbone approach to the
-public Open-Jev rows: learned UTF-8 byte embeddings, ordered context positions,
+This probe applies that tiny, no-pretrained-backbone approach to the
+Public-corpus rows: learned UTF-8 byte embeddings, ordered context positions,
 independent option pooling, and a shared option-to-context attention head. It
 uses no task IDs or fixed option vocabulary. The original data loader accepted
 rows whose provenance declared CC0-1.0, and splits remained group-disjoint; it
@@ -75,8 +75,8 @@ OOD NLL versus 0.896 uniform, and 26.8% ECE.
 
 These source-heldout runs **reject this scratch byte scorer as a generic
 decision model**. It remains research-only and is not wired into the daemon.
-No TypeSafe Jev service, API key, output, or checkpoint was used; these results
-do not establish Jev parity or real-desktop capability. The next meaningful
+No the hosted reference model service, API key, output, or checkpoint was used; these results
+do not establish reference-model parity or real-desktop capability. The next meaningful
 training signal is Heliox-owned task outcome data, not additional tuning on
 source-overlapping synthetic rows.
 
@@ -127,7 +127,7 @@ On the same seed `20261001` OOD rows (identical row/group hashes), adding a
 worse: score RPS changed from `0.2218` to `0.2295`, score top-1 from `46.0%` to
 `41.0%`, and all-task OOD NLL from `0.959` to `1.014`. The experimental
 objective was not retained. This paired result is evidence against that
-setting, not evidence that further loss tuning will close a gap to Jev.
+setting, not evidence that further loss tuning will close a gap to the reference model.
 
 ## Follow-up scaling and capacity probes
 
@@ -156,15 +156,15 @@ disjoint across those splits.
 This paired result supports a limited claim: width 128 improved aggregate
 OOD NLL, calibration, and yes/no balanced accuracy on this one fixed public
 split, while choice and score top-1 did not improve. It is not evidence of
-Jev parity, desktop-workflow generalization, or a safe execution policy. The
+reference-model parity, desktop-workflow generalization, or a safe execution policy. The
 model remains research-only and is not loaded by Heliox. The training code now
 accepts `--split-seed` for reproducible paired comparisons; omitting it keeps
 the prior behavior (`split_seed` defaults to `--seed`).
 
 Artifacts and per-run reports remain in ignored local
-`benchmarks/.bench-state/jevlike_tiny_*` directories. The runs used only the
+`benchmarks/.bench-state/referencelike_tiny_*` directories. The runs used only the
 revision-pinned, per-row CC0-filtered public dataset described above; no
-TypeSafe Jev service, output, weights, or labels were used.
+the hosted reference model service, output, weights, or labels were used.
 
 ## Cost, reproduction, and limits
 
@@ -178,9 +178,9 @@ TypeSafe Jev service, output, weights, or labels were used.
   daemon/RPC and approval path. CPU and CUDA selected the same option on all
   128 decisions; that is numerical portability, not an accuracy measure.
 - Reports and weights remain ignored local artifacts under
-  `benchmarks/.bench-state/jevlike_tiny_8k_ctx2048_seed28_final/` and
-  `benchmarks/.bench-state/jevlike_tiny_8k_ctx2048_seed29_final/`.
-- Dataset: `ZefanCai/Open-Jev`, config `release-v2-redistributable`, revision
+  `benchmarks/.bench-state/referencelike_tiny_8k_ctx2048_seed28_final/` and
+  `benchmarks/.bench-state/referencelike_tiny_8k_ctx2048_seed29_final/`.
+- Dataset: the pinned public decision corpus, config `release-v2-redistributable`, revision
   `c67699e13d0ae25e35b77165a4b6b079bedc8aba`. The dataset must already be
   cached locally; the runner does not download data implicitly.
 
@@ -188,17 +188,17 @@ From `daemon/`, with CUDA-enabled PyTorch and that dataset revision cached:
 
 ```powershell
 python scripts/train_tiny_typed_decision.py `
-  --output-dir benchmarks/.bench-state/jevlike_tiny_8k_ctx2048_seed28_final `
+  --output-dir benchmarks/.bench-state/referencelike_tiny_8k_ctx2048_seed28_final `
   --train-rows 8000 --calibration-rows 1000 --test-rows 1000 --ood-rows 1000 `
   --context-bytes 2048 --option-bytes 128 --seed 20260928
 
 python scripts/train_tiny_typed_decision.py `
-  --output-dir benchmarks/.bench-state/jevlike_tiny_8k_ctx2048_seed29_final `
+  --output-dir benchmarks/.bench-state/referencelike_tiny_8k_ctx2048_seed29_final `
   --train-rows 8000 --calibration-rows 1000 --test-rows 1000 --ood-rows 1000 `
   --context-bytes 2048 --option-bytes 128 --seed 20260929
 
 python scripts/train_tiny_typed_decision.py `
-  --output-dir benchmarks/.bench-state/jevlike_tiny_8k_ctx2048_seed20261002 `
+  --output-dir benchmarks/.bench-state/referencelike_tiny_8k_ctx2048_seed20261002 `
   --train-rows 8000 --calibration-rows 1000 --test-rows 1000 --ood-rows 1000 `
   --context-bytes 2048 --option-bytes 128 --seed 20261002
 ```
@@ -210,8 +210,8 @@ are intentionally not reused here. Regression tests check analytical ECE and
 expected random-choice accuracy; reports include calibration-bin counts,
 confidence, and accuracy.
 
-This is a compact research prototype, not a Jev/TypeSafe reproduction or
-parity claim. No TypeSafe Jev service, output, weights, or labels were used.
+This is a compact research prototype, not a reference-model reproduction or
+parity claim. No the hosted reference model service, output, weights, or labels were used.
 However, as noted above, these older runs included rows whose task sources
 referenced TypeSafe-hosted pages; they are superseded for clean-source claims.
 It has not been tested on multi-step

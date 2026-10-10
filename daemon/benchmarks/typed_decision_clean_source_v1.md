@@ -1,13 +1,13 @@
 # Clean-source typed-decision training probe
 
 **Status: research-only; no trained weights are loaded by Heliox.** This is a
-Heliox-owned, independently trained candidate-option scorer, not a Jev clone,
+Heliox-owned, independently trained candidate-option scorer, not the reference-model clone,
 general planner, or desktop executor.
 
 ## Data provenance and method
 
-The pinned Open-Jev dataset release is
-`ZefanCai/Open-Jev`, config `release-v2-redistributable`, revision
+The pinned public decision dataset release is
+the pinned public decision corpus, config `release-v2-redistributable`, revision
 `c67699e13d0ae25e35b77165a4b6b079bedc8aba`. A provenance review found that
 the earlier CC0-only gate still admitted synthetic/programmatic rows with
 TypeSafe-hosted source URLs. The shared loader now requires CC0-1.0, excludes
@@ -37,14 +37,14 @@ seed are:
 | Test | `56cdd5c162e7321dc3c354553268095c8c5bdecb469fc26295b7db783549f923` |
 | OOD | `b6423ad2808c4cb290c718d2c725f684739acd7b1d3e72db6fd503f487772229` |
 
-No TypeSafe Jev API calls, outputs, labels, or weights were used; the
+No the hosted reference model API calls, outputs, labels, or weights were used; the
 OpenRouter key was not read. TypeSafe's current
 [Master Customer Agreement §2.3(b)](https://typesafe.ai/legal/mca) prohibits
 using its services or any output for distillation, imitation, or development
 of a similar/competing product. The user-provided key and prompts do not change
 those provider terms. The safe path here was training from independently
 licensed data and the pinned Qwen base. The listwise candidate-scoring design
-follows the public [Open-Jev training guide](https://github.com/daseinlabs/open-jev/blob/main/docs/training.md),
+follows the public-corpus training guide,
 not TypeSafe service behavior or outputs.
 
 ## Results
@@ -81,7 +81,7 @@ model and remains a diagnostic only.
 
 The best evidence is that Qwen fine-tuning changes candidate rankings on this
 small clean OOD split, and the effect repeated over three model seeds. It does
-not show performance close to proprietary Jev: no permitted TypeSafe side-by-
+not show performance close to the proprietary reference model: no permitted TypeSafe side-by-
 side evaluation was made. These runs do not evaluate multi-step task completion,
 tool use, screen understanding, voice interruption, workflow reliability, or
 real user outcomes; they cannot justify execution authority. Keep these weights

@@ -1,13 +1,13 @@
-# Open-Jev 2B public general-decision baseline (v2)
+# Public 2B baseline: general-decision evaluation (v2)
 
-This is an offline evaluation of the independent Open-Jev project checkpoint,
+This is an offline evaluation of the independent public decision project checkpoint,
 not a Heliox-trained or Heliox-runtime model. It uses only its pinned public
 weights and the independently licensed public decision dataset; it does not
 use outputs from a hosted proprietary model.
 
 ## Frozen inputs
 
-- Checkpoint: `ZefanCai/Open-Jev-2B@0c7aa498b1627be8da4acf34c863ff0ee0a92785`.
+- Checkpoint: the released public 2B baseline at revision `0c7aa498b1627be8da4acf34c863ff0ee0a92785`.
 - Base: Qwen3.5-2B revision `15852e8c16360a2fea060d615a32b45270f8a8fc`.
 - Adapter SHA-256: `2d23935b1a7380db444abac572c04646918ba794e59002d1588236182a3ca18f`.
 - Scalar-head SHA-256: `3532cd576c58d5ad5bf17c3e9f2df4be8c70e08c07fa6bb7fa673dcd7b401f2a`.
@@ -23,7 +23,7 @@ use outputs from a hosted proprietary model.
 
 Fresh-set comparison with an equal-probability, label-blind baseline:
 
-| Decision kind | Open-Jev result | Uniform baseline | Rows |
+| Decision kind | Public-corpus result | Uniform baseline | Rows |
 | --- | --- | --- | ---: |
 | Binary (`noul`) | 90.0% accuracy; 80.4% balanced accuracy | 80.0%; 50.0% balanced | 70 |
 | Choice | 60.5% accuracy | 23.7% accuracy | 38 |
@@ -37,7 +37,7 @@ choice 71.4% vs 28.6%, and ordinal rank error 0.139 vs 0.923 (lower is better).
 The report above uses temperature 1.0. As a sensitivity check only, the same
 NF4 logits were rescored at the checkpoint card's published temperature
 (1.518796342858676, fitted upstream on a separate 512-row calibration set;
-see the [checkpoint card](https://huggingface.co/ZefanCai/Open-Jev-2B)). No
+see the checkpoint card). No
 temperature was fit on these OOD rows, and this value was not selected for
 Heliox.
 
@@ -60,7 +60,7 @@ execution. No weights were trained or promoted by this evaluation; approvals
 and deterministic execution gates remain unchanged.
 
 The complete local report and resumable logits are under the ignored path
-`daemon/benchmarks/.bench-state/released_openjev_general_public_v3/` and are
+`daemon/benchmarks/.bench-state/released_opendec_general_public_v3/` and are
 not committed.
 
 ## Reproduction
