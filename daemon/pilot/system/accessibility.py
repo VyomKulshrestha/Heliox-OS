@@ -14,6 +14,7 @@ from __future__ import annotations
 import itertools
 import json
 import logging
+import re
 import sys
 import time
 from collections import OrderedDict
@@ -81,6 +82,7 @@ class AccessibleElement:
     height: int
     enabled: bool
     focused: bool
+    runtime_id: str = ""  # UI Automation RuntimeId, e.g. "42.38601948.4.21"
 
     @property
     def center(self) -> tuple[int, int]:
@@ -137,6 +139,9 @@ def foreground_window() -> WindowIdentity | None:
     return WindowIdentity(int(handle), (rect.left, rect.top, rect.right, rect.bottom))
 
 
+_RUNTIME_ID = re.compile(r"^-?\d{1,10}(\.-?\d{1,10}){1,15}$")
+
+
 class SnapshotStore:
     """Keep recent snapshots and resolve refs only while their window is unchanged."""
 
@@ -166,6 +171,10 @@ class SnapshotStore:
         self._snapshots.move_to_end(snapshot.snapshot_id)
         while len(self._snapshots) > self._capacity:
             self._snapshots.popitem(last=False)
+
+    def window_of(self, snapshot_id: str) -> WindowIdentity | None:
+        snapshot = self._snapshots.get(snapshot_id)
+        return snapshot.window if snapshot else None
 
     def resolve(self, snapshot_id: str, ref: str) -> AccessibleElement:
         snapshot = self._snapshots.get(snapshot_id)
@@ -213,8 +222,9 @@ def _snapshot_script(handle: int, max_elements: int) -> str:
         "$r = $c.BoundingRectangle; $t = $c.ControlType.ProgrammaticName; "
         "if (-not $c.IsOffscreen -and $r.Width -gt 0 -and $r.Height -gt 0 -and "
         "($types -contains $t -or ($t -eq 'ControlType.Text' -and $c.Name))) { "
+        "$rid = ''; try { $rid = ($element.GetRuntimeId() -join '.') } catch { }; "
         "[void]$found.Add(@{ t = $t; n = $c.Name; a = $c.AutomationId; x = [int]$r.X; y = [int]$r.Y; "
-        "w = [int]$r.Width; h = [int]$r.Height; e = $c.IsEnabled; f = $c.HasKeyboardFocus }) }; "
+        "w = [int]$r.Width; h = [int]$r.Height; e = $c.IsEnabled; f = $c.HasKeyboardFocus; r = $rid }) }; "
         f"if ($depth -lt {MAX_TREE_DEPTH}) {{ "
         "try { $child = $walker.GetFirstChild($element) } catch { $child = $null }; "
         "while ($child -ne $null) { $queue.Enqueue(@($child, ($depth + 1))); "
@@ -254,6 +264,7 @@ def parse_snapshot(
                 height=int(raw.get("h") or 0),
                 enabled=bool(raw.get("e", True)),
                 focused=bool(raw.get("f", False)),
+                runtime_id=str(raw.get("r") or "") if _RUNTIME_ID.fullmatch(str(raw.get("r") or "")) else "",
             )
         )
     return AccessibilitySnapshot(
@@ -291,3 +302,50 @@ async def capture_snapshot(
         raise AccessibilityUnavailable(f"UI Automation returned unreadable output: {error}") from error
     store.add(snapshot)
     return snapshot
+
+
+def _background_press_script(handle: int, runtime_id: str) -> str:
+    parts = ",".join(str(int(part)) for part in runtime_id.split("."))
+    return (
+        "$ErrorActionPreference = 'Stop'; "
+        "Add-Type -AssemblyName UIAutomationClient; Add-Type -AssemblyName UIAutomationTypes; "
+        f"$root = [System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]{int(handle)}); "
+        "$condition = New-Object System.Windows.Automation.PropertyCondition("
+        f"[System.Windows.Automation.AutomationElement]::RuntimeIdProperty, [int[]]@({parts})); "
+        "$element = $root.FindFirst([System.Windows.Automation.TreeScope]::Subtree, $condition); "
+        "if ($element -eq $null) { Write-Output 'missing'; exit 0 }; "
+        "if (-not $element.Current.IsEnabled) { Write-Output 'disabled'; exit 0 }; "
+        "$pattern = $null; "
+        "if ($element.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$pattern)) "
+        "{ $pattern.Invoke(); Write-Output 'invoke'; exit 0 }; "
+        "if ($element.TryGetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern, [ref]$pattern)) "
+        "{ $pattern.Toggle(); Write-Output 'toggle'; exit 0 }; "
+        "if ($element.TryGetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern, [ref]$pattern)) "
+        "{ $pattern.Select(); Write-Output 'select'; exit 0 }; "
+        "if ($element.TryGetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern, [ref]$pattern)) "
+        "{ if ($pattern.Current.ExpandCollapseState -eq 'Expanded') { $pattern.Collapse() } else { $pattern.Expand() }; "
+        "Write-Output 'expand_collapse'; exit 0 }; "
+        "Write-Output 'none'"
+    )
+
+
+async def press_in_background(window: WindowIdentity, element: AccessibleElement) -> str | None:
+    """Press, toggle, select or expand an element without moving the cursor.
+
+    Returns the UI Automation pattern used, or None when the element offers no
+    such pattern and a physical click is needed instead.
+    """
+    if CURRENT_PLATFORM != Platform.WINDOWS or not _RUNTIME_ID.fullmatch(element.runtime_id or ""):
+        return None
+    code, stdout, stderr = await run_powershell(
+        _background_press_script(window.handle, element.runtime_id), timeout=SNAPSHOT_TIMEOUT_SECONDS
+    )
+    if code != 0:
+        logger.info("Background press failed for %s: %s", element.ref, (stderr or stdout).strip()[:200])
+        return None
+    outcome = stdout.strip().splitlines()[-1] if stdout.strip() else "none"
+    if outcome == "missing":
+        raise StaleElementRef(f"re-snapshot required: {element.label} ({element.ref}) is no longer in the window")
+    if outcome == "disabled":
+        raise ValueError(f"{element.label} ({element.ref}) is disabled")
+    return None if outcome == "none" else outcome

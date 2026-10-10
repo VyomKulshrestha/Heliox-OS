@@ -60,6 +60,13 @@ def _store(window: WindowIdentity | None = WINDOW, clock: _Clock | None = None) 
     return store, state
 
 
+def _executor_stub() -> SimpleNamespace:
+    return SimpleNamespace(
+        _accessibility_target=Executor._accessibility_target,
+        _press_element_in_background=Executor._press_element_in_background,
+    )
+
+
 def test_parse_snapshot_assigns_refs_and_cleans_names():
     snapshot = parse_snapshot(_payload(SAVE, EDIT), WINDOW, captured_at=5.0, snapshot_id="ax1")
 
@@ -176,11 +183,10 @@ async def test_mouse_click_uses_a_fresh_element_ref(monkeypatch):
     monkeypatch.setattr(accessibility, "_default_store", store)
     click = AsyncMock(return_value="Clicked at (200, 65)")
     monkeypatch.setattr("pilot.system.input_control.mouse_click", click)
+    monkeypatch.setattr(accessibility, "press_in_background", AsyncMock(return_value=None))
     action = SimpleNamespace(parameters=MouseParams(element_ref="e2", snapshot_id="ax1"))
 
-    output = await Executor._exec_mouse_click(
-        SimpleNamespace(_accessibility_target=Executor._accessibility_target), action
-    )
+    output = await Executor._exec_mouse_click(_executor_stub(), action)
 
     click.assert_awaited_once_with(200, 65, "left", 1)
     assert 'Edit "Search box" (e2)' in output
@@ -197,7 +203,7 @@ async def test_mouse_click_refuses_a_stale_ref_without_clicking(monkeypatch):
     action = SimpleNamespace(parameters=MouseParams(element_ref="e1", snapshot_id="ax1"))
 
     with pytest.raises(StaleElementRef, match="re-snapshot required"):
-        await Executor._exec_mouse_click(SimpleNamespace(_accessibility_target=Executor._accessibility_target), action)
+        await Executor._exec_mouse_click(_executor_stub(), action)
     click.assert_not_awaited()
 
 
@@ -238,3 +244,68 @@ async def test_autonomous_observation_includes_the_accessibility_snapshot():
 
     assert 'e1 Button "Save" at (30,30)' in context
     observer.assert_awaited_once()
+
+
+RID = {**SAVE, "r": "42.1001.4.7"}
+
+
+@pytest.mark.asyncio
+async def test_single_left_click_on_a_ref_presses_in_the_background(monkeypatch):
+    store, _ = _store()
+    store.add(parse_snapshot(_payload(RID, EDIT), WINDOW, captured_at=store.now(), snapshot_id="ax1"))
+    monkeypatch.setattr(accessibility, "_default_store", store)
+    press = AsyncMock(return_value="invoke")
+    monkeypatch.setattr(accessibility, "press_in_background", press)
+    click = AsyncMock()
+    monkeypatch.setattr("pilot.system.input_control.mouse_click", click)
+    action = SimpleNamespace(parameters=MouseParams(element_ref="e1", snapshot_id="ax1"))
+
+    output = await Executor._exec_mouse_click(_executor_stub(), action)
+
+    assert press.await_args.args[1].runtime_id == "42.1001.4.7"
+    click.assert_not_awaited()
+    assert "cursor did not move" in output and 'Button "Save" (e1)' in output
+
+
+@pytest.mark.asyncio
+async def test_right_and_double_clicks_never_use_background_press(monkeypatch):
+    press = AsyncMock(return_value="invoke")
+    monkeypatch.setattr(accessibility, "press_in_background", press)
+
+    for params in (
+        MouseParams(element_ref="e1", snapshot_id="ax1", button="right"),
+        MouseParams(element_ref="e1", snapshot_id="ax1", clicks=2),
+    ):
+        assert await Executor._press_element_in_background(params) is None
+    press.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_background_press_reports_a_vanished_element_as_stale(monkeypatch):
+    from pilot.system.platform_detect import Platform
+
+    monkeypatch.setattr(accessibility, "CURRENT_PLATFORM", Platform.WINDOWS)
+    monkeypatch.setattr(accessibility, "run_powershell", AsyncMock(return_value=(0, "missing\n", "")))
+    element = parse_snapshot(_payload(RID), WINDOW, captured_at=0.0).elements[0]
+
+    with pytest.raises(StaleElementRef, match="no longer in the window"):
+        await accessibility.press_in_background(WINDOW, element)
+
+
+@pytest.mark.asyncio
+async def test_background_press_falls_back_when_no_pattern_applies(monkeypatch):
+    from pilot.system.platform_detect import Platform
+
+    monkeypatch.setattr(accessibility, "CURRENT_PLATFORM", Platform.WINDOWS)
+    run = AsyncMock(return_value=(0, "none\n", ""))
+    monkeypatch.setattr(accessibility, "run_powershell", run)
+    element = parse_snapshot(_payload(RID), WINDOW, captured_at=0.0).elements[0]
+
+    assert await accessibility.press_in_background(WINDOW, element) is None
+    assert "[int[]]@(42,1001,4,7)" in run.await_args.args[0]
+
+
+def test_malformed_runtime_ids_are_dropped():
+    snapshot = parse_snapshot(_payload({**SAVE, "r": "1; Remove-Item"}), WINDOW, captured_at=0.0)
+
+    assert snapshot.elements[0].runtime_id == ""

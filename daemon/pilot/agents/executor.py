@@ -2312,12 +2312,32 @@ class Executor:
         x, y = element.center
         return x, y, f"{element.label} ({element.ref})"
 
+    @staticmethod
+    async def _press_element_in_background(p: MouseParams) -> str | None:
+        """Single left clicks on a ref try UI Automation first so the cursor stays with the person."""
+        if not p.element_ref or not p.snapshot_id or p.button != "left" or p.clicks != 1:
+            return None
+        from pilot.system.accessibility import default_store, press_in_background
+
+        store = default_store()
+        element = store.resolve(p.snapshot_id, p.element_ref)
+        window = store.window_of(p.snapshot_id)
+        if window is None:
+            return None
+        pattern = await press_in_background(window, element)
+        if pattern is None:
+            return None
+        return f"Pressed {element.label} ({element.ref}) through UI Automation ({pattern}); the cursor did not move"
+
     async def _exec_mouse_click(self, action: Action) -> str:
         from pilot.system.input_control import mouse_click
 
         p: MouseParams = action.parameters  # type: ignore[assignment]
         x, y = p.x, p.y
         target_label = ""
+        pressed = await self._press_element_in_background(p)
+        if pressed is not None:
+            return pressed
         grounded = self._accessibility_target(p)
         if grounded is not None:
             x, y, target_label = grounded
