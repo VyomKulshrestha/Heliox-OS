@@ -524,6 +524,18 @@ through the same approval, gateway and takeover checks. Step outputs are
 capped and passed through the same credential redaction as other persisted
 records before they are written.
 
+## 🗓️ Scheduled runs are limited to an approved list of actions
+
+A scheduled run starts an autonomous job with the list of action types the
+person approved for that schedule. The job's scope override denies every other
+action type at the gateway, and the autonomous loop refuses any plan that
+contains one before it reaches the executor, so the limit holds even if the
+gateway is disabled in `config.toml`. Approval is not bypassed: actions on the
+list that normally need confirmation still wait for the person, and the
+autonomous source floor (no root, no arbitrary page JavaScript, no registry
+writes or shutdown) still applies. A run that came due while Heliox was off is
+skipped rather than fired late.
+
 ## ✋ Human takeover of the desktop
 
 **What this is.** `pilot.security.human_control.HumanControlGate` lets the

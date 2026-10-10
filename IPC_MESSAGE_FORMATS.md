@@ -12,7 +12,7 @@ The Heliox OS UI and daemon communicate over a local WebSocket using the [JSON-R
 | Request timeout | 5 minutes |
 | Reconnect interval | 3 seconds (auto-reconnect on close) |
 
-The daemon currently registers **203 WebSocket RPC methods**. That is the API
+The daemon currently registers **208 WebSocket RPC methods**. That is the API
 surface count, not the action catalog: Heliox exposes **162 action
 types** through the guarded planner/executor system. This document names every
 registered RPC method; grouped tables are used where several methods share one
@@ -1276,6 +1276,31 @@ approval and human-takeover rules apply as usual.
 **Result:** `{ "status": "resumed", "job": <job> }`, or
 `{ "status": "error", "message": "Only an interrupted job can be resumed" }`.
 
+#### Scheduled runs
+
+A scheduled run is a goal Heliox works on by itself on a timetable, limited to
+an approved list of action types. Each run is an ordinary autonomous job
+(`source: "scheduled"`, `allowed_actions` set): the gateway denies every other
+action through the job's scope override, and the autonomous loop refuses a
+plan that uses one even when the gateway is switched off. Approval rules are
+unchanged, so actions that need approval still wait for the person.
+Schedules live in `scheduled_runs.db`. A run that came due while Heliox was off
+for more than 15 minutes is skipped (`last_status: "missed"`), and a schedule
+never starts a run while its previous one is still going.
+
+| Method | Params | Result |
+| --- | --- | --- |
+| `scheduled_run_list` | `{}` | `{ "status": "ok", "runs": [<run>] }` |
+| `scheduled_run_create` | `{ "name", "goal", "allowed_actions": ["disk_usage", "notify"], "every_minutes": 60 }` or `{ ..., "daily_at": "09:00", "weekdays": [0, 1, 2, 3, 4] }` | `{ "status": "ok", "run": <run> }` or `{ "status": "error", "message" }` |
+| `scheduled_run_set_enabled` | `{ "run_id", "enabled": false }` | `{ "status": "ok", "run": <run> }` |
+| `scheduled_run_delete` | `{ "run_id" }` | `{ "status": "ok", "deleted": true }` |
+| `scheduled_run_now` | `{ "run_id" }` | `{ "status": "ok", "run": <run> }`; the timetable is unchanged |
+
+`<run>`: `{ "run_id", "name", "goal", "allowed_actions", "every_minutes",
+"daily_at", "weekdays", "enabled", "next_run_at", "last_run_at", "last_job_id",
+"last_status", "last_job_status" }`. `every_minutes` is 5 to 10080; `weekdays`
+are 0 (Monday) to 6 (Sunday) and apply only to `daily_at`.
+
 #### `autonomous_jobs`
 List all autonomous jobs, including interrupted ones from before a restart.
 
@@ -1971,6 +1996,8 @@ For durable voice workflows, `status` may be `submitted`, `revising`, or
 - `autonomous_started`, `autonomous_decomposed`, `autonomous_step_start`,
   `autonomous_step_complete`, `autonomous_complete`, and
   `autonomous_cancelled` carry the current autonomous job object.
+- `scheduled_run_dispatched` carries `{ "run_id", "name", "job_id" }` when a
+  schedule starts its job.
 - `autonomous_paused_for_human` and `autonomous_resumed` carry the job object
   when a job waits for the person to hand the desktop back, and when it resumes.
 - `human_control` carries the control status (see Human Control) whenever the

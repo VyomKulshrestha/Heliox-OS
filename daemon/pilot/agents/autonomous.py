@@ -87,6 +87,15 @@ _FOREGROUND_INPUT_ACTIONS = frozenset(
 )
 
 
+def restrict_scope_to_actions(
+    scope_override: TaskScopeOverride | None, allowed_actions: list[str]
+) -> TaskScopeOverride:
+    """A scope override that denies every action type except ``allowed_actions``."""
+    base = scope_override or TaskScopeOverride()
+    denied = {action.value for action in ActionType} - set(allowed_actions)
+    return base.model_copy(update={"deny_action_types": sorted(set(base.deny_action_types) | denied)})
+
+
 class JobStatus(StrEnum):
     QUEUED = "queued"
     DECOMPOSING = "decomposing"
@@ -187,6 +196,8 @@ class AutonomousJob:
     scope_override: TaskScopeOverride | None = None  # optional caller-supplied restriction (see AgentGateway)
     decomposition: dict[str, Any] | None = None  # TaskDecomposition.to_dict(), kept so a resume knows the steps
     resumed_count: int = 0
+    # When set (scheduled runs), plans may only use these action types; anything else is refused.
+    allowed_actions: list[str] | None = None
 
     @property
     def duration_seconds(self) -> float:
@@ -210,6 +221,7 @@ class AutonomousJob:
             "session_id": self.session_id,
             "resumable": self.status == JobStatus.INTERRUPTED,
             "resumed_count": self.resumed_count,
+            "allowed_actions": self.allowed_actions,
         }
 
     def to_record(self) -> dict[str, Any]:
@@ -229,6 +241,7 @@ class AutonomousJob:
             "scope_override": self.scope_override.model_dump(mode="json") if self.scope_override else None,
             "decomposition": self.decomposition,
             "resumed_count": self.resumed_count,
+            "allowed_actions": self.allowed_actions,
         }
 
     @classmethod
@@ -239,6 +252,7 @@ class AutonomousJob:
             status = JobStatus.INTERRUPTED
         scope = data.get("scope_override")
         decomposition = data.get("decomposition")
+        allowed = data.get("allowed_actions")
         return cls(
             job_id=str(data["job_id"]),
             goal=str(data.get("goal", "")),
@@ -254,6 +268,7 @@ class AutonomousJob:
             scope_override=TaskScopeOverride.model_validate(scope) if isinstance(scope, dict) else None,
             decomposition=decomposition if isinstance(decomposition, dict) else None,
             resumed_count=int(data.get("resumed_count", 0)),
+            allowed_actions=[str(item) for item in allowed] if isinstance(allowed, list) else None,
         )
 
 
@@ -327,15 +342,25 @@ class AutonomousExecutor:
         source: str = "text",
         scope_override: TaskScopeOverride | None = None,
         session_id: str = "default",
+        allowed_actions: list[str] | None = None,
     ) -> AutonomousJob:
-        """Submit a new autonomous job. Returns immediately with a job handle."""
+        """Submit a new autonomous job. Returns immediately with a job handle.
+
+        ``allowed_actions`` limits every plan of the job to those action types: the
+        gateway denies the rest through the scope override, and the goal loop refuses
+        them itself as well, so the limit holds even with the gateway switched off.
+        """
         if self._stopping:
             raise RuntimeError("Autonomous executor is stopping")
+        if allowed_actions is not None:
+            allowed_actions = sorted({ActionType(name).value for name in allowed_actions})
+            scope_override = restrict_scope_to_actions(scope_override, allowed_actions)
         job = AutonomousJob(
             goal=goal,
             source=source,
             scope_override=scope_override,
             session_id=session_id,
+            allowed_actions=allowed_actions,
         )
         self._jobs[job.job_id] = job
         await self._persist(job)
@@ -1003,6 +1028,16 @@ class AutonomousExecutor:
                 if plan.error:
                     step.error = plan.error
                     break
+                if job.allowed_actions is not None:
+                    outside = sorted({action.action_type.value for action in plan.actions} - set(job.allowed_actions))
+                    if outside:
+                        progress.append(
+                            f"Round {round_index + 1} plan refused: {', '.join(outside)} "
+                            f"{'is' if len(outside) == 1 else 'are'} not on this run's approved list. "
+                            f"Use only: {', '.join(job.allowed_actions)}."
+                        )
+                        step.error = f"The plan needed actions outside the approved list: {', '.join(outside)}"
+                        continue
                 is_desktop_round = any(action.action_type in _DESKTOP_LOOP_ACTIONS for action in plan.actions)
                 if vision_disabled and is_desktop_round:
                     step.error = "Screen vision is disabled; interactive actions were not executed."

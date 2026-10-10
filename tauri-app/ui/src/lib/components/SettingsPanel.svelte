@@ -21,6 +21,7 @@
   import EmailIntegrationPanel from "./EmailIntegrationPanel.svelte";
   import SshIntegrationPanel from "./SshIntegrationPanel.svelte";
   import McpServersPanel from "./McpServersPanel.svelte";
+  import ScheduledRunsPanel from "./ScheduledRunsPanel.svelte";
   import GestureWorkflowBindings from "./GestureWorkflowBindings.svelte";
   import VoiceGestureWorkflowStatus from "./VoiceGestureWorkflowStatus.svelte";
   import RecordedWorkflowsPanel from "./RecordedWorkflowsPanel.svelte";
@@ -2463,6 +2464,7 @@
   <EmailIntegrationPanel />
   <SshIntegrationPanel />
   <McpServersPanel />
+  <ScheduledRunsPanel />
   <PeerMeshPanel />
   <AirHandoffPanel />
 </div>

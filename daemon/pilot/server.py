@@ -674,6 +674,7 @@ class PilotServer:
 
         self._mcp_client = default_mcp_client()
         self._mcp_client_refresh: asyncio.Task[Any] | None = None
+        self._scheduled_runs: Any = None
         self._self_healing: Any = None
         self._self_healing_started_monitors: set[str] = set()
         self._proactive: Any = None
@@ -1186,6 +1187,15 @@ class PilotServer:
             )
             # Jobs cut off by the last shutdown come back as interrupted; the person decides whether to resume.
             await self._autonomous.recover()
+
+            from pilot.workflows.scheduled_runs import ScheduledRunner, ScheduledRunStore
+
+            self._scheduled_runs = ScheduledRunner(
+                ScheduledRunStore(),
+                submit=self._submit_scheduled_run,
+                job_is_active=self._autonomous_job_is_active,
+            )
+            self._scheduled_runs.start()
             self._autonomous.set_broadcast(self._broadcast_notification)
             self._autonomous.set_speech(self._speak_companion_text)
             self._autonomous.set_approval_handler(self._wait_for_autonomous_confirmation)
@@ -1461,6 +1471,11 @@ class PilotServer:
             "autonomous_submit": self._handle_autonomous_submit,
             "autonomous_cancel": self._handle_autonomous_cancel,
             "autonomous_resume": self._handle_autonomous_resume,
+            "scheduled_run_list": self._handle_scheduled_run_list,
+            "scheduled_run_create": self._handle_scheduled_run_create,
+            "scheduled_run_set_enabled": self._handle_scheduled_run_set_enabled,
+            "scheduled_run_delete": self._handle_scheduled_run_delete,
+            "scheduled_run_now": self._handle_scheduled_run_now,
             "autonomous_jobs": self._handle_autonomous_jobs,
             "autonomous_job": self._handle_autonomous_job,
             "risk_gate_status": self._handle_risk_gate_status,
@@ -8771,6 +8786,8 @@ def handle_tool(tool_name, params):
         supervision_hook = getattr(self, "_supervision_hook", None)
         if supervision_hook is not None:
             supervision_hook.stop()
+        if self._scheduled_runs is not None:
+            await self._scheduled_runs.stop()
         if self._autonomous is not None:
             await self._autonomous.stop()
 
@@ -10560,6 +10577,95 @@ def handle_tool(tool_name, params):
         if job is None:
             return {"status": "error", "message": "Only an interrupted job can be resumed"}
         return {"status": "resumed", "job": job.to_dict()}
+
+    async def _submit_scheduled_run(self, run: Any) -> str:
+        """Start one scheduled run as an autonomous job limited to its approved actions."""
+        if self._autonomous is None:
+            raise RuntimeError("Autonomous executor not initialized")
+        goal = (
+            f'{run.goal}\n\n(Scheduled run "{run.name}". '
+            f"Only these actions are approved: {', '.join(run.allowed_actions)}.)"
+        )
+        job = await self._autonomous.submit(
+            goal,
+            source="scheduled",
+            session_id=f"scheduled:{run.run_id}",
+            allowed_actions=run.allowed_actions,
+        )
+        await self._broadcast_notification(
+            "scheduled_run_dispatched", {"run_id": run.run_id, "name": run.name, "job_id": job.job_id}
+        )
+        return job.job_id
+
+    def _autonomous_job_is_active(self, job_id: str) -> bool:
+        from pilot.agents.autonomous import JobStatus
+
+        job = self._autonomous.get_job(job_id) if self._autonomous is not None else None
+        return job is not None and job.status in {JobStatus.QUEUED, JobStatus.DECOMPOSING, JobStatus.RUNNING}
+
+    def _scheduled_run_view(self, run: Any) -> dict[str, Any]:
+        job = self._autonomous.get_job(run.last_job_id) if self._autonomous and run.last_job_id else None
+        return {**run.to_dict(), "last_job_status": job.status.value if job else ""}
+
+    async def _handle_scheduled_run_list(self, params: dict, ws: ServerConnection) -> dict:
+        """Scheduled agent runs with their next run time and the last run's job status."""
+        if self._scheduled_runs is None:
+            return {"status": "error", "message": "Scheduled runs are unavailable"}
+        return {"status": "ok", "runs": [self._scheduled_run_view(run) for run in await self._scheduled_runs.list()]}
+
+    async def _handle_scheduled_run_create(self, params: dict, ws: ServerConnection) -> dict:
+        """Create a schedule: name, goal, allowed_actions and every_minutes or daily_at (+ weekdays)."""
+        if self._scheduled_runs is None:
+            return {"status": "error", "message": "Scheduled runs are unavailable"}
+        try:
+            every_minutes = params.get("every_minutes", 0)
+            weekdays = params.get("weekdays", [])
+            if not isinstance(every_minutes, int) or isinstance(every_minutes, bool):
+                raise ValueError("every_minutes must be a whole number")
+            if not isinstance(weekdays, list) or not all(
+                isinstance(day, int) and not isinstance(day, bool) for day in weekdays
+            ):
+                raise ValueError("weekdays must be a list of numbers")
+            run = await self._scheduled_runs.create(
+                name=params.get("name", ""),
+                goal=params.get("goal", ""),
+                allowed_actions=params.get("allowed_actions", []),
+                every_minutes=every_minutes,
+                daily_at=params.get("daily_at", ""),
+                weekdays=weekdays,
+            )
+        except ValueError as error:
+            return {"status": "error", "message": str(error)}
+        return {"status": "ok", "run": self._scheduled_run_view(run)}
+
+    async def _handle_scheduled_run_set_enabled(self, params: dict, ws: ServerConnection) -> dict:
+        if self._scheduled_runs is None:
+            return {"status": "error", "message": "Scheduled runs are unavailable"}
+        try:
+            enabled = _validated_bool(params, "enabled", True)
+        except ValueError as error:
+            return {"status": "error", "message": str(error)}
+        run = await self._scheduled_runs.set_enabled(str(params.get("run_id", "")), enabled)
+        if run is None:
+            return {"status": "error", "message": "No such scheduled run"}
+        return {"status": "ok", "run": self._scheduled_run_view(run)}
+
+    async def _handle_scheduled_run_delete(self, params: dict, ws: ServerConnection) -> dict:
+        if self._scheduled_runs is None:
+            return {"status": "error", "message": "Scheduled runs are unavailable"}
+        deleted = await self._scheduled_runs.delete(str(params.get("run_id", "")))
+        return {"status": "ok" if deleted else "error", "deleted": deleted}
+
+    async def _handle_scheduled_run_now(self, params: dict, ws: ServerConnection) -> dict:
+        """Start a schedule's goal right away, with the same approved list."""
+        if self._scheduled_runs is None:
+            return {"status": "error", "message": "Scheduled runs are unavailable"}
+        run = await self._scheduled_runs.run_now(str(params.get("run_id", "")))
+        if run is None:
+            return {"status": "error", "message": "No such scheduled run"}
+        if run.last_status != "started":
+            return {"status": "error", "message": "The run could not start", "run": self._scheduled_run_view(run)}
+        return {"status": "ok", "run": self._scheduled_run_view(run)}
 
     async def _handle_autonomous_jobs(self, params: dict, ws: ServerConnection) -> dict:
         """List all autonomous jobs.
