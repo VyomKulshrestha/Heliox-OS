@@ -30,10 +30,8 @@ def test_select_cases_uses_one_row_per_group_reproducibly() -> None:
 
 def test_checkpoint_resumes_only_matching_contiguous_cases(tmp_path) -> None:
     path = tmp_path / "partial.jsonl"
-    selected = [{"group_sha256": "a", "row_index": 2},
-                {"group_sha256": "b", "row_index": 9}]
-    first = {"signature": "same-run", "case_index": 0,
-             "group_sha256": "a", "row_index": 2, "scores": {}}
+    selected = [{"group_sha256": "a", "row_index": 2}, {"group_sha256": "b", "row_index": 9}]
+    first = {"signature": "same-run", "case_index": 0, "group_sha256": "a", "row_index": 2, "scores": {}}
     path.write_text(json.dumps(first) + "\n", encoding="utf-8")
 
     assert load_checkpoint(path, selected, "same-run") == [first]

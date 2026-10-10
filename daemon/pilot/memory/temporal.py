@@ -219,9 +219,7 @@ class TemporalMemoryStore:
             columns = {row[1] for row in await cursor.fetchall()}
             await cursor.close()
             if "provenance" not in columns:
-                await db.execute(
-                    "ALTER TABLE episodic_memories ADD COLUMN provenance TEXT NOT NULL DEFAULT 'inferred'"
-                )
+                await db.execute("ALTER TABLE episodic_memories ADD COLUMN provenance TEXT NOT NULL DEFAULT 'inferred'")
             await db.commit()
         self._pool = pool
 

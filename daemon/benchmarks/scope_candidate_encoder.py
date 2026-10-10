@@ -52,18 +52,16 @@ class CandidateEncoder:
         if not any(HIDDEN_OUTPUT in node.output for node in model.graph.node):
             raise ValueError("Pinned NLI graph has no expected pooled output")
         del model.graph.output[:]
-        model.graph.output.append(onnx.helper.make_tensor_value_info(
-            HIDDEN_OUTPUT, onnx.TensorProto.FLOAT, ["batch_size", HIDDEN_SIZE]
-        ))
+        model.graph.output.append(
+            onnx.helper.make_tensor_value_info(HIDDEN_OUTPUT, onnx.TensorProto.FLOAT, ["batch_size", HIDDEN_SIZE])
+        )
         options = ort.SessionOptions()
         options.intra_op_num_threads = 2
         options.inter_op_num_threads = 1
         with tempfile.TemporaryDirectory(prefix="heliox-candidate-encoder-") as directory:
             derived = Path(directory) / "pooled.onnx"
             onnx.save(model, str(derived))
-            self._session = ort.InferenceSession(
-                str(derived), sess_options=options, providers=["CPUExecutionProvider"]
-            )
+            self._session = ort.InferenceSession(str(derived), sess_options=options, providers=["CPUExecutionProvider"])
         self._tokenizer = Tokenizer.from_file(str(tokenizer_path))
         self._tokenizer.enable_truncation(max_length=max_length)
         self.max_length = max_length
@@ -78,15 +76,22 @@ class CandidateEncoder:
             raise ValueError("batch_size must be positive")
         features: list[np.ndarray] = []
         for offset in range(0, len(prompts), batch_size):
-            encoded = [self._tokenizer.encode(*prompt) for prompt in prompts[offset:offset + batch_size]]
+            encoded = [self._tokenizer.encode(*prompt) for prompt in prompts[offset : offset + batch_size]]
             length = max(len(item.ids) for item in encoded)
             ids = np.full((len(encoded), length), 1, dtype=np.int64)
             mask = np.zeros((len(encoded), length), dtype=np.int64)
             for row, item in enumerate(encoded):
-                ids[row, :len(item.ids)] = item.ids
-                mask[row, :len(item.ids)] = 1
-            hidden = np.asarray(self._session.run(None, {
-                "input_ids": ids, "attention_mask": mask,
-            })[0], dtype=np.float32)
+                ids[row, : len(item.ids)] = item.ids
+                mask[row, : len(item.ids)] = 1
+            hidden = np.asarray(
+                self._session.run(
+                    None,
+                    {
+                        "input_ids": ids,
+                        "attention_mask": mask,
+                    },
+                )[0],
+                dtype=np.float32,
+            )
             features.append(hidden)
         return np.vstack(features) if features else np.empty((0, HIDDEN_SIZE), dtype=np.float32)

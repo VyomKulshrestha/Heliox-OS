@@ -217,7 +217,11 @@ def test_clean_base_4b_reports_require_quantization_and_source_policy(tmp_path):
         "adapter_sha256": "0" * 64,
         "head_sha256": "0" * 64,
     }
-    for change in ({"backbone_quantization": None}, {"initial_checkpoint": {"repo": "x"}}, {"training_source_policy": {}}):
+    for change in (
+        {"backbone_quantization": None},
+        {"initial_checkpoint": {"repo": "x"}},
+        {"training_source_policy": {}},
+    ):
         path = tmp_path / "report.json"
         path.write_text(json.dumps({**report, **change}), encoding="utf-8")
         with pytest.raises(ValueError, match="Clean-base research report"):

@@ -35,7 +35,9 @@ _SPECIFIC = re.compile(r"\b(?:selected|this|only|one|named)\b")
 _APP = re.compile(r"\b(?:app|application)\b")
 _OPERATING_SYSTEM = re.compile(r"\b(?:operating system|system-wide|os-wide)\b")
 _CLOSE = re.compile(r"\b(?:close|resolve)\b")
-_EXTERNAL_ACTION = re.compile(r"(?:^\s*|\b(?:and|then|also)\s+)(?:publish|post|upload|share|send|email|forward|deploy|release)\b")
+_EXTERNAL_ACTION = re.compile(
+    r"(?:^\s*|\b(?:and|then|also)\s+)(?:publish|post|upload|share|send|email|forward|deploy|release)\b"
+)
 _EXTERNAL_REQUEST = re.compile(r"\b(?:publish|post|upload|share|send|email|forward|deploy|release)\b")
 _UNSUBSCRIBE = re.compile(r"\bunsubscribe\b")
 _DESTRUCTIVE_ALIAS = (
@@ -57,10 +59,12 @@ def combined_features(pairs: list[tuple[str, str]], nli: np.ndarray) -> csr_matr
 
 
 def guarded_probabilities(pairs: list[tuple[str, str]], values: np.ndarray) -> np.ndarray:
-    return np.asarray([
-        semantic_guard(request, action, float(probability))
-        for (request, action), probability in zip(pairs, values, strict=True)
-    ])
+    return np.asarray(
+        [
+            semantic_guard(request, action, float(probability))
+            for (request, action), probability in zip(pairs, values, strict=True)
+        ]
+    )
 
 
 def semantic_guard(request: str, action: str, probability: float, *, version: str = MODEL_VERSION) -> float:
@@ -88,9 +92,17 @@ def semantic_guard(request: str, action: str, probability: float, *, version: st
         if version == V4_VERSION:
             if _BROADEN.search(action_lower) and not _BROADEN.search(request_lower):
                 return min(probability, 0.05)
-            if _SPECIFIC.search(request_lower) and _DIFFERENT.search(action_lower) and not _DIFFERENT.search(request_lower):
+            if (
+                _SPECIFIC.search(request_lower)
+                and _DIFFERENT.search(action_lower)
+                and not _DIFFERENT.search(request_lower)
+            ):
                 return min(probability, 0.05)
-            if _APP.search(request_lower) and _OPERATING_SYSTEM.search(action_lower) and not _OPERATING_SYSTEM.search(request_lower):
+            if (
+                _APP.search(request_lower)
+                and _OPERATING_SYSTEM.search(action_lower)
+                and not _OPERATING_SYSTEM.search(request_lower)
+            ):
                 return min(probability, 0.05)
             if _CLOSE.search(action_lower) and not _CLOSE.search(request_lower):
                 return min(probability, 0.05)
@@ -98,11 +110,19 @@ def semantic_guard(request: str, action: str, probability: float, *, version: st
                 return min(probability, 0.05)
             if _UNSUBSCRIBE.search(action_lower) and not _UNSUBSCRIBE.search(request_lower):
                 return min(probability, 0.05)
-            if any(target.startswith("cell ") for target in request_targets) and _COLUMN_V4.search(action_lower) and not action_targets:
+            if (
+                any(target.startswith("cell ") for target in request_targets)
+                and _COLUMN_V4.search(action_lower)
+                and not action_targets
+            ):
                 return min(probability, 0.05)
         if request_targets and _BROADEN.search(action_lower) and not _BROADEN.search(request_lower):
             return min(probability, 0.05)
-        if any(target.startswith("cell ") for target in request_targets) and _COLUMN.search(action_lower) and not action_targets:
+        if (
+            any(target.startswith("cell ") for target in request_targets)
+            and _COLUMN.search(action_lower)
+            and not action_targets
+        ):
             return min(probability, 0.05)
         destructive_request = None
         if version == V4_VERSION:
@@ -113,9 +133,13 @@ def semantic_guard(request: str, action: str, probability: float, *, version: st
             destructive_request = destructive_request or None
         guard_request = re.sub(r"\bscreen\b", "display", request) if version == V4_VERSION else request
         guard_action = re.sub(r"\bscreen\b", "display", action) if version == V4_VERSION else action
-        return apply_target_guard(guard_request, guard_action, probability,
-                                  mutating_action=bool(_MUTATING_CLAUSE.search(action_lower)),
-                                  destructive_request=destructive_request)
+        return apply_target_guard(
+            guard_request,
+            guard_action,
+            probability,
+            mutating_action=bool(_MUTATING_CLAUSE.search(action_lower)),
+            destructive_request=destructive_request,
+        )
     return apply_target_guard(request, action, probability)
 
 
@@ -131,9 +155,13 @@ class SemanticScopeHead:
                 intercept = float(data["intercept"])
                 version = str(data["model_version"])
                 backbone_revision = str(data["backbone_revision"])
-            if (weights.shape == (FEATURE_COUNT + 6,)
-                and np.all(np.isfinite(weights)) and np.isfinite(intercept)
-                and version in {"scope-decision-semantic-v2", V3_VERSION, V4_VERSION, MODEL_VERSION} and backbone_revision == REVISION):
+            if (
+                weights.shape == (FEATURE_COUNT + 6,)
+                and np.all(np.isfinite(weights))
+                and np.isfinite(intercept)
+                and version in {"scope-decision-semantic-v2", V3_VERSION, V4_VERSION, MODEL_VERSION}
+                and backbone_revision == REVISION
+            ):
                 self._weights = weights
                 self._intercept = intercept
                 self._version = version
@@ -155,10 +183,12 @@ class SemanticScopeHead:
         raw = 1.0 / (1.0 + np.exp(-np.clip(logits, -40.0, 40.0)))
         if self._version == MODEL_VERSION:
             return raw, guarded_probabilities(pairs, raw)
-        guarded = np.asarray([
-            semantic_guard(request, action, float(probability), version=self._version)
-            for (request, action), probability in zip(pairs, raw, strict=True)
-        ])
+        guarded = np.asarray(
+            [
+                semantic_guard(request, action, float(probability), version=self._version)
+                for (request, action), probability in zip(pairs, raw, strict=True)
+            ]
+        )
         return raw, guarded
 
     def predict_many(self, pairs: list[tuple[str, str]]) -> np.ndarray | None:

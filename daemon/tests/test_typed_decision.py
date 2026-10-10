@@ -45,9 +45,7 @@ def test_dynamic_typed_decisions_are_normalized_without_task_specific_rules() ->
     assert len(prompts) == 2
     assert "Settings" in prompts[0]
     assert "Proposed answer: wait" in prompts[0]
-    assert format_answer("noul", ["no", "yes"], np.asarray([-1.0, 1.0]), 1.0)[
-        "yes_probability"
-    ] > 0.5
+    assert format_answer("noul", ["no", "yes"], np.asarray([-1.0, 1.0]), 1.0)["yes_probability"] > 0.5
     score = format_answer("score", ["low", "mid", "high"], np.asarray([0.0, 1.0, 2.0]), 1.0)
     assert score["most_likely"] == "high"
     assert sum(score["probabilities"].values()) == pytest.approx(1.0)
@@ -94,27 +92,17 @@ def test_jev_style_typed_questions_compile_without_leaking_score_indices() -> No
     choice = format_typed_answer(compiled[1], [0.1, 0.9])
     assert choice["choice"] == "live"
     assert choice["confidence"] == pytest.approx(0.8)
-    assert choice["confidence_semantics"] == (
-        "normalized_distribution_concentration_not_accuracy_probability"
-    )
-    assert choice["distribution_semantics"] == (
-        "model_assigned_candidate_mass_not_empirical_correctness_probability"
-    )
+    assert choice["confidence_semantics"] == ("normalized_distribution_concentration_not_accuracy_probability")
+    assert choice["distribution_semantics"] == ("model_assigned_candidate_mass_not_empirical_correctness_probability")
     score = format_typed_answer(compiled[2], [0.2, 0.5, 0.3])
     assert score["score"] == pytest.approx(1.1)
-    assert score["confidence_semantics"] == (
-        "normalized_distribution_concentration_not_accuracy_probability"
-    )
-    assert score["distribution_semantics"] == (
-        "model_assigned_candidate_mass_not_empirical_correctness_probability"
-    )
+    assert score["confidence_semantics"] == ("normalized_distribution_concentration_not_accuracy_probability")
+    assert score["distribution_semantics"] == ("model_assigned_candidate_mass_not_empirical_correctness_probability")
     assert score["legend"] == ["weak", "partial", "strong"]
 
 
 def test_jev_style_typed_question_validation_is_bounded_and_strict() -> None:
-    optional_criteria = compile_typed_questions(
-        {}, {"decision": {"type": "noul", "instructions": "Ready?"}}
-    )
+    optional_criteria = compile_typed_questions({}, {"decision": {"type": "noul", "instructions": "Ready?"}})
     assert optional_criteria[0]["options"] == ["no", "yes"]
     assert optional_criteria[0]["question"] == "Ready?"
 
@@ -126,10 +114,13 @@ def test_jev_style_typed_question_validation_is_bounded_and_strict() -> None:
     with pytest.raises(ValueError, match=f"2-{MAX_OPTIONS}"):
         compile_typed_questions(
             {},
-            {"decision": {
-                "type": "choice", "instructions": "Choose",
-                "criteria": {f"option-{index}": None for index in range(MAX_OPTIONS + 1)},
-            }},
+            {
+                "decision": {
+                    "type": "choice",
+                    "instructions": "Choose",
+                    "criteria": {f"option-{index}": None for index in range(MAX_OPTIONS + 1)},
+                }
+            },
         )
 
     with pytest.raises(ValueError, match="true and false"):
@@ -218,7 +209,9 @@ def test_candidate_microbatch_caps_long_prompts_and_respects_lower_limits() -> N
 def test_native_next_token_labels_are_verified_and_choice_order_is_stable() -> None:
     class CharacterTokenizer:
         def apply_chat_template(self, messages, **_kwargs):
-            return "<system>" + messages[0]["content"] + "</system><user>" + messages[1]["content"] + "</user><assistant>"
+            return (
+                "<system>" + messages[0]["content"] + "</system><user>" + messages[1]["content"] + "</user><assistant>"
+            )
 
         def __call__(self, text, *, add_special_tokens=False):
             assert add_special_tokens is False
@@ -247,7 +240,9 @@ def test_native_next_token_labels_are_verified_and_choice_order_is_stable() -> N
 def test_native_next_token_reassigns_duplicate_candidate_tokens() -> None:
     class AliasingTokenizer:
         def apply_chat_template(self, messages, **_kwargs):
-            return "<system>" + messages[0]["content"] + "</system><user>" + messages[1]["content"] + "</user><assistant>"
+            return (
+                "<system>" + messages[0]["content"] + "</system><user>" + messages[1]["content"] + "</user><assistant>"
+            )
 
         def __call__(self, text, *, add_special_tokens=False):
             assert add_special_tokens is False
@@ -260,9 +255,7 @@ def test_native_next_token_reassigns_duplicate_candidate_tokens() -> None:
         "options": ["zebra", "apple"],
         "answer_keys": ["z", "a"],
     }
-    _, label_ids, scored_keys, labels = _encode_prompt_and_labels(
-        AliasingTokenizer(), "page", record, max_length=4096
-    )
+    _, label_ids, scored_keys, labels = _encode_prompt_and_labels(AliasingTokenizer(), "page", record, max_length=4096)
 
     assert labels == ["A", "C"]
     assert len(label_ids) == len(set(label_ids)) == 2
@@ -292,7 +285,9 @@ def test_native_noul_uses_probabilistic_ratings_not_binary_yes_no_labels() -> No
         eos_token_id = 1
 
         def apply_chat_template(self, messages, **_kwargs):
-            return "<system>" + messages[0]["content"] + "</system><user>" + messages[1]["content"] + "</user><assistant>"
+            return (
+                "<system>" + messages[0]["content"] + "</system><user>" + messages[1]["content"] + "</user><assistant>"
+            )
 
         def __call__(self, text, *, add_special_tokens=False):
             assert add_special_tokens is False

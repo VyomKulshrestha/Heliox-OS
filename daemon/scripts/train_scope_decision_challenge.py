@@ -39,7 +39,10 @@ def _rows(report_path: Path, cases: tuple[ScopeCase, ...]) -> dict[str, dict]:
     for case in cases:
         row = rows[case.id]
         if (row["request"], row["action"], row["split"], row["gold_in_scope"]) != (
-            case.request, case.action, case.split, case.in_scope,
+            case.request,
+            case.action,
+            case.split,
+            case.in_scope,
         ):
             raise ValueError(f"Teacher report was changed for {case.id}")
     return rows
@@ -76,13 +79,20 @@ def _predict(model: LogisticRegression, cases: list[ScopeCase], threshold: float
     logits -= np.log(threshold / (1 - threshold))
     raw = 1 / (1 + np.exp(-np.clip(logits, -40, 40)))
     return np.asarray(
-        [apply_target_guard(case.request, case.action, float(probability)) for case, probability in zip(cases, raw, strict=True)]
+        [
+            apply_target_guard(case.request, case.action, float(probability))
+            for case, probability in zip(cases, raw, strict=True)
+        ]
     )
 
 
 def train(
-    original_path: Path, challenge_path: Path, augmentation_path: Path,
-    stress_path: Path, candidate_path: Path, metrics_path: Path,
+    original_path: Path,
+    challenge_path: Path,
+    augmentation_path: Path,
+    stress_path: Path,
+    candidate_path: Path,
+    metrics_path: Path,
 ) -> dict:
     original = _rows(original_path, ORIGINAL_CASES)
     challenge = _rows(challenge_path, CHALLENGE_CASES)
@@ -102,8 +112,10 @@ def train(
         [(original | augmentation | stress | challenge)[case.id]["jev_probability"] >= 0.5 for case in train_cases]
     )
     weights = np.asarray(
-        [max(0.1, abs((original | augmentation | stress | challenge)[case.id]["jev_probability"] - 0.5) * 2)
-         for case in train_cases]
+        [
+            max(0.1, abs((original | augmentation | stress | challenge)[case.id]["jev_probability"] - 0.5) * 2)
+            for case in train_cases
+        ]
     )
     matrix = feature_matrix([(case.request, case.action) for case in train_cases])
     best = None
@@ -127,7 +139,8 @@ def train(
     baseline = ProductionScopeDecisionHead()
     baseline_probabilities = (
         np.asarray([baseline.predict(case.request, case.action).in_scope_probability for case in development])
-        if baseline.available else None
+        if baseline.available
+        else None
     )
     report = {
         "candidate_model_version": MODEL_VERSION,
@@ -164,8 +177,10 @@ def evaluate_final(challenge_path: Path, candidate_path: Path, metrics_path: Pat
 
 def main() -> None:
     import sys
+
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from scripts.reference_output_policy import block_jev_output_use
+
     block_jev_output_use()
 
     parser = argparse.ArgumentParser(description=__doc__)
@@ -180,9 +195,8 @@ def main() -> None:
     args = parser.parse_args()
     report = (
         evaluate_final(args.challenge, args.candidate, args.metrics)
-        if args.evaluate_final else train(
-            args.original, args.challenge, args.augmentation, args.stress_training, args.candidate, args.metrics
-        )
+        if args.evaluate_final
+        else train(args.original, args.challenge, args.augmentation, args.stress_training, args.candidate, args.metrics)
     )
     key = "candidate_final" if args.evaluate_final else "candidate_development"
     print(json.dumps({key: report[key]}, indent=2))

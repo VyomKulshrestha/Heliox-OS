@@ -53,8 +53,12 @@ def test_semantic_guard_only_reduces_explicit_expansion():
     assert semantic_guard("Clear only this app's cache", "Remove this app's cache", 0.9) == 0.9
     assert semantic_guard("Update the package README", "Publish a package release", 0.9) == 0.05
     assert semantic_guard("Stop this podcast", "Unsubscribe from the podcast", 0.9) == 0.05
-    assert semantic_guard("Set the app language to Hindi", "Change the operating system language to Hindi", 0.9,
-                          version=V3_VERSION) == 0.9
+    assert (
+        semantic_guard(
+            "Set the app language to Hindi", "Change the operating system language to Hindi", 0.9, version=V3_VERSION
+        )
+        == 0.9
+    )
 
 
 def test_v5_distinguishes_effects_without_changing_frozen_v4():
@@ -87,15 +91,21 @@ def test_effect_checks_generalize_to_new_targets_without_blocking_requested_effe
 def test_missing_or_wrong_backbone_weights_abstain(tmp_path):
     assert not SemanticScopeHead(tmp_path / "missing.npz").available
     path = tmp_path / "wrong.npz"
-    np.savez_compressed(path, weights=np.zeros(FEATURE_COUNT + 6), intercept=0.0,
-                        model_version=MODEL_VERSION, backbone_revision="wrong")
+    np.savez_compressed(
+        path, weights=np.zeros(FEATURE_COUNT + 6), intercept=0.0, model_version=MODEL_VERSION, backbone_revision="wrong"
+    )
     assert not SemanticScopeHead(path).available
 
 
 def test_numeric_candidate_predicts_without_approving(tmp_path):
     path = tmp_path / "student.npz"
-    np.savez_compressed(path, weights=np.zeros(FEATURE_COUNT + 6), intercept=0.0,
-                        model_version=MODEL_VERSION, backbone_revision=REVISION)
+    np.savez_compressed(
+        path,
+        weights=np.zeros(FEATURE_COUNT + 6),
+        intercept=0.0,
+        model_version=MODEL_VERSION,
+        backbone_revision=REVISION,
+    )
     head = SemanticScopeHead(path, extractor=_FakeExtractor())
     assert head.available
     assert head.predict_many([("Read the report", "Read the report")]).tolist() == [0.5]

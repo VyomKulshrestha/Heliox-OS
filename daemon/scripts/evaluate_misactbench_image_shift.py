@@ -47,13 +47,15 @@ def main() -> None:
     ids = manifest["case_ids"]
     original_report = json.loads(args.original_report.read_text(encoding="utf-8"))
     shifted_report = json.loads(args.shifted_report.read_text(encoding="utf-8"))
-    pinned = ("model", "revision", "dataset_sha256", "manifest_sha256",
-              "prompt_sha256", "max_side", "attention")
-    if (any(original_report[key] != shifted_report[key] for key in pinned)
-            or original_report["manifest_sha256"] != manifest_hash
-            or not 1 <= shifted_report.get("image_shift_offset", 0) < len(ids)
-            or shifted_report.get("original_coordinate_metadata_preserved") is not True
-            or original_report.get("text_only") or shifted_report.get("text_only")):
+    pinned = ("model", "revision", "dataset_sha256", "manifest_sha256", "prompt_sha256", "max_side", "attention")
+    if (
+        any(original_report[key] != shifted_report[key] for key in pinned)
+        or original_report["manifest_sha256"] != manifest_hash
+        or not 1 <= shifted_report.get("image_shift_offset", 0) < len(ids)
+        or shifted_report.get("original_coordinate_metadata_preserved") is not True
+        or original_report.get("text_only")
+        or shifted_report.get("text_only")
+    ):
         raise ValueError("Only the image pairing may differ between feature sets")
     original = _features(args.original_features, original_report, ids)
     shifted = _features(args.shifted_features, shifted_report, ids)
@@ -61,17 +63,24 @@ def main() -> None:
         raise ValueError("Feature dimensions differ")
 
     fitted = json.loads(args.fit_report.read_text(encoding="utf-8"))
-    if (fitted["manifest_sha256"] != manifest_hash
-            or fitted["feature_sha256"] != original_report["features_sha256"]
-            or fitted["artifact_sha256"] != hashlib.sha256(args.head.read_bytes()).hexdigest()):
+    if (
+        fitted["manifest_sha256"] != manifest_hash
+        or fitted["feature_sha256"] != original_report["features_sha256"]
+        or fitted["artifact_sha256"] != hashlib.sha256(args.head.read_bytes()).hexdigest()
+    ):
         raise ValueError("Head was not fitted on the original visual features")
     with np.load(args.head, allow_pickle=False) as head:
         mean, scale = head["mean"], head["scale"]
         coefficient, intercept = head["coefficient"], head["intercept"]
         cautious = float(head["cautious_threshold"])
-    if (mean.shape != (original.shape[1],) or scale.shape != mean.shape
-            or coefficient.shape != (1, original.shape[1]) or intercept.shape != (1,)
-            or np.any(scale <= 0) or not 0 < cautious < math.inf):
+    if (
+        mean.shape != (original.shape[1],)
+        or scale.shape != mean.shape
+        or coefficient.shape != (1, original.shape[1])
+        or intercept.shape != (1,)
+        or np.any(scale <= 0)
+        or not 0 < cautious < math.inf
+    ):
         raise ValueError("Frozen head parameters are invalid")
 
     def predict(matrix: np.ndarray) -> np.ndarray:

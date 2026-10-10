@@ -24,7 +24,10 @@ EPOCHS = 100
 
 
 def load_development(
-    source: Path, manifest_path: Path, features_path: Path, feature_report_path: Path,
+    source: Path,
+    manifest_path: Path,
+    features_path: Path,
+    feature_report_path: Path,
 ) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray], dict[str, str]]:
     """Validate provenance and open only train/calibration/development labels."""
     if sha256_file(source) != SOURCE_SHA256:
@@ -83,7 +86,10 @@ def main() -> None:
         parser.error("Use fresh artifact and report paths")
 
     features, labels, provenance = load_development(
-        args.source, args.manifest, args.features, args.feature_report,
+        args.source,
+        args.manifest,
+        args.features,
+        args.feature_report,
     )
     mean = features["train"].mean(axis=0)
     scale = features["train"].std(axis=0)
@@ -115,7 +121,8 @@ def main() -> None:
                 model.train()
                 optimizer.zero_grad(set_to_none=True)
                 loss = torch.nn.functional.binary_cross_entropy_with_logits(
-                    model(train_x).squeeze(1), train_y,
+                    model(train_x).squeeze(1),
+                    train_y,
                 )
                 loss.backward()
                 optimizer.step()
@@ -135,9 +142,12 @@ def main() -> None:
     weights = model.state_dict()
     np.savez_compressed(
         args.artifact,
-        mean=mean, scale=scale,
-        w1=weights["0.weight"].cpu().numpy(), b1=weights["0.bias"].cpu().numpy(),
-        w2=weights["3.weight"].cpu().numpy(), b2=weights["3.bias"].cpu().numpy(),
+        mean=mean,
+        scale=scale,
+        w1=weights["0.weight"].cpu().numpy(),
+        b1=weights["0.bias"].cpu().numpy(),
+        w2=weights["3.weight"].cpu().numpy(),
+        b2=weights["3.bias"].cpu().numpy(),
         cautious_threshold=cautious,
         manifest_sha256=provenance["manifest_sha256"],
         feature_sha256=provenance["features_sha256"],
@@ -164,9 +174,17 @@ def main() -> None:
         "limitation": "Reflector labels are not human adjudication; this head has no runtime authority or Jev parity.",
     }
     args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps({"selected_hidden": hidden, "selected_seed": seed,
-                      "development_default": report["development_default"],
-                      "development_cautious": report["development_cautious"]}, indent=2))
+    print(
+        json.dumps(
+            {
+                "selected_hidden": hidden,
+                "selected_seed": seed,
+                "development_default": report["development_default"],
+                "development_cautious": report["development_cautious"],
+            },
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":

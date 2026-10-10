@@ -7,7 +7,8 @@ from scripts.evaluate_world_cross_domain import training_domains
 
 def test_training_domains_excludes_held_out():
     assert training_domains(("agentic", "scope", "when2call"), "scope") == (
-        "agentic", "when2call",
+        "agentic",
+        "when2call",
     )
 
 

@@ -23,18 +23,23 @@ from scripts.sample_webworld_transitions import (
 
 def test_parse_multistep_trajectory_uses_previous_observed_state() -> None:
     turns = [
-        {"from": "human", "value": "Initial Page State:\nRootWebArea 'Start'\n  [17] button 'Open'\n"
-         "First Action: 'click('17')'\n\nNext Page State:"},
+        {
+            "from": "human",
+            "value": "Initial Page State:\nRootWebArea 'Start'\n  [17] button 'Open'\n"
+            "First Action: 'click('17')'\n\nNext Page State:",
+        },
         {"from": "gpt", "value": "RootWebArea 'Open'\n  [19] textbox 'Search'"},
-        {"from": "human", "value": "Continue the trajectory.\nAction: 'fill('19', 'tea')'"
-         "\nNext Page State:"},
+        {"from": "human", "value": "Continue the trajectory.\nAction: 'fill('19', 'tea')'\nNext Page State:"},
         {"from": "gpt", "value": "RootWebArea 'Open'\n  [19] textbox 'Search' value='tea'"},
     ]
 
     first, second = parse_trajectory(turns)
 
-    assert first == ("RootWebArea 'Start'\n  [17] button 'Open'", "click('17')",
-                     "RootWebArea 'Open'\n  [19] textbox 'Search'")
+    assert first == (
+        "RootWebArea 'Start'\n  [17] button 'Open'",
+        "click('17')",
+        "RootWebArea 'Open'\n  [19] textbox 'Search'",
+    )
     assert second[0] == first[2]
     assert second[1] == "fill('19', 'tea')"
 
@@ -48,12 +53,14 @@ def test_bind_action_uses_pre_action_node_not_a_numeric_id() -> None:
 
 
 def test_path_binding_adds_pre_action_ancestors_not_siblings() -> None:
-    tree = ("RootWebArea 'Shop'\n"
-            "  [1] navigation 'Main'\n"
-            "    [2] link 'Other'\n"
-            "  [3] dialog 'Cart'\n"
-            "    [4] list 'Items'\n"
-            "      [5] button 'Checkout'")
+    tree = (
+        "RootWebArea 'Shop'\n"
+        "  [1] navigation 'Main'\n"
+        "    [2] link 'Other'\n"
+        "  [3] dialog 'Cart'\n"
+        "    [4] list 'Items'\n"
+        "      [5] button 'Checkout'"
+    )
     path = bound_action_path(tree, "click('5')")
     assert path.startswith("click target button 'Checkout' hierarchy ")
     assert "ancestor_0_list" in path
@@ -65,16 +72,18 @@ def test_path_binding_adds_pre_action_ancestors_not_siblings() -> None:
 
 
 def test_malformed_trajectory_is_rejected_without_partial_rows() -> None:
-    turns = [{"from": "human", "value": "Initial Page State:\nTree\nFirst Action: 'click(1)'"
-              "\nNext Page State:"}, {"from": "gpt", "value": "Next"},
-             {"from": "human", "value": "no action marker"}, {"from": "gpt", "value": "Other"}]
+    turns = [
+        {"from": "human", "value": "Initial Page State:\nTree\nFirst Action: 'click(1)'\nNext Page State:"},
+        {"from": "gpt", "value": "Next"},
+        {"from": "human", "value": "no action marker"},
+        {"from": "gpt", "value": "Other"},
+    ]
 
     assert parse_trajectory(turns) == []
 
 
 def test_direct_navigation_type_is_distinct_from_in_page_action() -> None:
-    assert not np.array_equal(_features(["goto"], dimension=256)[0],
-                              _features(["click"], dimension=256)[0])
+    assert not np.array_equal(_features(["goto"], dimension=256)[0], _features(["click"], dimension=256)[0])
 
 
 def test_exact_state_identity_is_stable_without_storing_page_text() -> None:
@@ -107,12 +116,18 @@ def test_checkpoint_resumes_only_the_same_revision_and_sample(tmp_path) -> None:
         "state_digest": _state_digests(["Page A"]),
         "group": np.array([7], dtype=np.int32),
     }
-    _save_checkpoint(path, revision="a" * 40, total=100, offsets=[7, 50],
-                     pages_done=1, arrays=arrays, exclusions=Counter({"truncated": 2}), bound_rows=1)
-
-    done, restored, exclusions, bound_rows = _load_checkpoint(
-        path, revision="a" * 40, total=100, offsets=[7, 50]
+    _save_checkpoint(
+        path,
+        revision="a" * 40,
+        total=100,
+        offsets=[7, 50],
+        pages_done=1,
+        arrays=arrays,
+        exclusions=Counter({"truncated": 2}),
+        bound_rows=1,
     )
+
+    done, restored, exclusions, bound_rows = _load_checkpoint(path, revision="a" * 40, total=100, offsets=[7, 50])
     assert done == 1
     assert restored["group"].tolist() == [7]
     assert exclusions == Counter({"truncated": 2})
@@ -128,8 +143,7 @@ def test_read_json_retries_rate_limit_with_bounded_delay(monkeypatch) -> None:
     def open_once_then_succeed(_url, timeout):
         calls.append(timeout)
         if len(calls) == 1:
-            raise urllib.error.HTTPError("https://example.test", 429, "rate limit",
-                                         {"Retry-After": "2"}, None)
+            raise urllib.error.HTTPError("https://example.test", 429, "rate limit", {"Retry-After": "2"}, None)
         return io.BytesIO(b'{"ok": true}')
 
     monkeypatch.setattr("urllib.request.urlopen", open_once_then_succeed)

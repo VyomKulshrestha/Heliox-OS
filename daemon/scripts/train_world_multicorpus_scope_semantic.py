@@ -41,13 +41,16 @@ def balanced_domain_weights(labels: dict[str, np.ndarray]) -> np.ndarray:
             raise ValueError(f"{name} training data needs both classes")
         positive = int(np.sum(targets))
         negative = len(targets) - positive
-        weights.extend(np.where(targets, size / (4 * positive),
-                                size / (4 * negative)).tolist())
+        weights.extend(np.where(targets, size / (4 * positive), size / (4 * negative)).tolist())
     return np.asarray(weights)
 
 
-def select_head(train: np.ndarray, train_labels: dict[str, np.ndarray],
-                calibration: dict[str, np.ndarray], calibration_labels: dict[str, np.ndarray]):
+def select_head(
+    train: np.ndarray,
+    train_labels: dict[str, np.ndarray],
+    calibration: dict[str, np.ndarray],
+    calibration_labels: dict[str, np.ndarray],
+):
     targets = np.concatenate([train_labels[name] for name in DOMAINS])
     weights = balanced_domain_weights(train_labels)
     trials = []
@@ -55,13 +58,12 @@ def select_head(train: np.ndarray, train_labels: dict[str, np.ndarray],
         head = LogisticRegression(C=penalty, max_iter=1000)
         head.fit(train, targets, sample_weight=weights)
         scores = {name: head.predict_proba(calibration[name])[:, 1] for name in DOMAINS}
-        auc = {name: float(roc_auc_score(calibration_labels[name], scores[name]))
-               for name in DOMAINS}
-        trials.append((min(auc.values()), sum(auc.values()) / len(auc), penalty,
-                       head, scores, auc))
+        auc = {name: float(roc_auc_score(calibration_labels[name], scores[name])) for name in DOMAINS}
+        trials.append((min(auc.values()), sum(auc.values()) / len(auc), penalty, head, scores, auc))
     selected = max(trials, key=lambda item: (item[0], item[1], -item[2]))
-    threshold = math.nextafter(max(float(np.max(selected[4][name][~calibration_labels[name]]))
-                                   for name in DOMAINS), math.inf)
+    threshold = math.nextafter(
+        max(float(np.max(selected[4][name][~calibration_labels[name]])) for name in DOMAINS), math.inf
+    )
     summary = [{"C": item[2], "calibration_auc": item[5]} for item in trials]
     return selected[3], threshold, summary
 
@@ -78,45 +80,59 @@ def main() -> None:
     args = parser.parse_args()
     if args.max_length < 64 or args.artifact.exists() or args.report.exists():
         parser.error("Use max-length >=64 and fresh artifact/report paths")
-    validation = load_cases(args.dataset_dir / "validation.json", DATASET_HASHES["validation"],
-                            "tbac_validation")
+    validation = load_cases(args.dataset_dir / "validation.json", DATASET_HASHES["validation"], "tbac_validation")
     test = load_cases(args.dataset_dir / "test.json", DATASET_HASHES["test"], "tbac_test")
     tbac_train, tbac_calibration = split_validation(validation)
     if {case.request for case in validation} & {case.request for case in test}:
         raise ValueError("TBAC official test tasks overlap validation")
     scope, manifests = {}, {}
-    for name, partition in (("scope_train", "scope_train"),
-                            ("scope_calibration", "scope_calibration"),
-                            ("scope_test", "scope_test")):
+    for name, partition in (
+        ("scope_train", "scope_train"),
+        ("scope_calibration", "scope_calibration"),
+        ("scope_test", "scope_test"),
+    ):
         scope[name], manifests[name] = scopejudge_cases(args.scopejudge_path, partition)
     if not all(manifest == manifests["scope_train"] for manifest in manifests.values()):
         raise ValueError("ScopeJudge source changed between partitions")
     groups = {name: {case.id.split(":", 1)[0] for case in part} for name, part in scope.items()}
-    if any(groups[left] & groups[right] for left, right in
-           (("scope_train", "scope_calibration"), ("scope_train", "scope_test"),
-            ("scope_calibration", "scope_test"))):
+    if any(
+        groups[left] & groups[right]
+        for left, right in (
+            ("scope_train", "scope_calibration"),
+            ("scope_train", "scope_test"),
+            ("scope_calibration", "scope_test"),
+        )
+    ):
         raise ValueError("ScopeJudge trajectories overlap")
-    cases = {"tbac_train": tbac_train, "tbac_calibration": tbac_calibration,
-             "tbac_test": test, **scope, "heliox": tuple(HELIOX_CASES)}
+    cases = {
+        "tbac_train": tbac_train,
+        "tbac_calibration": tbac_calibration,
+        "tbac_test": test,
+        **scope,
+        "heliox": tuple(HELIOX_CASES),
+    }
 
     import torch
     from transformers import AutoTokenizer, Qwen3_5ForCausalLM
 
     if not torch.cuda.is_available() or torch.cuda.mem_get_info()[0] < 5 * 1024**3:
         raise RuntimeError("At least 5 GiB free CUDA memory is required")
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, revision=MODEL_REVISION,
-                                               local_files_only=True)
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, revision=MODEL_REVISION, local_files_only=True)
     model, loading = Qwen3_5ForCausalLM.from_pretrained(
-        MODEL_ID, revision=MODEL_REVISION, local_files_only=True,
-        dtype=torch.bfloat16, attn_implementation="eager",
-        device_map={"": "cuda:0"}, output_loading_info=True)
+        MODEL_ID,
+        revision=MODEL_REVISION,
+        local_files_only=True,
+        dtype=torch.bfloat16,
+        attn_implementation="eager",
+        device_map={"": "cuda:0"},
+        output_loading_info=True,
+    )
     if loading.get("missing_keys"):
         raise RuntimeError("Pinned text backbone has missing weights")
     model.eval()
     features, labels, excluded = {}, {}, {}
     for name, part in cases.items():
-        features[name], labels[name], excluded[name] = embed_cases(
-            model, tokenizer, part, args.max_length, name)
+        features[name], labels[name], excluded[name] = embed_cases(model, tokenizer, part, args.max_length, name)
     del model
     features["train"] = np.vstack((features["tbac_train"], features["scope_train"]))
     normalized, mean, scale = normalize(features)
@@ -124,35 +140,49 @@ def main() -> None:
         normalized["train"],
         {name: labels[f"{name}_train"] for name in DOMAINS},
         {name: normalized[f"{name}_calibration"] for name in DOMAINS},
-        {name: labels[f"{name}_calibration"] for name in DOMAINS})
+        {name: labels[f"{name}_calibration"] for name in DOMAINS},
+    )
     args.artifact.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(args.artifact, weights=head.coef_.astype(np.float32),
-                        bias=head.intercept_.astype(np.float32), mean=mean.astype(np.float32),
-                        scale=scale.astype(np.float32), threshold=threshold,
-                        model_revision=MODEL_REVISION)
-    scores = {name: head.predict_proba(values)[:, 1] for name, values in normalized.items()
-              if name != "train"}
+    np.savez_compressed(
+        args.artifact,
+        weights=head.coef_.astype(np.float32),
+        bias=head.intercept_.astype(np.float32),
+        mean=mean.astype(np.float32),
+        scale=scale.astype(np.float32),
+        threshold=threshold,
+        model_revision=MODEL_REVISION,
+    )
+    scores = {name: head.predict_proba(values)[:, 1] for name, values in normalized.items() if name != "train"}
     report = {
         "purpose": "research_only_multicorpus_world_task_state_head",
-        "model": MODEL_ID, "revision": MODEL_REVISION,
+        "model": MODEL_ID,
+        "revision": MODEL_REVISION,
         "prompt_sha256": hashlib.sha256(SYSTEM_PROMPT.encode()).hexdigest(),
-        "tbac": {"url": "https://github.com/outshift-open/tbac-research-datasets",
-                 "revision": DATASET_REVISION, "sha256": DATASET_HASHES},
-        "scopejudge": manifests["scope_train"], "max_length": args.max_length,
+        "tbac": {
+            "url": "https://github.com/outshift-open/tbac-research-datasets",
+            "revision": DATASET_REVISION,
+            "sha256": DATASET_HASHES,
+        },
+        "scopejudge": manifests["scope_train"],
+        "max_length": args.max_length,
         "rows": {name: len(part) for name, part in cases.items()},
-        "excluded_overlong": excluded, "regularization_trials": trials,
-        "selected_C": float(head.C), "calibration_threshold": threshold,
-        "metrics": {name: {"default": metrics(labels[name], scores[name], 0.5),
-                           "cautious": metrics(labels[name], scores[name], threshold)}
-                    for name in ("tbac_calibration", "scope_calibration", "tbac_test",
-                                 "scope_test", "heliox")},
+        "excluded_overlong": excluded,
+        "regularization_trials": trials,
+        "selected_C": float(head.C),
+        "calibration_threshold": threshold,
+        "metrics": {
+            name: {
+                "default": metrics(labels[name], scores[name], 0.5),
+                "cautious": metrics(labels[name], scores[name], threshold),
+            }
+            for name in ("tbac_calibration", "scope_calibration", "tbac_test", "scope_test", "heliox")
+        },
         "artifact_sha256": hashlib.sha256(args.artifact.read_bytes()).hexdigest(),
         "limitation": "Public task-tool and expert tool-call labels with inspected synthetic Heliox "
-                      "transfer only; no Jev parity, live desktop evidence, or execution authority.",
+        "transfer only; no Jev parity, live desktop evidence, or execution authority.",
     }
     args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps({name: report["metrics"][name] for name in
-                      ("tbac_test", "scope_test", "heliox")}, indent=2))
+    print(json.dumps({name: report["metrics"][name] for name in ("tbac_test", "scope_test", "heliox")}, indent=2))
 
 
 if __name__ == "__main__":

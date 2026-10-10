@@ -68,15 +68,16 @@ def build_cases(rows: list[dict], caps: dict[str, int] | None = None) -> tuple[d
             skipped["non_single_user_turn"] += 1
             continue
         user_request = messages[0]["content"]
-        group_key = hashlib.sha256(json.dumps(
-            [user_request, selected], ensure_ascii=False, sort_keys=True).encode()).hexdigest()
-        request = (user_request + "\nAvailable tool: " +
-                   json.dumps(selected, ensure_ascii=False, sort_keys=True))
-        action = (f"Invoke tool {call['name']} with arguments " +
-                  json.dumps(call["arguments"], ensure_ascii=False, sort_keys=True))
-        groups[group_key].append(ScopeCase(
-            f"when2call:{index}", request, action, positive_call is not None,
-            "when2call_preference"))
+        group_key = hashlib.sha256(
+            json.dumps([user_request, selected], ensure_ascii=False, sort_keys=True).encode()
+        ).hexdigest()
+        request = user_request + "\nAvailable tool: " + json.dumps(selected, ensure_ascii=False, sort_keys=True)
+        action = f"Invoke tool {call['name']} with arguments " + json.dumps(
+            call["arguments"], ensure_ascii=False, sort_keys=True
+        )
+        groups[group_key].append(
+            ScopeCase(f"when2call:{index}", request, action, positive_call is not None, "when2call_preference")
+        )
 
     partitions: dict[str, list[ScopeCase]] = {name: [] for name in caps}
     class_counts = {name: Counter() for name in caps}
@@ -92,19 +93,25 @@ def build_cases(rows: list[dict], caps: dict[str, int] | None = None) -> tuple[d
             continue
         partitions[split].append(case)
         class_counts[split][label] += 1
-    if any(class_counts[split][label] != caps[split]
-           for split in caps for label in ("positive", "negative")):
+    if any(class_counts[split][label] != caps[split] for split in caps for label in ("positive", "negative")):
         raise ValueError(f"Insufficient grouped class coverage: {class_counts}")
     requests = {name: {case.request for case in cases} for name, cases in partitions.items()}
-    if any(requests[left] & requests[right] for left, right in
-           (("train", "calibration"), ("train", "test"), ("calibration", "test"))):
+    if any(
+        requests[left] & requests[right]
+        for left, right in (("train", "calibration"), ("train", "test"), ("calibration", "test"))
+    ):
         raise ValueError("When2Call request/tool group overlap across splits")
     return {name: tuple(cases) for name, cases in partitions.items()}, {
-        "source": {"url": f"https://github.com/{REPOSITORY}", "revision": REVISION,
-                   "path": SOURCE_PATH, "sha256": SOURCE_SHA256,
-                   "license": "Apache-2.0; derived from Salesforce xLAM 60k (CC BY 4.0)"},
-        "skipped": dict(skipped), "selected": {name: dict(counts) for name, counts in class_counts.items()},
+        "source": {
+            "url": f"https://github.com/{REPOSITORY}",
+            "revision": REVISION,
+            "path": SOURCE_PATH,
+            "sha256": SOURCE_SHA256,
+            "license": "Apache-2.0; derived from Salesforce xLAM 60k (CC BY 4.0)",
+        },
+        "skipped": dict(skipped),
+        "selected": {name: dict(counts) for name, counts in class_counts.items()},
         "split_protocol": "SHA-256 group by request and selected tool; deduplicate and reject contradictory labels; "
-                          "70/20/10 hash buckets, then deterministic per-class caps",
+        "70/20/10 hash buckets, then deterministic per-class caps",
         "limitation": "Synthetic preference labels can be noisy. No source example is a user authorization.",
     }

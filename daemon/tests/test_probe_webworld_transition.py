@@ -16,19 +16,22 @@ from scripts.probe_webworld_transition import (
 )
 
 
-def _archive(tmp_path, *, leak: bool = False, state_leak: bool = False,
-             with_path: bool = False, with_digest: bool = False):
+def _archive(
+    tmp_path, *, leak: bool = False, state_leak: bool = False, with_path: bool = False, with_digest: bool = False
+):
     path = tmp_path / "features.npz"
     groups = np.array([1, 2, 3, 1 if leak else 4])
     optional = {"action_path": np.eye(256, dtype=np.float32)[:4]} if with_path else {}
     if with_digest:
         optional["state_digest"] = np.arange(128, dtype=np.uint8).reshape(4, 32)
     np.savez_compressed(
-        path, state=np.eye(1024, dtype=np.float32)[[0, 1, 2, 0 if state_leak else 3]],
+        path,
+        state=np.eye(1024, dtype=np.float32)[[0, 1, 2, 0 if state_leak else 3]],
         target=np.ones((4, 1024), dtype=np.float32),
         action_type=np.eye(256, dtype=np.float32)[:4],
         action_bound=np.eye(256, dtype=np.float32)[:4],
-        group=groups, split=np.array(["train", "train", "validation", "eval"]),
+        group=groups,
+        split=np.array(["train", "train", "validation", "eval"]),
         **optional,
     )
     report = tmp_path / "source.json"
@@ -67,8 +70,10 @@ def test_shuffle_keeps_action_types_and_metric_rewards_correct_target() -> None:
 
 def test_clustered_advantage_resamples_whole_trajectories() -> None:
     result = clustered_advantage(
-        np.array([0.2, 0.2, 0.3]), np.array([0.1, 0.1, 0.2]),
-        np.array([1, 1, 2]), seed=7,
+        np.array([0.2, 0.2, 0.3]),
+        np.array([0.1, 0.1, 0.2]),
+        np.array([1, 1, 2]),
+        seed=7,
     )
     assert result["groups"] == 2
     assert result["cluster_bootstrap_95_low"] > 0

@@ -10,8 +10,7 @@ from scripts.evaluate_opendec_separate_heads import (
 def test_relevance_fit_uses_only_training_and_calibration(tmp_path):
     def rows(size):
         labels = np.asarray([True, False] * size)
-        features = np.asarray([[1.0, 0.0] if label else [0.0, 1.0]
-                               for label in labels])
+        features = np.asarray([[1.0, 0.0] if label else [0.0, 1.0] for label in labels])
         return {"features": features, "labels": labels}
 
     artifact = tmp_path / "relevance.npz"
@@ -23,8 +22,13 @@ def test_relevance_fit_uses_only_training_and_calibration(tmp_path):
 
 def test_separate_gate_never_turns_scope_rejection_into_permission():
     data = {"features": np.asarray([[-1.0], [1.0], [2.0]])}
-    scope = {"mean": np.zeros(1), "scale": np.ones(1), "coefficient": np.ones((1, 1)),
-             "intercept": np.zeros(1), "threshold": np.asarray(0.5)}
+    scope = {
+        "mean": np.zeros(1),
+        "scale": np.ones(1),
+        "coefficient": np.ones((1, 1)),
+        "intercept": np.zeros(1),
+        "threshold": np.asarray(0.5),
+    }
     relevance = {**scope, "threshold": np.asarray(0.85)}
     scope_probability, gated = gated_probabilities(data, scope, relevance)
     assert list(scope_probability >= 0.5) == [False, True, True]

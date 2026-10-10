@@ -23,15 +23,21 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--model-report", type=Path, required=True)
-    parser.add_argument("--reference", type=Path,
-                        default=root / "benchmarks/qwen_general_reference_comparison_v4.json")
+    parser.add_argument("--reference", type=Path, default=root / "benchmarks/qwen_general_reference_comparison_v4.json")
     parser.add_argument("--report", type=Path, required=True)
     args = parser.parse_args()
     model_report, _ = verify_artifact(args.output_dir, args.model_report)
     reference = json.loads(args.reference.read_text(encoding="utf-8"))
     rows, manifest = selected_rows(reference)
-    payloads = [{"state": json.loads(row["state_json"]), "kind": row["kind"],
-                 "question": row["question"], "options": row["options"]} for row in rows]
+    payloads = [
+        {
+            "state": json.loads(row["state_json"]),
+            "kind": row["kind"],
+            "question": row["question"],
+            "options": row["options"],
+        }
+        for row in rows
+    ]
     predictions = score_requests(payloads, args.output_dir, args.model_report)
     local = prediction_metrics(rows, predictions)["by_kind"]
     report = {
@@ -42,11 +48,16 @@ def main() -> None:
         "selected_ids_sha256": reference["selected_ids_sha256"],
         "dataset_manifest": manifest,
         "local": local,
-        "jev": {kind: {key: value for key, value in reference["comparison"][kind].items()
-                       if key.startswith("jev_") or key == "rows"}
-                for kind in local},
+        "jev": {
+            kind: {
+                key: value
+                for key, value in reference["comparison"][kind].items()
+                if key.startswith("jev_") or key == "rows"
+            }
+            for kind in local
+        },
         "limitation": "Previously inspected licensed public OOD rows and archived Jev aggregates; "
-                      "not blind parity, live desktop, or safety evidence.",
+        "not blind parity, live desktop, or safety evidence.",
     }
     args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({"local": local, "jev": report["jev"]}, indent=2))

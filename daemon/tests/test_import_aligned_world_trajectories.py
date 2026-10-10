@@ -15,16 +15,24 @@ from scripts.train_world_visual_transition import load_features
 
 def _record(identifier: str, *, action: str = "left_click", next_step: int = 2) -> dict:
     def observation(step: int) -> dict:
-        return {"role": "user", "content": [{"type": "image_url", "image_url": {
-            "url": f"images/{identifier}/step_{step}.png"}}]}
+        return {
+            "role": "user",
+            "content": [{"type": "image_url", "image_url": {"url": f"images/{identifier}/step_{step}.png"}}],
+        }
 
-    command = {"role": "assistant", "content": (
-        f"<tool_call><function=computer_use><parameter=action>{action}</parameter>"
-        "<parameter=coordinate>[4, 8]</parameter></function></tool_call>")}
-    return {"trajectory_id": identifier,
-            "task": {"domain": "test", "description": f"Set option {identifier}"},
-            "result": {"safety": True},
-            "messages": [observation(1), command, observation(next_step)]}
+    command = {
+        "role": "assistant",
+        "content": (
+            f"<tool_call><function=computer_use><parameter=action>{action}</parameter>"
+            "<parameter=coordinate>[4, 8]</parameter></function></tool_call>"
+        ),
+    }
+    return {
+        "trajectory_id": identifier,
+        "task": {"domain": "test", "description": f"Set option {identifier}"},
+        "result": {"safety": True},
+        "messages": [observation(1), command, observation(next_step)],
+    }
 
 
 def _png(level: int) -> bytes:
@@ -35,8 +43,7 @@ def _png(level: int) -> bytes:
 
 def test_rejects_nonadjacent_observation_and_unsupported_action() -> None:
     assert len(_pairs(_record("first"))[0]) == 1
-    assert _pairs(_record("first", next_step=3))[1][
-        "missing_ordered_action_or_next_observation"] == 1
+    assert _pairs(_record("first", next_step=3))[1]["missing_ordered_action_or_next_observation"] == 1
     assert _pairs(_record("first", action="keyboard_type"))[0] == []
     record = _record("first")
     record["messages"][1]["content"] += "<function=computer_use>other</function>"
@@ -61,9 +68,23 @@ def test_local_import_and_trainer_contract_are_episode_disjoint(tmp_path, monkey
     assert rows[0]["coords"] == [0.25, 0.5]
 
     features, report = tmp_path / "features.npz", tmp_path / "report.json"
-    monkeypatch.setattr(sys, "argv", ["import", "--jsonl", str(jsonl), "--images", str(archive),
-                                  "--features", str(features), "--report", str(report),
-                                  "--max-trajectories", "6"])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "import",
+            "--jsonl",
+            str(jsonl),
+            "--images",
+            str(archive),
+            "--features",
+            str(features),
+            "--report",
+            str(report),
+            "--max-trajectories",
+            "6",
+        ],
+    )
     main()
     assert len(json.loads(report.read_text(encoding="utf-8"))["sampled_images_sha256"]) == 64
     partitions = load_features(features, report)
@@ -94,8 +115,7 @@ def test_missing_image_and_out_of_bounds_action_are_excluded(tmp_path) -> None:
     jsonl = tmp_path / "trajectories.jsonl"
     archive = tmp_path / "images.zip"
     records = [_record("first"), _record("second")]
-    records[1]["messages"][1]["content"] = records[1]["messages"][1]["content"].replace(
-        "[4, 8]", "[20, 8]")
+    records[1]["messages"][1]["content"] = records[1]["messages"][1]["content"].replace("[4, 8]", "[20, 8]")
     jsonl.write_text("\n".join(json.dumps(record) for record in records), encoding="utf-8")
     with zipfile.ZipFile(archive, "w") as output:
         for identifier in ("first", "second"):

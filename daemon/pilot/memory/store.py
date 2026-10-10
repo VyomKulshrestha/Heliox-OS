@@ -396,9 +396,7 @@ class MemoryStore:
                     "results": result_summaries,
                     "verification_passed": bool(getattr(verification, "passed", False)),
                 },
-                provenance=(
-                    MemoryProvenance.VERIFIED_OUTCOME if verified else MemoryProvenance.INFERRED
-                ),
+                provenance=(MemoryProvenance.VERIFIED_OUTCOME if verified else MemoryProvenance.INFERRED),
             )
 
     async def record_task_completion(
@@ -428,15 +426,11 @@ class MemoryStore:
             payload={
                 "verification_passed": independently_verified,
                 "completion_basis": (
-                    "exact_editable_text_match"
-                    if independently_verified
-                    else "model_claim_cites_fresh_observation"
+                    "exact_editable_text_match" if independently_verified else "model_claim_cites_fresh_observation"
                 ),
             },
             provenance=(
-                MemoryProvenance.VERIFIED_OUTCOME
-                if independently_verified
-                else MemoryProvenance.MODEL_SYNTHESIS
+                MemoryProvenance.VERIFIED_OUTCOME if independently_verified else MemoryProvenance.MODEL_SYNTHESIS
             ),
         )
 
@@ -525,19 +519,19 @@ class MemoryStore:
             or outcome not in {"passed", "failed"}
         ):
             return False
-        memory_id = hashlib.sha256(
-            f"{session_id}\0{occurred_at}\0{outcome}\0{lesson}".encode()
-        ).hexdigest()
+        memory_id = hashlib.sha256(f"{session_id}\0{occurred_at}\0{outcome}\0{lesson}".encode()).hexdigest()
         await asyncio.to_thread(
             self._chroma_collection.upsert,
             documents=[lesson],
-            metadatas=[{
-                "source": "verified_reflection",
-                "outcome": outcome,
-                "success": str(outcome == "passed"),
-                "session_id": session_id or "default",
-                "timestamp": occurred_at,
-            }],
+            metadatas=[
+                {
+                    "source": "verified_reflection",
+                    "outcome": outcome,
+                    "success": str(outcome == "passed"),
+                    "session_id": session_id or "default",
+                    "timestamp": occurred_at,
+                }
+            ],
             ids=[f"reflection-{memory_id}"],
         )
         return True

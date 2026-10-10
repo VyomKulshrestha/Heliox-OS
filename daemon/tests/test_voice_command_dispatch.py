@@ -180,9 +180,7 @@ async def test_voice_question_during_task_answers_without_correction():
 
     await server._voice_command_dispatch("Quick question, what is this plan for?")
 
-    server._handle_interject.assert_awaited_once_with(
-        {"input": "what is this plan for?", "mode": "ask"}, None
-    )
+    server._handle_interject.assert_awaited_once_with({"input": "what is this plan for?", "mode": "ask"}, None)
     server._handle_execute.assert_not_awaited()
     server._speak_voice_response.assert_awaited_once()
     payload = next(
@@ -203,12 +201,14 @@ async def test_voice_can_queue_next_task_without_correcting_current_one():
 
     await server._voice_command_dispatch("Next task, summarize the report")
 
-    server._queue_interactive_request.assert_awaited_once_with({
-        "input": "summarize the report",
-        "session_id": "current-chat",
-        "user_id": "local",
-        "source": "voice",
-    })
+    server._queue_interactive_request.assert_awaited_once_with(
+        {
+            "input": "summarize the report",
+            "session_id": "current-chat",
+            "user_id": "local",
+            "source": "voice",
+        }
+    )
     server._handle_interject.assert_not_awaited()
     server._speak_voice_response.assert_awaited_once()
 

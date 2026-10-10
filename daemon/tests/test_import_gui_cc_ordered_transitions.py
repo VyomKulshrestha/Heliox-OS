@@ -26,23 +26,34 @@ def _dataset(tmp_path, *, bad_step=False, duplicate_task=False):
     for index, sample in enumerate(ids):
         directory = root / "offline_data" / sample
         directory.mkdir(parents=True)
-        metadata.append({"sample_id": sample, "task_meta": (
-            "Task 0" if duplicate_task and index == 1 else f"Task {index}"),
-            "n_steps": 2})
+        metadata.append(
+            {
+                "sample_id": sample,
+                "task_meta": ("Task 0" if duplicate_task and index == 1 else f"Task {index}"),
+                "n_steps": 2,
+            }
+        )
         steps = [
-            {"step_id": 1 if bad_step and index == 0 else 0,
-             "semantic_action": {"type": "tap", "source_coord": [4, 8]}},
+            {
+                "step_id": 1 if bad_step and index == 0 else 0,
+                "semantic_action": {"type": "tap", "source_coord": [4, 8]},
+            },
             {"step_id": 1, "semantic_action": {"type": "scroll"}},
         ]
         (directory / "reference_trajectory.jsonl").write_text(
-            "\n".join(json.dumps(step) for step in steps), encoding="utf-8")
+            "\n".join(json.dumps(step) for step in steps), encoding="utf-8"
+        )
         (directory / "initial.png").write_bytes(_png(index * 20))
         (directory / "step_000_after.png").write_bytes(_png(index * 20 + 5))
     source = root / "offline_samples.jsonl"
     source.write_text("\n".join(json.dumps(row) for row in metadata), encoding="utf-8")
-    selection = {"dataset": "example/offline", "revision": "pinned", "sample_ids": ids,
-                 "split_seed": 20260926,
-                 "offline_samples_sha256": hashlib.sha256(source.read_bytes()).hexdigest()}
+    selection = {
+        "dataset": "example/offline",
+        "revision": "pinned",
+        "sample_ids": ids,
+        "split_seed": 20260926,
+        "offline_samples_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+    }
     manifest = tmp_path / "selection.json"
     manifest.write_text(json.dumps(selection), encoding="utf-8")
     return root, manifest, selection
@@ -57,8 +68,21 @@ def test_ordered_taps_only_and_trainer_contract(tmp_path, monkeypatch):
     assert rows[0]["coords"] == [0.25, 0.5]
     assert rows[0]["action"] == 1
     features, report = tmp_path / "features.npz", tmp_path / "report.json"
-    monkeypatch.setattr(sys, "argv", ["import", "--root", str(root), "--selection", str(manifest),
-                                  "--features", str(features), "--report", str(report)])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "import",
+            "--root",
+            str(root),
+            "--selection",
+            str(manifest),
+            "--features",
+            str(features),
+            "--report",
+            str(report),
+        ],
+    )
     main()
     partitions = load_features(features, report)
     assert sum(len(partition["state"]) for partition in partitions.values()) == 6
@@ -116,12 +140,26 @@ def test_rgb_representation_preserves_color_channels(tmp_path, monkeypatch, size
     representation = f"rgb{size}"
     rows, _, _ = import_pairs(root, selection, representation=representation)
     assert rows[0]["state"].shape == (3 * size * size,)
-    assert np.all(rows[0]["state"][:size * size] == 1)
-    assert np.all(rows[0]["state"][size * size:] == 0)
+    assert np.all(rows[0]["state"][: size * size] == 1)
+    assert np.all(rows[0]["state"][size * size :] == 0)
     features, report = tmp_path / "rgb.npz", tmp_path / "rgb.json"
-    monkeypatch.setattr(sys, "argv", ["import", "--root", str(root), "--selection", str(manifest),
-                                  "--representation", representation, "--features", str(features),
-                                  "--report", str(report)])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "import",
+            "--root",
+            str(root),
+            "--selection",
+            str(manifest),
+            "--representation",
+            representation,
+            "--features",
+            str(features),
+            "--report",
+            str(report),
+        ],
+    )
     main()
     assert json.loads(report.read_text(encoding="utf-8"))["feature_shape"] == [3, size, size]
     partitions = load_features(features, report)

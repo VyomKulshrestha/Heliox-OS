@@ -20,8 +20,7 @@ def test_feature_checkpoint_round_trip_and_selection_guard(tmp_path) -> None:
     ]
     vectors = [np.array([1.0, 2.0, 3.0]), np.array([4.0, 5.0, 6.0])]
     save_checkpoint(path, vectors, [0, 2], ["first"], signature="selection-a")
-    recovered, offsets, ids = load_checkpoint(path, selected, signature="selection-a",
-                                               feature_dim=3)
+    recovered, offsets, ids = load_checkpoint(path, selected, signature="selection-a", feature_dim=3)
     assert offsets == [0, 2]
     assert ids == ["first"]
     np.testing.assert_array_equal(recovered, vectors)

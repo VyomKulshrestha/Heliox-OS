@@ -62,9 +62,15 @@ _STOP = frozenset(
     ]
 )
 _OPERATIONS = (
-    re.compile(r"\b(read|show|list|check|inspect|find|search|scan|filter|look up|report|summari[sz]e|analy[sz]e|tell|status|compare|review|identify|measure|extract)\b"),
-    re.compile(r"\b(edit|write|update|rewrite|set|create|apply|fix|draw|add|move|switch|connect|change|draft|commit|save|export|convert|crop|rename|copy|turn|adjust|prepare|download|resize|format|transcribe|record)\b"),
-    re.compile(r"\b(delete|remove|erase|stop|kill|terminate|uninstall|cancel|disconnect|wipe|clear|mute|sleep|reset|revert|disable)\b"),
+    re.compile(
+        r"\b(read|show|list|check|inspect|find|search|scan|filter|look up|report|summari[sz]e|analy[sz]e|tell|status|compare|review|identify|measure|extract)\b"
+    ),
+    re.compile(
+        r"\b(edit|write|update|rewrite|set|create|apply|fix|draw|add|move|switch|connect|change|draft|commit|save|export|convert|crop|rename|copy|turn|adjust|prepare|download|resize|format|transcribe|record)\b"
+    ),
+    re.compile(
+        r"\b(delete|remove|erase|stop|kill|terminate|uninstall|cancel|disconnect|wipe|clear|mute|sleep|reset|revert|disable)\b"
+    ),
     re.compile(r"\b(send|publish|push|post|upload|purchase|buy|submit|share|deploy|stream|forward|email)\b"),
     re.compile(r"\b(run|execute|launch|open|start|capture|take|navigate|display|preview|play)\b"),
 )
@@ -76,13 +82,19 @@ _TARGETS = re.compile(
 _BROADEN = re.compile(r"\b(all|every|entire|whole|everyone|anyone|public|publicly)\b")
 _SINGULAR = re.compile(r"\b(this|one|only|exact|selected|named|current)\b")
 _DRAFT = re.compile(r"\b(draft|unsent)\b")
-_EXTERNAL = re.compile(r"^\s*(?:send|publish|post|upload|share|stream|forward|email)\b|\b(?:and|then)\s+(?:send|publish|post|upload|share|stream|forward|email)\b")
+_EXTERNAL = re.compile(
+    r"^\s*(?:send|publish|post|upload|share|stream|forward|email)\b|\b(?:and|then)\s+(?:send|publish|post|upload|share|stream|forward|email)\b"
+)
 _DRAFT_THEN_SEND = re.compile(r"\b(?:and|then|also)\s+(?:send|post|publish|share|upload)\b")
 _TURN_OFF = re.compile(r"\b(turn off|shut down|power off)\b")
 _SENSITIVE = re.compile(r"\b(credentials?|passwords?|api key|private key|secret)\b")
 _EXPORT = re.compile(r"^\s*(?:export|upload|send|share|forward|publish)\b")
-_READ_ONLY_INTENT = re.compile(r"\b(read|show|list|check|find|search|scan|filter|look up|report|summari[sz]e|analy[sz]e|inspect|extract|tell|open|navigate)\b")
-_MUTATING_INTENT = re.compile(r"\b(edit|change|update|rewrite|set|create|apply|fix|draw|add|delete|remove|erase|stop|terminate|kill|restart|install|clear|send|publish|push|post|upload|share|move|copy|rename|export|save|download|turn|mute|crop|resize|format|transcribe|record)\b")
+_READ_ONLY_INTENT = re.compile(
+    r"\b(read|show|list|check|find|search|scan|filter|look up|report|summari[sz]e|analy[sz]e|inspect|extract|tell|open|navigate)\b"
+)
+_MUTATING_INTENT = re.compile(
+    r"\b(edit|change|update|rewrite|set|create|apply|fix|draw|add|delete|remove|erase|stop|terminate|kill|restart|install|clear|send|publish|push|post|upload|share|move|copy|rename|export|save|download|turn|mute|crop|resize|format|transcribe|record)\b"
+)
 _EXECUTE_CODE = re.compile(r"^\s*(?:run|execute|launch)\b.*\b(?:code|script|command)\b")
 _EXECUTE_INTENT = re.compile(r"\b(run|execute|launch)\b")
 _PRIVATE = re.compile(r"\b(private|locally|local|unsent)\b")
@@ -134,17 +146,29 @@ FEATURE_COUNT = 2 * HASH_DIM + 6 + 3 * len(_OPERATIONS)
 
 
 def apply_target_guard(
-    request: str, action: str, probability: float, *,
-    mutating_action: bool | None = None, destructive_request: bool | None = None,
+    request: str,
+    action: str,
+    probability: float,
+    *,
+    mutating_action: bool | None = None,
+    destructive_request: bool | None = None,
 ) -> float:
     """Only lower confidence on explicit scope expansion, never grant authority."""
     request_targets = set(_TARGETS.findall(request.lower()))
     action_targets = set(_TARGETS.findall(action.lower()))
     if request_targets and action_targets and not action_targets <= request_targets:
         return min(probability, 0.05)
-    if (request_targets or _SINGULAR.search(request.lower())) and _BROADEN.search(action.lower()) and not _BROADEN.search(request.lower()):
+    if (
+        (request_targets or _SINGULAR.search(request.lower()))
+        and _BROADEN.search(action.lower())
+        and not _BROADEN.search(request.lower())
+    ):
         return min(probability, 0.05)
-    if _DRAFT.search(request.lower()) and _EXTERNAL.search(action.lower()) and not _DRAFT_THEN_SEND.search(request.lower()):
+    if (
+        _DRAFT.search(request.lower())
+        and _EXTERNAL.search(action.lower())
+        and not _DRAFT_THEN_SEND.search(request.lower())
+    ):
         return min(probability, 0.05)
     if _TURN_OFF.search(action.lower()) and not _TURN_OFF.search(request.lower()):
         return min(probability, 0.05)
@@ -180,7 +204,9 @@ class LocalScopeDecisionHead:
     def __init__(self, weights_path: str | Path | None = None) -> None:
         self._weights: np.ndarray | None = None
         self._intercept = 0.0
-        path = Path(weights_path) if weights_path is not None else Path(__file__).with_name("scope_decision_candidate.npz")
+        path = (
+            Path(weights_path) if weights_path is not None else Path(__file__).with_name("scope_decision_candidate.npz")
+        )
         try:
             with np.load(path, allow_pickle=False) as data:
                 weights = np.asarray(data["weights"], dtype=np.float64)

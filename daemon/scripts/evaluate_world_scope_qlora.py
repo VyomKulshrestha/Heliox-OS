@@ -31,11 +31,9 @@ def paired_replay(cases, outcomes: list[dict], *, min_margin: float) -> dict:
         raise ValueError("min_margin must be between zero and one")
     case_rows = {case.id: case for case in cases}
     score_rows = {row["id"]: row for row in outcomes}
-    if (len(case_rows) != len(cases) or len(score_rows) != len(outcomes)
-            or set(case_rows) != set(score_rows)):
+    if len(case_rows) != len(cases) or len(score_rows) != len(outcomes) or set(case_rows) != set(score_rows):
         raise ValueError("paired replay requires exactly one score per frozen case")
-    if any(not math.isfinite(row["local_probability"])
-           or not 0 <= row["local_probability"] <= 1 for row in outcomes):
+    if any(not math.isfinite(row["local_probability"]) or not 0 <= row["local_probability"] <= 1 for row in outcomes):
         raise ValueError("paired replay requires finite probability scores")
     pairs: dict[str, dict[str, str]] = {}
     for case in cases:
@@ -50,8 +48,7 @@ def paired_replay(cases, outcomes: list[dict], *, min_margin: float) -> dict:
         direct, extra = case_rows[group["direct"]], case_rows[group["extra"]]
         if direct.request != extra.request or not direct.in_scope or extra.in_scope:
             raise ValueError("paired replay has mismatched requests or labels")
-        margin = (score_rows[direct.id]["local_probability"]
-                  - score_rows[extra.id]["local_probability"])
+        margin = score_rows[direct.id]["local_probability"] - score_rows[extra.id]["local_probability"]
         if abs(margin) <= min_margin:
             abstained += 1
         elif margin > 0:
@@ -59,9 +56,14 @@ def paired_replay(cases, outcomes: list[dict], *, min_margin: float) -> dict:
         else:
             incorrect += 1
     total = len(pairs)
-    return {"pairs": total, "min_margin": min_margin, "correct": correct,
-            "incorrect": incorrect, "abstained": abstained,
-            "coverage": (correct + incorrect) / total}
+    return {
+        "pairs": total,
+        "min_margin": min_margin,
+        "correct": correct,
+        "incorrect": incorrect,
+        "abstained": abstained,
+        "coverage": (correct + incorrect) / total,
+    }
 
 
 def teacher_rows(path: Path, cases) -> dict[str, dict]:
@@ -103,16 +105,24 @@ def evaluate(adapter_dir: Path, report_path: Path, cases, teacher_path: Path) ->
     training, head_data = artifact_metadata(adapter_dir, report_path)
     teacher = teacher_rows(teacher_path, cases)
     tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, revision=MODEL_REVISION, local_files_only=True)
-    encoded, excluded = encode_cases(tokenizer, {"evaluation": cases}, training["max_length"],
-                                     openjev_prompt=True)
+    encoded, excluded = encode_cases(tokenizer, {"evaluation": cases}, training["max_length"], openjev_prompt=True)
     if excluded["evaluation"]:
         raise ValueError("Frozen suite has overlong examples; no partial comparison")
-    config = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4",
-                               bnb_4bit_use_double_quant=True, bnb_4bit_compute_dtype=torch.bfloat16)
+    config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_use_double_quant=True,
+        bnb_4bit_compute_dtype=torch.bfloat16,
+    )
     base = Qwen3_5ForCausalLM.from_pretrained(
-        MODEL_ID, revision=MODEL_REVISION, local_files_only=True,
-        quantization_config=config, dtype=torch.bfloat16,
-        attn_implementation="eager", device_map={"": "cuda:0"})
+        MODEL_ID,
+        revision=MODEL_REVISION,
+        local_files_only=True,
+        quantization_config=config,
+        dtype=torch.bfloat16,
+        attn_implementation="eager",
+        device_map={"": "cuda:0"},
+    )
     backbone = PeftModel.from_pretrained(base.model, adapter_dir, is_trainable=False)
     del base
     head = torch.nn.Linear(head_data["weight"].shape[1], 1).to("cuda", dtype=torch.float32)
@@ -125,12 +135,16 @@ def evaluate(adapter_dir: Path, report_path: Path, cases, teacher_path: Path) ->
     with torch.inference_mode():
         for case_id, ids, label in encoded["evaluation"]:
             tokens = torch.tensor([ids], device="cuda", dtype=torch.long)
-            hidden = backbone(input_ids=tokens, use_cache=False,
-                              return_dict=True).last_hidden_state[0, -1].float()
+            hidden = backbone(input_ids=tokens, use_cache=False, return_dict=True).last_hidden_state[0, -1].float()
             probability = float(torch.sigmoid(head(hidden).squeeze()).item())
-            outcomes.append({"id": case_id, "gold_in_scope": label,
-                             "local_probability": probability,
-                             "jev_probability": teacher[case_id]["jev_probability"]})
+            outcomes.append(
+                {
+                    "id": case_id,
+                    "gold_in_scope": label,
+                    "local_probability": probability,
+                    "jev_probability": teacher[case_id]["jev_probability"],
+                }
+            )
     labels = np.asarray([row["gold_in_scope"] for row in outcomes], dtype=np.bool_)
     local = np.asarray([row["local_probability"] for row in outcomes])
     jev = np.asarray([row["jev_probability"] for row in outcomes])
@@ -149,16 +163,18 @@ def evaluate(adapter_dir: Path, report_path: Path, cases, teacher_path: Path) ->
         },
         "results": outcomes,
         "limitation": "Paired replay compares two observed candidate scores only; it does not "
-                      "predict outcomes of untried actions. Authored synthetic cases were "
-                      "inspected during earlier model research; this is not a blind "
-                      "Jev-parity, live desktop, or safety test.",
+        "predict outcomes of untried actions. Authored synthetic cases were "
+        "inspected during earlier model research; this is not a blind "
+        "Jev-parity, live desktop, or safety test.",
     }
 
 
 def main() -> None:
     import sys
+
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from scripts.reference_output_policy import block_jev_output_use
+
     block_jev_output_use()
 
     root = Path(__file__).resolve().parents[1]

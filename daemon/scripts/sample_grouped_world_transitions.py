@@ -23,8 +23,7 @@ REVISION = re.compile(r"^[0-9a-f]{40}$")
 
 
 def fetch_page(dataset: str, config: str, split: str, offset: int, length: int) -> tuple[dict, str]:
-    query = urlencode({"dataset": dataset, "config": config, "split": split,
-                       "offset": offset, "length": length})
+    query = urlencode({"dataset": dataset, "config": config, "split": split, "offset": offset, "length": length})
     request = Request(f"{ENDPOINT}?{query}", headers={"User-Agent": "heliox-research/1.0"})
     for attempt in range(4):
         try:
@@ -52,9 +51,16 @@ def _field(row: dict, dotted_path: str):
     return value
 
 
-def extract_record(entry: dict, *, split: str, revision: str, dataset: str,
-                   group_path: str, max_input_chars: int,
-                   max_target_chars: int) -> tuple[dict | None, str]:
+def extract_record(
+    entry: dict,
+    *,
+    split: str,
+    revision: str,
+    dataset: str,
+    group_path: str,
+    max_input_chars: int,
+    max_target_chars: int,
+) -> tuple[dict | None, str]:
     if entry.get("truncated_cells"):
         return None, "truncated_source"
     source = entry.get("row")
@@ -64,9 +70,12 @@ def extract_record(entry: dict, *, split: str, revision: str, dataset: str,
     messages = source.get("messages")
     if not isinstance(group, str) or not group.strip():
         return None, "missing_group"
-    if (not isinstance(messages, list) or len(messages) != 3
-            or any(not isinstance(message, dict) for message in messages)
-            or [message.get("role") for message in messages] != ["system", "user", "assistant"]):
+    if (
+        not isinstance(messages, list)
+        or len(messages) != 3
+        or any(not isinstance(message, dict) for message in messages)
+        or [message.get("role") for message in messages] != ["system", "user", "assistant"]
+    ):
         return None, "invalid_messages"
     contents = [message.get("content") for message in messages]
     if not all(isinstance(content, str) and content.strip() for content in contents):
@@ -82,17 +91,25 @@ def extract_record(entry: dict, *, split: str, revision: str, dataset: str,
         "source_sha256": hashlib.sha256(
             json.dumps(source, ensure_ascii=False, sort_keys=True).encode("utf-8")
         ).hexdigest(),
-        "context_sha256": hashlib.sha256(
-            json.dumps(contents[:2], ensure_ascii=False).encode("utf-8")
-        ).hexdigest(),
+        "context_sha256": hashlib.sha256(json.dumps(contents[:2], ensure_ascii=False).encode("utf-8")).hexdigest(),
         "messages": messages,
     }, "accepted"
 
 
-def sample_split(*, dataset: str, config: str, source_split: str, output_split: str,
-                 pages: int, page_length: int, rng: random.Random,
-                 expected_revision: str | None, group_path: str,
-                 max_input_chars: int, max_target_chars: int) -> tuple[list[dict], Counter, str, int]:
+def sample_split(
+    *,
+    dataset: str,
+    config: str,
+    source_split: str,
+    output_split: str,
+    pages: int,
+    page_length: int,
+    rng: random.Random,
+    expected_revision: str | None,
+    group_path: str,
+    max_input_chars: int,
+    max_target_chars: int,
+) -> tuple[list[dict], Counter, str, int]:
     first, revision = fetch_page(dataset, config, source_split, 0, 1)
     if expected_revision is not None and revision != expected_revision:
         raise ValueError("Dataset revision changed between splits")
@@ -115,8 +132,12 @@ def sample_split(*, dataset: str, config: str, source_split: str, output_split: 
             if not isinstance(entry, dict) or entry.get("row_idx") != offset + index:
                 raise ValueError("Dataset server returned an unexpected row index")
             record, reason = extract_record(
-                entry, split=output_split, revision=revision, dataset=dataset,
-                group_path=group_path, max_input_chars=max_input_chars,
+                entry,
+                split=output_split,
+                revision=revision,
+                dataset=dataset,
+                group_path=group_path,
+                max_input_chars=max_input_chars,
                 max_target_chars=max_target_chars,
             )
             exclusions[reason] += 1
@@ -162,24 +183,44 @@ def main() -> None:
     parser.add_argument("--rows", type=Path, default=state / "grouped_world_transitions.jsonl")
     parser.add_argument("--report", type=Path, default=state / "grouped_world_transitions.json")
     args = parser.parse_args()
-    if (args.rows.exists() or args.report.exists() or args.train_pages < 1 or args.eval_pages < 1
-            or not 1 <= args.page_length <= 100 or args.max_input_chars < 1
-            or args.max_target_chars < 1 or not args.group_path.strip()
-            or (args.expected_revision is not None
-                and not REVISION.fullmatch(args.expected_revision))):
+    if (
+        args.rows.exists()
+        or args.report.exists()
+        or args.train_pages < 1
+        or args.eval_pages < 1
+        or not 1 <= args.page_length <= 100
+        or args.max_input_chars < 1
+        or args.max_target_chars < 1
+        or not args.group_path.strip()
+        or (args.expected_revision is not None and not REVISION.fullmatch(args.expected_revision))
+    ):
         parser.error("Use fresh outputs and positive bounded sampling settings")
     rng = random.Random(args.seed)
     train, train_exclusions, revision, train_total = sample_split(
-        dataset=args.dataset, config=args.config, source_split=args.train_split,
-        output_split="train", pages=args.train_pages, page_length=args.page_length,
-        rng=rng, expected_revision=args.expected_revision, group_path=args.group_path,
-        max_input_chars=args.max_input_chars, max_target_chars=args.max_target_chars,
+        dataset=args.dataset,
+        config=args.config,
+        source_split=args.train_split,
+        output_split="train",
+        pages=args.train_pages,
+        page_length=args.page_length,
+        rng=rng,
+        expected_revision=args.expected_revision,
+        group_path=args.group_path,
+        max_input_chars=args.max_input_chars,
+        max_target_chars=args.max_target_chars,
     )
     evaluation, eval_exclusions, revision, eval_total = sample_split(
-        dataset=args.dataset, config=args.config, source_split=args.eval_split,
-        output_split="eval", pages=args.eval_pages, page_length=args.page_length,
-        rng=rng, expected_revision=revision, group_path=args.group_path,
-        max_input_chars=args.max_input_chars, max_target_chars=args.max_target_chars,
+        dataset=args.dataset,
+        config=args.config,
+        source_split=args.eval_split,
+        output_split="eval",
+        pages=args.eval_pages,
+        page_length=args.page_length,
+        rng=rng,
+        expected_revision=revision,
+        group_path=args.group_path,
+        max_input_chars=args.max_input_chars,
+        max_target_chars=args.max_target_chars,
     )
     train, evaluation, leakage = separate_groups(train, evaluation)
     args.rows.parent.mkdir(parents=True, exist_ok=True)
@@ -188,22 +229,33 @@ def main() -> None:
             output.write(json.dumps(row, ensure_ascii=False) + "\n")
     report = {
         "purpose": "research_only_group_disjoint_world_transition_sample",
-        "source": {"dataset": args.dataset, "config": args.config, "revision": revision,
-                   "train_split": args.train_split, "eval_split": args.eval_split,
-                   "source_sizes": {"train": train_total, "eval": eval_total}},
-        "sampling": {"seed": args.seed, "train_pages": args.train_pages,
-                     "eval_pages": args.eval_pages, "page_length": args.page_length,
-                     "group_path": args.group_path, "max_input_chars": args.max_input_chars,
-                     "max_target_chars": args.max_target_chars},
+        "source": {
+            "dataset": args.dataset,
+            "config": args.config,
+            "revision": revision,
+            "train_split": args.train_split,
+            "eval_split": args.eval_split,
+            "source_sizes": {"train": train_total, "eval": eval_total},
+        },
+        "sampling": {
+            "seed": args.seed,
+            "train_pages": args.train_pages,
+            "eval_pages": args.eval_pages,
+            "page_length": args.page_length,
+            "group_path": args.group_path,
+            "max_input_chars": args.max_input_chars,
+            "max_target_chars": args.max_target_chars,
+        },
         "accepted": {"train": len(train), "eval": len(evaluation)},
-        "groups": {"train": len({row["group_sha256"] for row in train}),
-                   "eval": len({row["group_sha256"] for row in evaluation})},
-        "exclusions": {"train": dict(train_exclusions), "eval": dict(eval_exclusions),
-                       "leakage": dict(leakage)},
+        "groups": {
+            "train": len({row["group_sha256"] for row in train}),
+            "eval": len({row["group_sha256"] for row in evaluation}),
+        },
+        "exclusions": {"train": dict(train_exclusions), "eval": dict(eval_exclusions), "leakage": dict(leakage)},
         "rows_sha256": hashlib.sha256(args.rows.read_bytes()).hexdigest(),
         "limitation": "Text observations and outcome descriptions are not raw next-state evidence. "
-                      "A task-group split prevents sampled task overlap but not source annotation errors "
-                      "or broader environment overlap. No runtime integration or safety claim.",
+        "A task-group split prevents sampled task overlap but not source annotation errors "
+        "or broader environment overlap. No runtime integration or safety claim.",
     }
     args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report, indent=2))

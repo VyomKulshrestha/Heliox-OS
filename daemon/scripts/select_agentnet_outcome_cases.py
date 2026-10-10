@@ -17,10 +17,8 @@ from pathlib import Path
 SOURCE_REPO = "xlangai/AgentNet"
 SOURCE_REVISION = "d76ee50a63fad81cfdbe576416757d7c2091ed50"
 SOURCE_SHA256 = "8e24c5a5a1ef5a5113755b33ed12164fc37ce8fbbd35d1c7dba81bf950d53d00"
-SPLIT_ROWS = {"train": 1024, "calibration": 128, "development": 128,
-              "final": 128, "ood": 128}
-SEEDS = {"ood": 20261021, "final": 20261022, "development": 20261023,
-         "calibration": 20261024, "train": 20261025}
+SPLIT_ROWS = {"train": 1024, "calibration": 128, "development": 128, "final": 128, "ood": 128}
+SEEDS = {"ood": 20261021, "final": 20261022, "development": 20261023, "calibration": 20261024, "train": 20261025}
 MAX_INPUT_CHARS = 4_000
 
 
@@ -45,16 +43,23 @@ def load_candidates(source: Path) -> tuple[list[dict], Counter]:
                 before = current.get("value", {})
                 after = following.get("value", {})
                 label = before.get("last_step_correct")
-                fields = (before.get("observation"), before.get("action"),
-                          before.get("code"), after.get("observation"))
-                if (not isinstance(label, bool)
-                        or not all(isinstance(value, str) and value.strip() for value in fields)
-                        or following.get("index") != current.get("index", -2) + 1
-                        or len(task) + sum(len(value) for value in fields) > MAX_INPUT_CHARS):
+                fields = (before.get("observation"), before.get("action"), before.get("code"), after.get("observation"))
+                if (
+                    not isinstance(label, bool)
+                    or not all(isinstance(value, str) and value.strip() for value in fields)
+                    or following.get("index") != current.get("index", -2) + 1
+                    or len(task) + sum(len(value) for value in fields) > MAX_INPUT_CHARS
+                ):
                     counts["ineligible"] += 1
                     continue
-                candidates.append({"id": f"{group}:{current['index']}", "group": group,
-                                   "domain": trajectory["domain"], "correct": label})
+                candidates.append(
+                    {
+                        "id": f"{group}:{current['index']}",
+                        "group": group,
+                        "domain": trajectory["domain"],
+                        "correct": label,
+                    }
+                )
                 counts["correct" if label else "incorrect"] += 1
     if len({row["id"] for row in candidates}) != len(candidates):
         raise ValueError("Duplicate AgentNet action ID")
@@ -62,8 +67,7 @@ def load_candidates(source: Path) -> tuple[list[dict], Counter]:
     return candidates, counts
 
 
-def select(candidates: list[dict], *, ood_domain: str,
-           split_rows: dict[str, int] = SPLIT_ROWS) -> dict[str, list[str]]:
+def select(candidates: list[dict], *, ood_domain: str, split_rows: dict[str, int] = SPLIT_ROWS) -> dict[str, list[str]]:
     if any(rows <= 0 or rows % 2 for rows in split_rows.values()):
         raise ValueError("Each split must have a positive even row count")
     if "ood" not in split_rows:
@@ -75,9 +79,13 @@ def select(candidates: list[dict], *, ood_domain: str,
             continue
         rows: list[dict] = []
         for correct in (False, True):
-            pool = [row for row in candidates if row["group"] not in used_groups
-                    and row["correct"] is correct
-                    and ((row["domain"] == ood_domain) == (split == "ood"))]
+            pool = [
+                row
+                for row in candidates
+                if row["group"] not in used_groups
+                and row["correct"] is correct
+                and ((row["domain"] == ood_domain) == (split == "ood"))
+            ]
             pool.sort(key=lambda row: row["id"])
             random.Random(SEEDS[split] + int(correct)).shuffle(pool)
             class_count = 0
@@ -106,22 +114,28 @@ def main() -> None:
     splits = select(candidates, ood_domain=args.ood_domain)
     manifest = {
         "purpose": "pre_registered_agentnet_post_action_outcome_research",
-        "source_repo": SOURCE_REPO, "source_revision": SOURCE_REVISION,
-        "source_sha256": SOURCE_SHA256, "source_license": "MIT",
+        "source_repo": SOURCE_REPO,
+        "source_revision": SOURCE_REVISION,
+        "source_sha256": SOURCE_SHA256,
+        "source_license": "MIT",
         "label_provenance": "model_generated_reflector_step_correct_not_human",
-        "input_fields": ["instruction", "before_observation", "action", "code",
-                         "next_observation"],
+        "input_fields": ["instruction", "before_observation", "action", "code", "next_observation"],
         "excluded_fields": ["thought", "reflection", "task_completed", "alignment_score"],
-        "ood_domain": args.ood_domain, "max_input_chars": MAX_INPUT_CHARS,
-        "candidate_counts": dict(counts), "seeds": SEEDS,
+        "ood_domain": args.ood_domain,
+        "max_input_chars": MAX_INPUT_CHARS,
+        "candidate_counts": dict(counts),
+        "seeds": SEEDS,
         "selection_order": ["ood", "final", "development", "calibration", "train"],
         "splits": splits,
         "case_ids": [case_id for name in SPLIT_ROWS for case_id in splits[name]],
         "limitation": "Reflector outcome labels are not human action-safety labels. One action per task; no runtime authority.",
     }
     args.output.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps({"candidates": len(candidates),
-                      "splits": {name: len(rows) for name, rows in splits.items()}}, indent=2))
+    print(
+        json.dumps(
+            {"candidates": len(candidates), "splits": {name: len(rows) for name, rows in splits.items()}}, indent=2
+        )
+    )
 
 
 if __name__ == "__main__":

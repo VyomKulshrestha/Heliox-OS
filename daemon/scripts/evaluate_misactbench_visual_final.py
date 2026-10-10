@@ -34,28 +34,37 @@ def main() -> None:
     artifact_hash = hashlib.sha256(args.artifact.read_bytes()).hexdigest()
     manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
     fitted = json.loads(args.fit_report.read_text(encoding="utf-8"))
-    if (fitted["manifest_sha256"] != manifest_hash
-            or fitted["feature_sha256"] != feature_hash
-            or fitted["artifact_sha256"] != artifact_hash
-            or fitted["final_split_opened"] is not False):
+    if (
+        fitted["manifest_sha256"] != manifest_hash
+        or fitted["feature_sha256"] != feature_hash
+        or fitted["artifact_sha256"] != artifact_hash
+        or fitted["final_split_opened"] is not False
+    ):
         raise ValueError("Frozen fit report or final split provenance differs")
     with np.load(args.features, allow_pickle=False) as saved:
         ids = saved["ids"].tolist()
         matrix = np.asarray(saved["features"], dtype=np.float32)
     with np.load(args.artifact, allow_pickle=False) as head:
-        if (str(head["manifest_sha256"]) != manifest_hash
-                or str(head["feature_sha256"]) != feature_hash):
+        if str(head["manifest_sha256"]) != manifest_hash or str(head["feature_sha256"]) != feature_hash:
             raise ValueError("Frozen head belongs to another feature set")
         mean, scale = head["mean"], head["scale"]
         coefficient, intercept = head["coefficient"], head["intercept"]
         cautious = float(head["cautious_threshold"])
-    if (ids != manifest["case_ids"] or matrix.ndim != 2
-            or mean.shape != (matrix.shape[1],) or scale.shape != mean.shape
-            or coefficient.shape != (1, matrix.shape[1]) or intercept.shape != (1,)
-            or np.any(scale <= 0) or not np.isfinite(matrix).all()
-            or not np.isfinite(mean).all() or not np.isfinite(scale).all()
-            or not np.isfinite(coefficient).all() or not np.isfinite(intercept).all()
-            or not 0 < cautious <= math.nextafter(1.0, math.inf)):
+    if (
+        ids != manifest["case_ids"]
+        or matrix.ndim != 2
+        or mean.shape != (matrix.shape[1],)
+        or scale.shape != mean.shape
+        or coefficient.shape != (1, matrix.shape[1])
+        or intercept.shape != (1,)
+        or np.any(scale <= 0)
+        or not np.isfinite(matrix).all()
+        or not np.isfinite(mean).all()
+        or not np.isfinite(scale).all()
+        or not np.isfinite(coefficient).all()
+        or not np.isfinite(intercept).all()
+        or not 0 < cautious <= math.nextafter(1.0, math.inf)
+    ):
         raise ValueError("Frozen visual features or head parameters are invalid")
     trajectories = json.loads(args.dataset.read_text(encoding="utf-8"))
     final_ids = manifest["splits"]["final"]
@@ -78,24 +87,27 @@ def main() -> None:
         purpose = "one_shot_frozen_text_action_final_test"
     if mode == "observed_history":
         purpose = "one_shot_frozen_history_action_final_test"
-    report = {"purpose": purpose,
-              "dataset_sha256": DATASET_SHA256,
-              "manifest_sha256": manifest_hash, "feature_sha256": feature_hash,
-              "fit_report_sha256": hashlib.sha256(args.fit_report.read_bytes()).hexdigest(),
-              "artifact_sha256": artifact_hash,
-              "default": assess(labels, probabilities, 0.5),
-              "calibration_cautious": assess(labels, probabilities, cautious),
-              "limitation": (
-                  "Public screenshot/action labels with one observed prior action and screen transition; "
-                  "not live desktop safety, Jev parity, or execution authority."
-                  if mode == "observed_history" else
-                  "Public screenshot/action labels without observed history; "
-                  "not live desktop safety, Jev parity, or execution authority.")}
+    report = {
+        "purpose": purpose,
+        "dataset_sha256": DATASET_SHA256,
+        "manifest_sha256": manifest_hash,
+        "feature_sha256": feature_hash,
+        "fit_report_sha256": hashlib.sha256(args.fit_report.read_bytes()).hexdigest(),
+        "artifact_sha256": artifact_hash,
+        "default": assess(labels, probabilities, 0.5),
+        "calibration_cautious": assess(labels, probabilities, cautious),
+        "limitation": (
+            "Public screenshot/action labels with one observed prior action and screen transition; "
+            "not live desktop safety, Jev parity, or execution authority."
+            if mode == "observed_history"
+            else "Public screenshot/action labels without observed history; "
+            "not live desktop safety, Jev parity, or execution authority."
+        ),
+    }
     if mode:
         report["input_mode"] = mode
     args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps({"default": report["default"],
-                      "calibration_cautious": report["calibration_cautious"]}, indent=2))
+    print(json.dumps({"default": report["default"], "calibration_cautious": report["calibration_cautious"]}, indent=2))
 
 
 if __name__ == "__main__":

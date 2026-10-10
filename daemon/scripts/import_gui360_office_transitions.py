@@ -29,8 +29,7 @@ def _single_image_index(message: dict[str, Any]) -> int | None:
     content = message.get("content")
     if not isinstance(content, list):
         return None
-    indices = [item.get("index") for item in content
-               if isinstance(item, dict) and item.get("type") == "image"]
+    indices = [item.get("index") for item in content if isinstance(item, dict) and item.get("type") == "image"]
     if len(indices) != 1 or not isinstance(indices[0], int) or isinstance(indices[0], bool):
         return None
     return indices[0]
@@ -70,16 +69,29 @@ def _click(call: dict[str, Any]) -> tuple[float, float] | None:
         return None
     action = actions[0]
     coords = action.get("coordinate")
-    if (action.get("action") != "click" or not isinstance(coords, list) or len(coords) != 2
-        or any(not isinstance(value, (int, float)) or isinstance(value, bool)
-               or not np.isfinite(value) or not 0 <= value <= 1000 for value in coords)):
+    if (
+        action.get("action") != "click"
+        or not isinstance(coords, list)
+        or len(coords) != 2
+        or any(
+            not isinstance(value, (int, float))
+            or isinstance(value, bool)
+            or not np.isfinite(value)
+            or not 0 <= value <= 1000
+            for value in coords
+        )
+    ):
         return None
     return coords[0] / 1000, coords[1] / 1000
 
 
 def extract_transitions(
-    row: dict[str, Any], *, split: str, expected_domain: str,
-    representation: str, reasons: Counter,
+    row: dict[str, Any],
+    *,
+    split: str,
+    expected_domain: str,
+    representation: str,
+    reasons: Counter,
 ) -> list[dict[str, Any]]:
     """Trust image order and one observed tool result, never inferred UI effects."""
     try:
@@ -91,13 +103,19 @@ def extract_transitions(
         raise ValueError("Invalid GUI-360 row structure")
     info = metadata.get("others")
     trajectory_id = info.get("id") if isinstance(info, dict) else None
-    if (metadata.get("dims") != ["desktop", "use"] or not isinstance(trajectory_id, str)
+    if (
+        metadata.get("dims") != ["desktop", "use"]
+        or not isinstance(trajectory_id, str)
         or not trajectory_id.startswith(expected_domain + "_")
-        or info.get("source") != "vyokky/GUI-360"):
+        or info.get("source") != "vyokky/GUI-360"
+    ):
         raise ValueError("Shard domain or dataset lineage differs from the frozen protocol")
     images = row.get("images")
-    if (not isinstance(images, list) or not 2 <= len(images) <= MAX_IMAGES_PER_TRAJECTORY
-        or not 3 <= len(messages) <= MAX_MESSAGES_PER_TRAJECTORY):
+    if (
+        not isinstance(images, list)
+        or not 2 <= len(images) <= MAX_IMAGES_PER_TRAJECTORY
+        or not 3 <= len(messages) <= MAX_MESSAGES_PER_TRAJECTORY
+    ):
         reasons["invalid_trajectory_size"] += 1
         return []
     cache: dict[int, tuple[np.ndarray, tuple[int, int], str]] = {}
@@ -123,17 +141,26 @@ def extract_transitions(
             reasons["unsupported_action"] += 1
             continue
         following = messages[position + 1] if position + 1 < len(messages) else None
-        if (not isinstance(following, dict) or following.get("role") != "tool"
-            or following.get("tool_call_id") != calls[0].get("id")):
+        if (
+            not isinstance(following, dict)
+            or following.get("role") != "tool"
+            or following.get("tool_call_id") != calls[0].get("id")
+        ):
             reasons["unpaired_tool_result"] += 1
             continue
         after_index = _single_image_index(following)
-        if (after_index is None or after_index == current_image
-            or not 0 <= current_image < len(images) or not 0 <= after_index < len(images)):
+        if (
+            after_index is None
+            or after_index == current_image
+            or not 0 <= current_image < len(images)
+            or not 0 <= after_index < len(images)
+        ):
             reasons["missing_or_reused_screenshot"] += 1
             continue
-        if not any(isinstance(later, dict) and later.get("role") == "assistant"
-                   and later.get("tool_calls") for later in messages[position + 2:]):
+        if not any(
+            isinstance(later, dict) and later.get("role") == "assistant" and later.get("tool_calls")
+            for later in messages[position + 2 :]
+        ):
             reasons["terminal_transition"] += 1
             continue
         try:
@@ -148,9 +175,17 @@ def extract_transitions(
         if before_size != after_size:
             reasons["screen_size_changed"] += 1
             continue
-        rows.append({"state": before, "target": after, "action": 1,
-                     "coords": coords, "group": group, "split": split,
-                     "image_hashes": (before_hash, after_hash)})
+        rows.append(
+            {
+                "state": before,
+                "target": after,
+                "action": 1,
+                "coords": coords,
+                "group": group,
+                "split": split,
+                "image_hashes": (before_hash, after_hash),
+            }
+        )
     return rows
 
 
@@ -160,9 +195,12 @@ def import_shards(root: Path, protocol: dict[str, Any]) -> tuple[list[dict[str, 
     except ImportError as exc:
         raise RuntimeError("Offline GUI-360 import requires the optional pyarrow package") from exc
     shards = protocol.get("shards")
-    if (protocol.get("dataset") != "cua-lite/GUI-360"
+    if (
+        protocol.get("dataset") != "cua-lite/GUI-360"
         or protocol.get("representation") not in {"gray16", "rgb32"}
-        or not isinstance(shards, list) or not shards):
+        or not isinstance(shards, list)
+        or not shards
+    ):
         raise ValueError("Invalid GUI-360 protocol")
     assignments = {"train": set(), "validation": set(), "eval": set()}
     for shard in shards:
@@ -172,9 +210,10 @@ def import_shards(root: Path, protocol: dict[str, Any]) -> tuple[list[dict[str, 
         if not isinstance(domain, str) or not domain:
             raise ValueError("Missing expected application domain")
         assignments[shard["split"]].add(domain)
-    if (any(not domains for domains in assignments.values())
-        or any(assignments[left] & assignments[right] for left, right in
-               (("train", "validation"), ("train", "eval"), ("validation", "eval")))):
+    if any(not domains for domains in assignments.values()) or any(
+        assignments[left] & assignments[right]
+        for left, right in (("train", "validation"), ("train", "eval"), ("validation", "eval"))
+    ):
         raise ValueError("Application domains must be disjoint across splits")
     rows: list[dict[str, Any]] = []
     reasons: Counter = Counter()
@@ -183,8 +222,7 @@ def import_shards(root: Path, protocol: dict[str, Any]) -> tuple[list[dict[str, 
     for shard in shards:
         name = Path(shard["path"]).name
         path = root / name
-        if (not path.is_file() or path.stat().st_size > MAX_SHARD_BYTES
-            or _file_sha256(path) != shard.get("sha256")):
+        if not path.is_file() or path.stat().st_size > MAX_SHARD_BYTES or _file_sha256(path) != shard.get("sha256"):
             raise ValueError(f"Missing, oversize, or changed pinned shard: {name}")
         source = parquet.ParquetFile(path)
         if set(source.schema_arrow.names) != {"images", "messages", "metadata"}:
@@ -198,23 +236,31 @@ def import_shards(root: Path, protocol: dict[str, Any]) -> tuple[list[dict[str, 
                     raise ValueError("Duplicate or missing trajectory ID")
                 seen_ids.add(trajectory_id)
                 source_rows[shard["split"]] += 1
-                rows.extend(extract_transitions(
-                    record, split=shard["split"], expected_domain=shard["expected_domain"],
-                    representation=protocol["representation"], reasons=reasons,
-                ))
+                rows.extend(
+                    extract_transitions(
+                        record,
+                        split=shard["split"],
+                        expected_domain=shard["expected_domain"],
+                        representation=protocol["representation"],
+                        reasons=reasons,
+                    )
+                )
     counts = Counter(row["split"] for row in rows)
     minimum = protocol.get("minimum_rows_per_split", 20)
     if any(counts[split] < minimum for split in assignments):
         raise ValueError(f"Too few aligned nonterminal transitions: {dict(counts)}; exclusions: {dict(reasons)}")
-    screens = {split: {row["state"].tobytes() for row in rows if row["split"] == split}
-               for split in assignments}
-    if any(screens[left] & screens[right] for left, right in
-           (("train", "validation"), ("train", "eval"), ("validation", "eval"))):
+    screens = {split: {row["state"].tobytes() for row in rows if row["split"] == split} for split in assignments}
+    if any(
+        screens[left] & screens[right]
+        for left, right in (("train", "validation"), ("train", "eval"), ("validation", "eval"))
+    ):
         raise ValueError("Identical pre-action screen leaked across application splits")
-    return rows, {"source_trajectories": dict(source_rows), "accepted": dict(counts),
-                  "exclusions": dict(reasons),
-                  "groups": {split: len({row["group"] for row in rows if row["split"] == split})
-                             for split in assignments}}
+    return rows, {
+        "source_trajectories": dict(source_rows),
+        "accepted": dict(counts),
+        "exclusions": dict(reasons),
+        "groups": {split: len({row["group"] for row in rows if row["split"] == split}) for split in assignments},
+    }
 
 
 def main() -> None:
@@ -225,8 +271,13 @@ def main() -> None:
     parser.add_argument("--features", type=Path, default=state / "gui360_office_v1.npz")
     parser.add_argument("--report", type=Path, default=state / "gui360_office_v1.json")
     args = parser.parse_args()
-    if (not args.root.is_dir() or not args.protocol.is_file() or args.features.exists()
-        or args.report.exists() or args.features.resolve() == args.report.resolve()):
+    if (
+        not args.root.is_dir()
+        or not args.protocol.is_file()
+        or args.features.exists()
+        or args.report.exists()
+        or args.features.resolve() == args.report.resolve()
+    ):
         parser.error("Use a local shard directory, frozen protocol, and fresh output paths")
     protocol = json.loads(args.protocol.read_text(encoding="utf-8"))
     rows, audit = import_shards(args.root, protocol)
@@ -244,18 +295,20 @@ def main() -> None:
     representation = protocol["representation"]
     report = {
         "purpose": "offline_only_gui360_office_transition_import",
-        "dataset": protocol["dataset"], "revision": protocol["revision"],
+        "dataset": protocol["dataset"],
+        "revision": protocol["revision"],
         "protocol_sha256": _file_sha256(args.protocol),
         "source_shards_sha256": {item["path"]: item["sha256"] for item in protocol["shards"]},
-        "sampled_images_sha256": hashlib.sha256("".join(
-            image_hash for row in rows for image_hash in row["image_hashes"]
-        ).encode("ascii")).hexdigest(),
+        "sampled_images_sha256": hashlib.sha256(
+            "".join(image_hash for row in rows for image_hash in row["image_hashes"]).encode("ascii")
+        ).hexdigest(),
         "feature_shape": [1, 16, 16] if representation == "gray16" else [3, 32, 32],
-        "representation": representation, "split_basis": protocol["split_basis"],
+        "representation": representation,
+        "split_basis": protocol["split_basis"],
         **audit,
         "features_sha256": _file_sha256(args.features),
         "limitation": "One non-interventional shard per Office domain. No verified same-state action interventions, "
-                      "live desktop transfer, execution authority, or Jev parity is established.",
+        "live desktop transfer, execution authority, or Jev parity is established.",
     }
     args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report, indent=2), flush=True)

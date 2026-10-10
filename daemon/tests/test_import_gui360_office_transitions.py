@@ -22,9 +22,15 @@ def _trajectory(domain: str, *, multi_action: bool = False) -> dict:
         actions = [{"action": "click", "coordinate": coordinate}]
         if multi_action and index == 0:
             actions.append({"action": "click", "coordinate": [800, 700]})
-        return {"role": "assistant", "tool_calls": [{
-            "id": f"call_{index}", "function": {"name": "computer", "arguments": {"actions": actions}},
-        }]}
+        return {
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "id": f"call_{index}",
+                    "function": {"name": "computer", "arguments": {"actions": actions}},
+                }
+            ],
+        }
 
     messages = [
         {"role": "user", "content": [{"type": "image", "index": 0}]},
@@ -35,20 +41,28 @@ def _trajectory(domain: str, *, multi_action: bool = False) -> dict:
         {"role": "assistant", "content": [{"type": "text", "text": "done"}]},
     ]
     return {
-        "metadata": json.dumps({"dims": ["desktop", "use"], "others": {
-            "id": f"{domain}_example_1", "source": "vyokky/GUI-360",
-        }}),
+        "metadata": json.dumps(
+            {
+                "dims": ["desktop", "use"],
+                "others": {
+                    "id": f"{domain}_example_1",
+                    "source": "vyokky/GUI-360",
+                },
+            }
+        ),
         "messages": json.dumps(messages),
-        "images": [{"bytes": _png(color), "path": None} for color in
-                   ((10, 20, 30), (80, 90, 100), (150, 160, 170))],
+        "images": [{"bytes": _png(color), "path": None} for color in ((10, 20, 30), (80, 90, 100), (150, 160, 170))],
     }
 
 
 def test_import_accepts_only_aligned_nonterminal_single_click() -> None:
     reasons = Counter()
     rows = extract_transitions(
-        _trajectory("excel"), split="train", expected_domain="excel",
-        representation="rgb32", reasons=reasons,
+        _trajectory("excel"),
+        split="train",
+        expected_domain="excel",
+        representation="rgb32",
+        reasons=reasons,
     )
     assert len(rows) == 1
     assert rows[0]["state"].shape == (3 * 32 * 32,)
@@ -60,30 +74,42 @@ def test_import_accepts_only_aligned_nonterminal_single_click() -> None:
 
 def test_import_rejects_ambiguous_actions_and_wrong_domain() -> None:
     reasons = Counter()
-    assert extract_transitions(
-        _trajectory("excel", multi_action=True), split="train", expected_domain="excel",
-        representation="gray16", reasons=reasons,
-    ) == []
+    assert (
+        extract_transitions(
+            _trajectory("excel", multi_action=True),
+            split="train",
+            expected_domain="excel",
+            representation="gray16",
+            reasons=reasons,
+        )
+        == []
+    )
     assert reasons["unsupported_action"] == 1
     with pytest.raises(ValueError, match="domain"):
         extract_transitions(
-            _trajectory("word"), split="eval", expected_domain="excel",
-            representation="rgb32", reasons=Counter(),
+            _trajectory("word"),
+            split="eval",
+            expected_domain="excel",
+            representation="rgb32",
+            reasons=Counter(),
         )
 
 
 def test_import_rejects_identical_pre_screen_across_domains(tmp_path) -> None:
     arrow = pytest.importorskip("pyarrow")
     parquet = pytest.importorskip("pyarrow.parquet")
-    protocol = {"dataset": "cua-lite/GUI-360", "representation": "rgb32",
-                "minimum_rows_per_split": 1, "shards": []}
+    protocol = {"dataset": "cua-lite/GUI-360", "representation": "rgb32", "minimum_rows_per_split": 1, "shards": []}
     for split, domain in (("train", "excel"), ("validation", "word"), ("eval", "ppt")):
         path = tmp_path / f"{domain}.parquet"
         parquet.write_table(arrow.Table.from_pylist([_trajectory(domain)]), path)
-        protocol["shards"].append({
-            "path": path.name, "sha256": _file_sha256(path),
-            "expected_domain": domain, "split": split,
-        })
+        protocol["shards"].append(
+            {
+                "path": path.name,
+                "sha256": _file_sha256(path),
+                "expected_domain": domain,
+                "split": split,
+            }
+        )
     with pytest.raises(ValueError, match="pre-action screen leaked"):
         import_shards(tmp_path, protocol)
     protocol["shards"][0]["sha256"] = "0" * 64

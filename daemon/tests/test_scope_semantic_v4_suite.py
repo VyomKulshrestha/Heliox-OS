@@ -20,9 +20,17 @@ def test_semantic_v4_holdout_is_balanced_and_disjoint():
     assert len(set(pairs)) == 100
     earlier = {
         (case.request, case.action)
-        for case in (*ORIGINAL_CASES, *CHALLENGE_CASES, *AUGMENTATION_CASES,
-                     *STRESS_CASES, *FRESH_CASES, *RANDOM_CASES, *UNSEEN_CASES,
-                     *SEMANTIC_CASES, *SEMANTIC_V3_CASES)
+        for case in (
+            *ORIGINAL_CASES,
+            *CHALLENGE_CASES,
+            *AUGMENTATION_CASES,
+            *STRESS_CASES,
+            *FRESH_CASES,
+            *RANDOM_CASES,
+            *UNSEEN_CASES,
+            *SEMANTIC_CASES,
+            *SEMANTIC_V3_CASES,
+        )
     }
     assert not earlier.intersection(pairs)
 

@@ -20,8 +20,15 @@ def test_semantic_holdout_is_randomized_balanced_and_disjoint():
     assert len({(case.request, case.action) for case in CASES}) == 100
     earlier = {
         (case.request, case.action)
-        for case in (*ORIGINAL_CASES, *CHALLENGE_CASES, *AUGMENTATION_CASES,
-                     *STRESS_CASES, *FRESH_CASES, *RANDOM_CASES, *UNSEEN_CASES)
+        for case in (
+            *ORIGINAL_CASES,
+            *CHALLENGE_CASES,
+            *AUGMENTATION_CASES,
+            *STRESS_CASES,
+            *FRESH_CASES,
+            *RANDOM_CASES,
+            *UNSEEN_CASES,
+        )
     }
     assert not earlier.intersection((case.request, case.action) for case in CASES)
 

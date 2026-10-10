@@ -24,10 +24,16 @@ def infer_logits(features: np.ndarray, weights: dict[str, np.ndarray]) -> np.nda
     """Reproduce the saved PyTorch Linear/GELU/Linear head without dropout."""
     mean, scale = weights["mean"], weights["scale"]
     w1, b1, w2, b2 = (weights[name] for name in ("w1", "b1", "w2", "b2"))
-    if (features.ndim != 2 or features.shape[1] != len(mean)
-            or scale.shape != mean.shape or np.any(scale <= 0)
-            or w1.shape[1] != len(mean) or b1.shape != (w1.shape[0],)
-            or w2.shape != (1, w1.shape[0]) or b2.shape != (1,)):
+    if (
+        features.ndim != 2
+        or features.shape[1] != len(mean)
+        or scale.shape != mean.shape
+        or np.any(scale <= 0)
+        or w1.shape[1] != len(mean)
+        or b1.shape != (w1.shape[0],)
+        or w2.shape != (1, w1.shape[0])
+        or b2.shape != (1,)
+    ):
         raise ValueError("Saved head and features have incompatible shapes")
     standardized = (features.astype(np.float32) - mean) / scale
     hidden_input = standardized @ w1.T + b1
@@ -51,21 +57,24 @@ def balanced_calibration_weights(labels: dict[str, np.ndarray], domains: tuple[s
 
 
 def weighted_nll(logits: np.ndarray, labels: np.ndarray, weights: np.ndarray) -> float:
-    if (logits.shape != labels.shape or logits.shape != weights.shape
-            or not np.isfinite(logits).all() or not np.isfinite(weights).all()):
+    if (
+        logits.shape != labels.shape
+        or logits.shape != weights.shape
+        or not np.isfinite(logits).all()
+        or not np.isfinite(weights).all()
+    ):
         raise ValueError("Invalid calibration arrays")
     return float(np.sum(weights * (np.logaddexp(0.0, logits) - labels * logits)))
 
 
-def fit_calibrators(
-    logits: np.ndarray, labels: np.ndarray, weights: np.ndarray
-) -> dict[str, tuple[float, float]]:
+def fit_calibrators(logits: np.ndarray, labels: np.ndarray, weights: np.ndarray) -> dict[str, tuple[float, float]]:
     """Fit monotone logit maps; (scale, bias) leaves ranking unchanged."""
     target = labels.astype(np.float64)
     baseline = weighted_nll(logits, target, weights)
     temperature = minimize_scalar(
         lambda log_t: weighted_nll(logits * np.exp(-log_t), target, weights),
-        bounds=(-5.0, 5.0), method="bounded",
+        bounds=(-5.0, 5.0),
+        method="bounded",
     )
     if not temperature.success:
         raise RuntimeError("Temperature fit did not converge")
@@ -73,7 +82,8 @@ def fit_calibrators(
     platt = minimize(
         lambda params: weighted_nll(logits * np.exp(params[0]) + params[1], target, weights),
         x0=np.asarray([float(np.log(temperature_scale)), 0.0]),
-        bounds=((-5.0, 5.0), (-10.0, 10.0)), method="L-BFGS-B",
+        bounds=((-5.0, 5.0), (-10.0, 10.0)),
+        method="L-BFGS-B",
     )
     if not platt.success:
         raise RuntimeError("Platt fit did not converge")
@@ -82,8 +92,7 @@ def fit_calibrators(
         "temperature": (temperature_scale, 0.0),
         "platt": (float(np.exp(platt.x[0])), float(platt.x[1])),
     }
-    if any(weighted_nll(logits * scale + bias, target, weights) > baseline + 1e-6
-           for scale, bias in maps.values()):
+    if any(weighted_nll(logits * scale + bias, target, weights) > baseline + 1e-6 for scale, bias in maps.values()):
         raise RuntimeError("Calibration increased fitting loss")
     return maps
 
@@ -92,14 +101,18 @@ def calibration_metrics(labels: np.ndarray, probabilities: np.ndarray) -> dict[s
     """Report probability quality and a fixed, non-selected acceptance grid."""
     target = labels.astype(bool)
     probability = np.asarray(probabilities, dtype=np.float64)
-    if (len(target) == 0 or target.shape != probability.shape
-            or not np.isfinite(probability).all()
-            or np.any((probability < 0) | (probability > 1))):
+    if (
+        len(target) == 0
+        or target.shape != probability.shape
+        or not np.isfinite(probability).all()
+        or np.any((probability < 0) | (probability > 1))
+    ):
         raise ValueError("Invalid probability evaluation arrays")
     bins = np.array_split(np.argsort(probability, kind="stable"), min(10, len(target)))
     ece = sum(
         len(indices) / len(target) * abs(float(probability[indices].mean()) - float(target[indices].mean()))
-        for indices in bins if len(indices)
+        for indices in bins
+        if len(indices)
     )
     decisions = probability >= 0.5
     acceptance = {}
@@ -147,16 +160,17 @@ def main() -> None:
     if args.when2call_report:
         extra_bytes = args.when2call_report.read_bytes()
         extra = json.loads(extra_bytes)
-        if (extra["purpose"] != "research_only_grouped_call_readiness_features"
-                or extra["model"] != source["model"] or extra["revision"] != source["revision"]
-                or set(extra["splits"]) != {"train", "calibration", "test"}):
+        if (
+            extra["purpose"] != "research_only_grouped_call_readiness_features"
+            or extra["model"] != source["model"]
+            or extra["revision"] != source["revision"]
+            or set(extra["splits"]) != {"train", "calibration", "test"}
+        ):
             raise ValueError("When2Call source does not match the frozen backbone")
         manifest = {
             "rows": {key: value["rows"] for key, value in extra["splits"].items()},
             "excluded_overlong": {key: value["overlong"] for key, value in extra["splits"].items()},
-            "feature_checkpoint_sha256": {
-                key: value["checkpoint_sha256"] for key, value in extra["splits"].items()
-            },
+            "feature_checkpoint_sha256": {key: value["checkpoint_sha256"] for key, value in extra["splits"].items()},
         }
         extra_features, extra_labels = load_features(args.when2call_feature_dir, manifest)
         features.update({f"when2call_{key}": value for key, value in extra_features.items()})
@@ -167,12 +181,14 @@ def main() -> None:
 
     with np.load(args.artifact, allow_pickle=False) as saved:
         weights = {key: saved[key] for key in ("w1", "b1", "w2", "b2", "mean", "scale")}
-        if (str(saved["source_report_sha256"].item()) != hashlib.sha256(source_bytes).hexdigest()
-                or str(saved["when2call_report_sha256"].item()) != when2call_sha256):
+        if (
+            str(saved["source_report_sha256"].item()) != hashlib.sha256(source_bytes).hexdigest()
+            or str(saved["when2call_report_sha256"].item()) != when2call_sha256
+        ):
             raise ValueError("Head artifact does not match the pinned feature sources")
-    calibration_logits = np.concatenate([
-        infer_logits(features[f"{domain}_calibration"], weights) for domain in domains
-    ])
+    calibration_logits = np.concatenate(
+        [infer_logits(features[f"{domain}_calibration"], weights) for domain in domains]
+    )
     calibration_labels = np.concatenate([labels[f"{domain}_calibration"] for domain in domains])
     calibration_weights = balanced_calibration_weights(labels, domains)
     maps = fit_calibrators(calibration_logits, calibration_labels, calibration_weights)
@@ -185,8 +201,8 @@ def main() -> None:
         "test_partition": list(evaluation),
         "selection": "Calibrators fit on calibration only; no test-based selection or runtime promotion",
         "limitation": "The frozen head was already selected on these calibration partitions. "
-                      "This is exploratory post-hoc calibration, not independent validation, "
-                      "runtime authorization evidence, or Jev parity.",
+        "This is exploratory post-hoc calibration, not independent validation, "
+        "runtime authorization evidence, or Jev parity.",
         "calibrators": {},
         "metrics": {},
     }
@@ -194,17 +210,25 @@ def main() -> None:
         report["calibrators"][name] = {"scale": scale, "bias": bias}
         report["metrics"][name] = {
             partition: calibration_metrics(
-                labels[partition], expit(infer_logits(features[partition], weights) * scale + bias),
+                labels[partition],
+                expit(infer_logits(features[partition], weights) * scale + bias),
             )
             for partition in evaluation
         }
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps({
-        "calibrators": report["calibrators"],
-        "test": {name: report["metrics"][name].get("when2call_test", report["metrics"][name]["heliox"])
-                 for name in maps},
-    }, indent=2))
+    print(
+        json.dumps(
+            {
+                "calibrators": report["calibrators"],
+                "test": {
+                    name: report["metrics"][name].get("when2call_test", report["metrics"][name]["heliox"])
+                    for name in maps
+                },
+            },
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":

@@ -34,8 +34,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PROTOCOL = ROOT / "benchmarks/released_opendec_general_protocol_v2.json"
 
 
-def select_archived_rows(*, seed: int, pool: int, limit: int,
-                         expected_ids_sha256: str) -> tuple[list[dict], dict]:
+def select_archived_rows(*, seed: int, pool: int, limit: int, expected_ids_sha256: str) -> tuple[list[dict], dict]:
     """Recreate the pinned licensed OOD selection without teacher outputs."""
     rows, manifest = load_split("ood", pool, seed)
     rows = [row for row in rows if row["kind"] != "score" or len(row["options"]) <= 10][:limit]
@@ -74,18 +73,27 @@ def load_excluded_group_ids(root: Path, descriptor: dict | None, *, _depth: int 
         base = saved.get("base_manifest")
         groups = load_excluded_group_ids(root, base, _depth=_depth + 1) if base else set()
         for source in sources:
-            if (not isinstance(source, dict) or not isinstance(source.get("split"), str)
-                    or type(source.get("pool")) is not int or source["pool"] < 1
-                    or type(source.get("seed")) is not int
-                    or type(source.get("selected_rows")) is not int
-                    or not 1 <= source["selected_rows"] <= source["pool"]):
+            if (
+                not isinstance(source, dict)
+                or not isinstance(source.get("split"), str)
+                or type(source.get("pool")) is not int
+                or source["pool"] < 1
+                or type(source.get("seed")) is not int
+                or type(source.get("selected_rows")) is not int
+                or not 1 <= source["selected_rows"] <= source["pool"]
+            ):
                 raise ValueError("Group exclusion source selection is invalid")
             prior = source.get("exclude_group_manifest")
             if prior is not None:
                 prior_groups = load_excluded_group_ids(root, prior, _depth=_depth + 1)
                 rows, _ = select_fresh_rows(
-                    [], split=source["split"], seed=source["seed"], pool=source["pool"],
-                    limit=source["selected_rows"], excluded_group_ids=prior_groups)
+                    [],
+                    split=source["split"],
+                    seed=source["seed"],
+                    pool=source["pool"],
+                    limit=source["selected_rows"],
+                    excluded_group_ids=prior_groups,
+                )
             else:
                 if source["selected_rows"] != source["pool"]:
                     raise ValueError("Partial source selections must pin their prior group manifest")
@@ -95,16 +103,18 @@ def load_excluded_group_ids(root: Path, descriptor: dict | None, *, _depth: int 
             ids_digest = hashlib.sha256("\n".join(row["id"] for row in rows).encode()).hexdigest()
             source_groups = {row["group_id"] for row in rows}
             groups_digest = hashlib.sha256("\n".join(sorted(source_groups)).encode()).hexdigest()
-            if (ids_digest != source.get("selected_ids_sha256")
-                    or groups_digest != source.get("group_ids_sha256")):
+            if ids_digest != source.get("selected_ids_sha256") or groups_digest != source.get("group_ids_sha256"):
                 raise ValueError("Group exclusion source selection changed")
             groups.update(source_groups)
         if len(groups) != saved.get("unique_group_count"):
             raise ValueError("Group exclusion group count changed")
     else:
         groups = saved.get("group_ids")
-        if (not isinstance(groups, list) or any(not isinstance(group, str) or not group for group in groups)
-                or groups != sorted(set(groups))):
+        if (
+            not isinstance(groups, list)
+            or any(not isinstance(group, str) or not group for group in groups)
+            or groups != sorted(set(groups))
+        ):
             raise ValueError("Group exclusion manifest must contain sorted unique IDs")
         groups = set(groups)
     digest = hashlib.sha256("\n".join(sorted(groups)).encode()).hexdigest()
@@ -113,9 +123,15 @@ def load_excluded_group_ids(root: Path, descriptor: dict | None, *, _depth: int 
     return groups
 
 
-def select_fresh_rows(archived_rows: list[dict], *, seed: int, pool: int, limit: int,
-                      split: str = "ood",
-                      excluded_group_ids: set[str] | None = None) -> tuple[list[dict], dict]:
+def select_fresh_rows(
+    archived_rows: list[dict],
+    *,
+    seed: int,
+    pool: int,
+    limit: int,
+    split: str = "ood",
+    excluded_group_ids: set[str] | None = None,
+) -> tuple[list[dict], dict]:
     """Select public rows, excluding all pinned groups and fresh duplicates."""
     selected, manifest = load_split(split, pool, seed)
     seen_groups = {row["group_id"] for row in archived_rows}
@@ -135,8 +151,7 @@ def select_fresh_rows(archived_rows: list[dict], *, seed: int, pool: int, limit:
 def verify_fresh_selection(rows: list[dict], protocol: dict) -> None:
     """Verify the ordered row and unique-group hashes frozen in a protocol."""
     ids_digest = hashlib.sha256("\n".join(row["id"] for row in rows).encode()).hexdigest()
-    groups_digest = hashlib.sha256("\n".join(sorted(
-        {row["group_id"] for row in rows})).encode()).hexdigest()
+    groups_digest = hashlib.sha256("\n".join(sorted({row["group_id"] for row in rows})).encode()).hexdigest()
     if protocol.get("fresh_ids_sha256") not in (None, ids_digest):
         raise ValueError("Fresh OOD row IDs differ from the frozen protocol")
     if protocol.get("fresh_group_ids_sha256") not in (None, groups_digest):
@@ -152,25 +167,33 @@ def input_signature(rows: list[dict], manifest: dict, *, max_length: int) -> str
         "head_sha256": OPENJEV_HEAD_SHA256,
         "manifest": manifest,
         "max_length": max_length,
-        "rows": [{key: row[key] for key in ("id", "state_json", "kind", "question", "options", "target")}
-                 for row in rows],
+        "rows": [
+            {key: row[key] for key in ("id", "state_json", "kind", "question", "options", "target")} for row in rows
+        ],
     }
     return hashlib.sha256(json.dumps(identity, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
 def summarize(rows: list[dict], logits: list[np.ndarray]) -> dict:
     result = metrics(rows, logits, 1.0)
-    result["wrong_ids"] = [row["id"] for row, values in zip(rows, logits, strict=True)
-                           if int(np.argmax(values)) != int(np.argmax(row["target"]))]
+    result["wrong_ids"] = [
+        row["id"]
+        for row, values in zip(rows, logits, strict=True)
+        if int(np.argmax(values)) != int(np.argmax(row["target"]))
+    ]
     return result
 
 
 def load_logits_checkpoint(path: Path, rows: list[dict], *, signature: str) -> list[np.ndarray]:
     saved = json.loads(path.read_text(encoding="utf-8"))
     raw = saved.get("logits")
-    if (saved.get("schema_version") != 1 or saved.get("signature") != signature
-            or saved.get("ids") != [row["id"] for row in rows]
-            or not isinstance(raw, list) or len(raw) != len(rows)):
+    if (
+        saved.get("schema_version") != 1
+        or saved.get("signature") != signature
+        or saved.get("ids") != [row["id"] for row in rows]
+        or not isinstance(raw, list)
+        or len(raw) != len(rows)
+    ):
         raise ValueError("Logit checkpoint does not match the pinned selection")
     return [np.asarray(values, dtype=np.float64) for values in raw]
 
@@ -178,30 +201,37 @@ def load_logits_checkpoint(path: Path, rows: list[dict], *, signature: str) -> l
 def summarize_checkpoints(protocol_path: Path, output_dir: Path) -> dict:
     """Rebuild a public-label report from verified logits without loading a model."""
     protocol = json.loads(protocol_path.read_text(encoding="utf-8"))
-    if (protocol.get("schema_version") != 2 or protocol.get("dataset_revision") != DATASET_REVISION
-            or protocol.get("released_checkpoint") != f"{OPENJEV_REPO}@{OPENJEV_REVISION}"
-            or protocol.get("max_length") != 1024):
+    if (
+        protocol.get("schema_version") != 2
+        or protocol.get("dataset_revision") != DATASET_REVISION
+        or protocol.get("released_checkpoint") != f"{OPENJEV_REPO}@{OPENJEV_REVISION}"
+        or protocol.get("max_length") != 1024
+    ):
         raise ValueError("Protocol does not match the pinned public model and dataset")
     report_path = output_dir / "report.json"
     if report_path.exists():
         raise FileExistsError("Final result already exists")
     archived, archived_manifest = select_archived_rows(
-        seed=protocol["archived_seed"], pool=protocol["archived_pool"],
-        limit=protocol["archived_rows"], expected_ids_sha256=protocol["archived_ids_sha256"])
+        seed=protocol["archived_seed"],
+        pool=protocol["archived_pool"],
+        limit=protocol["archived_rows"],
+        expected_ids_sha256=protocol["archived_ids_sha256"],
+    )
     excluded_group_ids = load_excluded_group_ids(ROOT, protocol.get("excluded_group_manifest"))
     fresh, fresh_manifest = select_fresh_rows(
-        archived, split=protocol.get("fresh_split", "ood"),
-        seed=protocol["fresh_seed"], pool=protocol["fresh_pool"],
-        limit=protocol["fresh_rows"], excluded_group_ids=excluded_group_ids)
+        archived,
+        split=protocol.get("fresh_split", "ood"),
+        seed=protocol["fresh_seed"],
+        pool=protocol["fresh_pool"],
+        limit=protocol["fresh_rows"],
+        excluded_group_ids=excluded_group_ids,
+    )
     verify_fresh_selection(fresh, protocol)
     scored = {}
-    for name, rows, manifest in (("archived", archived, archived_manifest),
-                                 ("fresh", fresh, fresh_manifest)):
+    for name, rows, manifest in (("archived", archived, archived_manifest), ("fresh", fresh, fresh_manifest)):
         signature = input_signature(rows, manifest, max_length=protocol["max_length"])
-        logits = load_logits_checkpoint(
-            output_dir / f"{name}_logits.json", rows, signature=signature)
-        scored[name] = {"selection_signature": signature, "manifest": manifest,
-                        "metrics": summarize(rows, logits)}
+        logits = load_logits_checkpoint(output_dir / f"{name}_logits.json", rows, signature=signature)
+        scored[name] = {"selection_signature": signature, "manifest": manifest, "metrics": summarize(rows, logits)}
     report = {
         "purpose": "released_openjev_general_research_only",
         "protocol_sha256": hashlib.sha256(protocol_path.read_bytes()).hexdigest(),
@@ -211,14 +241,18 @@ def summarize_checkpoints(protocol_path: Path, output_dir: Path) -> dict:
         "backbone": "Qwen3.5-2B NF4; quantized outputs are not the released bf16 outputs",
         "temperature": 1.0,
         "fresh_split": protocol.get("fresh_split", "ood"),
-        "archived": scored["archived"], "fresh": scored["fresh"],
+        "archived": scored["archived"],
+        "fresh": scored["fresh"],
         "excluded_group_manifest_sha256": (protocol.get("excluded_group_manifest") or {}).get("sha256"),
         "excluded_group_count": len(excluded_group_ids),
         "fresh_ids_sha256": hashlib.sha256("\n".join(row["id"] for row in fresh).encode()).hexdigest(),
-        "fresh_group_ids_sha256": hashlib.sha256("\n".join(sorted(
-            {row["group_id"] for row in fresh})).encode()).hexdigest(),
-        "uniform_baseline": {"archived": uniform_baseline(archived)["by_kind"],
-                             "fresh": uniform_baseline(fresh)["by_kind"]},
+        "fresh_group_ids_sha256": hashlib.sha256(
+            "\n".join(sorted({row["group_id"] for row in fresh})).encode()
+        ).hexdigest(),
+        "uniform_baseline": {
+            "archived": uniform_baseline(archived)["by_kind"],
+            "fresh": uniform_baseline(fresh)["by_kind"],
+        },
         "archived_ids_sha256": protocol["archived_ids_sha256"],
         "limitation": "Public synthetic rows only; no desktop transfer or execution-authority evidence.",
     }
@@ -238,28 +272,39 @@ def run(protocol_path: Path, output_dir: Path, *, resume: bool) -> dict:
     from transformers import AutoTokenizer, BitsAndBytesConfig, Qwen3_5ForCausalLM
 
     protocol = json.loads(protocol_path.read_text(encoding="utf-8"))
-    if (protocol.get("schema_version") != 2 or protocol.get("dataset_revision") != DATASET_REVISION
-            or protocol.get("released_checkpoint") != f"{OPENJEV_REPO}@{OPENJEV_REVISION}"
-            or protocol.get("max_length") != 1024):
+    if (
+        protocol.get("schema_version") != 2
+        or protocol.get("dataset_revision") != DATASET_REVISION
+        or protocol.get("released_checkpoint") != f"{OPENJEV_REPO}@{OPENJEV_REVISION}"
+        or protocol.get("max_length") != 1024
+    ):
         raise ValueError("Protocol does not match the pinned public model and dataset")
     report_path = output_dir / "report.json"
     if report_path.exists():
         raise FileExistsError("Final result already exists")
     archived, archived_manifest = select_archived_rows(
-        seed=protocol["archived_seed"], pool=protocol["archived_pool"],
-        limit=protocol["archived_rows"], expected_ids_sha256=protocol["archived_ids_sha256"])
+        seed=protocol["archived_seed"],
+        pool=protocol["archived_pool"],
+        limit=protocol["archived_rows"],
+        expected_ids_sha256=protocol["archived_ids_sha256"],
+    )
     excluded_group_ids = load_excluded_group_ids(ROOT, protocol.get("excluded_group_manifest"))
     fresh, fresh_manifest = select_fresh_rows(
-        archived, split=protocol.get("fresh_split", "ood"),
-        seed=protocol["fresh_seed"], pool=protocol["fresh_pool"],
-        limit=protocol["fresh_rows"], excluded_group_ids=excluded_group_ids)
+        archived,
+        split=protocol.get("fresh_split", "ood"),
+        seed=protocol["fresh_seed"],
+        pool=protocol["fresh_pool"],
+        limit=protocol["fresh_rows"],
+        excluded_group_ids=excluded_group_ids,
+    )
     verify_fresh_selection(fresh, protocol)
     parts = {"archived": (archived, archived_manifest), "fresh": (fresh, fresh_manifest)}
     if not torch.cuda.is_available() or torch.cuda.mem_get_info()[0] < 4 * 1024**3:
         raise RuntimeError("At least 4 GiB free CUDA memory is required")
     adapter_dir, head_path = openjev_checkpoint_paths()
-    model_path = snapshot_download("Qwen/Qwen3.5-2B", revision="15852e8c16360a2fea060d615a32b45270f8a8fc",
-                                   local_files_only=True)
+    model_path = snapshot_download(
+        "Qwen/Qwen3.5-2B", revision="15852e8c16360a2fea060d615a32b45270f8a8fc", local_files_only=True
+    )
     tokenizer = AutoTokenizer.from_pretrained(model_path, local_files_only=True)
     encoded = {}
     for name, (rows, _) in parts.items():
@@ -268,11 +313,14 @@ def run(protocol_path: Path, output_dir: Path, *, resume: bool) -> dict:
             raise ValueError(f"{name} contains overlong records; no partial benchmark")
     dtype = torch.bfloat16
     base = Qwen3_5ForCausalLM.from_pretrained(
-        model_path, local_files_only=True, dtype=dtype, device_map={"": 0},
+        model_path,
+        local_files_only=True,
+        dtype=dtype,
+        device_map={"": 0},
         attn_implementation="eager",
         quantization_config=BitsAndBytesConfig(
-            load_in_4bit=True, bnb_4bit_quant_type="nf4", bnb_4bit_use_double_quant=True,
-            bnb_4bit_compute_dtype=dtype),
+            load_in_4bit=True, bnb_4bit_quant_type="nf4", bnb_4bit_use_double_quant=True, bnb_4bit_compute_dtype=dtype
+        ),
     )
     backbone = PeftModel.from_pretrained(base.model, adapter_dir, is_trainable=False)
     verify_openjev_adapter(backbone, adapter_dir)
@@ -287,12 +335,16 @@ def run(protocol_path: Path, output_dir: Path, *, resume: bool) -> dict:
     for name, (rows, manifest) in parts.items():
         signature = input_signature(rows, manifest, max_length=protocol["max_length"])
         logits = evaluate_checkpointed(
-            backbone, head, encoded[name], name,
-            path=output_dir / f"{name}_logits.json", signature=signature,
-            resume=resume, checkpoint_every=protocol["checkpoint_every"],
+            backbone,
+            head,
+            encoded[name],
+            name,
+            path=output_dir / f"{name}_logits.json",
+            signature=signature,
+            resume=resume,
+            checkpoint_every=protocol["checkpoint_every"],
         )
-        scored[name] = {"selection_signature": signature, "manifest": manifest,
-                        "metrics": summarize(rows, logits)}
+        scored[name] = {"selection_signature": signature, "manifest": manifest, "metrics": summarize(rows, logits)}
     report = {
         "purpose": "released_openjev_general_research_only",
         "protocol_sha256": hashlib.sha256(protocol_path.read_bytes()).hexdigest(),
@@ -302,14 +354,18 @@ def run(protocol_path: Path, output_dir: Path, *, resume: bool) -> dict:
         "backbone": "Qwen3.5-2B NF4; quantized outputs are not the released bf16 outputs",
         "temperature": 1.0,
         "fresh_split": protocol.get("fresh_split", "ood"),
-        "archived": scored["archived"], "fresh": scored["fresh"],
+        "archived": scored["archived"],
+        "fresh": scored["fresh"],
         "excluded_group_manifest_sha256": (protocol.get("excluded_group_manifest") or {}).get("sha256"),
         "excluded_group_count": len(excluded_group_ids),
         "fresh_ids_sha256": hashlib.sha256("\n".join(row["id"] for row in fresh).encode()).hexdigest(),
-        "fresh_group_ids_sha256": hashlib.sha256("\n".join(sorted(
-            {row["group_id"] for row in fresh})).encode()).hexdigest(),
-        "uniform_baseline": {"archived": uniform_baseline(archived)["by_kind"],
-                             "fresh": uniform_baseline(fresh)["by_kind"]},
+        "fresh_group_ids_sha256": hashlib.sha256(
+            "\n".join(sorted({row["group_id"] for row in fresh})).encode()
+        ).hexdigest(),
+        "uniform_baseline": {
+            "archived": uniform_baseline(archived)["by_kind"],
+            "fresh": uniform_baseline(fresh)["by_kind"],
+        },
         "archived_ids_sha256": protocol["archived_ids_sha256"],
         "limitation": "Public synthetic rows only; no desktop transfer or execution-authority evidence.",
     }
@@ -320,14 +376,19 @@ def run(protocol_path: Path, output_dir: Path, *, resume: bool) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--protocol", type=Path, default=PROTOCOL)
-    parser.add_argument("--output-dir", type=Path,
-                        default=ROOT / "benchmarks/.bench-state/released_openjev_general_v2")
+    parser.add_argument("--output-dir", type=Path, default=ROOT / "benchmarks/.bench-state/released_openjev_general_v2")
     parser.add_argument("--resume", action="store_true")
-    parser.add_argument("--summarize-checkpoints", action="store_true",
-                        help="Build a report from complete local logits without loading the GPU model")
+    parser.add_argument(
+        "--summarize-checkpoints",
+        action="store_true",
+        help="Build a report from complete local logits without loading the GPU model",
+    )
     args = parser.parse_args()
-    result = (summarize_checkpoints(args.protocol, args.output_dir) if args.summarize_checkpoints
-              else run(args.protocol, args.output_dir, resume=args.resume))
+    result = (
+        summarize_checkpoints(args.protocol, args.output_dir)
+        if args.summarize_checkpoints
+        else run(args.protocol, args.output_dir, resume=args.resume)
+    )
     print(json.dumps({name: result[name]["metrics"]["by_kind"] for name in ("archived", "fresh")}, indent=2))
 
 

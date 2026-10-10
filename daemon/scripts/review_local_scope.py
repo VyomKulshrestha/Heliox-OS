@@ -80,15 +80,18 @@ def read_cases(database: Path) -> list[ReviewCase]:
             action_text = json.dumps(action, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
             identity = f"{task_id}:{plan_id}:{action_id or sequence}"
             case_id = hashlib.sha256(identity.encode()).hexdigest()[:24]
-            cases.setdefault(case_id, ReviewCase(
-                case_id=case_id,
-                source_hash=_source_hash(request, action_text),
-                task_id=task_id,
-                sequence=sequence,
-                request=request,
-                action=action_text,
-                action_type=str(action.get("action_type") or "unknown"),
-            ))
+            cases.setdefault(
+                case_id,
+                ReviewCase(
+                    case_id=case_id,
+                    source_hash=_source_hash(request, action_text),
+                    task_id=task_id,
+                    sequence=sequence,
+                    request=request,
+                    action=action_text,
+                    action_type=str(action.get("action_type") or "unknown"),
+                ),
+            )
         return sorted(cases.values(), key=lambda case: case.sequence)
     finally:
         connection.close()
@@ -101,8 +104,11 @@ def read_labels(path: Path, cases: list[ReviewCase], *, reviewer: str = "user") 
         return {}
     for line in path.read_text(encoding="utf-8").splitlines():
         row = json.loads(line)
-        if (row.get("reviewer") == reviewer and row.get("label") in {"in_scope", "out_of_scope", "unclear"}
-                and current.get(row.get("case_id")) == row.get("source_hash")):
+        if (
+            row.get("reviewer") == reviewer
+            and row.get("label") in {"in_scope", "out_of_scope", "unclear"}
+            and current.get(row.get("case_id")) == row.get("source_hash")
+        ):
             labels_by_hash[row["source_hash"]] = row["label"]
     return {case.case_id: labels_by_hash[case.source_hash] for case in cases if case.source_hash in labels_by_hash}
 
@@ -138,8 +144,10 @@ def main() -> None:
     labels = read_labels(args.labels, cases, reviewer=args.reviewer)
     unique_pairs = len({case.source_hash for case in cases})
     reviewed_pairs = len({case.source_hash for case in cases if case.case_id in labels})
-    print(f"Local action records: {len(cases)}; unique request/action pairs: {unique_pairs}; "
-          f"{args.reviewer} reviewed pairs: {reviewed_pairs}")
+    print(
+        f"Local action records: {len(cases)}; unique request/action pairs: {unique_pairs}; "
+        f"{args.reviewer} reviewed pairs: {reviewed_pairs}"
+    )
     if not args.review:
         return
     print("Local terminal display may still contain sensitive context. Nothing is uploaded.")

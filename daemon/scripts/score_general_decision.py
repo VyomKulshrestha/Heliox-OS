@@ -69,11 +69,15 @@ def verify_artifact(output_dir: Path, report_path: Path) -> tuple[dict, Path]:
     }
     if identity not in supported:
         raise ValueError("Research report does not match the pinned base model")
-    if identity[0] in QWEN35_NF4_BACKBONES and identity[0] != OPENJEV_BASE_MODEL and (
-        report.get("backbone_quantization") != "NF4 double quantization"
-        or report.get("initialization") != "base_yes_no_head_v1"
-        or report.get("initial_checkpoint") is not None
-        or report.get("training_source_policy") != json.loads(json.dumps(TRAINING_SOURCE_POLICY))
+    if (
+        identity[0] in QWEN35_NF4_BACKBONES
+        and identity[0] != OPENJEV_BASE_MODEL
+        and (
+            report.get("backbone_quantization") != "NF4 double quantization"
+            or report.get("initialization") != "base_yes_no_head_v1"
+            or report.get("initial_checkpoint") is not None
+            or report.get("training_source_policy") != json.loads(json.dumps(TRAINING_SOURCE_POLICY))
+        )
     ):
         raise ValueError("Clean-base research report is missing its quantization or source policy")
     microbatch_size = report.get("candidate_microbatch_size", 2)

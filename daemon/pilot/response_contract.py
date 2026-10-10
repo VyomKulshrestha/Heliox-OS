@@ -73,16 +73,19 @@ def success_message(
     unverified_effects = sum(
         result.success
         and index not in observed
-        and (result.action.action_type not in READ_ONLY_ACTIONS
-             or result.action.action_type in _EFFECTFUL_READ_ONLY_CATALOG_ENTRIES)
+        and (
+            result.action.action_type not in READ_ONLY_ACTIONS
+            or result.action.action_type in _EFFECTFUL_READ_ONLY_CATALOG_ENTRIES
+        )
         and result.action.permission_tier > PermissionTier.READ_ONLY
         for index, result in enumerate(results)
     )
     caveat = (
-        "\nNote: " + ("1 action effect was" if unverified_effects == 1
-                       else f"{unverified_effects} action effects were")
+        "\nNote: "
+        + ("1 action effect was" if unverified_effects == 1 else f"{unverified_effects} action effects were")
         + " reported successful but not independently verified."
-        if unverified_effects else ""
+        if unverified_effects
+        else ""
     )
 
     exact_count = exact_labeled_finding_count(plan)
@@ -90,10 +93,13 @@ def success_message(
         sections = [section for result in results for section in _extract_labeled_sections(result.output)]
         if len(sections) == exact_count:
             empty_finding = "Reported." if unverified_effects else "Verified."
-            return "\n".join(
-                f"{index}. {label}: {content or empty_finding}"
-                for index, (label, content) in enumerate(sections, start=1)
-            ) + caveat
+            return (
+                "\n".join(
+                    f"{index}. {label}: {content or empty_finding}"
+                    for index, (label, content) in enumerate(sections, start=1)
+                )
+                + caveat
+            )
 
     if exact_count is not None and exact_count == len(results):
         findings = []

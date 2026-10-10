@@ -31,8 +31,7 @@ def load_rows(path: Path) -> dict[str, list[dict]]:
         raise ValueError("Both train and eval must contain source rows")
     all_rows = [*partitions["train"], *partitions["eval"]]
     if any("group_sha256" in row for row in all_rows):
-        if any(not isinstance(row.get("group_sha256"), str) or len(row["group_sha256"]) != 64
-               for row in all_rows):
+        if any(not isinstance(row.get("group_sha256"), str) or len(row["group_sha256"]) != 64 for row in all_rows):
             raise ValueError("Grouped rows require a 64-character group hash")
         train_groups = {row["group_sha256"] for row in partitions["train"]}
         eval_groups = {row["group_sha256"] for row in partitions["eval"]}
@@ -41,27 +40,30 @@ def load_rows(path: Path) -> dict[str, list[dict]]:
     return partitions
 
 
-def encode_rows(tokenizer, partitions: dict[str, list[dict]], *, max_input_tokens: int,
-                max_target_tokens: int) -> tuple[dict[str, list[dict]], dict[str, int]]:
+def encode_rows(
+    tokenizer, partitions: dict[str, list[dict]], *, max_input_tokens: int, max_target_tokens: int
+) -> tuple[dict[str, list[dict]], dict[str, int]]:
     encoded, exclusions = {}, {}
     for split, rows in partitions.items():
         encoded[split], exclusions[split] = [], 0
         for row in rows:
             prompt = tokenizer.apply_chat_template(
-                row["messages"][:2], tokenize=False, add_generation_prompt=True,
+                row["messages"][:2],
+                tokenize=False,
+                add_generation_prompt=True,
                 enable_thinking=False,
             )
             prompt_ids = tokenizer(prompt, add_special_tokens=False)["input_ids"]
-            target_ids = tokenizer(row["messages"][2]["content"],
-                                   add_special_tokens=False)["input_ids"]
+            target_ids = tokenizer(row["messages"][2]["content"], add_special_tokens=False)["input_ids"]
             if len(prompt_ids) > max_input_tokens or len(target_ids) > max_target_tokens:
                 exclusions[split] += 1
                 continue
             ids = prompt_ids + target_ids + [tokenizer.eos_token_id]
-            encoded_row = {"ids": ids,
-                           "labels": [-100] * len(prompt_ids)
-                           + target_ids + [tokenizer.eos_token_id],
-                           "domain": row["dataset"]}
+            encoded_row = {
+                "ids": ids,
+                "labels": [-100] * len(prompt_ids) + target_ids + [tokenizer.eos_token_id],
+                "domain": row["dataset"],
+            }
             if "group_sha256" in row:
                 encoded_row["group_sha256"] = row["group_sha256"]
             encoded[split].append(encoded_row)
@@ -83,8 +85,14 @@ def main() -> None:
     parser.add_argument("--learning-rate", type=float, default=1e-4)
     parser.add_argument("--seed", type=int, default=20260925)
     args = parser.parse_args()
-    if (not args.rows.is_file() or args.report.exists() or args.adapter.exists()
-            or args.max_input_tokens < 1 or args.max_target_tokens < 1 or args.epochs < 1):
+    if (
+        not args.rows.is_file()
+        or args.report.exists()
+        or args.adapter.exists()
+        or args.max_input_tokens < 1
+        or args.max_target_tokens < 1
+        or args.epochs < 1
+    ):
         parser.error("Use existing source rows, fresh outputs, and positive limits")
     if not math.isfinite(args.learning_rate) or args.learning_rate <= 0:
         parser.error("Learning rate must be positive and finite")
@@ -102,17 +110,27 @@ def main() -> None:
     tokenizer = AutoTokenizer.from_pretrained(snapshot, local_files_only=True)
     source_rows = load_rows(args.rows)
     grouped = "group_sha256" in source_rows["train"][0]
-    rows, exclusions = encode_rows(tokenizer, source_rows,
-                                   max_input_tokens=args.max_input_tokens,
-                                   max_target_tokens=args.max_target_tokens)
-    group_counts = ({split: len({row["group_sha256"] for row in partition})
-                     for split, partition in rows.items()} if grouped else None)
-    config = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4",
-                               bnb_4bit_use_double_quant=True,
-                               bnb_4bit_compute_dtype=torch.bfloat16)
+    rows, exclusions = encode_rows(
+        tokenizer, source_rows, max_input_tokens=args.max_input_tokens, max_target_tokens=args.max_target_tokens
+    )
+    group_counts = (
+        {split: len({row["group_sha256"] for row in partition}) for split, partition in rows.items()}
+        if grouped
+        else None
+    )
+    config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_use_double_quant=True,
+        bnb_4bit_compute_dtype=torch.bfloat16,
+    )
     model = AutoModelForCausalLM.from_pretrained(
-        snapshot, local_files_only=True, quantization_config=config,
-        dtype=torch.bfloat16, device_map={"": "cuda:0"}, attn_implementation="eager",
+        snapshot,
+        local_files_only=True,
+        quantization_config=config,
+        dtype=torch.bfloat16,
+        device_map={"": "cuda:0"},
+        attn_implementation="eager",
     )
     model.config.use_cache = False
 
@@ -133,15 +151,25 @@ def main() -> None:
         }
 
     base_loss, base_domains = evaluate()
-    model = get_peft_model(model, LoraConfig(
-        task_type="CAUSAL_LM", r=8, lora_alpha=16, lora_dropout=0.05,
-        target_modules=["q_proj", "k_proj", "v_proj", "o_proj",
-                        "gate_proj", "up_proj", "down_proj"],
-    ))
-    optimizer = torch.optim.AdamW((parameter for parameter in model.parameters()
-                                   if parameter.requires_grad), lr=args.learning_rate)
-    print(json.dumps({"event": "ready", "train": len(rows["train"]),
-                      "eval": len(rows["eval"]), "base_eval_loss": base_loss}), flush=True)
+    model = get_peft_model(
+        model,
+        LoraConfig(
+            task_type="CAUSAL_LM",
+            r=8,
+            lora_alpha=16,
+            lora_dropout=0.05,
+            target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+        ),
+    )
+    optimizer = torch.optim.AdamW(
+        (parameter for parameter in model.parameters() if parameter.requires_grad), lr=args.learning_rate
+    )
+    print(
+        json.dumps(
+            {"event": "ready", "train": len(rows["train"]), "eval": len(rows["eval"]), "base_eval_loss": base_loss}
+        ),
+        flush=True,
+    )
     for epoch in range(args.epochs):
         random.shuffle(rows["train"])
         model.train()
@@ -150,22 +178,30 @@ def main() -> None:
             loss_for(row).backward()
             optimizer.step()
             if (index + 1) % 10 == 0:
-                print(json.dumps({"event": "step", "epoch": epoch + 1,
-                                  "completed": index + 1, "total": len(rows["train"])}), flush=True)
+                print(
+                    json.dumps(
+                        {"event": "step", "epoch": epoch + 1, "completed": index + 1, "total": len(rows["train"])}
+                    ),
+                    flush=True,
+                )
     tuned_loss, tuned_domains = evaluate()
     args.adapter.mkdir(parents=True)
     model.save_pretrained(args.adapter)
     report = {
-        "purpose": ("research_only_grouped_ui_transition_probe" if grouped
-                    else "research_only_tool_response_transition_probe"),
+        "purpose": (
+            "research_only_grouped_ui_transition_probe" if grouped else "research_only_tool_response_transition_probe"
+        ),
         "source_rows_sha256": hashlib.sha256(args.rows.read_bytes()).hexdigest(),
         "base_model": {"id": MODEL, "revision": REVISION},
-        "train_rows": len(rows["train"]), "eval_rows": len(rows["eval"]),
-        "excluded_overlong": exclusions, "epochs": args.epochs,
+        "train_rows": len(rows["train"]),
+        "eval_rows": len(rows["eval"]),
+        "excluded_overlong": exclusions,
+        "epochs": args.epochs,
         "learning_rate": args.learning_rate,
         "max_input_tokens": args.max_input_tokens,
         "max_target_tokens": args.max_target_tokens,
-        "base_eval_loss": base_loss, "tuned_eval_loss": tuned_loss,
+        "base_eval_loss": base_loss,
+        "tuned_eval_loss": tuned_loss,
         "base_eval_loss_by_domain": base_domains,
         "tuned_eval_loss_by_domain": tuned_domains,
         "groups": group_counts,
@@ -173,8 +209,8 @@ def main() -> None:
             "Task-group-disjoint text observations and outcome descriptions are not raw next-state "
             "evidence. A loss improvement is not action-effect accuracy, OS generalization, "
             "authority, safety, or Jev parity. Not runtime-loaded."
-            if grouped else
-            "Small synthetic tool-response sample. A loss improvement is not action-effect "
+            if grouped
+            else "Small synthetic tool-response sample. A loss improvement is not action-effect "
             "accuracy, OS generalization, authority, safety, or Jev parity. Not runtime-loaded."
         ),
     }

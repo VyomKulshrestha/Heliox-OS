@@ -14,14 +14,15 @@ from scripts.select_misactbench_observed_history import SPLIT_ROWS
 def test_history_selection_is_group_disjoint_and_unseen() -> None:
     root = Path(__file__).resolve().parents[1] / "benchmarks"
     manifest = json.loads((root / "misactbench_observed_history_selection_v1.json").read_text())
-    exclusions = [root / name for name in (
-        "misactbench_visual_feature_selection_v1.json",
-        "misactbench_visual_selection_v1.json",
-    )]
-    excluded = {case_id.split(":", 1)[0] for path in exclusions
-                for case_id in json.loads(path.read_text())["case_ids"]}
-    ids = [case_id for name in ("train", "calibration", "development", "final")
-           for case_id in manifest["splits"][name]]
+    exclusions = [
+        root / name
+        for name in (
+            "misactbench_visual_feature_selection_v1.json",
+            "misactbench_visual_selection_v1.json",
+        )
+    ]
+    excluded = {case_id.split(":", 1)[0] for path in exclusions for case_id in json.loads(path.read_text())["case_ids"]}
+    ids = [case_id for name in ("train", "calibration", "development", "final") for case_id in manifest["splits"][name]]
     groups = [case_id.split(":", 1)[0] for case_id in ids]
     assert manifest["case_ids"] == ids
     assert {name: len(rows) for name, rows in manifest["splits"].items()} == SPLIT_ROWS
@@ -35,21 +36,21 @@ def test_history_selection_is_group_disjoint_and_unseen() -> None:
 def test_pre_final_history_report_pins_both_arms() -> None:
     root = Path(__file__).resolve().parents[1] / "benchmarks"
     report = json.loads((root / "misactbench_observed_history_dev_v1.json").read_text())
-    assert report["selection_sha256"] == hashlib.sha256(
-        (root / "misactbench_observed_history_selection_v1.json").read_bytes()
-    ).hexdigest()
+    assert (
+        report["selection_sha256"]
+        == hashlib.sha256((root / "misactbench_observed_history_selection_v1.json").read_bytes()).hexdigest()
+    )
     assert report["split_rows"] == SPLIT_ROWS
-    assert report["current_screen"]["prompt_sha256"] == hashlib.sha256(
-        PROMPT_V2.encode()).hexdigest()
-    assert report["observed_history"]["prompt_sha256"] == hashlib.sha256(
-        PROMPT_HISTORY_V1.encode()).hexdigest()
+    assert report["current_screen"]["prompt_sha256"] == hashlib.sha256(PROMPT_V2.encode()).hexdigest()
+    assert report["observed_history"]["prompt_sha256"] == hashlib.sha256(PROMPT_HISTORY_V1.encode()).hexdigest()
     assert report["final_split_opened_for_model_or_threshold_selection"] is False
     assert report["promotion"] == "none"
 
     final = json.loads((root / "misactbench_observed_history_final_v1.json").read_text())
     assert final["selection_sha256"] == report["selection_sha256"]
-    assert final["pre_final_development_report_sha256"] == hashlib.sha256(
-        (root / "misactbench_observed_history_dev_v1.json").read_bytes()
-    ).hexdigest()
+    assert (
+        final["pre_final_development_report_sha256"]
+        == hashlib.sha256((root / "misactbench_observed_history_dev_v1.json").read_bytes()).hexdigest()
+    )
     assert final["final_rows"] == SPLIT_ROWS["final"]
     assert final["promotion"] == "none"

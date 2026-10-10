@@ -24,8 +24,11 @@ REGULARIZATION = (0.001, 0.01, 0.1, 1.0)
 def load_public_splits(feature_dir: Path, source_report: Path) -> tuple[dict[str, dict], dict]:
     report = json.loads(source_report.read_text(encoding="utf-8"))
     source = report.get("scopejudge", {})
-    if (source.get("dataset") != "dreadnode/scopejudge" or source.get("license") != "MIT"
-            or "trajectory-disjoint" not in source.get("selection", "")):
+    if (
+        source.get("dataset") != "dreadnode/scopejudge"
+        or source.get("license") != "MIT"
+        or "trajectory-disjoint" not in source.get("selection", "")
+    ):
         raise ValueError("Source report must attest to MIT ScopeJudge trajectory-disjoint splits")
 
     hashes = report.get("feature_checkpoint_sha256", {})
@@ -43,8 +46,13 @@ def load_public_splits(feature_dir: Path, source_report: Path) -> tuple[dict[str
             identity = str(saved["identity"])
             processed = int(saved["processed"])
             overlong = int(saved["overlong"])
-        if (features.ndim != 2 or features.shape[0] != len(labels) or not len(labels)
-                or not np.all(np.isfinite(features)) or len(np.unique(labels)) != 2):
+        if (
+            features.ndim != 2
+            or features.shape[0] != len(labels)
+            or not len(labels)
+            or not np.all(np.isfinite(features))
+            or len(np.unique(labels)) != 2
+        ):
             raise ValueError(f"Invalid feature matrix or labels: {name}")
         if dimension is not None and features.shape[1] != dimension:
             raise ValueError("Feature dimensions differ across splits")
@@ -122,9 +130,7 @@ def train_candidate(splits: dict[str, dict], *, device: str = "auto") -> tuple[d
     with torch.no_grad():
         for name, (features, _) in tensors.items():
             scores[name] = torch.sigmoid(selected(features).squeeze(-1)).cpu().numpy()
-    worst_calibration_negative = np.float32(
-        np.max(scores["scope_calibration"][~calibration_labels])
-    )
+    worst_calibration_negative = np.float32(np.max(scores["scope_calibration"][~calibration_labels]))
     threshold = float(np.nextafter(worst_calibration_negative, np.float32(math.inf)))
 
     model_state = {
@@ -140,9 +146,7 @@ def train_candidate(splits: dict[str, dict], *, device: str = "auto") -> tuple[d
         "device_name": torch.cuda.get_device_name() if str(device).startswith("cuda") else "CPU",
         "method": "L2-regularized logistic head over frozen Qwen features; train-only normalization",
         "selected_l2": selected_strength,
-        "calibration_trials": [
-            {"l2": strength, "auc": auc} for auc, strength, _, _ in trials
-        ],
+        "calibration_trials": [{"l2": strength, "auc": auc} for auc, strength, _, _ in trials],
         "calibration_threshold": threshold,
         "calibration": _metrics(calibration_labels, scores["scope_calibration"], threshold),
         "test_default": _metrics(splits["scope_test"]["labels"], scores["scope_test"], 0.5),
@@ -167,22 +171,28 @@ def main() -> None:
     model_state, result = train_candidate(splits, device=args.device)
     args.artifact.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(args.artifact, **model_state)
-    result.update({
-        "purpose": "unpromoted_public_scope_label_research_only",
-        "representation": source["representation"],
-        "source": {key: source[key] for key in ("dataset", "revision", "sha256", "license", "selection")},
-        "source_report_sha256": hashlib.sha256(args.source_report.read_bytes()).hexdigest(),
-        "training_script_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
-        "feature_cache_sha256": {
-            name: hashlib.sha256((args.feature_dir / f"{name}.npz").read_bytes()).hexdigest()
-            for name in SPLITS
-        },
-        "artifact_sha256": hashlib.sha256(args.artifact.read_bytes()).hexdigest(),
-        "rows": {name: len(split["labels"]) for name, split in splits.items()},
-        "limitation": "Adaptive public-label research on offensive-security trajectories; not broad desktop-agent safety, live approval, or production authorization evidence.",
-    })
+    result.update(
+        {
+            "purpose": "unpromoted_public_scope_label_research_only",
+            "representation": source["representation"],
+            "source": {key: source[key] for key in ("dataset", "revision", "sha256", "license", "selection")},
+            "source_report_sha256": hashlib.sha256(args.source_report.read_bytes()).hexdigest(),
+            "training_script_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+            "feature_cache_sha256": {
+                name: hashlib.sha256((args.feature_dir / f"{name}.npz").read_bytes()).hexdigest() for name in SPLITS
+            },
+            "artifact_sha256": hashlib.sha256(args.artifact.read_bytes()).hexdigest(),
+            "rows": {name: len(split["labels"]) for name, split in splits.items()},
+            "limitation": "Adaptive public-label research on offensive-security trajectories; not broad desktop-agent safety, live approval, or production authorization evidence.",
+        }
+    )
     args.report.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps({key: result[key] for key in ("device", "selected_l2", "calibration", "test_default", "test_cautious")}, indent=2))
+    print(
+        json.dumps(
+            {key: result[key] for key in ("device", "selected_l2", "calibration", "test_default", "test_cautious")},
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":

@@ -36,8 +36,10 @@ def encode_rows(tokenizer, rows: list[dict], max_length: int) -> tuple[list[dict
         sequences = []
         for prompt in candidate_prompts(row):
             rendered = tokenizer.apply_chat_template(
-                [{"role": "user", "content": prompt}], tokenize=False,
-                add_generation_prompt=True, enable_thinking=False,
+                [{"role": "user", "content": prompt}],
+                tokenize=False,
+                add_generation_prompt=True,
+                enable_thinking=False,
             )
             sequences.append(tokenizer(rendered, add_special_tokens=False)["input_ids"])
         if any(not tokens or len(tokens) > max_length for tokens in sequences):
@@ -49,9 +51,16 @@ def encode_rows(tokenizer, rows: list[dict], max_length: int) -> tuple[list[dict
 
 
 def _signature(split: str, manifest: dict, token_hash: str, max_length: int) -> str:
-    identity = {"model": MODEL, "revision": REVISION, "dataset_revision": DATASET_REVISION,
-                "split": split, "manifest": manifest, "token_hash": token_hash,
-                "max_length": max_length, "representation": "last_hidden_state_final_token_bf16"}
+    identity = {
+        "model": MODEL,
+        "revision": REVISION,
+        "dataset_revision": DATASET_REVISION,
+        "split": split,
+        "manifest": manifest,
+        "token_hash": token_hash,
+        "max_length": max_length,
+        "representation": "last_hidden_state_final_token_bf16",
+    }
     return hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
 
 
@@ -62,20 +71,25 @@ def verify_loaded_backbone(model, loading: dict) -> None:
         raise RuntimeError("Frozen backbone has unloaded meta parameters")
 
 
-def save_checkpoint(path: Path, features: list[np.ndarray], offsets: list[int],
-                    ids: list[str], *, signature: str) -> None:
+def save_checkpoint(
+    path: Path, features: list[np.ndarray], offsets: list[int], ids: list[str], *, signature: str
+) -> None:
     matrix = np.stack(features).astype(np.float16) if features else np.empty((0, 0), np.float16)
-    metadata = {"signature": signature, "completed": len(ids), "ids": ids,
-                "feature_dim": matrix.shape[1]}
+    metadata = {"signature": signature, "completed": len(ids), "ids": ids, "feature_dim": matrix.shape[1]}
     temporary = path.with_suffix(".tmp")
     with temporary.open("wb") as stream:
-        np.savez_compressed(stream, features=matrix, offsets=np.asarray(offsets, dtype=np.int32),
-                            metadata_json=np.asarray(json.dumps(metadata)))
+        np.savez_compressed(
+            stream,
+            features=matrix,
+            offsets=np.asarray(offsets, dtype=np.int32),
+            metadata_json=np.asarray(json.dumps(metadata)),
+        )
     os.replace(temporary, path)
 
 
-def load_checkpoint(path: Path, encoded: list[dict], *, signature: str, feature_dim: int
-                    ) -> tuple[list[np.ndarray], list[int], list[str]]:
+def load_checkpoint(
+    path: Path, encoded: list[dict], *, signature: str, feature_dim: int
+) -> tuple[list[np.ndarray], list[int], list[str]]:
     with np.load(path, allow_pickle=False) as archive:
         matrix = archive["features"]
         offsets = archive["offsets"].tolist()
@@ -87,22 +101,27 @@ def load_checkpoint(path: Path, encoded: list[dict], *, signature: str, feature_
     expected_offsets = [0]
     for item in encoded[:completed]:
         expected_offsets.append(expected_offsets[-1] + len(item["sequences"]))
-    if (metadata.get("signature") != signature or ids != expected
-            or offsets != expected_offsets
-            or matrix.shape != (expected_offsets[-1], feature_dim)
-            or metadata.get("feature_dim") != feature_dim or not np.isfinite(matrix).all()):
+    if (
+        metadata.get("signature") != signature
+        or ids != expected
+        or offsets != expected_offsets
+        or matrix.shape != (expected_offsets[-1], feature_dim)
+        or metadata.get("feature_dim") != feature_dim
+        or not np.isfinite(matrix).all()
+    ):
         raise ValueError("Feature checkpoint does not match the selected rows")
     return list(matrix), offsets, ids
 
 
-def extract(model, encoded: list[dict], path: Path, *, signature: str,
-            checkpoint_every: int, resume: bool) -> int:
+def extract(model, encoded: list[dict], path: Path, *, signature: str, checkpoint_every: int, resume: bool) -> int:
     import torch
 
     feature_dim = model.config.hidden_size
-    features, offsets, ids = (load_checkpoint(path, encoded, signature=signature,
-                                             feature_dim=feature_dim)
-                              if resume and path.exists() else ([], [0], []))
+    features, offsets, ids = (
+        load_checkpoint(path, encoded, signature=signature, feature_dim=feature_dim)
+        if resume and path.exists()
+        else ([], [0], [])
+    )
     model.eval()
     with torch.inference_mode():
         for index in range(len(ids), len(encoded)):
@@ -110,16 +129,17 @@ def extract(model, encoded: list[dict], path: Path, *, signature: str,
             candidate_features = []
             for tokens in item["sequences"]:
                 input_ids = torch.tensor([tokens], dtype=torch.long, device="cuda")
-                hidden = model(input_ids=input_ids, use_cache=False,
-                               return_dict=True).last_hidden_state[0, -1]
+                hidden = model(input_ids=input_ids, use_cache=False, return_dict=True).last_hidden_state[0, -1]
                 candidate_features.append(hidden.float().cpu().numpy().astype(np.float16))
             features.extend(candidate_features)
             offsets.append(len(features))
             ids.append(item["row"]["id"])
             if len(ids) % checkpoint_every == 0 or len(ids) == len(encoded):
                 save_checkpoint(path, features, offsets, ids, signature=signature)
-                print(json.dumps({"event": "checkpoint", "split": path.stem,
-                                  "rows": len(ids), "total": len(encoded)}), flush=True)
+                print(
+                    json.dumps({"event": "checkpoint", "split": path.stem, "rows": len(ids), "total": len(encoded)}),
+                    flush=True,
+                )
     return len(ids)
 
 
@@ -134,16 +154,23 @@ def main() -> None:
     parser.add_argument("--checkpoint-every", type=int, default=16)
     parser.add_argument("--seed", type=int, default=20260926)
     parser.add_argument("--resume", action="store_true")
-    parser.add_argument("--output-dir", type=Path,
-                        default=root / "benchmarks/.bench-state/qwen2b_frozen_general_v1")
-    parser.add_argument("--report", type=Path,
-                        default=root / "benchmarks/.bench-state/qwen2b_frozen_general_v1.json")
+    parser.add_argument("--output-dir", type=Path, default=root / "benchmarks/.bench-state/qwen2b_frozen_general_v1")
+    parser.add_argument("--report", type=Path, default=root / "benchmarks/.bench-state/qwen2b_frozen_general_v1.json")
     args = parser.parse_args()
-    limits = {"train": args.train_rows, "calibration": args.calibration_rows,
-              "test": args.test_rows, "ood": args.ood_rows}
-    if (min(limits.values()) < 1 or args.max_length < 64 or args.checkpoint_every < 1
-            or args.report.exists() or (args.output_dir.exists() and not args.resume)
-            or (args.resume and not args.output_dir.is_dir())):
+    limits = {
+        "train": args.train_rows,
+        "calibration": args.calibration_rows,
+        "test": args.test_rows,
+        "ood": args.ood_rows,
+    }
+    if (
+        min(limits.values()) < 1
+        or args.max_length < 64
+        or args.checkpoint_every < 1
+        or args.report.exists()
+        or (args.output_dir.exists() and not args.resume)
+        or (args.resume and not args.output_dir.is_dir())
+    ):
         parser.error("Use positive limits, an unfinished matching resume, and fresh final output")
     rows, manifests = {}, {}
     for offset, (split, limit) in enumerate(limits.items()):
@@ -166,11 +193,23 @@ def main() -> None:
         if not encoded[split]:
             raise ValueError(f"No {split} rows fit the token limit")
         signatures[split] = _signature(split, manifests[split], token_hash, args.max_length)
-    print(json.dumps({"event": "selected", "kept": {key: len(value) for key, value in encoded.items()},
-                      "excluded_overlong": excluded}), flush=True)
+    print(
+        json.dumps(
+            {
+                "event": "selected",
+                "kept": {key: len(value) for key, value in encoded.items()},
+                "excluded_overlong": excluded,
+            }
+        ),
+        flush=True,
+    )
     base, loading = AutoModelForCausalLM.from_pretrained(
-        path, local_files_only=True, dtype=torch.bfloat16, device_map={"": 0},
-        attn_implementation="eager", output_loading_info=True,
+        path,
+        local_files_only=True,
+        dtype=torch.bfloat16,
+        device_map={"": 0},
+        attn_implementation="eager",
+        output_loading_info=True,
     )
     model = base.model
     verify_loaded_backbone(model, loading)
@@ -180,19 +219,32 @@ def main() -> None:
     args.output_dir.mkdir(parents=True, exist_ok=True)
     completed = {}
     for split in SPLITS:
-        completed[split] = extract(model, encoded[split], args.output_dir / f"{split}.npz",
-                                   signature=signatures[split],
-                                   checkpoint_every=args.checkpoint_every, resume=args.resume)
-    report = {"purpose": "frozen_public_general_decision_feature_extraction",
-              "model": MODEL, "revision": REVISION, "dataset_revision": DATASET_REVISION,
-              "selected_rows": limits, "seed": args.seed, "max_length": args.max_length,
-              "source_manifests": manifests, "excluded_overlong": excluded,
-              "completed": completed,
-              "feature_sha256": {split: hashlib.sha256(
-                  (args.output_dir / f"{split}.npz").read_bytes()).hexdigest() for split in SPLITS},
-              "peak_vram_gib": round(torch.cuda.max_memory_allocated() / 1024**3, 3),
-              "limitation": "Frozen public features only; no trained head, Jev parity, "
-                            "live desktop validation, or execution authority."}
+        completed[split] = extract(
+            model,
+            encoded[split],
+            args.output_dir / f"{split}.npz",
+            signature=signatures[split],
+            checkpoint_every=args.checkpoint_every,
+            resume=args.resume,
+        )
+    report = {
+        "purpose": "frozen_public_general_decision_feature_extraction",
+        "model": MODEL,
+        "revision": REVISION,
+        "dataset_revision": DATASET_REVISION,
+        "selected_rows": limits,
+        "seed": args.seed,
+        "max_length": args.max_length,
+        "source_manifests": manifests,
+        "excluded_overlong": excluded,
+        "completed": completed,
+        "feature_sha256": {
+            split: hashlib.sha256((args.output_dir / f"{split}.npz").read_bytes()).hexdigest() for split in SPLITS
+        },
+        "peak_vram_gib": round(torch.cuda.max_memory_allocated() / 1024**3, 3),
+        "limitation": "Frozen public features only; no trained head, Jev parity, "
+        "live desktop validation, or execution authority.",
+    }
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({"event": "complete", "rows": completed}), flush=True)

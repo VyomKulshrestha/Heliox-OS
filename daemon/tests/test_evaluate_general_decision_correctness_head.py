@@ -29,23 +29,29 @@ def test_select_unseen_group_rows_rejects_insufficient_unique_groups() -> None:
 
 
 def test_split_policy_allows_only_disjoint_nontraining_partitions() -> None:
-    validate_split_policy({
-        "base_training_splits": ["train"],
-        "fit_split": "calibration",
-        "test_split": "ood",
-    })
-
-
-@pytest.mark.parametrize(("fit_split", "test_split"), [
-    ("train", "ood"),
-    ("calibration", "train"),
-    ("calibration", "calibration"),
-])
-def test_split_policy_rejects_training_or_reused_partitions(fit_split: str,
-                                                            test_split: str) -> None:
-    with pytest.raises(ValueError, match="distinct from the base training mixture"):
-        validate_split_policy({
+    validate_split_policy(
+        {
             "base_training_splits": ["train"],
-            "fit_split": fit_split,
-            "test_split": test_split,
-        })
+            "fit_split": "calibration",
+            "test_split": "ood",
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    ("fit_split", "test_split"),
+    [
+        ("train", "ood"),
+        ("calibration", "train"),
+        ("calibration", "calibration"),
+    ],
+)
+def test_split_policy_rejects_training_or_reused_partitions(fit_split: str, test_split: str) -> None:
+    with pytest.raises(ValueError, match="distinct from the base training mixture"):
+        validate_split_policy(
+            {
+                "base_training_splits": ["train"],
+                "fit_split": fit_split,
+                "test_split": test_split,
+            }
+        )

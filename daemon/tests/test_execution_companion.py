@@ -132,9 +132,7 @@ async def test_review_failure_keeps_existing_safety_pipeline_authoritative():
 @pytest.mark.asyncio
 async def test_local_scope_head_adds_warning_but_cannot_grant_or_block():
     head = _ScopeHead(0.05)
-    companion = ExecutionCompanion(
-        _Model('{"decision":"CONTINUE","reason":"Looks aligned."}'), scope_advisor=head
-    )
+    companion = ExecutionCompanion(_Model('{"decision":"CONTINUE","reason":"Looks aligned."}'), scope_advisor=head)
 
     review = await companion.review("Commit locally; do not push.", _push_plan())
 

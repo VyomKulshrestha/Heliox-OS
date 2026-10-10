@@ -33,12 +33,10 @@ def trajectory_split(cases: list) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     groups = np.asarray([case.case_id.split(":", 1)[0] for case in cases])
     splitter = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=SEED)
     development, test = next(splitter.split(indices, groups=groups))
-    train_relative, validation_relative = next(splitter.split(
-        development, groups=groups[development]
-    ))
+    train_relative, validation_relative = next(splitter.split(development, groups=groups[development]))
     train, validation = development[train_relative], development[validation_relative]
     train_groups, validation_groups, test_groups = (set(groups[part]) for part in (train, validation, test))
-    if (train_groups & validation_groups or train_groups & test_groups or validation_groups & test_groups):
+    if train_groups & validation_groups or train_groups & test_groups or validation_groups & test_groups:
         raise ValueError("Trajectory leaked between splits")
     return train, validation, test
 
@@ -64,9 +62,9 @@ def run(dataset: Path, root: Path) -> dict:
     public_pairs = [(case.request, case.action) for case in public]
     synthetic_pairs, synthetic_labels = synthetic_training(root)
     train_pairs = [public_pairs[index] for index in train_ids] + synthetic_pairs
-    train_labels = np.concatenate((
-        np.asarray([public[index].in_scope for index in train_ids], dtype=bool), synthetic_labels
-    ))
+    train_labels = np.concatenate(
+        (np.asarray([public[index].in_scope for index in train_ids], dtype=bool), synthetic_labels)
+    )
     model = LogisticRegression(C=1.0, class_weight="balanced", solver="liblinear", max_iter=1000)
     model.fit(feature_matrix(train_pairs), train_labels)
     validation = [public[index] for index in validation_ids]
@@ -98,8 +96,10 @@ def run(dataset: Path, root: Path) -> dict:
 
 def main() -> None:
     import sys
+
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from scripts.reference_output_policy import block_jev_output_use
+
     block_jev_output_use()
 
     root = Path(__file__).resolve().parents[1]
@@ -109,8 +109,19 @@ def main() -> None:
     args = parser.parse_args()
     report = run(args.dataset, root)
     args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps({key: ({metric: value for metric, value in data.items() if metric not in {"mismatch_ids", "mismatches"}}
-                            if isinstance(data, dict) else data) for key, data in report.items()}, indent=2))
+    print(
+        json.dumps(
+            {
+                key: (
+                    {metric: value for metric, value in data.items() if metric not in {"mismatch_ids", "mismatches"}}
+                    if isinstance(data, dict)
+                    else data
+                )
+                for key, data in report.items()
+            },
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":

@@ -10,8 +10,11 @@ from scripts.probe_opendec_multidomain import candidate_prompts, objective, pred
 
 
 def test_candidate_prompts_keep_question_context_shared() -> None:
-    row = {"state_json": json.dumps("The browser is on a settings page."),
-           "question": "What should happen next?", "options": ["Read settings", "Delete settings"]}
+    row = {
+        "state_json": json.dumps("The browser is on a settings page."),
+        "question": "What should happen next?",
+        "options": ["Read settings", "Delete settings"],
+    }
     prompts = candidate_prompts(row)
     assert len(prompts) == 2
     assert prompts[0][0] == prompts[1][0]
@@ -20,8 +23,7 @@ def test_candidate_prompts_keep_question_context_shared() -> None:
 
 
 def test_shared_head_gradient_and_variable_candidates() -> None:
-    features = np.array([[0.2, 0.3], [0.4, -0.1], [-0.1, 0.2],
-                         [0.5, 0.2], [0.1, 0.6]], dtype=np.float64)
+    features = np.array([[0.2, 0.3], [0.4, -0.1], [-0.1, 0.2], [0.5, 0.2], [0.1, 0.6]], dtype=np.float64)
     offsets = np.array([0, 2, 5])
     targets = [np.array([1.0, 0.0]), np.array([0.2, 0.3, 0.5])]
     weights = np.array([0.5, -0.3])

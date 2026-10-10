@@ -25,8 +25,12 @@ def _goal_score(goal: str, label: str) -> tuple[int, int]:
     goal_tokens = _tokens(goal)
     if not label_tokens or not goal_tokens:
         return (0, 0)
-    phrase = int(any(goal_tokens[i : i + len(label_tokens)] == label_tokens
-                     for i in range(len(goal_tokens) - len(label_tokens) + 1)))
+    phrase = int(
+        any(
+            goal_tokens[i : i + len(label_tokens)] == label_tokens
+            for i in range(len(goal_tokens) - len(label_tokens) + 1)
+        )
+    )
     overlap = len(set(label_tokens) & set(goal_tokens))
     return (phrase, overlap)
 
@@ -67,9 +71,10 @@ def load_branches(path: Path, seed: int) -> tuple[dict[str, list[list[dict[str, 
             raise ValueError("Invalid split, group, or task in replay archive")
         tasks[split].add(task)
         by_group[(split, group)].append(row)
-    if any(tasks[left] & tasks[right] for left, right in (
-        ("train", "validation"), ("train", "eval"), ("validation", "eval")
-    )):
+    if any(
+        tasks[left] & tasks[right]
+        for left, right in (("train", "validation"), ("train", "eval"), ("validation", "eval"))
+    ):
         raise ValueError("Task identity leaked across replay splits")
 
     branches: dict[str, list[list[dict[str, Any]]]] = defaultdict(list)
@@ -121,9 +126,8 @@ def run(archive: Path, seed: int) -> dict[str, Any]:
         for task in eval_tasks
     }
     sufficient_coverage = len(branches["eval"]) >= 10 and len(eval_tasks) >= 2
-    improved = (
-        evaluation[selected]["accuracy"] - evaluation["first"]["accuracy"] >= 0.10
-        and all(scores[selected]["wins"] >= scores["first"]["wins"] for scores in per_task.values())
+    improved = evaluation[selected]["accuracy"] - evaluation["first"]["accuracy"] >= 0.10 and all(
+        scores[selected]["wins"] >= scores["first"]["wins"] for scores in per_task.values()
     )
     return {
         "purpose": "research_only_dream_rsi_inspired_exact_one_step_replay",
@@ -135,9 +139,11 @@ def run(archive: Path, seed: int) -> dict[str, Any]:
         "held_out_eval": evaluation,
         "held_out_by_task": per_task,
         "selected_minus_first_wins": evaluation[selected]["wins"] - evaluation["first"]["wins"],
-        "predeclared_gate": {"sufficient_coverage": sufficient_coverage,
-                             "improved_over_fixed_first": improved,
-                             "passed": sufficient_coverage and improved},
+        "predeclared_gate": {
+            "sufficient_coverage": sufficient_coverage,
+            "improved_over_fixed_first": improved,
+            "passed": sufficient_coverage and improved,
+        },
         "limitation": "Only two observed terminal actions per synthetic reset state are replayed. "
         "No unseen branch, long-horizon policy, real desktop outcome, model weight, "
         "Jev parity, or execution authority is established.",

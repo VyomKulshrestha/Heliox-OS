@@ -20,9 +20,15 @@ def test_action_index_accepts_only_bare_or_prefixed_integer() -> None:
 
 
 def test_ollama_model_must_be_installed_and_digest_pinned(monkeypatch) -> None:
-    monkeypatch.setattr(probe, "ollama_json", lambda _path: {"models": [
-        {"name": "qwen3:8b", "digest": "a" * 64},
-    ]})
+    monkeypatch.setattr(
+        probe,
+        "ollama_json",
+        lambda _path: {
+            "models": [
+                {"name": "qwen3:8b", "digest": "a" * 64},
+            ]
+        },
+    )
     assert probe.ollama_model_digest("qwen3:8b") == "a" * 64
     try:
         probe.ollama_model_digest("missing:8b")
@@ -41,12 +47,12 @@ def test_ollama_choice_rejects_wrong_model_and_overlong_prompt(monkeypatch) -> N
 
     monkeypatch.setattr(probe, "ollama_json", reply)
     lengths = []
-    assert probe.choose_ollama("Choose", [{"label": "A"}, {"label": "B"}], [],
-                               "qwen3:8b", 256, lengths) == "Index: 1"
+    assert probe.choose_ollama("Choose", [{"label": "A"}, {"label": "B"}], [], "qwen3:8b", 256, lengths) == "Index: 1"
     assert lengths == [40]
     assert captured[0]["stream"] is False and captured[0]["think"] is False
-    monkeypatch.setattr(probe, "ollama_json", lambda *_args: {
-        "model": "qwen3:8b", "response": "1", "prompt_eval_count": 257})
+    monkeypatch.setattr(
+        probe, "ollama_json", lambda *_args: {"model": "qwen3:8b", "response": "1", "prompt_eval_count": 257}
+    )
     try:
         probe.choose_ollama("Choose", [], [], "qwen3:8b", 256, lengths)
     except ValueError:
@@ -72,8 +78,7 @@ def test_delayed_terminal_reward_is_checked_after_ui_settles(monkeypatch) -> Non
             self.clicked = True
 
         def evaluate(self, _script: str) -> dict:
-            return {"done": self.clicked and self.waited,
-                    "reward": 1 if self.clicked and self.waited else None}
+            return {"done": self.clicked and self.waited, "reward": 1 if self.clicked and self.waited else None}
 
         def wait_for_timeout(self, _milliseconds: int) -> None:
             self.waited = True
@@ -89,9 +94,13 @@ def test_delayed_terminal_reward_is_checked_after_ui_settles(monkeypatch) -> Non
     monkeypatch.setattr(probe, "_reset", lambda *_args: (context, page, [], b"png", "dom"))
     monkeypatch.setattr(probe, "visual_feature", lambda *_args: np.zeros(256, dtype=np.float32))
     monkeypatch.setattr(probe, "goal_description", lambda *_args: 'Click "target".')
-    monkeypatch.setattr(probe, "candidate_actions", lambda *_args: [
-        {"label": "target", "tag": "button", "x": 10, "y": 20},
-    ])
+    monkeypatch.setattr(
+        probe,
+        "candidate_actions",
+        lambda *_args: [
+            {"label": "target", "tag": "button", "x": 10, "y": 20},
+        ],
+    )
     result = probe.run_episode(None, None, "task", "seed", 2, lambda *_args: "0")
     assert result["success"] and result["steps"] == 1
     assert result["stop_reason"] == "terminal" and result["invalid_output"] is None
@@ -104,9 +113,7 @@ def test_navigation_baseline_reveals_target_then_uses_exact_visible_label() -> N
     save = {"label": "Save", "tag": "li", "x": 30, "y": 40, "gesture": "click"}
     assert navigation_baseline(goal, [menu], []) == "0"
     assert navigation_baseline(goal, [menu, save], []) == "1"
-    assert navigation_baseline(goal, [menu, save], [
-        {"label": "Menu", "x": 10, "y": 20, "gesture": "click"}
-    ]) == "1"
+    assert navigation_baseline(goal, [menu, save], [{"label": "Menu", "x": 10, "y": 20, "gesture": "click"}]) == "1"
 
 
 def test_navigation_baseline_explores_unvisited_tabs() -> None:
@@ -115,16 +122,15 @@ def test_navigation_baseline_explores_unvisited_tabs() -> None:
         {"label": "2", "tag": "a", "x": 30, "y": 20, "gesture": "click"},
     ]
     assert navigation_baseline('Find "target".', controls, []) == "0"
-    assert navigation_baseline('Find "target".', controls, [
-        {"label": "1", "x": 10, "y": 20, "gesture": "click"}
-    ]) == "1"
+    assert (
+        navigation_baseline('Find "target".', controls, [{"label": "1", "x": 10, "y": 20, "gesture": "click"}]) == "1"
+    )
 
 
 def test_navigation_baseline_explores_popup_with_hover() -> None:
     controls = [
         {"label": "Menu", "tag": "button", "x": 10, "y": 20, "gesture": "click"},
-        {"label": "Playback", "tag": "li", "x": 20, "y": 40,
-         "gesture": "hover", "has_popup": "true"},
+        {"label": "Playback", "tag": "li", "x": 20, "y": 40, "gesture": "hover", "has_popup": "true"},
     ]
     history = [{"label": "Menu", "x": 10, "y": 20, "gesture": "click"}]
     assert navigation_baseline('Find "Next".', controls, history) == "1"
@@ -138,23 +144,35 @@ def test_navigation_baseline_follows_named_controls_before_submit() -> None:
     ]
     goal = "Select orRz4, dVSD4kc and click Submit."
     assert navigation_baseline(goal, controls, []) == "1"
-    assert navigation_baseline(goal, controls, [
-        {"label": "orRz4", "x": 30, "y": 40, "gesture": "click"},
-    ]) == "2"
-    assert navigation_baseline(goal, controls, [
-        {"label": "orRz4", "x": 30, "y": 40, "gesture": "click"},
-        {"label": "dVSD4kc", "x": 50, "y": 60, "gesture": "click"},
-    ]) == "0"
+    assert (
+        navigation_baseline(
+            goal,
+            controls,
+            [
+                {"label": "orRz4", "x": 30, "y": 40, "gesture": "click"},
+            ],
+        )
+        == "2"
+    )
+    assert (
+        navigation_baseline(
+            goal,
+            controls,
+            [
+                {"label": "orRz4", "x": 30, "y": 40, "gesture": "click"},
+                {"label": "dVSD4kc", "x": 50, "y": 60, "gesture": "click"},
+            ],
+        )
+        == "0"
+    )
 
 
 def test_navigation_baseline_matches_visible_icon_hint() -> None:
     controls = [
-        {"label": "Save", "tag": "li", "x": 10, "y": 20,
-         "gesture": "click", "icon_hint": "ui-icon ui-icon-disk"},
-        {"label": "Stop", "tag": "li", "x": 30, "y": 20,
-         "gesture": "click", "icon_hint": "ui-icon ui-icon-stop"},
+        {"label": "Save", "tag": "li", "x": 10, "y": 20, "gesture": "click", "icon_hint": "ui-icon ui-icon-disk"},
+        {"label": "Stop", "tag": "li", "x": 30, "y": 20, "gesture": "click", "icon_hint": "ui-icon ui-icon-stop"},
     ]
-    assert navigation_baseline('Click the [span ui-icon ui-icon-stop] icon.', controls, []) == "1"
+    assert navigation_baseline("Click the [span ui-icon ui-icon-stop] icon.", controls, []) == "1"
 
 
 def test_model_prompt_contains_visible_controls_not_rewards() -> None:
@@ -169,9 +187,9 @@ def test_available_choices_prefers_hover_and_blocks_repeated_action() -> None:
         {"label": "Menu", "x": 10, "y": 20},
         {"label": "Playback", "x": 30, "y": 40, "has_popup": "true"},
     ]
-    history = [{"label": "Menu", "x": 10, "y": 20,
-                "gesture": "click", "state_sha256": "previous"}]
+    history = [{"label": "Menu", "x": 10, "y": 20, "gesture": "click", "state_sha256": "previous"}]
     choices = available_choices(controls, history, "current")
     assert [(row["label"], row["gesture"]) for row in choices] == [
-        ("Playback", "hover"), ("Playback", "click"),
+        ("Playback", "hover"),
+        ("Playback", "click"),
     ]

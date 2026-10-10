@@ -75,11 +75,9 @@ def test_group_bootstrap_resamples_whole_episodes_and_is_reproducible() -> None:
 
 def test_group_bootstrap_rejects_unpaired_or_dependent_inputs() -> None:
     with pytest.raises(ValueError, match="aligned finite losses"):
-        group_bootstrap_loss_delta(np.array([1.0]), np.array([0.0]), np.array(["a"]),
-                                   seed=1, replicates=99)
+        group_bootstrap_loss_delta(np.array([1.0]), np.array([0.0]), np.array(["a"]), seed=1, replicates=99)
     with pytest.raises(ValueError, match="at least two independent groups"):
-        group_bootstrap_loss_delta(np.array([1.0, 1.0]), np.array([0.0, 0.0]),
-                                   np.array(["same", "same"]), seed=1)
+        group_bootstrap_loss_delta(np.array([1.0, 1.0]), np.array([0.0, 0.0]), np.array(["same", "same"]), seed=1)
 
 
 def test_counterfactual_successor_retrieval_is_group_aware_and_compares_to_chance() -> None:
@@ -91,7 +89,10 @@ def test_counterfactual_successor_retrieval_is_group_aware_and_compares_to_chanc
     }
 
     result = counterfactual_successor_retrieval(
-        partition["target"], partition, seed=19, replicates=1000,
+        partition["target"],
+        partition,
+        seed=19,
+        replicates=1000,
     )
 
     assert result["mean_group_top1_accuracy"] == 1
@@ -127,15 +128,23 @@ def _write_features(tmp_path, groups=("a", "b", "c")):
     state = np.zeros((3, 256), dtype=np.float32)
     target = np.ones((3, 256), dtype=np.float32)
     np.savez_compressed(
-        features, state=state, target=target,
+        features,
+        state=state,
+        target=target,
         action=np.array([1, 2, 3]),
         coords=np.full((3, 2), 0.5, dtype=np.float32),
-        group=np.array(groups), split=np.array(["train", "validation", "eval"]),
+        group=np.array(groups),
+        split=np.array(["train", "validation", "eval"]),
     )
     report = tmp_path / "source.json"
-    report.write_text(json.dumps({
-        "features_sha256": hashlib.sha256(features.read_bytes()).hexdigest(),
-    }), encoding="utf-8")
+    report.write_text(
+        json.dumps(
+            {
+                "features_sha256": hashlib.sha256(features.read_bytes()).hexdigest(),
+            }
+        ),
+        encoding="utf-8",
+    )
     return features, report
 
 
@@ -145,8 +154,7 @@ def test_valid_features_produce_episode_disjoint_action_vectors(tmp_path) -> Non
     assert rows["train"]["action"].shape == (1, 11)
     assert rows["train"]["action"][0, 1] == 1
     assert rows["eval"]["groups"].tolist() == ["c"]
-    assert metrics(rows["train"]["target"], rows["train"]["state"],
-                   rows["train"]["target"])["mse"] == 0
+    assert metrics(rows["train"]["target"], rows["train"]["state"], rows["train"]["target"])["mse"] == 0
 
 
 def test_rejects_episode_leakage_and_changed_source(tmp_path) -> None:
@@ -164,8 +172,7 @@ def test_additional_source_keeps_primary_eval_and_rejects_screen_leakage(tmp_pat
     for index, split in enumerate(("train", "validation", "eval")):
         primary[split]["state"][:] = (index + 1) / 10
     additional = {
-        split: {key: value.copy() for key, value in partition.items()}
-        for split, partition in primary.items()
+        split: {key: value.copy() for key, value in partition.items()} for split, partition in primary.items()
     }
     for index, split in enumerate(("train", "validation", "eval")):
         additional[split]["state"][:] = (index + 4) / 10
@@ -325,7 +332,9 @@ def test_private_samples_split_by_recording_without_plaintext_files() -> None:
 
     rows = load_recorded_features(Store(), seed=7)
     assert {key: len(value["state"]) for key, value in rows.items()} == {
-        "train": 24, "validation": 12, "eval": 12,
+        "train": 24,
+        "validation": 12,
+        "eval": 12,
     }
     assert set(rows["train"]["groups"]).isdisjoint(rows["eval"]["groups"])
     assert rows["train"]["action"].shape == (24, 11)
@@ -354,8 +363,10 @@ def test_private_recordings_with_same_pre_screen_stay_in_one_partition() -> None
 
     rows = load_recorded_features(Store(), seed=7)
     states = {split: set(partition["state"][:, 0]) for split, partition in rows.items()}
-    assert all(states[left].isdisjoint(states[right]) for left, right in
-               (("train", "validation"), ("train", "eval"), ("validation", "eval")))
+    assert all(
+        states[left].isdisjoint(states[right])
+        for left, right in (("train", "validation"), ("train", "eval"), ("validation", "eval"))
+    )
     assert sorted(len(partition["state"]) for partition in rows.values()) == [12, 12, 36]
 
 
@@ -364,12 +375,14 @@ def test_shared_pre_screen_merging_is_transitive() -> None:
         before = np.full(256, value / 255, dtype=np.float32)
         return before, before, 1, np.array([0.5, 0.5], dtype=np.float32)
 
-    merged = merge_recordings_with_shared_states([
-        ("first", [row(1)]),
-        ("bridge", [row(1), row(2)]),
-        ("third", [row(2)]),
-        ("separate", [row(3)]),
-    ])
+    merged = merge_recordings_with_shared_states(
+        [
+            ("first", [row(1)]),
+            ("bridge", [row(1), row(2)]),
+            ("third", [row(2)]),
+            ("separate", [row(3)]),
+        ]
+    )
 
     assert sorted(len(rows) for _, rows in merged) == [1, 4]
 
@@ -381,8 +394,13 @@ def test_private_recordings_reject_insufficient_independent_pre_screens() -> Non
                 {
                     "workflow_id": f"recording-{group}",
                     "samples": [
-                        {"action_type": "mouse_click", "before": [0] * 256,
-                         "after": [255] * 256, "coords": [0.25, 0.75], "post_observed": True}
+                        {
+                            "action_type": "mouse_click",
+                            "before": [0] * 256,
+                            "after": [255] * 256,
+                            "coords": [0.25, 0.75],
+                            "post_observed": True,
+                        }
                     ],
                 }
                 for group in range(4)

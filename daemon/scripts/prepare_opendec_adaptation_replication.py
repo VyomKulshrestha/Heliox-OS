@@ -76,21 +76,22 @@ def write_json_new(path: Path, value: dict) -> None:
     temporary = path.with_suffix(path.suffix + ".tmp")
     if temporary.exists():
         raise FileExistsError(f"Refusing to overwrite temporary artifact: {temporary}")
-    temporary.write_text(json.dumps(value, indent=2, allow_nan=False) + "\n",
-                         encoding="utf-8", newline="\n")
+    temporary.write_text(json.dumps(value, indent=2, allow_nan=False) + "\n", encoding="utf-8", newline="\n")
     temporary.replace(path)
 
 
 def reconstruct_candidate_groups(report: dict) -> tuple[dict[str, list[dict]], set[str]]:
     """Rebuild exact sampled split groups and fail closed on manifest drift."""
-    if (report.get("dataset") != DATASET or report.get("dataset_config") != DATASET_CONFIG
-            or report.get("dataset_revision") != DATASET_REVISION):
+    if (
+        report.get("dataset") != DATASET
+        or report.get("dataset_config") != DATASET_CONFIG
+        or report.get("dataset_revision") != DATASET_REVISION
+    ):
         raise ValueError("Training report does not use the pinned licensed Open-Jev dataset")
     seed = report.get("seed")
     selected_rows = report.get("selected_rows")
     pinned_manifests = report.get("dataset_manifests")
-    if (type(seed) is not int or not isinstance(selected_rows, dict)
-            or not isinstance(pinned_manifests, dict)):
+    if type(seed) is not int or not isinstance(selected_rows, dict) or not isinstance(pinned_manifests, dict):
         raise ValueError("Training report is missing reproducible split metadata")
 
     split_rows: dict[str, list[dict]] = {}
@@ -128,8 +129,13 @@ def load_logits_by_id(path: Path, rows: list[dict], *, signature: str) -> dict[s
     saved = json.loads(path.read_text(encoding="utf-8"))
     ids = [row["id"] for row in rows]
     logits = saved.get("logits")
-    if (saved.get("schema_version") != 1 or saved.get("signature") != signature
-            or saved.get("ids") != ids or not isinstance(logits, list) or len(logits) != len(rows)):
+    if (
+        saved.get("schema_version") != 1
+        or saved.get("signature") != signature
+        or saved.get("ids") != ids
+        or not isinstance(logits, list)
+        or len(logits) != len(rows)
+    ):
         raise ValueError(f"Frozen baseline logits do not match {path.name} row selection")
     return dict(zip(ids, logits, strict=True))
 
@@ -141,10 +147,13 @@ def prepare(args: argparse.Namespace) -> dict:
     baseline_output_dir = resolve_state_path(args.baseline_output_dir, "Baseline output directory")
     if len({source_output_path, manifest_output_path, baseline_output_dir}) != 3:
         raise ValueError("Protocol, manifest, and baseline output paths must differ")
-    planned_outputs = (source_output_path, manifest_output_path,
-                       baseline_output_dir / "archived_logits.json",
-                       baseline_output_dir / "fresh_logits.json",
-                       baseline_output_dir / "report.json")
+    planned_outputs = (
+        source_output_path,
+        manifest_output_path,
+        baseline_output_dir / "archived_logits.json",
+        baseline_output_dir / "fresh_logits.json",
+        baseline_output_dir / "report.json",
+    )
     if any(path.exists() for path in planned_outputs):
         raise FileExistsError("Refusing to overwrite candidate-specific evaluation artifacts")
     run_report = json.loads(run_report_path.read_text(encoding="utf-8"))
@@ -156,8 +165,10 @@ def prepare(args: argparse.Namespace) -> dict:
     if not source_path.is_relative_to(BENCHMARKS.resolve()) or sha256_file(source_path) != descriptor["sha256"]:
         raise ValueError("Frozen source protocol is missing or has changed")
     source = json.loads(source_path.read_text(encoding="utf-8"))
-    if (source.get("dataset_revision") != DATASET_REVISION
-            or source.get("released_checkpoint") != f"{OPENJEV_REPO}@{OPENJEV_REVISION}"):
+    if (
+        source.get("dataset_revision") != DATASET_REVISION
+        or source.get("released_checkpoint") != f"{OPENJEV_REPO}@{OPENJEV_REVISION}"
+    ):
         raise ValueError("Frozen source protocol does not pin the supported Open-Jev release")
 
     previous_groups = load_excluded_group_ids(ROOT, source.get("excluded_group_manifest"))
@@ -169,20 +180,28 @@ def prepare(args: argparse.Namespace) -> dict:
     }
 
     archived, _ = select_archived_rows(
-        seed=source["archived_seed"], pool=source["archived_pool"],
-        limit=source["archived_rows"], expected_ids_sha256=source["archived_ids_sha256"],
+        seed=source["archived_seed"],
+        pool=source["archived_pool"],
+        limit=source["archived_rows"],
+        expected_ids_sha256=source["archived_ids_sha256"],
     )
     frozen_fresh, fresh_manifest = select_fresh_rows(
-        archived, split=source.get("fresh_split", "ood"), seed=source["fresh_seed"],
-        pool=source["fresh_pool"], limit=source["fresh_rows"],
+        archived,
+        split=source.get("fresh_split", "ood"),
+        seed=source["fresh_seed"],
+        pool=source["fresh_pool"],
+        limit=source["fresh_rows"],
         excluded_group_ids=previous_groups,
     )
     expected_fresh = candidate_independent_rows(frozen_fresh, candidate_groups)
     if not expected_fresh:
         raise ValueError("The frozen baseline selection has no groups independent of this candidate")
     fresh, fresh_manifest = select_fresh_rows(
-        archived, split=source.get("fresh_split", "ood"), seed=source["fresh_seed"],
-        pool=source["fresh_pool"], limit=len(expected_fresh),
+        archived,
+        split=source.get("fresh_split", "ood"),
+        seed=source["fresh_seed"],
+        pool=source["fresh_pool"],
+        limit=len(expected_fresh),
         excluded_group_ids=previous_groups | candidate_groups,
     )
     if [row["id"] for row in fresh] != [row["id"] for row in expected_fresh]:
@@ -201,32 +220,37 @@ def prepare(args: argparse.Namespace) -> dict:
     baseline_descriptor = comparison["released_baseline"]
     baseline_report_path = BENCHMARKS / baseline_descriptor["report_path"]
     frozen_logits_path = BENCHMARKS / baseline_descriptor["fresh_logits_path"]
-    if (sha256_file(baseline_report_path) != baseline_descriptor["report_sha256"]
-            or sha256_file(frozen_logits_path) != baseline_descriptor["fresh_logits_sha256"]):
+    if (
+        sha256_file(baseline_report_path) != baseline_descriptor["report_sha256"]
+        or sha256_file(frozen_logits_path) != baseline_descriptor["fresh_logits_sha256"]
+    ):
         raise ValueError("Frozen released-baseline report or logits have changed")
     baseline_report = json.loads(baseline_report_path.read_text(encoding="utf-8"))
     archived_rows, archived_manifest = select_archived_rows(
-        seed=source["archived_seed"], pool=source["archived_pool"],
-        limit=source["archived_rows"], expected_ids_sha256=source["archived_ids_sha256"],
+        seed=source["archived_seed"],
+        pool=source["archived_pool"],
+        limit=source["archived_rows"],
+        expected_ids_sha256=source["archived_ids_sha256"],
     )
     archived_logits_path = baseline_report_path.parent / "archived_logits.json"
-    archived_signature = input_signature(
-        archived_rows, archived_manifest, max_length=source["max_length"])
+    archived_signature = input_signature(archived_rows, archived_manifest, max_length=source["max_length"])
     archived_logits = load_logits_by_id(
-        archived_logits_path, archived_rows,
+        archived_logits_path,
+        archived_rows,
         signature=baseline_report["archived"]["selection_signature"],
     )
     if baseline_report["archived"]["selection_signature"] != archived_signature:
         raise ValueError("Frozen archived baseline logits use an unexpected signature")
-    old_fresh_signature = input_signature(
-        frozen_fresh, fresh_manifest, max_length=source["max_length"])
+    old_fresh_signature = input_signature(frozen_fresh, fresh_manifest, max_length=source["max_length"])
     frozen_fresh_logits = load_logits_by_id(
-        frozen_logits_path, frozen_fresh,
+        frozen_logits_path,
+        frozen_fresh,
         signature=baseline_report["fresh"]["selection_signature"],
     )
-    if (baseline_report["fresh"]["selection_signature"] != old_fresh_signature
-            or baseline_report["fresh"]["selection_signature"]
-            != baseline_descriptor["fresh_selection_signature"]):
+    if (
+        baseline_report["fresh"]["selection_signature"] != old_fresh_signature
+        or baseline_report["fresh"]["selection_signature"] != baseline_descriptor["fresh_selection_signature"]
+    ):
         raise ValueError("Frozen fresh baseline logits use an unexpected signature")
     fresh_signature = input_signature(fresh, fresh_manifest, max_length=source["max_length"])
     fresh_logits = {row["id"]: frozen_fresh_logits[row["id"]] for row in fresh}
@@ -234,16 +258,24 @@ def prepare(args: argparse.Namespace) -> dict:
     # Persist outputs only after every selection/hash check has passed.
     write_json_new(manifest_output_path, manifest)
     write_json_new(source_output_path, source)
-    write_json_new(baseline_output_dir / "archived_logits.json", {
-        "schema_version": 1, "signature": archived_signature,
-        "ids": [row["id"] for row in archived_rows],
-        "logits": [archived_logits[row["id"]] for row in archived_rows],
-    })
-    write_json_new(baseline_output_dir / "fresh_logits.json", {
-        "schema_version": 1, "signature": fresh_signature,
-        "ids": [row["id"] for row in fresh],
-        "logits": [fresh_logits[row["id"]] for row in fresh],
-    })
+    write_json_new(
+        baseline_output_dir / "archived_logits.json",
+        {
+            "schema_version": 1,
+            "signature": archived_signature,
+            "ids": [row["id"] for row in archived_rows],
+            "logits": [archived_logits[row["id"]] for row in archived_rows],
+        },
+    )
+    write_json_new(
+        baseline_output_dir / "fresh_logits.json",
+        {
+            "schema_version": 1,
+            "signature": fresh_signature,
+            "ids": [row["id"] for row in fresh],
+            "logits": [fresh_logits[row["id"]] for row in fresh],
+        },
+    )
     return {
         "source_protocol": repository_path(source_output_path),
         "source_protocol_sha256": sha256_file(source_output_path),
@@ -254,8 +286,7 @@ def prepare(args: argparse.Namespace) -> dict:
         "fresh_groups": len(fresh_groups),
         "baseline_logits_reused": True,
         "fresh_ids_sha256": source["fresh_ids_sha256"],
-        "split_group_counts": {name: len({row["group_id"] for row in rows})
-                                for name, rows in split_rows.items()},
+        "split_group_counts": {name: len({row["group_id"] for row in rows}) for name, rows in split_rows.items()},
     }
 
 
@@ -272,25 +303,30 @@ def finalize(args: argparse.Namespace) -> dict:
     fresh_logits_path = baseline_dir / "fresh_logits.json"
     baseline_report = json.loads(baseline_report_path.read_text(encoding="utf-8"))
     candidate_report = json.loads(candidate_report_path.read_text(encoding="utf-8"))
-    if (baseline_report.get("protocol_sha256") != sha256_file(source_path)
-            or baseline_report.get("fresh_ids_sha256") != source.get("fresh_ids_sha256")
-            or baseline_report.get("fresh_group_ids_sha256") != source.get("fresh_group_ids_sha256")):
+    if (
+        baseline_report.get("protocol_sha256") != sha256_file(source_path)
+        or baseline_report.get("fresh_ids_sha256") != source.get("fresh_ids_sha256")
+        or baseline_report.get("fresh_group_ids_sha256") != source.get("fresh_group_ids_sha256")
+    ):
         raise ValueError("Released baseline report does not match the frozen source selection")
-    if (candidate_report.get("dataset") != DATASET
-            or candidate_report.get("dataset_revision") != DATASET_REVISION
-            or candidate_report.get("initial_checkpoint", {}).get("repo") != OPENJEV_REPO
-            or candidate_report.get("initial_checkpoint", {}).get("revision") != OPENJEV_REVISION):
+    if (
+        candidate_report.get("dataset") != DATASET
+        or candidate_report.get("dataset_revision") != DATASET_REVISION
+        or candidate_report.get("initial_checkpoint", {}).get("repo") != OPENJEV_REPO
+        or candidate_report.get("initial_checkpoint", {}).get("revision") != OPENJEV_REVISION
+    ):
         raise ValueError("Candidate report does not identify the pinned Open-Jev warm start")
-    if (sha256_file(candidate_dir / "adapter" / "adapter_model.safetensors")
-            != candidate_report.get("adapter_sha256")
-            or sha256_file(candidate_dir / "head.npz") != candidate_report.get("head_sha256")):
+    if sha256_file(candidate_dir / "adapter" / "adapter_model.safetensors") != candidate_report.get(
+        "adapter_sha256"
+    ) or sha256_file(candidate_dir / "head.npz") != candidate_report.get("head_sha256"):
         raise ValueError("Candidate artifact hashes do not match its report")
 
     protocol = json.loads(FROZEN_COMPARISON_PROTOCOL.read_text(encoding="utf-8"))
     protocol["purpose"] = "candidate_specific_group_disjoint_public_replication"
     protocol["frozen_at_utc"] = datetime.now(timezone.utc).date().isoformat()
     protocol["source_selection_protocol"] = {
-        "path": repository_path(source_path), "sha256": sha256_file(source_path),
+        "path": repository_path(source_path),
+        "sha256": sha256_file(source_path),
     }
     protocol["released_baseline"] = {
         "report_path": repository_path(baseline_report_path, base=BENCHMARKS),

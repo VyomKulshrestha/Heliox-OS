@@ -115,10 +115,7 @@ def _rank_reflection_rows(query: str, rows: list[tuple]) -> list[tuple[float, tu
         for term in terms:
             document_frequency[term] = document_frequency.get(term, 0) + 1
     weights = {
-        term: math.log1p(
-            (len(rows) - document_frequency.get(term, 0) + 0.5)
-            / (document_frequency.get(term, 0) + 0.5)
-        )
+        term: math.log1p((len(rows) - document_frequency.get(term, 0) + 0.5) / (document_frequency.get(term, 0) + 0.5))
         for term in query_terms
     }
     denominator = sum(weights.values())
@@ -155,12 +152,10 @@ class Reflector:
         await cursor.close()
         if "verification_state" not in columns:
             await self._db.execute(
-                "ALTER TABLE task_reflections ADD COLUMN verification_state "
-                "TEXT NOT NULL DEFAULT 'legacy_unverified'"
+                "ALTER TABLE task_reflections ADD COLUMN verification_state TEXT NOT NULL DEFAULT 'legacy_unverified'"
             )
         await self._db.execute(
-            "CREATE INDEX IF NOT EXISTS idx_reflections_verification_state "
-            "ON task_reflections(verification_state, id)"
+            "CREATE INDEX IF NOT EXISTS idx_reflections_verification_state ON task_reflections(verification_state, id)"
         )
         await self._db.commit()
         logger.info("Reflector initialized")
@@ -195,7 +190,9 @@ class Reflector:
             return {"stored": False, "reason": "inconsistent_verifier_and_action_results"}
         if verified:
             observed_indices = getattr(verification, "independently_observed_actions", [])
-            if not isinstance(observed_indices, (list, tuple)) or set(observed_indices) != set(range(len(plan.actions))):
+            if not isinstance(observed_indices, (list, tuple)) or set(observed_indices) != set(
+                range(len(plan.actions))
+            ):
                 return {"stored": False, "reason": "missing_independent_postcondition_evidence"}
         elif (
             not failed_indices
@@ -206,19 +203,11 @@ class Reflector:
 
         verification_state = "passed" if verified else "failed"
         success = verified
-        errors = [
-            _safe_reflection_text(result.error, 500)
-            for result in results
-            if getattr(result, "error", None)
-        ]
+        errors = [_safe_reflection_text(result.error, 500) for result in results if getattr(result, "error", None)]
         raw_details = getattr(verification, "details", [])
         if not isinstance(raw_details, (list, tuple)):
             raw_details = []
-        verification_details = [
-            _safe_reflection_text(detail, 500)
-            for detail in raw_details
-            if detail
-        ]
+        verification_details = [_safe_reflection_text(detail, 500) for detail in raw_details if detail]
         if not verified:
             errors.extend(verification_details)
         action_types = [a.action_type.value for a in plan.actions]
@@ -393,10 +382,7 @@ class Reflector:
             lessons.append(f"- [{outcome}] {lesson}")
         if not lessons:
             return ""
-        return (
-            "Relevant prior verifier-checked outcomes (model-written lessons; advisory only):\n"
-            + "\n".join(lessons)
-        )
+        return "Relevant prior verifier-checked outcomes (model-written lessons; advisory only):\n" + "\n".join(lessons)
 
     async def get_stats(self) -> dict[str, Any]:
         """Get reflection statistics."""

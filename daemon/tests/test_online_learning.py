@@ -384,9 +384,7 @@ async def test_real_verifier_result_trains_only_checked_file_transition(tmp_path
                 occurred_at=occurred_at,
                 payload=payload,
             )
-        verification = await verifier.verify(
-            ActionPlan(actions=[action]), [ActionResult(action=action, success=True)]
-        )
+        verification = await verifier.verify(ActionPlan(actions=[action]), [ActionResult(action=action, success=True)])
         await ledger.append(
             ExperienceEventType.OUTCOME_VERIFIED,
             idempotency_key=f"{plan_id}:verified",
@@ -418,20 +416,39 @@ async def test_directory_copy_existence_does_not_train_world_transition(tmp_path
     destination = tmp_path / "destination"
     source.mkdir()
     destination.mkdir()
-    action = Action(action_type=ActionType.FILE_COPY, target=str(source),
-                    parameters=FileParams(path=str(source), destination=str(destination), recursive=True))
+    action = Action(
+        action_type=ActionType.FILE_COPY,
+        target=str(source),
+        parameters=FileParams(path=str(source), destination=str(destination), recursive=True),
+    )
     for event_type, suffix, payload in (
         (ExperienceEventType.ACTION_STARTED, "started", {"index": 0, "action_type": "file_copy"}),
-        (ExperienceEventType.ACTION_COMPLETED, "completed",
-         {"index": 0, "success": True, "executed": True, "callback_observed": True}),
+        (
+            ExperienceEventType.ACTION_COMPLETED,
+            "completed",
+            {"index": 0, "success": True, "executed": True, "callback_observed": True},
+        ),
     ):
-        await ledger.append(event_type, idempotency_key=f"copy:{suffix}", action_id="copy-action",
-                            plan_id="copy-plan", source="interactive", occurred_at=occurred_at, payload=payload)
+        await ledger.append(
+            event_type,
+            idempotency_key=f"copy:{suffix}",
+            action_id="copy-action",
+            plan_id="copy-plan",
+            source="interactive",
+            occurred_at=occurred_at,
+            payload=payload,
+        )
     verification = await Verifier(MagicMock()).verify(
-        ActionPlan(actions=[action]), [ActionResult(action=action, success=True)])
-    await ledger.append(ExperienceEventType.OUTCOME_VERIFIED, idempotency_key="copy:verified",
-                        plan_id="copy-plan", source="verifier", occurred_at=occurred_at,
-                        payload={"result_count": 1, "verification": verification})
+        ActionPlan(actions=[action]), [ActionResult(action=action, success=True)]
+    )
+    await ledger.append(
+        ExperienceEventType.OUTCOME_VERIFIED,
+        idempotency_key="copy:verified",
+        plan_id="copy-plan",
+        source="verifier",
+        occurred_at=occurred_at,
+        payload={"result_count": 1, "verification": verification},
+    )
     await ledger.drain_subscribers()
 
     assert verification.passed is True
@@ -450,25 +467,47 @@ async def test_browser_world_transition_requires_matching_observed_url(tmp_path,
     ledger = ExperienceLedger(tmp_path / "experience.db")
     await ledger.initialize()
     ledger.subscribe(learner.consume)
-    action = Action(action_type=ActionType.BROWSER_NAVIGATE, target="https://example.com/account",
-                    parameters=BrowserParams(url="https://example.com/account"))
+    action = Action(
+        action_type=ActionType.BROWSER_NAVIGATE,
+        target="https://example.com/account",
+        parameters=BrowserParams(url="https://example.com/account"),
+    )
 
     for index, matched in enumerate((True, False)):
-        monkeypatch.setattr(browser, "browser_action_already_satisfied",
-                            AsyncMock(return_value=(matched, "current page")))
+        monkeypatch.setattr(
+            browser, "browser_action_already_satisfied", AsyncMock(return_value=(matched, "current page"))
+        )
         plan_id = f"browser-plan-{index}"
         action_id = f"browser-action-{index}"
-        await ledger.append(ExperienceEventType.ACTION_STARTED, idempotency_key=f"{action_id}:started",
-                            plan_id=plan_id, action_id=action_id, source="interactive", occurred_at=occurred_at,
-                            payload={"index": 0, "action_type": "browser_navigate"})
-        await ledger.append(ExperienceEventType.ACTION_COMPLETED, idempotency_key=f"{action_id}:completed",
-                            plan_id=plan_id, action_id=action_id, source="interactive", occurred_at=occurred_at,
-                            payload={"index": 0, "success": True, "executed": True, "callback_observed": True})
+        await ledger.append(
+            ExperienceEventType.ACTION_STARTED,
+            idempotency_key=f"{action_id}:started",
+            plan_id=plan_id,
+            action_id=action_id,
+            source="interactive",
+            occurred_at=occurred_at,
+            payload={"index": 0, "action_type": "browser_navigate"},
+        )
+        await ledger.append(
+            ExperienceEventType.ACTION_COMPLETED,
+            idempotency_key=f"{action_id}:completed",
+            plan_id=plan_id,
+            action_id=action_id,
+            source="interactive",
+            occurred_at=occurred_at,
+            payload={"index": 0, "success": True, "executed": True, "callback_observed": True},
+        )
         verification = await Verifier(MagicMock()).verify(
-            ActionPlan(actions=[action]), [ActionResult(action=action, success=True)])
-        await ledger.append(ExperienceEventType.OUTCOME_VERIFIED, idempotency_key=f"{plan_id}:verified",
-                            plan_id=plan_id, source="verifier", occurred_at=occurred_at,
-                            payload={"result_count": 1, "verification": verification})
+            ActionPlan(actions=[action]), [ActionResult(action=action, success=True)]
+        )
+        await ledger.append(
+            ExperienceEventType.OUTCOME_VERIFIED,
+            idempotency_key=f"{plan_id}:verified",
+            plan_id=plan_id,
+            source="verifier",
+            occurred_at=occurred_at,
+            payload={"result_count": 1, "verification": verification},
+        )
     await ledger.drain_subscribers()
 
     assert learner.status()["transitions"]["labels"] == 1
@@ -477,9 +516,7 @@ async def test_browser_world_transition_requires_matching_observed_url(tmp_path,
 
 
 @pytest.mark.asyncio
-async def test_transition_promotion_requires_support_for_action_and_source(
-    tmp_path, occurred_at, monkeypatch
-):
+async def test_transition_promotion_requires_support_for_action_and_source(tmp_path, occurred_at, monkeypatch):
     learner = VerifiedOnlineLearner(tmp_path / "learning-state.json")
     ledger = ExperienceLedger(tmp_path / "experience.db")
     await ledger.initialize()
@@ -524,7 +561,9 @@ async def test_transition_promotion_requires_support_for_action_and_source(
     await ledger.drain_subscribers()
 
     supported = learner.score_transition(action_type="file_write", source="interactive", occurred_at=occurred_at)
-    other_action = learner.score_transition(action_type="browser_navigate", source="interactive", occurred_at=occurred_at)
+    other_action = learner.score_transition(
+        action_type="browser_navigate", source="interactive", occurred_at=occurred_at
+    )
     other_source = learner.score_transition(action_type="file_write", source="mcp", occurred_at=occurred_at)
     assert supported.labels == MINIMUM_PROMOTION_LABELS
     assert supported.state == "promoted"
@@ -533,9 +572,10 @@ async def test_transition_promotion_requires_support_for_action_and_source(
     assert other_action.state == other_source.state == "candidate"
     rebuilt = VerifiedOnlineLearner(tmp_path / "learning-state.json")
     await rebuilt.initialize(ledger)
-    assert rebuilt.score_transition(
-        action_type="file_write", source="interactive", occurred_at=occurred_at
-    ).state == "promoted"
+    assert (
+        rebuilt.score_transition(action_type="file_write", source="interactive", occurred_at=occurred_at).state
+        == "promoted"
+    )
 
     from pilot.security.risk_gate import RiskGate
     from pilot.security.risk_observation import OsSnapshot
@@ -551,11 +591,15 @@ async def test_transition_promotion_requires_support_for_action_and_source(
     )
     gate = RiskGate(weights_path="/nonexistent.npz")
     gate.set_online_learner(rebuilt)
-    plan = ActionPlan(actions=[Action(
-        action_type=ActionType.FILE_WRITE,
-        target="safe.txt",
-        parameters=FileParams(path="safe.txt", content="expected"),
-    )])
+    plan = ActionPlan(
+        actions=[
+            Action(
+                action_type=ActionType.FILE_WRITE,
+                target="safe.txt",
+                parameters=FileParams(path="safe.txt", content="expected"),
+            )
+        ]
+    )
     risk, reasons = gate.evaluate_plan(plan, PilotConfig(), source="interactive")
     assert risk > 0
     assert "independently verified" in reasons[0]

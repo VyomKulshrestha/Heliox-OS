@@ -307,9 +307,7 @@ class TestRecord:
         assert "search the web" in episodes[0].text
 
     @pytest.mark.asyncio
-    async def test_temporal_episode_is_verified_only_after_goal_verification(
-        self, store, fake_plan, fake_results
-    ):
+    async def test_temporal_episode_is_verified_only_after_goal_verification(self, store, fake_plan, fake_results):
         from types import SimpleNamespace
 
         from pilot.actions import VerificationResult
@@ -335,9 +333,7 @@ class TestRecord:
         assert "Outcome: success" in episodes[0].text
 
     @pytest.mark.asyncio
-    async def test_verified_action_round_stays_in_progress_until_task_completion(
-        self, store, fake_plan, fake_results
-    ):
+    async def test_verified_action_round_stays_in_progress_until_task_completion(self, store, fake_plan, fake_results):
         from types import SimpleNamespace
 
         from pilot.actions import VerificationResult
@@ -401,9 +397,7 @@ class TestRecord:
         assert "Outcome: success" in episodes[0].text
 
     @pytest.mark.asyncio
-    async def test_verification_failure_overrides_successful_action_results(
-        self, store, fake_plan, fake_results
-    ):
+    async def test_verification_failure_overrides_successful_action_results(self, store, fake_plan, fake_results):
         from types import SimpleNamespace
 
         from pilot.actions import VerificationResult
@@ -655,10 +649,12 @@ class TestGetContext:
         async def fake_to_thread(fn, *args, **kwargs):
             return {
                 "documents": [["verified lesson", "ordinary episode"]],
-                "metadatas": [[
-                    {"source": "verified_reflection"},
-                    {"source": "episode", "explanation": "ordinary result"},
-                ]],
+                "metadatas": [
+                    [
+                        {"source": "verified_reflection"},
+                        {"source": "episode", "explanation": "ordinary result"},
+                    ]
+                ],
             }
 
         with patch("pilot.memory.store.asyncio.to_thread", side_effect=fake_to_thread):
@@ -679,10 +675,12 @@ class TestGetContext:
             assert kwargs["n_results"] == 3
             return {
                 "documents": [["Check the requested file exists.", "untrusted text"]],
-                "metadatas": [[
-                    {"source": "verified_reflection", "outcome": "failed"},
-                    {"source": "ordinary_episode", "outcome": "passed"},
-                ]],
+                "metadatas": [
+                    [
+                        {"source": "verified_reflection", "outcome": "failed"},
+                        {"source": "ordinary_episode", "outcome": "passed"},
+                    ]
+                ],
             }
 
         with patch("pilot.memory.store.asyncio.to_thread", side_effect=fake_to_thread):

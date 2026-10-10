@@ -45,7 +45,8 @@ def selected_rows(source: Path, ids: list[str]) -> dict[str, dict]:
                 found[case_id] = {
                     "instruction": trajectory["instruction"],
                     "before_observation": before["observation"],
-                    "action": before["action"], "code": before["code"],
+                    "action": before["action"],
+                    "code": before["code"],
                     "next_observation": following["value"]["observation"],
                     "label": before["last_step_correct"],
                 }
@@ -60,12 +61,10 @@ def diagnose(rows: dict[str, dict], splits: dict[str, list[str]]) -> dict:
     train_labels = np.asarray([rows[case_id]["label"] for case_id in train_ids])
 
     def texts(ids: list[str], fields: tuple[str, ...]) -> list[str]:
-        return ["\n".join(str(rows[case_id][field]) for field in fields)
-                for case_id in ids]
+        return ["\n".join(str(rows[case_id][field]) for field in fields) for case_id in ids]
 
     for view, fields in VIEWS.items():
-        vectorizer = TfidfVectorizer(ngram_range=(1, 2), min_df=2,
-                                     max_features=50_000, sublinear_tf=True)
+        vectorizer = TfidfVectorizer(ngram_range=(1, 2), min_df=2, max_features=50_000, sublinear_tf=True)
         train_x = vectorizer.fit_transform(texts(train_ids, fields))
         head = LogisticRegression(C=1.0, max_iter=1000).fit(train_x, train_labels)
         report[view] = {"vocabulary_size": len(vectorizer.vocabulary_)}

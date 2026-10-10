@@ -562,7 +562,9 @@ async def test_handle_execute_approved_success_reports_verified_outcome():
     assert result["status"] == "success"
     assert result["verification"]["passed"] is True
     assert result["message"] == "opened"
-    assert server._recent_companion_context_by_session["default"].startswith("Previous request: open example.com\nExecution result:")
+    assert server._recent_companion_context_by_session["default"].startswith(
+        "Previous request: open example.com\nExecution result:"
+    )
     assert sum('"method": "confirm_required"' in message for message in ws.sent) == 1
     assert [method for method, _ in server.test_broadcasts].count("task_complete") == 1
 
@@ -968,9 +970,7 @@ async def test_in_task_question_answers_without_cancelling_execution():
     server._model_router = MagicMock()
     server._model_router.generate = AsyncMock(return_value="I can help while the task continues.")
 
-    result = await server._handle_interject(
-        {"input": "Can you explain the current plan?", "mode": "ask"}, MagicMock()
-    )
+    result = await server._handle_interject({"input": "Can you explain the current plan?", "mode": "ask"}, MagicMock())
 
     assert result == {
         "status": "answered",
@@ -992,9 +992,7 @@ async def test_in_task_answer_uses_personal_context_without_granting_actions():
     server._subconscious.get_persona_context = AsyncMock(return_value="User prefers concise updates")
     server._cancel_event = asyncio.Event()
 
-    result = await server._handle_interject(
-        {"input": "How should you update me?", "mode": "ask"}, MagicMock()
-    )
+    result = await server._handle_interject({"input": "How should you update me?", "mode": "ask"}, MagicMock())
 
     prompt = server._model_router.generate.await_args.args[0]
     assert "User prefers concise updates" in prompt
@@ -1087,9 +1085,7 @@ async def test_queued_task_can_be_cancelled_without_affecting_current_task(tmp_p
     server._client_roles[ws] = RpcClientRole.UI
     try:
         queued = await server._handle_queue_execute({"input": "later", "session_id": "chat-1"}, ws)
-        denied = await server._handle_cancel_queued_execute(
-            {"task_id": queued["task_id"], "resume_token": "wrong"}, ws
-        )
+        denied = await server._handle_cancel_queued_execute({"task_id": queued["task_id"], "resume_token": "wrong"}, ws)
         cancelled = await server._handle_cancel_queued_execute(
             {"task_id": queued["task_id"], "resume_token": queued["resume_token"]}, ws
         )
@@ -1188,9 +1184,9 @@ async def test_concurrent_queue_submissions_obey_ten_task_limit(tmp_path):
     ws = _FakeWs()
     server._client_roles[ws] = RpcClientRole.UI
     try:
-        results = await asyncio.gather(*(
-            server._handle_queue_execute({"input": f"task {index}"}, ws) for index in range(11)
-        ))
+        results = await asyncio.gather(
+            *(server._handle_queue_execute({"input": f"task {index}"}, ws) for index in range(11))
+        )
         assert sum(result["status"] == "queued" for result in results) == 10
         assert sum(result["status"] == "error" for result in results) == 1
         assert len(server._queued_execute_requests) == 10

@@ -58,8 +58,7 @@ def _probabilities(row: dict, answer: dict) -> np.ndarray:
     return np.asarray([distribution[str(index)] for index in range(len(row["options"]))], dtype=np.float64)
 
 
-def run(*, split: str, row_limit: int, seed: int, model_id: str,
-        max_length: int, output_path: Path) -> dict:
+def run(*, split: str, row_limit: int, seed: int, model_id: str, max_length: int, output_path: Path) -> dict:
     import torch
 
     rows, manifest = load_split(split, row_limit, seed)
@@ -103,16 +102,12 @@ def run(*, split: str, row_limit: int, seed: int, model_id: str,
         "dataset_manifest": manifest,
         "split": split,
         "seed": seed,
-        "selected_ids_sha256": hashlib.sha256(
-            "\n".join(row["id"] for row in kept_rows).encode()
-        ).hexdigest(),
+        "selected_ids_sha256": hashlib.sha256("\n".join(row["id"] for row in kept_rows).encode()).hexdigest(),
         "model": model_id,
         "model_revision": PINNED_BACKBONES[model_id],
         "weights": "local pinned base model only; no adapters or provider outputs",
         "scoring": "typed candidate labels scored from one next-token distribution per question; no decoding",
-        "prompt_contract": (
-            "v2 string labels; internal answer keys omitted; Noul A-I ratings represent p_yes 0.1-0.9"
-        ),
+        "prompt_contract": ("v2 string labels; internal answer keys omitted; Noul A-I ratings represent p_yes 0.1-0.9"),
         "calibration": "uncalibrated; temperature=1.0",
         "max_length": max_length,
         "rows_requested": len(rows),
@@ -157,15 +152,20 @@ def main() -> None:
         max_length=args.max_length,
         output_path=args.output,
     )
-    print(json.dumps({
-        "metrics": report["metrics"]["by_kind"],
-        "uniform_baseline": report["uniform_baseline"]["by_kind"],
-        "median_latency_ms": report["median_latency_ms"],
-        "p95_latency_ms": report["p95_latency_ms"],
-        "peak_cuda_gib": report["peak_cuda_gib"],
-        "rows_scored": report["rows_scored"],
-        "rows_skipped": len(report["rows_skipped"]),
-    }, indent=2))
+    print(
+        json.dumps(
+            {
+                "metrics": report["metrics"]["by_kind"],
+                "uniform_baseline": report["uniform_baseline"]["by_kind"],
+                "median_latency_ms": report["median_latency_ms"],
+                "p95_latency_ms": report["p95_latency_ms"],
+                "peak_cuda_gib": report["peak_cuda_gib"],
+                "rows_scored": report["rows_scored"],
+                "rows_skipped": len(report["rows_skipped"]),
+            },
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":

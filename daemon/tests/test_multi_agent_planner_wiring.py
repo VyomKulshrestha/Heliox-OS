@@ -61,18 +61,22 @@ def test_decomposer_specialist_names_resolve_to_existing_role_prompts() -> None:
 async def test_autonomous_goal_loop_passes_decomposer_guidance_to_planner() -> None:
     goal = "Check the visible Heliox screen"
     planner = SimpleNamespace(
-        plan=AsyncMock(return_value=ActionPlan(
-            actions=[],
-            explanation='GOAL_COMPLETE: "Heliox home screen ready".',
-        ))
+        plan=AsyncMock(
+            return_value=ActionPlan(
+                actions=[],
+                explanation='GOAL_COMPLETE: "Heliox home screen ready".',
+            )
+        )
     )
     screen = SimpleNamespace(
-        observe_now=AsyncMock(return_value=SimpleNamespace(
-            screen_hash="fresh-screen",
-            active_app="Heliox",
-            active_window_title="Heliox",
-            description="Heliox home screen ready",
-        )),
+        observe_now=AsyncMock(
+            return_value=SimpleNamespace(
+                screen_hash="fresh-screen",
+                active_app="Heliox",
+                active_window_title="Heliox",
+                description="Heliox home screen ready",
+            )
+        ),
         get_context_for_planner=MagicMock(return_value="Heliox home screen ready"),
     )
     autonomous = AutonomousExecutor(
@@ -85,8 +89,6 @@ async def test_autonomous_goal_loop_passes_decomposer_guidance_to_planner() -> N
     step = JobStep(index=0, title="Check", description=goal)
     job = AutonomousJob(goal=goal, total_steps=1, steps=[step])
 
-    await autonomous._execute_goal_loop(
-        job, step, goal, specialist_context="Web Operations Specialist"
-    )
+    await autonomous._execute_goal_loop(job, step, goal, specialist_context="Web Operations Specialist")
 
     assert planner.plan.await_args.kwargs["specialist_context"] == "Web Operations Specialist"

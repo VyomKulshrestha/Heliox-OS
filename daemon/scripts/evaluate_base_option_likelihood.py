@@ -71,9 +71,7 @@ def render_prompt(row: dict[str, Any]) -> str:
     """Render only observable task fields; target, IDs, and provenance stay out."""
     state = json.loads(row["state_json"])
     rendered_state = (
-        state
-        if isinstance(state, str)
-        else json.dumps(state, sort_keys=True, ensure_ascii=False, allow_nan=False)
+        state if isinstance(state, str) else json.dumps(state, sort_keys=True, ensure_ascii=False, allow_nan=False)
     )
     choices = "\n".join(f"{index + 1}. {option}" for index, option in enumerate(row["options"]))
     return (
@@ -91,11 +89,8 @@ def encode_candidates(tokenizer: Any, row: dict[str, Any]) -> tuple[int, list[li
         enable_thinking=False,
     )
     prompt_ids = tokenizer(rendered, add_special_tokens=False)["input_ids"]
-    sequences = [
-        tokenizer(rendered + " " + option, add_special_tokens=False)["input_ids"]
-        for option in row["options"]
-    ]
-    if any(sequence[:len(prompt_ids)] != prompt_ids for sequence in sequences):
+    sequences = [tokenizer(rendered + " " + option, add_special_tokens=False)["input_ids"] for option in row["options"]]
+    if any(sequence[: len(prompt_ids)] != prompt_ids for sequence in sequences):
         raise ValueError("Tokenizer merged the prompt boundary with a candidate continuation")
     longest_common_prefix(sequences)
     if any(len(sequence) > MAX_LENGTH for sequence in sequences):
@@ -119,18 +114,20 @@ def _repeat_cache(cache: Any, repeats: int) -> Any:
     if isinstance(cache, (tuple, list)):
         layers = []
         for layer in cache:
-            layers.append(tuple(
-                tensor.expand((repeats,) + tuple(tensor.shape[1:])).contiguous()
-                for tensor in layer
-            ))
+            layers.append(tuple(tensor.expand((repeats,) + tuple(tensor.shape[1:])).contiguous() for tensor in layer))
         return tuple(layers)
     raise RuntimeError("The local model cache cannot be expanded for shared-prefix scoring")
 
 
-def score_shared_prefix(model: Any, sequences: list[list[int]], *,
-                        prompt_length: int,
-                        option_batch_size: int, pad_token_id: int,
-                        normalization: str = "mean") -> tuple[list[float], list[list[float]]]:
+def score_shared_prefix(
+    model: Any,
+    sequences: list[list[int]],
+    *,
+    prompt_length: int,
+    option_batch_size: int,
+    pad_token_id: int,
+    normalization: str = "mean",
+) -> tuple[list[float], list[list[float]]]:
     """Score candidate continuations using one shared context prefill per batch."""
     import torch
 
@@ -147,25 +144,26 @@ def score_shared_prefix(model: Any, sequences: list[list[int]], *,
     token_logprobs: list[list[float]] = []
     with torch.inference_mode():
         for start in range(0, len(suffixes), option_batch_size):
-            chunk = suffixes[start:start + option_batch_size]
+            chunk = suffixes[start : start + option_batch_size]
             prefix_output = model(input_ids=prefix_ids, use_cache=True, return_dict=True)
             prefix_logprobs = torch.log_softmax(prefix_output.logits[0, -1].float(), dim=-1)
             first_scores = [prefix_logprobs[suffix[0]].item() for suffix in chunk]
             lengths = [len(suffix) for suffix in chunk]
             max_suffix = max(lengths)
             if max_suffix > 1:
-                suffix_ids = torch.full(
-                    (len(chunk), max_suffix), pad_token_id, dtype=torch.long, device="cuda"
-                )
+                suffix_ids = torch.full((len(chunk), max_suffix), pad_token_id, dtype=torch.long, device="cuda")
                 suffix_mask = torch.zeros_like(suffix_ids)
                 for index, suffix in enumerate(chunk):
-                    suffix_ids[index, :len(suffix)] = torch.tensor(suffix, dtype=torch.long, device="cuda")
-                    suffix_mask[index, :len(suffix)] = 1
+                    suffix_ids[index, : len(suffix)] = torch.tensor(suffix, dtype=torch.long, device="cuda")
+                    suffix_mask[index, : len(suffix)] = 1
                 cache = _repeat_cache(prefix_output.past_key_values, len(chunk))
-                attention_mask = torch.cat((
-                    torch.ones((len(chunk), len(prefix)), dtype=torch.long, device="cuda"),
-                    suffix_mask,
-                ), dim=1)
+                attention_mask = torch.cat(
+                    (
+                        torch.ones((len(chunk), len(prefix)), dtype=torch.long, device="cuda"),
+                        suffix_mask,
+                    ),
+                    dim=1,
+                )
                 output = model(
                     input_ids=suffix_ids,
                     attention_mask=attention_mask,
@@ -182,23 +180,24 @@ def score_shared_prefix(model: Any, sequences: list[list[int]], *,
                 if len(suffix) > 1:
                     token_ids = torch.tensor(suffix[1:], dtype=torch.long, device="cuda")
                     positions = torch.arange(len(suffix) - 1, device="cuda")
-                    candidate_logprobs.extend(
-                        next_logprobs[index, positions, token_ids].detach().cpu().tolist()
-                    )
+                    candidate_logprobs.extend(next_logprobs[index, positions, token_ids].detach().cpu().tolist())
                 token_logprobs.append(candidate_logprobs)
-                scores.append(mean_token_logprob(
-                    sum(candidate_logprobs), len(suffix), normalization=normalization
-                ))
+                scores.append(mean_token_logprob(sum(candidate_logprobs), len(suffix), normalization=normalization))
             del prefix_output
             if next_logprobs is not None:
                 del next_logprobs
     return scores, token_logprobs
 
 
-def score_naive(model: Any, sequences: list[list[int]], *,
-                prompt_length: int,
-                option_batch_size: int, pad_token_id: int,
-                normalization: str = "mean") -> tuple[list[float], list[list[float]]]:
+def score_naive(
+    model: Any,
+    sequences: list[list[int]],
+    *,
+    prompt_length: int,
+    option_batch_size: int,
+    pad_token_id: int,
+    normalization: str = "mean",
+) -> tuple[list[float], list[list[float]]]:
     """Reference full-sequence scorer for a small exactness check."""
     import torch
 
@@ -212,24 +211,21 @@ def score_naive(model: Any, sequences: list[list[int]], *,
     token_logprobs: list[list[float]] = []
     with torch.inference_mode():
         for start in range(0, len(sequences), option_batch_size):
-            chunk = sequences[start:start + option_batch_size]
+            chunk = sequences[start : start + option_batch_size]
             lengths = [len(sequence) for sequence in chunk]
             width = max(lengths)
             input_ids = torch.full((len(chunk), width), pad_token_id, dtype=torch.long, device="cuda")
             attention_mask = torch.zeros_like(input_ids)
             for index, sequence in enumerate(chunk):
-                input_ids[index, :len(sequence)] = torch.tensor(sequence, dtype=torch.long, device="cuda")
-                attention_mask[index, :len(sequence)] = 1
-            output = model(input_ids=input_ids, attention_mask=attention_mask,
-                           use_cache=False, return_dict=True)
-            for index, (sequence, suffix) in enumerate(zip(chunk, suffixes[start:start + len(chunk)], strict=True)):
+                input_ids[index, : len(sequence)] = torch.tensor(sequence, dtype=torch.long, device="cuda")
+                attention_mask[index, : len(sequence)] = 1
+            output = model(input_ids=input_ids, attention_mask=attention_mask, use_cache=False, return_dict=True)
+            for index, (sequence, suffix) in enumerate(zip(chunk, suffixes[start : start + len(chunk)], strict=True)):
                 offset = len(sequence) - len(suffix)
                 positions = torch.arange(offset - 1, len(sequence) - 1, device="cuda")
                 token_ids = torch.tensor(suffix, dtype=torch.long, device="cuda")
                 selected_logprobs = torch.log_softmax(output.logits[index, positions].float(), dim=-1)
-                parts = selected_logprobs[
-                    torch.arange(len(suffix), device="cuda"), token_ids
-                ].detach().cpu().tolist()
+                parts = selected_logprobs[torch.arange(len(suffix), device="cuda"), token_ids].detach().cpu().tolist()
                 token_logprobs.append(parts)
                 total = sum(parts)
                 results.append(mean_token_logprob(total, len(suffix), normalization=normalization))
@@ -276,9 +272,18 @@ def _load_local_model(model_name: str):
     return torch, tokenizer, model
 
 
-def run(*, split: str, limit: int, seed: int, option_batch_size: int,
-        normalization: str, verify_rows: int, model_name: str, scoring: str,
-        output_path: Path) -> dict:
+def run(
+    *,
+    split: str,
+    limit: int,
+    seed: int,
+    option_batch_size: int,
+    normalization: str,
+    verify_rows: int,
+    model_name: str,
+    scoring: str,
+    output_path: Path,
+) -> dict:
     rows, manifest = load_split(split, limit, seed)
     print(f"Loaded {len(rows)} licensed {split} rows from the local dataset cache", flush=True)
     print(f"Loading cached {model_name} on CUDA (no downloads)", flush=True)
@@ -294,7 +299,9 @@ def run(*, split: str, limit: int, seed: int, option_batch_size: int,
     for index, (row, (prompt_length, sequences)) in enumerate(zip(rows, encoded, strict=True)):
         if scoring == "full_sequence":
             reference, reference_parts = score_naive(
-                model, sequences, prompt_length=prompt_length,
+                model,
+                sequences,
+                prompt_length=prompt_length,
                 option_batch_size=option_batch_size,
                 pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id,
                 normalization=normalization,
@@ -302,14 +309,18 @@ def run(*, split: str, limit: int, seed: int, option_batch_size: int,
             values = reference
         else:
             values, shared_parts = score_shared_prefix(
-                model, sequences, prompt_length=prompt_length,
+                model,
+                sequences,
+                prompt_length=prompt_length,
                 option_batch_size=option_batch_size,
                 pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id,
                 normalization=normalization,
             )
         if scoring == "shared_prefix" and index < verify_rows:
             reference, reference_parts = score_naive(
-                model, sequences, prompt_length=prompt_length,
+                model,
+                sequences,
+                prompt_length=prompt_length,
                 option_batch_size=option_batch_size,
                 pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id,
                 normalization=normalization,
@@ -325,14 +336,17 @@ def run(*, split: str, limit: int, seed: int, option_batch_size: int,
                 for candidate_index, (shared, reference_tokens) in enumerate(
                     zip(shared_parts, reference_parts, strict=True)
                 )
-                for token_index, (left, right) in enumerate(
-                    zip(shared, reference_tokens, strict=True)
-                )
+                for token_index, (left, right) in enumerate(zip(shared, reference_tokens, strict=True))
             )
             top1_match = int(np.argmax(values) == np.argmax(reference))
-            verification.append({"row_id": row["id"], "max_abs_score_delta": delta,
-                                 "max_abs_token_logprob_delta": token_delta,
-                                 "selected_option_matches_reference": bool(top1_match)})
+            verification.append(
+                {
+                    "row_id": row["id"],
+                    "max_abs_score_delta": delta,
+                    "max_abs_token_logprob_delta": token_delta,
+                    "selected_option_matches_reference": bool(top1_match),
+                }
+            )
             if not top1_match:
                 raise RuntimeError(
                     f"Shared-prefix selection differs from the full-sequence reference "
@@ -359,9 +373,11 @@ def run(*, split: str, limit: int, seed: int, option_batch_size: int,
         "model_revision": PINNED_BASES[model_name],
         "model_weights": "local cached base only; no adapter or provider output",
         "scoring": {
-            "method": ("full-sequence batched causal continuation log-likelihood"
-                       if scoring == "full_sequence"
-                       else "shared-prefix causal continuation log-likelihood (diagnostic only)"),
+            "method": (
+                "full-sequence batched causal continuation log-likelihood"
+                if scoring == "full_sequence"
+                else "shared-prefix causal continuation log-likelihood (diagnostic only)"
+            ),
             "normalization": normalization,
             "option_batch_size": option_batch_size,
             "reference_comparison": verification,
@@ -388,8 +404,9 @@ def main() -> None:
     parser.add_argument("--normalization", choices=("mean", "sum"), default="mean")
     parser.add_argument("--model", choices=tuple(PINNED_BASES), default=DEFAULT_MODEL)
     parser.add_argument("--scoring", choices=("full_sequence", "shared_prefix"), default="full_sequence")
-    parser.add_argument("--verify-rows", type=int, default=2,
-                        help="Compare shared-prefix selection with a full-sequence reference")
+    parser.add_argument(
+        "--verify-rows", type=int, default=2, help="Compare shared-prefix selection with a full-sequence reference"
+    )
     parser.add_argument(
         "--output",
         type=Path,
@@ -409,10 +426,17 @@ def main() -> None:
         scoring=args.scoring,
         output_path=args.output,
     )
-    print(json.dumps({"metrics": result["metrics"]["by_kind"],
-                      "uniform_baseline": result["uniform_baseline"]["by_kind"],
-                      "elapsed_seconds": result["elapsed_seconds"],
-                      "reference_comparison": result["scoring"]["reference_comparison"]}, indent=2))
+    print(
+        json.dumps(
+            {
+                "metrics": result["metrics"]["by_kind"],
+                "uniform_baseline": result["uniform_baseline"]["by_kind"],
+                "elapsed_seconds": result["elapsed_seconds"],
+                "reference_comparison": result["scoring"]["reference_comparison"],
+            },
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":

@@ -47,8 +47,8 @@ class _NoChangeDiff:
     ("action", "expected"),
     [
         (
-            lambda: browser.browser_click("button[data-label=\"it's done\"]"),
-            [("click", "button[data-label=\"it's done\"]", {"button": "left", "click_count": 1, "timeout": 5000})],
+            lambda: browser.browser_click('button[data-label="it\'s done"]'),
+            [("click", 'button[data-label="it\'s done"]', {"button": "left", "click_count": 1, "timeout": 5000})],
         ),
         (
             lambda: browser.browser_click_text("It's done"),

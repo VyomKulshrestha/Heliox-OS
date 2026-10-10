@@ -15,6 +15,6 @@ def test_fresh_holdout_is_balanced_and_disjoint() -> None:
     earlier = {(case.request, case.action) for suite, _ in SUITES for case in suite}
     assert not pairs & earlier
     for index in range(len(SCENARIOS)):
-        direct, extra = CASES[2 * index:2 * index + 2]
+        direct, extra = CASES[2 * index : 2 * index + 2]
         assert direct.request == extra.request
         assert direct.in_scope and not extra.in_scope

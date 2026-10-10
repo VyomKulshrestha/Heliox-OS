@@ -39,20 +39,20 @@ def _page_html(family: int, positions: tuple[tuple[int, int], tuple[int, int]]) 
     for index, (x, y) in enumerate(positions):
         controls.append(
             f'<button id="button-{index}" style="left:{x}px;top:{y}px" '
-            f'onclick="document.getElementById(\'panel-{index}\').hidden=false">'
-            f'Select {index + 1}</button>'
+            f"onclick=\"document.getElementById('panel-{index}').hidden=false\">"
+            f"Select {index + 1}</button>"
             f'<div class="panel" id="panel-{index}" hidden '
             f'style="left:{x}px;top:{y + 58}px"></div>'
         )
     return (
         '<!doctype html><html><head><meta charset="utf-8"><style>'
-        f'body{{margin:0;background:{background};color:{foreground};font:18px Arial}}'
-        f'button{{position:absolute;width:115px;height:42px;background:{button};'
-        f'color:{background};border:2px solid {foreground};border-radius:{radius};cursor:pointer}}'
-        f'.panel{{position:absolute;width:115px;height:72px;background:{panel};'
-        f'border:3px solid {foreground};border-radius:{radius}}}'
-        '[hidden]{display:none!important}'
-        '</style></head><body>' + ''.join(controls) + '</body></html>'
+        f"body{{margin:0;background:{background};color:{foreground};font:18px Arial}}"
+        f"button{{position:absolute;width:115px;height:42px;background:{button};"
+        f"color:{background};border:2px solid {foreground};border-radius:{radius};cursor:pointer}}"
+        f".panel{{position:absolute;width:115px;height:72px;background:{panel};"
+        f"border:3px solid {foreground};border-radius:{radius}}}"
+        "[hidden]{display:none!important}"
+        "</style></head><body>" + "".join(controls) + "</body></html>"
     )
 
 
@@ -104,9 +104,12 @@ def _collect(page, family: int, sample_index: int, rng: random.Random) -> dict:
     after = _features(page.screenshot())
     group = hashlib.sha256(f"{family}:{sample_index}".encode("ascii")).hexdigest()
     return {
-        "state": before, "target": after,
-        "action": action, "coords": (center_x / WIDTH, center_y / HEIGHT),
-        "group": group, "split": "train" if family < 4 else "validation" if family == 4 else "eval",
+        "state": before,
+        "target": after,
+        "action": action,
+        "coords": (center_x / WIDTH, center_y / HEIGHT),
+        "group": group,
+        "split": "train" if family < 4 else "validation" if family == 4 else "eval",
     }
 
 
@@ -122,12 +125,18 @@ def _collect_counterfactual_pair(page, family: int, sample_index: int, rng: rand
         before = _features(page.screenshot())
         center_x, center_y = x + 57, y + 21
         page.mouse.click(center_x, center_y)
-        if (page.locator(".panel:not([hidden])").count() != 1
-                or not page.locator(f"#panel-{chosen}").is_visible()):
+        if page.locator(".panel:not([hidden])").count() != 1 or not page.locator(f"#panel-{chosen}").is_visible():
             raise ValueError("Browser state did not match the chosen counterfactual action")
-        rows.append({"state": before, "target": _features(page.screenshot()),
-                     "action": 1, "coords": (center_x / WIDTH, center_y / HEIGHT),
-                     "group": group, "split": split})
+        rows.append(
+            {
+                "state": before,
+                "target": _features(page.screenshot()),
+                "action": 1,
+                "coords": (center_x / WIDTH, center_y / HEIGHT),
+                "group": group,
+                "split": split,
+            }
+        )
     if not np.array_equal(rows[0]["state"], rows[1]["state"]):
         raise ValueError("Counterfactual clicks did not start from the same observed state")
     if np.array_equal(rows[0]["target"], rows[1]["target"]):
@@ -173,17 +182,22 @@ def main() -> None:
     )
     report = {
         "purpose": "research_only_controlled_browser_visual_transitions",
-        "seed": args.seed, "samples_per_family": args.samples_per_family,
+        "seed": args.seed,
+        "samples_per_family": args.samples_per_family,
         "counterfactual_pairs": args.paired_counterfactuals,
         "split_basis": "layout_family",
-        "fit_layouts": [0, 1, 2, 3], "validation_layout": 4, "eval_layout": 5,
+        "fit_layouts": [0, 1, 2, 3],
+        "validation_layout": 4,
+        "eval_layout": 5,
         "rows": dict(Counter(row["split"] for row in rows)),
-        "groups": {split: len({row["group"] for row in rows if row["split"] == split})
-                   for split in ("train", "validation", "eval")},
+        "groups": {
+            split: len({row["group"] for row in rows if row["split"] == split})
+            for split in ("train", "validation", "eval")
+        },
         "browser_state_verified": True,
         "features_sha256": hashlib.sha256(args.features.read_bytes()).hexdigest(),
         "limitation": "Generated local pages with button toggles only; no user screen capture, "
-                      "real desktop transfer, safety, or runtime-promotion claim.",
+        "real desktop transfer, safety, or runtime-promotion claim.",
     }
     args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report, indent=2), flush=True)

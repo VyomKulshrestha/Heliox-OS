@@ -700,7 +700,9 @@ class AgentGateway:
             logger.warning("Failed to record agent gateway audit event (non-fatal)", exc_info=True)
 
     async def _maybe_run_critic(
-        self, plan: ActionPlan, critic_already_reviewed: bool,
+        self,
+        plan: ActionPlan,
+        critic_already_reviewed: bool,
         source: InvocationSource = InvocationSource.INTERACTIVE,
     ) -> dict[str, Any] | None:
         """Re-implements server.py's interactive critic-trigger predicate so
@@ -725,8 +727,11 @@ class AgentGateway:
         plan_has_blockable_authority = plan_has_tier4 or plan_has_tier3 or plan_has_irreversible
 
         risk_assessment = assess_plan_risk(plan, self._config)
-        if (source != InvocationSource.INTERACTIVE and state_changing
-                and risk_assessment.model_version == "evaluation-error"):
+        if (
+            source != InvocationSource.INTERACTIVE
+            and state_changing
+            and risk_assessment.model_version == "evaluation-error"
+        ):
             return {
                 "verdict": "BLOCK",
                 "risk_score": risk_assessment.combined_score,

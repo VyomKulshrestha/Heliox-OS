@@ -25,8 +25,7 @@ ROOT = Path(__file__).resolve().parents[1]
 BENCHMARK_REVISION = "9ec6f15a8773aaffbbb41e7d7e65a20599ab0cc3"
 BENCHMARK_SHA256 = "5c2414edb3006b8bfcb70fda433f0f9ca015759433849f8d3104328a1f7c4180"
 BENCHMARK_URL = (
-    "https://raw.githubusercontent.com/fstandhartinger/jevbench/"
-    f"{BENCHMARK_REVISION}/datasets/public/original.jsonl"
+    f"https://raw.githubusercontent.com/fstandhartinger/jevbench/{BENCHMARK_REVISION}/datasets/public/original.jsonl"
 )
 MAX_DATA_BYTES = 1_000_000
 
@@ -69,8 +68,7 @@ def task_to_row(task: dict) -> dict:
             raise ValueError("JevBench Choice criteria must be a mapping of at least two labels")
         labels = list(criteria)
         options = [
-            f"{label}: {description}" if isinstance(description, str) and description.strip()
-            else str(label)
+            f"{label}: {description}" if isinstance(description, str) and description.strip() else str(label)
             for label, description in criteria.items()
         ]
         expected = task.get("expected")
@@ -120,8 +118,12 @@ def probabilities(row: dict, prediction: dict) -> np.ndarray:
     else:
         distribution = answer["probabilities"]
         values = np.asarray([distribution[option] for option in row["options"]], dtype=np.float64)
-    if (not np.isfinite(values).all() or np.any(values < 0) or np.any(values > 1)
-            or not np.isclose(values.sum(), 1.0, rtol=1e-5, atol=1e-5)):
+    if (
+        not np.isfinite(values).all()
+        or np.any(values < 0)
+        or np.any(values > 1)
+        or not np.isclose(values.sum(), 1.0, rtol=1e-5, atol=1e-5)
+    ):
         raise ValueError(f"Scorer returned an invalid distribution for row {row['id']}")
     return values
 
@@ -133,11 +135,15 @@ def score_frozen_model(rows: list[dict], output_dir: Path, model_report_path: Pa
 
     model_report, _ = verify_artifact(output_dir, model_report_path)
     tokenizer_path = snapshot_download(
-        model_report["model"], revision=model_report["revision"], local_files_only=True,
+        model_report["model"],
+        revision=model_report["revision"],
+        local_files_only=True,
     )
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, local_files_only=True)
     encoded, overlong = encode_rows(
-        tokenizer, rows, int(model_report["max_length"]),
+        tokenizer,
+        rows,
+        int(model_report["max_length"]),
         prompt_style=model_report.get("prompt_style", "candidate_v1"),
     )
     if overlong or len(encoded) != len(rows):
@@ -149,11 +155,12 @@ def score_frozen_model(rows: list[dict], output_dir: Path, model_report_path: Pa
     started = time.perf_counter()
     torch.cuda.reset_peak_memory_stats()
     predictions = score_requests(
-        [public_payload(row) for row in rows], output_dir, model_report_path,
+        [public_payload(row) for row in rows],
+        output_dir,
+        model_report_path,
     )
     elapsed = time.perf_counter() - started
-    row_probabilities = [probabilities(row, prediction)
-                         for row, prediction in zip(rows, predictions, strict=True)]
+    row_probabilities = [probabilities(row, prediction) for row, prediction in zip(rows, predictions, strict=True)]
     report_metrics = metrics(rows, [np.log(values) for values in row_probabilities], 1.0)
     correct = int(round(report_metrics["top1_accuracy"] * len(rows)))
     per_kind_correct = {
@@ -174,9 +181,9 @@ def score_frozen_model(rows: list[dict], output_dir: Path, model_report_path: Pa
             "correct": correct,
             "total": len(rows),
             "accuracy": report_metrics["top1_accuracy"],
-            "macro_accuracy": float(np.mean([
-                summary["top1_accuracy"] for summary in report_metrics["by_kind"].values()
-            ])),
+            "macro_accuracy": float(
+                np.mean([summary["top1_accuracy"] for summary in report_metrics["by_kind"].values()])
+            ),
             "mean_brier": report_metrics["mean_brier"],
             "mean_nll": report_metrics["mean_nll"],
             "mean_score_rank_error": report_metrics["by_kind"].get("score", {}).get("mean_rank_error"),
@@ -207,9 +214,11 @@ def score_cross_attention_model(rows: list[dict], artifact_path: Path, report_pa
     from scripts.train_cross_attention_typed_decision import _context_text, _encode_split, _logits
 
     report = json.loads(report_path.read_text(encoding="utf-8"))
-    if (report.get("model") != "Qwen/Qwen3-0.6B"
-            or report.get("model_revision") != "c1899de289a04d12100db370d81485cdf75e47ca"
-            or report.get("head_sha256") != hashlib.sha256(artifact_path.read_bytes()).hexdigest()):
+    if (
+        report.get("model") != "Qwen/Qwen3-0.6B"
+        or report.get("model_revision") != "c1899de289a04d12100db370d81485cdf75e47ca"
+        or report.get("head_sha256") != hashlib.sha256(artifact_path.read_bytes()).hexdigest()
+    ):
         raise ValueError("Cached cross-attention artifact does not match its pinned report")
     with np.load(artifact_path, allow_pickle=False) as saved:
         model_id = str(saved["model"])
@@ -221,8 +230,13 @@ def score_cross_attention_model(rows: list[dict], artifact_path: Path, report_pa
         state = {
             key: torch.from_numpy(saved[key].copy())
             for key in (
-                "context_norm.weight", "context_norm.bias", "option_norm.weight",
-                "option_norm.bias", "query.weight", "key.weight", "value.weight",
+                "context_norm.weight",
+                "context_norm.bias",
+                "option_norm.weight",
+                "option_norm.bias",
+                "query.weight",
+                "key.weight",
+                "value.weight",
             )
         }
     if model_id != report["model"] or revision != report["model_revision"]:
@@ -243,17 +257,26 @@ def score_cross_attention_model(rows: list[dict], artifact_path: Path, report_pa
     started = time.perf_counter()
     torch.cuda.reset_peak_memory_stats()
     backbone = AutoModel.from_pretrained(
-        model_path, local_files_only=True, dtype=torch.bfloat16,
-        attn_implementation="eager", low_cpu_mem_usage=True, device_map="cuda:0",
+        model_path,
+        local_files_only=True,
+        dtype=torch.bfloat16,
+        attn_implementation="eager",
+        low_cpu_mem_usage=True,
+        device_map="cuda:0",
     ).eval()
     backbone.requires_grad_(False)
     head = build_listwise_decision_head(int(backbone.config.hidden_size), rank).to("cuda:0")
     head.load_state_dict(state, strict=True)
     head.eval()
     items, skipped, truncated = _encode_split(
-        backbone, tokenizer, rows, split="jevbench-mit-original",
-        max_length=max_length, max_context_tokens=max_context_tokens,
-        batch_size=16, device="cuda:0",
+        backbone,
+        tokenizer,
+        rows,
+        split="jevbench-mit-original",
+        max_length=max_length,
+        max_context_tokens=max_context_tokens,
+        batch_size=16,
+        device="cuda:0",
     )
     if skipped or truncated or len(items) != len(rows):
         raise ValueError("Cross-attention input was skipped or truncated; refusing a partial score")
@@ -276,9 +299,9 @@ def score_cross_attention_model(rows: list[dict], artifact_path: Path, report_pa
             "correct": int(round(report_metrics["top1_accuracy"] * len(rows))),
             "total": len(rows),
             "accuracy": report_metrics["top1_accuracy"],
-            "macro_accuracy": float(np.mean([
-                summary["top1_accuracy"] for summary in report_metrics["by_kind"].values()
-            ])),
+            "macro_accuracy": float(
+                np.mean([summary["top1_accuracy"] for summary in report_metrics["by_kind"].values()])
+            ),
             "mean_brier": report_metrics["mean_brier"],
             "mean_nll": report_metrics["mean_nll"],
             "mean_score_rank_error": report_metrics["by_kind"].get("score", {}).get("mean_rank_error"),
@@ -294,19 +317,23 @@ def score_cross_attention_model(rows: list[dict], artifact_path: Path, report_pa
             "peak_cuda_gib": round(torch.cuda.max_memory_allocated() / 1024**3, 3),
         },
         "correct_by_row": [
-            bool(np.argmax(values) == np.argmax(row["target"]))
-            for row, values in zip(rows, logits, strict=True)
+            bool(np.argmax(values) == np.argmax(row["target"])) for row, values in zip(rows, logits, strict=True)
         ],
     }
 
 
-def paired_accuracy_difference(rows: list[dict], candidate: list[bool],
-                               baseline: list[bool], *, replicates: int = 5000,
-                               seed: int = 20260929) -> dict:
-    if (len(rows) != len(candidate) or len(rows) != len(baseline) or not rows
-            or any(type(value) is not bool for value in (*candidate, *baseline))
-            or type(replicates) is not int or replicates < 100
-            or type(seed) is not int):
+def paired_accuracy_difference(
+    rows: list[dict], candidate: list[bool], baseline: list[bool], *, replicates: int = 5000, seed: int = 20260929
+) -> dict:
+    if (
+        len(rows) != len(candidate)
+        or len(rows) != len(baseline)
+        or not rows
+        or any(type(value) is not bool for value in (*candidate, *baseline))
+        or type(replicates) is not int
+        or replicates < 100
+        or type(seed) is not int
+    ):
         raise ValueError("Paired benchmark outcomes must match the nonempty row set")
     group_indices: dict[str, list[int]] = {}
     for index, row in enumerate(rows):
@@ -329,9 +356,15 @@ def paired_accuracy_difference(rows: list[dict], candidate: list[bool],
     }
 
 
-def evaluate(output_dir: Path, model_report_path: Path, baseline_output_dir: Path,
-             baseline_model_report_path: Path, cross_attention_artifact: Path,
-             cross_attention_report: Path, report_path: Path) -> dict:
+def evaluate(
+    output_dir: Path,
+    model_report_path: Path,
+    baseline_output_dir: Path,
+    baseline_model_report_path: Path,
+    cross_attention_artifact: Path,
+    cross_attention_report: Path,
+    report_path: Path,
+) -> dict:
     with urlopen(BENCHMARK_URL, timeout=30) as response:
         payload = response.read(MAX_DATA_BYTES + 1)
     tasks = parse_tasks(payload)
@@ -339,7 +372,9 @@ def evaluate(output_dir: Path, model_report_path: Path, baseline_output_dir: Pat
     candidate = score_frozen_model(rows, output_dir, model_report_path)
     baseline = score_frozen_model(rows, baseline_output_dir, baseline_model_report_path)
     cross_attention = score_cross_attention_model(
-        rows, cross_attention_artifact, cross_attention_report,
+        rows,
+        cross_attention_artifact,
+        cross_attention_report,
     )
 
     result = {
@@ -360,10 +395,14 @@ def evaluate(output_dir: Path, model_report_path: Path, baseline_output_dir: Pat
             "heliox_cross_attention_v2_local": cross_attention["inference"],
         },
         "paired_accuracy_difference": paired_accuracy_difference(
-            rows, candidate["correct_by_row"], baseline["correct_by_row"],
+            rows,
+            candidate["correct_by_row"],
+            baseline["correct_by_row"],
         ),
         "heliox_cross_attention_minus_local_open_jev_2b": paired_accuracy_difference(
-            rows, cross_attention["correct_by_row"], baseline["correct_by_row"],
+            rows,
+            cross_attention["correct_by_row"],
+            baseline["correct_by_row"],
         ),
         "published_references": {
             "jev": {"correct": 71, "total": 72},
@@ -384,48 +423,64 @@ def evaluate(output_dir: Path, model_report_path: Path, baseline_output_dir: Pat
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--output-dir", type=Path,
+        "--output-dir",
+        type=Path,
         default=ROOT / "benchmarks/.bench-state/openjev_scale_1024_rps_v1",
     )
     parser.add_argument(
-        "--model-report", type=Path,
+        "--model-report",
+        type=Path,
         default=ROOT / "benchmarks/opendec_scale_1024_rps_v1.json",
     )
     parser.add_argument(
-        "--baseline-output-dir", type=Path,
+        "--baseline-output-dir",
+        type=Path,
         default=ROOT / "benchmarks/.bench-state/openjev_runtime_candidate_v1",
     )
     parser.add_argument(
-        "--baseline-model-report", type=Path,
+        "--baseline-model-report",
+        type=Path,
         default=ROOT / "benchmarks/.bench-state/openjev_runtime_candidate_v1/report.json",
     )
     parser.add_argument(
-        "--cross-attention-artifact", type=Path,
+        "--cross-attention-artifact",
+        type=Path,
         default=ROOT / "benchmarks/.bench-state/cross_attention_v2/cross_attention_head.npz",
     )
     parser.add_argument(
-        "--cross-attention-report", type=Path,
+        "--cross-attention-report",
+        type=Path,
         default=ROOT / "benchmarks/.bench-state/cross_attention_v2/report.json",
     )
     parser.add_argument(
-        "--report", type=Path,
+        "--report",
+        type=Path,
         default=ROOT / "benchmarks/.bench-state/jevbench_mit_original_rps_v1/report.json",
     )
     args = parser.parse_args()
     result = evaluate(
-        args.output_dir, args.model_report, args.baseline_output_dir,
-        args.baseline_model_report, args.cross_attention_artifact,
-        args.cross_attention_report, args.report,
+        args.output_dir,
+        args.model_report,
+        args.baseline_output_dir,
+        args.baseline_model_report,
+        args.cross_attention_artifact,
+        args.cross_attention_report,
+        args.report,
     )
-    print(json.dumps({
-        "heliox": result["heliox"],
-        "released_open_jev_2b_local": result["released_open_jev_2b_local"],
-        "heliox_cross_attention_v2_local": result["heliox_cross_attention_v2_local"],
-        "paired_accuracy_difference": result["paired_accuracy_difference"],
-        "heliox_cross_attention_minus_local_open_jev_2b": result[
-            "heliox_cross_attention_minus_local_open_jev_2b"
-        ],
-    }, indent=2))
+    print(
+        json.dumps(
+            {
+                "heliox": result["heliox"],
+                "released_open_jev_2b_local": result["released_open_jev_2b_local"],
+                "heliox_cross_attention_v2_local": result["heliox_cross_attention_v2_local"],
+                "paired_accuracy_difference": result["paired_accuracy_difference"],
+                "heliox_cross_attention_minus_local_open_jev_2b": result[
+                    "heliox_cross_attention_minus_local_open_jev_2b"
+                ],
+            },
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":

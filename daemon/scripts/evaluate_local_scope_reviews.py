@@ -58,13 +58,18 @@ def main() -> None:
     if result is None:
         parser.error("Candidate is unavailable or incompatible")
     raw, guarded = result
-    print(json.dumps({
-        "reviewer": args.reviewer,
-        "max_length": args.max_length,
-        "raw": summarize(labels, raw),
-        "guarded": summarize(labels, guarded),
-        "limitation": "Local review labels are not independent expert or user labels unless reviewer=user.",
-    }, indent=2))
+    print(
+        json.dumps(
+            {
+                "reviewer": args.reviewer,
+                "max_length": args.max_length,
+                "raw": summarize(labels, raw),
+                "guarded": summarize(labels, guarded),
+                "limitation": "Local review labels are not independent expert or user labels unless reviewer=user.",
+            },
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":

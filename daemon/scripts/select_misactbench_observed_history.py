@@ -13,8 +13,7 @@ from benchmarks.misactbench_general import DATASET_SHA256, load_cases, sample_ca
 from scripts.fetch_misactbench_screenshot import CENTRAL_SHA256, read_index  # noqa: E402
 
 SPLIT_ROWS = {"train": 80, "calibration": 24, "development": 24, "final": 32}
-SEEDS = {"final": 20261011, "development": 20261012,
-         "calibration": 20261013, "train": 20261014}
+SEEDS = {"final": 20261011, "development": 20261012, "calibration": 20261013, "train": 20261014}
 
 
 def main() -> None:
@@ -29,8 +28,7 @@ def main() -> None:
         raise ValueError("Human annotations differ from the pinned dataset")
     trajectories = json.loads(args.dataset.read_text(encoding="utf-8"))
     exclusions = [json.loads(path.read_text(encoding="utf-8")) for path in args.exclude_manifest]
-    excluded = {case_id.split(":", 1)[0]
-                for manifest in exclusions for case_id in manifest["case_ids"]}
+    excluded = {case_id.split(":", 1)[0] for manifest in exclusions for case_id in manifest["case_ids"]}
     archive = read_index()
     cases = []
     for case in load_cases(args.dataset):
@@ -40,27 +38,26 @@ def main() -> None:
         steps = trajectories[trajectory_id]["steps"]
         previous = steps.get(str(int(step_id) - 1))
         current = steps[step_id]
-        if (previous is not None
-                and previous["screenshot_path"].removeprefix("MisActBench/") in archive
-                and current["screenshot_path"].removeprefix("MisActBench/") in archive):
+        if (
+            previous is not None
+            and previous["screenshot_path"].removeprefix("MisActBench/") in archive
+            and current["screenshot_path"].removeprefix("MisActBench/") in archive
+        ):
             cases.append(case)
     splits = {}
     used = set(excluded)
     for name in ("final", "development", "calibration", "train"):
-        rows = sample_cases([case for case in cases if case["group"] not in used],
-                            SPLIT_ROWS[name], SEEDS[name])
+        rows = sample_cases([case for case in cases if case["group"] not in used], SPLIT_ROWS[name], SEEDS[name])
         splits[name] = [case["id"] for case in rows]
         used.update(case["group"] for case in rows)
-    case_ids = [case_id for name in ("train", "calibration", "development", "final")
-                for case_id in splits[name]]
+    case_ids = [case_id for name in ("train", "calibration", "development", "final") for case_id in splits[name]]
     if len({case_id.split(":", 1)[0] for case_id in case_ids}) != len(case_ids):
         raise ValueError("Trajectory groups overlap")
     manifest = {
         "purpose": "pre_registered_observed_history_comparison",
         "dataset_sha256": DATASET_SHA256,
         "archive_central_sha256": CENTRAL_SHA256,
-        "excluded_manifests_sha256": [hashlib.sha256(path.read_bytes()).hexdigest()
-                                      for path in args.exclude_manifest],
+        "excluded_manifests_sha256": [hashlib.sha256(path.read_bytes()).hexdigest() for path in args.exclude_manifest],
         "eligible_actions_with_consecutive_screens": len(cases),
         "selection_order": ["final", "development", "calibration", "train"],
         "seeds": SEEDS,
@@ -69,8 +66,11 @@ def main() -> None:
         "limitation": "One balanced human-labeled action per unseen trajectory; previous action and both screenshots are inputs, but previous labels and future observations are excluded.",
     }
     args.output.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps({"eligible_actions": len(cases),
-                      "splits": {name: len(rows) for name, rows in splits.items()}}, indent=2))
+    print(
+        json.dumps(
+            {"eligible_actions": len(cases), "splits": {name: len(rows) for name, rows in splits.items()}}, indent=2
+        )
+    )
 
 
 if __name__ == "__main__":

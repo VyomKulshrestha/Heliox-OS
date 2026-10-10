@@ -15,15 +15,23 @@ from sklearn.model_selection import GroupShuffleSplit
 OUTCOMES = ("achieved", "partial", "not_achieved")
 MINIMUM_EXAMPLES = 24
 MINIMUM_GROUPS = 8
-BASE_FEATURES = frozenset({
-    "step_count_log1p", "omitted_fraction", "placeholder_fraction",
-    "overlap_warning", "incomplete",
-})
+BASE_FEATURES = frozenset(
+    {
+        "step_count_log1p",
+        "omitted_fraction",
+        "placeholder_fraction",
+        "overlap_warning",
+        "incomplete",
+    }
+)
 
 
 def fit_workflow_outcome_model(
-    examples: list[dict[str, Any]], *, seed: int = 20260930,
-    minimum_examples: int = MINIMUM_EXAMPLES, minimum_groups: int = MINIMUM_GROUPS,
+    examples: list[dict[str, Any]],
+    *,
+    seed: int = 20260930,
+    minimum_examples: int = MINIMUM_EXAMPLES,
+    minimum_groups: int = MINIMUM_GROUPS,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Fit a de-identified model and evaluate it on held-out recipe groups.
 
@@ -46,12 +54,14 @@ def fit_workflow_outcome_model(
             raise ValueError("Outcome label is not supported")
         if not isinstance(features, dict) or not features:
             raise ValueError("Outcome features must be a non-empty numeric mapping")
-        if any(not isinstance(key, str)
-               or (key not in BASE_FEATURES
-                   and re.fullmatch(r"action_family_[a-z][a-z0-9_-]{0,31}", key) is None)
-               or not isinstance(value, (int, float)) or isinstance(value, bool)
-               or not math.isfinite(value)
-               for key, value in features.items()):
+        if any(
+            not isinstance(key, str)
+            or (key not in BASE_FEATURES and re.fullmatch(r"action_family_[a-z][a-z0-9_-]{0,31}", key) is None)
+            or not isinstance(value, (int, float))
+            or isinstance(value, bool)
+            or not math.isfinite(value)
+            for key, value in features.items()
+        ):
             raise ValueError("Outcome features must contain finite numeric values only")
         groups.append(group_id)
         labels.append(label)
@@ -78,30 +88,27 @@ def fit_workflow_outcome_model(
         random_state=seed,
     )
     selected_split = None
-    for train_indices, test_indices in splitter.split(
-        np.zeros((len(examples), 1)), label_values, group_values
-    ):
-        if (set(label_values[train_indices]) == all_classes
-                and set(label_values[test_indices]) == all_classes):
+    for train_indices, test_indices in splitter.split(np.zeros((len(examples), 1)), label_values, group_values):
+        if set(label_values[train_indices]) == all_classes and set(label_values[test_indices]) == all_classes:
             selected_split = train_indices, test_indices
             break
     if selected_split is None:
-        raise ValueError("Could not form a group-disjoint holdout containing every observed outcome class in both partitions")
+        raise ValueError(
+            "Could not form a group-disjoint holdout containing every observed outcome class in both partitions"
+        )
     train_indices, test_indices = selected_split
     train_groups = set(group_values[train_indices])
     test_groups = set(group_values[test_indices])
     if train_groups & test_groups:
         raise RuntimeError("Recipe group leaked between training and evaluation")
 
-    feature_names = sorted({
-        key for index in train_indices for key in examples[index]["features"]
-    })
+    feature_names = sorted({key for index in train_indices for key in examples[index]["features"]})
 
     def matrix(indices: np.ndarray) -> np.ndarray:
-        return np.asarray([
-            [float(examples[index]["features"].get(name, 0.0)) for name in feature_names]
-            for index in indices
-        ], dtype=np.float64)
+        return np.asarray(
+            [[float(examples[index]["features"].get(name, 0.0)) for name in feature_names] for index in indices],
+            dtype=np.float64,
+        )
 
     train_x = matrix(train_indices)
     test_x = matrix(test_indices)
@@ -112,24 +119,43 @@ def fit_workflow_outcome_model(
     weights *= len(weights) / weights.sum()
 
     model = LogisticRegression(
-        C=0.5, class_weight="balanced", max_iter=1000, random_state=seed,
+        C=0.5,
+        class_weight="balanced",
+        max_iter=1000,
+        random_state=seed,
     )
     model.fit(train_x, train_y, sample_weight=weights)
     probabilities = model.predict_proba(test_x)
     predictions = model.classes_[np.argmax(probabilities, axis=1)]
     majority = Counter(train_y).most_common(1)[0][0]
     candidate_balanced_accuracy = recall_score(
-        test_y, predictions, labels=classes, average="macro", zero_division=0,
+        test_y,
+        predictions,
+        labels=classes,
+        average="macro",
+        zero_division=0,
     )
     candidate_class_recall = recall_score(
-        test_y, predictions, labels=classes, average=None, zero_division=0,
+        test_y,
+        predictions,
+        labels=classes,
+        average=None,
+        zero_division=0,
     )
     majority_predictions = np.full(len(test_y), majority)
     majority_balanced_accuracy = recall_score(
-        test_y, majority_predictions, labels=classes, average="macro", zero_division=0,
+        test_y,
+        majority_predictions,
+        labels=classes,
+        average="macro",
+        zero_division=0,
     )
     majority_class_recall = recall_score(
-        test_y, majority_predictions, labels=classes, average=None, zero_division=0,
+        test_y,
+        majority_predictions,
+        labels=classes,
+        average=None,
+        zero_division=0,
     )
 
     artifact = {
@@ -157,17 +183,13 @@ def fit_workflow_outcome_model(
             "accuracy": float(accuracy_score(test_y, predictions)),
             "balanced_accuracy": float(candidate_balanced_accuracy),
             "log_loss": float(log_loss(test_y, probabilities, labels=model.classes_)),
-            "class_recall": {
-                label: float(value) for label, value in zip(classes, candidate_class_recall, strict=True)
-            },
+            "class_recall": {label: float(value) for label, value in zip(classes, candidate_class_recall, strict=True)},
         },
         "majority_baseline": {
             "class": majority,
             "accuracy": float(accuracy_score(test_y, majority_predictions)),
             "balanced_accuracy": float(majority_balanced_accuracy),
-            "class_recall": {
-                label: float(value) for label, value in zip(classes, majority_class_recall, strict=True)
-            },
+            "class_recall": {label: float(value) for label, value in zip(classes, majority_class_recall, strict=True)},
         },
         "class_group_counts": class_group_counts,
         "test_class_coverage": {label: int(Counter(test_y)[label]) for label in classes},

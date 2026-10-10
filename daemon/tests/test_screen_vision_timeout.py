@@ -46,7 +46,6 @@ class TestTimeoutPausesAgent:
         assert agent._consecutive_timeouts >= agent._max_consecutive_timeouts
         await agent.stop()
 
-
     @pytest.mark.asyncio
     async def test_does_not_pause_before_threshold(self, agent):
         timeouts = 0
@@ -241,12 +240,15 @@ async def test_active_task_ocr_unavailable_is_not_planner_text(agent):
 @pytest.mark.asyncio
 async def test_active_task_ocr_timeout_is_not_planner_text(agent):
     agent._running = True
+
     async def slow_ocr():
         await asyncio.sleep(0.1)
         return "stale result"
 
-    with (patch("pilot.system.vision.screen_ocr", new=slow_ocr),
-          patch("pilot.agents.screen_vision.ACTIVE_TASK_OCR_TIMEOUT_SECONDS", 0.01)):
+    with (
+        patch("pilot.system.vision.screen_ocr", new=slow_ocr),
+        patch("pilot.agents.screen_vision.ACTIVE_TASK_OCR_TIMEOUT_SECONDS", 0.01),
+    ):
         assert await agent.read_visible_text_now() == ""
 
 

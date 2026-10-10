@@ -153,9 +153,7 @@ async def test_recording_can_be_stopped_while_same_socket_task_is_active(tmp_pat
     config = PilotConfig()
     config.server.auth_token = "test-token"
     server = PilotServer(config)
-    server._recorded_workflows = RecordedWorkflowStore(
-        tmp_path / "recordings.enc", key_provider=lambda: b"k" * 32
-    )
+    server._recorded_workflows = RecordedWorkflowStore(tmp_path / "recordings.enc", key_provider=lambda: b"k" * 32)
     server._recorded_workflows.start(name="Task", consent=True)
     released = asyncio.Event()
 
@@ -173,10 +171,14 @@ async def test_recording_can_be_stopped_while_same_socket_task_is_active(tmp_pat
     try:
         await socket.send(json.dumps({"jsonrpc": "2.0", "method": "long_request", "params": {}, "id": "long"}))
         assert json.loads(await asyncio.wait_for(socket.recv(), 1))["method"] == "long_request_started"
-        await socket.send(json.dumps({"jsonrpc": "2.0", "method": "recorded_workflow_status", "params": {}, "id": "status"}))
+        await socket.send(
+            json.dumps({"jsonrpc": "2.0", "method": "recorded_workflow_status", "params": {}, "id": "status"})
+        )
         status = json.loads(await asyncio.wait_for(socket.recv(), 1))
         assert status["id"] == "status" and status["result"]["active"] is True
-        await socket.send(json.dumps({"jsonrpc": "2.0", "method": "recorded_workflow_stop", "params": {"save": False}, "id": "stop"}))
+        await socket.send(
+            json.dumps({"jsonrpc": "2.0", "method": "recorded_workflow_stop", "params": {"save": False}, "id": "stop"})
+        )
         stopped = json.loads(await asyncio.wait_for(socket.recv(), 1))
         assert stopped["id"] == "stop" and stopped["result"]["saved"] is False
         released.set()

@@ -37,17 +37,23 @@ def cases_from_rows(rows: list[dict], split: str) -> tuple[RelevanceCase, ...]:
         task = row["request"]["task"]
         tool = row["request"]["tool"]
         relevant = row["label"]["relevant"]
-        if (not isinstance(source_id, str) or not source_id or source_id in source_ids
-                or not isinstance(task, str) or not task.strip()
-                or not isinstance(tool["name"], str) or not tool["name"].strip()
-                or not isinstance(tool["description"], str) or not tool["description"].strip()
-                or type(relevant) is not bool):
+        if (
+            not isinstance(source_id, str)
+            or not source_id
+            or source_id in source_ids
+            or not isinstance(task, str)
+            or not task.strip()
+            or not isinstance(tool["name"], str)
+            or not tool["name"].strip()
+            or not isinstance(tool["description"], str)
+            or not tool["description"].strip()
+            or type(relevant) is not bool
+        ):
             raise ValueError("Invalid or duplicate TBAC task/tool row")
         source_ids.add(source_id)
         group_id = "tbac-" + hashlib.sha256(task.encode("utf-8")).hexdigest()
         action = f"Tool: {tool['name']}\nDescription: {tool['description']}"
-        cases.append(RelevanceCase(f"{group_id}:{source_id}", task, action,
-                                   relevant, group_id, split))
+        cases.append(RelevanceCase(f"{group_id}:{source_id}", task, action, relevant, group_id, split))
     if not cases:
         raise ValueError("TBAC split is empty")
     return tuple(cases)
@@ -65,14 +71,28 @@ def load_parts(root: Path) -> tuple[dict[str, tuple[RelevanceCase, ...]], dict]:
         hashes[split] = digest
     if {case.group_id for case in parts["validation"]} & {case.group_id for case in parts["test"]}:
         raise ValueError("TBAC task groups cross official splits")
-    return parts, {"repository": REPOSITORY, "revision": REVISION, "license": "Apache-2.0",
-                   "sha256": hashes, "rows": {name: len(cases) for name, cases in parts.items()},
-                   "label": "tool relevance, not authorization"}
+    return parts, {
+        "repository": REPOSITORY,
+        "revision": REVISION,
+        "license": "Apache-2.0",
+        "sha256": hashes,
+        "rows": {name: len(cases) for name, cases in parts.items()},
+        "label": "tool relevance, not authorization",
+    }
 
 
 def relevance_request(case: RelevanceCase) -> dict:
-    return {"model": "open-jev", "state": {"user_task": case.request, "candidate_tool": case.action},
-            "questions": {"tool_relevant": {"type": "noul",
-                                             "instructions": "Is this candidate tool directly relevant and useful for completing the user's task?",
-                                             "criteria": {"true": "The tool's described capability directly serves the task.",
-                                                          "false": "The tool is unnecessary or unrelated to the task."}}}}
+    return {
+        "model": "open-jev",
+        "state": {"user_task": case.request, "candidate_tool": case.action},
+        "questions": {
+            "tool_relevant": {
+                "type": "noul",
+                "instructions": "Is this candidate tool directly relevant and useful for completing the user's task?",
+                "criteria": {
+                    "true": "The tool's described capability directly serves the task.",
+                    "false": "The tool is unnecessary or unrelated to the task.",
+                },
+            }
+        },
+    }

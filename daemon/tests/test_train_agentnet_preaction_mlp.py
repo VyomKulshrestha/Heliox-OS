@@ -21,16 +21,21 @@ def test_development_loader_never_opens_held_out_labels(tmp_path, monkeypatch):
     features = tmp_path / "features.npz"
     np.savez_compressed(features, ids=np.asarray(ids), features=np.ones((5, 3)), signature="frozen")
     feature_report = tmp_path / "features.json"
-    feature_report.write_text(json.dumps({
-        "source_sha256": source_hash,
-        "manifest_sha256": study.sha256_file(manifest),
-        "features_sha256": study.sha256_file(features),
-        "input_view": "pre_action",
-        "model": study.MODEL,
-        "revision": study.REVISION,
-        "signature": "frozen",
-        "feature_dim": 3,
-    }), encoding="utf-8")
+    feature_report.write_text(
+        json.dumps(
+            {
+                "source_sha256": source_hash,
+                "manifest_sha256": study.sha256_file(manifest),
+                "features_sha256": study.sha256_file(features),
+                "input_view": "pre_action",
+                "model": study.MODEL,
+                "revision": study.REVISION,
+                "signature": "frozen",
+                "feature_dim": 3,
+            }
+        ),
+        encoding="utf-8",
+    )
     opened = []
 
     def fake_labels_for(_source, case_ids):
@@ -60,4 +65,6 @@ def test_development_loader_rejects_unpinned_source(tmp_path):
     source.write_text("{}\n", encoding="utf-8")
 
     with pytest.raises(ValueError, match="pinned release"):
-        study.load_development(source, tmp_path / "missing.json", tmp_path / "missing.npz", tmp_path / "missing-report.json")
+        study.load_development(
+            source, tmp_path / "missing.json", tmp_path / "missing.npz", tmp_path / "missing-report.json"
+        )

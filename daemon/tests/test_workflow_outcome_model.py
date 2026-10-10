@@ -20,21 +20,21 @@ def _examples() -> list[dict]:
         for index in range(4):
             group = f"opaque-recipe-{family}-{index}"
             for _ in range(3):
-                rows.append({
-                    "group_id": group,
-                    "features": {
-                        f"action_family_{family}": 1.0,
-                        "step_count_log1p": math.log1p(index + 1),
-                    },
-                    "label": label,
-                })
+                rows.append(
+                    {
+                        "group_id": group,
+                        "features": {
+                            f"action_family_{family}": 1.0,
+                            "step_count_log1p": math.log1p(index + 1),
+                        },
+                        "label": label,
+                    }
+                )
     return rows
 
 
 def test_outcome_candidate_is_fitted_and_research_only() -> None:
-    artifact, report = fit_workflow_outcome_model(
-        _examples(), seed=17, minimum_examples=12, minimum_groups=8
-    )
+    artifact, report = fit_workflow_outcome_model(_examples(), seed=17, minimum_examples=12, minimum_groups=8)
 
     assert artifact["research_only"] is True
     assert artifact["execution_authority"] == "none"
@@ -58,10 +58,7 @@ def test_outcome_candidate_rejects_too_few_real_examples() -> None:
 
 
 def test_outcome_candidate_rejects_class_with_only_one_independent_recipe() -> None:
-    examples = [
-        row for row in _examples()
-        if row["label"] != "not_achieved" or row["group_id"].endswith("-0")
-    ]
+    examples = [row for row in _examples() if row["label"] != "not_achieved" or row["group_id"].endswith("-0")]
 
     with pytest.raises(ValueError, match="at least two independent recipe groups"):
         fit_workflow_outcome_model(examples, minimum_examples=12, minimum_groups=8)

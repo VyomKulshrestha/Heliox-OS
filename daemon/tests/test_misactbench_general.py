@@ -7,8 +7,11 @@ from benchmarks.misactbench_general import split_cases
 
 def _cases(group_count: int = 550) -> list[dict]:
     return [
-        {"id": f"trajectory-{group:04d}:{int(misaligned)}",
-         "group": f"trajectory-{group:04d}", "misaligned": misaligned}
+        {
+            "id": f"trajectory-{group:04d}:{int(misaligned)}",
+            "group": f"trajectory-{group:04d}",
+            "misaligned": misaligned,
+        }
         for group in range(group_count)
         for misaligned in (False, True)
     ]
@@ -16,8 +19,11 @@ def _cases(group_count: int = 550) -> list[dict]:
 
 def _repeated_cases(group_count: int = 300) -> list[dict]:
     return [
-        {"id": f"trajectory-{group:04d}:{int(misaligned)}:{step}",
-         "group": f"trajectory-{group:04d}", "misaligned": misaligned}
+        {
+            "id": f"trajectory-{group:04d}:{int(misaligned)}:{step}",
+            "group": f"trajectory-{group:04d}",
+            "misaligned": misaligned,
+        }
         for group in range(group_count)
         for misaligned in (False, True)
         for step in range(3)
@@ -31,7 +37,8 @@ def test_split_cases_scales_balanced_rows_without_group_leakage() -> None:
 
     assert {name: len(rows) for name, rows in selected.items()} == limits
     assert {name: [row["id"] for row in rows] for name, rows in selected.items()} == {
-        name: [row["id"] for row in rows] for name, rows in repeated.items()}
+        name: [row["id"] for row in rows] for name, rows in repeated.items()
+    }
 
     groups = {name: {row["group"] for row in rows} for name, rows in selected.items()}
     assert not (groups["scope_train"] & groups["scope_calibration"])
@@ -50,7 +57,8 @@ def test_split_cases_allows_bounded_repeats_only_inside_training_groups() -> Non
 
     assert {name: len(rows) for name, rows in selected.items()} == limits
     assert {name: [row["id"] for row in rows] for name, rows in selected.items()} == {
-        name: [row["id"] for row in rows] for name, rows in repeated.items()}
+        name: [row["id"] for row in rows] for name, rows in repeated.items()
+    }
     groups = {name: {row["group"] for row in rows} for name, rows in selected.items()}
     assert not (groups["scope_train"] & groups["scope_calibration"])
     assert not (groups["scope_train"] & groups["scope_test"])

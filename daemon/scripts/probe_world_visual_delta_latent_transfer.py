@@ -21,8 +21,7 @@ def training_task_names(model_report: dict, source_reports: tuple[Path | None, P
     fields = ("source_report_sha256", "additional_source_report_sha256")
     if all(path is None for path in source_reports):
         return None
-    if any(bool(path) != bool(model_report.get(field))
-           for path, field in zip(source_reports, fields, strict=True)):
+    if any(bool(path) != bool(model_report.get(field)) for path, field in zip(source_reports, fields, strict=True)):
         raise ValueError("Provide every source report used to fit the frozen model")
     tasks = set()
     for path, field in zip(source_reports, fields, strict=True):
@@ -32,8 +31,7 @@ def training_task_names(model_report: dict, source_reports: tuple[Path | None, P
         source = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(source.get("tasks"), dict):
             raise ValueError("Training source report has no task-split provenance")
-        tasks.update(task for split in ("train", "validation")
-                     for task in source["tasks"].get(split, []))
+        tasks.update(task for split in ("train", "validation") for task in source["tasks"].get(split, []))
     return tasks
 
 
@@ -70,10 +68,16 @@ def main() -> None:
     parser.add_argument("--target-report", type=Path, required=True)
     parser.add_argument("--target-semantic-features", type=Path)
     parser.add_argument("--target-semantic-report", type=Path)
-    parser.add_argument("--training-source-report", type=Path,
-                        help="Hash-verified primary training archive report for task-overlap audit")
-    parser.add_argument("--additional-training-source-report", type=Path,
-                        help="Hash-verified additional training archive report for task-overlap audit")
+    parser.add_argument(
+        "--training-source-report",
+        type=Path,
+        help="Hash-verified primary training archive report for task-overlap audit",
+    )
+    parser.add_argument(
+        "--additional-training-source-report",
+        type=Path,
+        help="Hash-verified additional training archive report for task-overlap audit",
+    )
     parser.add_argument("--split", choices=("train", "validation", "eval"), default="eval")
     parser.add_argument("--report", type=Path, required=True)
     parser.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
@@ -84,8 +88,9 @@ def main() -> None:
     if model_report.get("purpose") != "research_only_delta_inverse_visual_latent_transition":
         raise ValueError("Expected a delta-latent research report")
     semantic_dim = int(model_report.get("semantic_dim") or 0)
-    if (bool(args.target_semantic_features) != bool(args.target_semantic_report)
-            or bool(semantic_dim) != bool(args.target_semantic_features)):
+    if bool(args.target_semantic_features) != bool(args.target_semantic_report) or bool(semantic_dim) != bool(
+        args.target_semantic_features
+    ):
         raise ValueError("Target semantic features are required exactly for semantic models")
     weights_hash = hashlib.sha256(args.weights.read_bytes()).hexdigest()
     if weights_hash != model_report.get("weights_sha256"):
@@ -99,12 +104,11 @@ def main() -> None:
     rows = load_features(args.target_features, args.target_report)
     if semantic_dim:
         actual_dim = attach_semantic_features(
-            rows, args.target_features, args.target_report,
-            args.target_semantic_features, args.target_semantic_report)
+            rows, args.target_features, args.target_report, args.target_semantic_features, args.target_semantic_report
+        )
         if actual_dim != semantic_dim:
             raise ValueError("Frozen model and target semantic dimensions differ")
-    fit_tasks = training_task_names(
-        model_report, (args.training_source_report, args.additional_training_source_report))
+    fit_tasks = training_task_names(model_report, (args.training_source_report, args.additional_training_source_report))
     masks = task_masks(args.target_features, args.split, len(rows[args.split]["state"]))
 
     import torch
@@ -129,10 +133,14 @@ def main() -> None:
         "target_report_sha256": hashlib.sha256(args.target_report.read_bytes()).hexdigest(),
         "target_semantic_features_sha256": (
             hashlib.sha256(args.target_semantic_features.read_bytes()).hexdigest()
-            if args.target_semantic_features else None),
+            if args.target_semantic_features
+            else None
+        ),
         "target_semantic_report_sha256": (
             hashlib.sha256(args.target_semantic_report.read_bytes()).hexdigest()
-            if args.target_semantic_report else None),
+            if args.target_semantic_report
+            else None
+        ),
         "target_split": args.split,
         "target_rows": len(rows[args.split]["state"]),
         "target_groups": len(set(rows[args.split]["groups"])),
@@ -143,7 +151,7 @@ def main() -> None:
         "training_task_names": sorted(fit_tasks) if fit_tasks is not None else None,
         "exact_task_name_overlap": (sorted(set(masks) & fit_tasks) if fit_tasks is not None else None),
         "limitation": "Frozen one-step latent model on selected public GUI pairs only. "
-                      "No real desktop, multistep task, runtime promotion, safety, or Jev parity claim.",
+        "No real desktop, multistep task, runtime promotion, safety, or Jev parity claim.",
     }
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")

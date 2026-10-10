@@ -172,7 +172,8 @@ def candidate_centers(page) -> list[tuple[float, float]]:
 
 def visible_semantics(page, point: tuple[float, float] | None = None) -> dict[str, str]:
     """Capture bounded rendered text/control state, never HTML source."""
-    result = page.evaluate("""point => {
+    result = page.evaluate(
+        """point => {
         const root = document.querySelector('#wrap');
         const hit = point ? document.elementFromPoint(point[0], point[1]) : null;
         const control = hit?.closest('button,a,input,select,[role]') || hit;
@@ -202,12 +203,16 @@ def visible_semantics(page, point: tuple[float, float] | None = None) -> dict[st
                 ? (control.getAttribute('type') || 'text').toLowerCase()
                 : (control?.getAttribute('role') || control?.tagName || '').toLowerCase()
         };
-    }""", list(point) if point is not None else None)
+    }""",
+        list(point) if point is not None else None,
+    )
     rendered = " ".join(result["text"].split())
     controls = "\n".join(result["controls"])
-    return {"text": (rendered + "\nControls:\n" + controls)[:MAX_SEMANTIC_CHARS],
-            "target": " ".join(result["target"].split())[:160],
-            "target_kind": " ".join(result["target_kind"].split())[:40]}
+    return {
+        "text": (rendered + "\nControls:\n" + controls)[:MAX_SEMANTIC_CHARS],
+        "target": " ".join(result["target"].split())[:160],
+        "target_kind": " ".join(result["target_kind"].split())[:40],
+    }
 
 
 def _reset(browser, assets: PinnedAssets, task: str, seed: str):
@@ -228,8 +233,14 @@ def _reset(browser, assets: PinnedAssets, task: str, seed: str):
 
 
 def collect_group(
-    browser, assets: PinnedAssets, task: str, seed: str, max_candidates: int, feature_size: int = 16,
-    include_semantics: bool = False, nonterminal_only: bool = False,
+    browser,
+    assets: PinnedAssets,
+    task: str,
+    seed: str,
+    max_candidates: int,
+    feature_size: int = 16,
+    include_semantics: bool = False,
+    nonterminal_only: bool = False,
     require_semantic_difference: bool = False,
 ) -> tuple[list[dict], int]:
     reference: tuple[list[tuple[float, float]], str, np.ndarray] | None = None
@@ -250,30 +261,38 @@ def collect_group(
             if candidate_index >= len(candidates):
                 break
             x, y = candidates[candidate_index]
-            before_semantics = visible_semantics(page, (x, y)) if (include_semantics or require_semantic_difference) else None
+            before_semantics = (
+                visible_semantics(page, (x, y)) if (include_semantics or require_semantic_difference) else None
+            )
             page.mouse.click(x, y)
             outcome = page.evaluate("({done: WOB_DONE_GLOBAL, reward: WOB_RAW_REWARD_GLOBAL})")
             attempted += 1
             if nonterminal_only and outcome["done"]:
                 continue
-            row = {"state": before_feature,
-                   "target": visual_feature(page.screenshot(animations="disabled"), feature_size),
-                   "coords": (x / VIEWPORT["width"], y / VIEWPORT["height"]),
-                   "done": bool(outcome["done"]),
-                   "reward": float(outcome["reward"]) if outcome["done"] else None}
+            row = {
+                "state": before_feature,
+                "target": visual_feature(page.screenshot(animations="disabled"), feature_size),
+                "coords": (x / VIEWPORT["width"], y / VIEWPORT["height"]),
+                "done": bool(outcome["done"]),
+                "reward": float(outcome["reward"]) if outcome["done"] else None,
+            }
             if before_semantics is not None:
-                row.update({"state_text": before_semantics["text"],
-                            "action_label": before_semantics["target"],
-                            "action_kind": before_semantics.get("target_kind", ""),
-                            "target_text": visible_semantics(page)["text"]})
+                row.update(
+                    {
+                        "state_text": before_semantics["text"],
+                        "action_label": before_semantics["target"],
+                        "action_kind": before_semantics.get("target_kind", ""),
+                        "target_text": visible_semantics(page)["text"],
+                    }
+                )
             rows.append(row)
         finally:
             context.close()
     for left in range(len(rows)):
         for right in range(left + 1, len(rows)):
-            if (not np.array_equal(rows[left]["target"], rows[right]["target"])
-                and (not require_semantic_difference
-                     or rows[left]["target_text"] != rows[right]["target_text"])):
+            if not np.array_equal(rows[left]["target"], rows[right]["target"]) and (
+                not require_semantic_difference or rows[left]["target_text"] != rows[right]["target_text"]
+            ):
                 return [rows[left], rows[right]], attempted
     return [], attempted
 
@@ -300,14 +319,21 @@ def main() -> None:
     parser.add_argument("--seed-start", type=int, default=0)
     parser.add_argument("--feature-size", type=int, choices=(16, 64), default=16)
     parser.add_argument("--max-candidates", type=int, default=8)
-    parser.add_argument("--nonterminal-only", action="store_true",
-                        help="Keep only action pairs whose two outcomes remain on the task page")
-    parser.add_argument("--require-semantic-difference", action="store_true",
-                        help="Reject pairs differing only in screenshot pixels, such as focus outlines")
+    parser.add_argument(
+        "--nonterminal-only",
+        action="store_true",
+        help="Keep only action pairs whose two outcomes remain on the task page",
+    )
+    parser.add_argument(
+        "--require-semantic-difference",
+        action="store_true",
+        help="Reject pairs differing only in screenshot pixels, such as focus outlines",
+    )
     parser.add_argument("--features", type=Path, default=root / "miniwob_branches_v1.npz")
     parser.add_argument("--report", type=Path, default=root / "miniwob_branches_v1.json")
-    parser.add_argument("--semantic-archive", type=Path,
-                        help="Opt-in local JSONL of bounded public-task visible text and actions")
+    parser.add_argument(
+        "--semantic-archive", type=Path, help="Opt-in local JSONL of bounded public-task visible text and actions"
+    )
     args = parser.parse_args()
     try:
         tasks = {split: parse_tasks(getattr(args, f"{split}_tasks")) for split in ("train", "validation", "eval")}
@@ -320,9 +346,14 @@ def main() -> None:
         or not 2 <= args.max_candidates <= 16
         or args.features.exists()
         or args.report.exists()
-        or (args.semantic_archive is not None
-            and (args.semantic_archive.exists() or args.semantic_archive.suffix != ".jsonl"
-                 or args.semantic_archive.resolve() in (args.features.resolve(), args.report.resolve())))
+        or (
+            args.semantic_archive is not None
+            and (
+                args.semantic_archive.exists()
+                or args.semantic_archive.suffix != ".jsonl"
+                or args.semantic_archive.resolve() in (args.features.resolve(), args.report.resolve())
+            )
+        )
     ):
         parser.error("Use task-disjoint splits, bounded settings, and fresh output paths")
 
@@ -340,7 +371,12 @@ def main() -> None:
                         seed = f"{SOURCE_COMMIT}:{task}:{index}"
                         try:
                             pair, count = collect_group(
-                                browser, assets, task, seed, args.max_candidates, args.feature_size,
+                                browser,
+                                assets,
+                                task,
+                                seed,
+                                args.max_candidates,
+                                args.feature_size,
                                 include_semantics=args.semantic_archive is not None,
                                 nonterminal_only=args.nonterminal_only,
                                 require_semantic_difference=args.require_semantic_difference,
@@ -384,9 +420,28 @@ def main() -> None:
     semantic_sha256 = None
     if args.semantic_archive is not None:
         args.semantic_archive.parent.mkdir(parents=True, exist_ok=True)
-        content = "".join(json.dumps({key: row[key] for key in (
-            "group", "split", "task", "coords", "done", "reward", "state_text",
-            "action_label", "action_kind", "target_text")}, ensure_ascii=False) + "\n" for row in rows)
+        content = "".join(
+            json.dumps(
+                {
+                    key: row[key]
+                    for key in (
+                        "group",
+                        "split",
+                        "task",
+                        "coords",
+                        "done",
+                        "reward",
+                        "state_text",
+                        "action_label",
+                        "action_kind",
+                        "target_text",
+                    )
+                },
+                ensure_ascii=False,
+            )
+            + "\n"
+            for row in rows
+        )
         args.semantic_archive.write_text(content, encoding="utf-8")
         semantic_sha256 = hashlib.sha256(args.semantic_archive.read_bytes()).hexdigest()
     termination_by_group = {}
@@ -420,12 +475,10 @@ def main() -> None:
         "reward_observed": {
             split: dict(Counter(str(row["reward"]) for row in rows if row["split"] == split)) for split in tasks
         },
-        "terminal_outcome_rows": {
-            split: sum(row["done"] for row in rows if row["split"] == split) for split in tasks
-        },
+        "terminal_outcome_rows": {split: sum(row["done"] for row in rows if row["split"] == split) for split in tasks},
         "mixed_terminal_pairs": {
-            split: sum(len(states) == 2 for (name, _), states in termination_by_group.items()
-                       if name == split) for split in tasks
+            split: sum(len(states) == 2 for (name, _), states in termination_by_group.items() if name == split)
+            for split in tasks
         },
         "features_sha256": hashlib.sha256(args.features.read_bytes()).hexdigest(),
         "semantic_archive_sha256": semantic_sha256,
