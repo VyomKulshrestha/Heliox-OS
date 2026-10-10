@@ -77,6 +77,25 @@ class Subtask:
             "order": self.order,
         }
 
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Subtask:
+        try:
+            status = SubtaskStatus(str(data.get("status", "pending")))
+        except ValueError:
+            status = SubtaskStatus.PENDING
+        return cls(
+            id=str(data.get("id", "")),
+            title=str(data.get("title", "")),
+            description=str(data.get("description", "")),
+            agent=str(data.get("agent", "system")),
+            depends_on=[str(item) for item in data.get("depends_on") or []],
+            status=status,
+            estimated_complexity=float(data.get("estimated_complexity", 0.5)),
+            output=str(data.get("output", "")),
+            error=str(data.get("error", "")),
+            order=int(data.get("order", 0)),
+        )
+
 
 @dataclass
 class TaskDecomposition:
@@ -99,6 +118,17 @@ class TaskDecomposition:
             "subtask_count": len(self.subtasks),
             "subtasks": [s.to_dict() for s in self.subtasks],
         }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> TaskDecomposition:
+        return cls(
+            goal=str(data.get("goal", "")),
+            subtasks=[Subtask.from_dict(item) for item in data.get("subtasks") or [] if isinstance(item, dict)],
+            is_complex=bool(data.get("is_complex", False)),
+            estimated_total_time=str(data.get("estimated_total_time", "")),
+            error=str(data.get("error", "")),
+            decomposition_id=str(data.get("decomposition_id", "")) or uuid.uuid4().hex[:8],
+        )
 
 
 DECOMPOSITION_PROMPT = """\

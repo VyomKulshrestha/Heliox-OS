@@ -149,7 +149,13 @@ _RAW_MEDIA_KEYS = {
 }
 _TOKEN_PATTERNS = (
     re.compile(r"\b(?:sk|gh[opsu]|github_pat)_[A-Za-z0-9_-]{12,}\b"),
+    # OpenAI / Anthropic / OpenRouter style keys: sk-..., sk-ant-..., sk-or-...
+    re.compile(r"\bsk-[A-Za-z0-9_-]{16,}"),
     re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{12,}\b"),
+    # key=value / key: value assignments of credentials in logs and tool output
+    re.compile(
+        r"(?i)\b(?:api[_-]?key|access[_-]?token|auth[_-]?token|secret|password|passwd)\b\s*[:=]\s*[\"']?[^\s\"',;]{6,}"
+    ),
 )
 
 

@@ -12,7 +12,7 @@ The Heliox OS UI and daemon communicate over a local WebSocket using the [JSON-R
 | Request timeout | 5 minutes |
 | Reconnect interval | 3 seconds (auto-reconnect on close) |
 
-The daemon currently registers **202 WebSocket RPC methods**. That is the API
+The daemon currently registers **203 WebSocket RPC methods**. That is the API
 surface count, not the action catalog: Heliox exposes **162 action
 types** through the guarded planner/executor system. This document names every
 registered RPC method; grouped tables are used where several methods share one
@@ -1259,13 +1259,25 @@ Submit a goal for fire-and-forget autonomous background execution.
 ```
 
 #### `autonomous_cancel`
-Cancel a running autonomous job.
+Cancel a running autonomous job, or dismiss an interrupted one.
 
 **Params:** `{ "job_id": "abc123" }`
 **Result:** `{ "cancelled": true, "job_id": "abc123" }`
 
+#### `autonomous_resume`
+Continue a job that a daemon shutdown or crash interrupted. Jobs are saved in
+`autonomous_jobs.db` in the data folder; after a restart, any job that was
+queued, planning or running comes back with `"status": "interrupted"` and
+`"resumable": true`, and nothing resumes on its own. Resuming skips finished
+steps, re-observes the screen and tells the planner the step was interrupted;
+approval and human-takeover rules apply as usual.
+
+**Params:** `{ "job_id": "abc123" }`
+**Result:** `{ "status": "resumed", "job": <job> }`, or
+`{ "status": "error", "message": "Only an interrupted job can be resumed" }`.
+
 #### `autonomous_jobs`
-List all autonomous jobs.
+List all autonomous jobs, including interrupted ones from before a restart.
 
 **Params:** `{}`
 **Result:** `{ "jobs": [ <job>, ... ] }`

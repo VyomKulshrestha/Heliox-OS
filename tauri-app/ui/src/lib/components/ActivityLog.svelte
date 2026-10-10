@@ -3,6 +3,7 @@
   import { call, requireResultStatus } from "../api/daemon";
   import { invoke } from "../api/invoke";
   import { loadLocalCommandHistory, type LocalCommandStatus } from "../utils/chatSessions";
+  import BackgroundTasksPanel from "./BackgroundTasksPanel.svelte";
 
   async function openLogsFolder() {
     await invoke("open_logs_folder");
@@ -76,6 +77,8 @@
       <button class="open-logs-btn" onclick={openLogsFolder} title="Open Logs Folder"> 📂 Open Logs </button>
     </div>
   </div>
+
+  <BackgroundTasksPanel />
 
   {#if loading}
     <div class="empty">Loading...</div>

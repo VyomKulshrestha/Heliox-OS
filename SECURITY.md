@@ -513,6 +513,17 @@ Tool output is size-capped and labelled as untrusted data before the planner
 sees it. Heliox declines server requests for sampling, roots or elicitation, so
 a server cannot use Heliox's model or read its files.
 
+## ⏸️ Interrupted background jobs never resume by themselves
+
+Autonomous jobs are saved to `autonomous_jobs.db` as they change state. A job
+that was running when the daemon stopped or crashed comes back as
+`interrupted`; it waits for the person to resume or dismiss it, so a restarted
+daemon never starts moving the mouse on its own. A resumed job keeps its
+original scope override, re-observes the screen before acting and goes
+through the same approval, gateway and takeover checks. Step outputs are
+capped and passed through the same credential redaction as other persisted
+records before they are written.
+
 ## ✋ Human takeover of the desktop
 
 **What this is.** `pilot.security.human_control.HumanControlGate` lets the

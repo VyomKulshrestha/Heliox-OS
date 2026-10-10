@@ -95,6 +95,18 @@ class JobStatus(StrEnum):
     PARTIAL = "partial"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    # Cut off by a daemon stop or crash; waits for the person to resume or cancel it.
+    INTERRUPTED = "interrupted"
+
+
+TERMINAL_STEP_STATES = frozenset({"success", "failed", "skipped"})
+MAX_PERSISTED_STEP_CHARS = 2000
+
+
+def _persistable_text(text: str) -> str:
+    from pilot.intelligence.experience import redact_for_persistence
+
+    return str(redact_for_persistence(text[:MAX_PERSISTED_STEP_CHARS]))
 
 
 @dataclass
@@ -129,6 +141,33 @@ class JobStep:
             "rounds": self.rounds,
         }
 
+    def to_record(self) -> dict[str, Any]:
+        return {
+            "index": self.index,
+            "title": self.title,
+            "description": self.description,
+            "status": self.status,
+            "output": _persistable_text(self.output),
+            "error": _persistable_text(self.error),
+            "started_at": self.started_at,
+            "completed_at": self.completed_at,
+            "rounds": self.rounds,
+        }
+
+    @classmethod
+    def from_record(cls, data: dict[str, Any]) -> JobStep:
+        return cls(
+            index=int(data.get("index", 0)),
+            title=str(data.get("title", "")),
+            description=str(data.get("description", "")),
+            status=str(data.get("status", "pending")),
+            output=str(data.get("output", "")),
+            error=str(data.get("error", "")),
+            started_at=float(data.get("started_at", 0.0)),
+            completed_at=float(data.get("completed_at", 0.0)),
+            rounds=int(data.get("rounds", 0)),
+        )
+
 
 @dataclass
 class AutonomousJob:
@@ -146,6 +185,8 @@ class AutonomousJob:
     source: str = "text"  # "text" or "voice" -- input modality, unrelated to gateway InvocationSource
     session_id: str = "default"
     scope_override: TaskScopeOverride | None = None  # optional caller-supplied restriction (see AgentGateway)
+    decomposition: dict[str, Any] | None = None  # TaskDecomposition.to_dict(), kept so a resume knows the steps
+    resumed_count: int = 0
 
     @property
     def duration_seconds(self) -> float:
@@ -167,7 +208,53 @@ class AutonomousJob:
             "result_summary": self.result_summary,
             "source": self.source,
             "session_id": self.session_id,
+            "resumable": self.status == JobStatus.INTERRUPTED,
+            "resumed_count": self.resumed_count,
         }
+
+    def to_record(self) -> dict[str, Any]:
+        """Everything needed to show the job again, or resume it, after a restart."""
+        return {
+            "job_id": self.job_id,
+            "goal": self.goal,
+            "status": self.status.value,
+            "steps": [step.to_record() for step in self.steps],
+            "current_step": self.current_step,
+            "total_steps": self.total_steps,
+            "started_at": self.started_at,
+            "completed_at": self.completed_at,
+            "result_summary": self.result_summary,
+            "source": self.source,
+            "session_id": self.session_id,
+            "scope_override": self.scope_override.model_dump(mode="json") if self.scope_override else None,
+            "decomposition": self.decomposition,
+            "resumed_count": self.resumed_count,
+        }
+
+    @classmethod
+    def from_record(cls, data: dict[str, Any]) -> AutonomousJob:
+        try:
+            status = JobStatus(str(data.get("status", JobStatus.INTERRUPTED.value)))
+        except ValueError:
+            status = JobStatus.INTERRUPTED
+        scope = data.get("scope_override")
+        decomposition = data.get("decomposition")
+        return cls(
+            job_id=str(data["job_id"]),
+            goal=str(data.get("goal", "")),
+            status=status,
+            steps=[JobStep.from_record(step) for step in data.get("steps") or [] if isinstance(step, dict)],
+            current_step=int(data.get("current_step", 0)),
+            total_steps=int(data.get("total_steps", 0)),
+            started_at=float(data.get("started_at", 0.0)),
+            completed_at=float(data.get("completed_at", 0.0)),
+            result_summary=str(data.get("result_summary", "")),
+            source=str(data.get("source", "text")),
+            session_id=str(data.get("session_id", "default")),
+            scope_override=TaskScopeOverride.model_validate(scope) if isinstance(scope, dict) else None,
+            decomposition=decomposition if isinstance(decomposition, dict) else None,
+            resumed_count=int(data.get("resumed_count", 0)),
+        )
 
 
 class AutonomousExecutor:
@@ -190,8 +277,11 @@ class AutonomousExecutor:
         multi_agent_router: Any | None = None,
         accessibility_observer: Callable[[], Awaitable[str]] | None = None,
         human_control: Any | None = None,
+        job_store: Any | None = None,
     ) -> None:
         self._planner = planner
+        # AutonomousJobStore: jobs survive a daemon restart as interrupted, resumable records.
+        self._job_store = job_store
         # HumanControlGate: the person can take the desktop back; jobs pause until it is returned.
         self._human_control = human_control
         # Returns the focused window's element list with refs, or "" when unavailable.
@@ -248,25 +338,79 @@ class AutonomousExecutor:
             session_id=session_id,
         )
         self._jobs[job.job_id] = job
-
-        if self._memory is not None:
-            try:
-                await self._memory.put_working(
-                    session_id=session_id,
-                    task_id=job.job_id,
-                    key="active_goal",
-                    value={"goal": goal, "source": source},
-                    priority=0.95,
-                    ttl_seconds=3600,
-                )
-            except Exception:
-                logger.warning("Could not persist autonomous working memory", exc_info=True)
+        await self._persist(job)
+        await self._remember_active_goal(job)
 
         # Launch in background — non-blocking
         task = asyncio.create_task(self._run_job(job))
         self._active_tasks[job.job_id] = task
 
         logger.info("Autonomous job submitted: [%s] %s", job.job_id, goal[:80])
+        return job
+
+    async def _remember_active_goal(self, job: AutonomousJob) -> None:
+        if self._memory is None:
+            return
+        try:
+            await self._memory.put_working(
+                session_id=job.session_id,
+                task_id=job.job_id,
+                key="active_goal",
+                value={"goal": job.goal, "source": job.source},
+                priority=0.95,
+                ttl_seconds=3600,
+            )
+        except Exception:
+            logger.warning("Could not persist autonomous working memory", exc_info=True)
+
+    async def _persist(self, job: AutonomousJob) -> None:
+        if self._job_store is None:
+            return
+        try:
+            await self._job_store.save(job.to_record())
+        except Exception:
+            logger.warning("Could not save autonomous job %s", job.job_id, exc_info=True)
+
+    async def recover(self) -> list[AutonomousJob]:
+        """Reload saved jobs after a restart. Jobs cut off mid-run become interrupted; none resume by themselves."""
+        if self._job_store is None:
+            return []
+        await self._job_store.mark_interrupted()
+        for record in await self._job_store.load_recent():
+            try:
+                job = AutonomousJob.from_record(record)
+            except (KeyError, TypeError, ValueError):
+                logger.warning("Skipping unreadable autonomous job record %r", record.get("job_id"))
+                continue
+            self._jobs.setdefault(job.job_id, job)
+        with contextlib.suppress(Exception):
+            await self._job_store.prune()
+        # Jobs a clean shutdown already saved as interrupted wait for the person just like crashed ones.
+        interrupted = [job for job in self._jobs.values() if job.status == JobStatus.INTERRUPTED]
+        if interrupted:
+            logger.info("%d autonomous job(s) were interrupted by the last shutdown", len(interrupted))
+        return interrupted
+
+    async def resume(self, job_id: str) -> AutonomousJob | None:
+        """Continue an interrupted job from its first unfinished step; None if it is not interrupted."""
+        if self._stopping:
+            raise RuntimeError("Autonomous executor is stopping")
+        job = self._jobs.get(job_id)
+        if job is None or job.status != JobStatus.INTERRUPTED or job_id in self._active_tasks:
+            return None
+        job.status = JobStatus.QUEUED
+        job.resumed_count += 1
+        job.completed_at = 0.0
+        job.result_summary = ""
+        for step in job.steps:
+            if step.status not in TERMINAL_STEP_STATES:
+                step.status = "pending"
+                step.error = ""
+                step.completed_at = 0.0
+        await self._persist(job)
+        await self._remember_active_goal(job)
+        self._active_tasks[job.job_id] = asyncio.create_task(self._run_job(job))
+        logger.info("Autonomous job resumed: [%s] %s", job.job_id, job.goal[:80])
         return job
 
     async def cancel(self, job_id: str) -> bool:
@@ -307,36 +451,56 @@ class AutonomousExecutor:
         sorted_jobs = sorted(self._jobs.values(), key=lambda j: j.started_at or 0, reverse=True)
         return [j.to_dict() for j in sorted_jobs[:50]]
 
+    def _restored_decomposition(self, job: AutonomousJob) -> Any:
+        """Rebuild a resumed job's subtasks, carrying over what earlier runs finished."""
+        from pilot.agents.decomposer import SubtaskStatus, TaskDecomposition
+
+        decomposition = TaskDecomposition.from_dict(job.decomposition or {})
+        finished = {"success": SubtaskStatus.SUCCESS, "failed": SubtaskStatus.FAILED, "skipped": SubtaskStatus.SKIPPED}
+        for subtask in decomposition.subtasks:
+            step = job.steps[subtask.order] if 0 <= subtask.order < len(job.steps) else None
+            subtask.status = finished.get(step.status, SubtaskStatus.PENDING) if step else SubtaskStatus.PENDING
+            subtask.output = step.output if step else ""
+        return decomposition
+
     async def _run_job(self, job: AutonomousJob) -> None:
         """Execute a job through the full autonomous pipeline."""
-        job.started_at = time.time()
+        resuming = bool(job.steps)
+        if not job.started_at:
+            job.started_at = time.time()
 
         try:
-            # Stage 1: Decompose the goal into subtasks
-            job.status = JobStatus.DECOMPOSING
-            await self._notify("autonomous_started", job)
-
-            decomposition = await self._decomposer.decompose(job.goal)
-            if decomposition.error:
-                raise RuntimeError(decomposition.error)
-
-            multi_step = decomposition.is_complex and bool(decomposition.subtasks)
-            if multi_step:
-                # Complex task — execute each subtask
-                job.total_steps = len(decomposition.subtasks)
-                for i, subtask in enumerate(decomposition.subtasks):
-                    job.steps.append(
-                        JobStep(
-                            index=i,
-                            title=subtask.title,
-                            description=subtask.description,
-                        )
-                    )
-                await self._notify("autonomous_decomposed", job)
+            if resuming:
+                multi_step = bool(job.decomposition and job.decomposition.get("subtasks"))
+                decomposition = self._restored_decomposition(job) if multi_step else None
+                await self._notify("autonomous_started", job)
             else:
-                # Simple task — single-step execution
-                job.total_steps = 1
-                job.steps.append(JobStep(index=0, title="Execute", description=job.goal))
+                # Stage 1: Decompose the goal into subtasks
+                job.status = JobStatus.DECOMPOSING
+                await self._notify("autonomous_started", job)
+
+                decomposition = await self._decomposer.decompose(job.goal)
+                if decomposition.error:
+                    raise RuntimeError(decomposition.error)
+
+                multi_step = decomposition.is_complex and bool(decomposition.subtasks)
+                if multi_step:
+                    # Complex task — execute each subtask
+                    job.decomposition = decomposition.to_dict()
+                    job.total_steps = len(decomposition.subtasks)
+                    for i, subtask in enumerate(decomposition.subtasks):
+                        job.steps.append(
+                            JobStep(
+                                index=i,
+                                title=subtask.title,
+                                description=subtask.description,
+                            )
+                        )
+                    await self._notify("autonomous_decomposed", job)
+                else:
+                    # Simple task — single-step execution
+                    job.total_steps = 1
+                    job.steps.append(JobStep(index=0, title="Execute", description=job.goal))
 
             from pilot.intelligence.experience import experience_scope
 
@@ -359,6 +523,18 @@ class AutonomousExecutor:
                 job.result_summary = "All steps failed."
 
         except asyncio.CancelledError:
+            if self._stopping and job.status != JobStatus.CANCELLED:
+                # The daemon is shutting down, not the person cancelling: keep the job resumable.
+                from pilot.workflows.autonomous_jobs import INTERRUPTED_SUMMARY
+
+                job.status = JobStatus.INTERRUPTED
+                job.result_summary = INTERRUPTED_SUMMARY
+                for step in job.steps:
+                    if step.status == "running":
+                        step.status = JobStatus.INTERRUPTED.value
+                await self._persist(job)
+                self._active_tasks.pop(job.job_id, None)
+                return
             job.status = JobStatus.CANCELLED
             job.result_summary = "Job was cancelled."
         except Exception as e:
@@ -367,6 +543,7 @@ class AutonomousExecutor:
             logger.error("Autonomous job [%s] failed: %s", job.job_id, e)
 
         job.completed_at = time.time()
+        await self._persist(job)
         if not self._stopping:
             await self._notify("autonomous_complete", job)
             await self._announce_completion(job)
@@ -431,7 +608,7 @@ class AutonomousExecutor:
         step.started_at = time.time()
         await self._notify("autonomous_step_start", job)
 
-        await self._execute_goal_loop(job, step, job.goal)
+        await self._execute_goal_loop(job, step, job.goal, initial_progress=self._resume_note(job, step))
 
         step.completed_at = time.time()
         await self._notify("autonomous_step_complete", job)
@@ -483,6 +660,8 @@ class AutonomousExecutor:
         for batch in batches:
             for subtask in batch:
                 step = job.steps[subtask.order]
+                if step.status in TERMINAL_STEP_STATES:
+                    continue  # finished before an interruption; its output is already on the subtask
                 job.current_step = subtask.order
                 failed_dependencies = [
                     dependency
@@ -520,7 +699,13 @@ class AutonomousExecutor:
                 specialist_context = None
                 if self._multi_agent_router is not None:
                     specialist_context = self._multi_agent_router.get_enhanced_prompt_for_specialist(subtask.agent)
-                await self._execute_goal_loop(job, step, goal, specialist_context=specialist_context or None)
+                await self._execute_goal_loop(
+                    job,
+                    step,
+                    goal,
+                    specialist_context=specialist_context or None,
+                    initial_progress=self._resume_note(job, step),
+                )
                 if step.status == "success":
                     subtask.status = SubtaskStatus.SUCCESS
                     subtask.output = step.output
@@ -530,6 +715,16 @@ class AutonomousExecutor:
 
                 step.completed_at = time.time()
                 await self._notify("autonomous_step_complete", job)
+
+    @staticmethod
+    def _resume_note(job: AutonomousJob, step: JobStep) -> list[str]:
+        if not job.resumed_count or not step.rounds:
+            return []
+        return [
+            f"This step was interrupted after {step.rounds} round(s) when Heliox stopped and has now been resumed. "
+            "Some of it may already be done: observe the current state and continue from there, without repeating "
+            "work that is already visible."
+        ]
 
     def _human_control_armed(self) -> contextlib.AbstractContextManager[None]:
         if self._human_control is None:
@@ -766,9 +961,10 @@ class AutonomousExecutor:
         on_round_complete: Callable[[str, ActionPlan, list[Any], Any, bool], Coroutine[Any, Any, None]] | None = None,
         memory_task_id: str | None = None,
         specialist_context: str | None = None,
+        initial_progress: list[str] | None = None,
     ) -> None:
         """Observe, act, verify, and re-plan until a step's real goal is complete."""
-        progress: list[str] = []
+        progress: list[str] = list(initial_progress or [])
         output_chunks: list[str] = []
         fingerprints: dict[str, int] = {}
         completed_action_types: set[str] = set()
@@ -956,7 +1152,8 @@ class AutonomousExecutor:
             step.status = "failed"
 
     async def _notify(self, event: str, job: AutonomousJob) -> None:
-        """Send a progress notification."""
+        """Save the job's new state and send a progress notification."""
+        await self._persist(job)
         if self._broadcast:
             try:
                 await self._broadcast(event, job.to_dict())

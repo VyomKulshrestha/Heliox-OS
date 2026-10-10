@@ -1169,6 +1169,7 @@ class PilotServer:
         # ── Autonomous Executor (JARVIS fire-and-forget) ──
         try:
             from pilot.agents.autonomous import AutonomousExecutor
+            from pilot.workflows.autonomous_jobs import AutonomousJobStore
 
             self._autonomous = AutonomousExecutor(
                 planner=self._planner,
@@ -1181,7 +1182,10 @@ class PilotServer:
                 multi_agent_router=self._multi_agent,
                 accessibility_observer=_accessibility_observation,
                 human_control=self._human_control,
+                job_store=AutonomousJobStore(),
             )
+            # Jobs cut off by the last shutdown come back as interrupted; the person decides whether to resume.
+            await self._autonomous.recover()
             self._autonomous.set_broadcast(self._broadcast_notification)
             self._autonomous.set_speech(self._speak_companion_text)
             self._autonomous.set_approval_handler(self._wait_for_autonomous_confirmation)
@@ -1456,6 +1460,7 @@ class PilotServer:
             "list_wake_variants": self._handle_list_wake_variants,
             "autonomous_submit": self._handle_autonomous_submit,
             "autonomous_cancel": self._handle_autonomous_cancel,
+            "autonomous_resume": self._handle_autonomous_resume,
             "autonomous_jobs": self._handle_autonomous_jobs,
             "autonomous_job": self._handle_autonomous_job,
             "risk_gate_status": self._handle_risk_gate_status,
@@ -10543,6 +10548,18 @@ def handle_tool(tool_name, params):
         job_id = params.get("job_id", "")
         success = await self._autonomous.cancel(job_id)
         return {"cancelled": success, "job_id": job_id}
+
+    async def _handle_autonomous_resume(self, params: dict, ws: ServerConnection) -> dict:
+        """Continue a job that a daemon shutdown or crash interrupted, from its first unfinished step."""
+        if not self._autonomous:
+            return {"error": "Autonomous executor not initialized"}
+        job_id = params.get("job_id", "")
+        if not isinstance(job_id, str) or not job_id:
+            return {"status": "error", "message": "job_id is required"}
+        job = await self._autonomous.resume(job_id)
+        if job is None:
+            return {"status": "error", "message": "Only an interrupted job can be resumed"}
+        return {"status": "resumed", "job": job.to_dict()}
 
     async def _handle_autonomous_jobs(self, params: dict, ws: ServerConnection) -> dict:
         """List all autonomous jobs.
