@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "purpose": "attempt to exceed the Jev reference on a fresh authored desktop decision set; not general Jev parity or execution authority",
+  "frozen_before_execution": true,
+  "baseline_candidate": "jev_like_2b_v4_20261009.json (promoted; adapter a1f63979d3dc..., head cd0e0a3a4fd2...)",
+  "compute": "Google Colab Tesla T4 16 GB (free tier); fp16",
+  "changes_from_v4": [
+    "desktop corpus v2 -> v3: latest_instruction gains varied unrelated and confirming follow-ups (v4 wrongly cancelled requests after small talk); action_risk is now trained with richer levels including credential exposure by message; time_conversion scenarios tripled; new held-out urgency_rating score family",
+    "calibration temperature search widened from [0.25, 5] to the runtime range [0.05, 20] (v4's score temperature sat on the old floor; refitting v4 offline lowered held-out score MAE from 0.112 to 0.086)",
+    "all other data limits and hyperparameters identical to v4"
+  ],
+  "training_data": {
+    "release-v2-redistributable": {"train": 256, "calibration": 48, "test": 64, "ood": 96, "source_holdout_fraction": 0.2, "source_holdout_seed": 20261008},
+    "email-selection-control-v1": {"train": 32, "calibration": 16, "test": 16, "license": "CC0-1.0 per row"},
+    "mailroom-control-v1": {"train": 96, "calibration": 24, "test": 32, "license": "CC0-1.0 per row"},
+    "heliox_desktop_decisions_v3": {"seed": 20261002, "train_scenarios_per_family": 50, "license": "MIT, authored in repository", "family_ood": ["least_privilege", "third_party_disclosure", "urgency_rating"], "held_out_surface_variant": 3},
+    "excluded": ["TypeSafe Jev outputs", "released Open-Jev adapter weights", "rows failing the per-row CC0 or typesafe.ai source filter"]
+  },
+  "candidate": {"backbone": "qwen3.5-2b", "candidate_microbatch_size": 2},
+  "hyperparameters": {
+    "seed": 20261008,
+    "split_seed": 20261008,
+    "max_length": 1536,
+    "lora_rank": 8,
+    "prompt_style": "full_options_v2",
+    "attention": "sdpa",
+    "dtype": "float16",
+    "accumulation": 4,
+    "lr": 0.0001,
+    "head_lr": 0.0002,
+    "brier_weight": 0.1,
+    "ordinal_weight": 0.1,
+    "score_label_sigma": 0.75,
+    "kind_temperatures": true,
+    "temperature_bounds": [0.05, 20.0],
+    "skip_baseline": true,
+    "passes": 1
+  },
+  "confirmatory_set": "benchmarks/desktop_decisions_v3_eval_cases.json: seed 20261010, held-out surfaces and eval lexicon, states never seen in v3 fitting or calibration rows, Jev references collected before training ($0.002050)",
+  "promotion_rule": [
+    "Pass G1-G5 (scripts/check_jev_like_promotion.py) on the v3 corpus held-out splits.",
+    "On the confirmatory set (daemon runtime scorer, cached Jev references): Noul plus choice gold correct must be at least v4's, Noul false allowances must not exceed v4's, and score mean absolute error must be lower than v4's."
+  ],
+  "better_than_jev_rule": "On the confirmatory set, the promoted model counts as better than Jev on this benchmark only if Noul gold accuracy, choice gold accuracy and score mean absolute error are each at least as good as Jev's, at least one is strictly better, and Noul false allowances are not higher than Jev's. Any other outcome is reported as not better than Jev.",
+  "limitation": "The confirmatory labels are authored by this project, so exceeding Jev here means better agreement with these authored decision rules, not general superiority."
+}
