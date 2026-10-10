@@ -105,3 +105,13 @@ def test_checkpoint_signature_binds_the_new_mixture_options() -> None:
     assert len(signatures) == len(variants) + 1
     disabled = argparse.Namespace(**{**vars(base), "extra_config": None, "desktop_corpus": False})
     assert checkpoint_signature(disabled, {}, {}, None) == original
+
+
+def test_temperature_search_can_sharpen_under_confident_heads_below_the_old_floor() -> None:
+    from scripts.train_general_decision import TEMPERATURE_BOUNDS, fit_temperature
+
+    rows = [{"kind": "score", "target": [0.0, 0.0, 1.0, 0.0]} for _ in range(20)]
+    logits = [np.array([0.0, 0.1, 0.35, 0.1]) for _ in rows]
+    temperature = fit_temperature(logits, rows)
+    assert TEMPERATURE_BOUNDS[0] <= temperature < 0.25
+    assert probabilities(logits[0], temperature)[2] > 0.9
