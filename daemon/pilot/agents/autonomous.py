@@ -112,6 +112,22 @@ TERMINAL_STEP_STATES = frozenset({"success", "failed", "skipped"})
 MAX_PERSISTED_STEP_CHARS = 2000
 
 
+TOOL_CALL_PREVIEW_CHARS = 600
+TOOL_CALL_ARGUMENT_CHARS = 400
+
+
+def _tool_call_arguments(action: Any) -> str:
+    """The parameters a tool call actually set, redacted and capped for display."""
+    from pilot.intelligence.experience import redact_for_persistence
+
+    try:
+        params = action.parameters.model_dump(mode="json", exclude_defaults=True)
+    except Exception:
+        return ""
+    text = json.dumps(redact_for_persistence(params), ensure_ascii=False, sort_keys=True)
+    return text if len(text) <= TOOL_CALL_ARGUMENT_CHARS else text[:TOOL_CALL_ARGUMENT_CHARS] + "..."
+
+
 def _persistable_text(text: str) -> str:
     from pilot.intelligence.experience import redact_for_persistence
 
@@ -1112,11 +1128,14 @@ class AutonomousExecutor:
                     progress.append(f"Round {round_index + 1} blocked: {failure}")
                     step.error = failure
                     break
+                on_call_start, on_call_complete = self._tool_call_reporter(job, step, round_index)
                 with agent_initiated():
                     if self._orchestrator is not None:
                         results = await self._orchestrator.execute_plan(
                             goal,
                             plan,
+                            on_action_start=on_call_start,
+                            on_action_complete=on_call_complete,
                             plan_id=plan_id,
                             scope_override=job.scope_override,
                             user_confirmed=user_confirmed,
@@ -1124,6 +1143,8 @@ class AutonomousExecutor:
                     else:
                         results = await self._executor.execute(
                             plan,
+                            on_action_start=on_call_start,
+                            on_action_complete=on_call_complete,
                             plan_id=plan_id,
                             invocation_source=invocation_source,
                             scope_override=job.scope_override,
@@ -1185,6 +1206,61 @@ class AutonomousExecutor:
         step.output = "\n".join(output_chunks)
         if step.status != "success":
             step.status = "failed"
+
+    def _tool_call_reporter(
+        self, job: AutonomousJob, step: JobStep, round_index: int
+    ) -> tuple[Callable[[Any], Awaitable[None]], Callable[[Any], Awaitable[None]]]:
+        """Callbacks that stream each action of a round to the chat as an ``agent_tool_call`` card."""
+        pending: list[tuple[Any, str, float]] = []  # (action, call_id, started) in start order
+
+        def base(call_id: str, action: Any) -> dict[str, Any]:
+            return {
+                "job_id": job.job_id,
+                "goal": job.goal[:300],
+                "source": job.source,
+                "step": step.index,
+                "total_steps": job.total_steps,
+                "round": round_index + 1,
+                "call_id": call_id,
+                "action_type": action.action_type.value,
+                "target": str(action.target)[:200],
+                "arguments": _tool_call_arguments(action),
+                "tier": action.permission_tier.name.lower(),
+            }
+
+        async def on_start(action: Any) -> None:
+            call_id = uuid.uuid4().hex[:12]
+            pending.append((action, call_id, time.monotonic()))
+            await self._broadcast_tool_call({**base(call_id, action), "phase": "start"})
+
+        async def on_complete(result: Any) -> None:
+            index = next((i for i, item in enumerate(pending) if item[0] is result.action), 0 if pending else -1)
+            if index >= 0:
+                _action, call_id, started = pending.pop(index)
+                duration_ms = int((time.monotonic() - started) * 1000)
+            else:  # skipped before it started (e.g. refused by policy)
+                call_id, duration_ms = uuid.uuid4().hex[:12], 0
+            await self._broadcast_tool_call(
+                {
+                    **base(call_id, result.action),
+                    "phase": "complete",
+                    "success": bool(result.success),
+                    "executed": bool(getattr(result, "executed", True)),
+                    "output": _persistable_text(result.output or "")[:TOOL_CALL_PREVIEW_CHARS],
+                    "error": _persistable_text(result.error or "")[:TOOL_CALL_PREVIEW_CHARS],
+                    "duration_ms": duration_ms,
+                }
+            )
+
+        return on_start, on_complete
+
+    async def _broadcast_tool_call(self, payload: dict[str, Any]) -> None:
+        if self._broadcast is None:
+            return
+        try:
+            await self._broadcast("agent_tool_call", payload)
+        except Exception:
+            logger.debug("Could not broadcast tool call", exc_info=True)
 
     async def _notify(self, event: str, job: AutonomousJob) -> None:
         """Save the job's new state and send a progress notification."""

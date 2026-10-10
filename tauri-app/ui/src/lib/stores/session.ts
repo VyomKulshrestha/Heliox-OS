@@ -16,7 +16,10 @@ import { settings } from "./settings";
 import { companion } from "./companion";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 
-export type MessageType = "user" | "system" | "error" | "plan" | "result" | "assistant" | "git_conflict";
+import { applyAgentRunStatus, applyToolCall, type AgentRun } from "../utils/agentRuns";
+
+export type { AgentRun, ToolCall } from "../utils/agentRuns";
+export type MessageType = "user" | "system" | "error" | "plan" | "result" | "assistant" | "git_conflict" | "agent_run";
 
 // 1. Definition interfaces for structuring session data models
 export interface PlanAction {
@@ -71,6 +74,7 @@ export interface Message {
   actionResults?: ActionResultData[];
   verification?: VerificationData;
   gitConflict?: GitConflictPayload;
+  agentRun?: AgentRun;
 }
 
 export interface LiveActionState {
@@ -820,6 +824,18 @@ function createSession() {
             learnedRelevance: Number(p.learned_relevance ?? 0.5),
           },
           proactiveSuggestionPending: false,
+        }));
+        break;
+
+      case "agent_tool_call":
+        update((s) => ({ ...s, messages: applyToolCall(s.messages, p) }));
+        break;
+
+      case "autonomous_complete":
+      case "autonomous_cancelled":
+        update((s) => ({
+          ...s,
+          messages: applyAgentRunStatus(s.messages, String(p.job_id ?? ""), String(p.status ?? "")),
         }));
         break;
 

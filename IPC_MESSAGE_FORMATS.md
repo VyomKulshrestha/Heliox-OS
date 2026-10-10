@@ -1998,6 +1998,15 @@ For durable voice workflows, `status` may be `submitted`, `revising`, or
   `autonomous_cancelled` carry the current autonomous job object.
 - `scheduled_run_dispatched` carries `{ "run_id", "name", "job_id" }` when a
   schedule starts its job.
+- `agent_tool_call` streams each action an autonomous job runs (background
+  jobs, scheduled runs, MCP-submitted tasks, voice/gesture workflows), once
+  with `"phase": "start"` and once with `"phase": "complete"` sharing a
+  `call_id`: `{ "job_id", "goal", "source", "step", "total_steps", "round",
+  "call_id", "phase", "action_type", "target", "arguments", "tier" }`, plus
+  `success`, `executed`, `output`, `error` (each at most 600 characters) and
+  `duration_ms` on completion. `arguments` is the JSON of the parameters the
+  action set, redacted and capped at 400 characters. The chat shows one card
+  per job with a row per call.
 - `autonomous_paused_for_human` and `autonomous_resumed` carry the job object
   when a job waits for the person to hand the desktop back, and when it resumes.
 - `human_control` carries the control status (see Human Control) whenever the

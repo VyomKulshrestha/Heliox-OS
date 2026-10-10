@@ -21,6 +21,7 @@
   import NeuralBackground from "./lib/components/NeuralBackground.svelte";
   import ParticleBurst from "./lib/components/ParticleBurst.svelte";
   import ExecutionGraph from "./lib/components/ExecutionGraph.svelte";
+  import AgentRunCard from "./lib/components/AgentRunCard.svelte";
   import VirtualList from "./lib/components/VirtualList.svelte";
   import PluginsTab from "./lib/components/PluginsTab.svelte";
   import GitConflictResolver from "./lib/components/GitConflictResolver.svelte";
@@ -428,6 +429,8 @@
       <span class="msg-label">YOU</span>
       <span class="msg-text">{msg.text}</span>
     </div>
+  {:else if msg.type === "agent_run" && msg.agentRun}
+    <AgentRunCard run={msg.agentRun} />
   {:else if msg.type === "plan" && msg.plan}
     <div class="message plan-msg has-copy">
       <div class="msg-header">
