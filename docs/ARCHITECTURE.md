@@ -419,9 +419,9 @@ behind the capability broker and planner approval path.
 
 ## Action execution and coverage
 
-`ActionType` declares 160 actions. Startup builds the provider index and the
+`ActionType` declares 162 actions. Startup builds the provider index and the
 `agent_mesh_status` RPC reports registered actions, available actions, coverage,
-and exact uncovered names. The current contract is 160/160 with zero uncovered
+and exact uncovered names. The current contract is 162/162 with zero uncovered
 routes.
 
 Most specialists filter a sub-plan and use the shared `Executor`, preserving

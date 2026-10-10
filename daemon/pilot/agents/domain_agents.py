@@ -384,11 +384,13 @@ class PluginRuntimeAgent(_ExecutorDomainAgent):
             ActionType.WASM_CALL,
             ActionType.PLUGIN_CALL,
             ActionType.SKILL_RUN,
+            ActionType.MCP_LIST_TOOLS,
+            ActionType.MCP_CALL_TOOL,
         }
     )
-    CONFIRMATION_ACTIONS = frozenset({ActionType.PLUGIN_CALL})
+    CONFIRMATION_ACTIONS = frozenset({ActionType.PLUGIN_CALL, ActionType.MCP_CALL_TOOL})
     DOMAIN_LABEL = "Plugin runtime"
-    mesh_keywords = ("plugin", "wasm", "skill", "marketplace", "extension", "tool")
+    mesh_keywords = ("plugin", "wasm", "skill", "marketplace", "extension", "tool", "mcp")
     mesh_filesystem_read = ("manifest_declared_only",)
     mesh_filesystem_write = ("manifest_declared_only",)
     mesh_network_domains = ("manifest_declared_only",)

@@ -202,6 +202,8 @@ NO_TARGET_REQUIRED = {
     ActionType.GIT_PUSH,
     ActionType.WASM_CALL,
     ActionType.PLUGIN_CALL,
+    ActionType.MCP_LIST_TOOLS,
+    ActionType.MCP_CALL_TOOL,
 }
 
 # File action types

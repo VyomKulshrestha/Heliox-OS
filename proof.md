@@ -8,11 +8,11 @@ Product version: **0.13.0**
 
 ## Capability and routing evidence
 
-- **160** declared action types are generated from `daemon/pilot/actions.py`.
-- **21** executable specialists register providers for all **160** action types.
+- **162** declared action types are generated from `daemon/pilot/actions.py`.
+- **21** executable specialists register providers for all **162** action types.
 - Mesh coverage is **complete**; uncovered action types: **0**.
 - **22** action types have a separate observed post-condition verifier.
-- **138** action types currently rely on the executor result without an independent post-condition check.
+- **140** action types currently rely on the executor result without an independent post-condition check.
 - **6** plugin manifests are represented in the generated catalog.
 
 Source: [machine-readable capability catalog](https://github.com/VyomKulshrestha/Heliox-OS/blob/main/capabilities.json). Platform declarations describe product targets; host tools, credentials, permissions, hardware, and integrations still determine runtime availability.
@@ -139,7 +139,7 @@ Neural details and the recorded EEGBCI snapshot are documented in [Neural Intent
 
 ## Known limitations
 
-1. Only 22 of 160 actions currently have an independent post-condition verifier; inspect `verification.independent_postcondition` in the capability catalog.
+1. Only 22 of 162 actions currently have an independent post-condition verifier; inspect `verification.independent_postcondition` in the capability catalog.
 2. CI validates software contracts but cannot establish camera, microphone, speaker, accessibility-permission, EEG, or human-factors accuracy.
 3. Browser pages, third-party APIs, cloud models, and external applications can change independently of Heliox.
 4. Local-first operation does not mean every configured path is offline. Cloud model and integration tasks send necessary context to the selected provider.

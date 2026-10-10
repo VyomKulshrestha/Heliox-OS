@@ -19,7 +19,7 @@
   "sources": {
     "action_registry": {
       "path": "daemon/pilot/actions.py",
-      "sha256": "bc92b385ff0395f71dd7f22d1f3d34ac8363bebcbbd150f27dd5c44d466fe4ae"
+      "sha256": "8137a14cd89b663683461ab2b7ec504d6617406a48b8ddddd88202a68c03c942"
     },
     "postcondition_verifier": {
       "path": "daemon/pilot/agents/verifier.py",
@@ -53,7 +53,7 @@
     ]
   },
   "summary": {
-    "action_types": 160,
+    "action_types": 162,
     "families": {
       "browser": 24,
       "calendar": 7,
@@ -76,7 +76,7 @@
       "screen": 6,
       "service": 6,
       "ssh": 2,
-      "system": 20,
+      "system": 22,
       "trigger": 5,
       "user": 2,
       "volume": 3,
@@ -86,16 +86,16 @@
     },
     "permission_tiers": {
       "destructive": 11,
-      "read_only": 56,
-      "system_modify": 35,
+      "read_only": 57,
+      "system_modify": 36,
       "user_write": 58
     },
     "independent_postcondition_verifiers": 22,
     "plugins": 6,
     "mesh": {
       "specialists": 21,
-      "registered_action_types": 160,
-      "available_action_types": 160,
+      "registered_action_types": 162,
+      "available_action_types": 162,
       "coverage_complete": true,
       "uncovered_action_types": []
     }
@@ -5906,6 +5906,72 @@
           "role": "code_agent",
           "source": "builtin"
         },
+        {
+          "id": "builtin:pilot.agents.domain_agents.PluginRuntimeAgent",
+          "name": "PluginRuntimeAgent",
+          "role": "plugin_runtime_agent",
+          "source": "builtin"
+        }
+      ],
+      "verification": {
+        "method": "executor_result_only",
+        "independent_postcondition": false,
+        "note": "No independent post-condition check is currently registered."
+      }
+    },
+    {
+      "id": "mcp_list_tools",
+      "family": "system",
+      "permission": {
+        "tier": 0,
+        "name": "read_only",
+        "approval_required": false,
+        "snapshot_required": false,
+        "irreversible": false
+      },
+      "platform_support": {
+        "platforms": [
+          "windows",
+          "macos",
+          "linux"
+        ],
+        "basis": "declared_product_target",
+        "note": "Availability can still depend on host tools, permissions, hardware, and configured integrations."
+      },
+      "providers": [
+        {
+          "id": "builtin:pilot.agents.domain_agents.PluginRuntimeAgent",
+          "name": "PluginRuntimeAgent",
+          "role": "plugin_runtime_agent",
+          "source": "builtin"
+        }
+      ],
+      "verification": {
+        "method": "executor_result_only",
+        "independent_postcondition": false,
+        "note": "No independent post-condition check is currently registered."
+      }
+    },
+    {
+      "id": "mcp_call_tool",
+      "family": "system",
+      "permission": {
+        "tier": 2,
+        "name": "system_modify",
+        "approval_required": true,
+        "snapshot_required": false,
+        "irreversible": true
+      },
+      "platform_support": {
+        "platforms": [
+          "windows",
+          "macos",
+          "linux"
+        ],
+        "basis": "declared_product_target",
+        "note": "Availability can still depend on host tools, permissions, hardware, and configured integrations."
+      },
+      "providers": [
         {
           "id": "builtin:pilot.agents.domain_agents.PluginRuntimeAgent",
           "name": "PluginRuntimeAgent",

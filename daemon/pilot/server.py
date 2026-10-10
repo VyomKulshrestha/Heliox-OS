@@ -670,6 +670,10 @@ class PilotServer:
         from pilot.security.human_control import HumanControlGate
 
         self._human_control = HumanControlGate()
+        from pilot.mcp_client import default_manager as default_mcp_client
+
+        self._mcp_client = default_mcp_client()
+        self._mcp_client_refresh: asyncio.Task[Any] | None = None
         self._self_healing: Any = None
         self._self_healing_started_monitors: set[str] = set()
         self._proactive: Any = None
@@ -918,6 +922,9 @@ class PilotServer:
         self._executor.set_controller_lease(self._controller_lease)
         self._human_control.add_listener(self._broadcast_human_control)
         self._executor.set_human_control(self._human_control)
+        self._executor.set_mcp_client(self._mcp_client)
+        # MCP servers can be slow to start (npx downloads); connect in the background.
+        self._mcp_client_refresh = asyncio.create_task(self._refresh_mcp_client())
 
         # Neural input owns a separate signing/session authority. Its fixed
         # goals still converge on the same Executor, Agent Gateway, world
@@ -1478,6 +1485,8 @@ class PilotServer:
             "take_control": self._handle_take_control,
             "release_control": self._handle_release_control,
             "human_control_status": self._handle_human_control_status,
+            "mcp_client_status": self._handle_mcp_client_status,
+            "mcp_client_refresh": self._handle_mcp_client_refresh,
             "recorded_workflow_start": self._handle_recorded_workflow_start,
             "recorded_workflow_stop": self._handle_recorded_workflow_stop,
             "recorded_workflow_list": self._handle_recorded_workflow_list,
@@ -8733,6 +8742,12 @@ def handle_tool(tool_name, params):
             await asyncio.gather(active_execution, return_exceptions=True)
         self._active_execution_task = None
 
+        refresh = self._mcp_client_refresh
+        if refresh is not None and not refresh.done():
+            refresh.cancel()
+            await asyncio.gather(refresh, return_exceptions=True)
+        await self._mcp_client.close()
+
         mcp_tasks = tuple(self._mcp_tasks.values())
         for task in mcp_tasks:
             task.cancel()
@@ -10257,6 +10272,25 @@ def handle_tool(tool_name, params):
 
     async def _handle_human_control_status(self, params: dict, ws: ServerConnection) -> dict:
         return {"status": "ok", **self._human_control.status().to_dict()}
+
+    async def _refresh_mcp_client(self) -> dict[str, Any]:
+        """(Re)connect the person's MCP servers and show their tools to the planner."""
+        try:
+            status = await self._mcp_client.refresh()
+        except Exception as error:  # a broken server list must not stop the daemon
+            logger.warning("MCP client refresh failed: %s", error)
+            return {"servers": [], "tool_count": 0, "error": str(error)}
+        if self._planner:
+            self._planner.set_mcp_context(self._mcp_client.catalog())
+        return status
+
+    async def _handle_mcp_client_status(self, params: dict, ws: ServerConnection) -> dict:
+        """Configured MCP servers, whether each is running, and how many tools it offers."""
+        return {"status": "ok", **self._mcp_client.status()}
+
+    async def _handle_mcp_client_refresh(self, params: dict, ws: ServerConnection) -> dict:
+        """Restart the MCP servers listed in mcp_servers.json and reload their tools."""
+        return {"status": "ok", **(await self._refresh_mcp_client())}
 
     async def _handle_recorded_workflow_status(self, params: dict, ws: ServerConnection) -> dict:
         return {

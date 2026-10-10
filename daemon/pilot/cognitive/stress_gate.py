@@ -71,6 +71,7 @@ SAFE_ACTIONS: set[ActionType] = {
     ActionType.BROWSER_EXTRACT_LINKS,
     ActionType.BROWSER_PAGE_INFO,
     ActionType.BROWSER_SNAPSHOT,
+    ActionType.MCP_LIST_TOOLS,
     ActionType.BROWSER_LIST_TABS,
     ActionType.BROWSER_SCREENSHOT,
     ActionType.BROWSER_NAVIGATE,

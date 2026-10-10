@@ -106,3 +106,25 @@ is tested through the official Python MCP client.
 The MCP bridge therefore adds another client surface without creating another
 execution authority: planning, policy, approval, execution, verification,
 audit, cancellation, and durable recovery stay in the existing daemon path.
+
+## MCP servers Heliox uses
+
+Heliox can also call tools on MCP servers the person configures in
+`mcp_servers.json` in Heliox's config folder
+(`{ "mcpServers": { "name": { "command", "args", "env", "disabled" } } }`).
+`pilot.mcp_client` starts each server as a local stdio process when the daemon
+starts or when `mcp_client_refresh` is called, negotiates protocol version
+`2025-06-18`, and caches up to 64 tools per server from `tools/list`.
+
+- `mcp_list_tools` (read-only) lists the cached tools and their argument schemas.
+- `mcp_call_tool` takes `mcp_server`, `mcp_tool` and `mcp_arguments`. Its tier
+  follows the tool's annotations: `readOnlyHint: true` is read-only,
+  `destructiveHint: true` is destructive, anything else needs approval, and
+  every non-read-only call is irreversible for confirmation purposes.
+- Only tools from the last refresh can be called. Calls time out after 60
+  seconds, and output is capped at 8,000 characters and labelled untrusted.
+- Server-to-client requests (sampling, roots, elicitation) are declined.
+- A server inherits only `PATH` and a few system variables from the daemon;
+  credentials it needs go in its `env` entry.
+- File actions cannot read or edit `mcp_servers.json`, so a plan cannot add a
+  server or change which program runs.

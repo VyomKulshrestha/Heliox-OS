@@ -40,6 +40,7 @@ from pilot.actions import (
     HumanHelpParams,
     KeyboardParams,
     LogAnalyzeParams,
+    McpToolParams,
     MouseParams,
     NotifyParams,
     OpenApplicationParams,
@@ -359,6 +360,8 @@ class Executor:
             ActionType.WORKSPACE_SEARCH: self._exec_workspace_search,
             ActionType.WASM_CALL: self._exec_wasm_call,
             ActionType.PLUGIN_CALL: self._exec_plugin_call,
+            ActionType.MCP_LIST_TOOLS: self._exec_mcp_list_tools,
+            ActionType.MCP_CALL_TOOL: self._exec_mcp_call_tool,
             ActionType.LOG_ANALYZE: self._exec_log_analyze,
         }
 
@@ -3006,6 +3009,50 @@ class Executor:
         if "error" in result:
             raise RuntimeError(f"Plugin tool execution failed: {result['error']}")
         return json.dumps(result)
+
+    def _mcp_client_manager(self) -> typing.Any:
+        manager = getattr(self, "_mcp_client", None)
+        if manager is None:
+            from pilot.mcp_client import default_manager
+
+            manager = default_manager()
+        return manager
+
+    def set_mcp_client(self, manager: typing.Any) -> None:
+        """Route mcp_list_tools / mcp_call_tool through this MCP client manager."""
+        self._mcp_client = manager
+
+    async def _exec_mcp_list_tools(self, action: Action) -> str:
+        """List the tools offered by the person's configured MCP servers."""
+        import json
+
+        params: McpToolParams = action.parameters  # type: ignore[assignment]
+        manager = self._mcp_client_manager()
+        server = params.mcp_server.strip() or action.target.strip()
+        tools = [tool for tool in manager.tools() if not server or tool.server == server]
+        if not tools:
+            status = manager.status()
+            if not status["servers"]:
+                return "No MCP servers are configured. The person can add them to mcp_servers.json in Heliox's config folder."
+            problems = "; ".join(
+                f"{item['name']}: {item['error'] or 'no tools'}" for item in status["servers"] if not item["tools"]
+            )
+            return f"No MCP tools available{' on ' + server if server else ''}. {problems}".strip()
+        lines = []
+        for tool in sorted(tools, key=lambda item: (item.server, item.name)):
+            access = "read-only" if tool.read_only else "destructive" if tool.destructive else "needs approval"
+            schema = json.dumps(tool.input_schema.get("properties", {}), ensure_ascii=False)[:600]
+            lines.append(f"{tool.server}.{tool.name} [{access}]: {tool.description}\n  arguments: {schema}")
+        return "\n".join(lines)
+
+    async def _exec_mcp_call_tool(self, action: Action) -> str:
+        """Call one tool on a configured MCP server; its output is untrusted data."""
+        params: McpToolParams = action.parameters  # type: ignore[assignment]
+        server = params.mcp_server.strip()
+        tool = params.mcp_tool.strip()
+        if not server or not tool:
+            raise ValueError("mcp_call_tool requires mcp_server and mcp_tool")
+        return await self._mcp_client_manager().call(server, tool, params.mcp_arguments)
 
     async def _exec_log_analyze(self, action: Action) -> str:
         import json

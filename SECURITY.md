@@ -200,7 +200,7 @@ Settings → Agent Gateway Policy shows the enforced floor per source and lets y
 `pilot.agents.agent_mesh.AgentMesh` register **21 concrete specialists across
 20 gateway roles**. Capability discovery indexes providers by concrete class,
 so Communication and Email can coexist despite sharing `comm_agent`.
-`agent_mesh_status` verifies all 160 declared actions have a provider and
+`agent_mesh_status` verifies all 162 declared actions have a provider and
 reports exact uncovered names if that contract regresses.
 
 Provider choice is based on exact action capability plus callback-observed
@@ -492,6 +492,26 @@ folder (`config.toml`, which stores the daemon auth token, `restrictions.toml`,
 This is built into the validator and applies whatever `protected_folders`
 says, so a prompt-injected plan cannot read the token or register a program
 for Heliox to run.
+
+## 🔌 Tools from the person's MCP servers
+
+`pilot.mcp_client` starts only the servers listed in `mcp_servers.json`, each
+as a local stdio process with the command, arguments and environment the person
+wrote there. `mcp_call_tool` can call only tools those servers listed at the
+last refresh. Its permission tier comes from the server's own annotations: a
+tool marked `readOnlyHint: true` runs without approval, `destructiveHint: true`
+makes it destructive, and every other tool needs approval with its exact
+arguments shown. Every non-read-only call is treated as irreversible, because a
+local snapshot cannot undo a message sent or a record deleted on another
+service. Annotations are the server's claim, so list only servers you trust.
+
+A server process inherits only `PATH` and the few system variables launchers
+such as `npx` need, plus the `env` the person wrote for it. Model provider keys
+and other secrets in the daemon's environment never reach it.
+
+Tool output is size-capped and labelled as untrusted data before the planner
+sees it. Heliox declines server requests for sampling, roots or elicitation, so
+a server cannot use Heliox's model or read its files.
 
 ## ✋ Human takeover of the desktop
 

@@ -12,8 +12,8 @@ The Heliox OS UI and daemon communicate over a local WebSocket using the [JSON-R
 | Request timeout | 5 minutes |
 | Reconnect interval | 3 seconds (auto-reconnect on close) |
 
-The daemon currently registers **200 WebSocket RPC methods**. That is the API
-surface count, not the action catalog: Heliox exposes **160 action
+The daemon currently registers **202 WebSocket RPC methods**. That is the API
+surface count, not the action catalog: Heliox exposes **162 action
 types** through the guarded planner/executor system. This document names every
 registered RPC method; grouped tables are used where several methods share one
 contract.
@@ -501,13 +501,13 @@ Return formatted host uptime such as `"3h 12m"` or `"2d 4h 8m"`.
 Return platform information.
 
 **Params:** `{}`
-**Result:** `{ "platform": { ... }, "capabilities_count": 160 }`
+**Result:** `{ "platform": { ... }, "capabilities_count": 162 }`
 
 #### `capabilities`
 List all available action types.
 
 **Params:** `{}`
-**Result:** `{ "action_types": ["file_read", "file_write", ...], "count": 160 }`
+**Result:** `{ "action_types": ["file_read", "file_write", ...], "count": 162 }`
 
 #### `list_ollama_models`
 Discover locally available Ollama models.
@@ -647,7 +647,7 @@ coverage contract.
 
 **Params:** `{}`
 
-The current `main` runtime reports 21 executable specialists, 160 declared and
+The current `main` runtime reports 21 executable specialists, 162 declared and
 available action types, and an empty `uncovered_action_types` list. Clients must
 surface exact uncovered names as a release-blocking warning rather than hiding
 coverage regression.
@@ -659,8 +659,8 @@ coverage regression.
   "enabled": true,
   "total_specialists": 21,
   "executable_specialists": 21,
-  "registered_action_types": 160,
-  "available_action_types": 160,
+  "registered_action_types": 162,
+  "available_action_types": 162,
   "coverage_complete": true,
   "uncovered_action_types": [],
   "specialists": []
@@ -1327,6 +1327,24 @@ agent observes again before acting.
 Control status: `{ "status": "ok", "holder": "agent" or "human", "reason": "...",
 "since": 1791640000.0, "generation": 3, "armed": true,
 "physical_input_detection": true }`.
+
+### MCP Client
+
+Heliox can use tools from MCP servers the person lists in `mcp_servers.json`
+inside Heliox's config folder, in the usual
+`{ "mcpServers": { "name": { "command", "args", "env", "disabled" } } }`
+format. Each server runs as a local stdio process; actions cannot read or
+change that file. The planner sees the tools through `mcp_list_tools` and
+calls them with `mcp_call_tool`. A call runs without approval only when the
+server marks the tool `readOnlyHint: true`.
+
+| Method | Params | Result |
+| --- | --- | --- |
+| `mcp_client_status` | `{}` | configured servers and tool counts |
+| `mcp_client_refresh` | `{}` | the same, after restarting every server |
+
+Status: `{ "status": "ok", "tool_count": 12, "servers": [{ "name": "github",
+"running": true, "tools": 12, "error": "", "server_info": { ... } }] }`.
 
 ### Durable Voice/Gesture Workflows
 

@@ -58,9 +58,9 @@ v0.13.0 strengthens truthful terminal outcomes, transactional live settings, aut
 
 | Surface              | Current evidence                                                                              | Important boundary                                                                             |
 | -------------------- | --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| Action schema        | 160 declared action types                                                                     | Availability depends on OS, dependencies, permissions, credentials, and policy                 |
-| Specialist mesh      | 21 executable specialists with providers for 160/160 declared actions                         | Provider coverage is not universal environment compatibility                                   |
-| Outcome verification | 22 actions have an independent observed post-condition verifier                               | The other 138 currently rely on the executor result                                            |
+| Action schema        | 162 declared action types                                                                     | Availability depends on OS, dependencies, permissions, credentials, and policy                 |
+| Specialist mesh      | 21 executable specialists with providers for 162/162 declared actions                         | Provider coverage is not universal environment compatibility                                   |
+| Outcome verification | 22 actions have an independent observed post-condition verifier                               | The other 140 currently rely on the executor result                                            |
 | Guarded fast path    | 26.476 ms median, 27.999 ms p95 across 100 non-LLM CPU-usage iterations; zero model calls     | This is not provider, browser, voice, camera, TTS, neural, or full-workflow latency            |
 | Subscription planning | 3/3 fixed Codex CLI cases; 14.708 s median; zero executed or destructive actions             | One account and planning only; not action-execution, Claude, or universal provider evidence     |
 | Intent dispatch      | 59/59 curated bounded-intent and ambiguous-fall-through regression cases                     | Fixed corpus; not population-level language-understanding accuracy                            |
@@ -72,7 +72,7 @@ v0.13.0 strengthens truthful terminal outcomes, transactional live settings, aut
 | Windows signing      | SignPath test-policy workflow signs and verifies EXE, MSI, and embedded application artifacts | The production certificate is pending; current public installers are not yet production-signed |
 
 > [!IMPORTANT]
-> **160/160 provider coverage does not mean 160 independently verified outcomes.** The generated catalog records the provider, permission tier, platform declarations, approval requirements, and verification method for every action.
+> **162/162 provider coverage does not mean 162 independently verified outcomes.** The generated catalog records the provider, permission tier, platform declarations, approval requirements, and verification method for every action.
 
 - [Human-readable evidence and limitations](https://www.helioxos.dev/proof.html)
 - [Detailed Markdown evidence](proof.md)
@@ -259,6 +259,28 @@ with [Gnomon](docs/GNOMON_TRAINING.md) for single or batched questions. Every su
 approval in Heliox; neither the MCP client nor the research scorer can approve
 its own work. See [MCP interfaces](docs/MCP.md) for the tool list and security
 boundary.
+
+### Give Heliox tools from other MCP servers
+
+Heliox is also an MCP client. List servers in `mcp_servers.json` inside Heliox's
+config folder, in the same format, and the planner can call their tools
+(GitHub, Slack, Notion, databases and so on) as ordinary actions:
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "..." }
+    }
+  }
+}
+```
+
+Tools the server marks read-only run straight away; every other tool asks for
+approval with its arguments shown. Call `mcp_client_refresh` (or restart the
+daemon) after editing the file.
 
 ## Try these tasks
 

@@ -258,6 +258,10 @@ class ActionType(StrEnum):
     # -- Third-party skills (dynamic ``pilot/skills`` loader) --
     SKILL_RUN = "skill_run"
 
+    # -- Tools on MCP servers the person configured (``pilot.mcp_client``) --
+    MCP_LIST_TOOLS = "mcp_list_tools"
+    MCP_CALL_TOOL = "mcp_call_tool"
+
 
 class PermissionTier(int, Enum):
     READ_ONLY = 0
@@ -343,6 +347,8 @@ READ_ONLY_ACTIONS = {
     ActionType.CALENDAR_RECONCILE,
     ActionType.CALENDAR_PARSE,
     ActionType.CALENDAR_LIST_EVENTS,
+    # Lists tools of the person's MCP servers from the local cache
+    ActionType.MCP_LIST_TOOLS,
 }
 
 DESTRUCTIVE_ACTIONS = {
@@ -908,6 +914,14 @@ class WasmCallParams(BaseModel):
     args: dict[str, Any] = Field(default_factory=dict)
 
 
+class McpToolParams(BaseModel):
+    """For MCP_LIST_TOOLS / MCP_CALL_TOOL: a tool on an MCP server the person configured."""
+
+    mcp_server: str = Field(default="", max_length=40)
+    mcp_tool: str = Field(default="", max_length=80)
+    mcp_arguments: dict[str, Any] = Field(default_factory=dict)
+
+
 class EmptyParams(BaseModel):
     """For actions that need no parameters."""
 
@@ -962,6 +976,7 @@ ActionParameters = (
     | SkillRunParams
     | GitParams
     | GitResolveParams
+    | McpToolParams
     | EmptyParams
 )
 
@@ -1031,6 +1046,12 @@ class Action(BaseModel):
             return PermissionTier.READ_ONLY
         if self.requires_root:
             return PermissionTier.ROOT_CRITICAL
+        if self.action_type == ActionType.MCP_CALL_TOOL:
+            from pilot.mcp_client import tool_permission_tier
+
+            return tool_permission_tier(
+                str(getattr(self.parameters, "mcp_server", "")), str(getattr(self.parameters, "mcp_tool", ""))
+            )
         if self.action_type in DESTRUCTIVE_ACTIONS:
             return PermissionTier.DESTRUCTIVE
         if self.action_type in SYSTEM_MODIFY_ACTIONS:
@@ -1066,6 +1087,9 @@ class Action(BaseModel):
         if self.action_type in {ActionType.API_REQUEST, ActionType.API_GITHUB}:
             method = str(getattr(self.parameters, "method", "GET")).upper()
             return method not in READ_ONLY_HTTP_METHODS
+        if self.action_type == ActionType.MCP_CALL_TOOL:
+            # A tool on another server can send, post or delete; local snapshots cannot undo that.
+            return self.permission_tier > PermissionTier.READ_ONLY
         return self.action_type in IRREVERSIBLE_ACTIONS
 
 

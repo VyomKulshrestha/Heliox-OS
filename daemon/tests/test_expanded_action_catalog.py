@@ -38,7 +38,7 @@ def _executor(default_config, tmp_path: Path) -> Executor:
 
 
 def test_action_catalog_contains_157_real_actions():
-    assert len(ActionType) == 160
+    assert len(ActionType) == 162
     assert {
         ActionType.FILE_HASH,
         ActionType.FILE_COMPARE,
