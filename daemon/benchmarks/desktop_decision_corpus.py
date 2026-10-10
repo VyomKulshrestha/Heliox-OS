@@ -1420,6 +1420,13 @@ if __name__ == "__main__":
         help="Skip states that appear in fitting/calibration rows generated with the default seed and this many "
         "training scenarios",
     )
+    parser.add_argument(
+        "--exclude-cases",
+        type=Path,
+        nargs="*",
+        default=[],
+        help="Also skip states used by earlier evaluation case files",
+    )
     arguments = parser.parse_args()
     if arguments.output.exists():
         parser.error("Use a fresh output path")
@@ -1427,6 +1434,9 @@ if __name__ == "__main__":
     if arguments.exclude_fitting_scenarios:
         fitting = generate(scenarios={"train": arguments.exclude_fitting_scenarios}, version=arguments.version)
         excluded = frozenset(row["state_json"] for row in fitting["train"] + fitting["calibration"])
+    for case_file in arguments.exclude_cases:
+        earlier = json.loads(case_file.read_text(encoding="utf-8"))
+        excluded |= {json.dumps(case["state"], ensure_ascii=False, sort_keys=True, allow_nan=False) for case in earlier}
     cases = evaluation_cases(
         generate(arguments.seed, version=arguments.version), arguments.limit, exclude_states=excluded
     )
