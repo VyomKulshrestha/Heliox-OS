@@ -36,6 +36,7 @@ from pilot.actions import (
     GitParams,
     GitResolveParams,
     GnomeSettingParams,
+    HumanHelpParams,
     KeyboardParams,
     LogAnalyzeParams,
     MouseParams,
@@ -218,6 +219,10 @@ OPEN URL / APP / NOTIFY:
 - open_url Params: {{"url": "https://example.com"}} -- ONLY opens in user's external browser window. CANNOT READ TEXT.
 - open_application Params: {{"name": "app-name", "args": []}}
 - notify Params: {{"summary": "Title", "body": "message"}}
+- request_human_help — Hand the desktop to the person for anything Heliox must not do itself:
+  signing in, passwords, 2FA codes, CAPTCHAs, payments, or a genuinely ambiguous choice.
+  Params: {{"help_needed": "Sign in to Outlook", "instructions": "Close the window when done"}}.
+  The task pauses until the person hands control back, then observes the screen again.
 
 DOWNLOAD:
 - download_file Params: {{"url": "https://example.com/file.zip", "output_path": "/path/to/save", "overwrite": false}}
@@ -1908,6 +1913,10 @@ class Planner:
             return OpenApplicationParams(**params)
         if action_type == ActionType.NOTIFY:
             return NotifyParams(**params)
+        if action_type == ActionType.REQUEST_HUMAN_HELP:
+            if "help_needed" not in params:
+                params = {**params, "help_needed": str(params.get("reason") or params.get("message") or "").strip()}
+            return HumanHelpParams(**params)
 
         # Process management
         if action_type in (ActionType.PROCESS_LIST, ActionType.PROCESS_KILL, ActionType.PROCESS_INFO):

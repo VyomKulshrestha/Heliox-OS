@@ -67,6 +67,7 @@ class ActionType(StrEnum):
     OPEN_URL = "open_url"
     OPEN_APPLICATION = "open_application"
     NOTIFY = "notify"
+    REQUEST_HUMAN_HELP = "request_human_help"
 
     # -- Process management --
     PROCESS_LIST = "process_list"
@@ -286,6 +287,7 @@ READ_ONLY_ACTIONS = {
     ActionType.OPEN_URL,
     ActionType.OPEN_APPLICATION,
     ActionType.NOTIFY,
+    ActionType.REQUEST_HUMAN_HELP,
     ActionType.PROCESS_LIST,
     ActionType.PROCESS_INFO,
     ActionType.CLIPBOARD_READ,
@@ -534,6 +536,13 @@ class OpenApplicationParams(BaseModel):
 class NotifyParams(BaseModel):
     summary: str = "Pilot notification"
     body: str = ""
+
+
+class HumanHelpParams(BaseModel):
+    """For REQUEST_HUMAN_HELP: hand the desktop to the person for something Heliox must not do."""
+
+    help_needed: str = Field(min_length=1, max_length=200)  # e.g. "Sign in to Outlook"
+    instructions: str = Field(default="", max_length=500)
 
 
 class ProcessParams(BaseModel):
@@ -913,6 +922,7 @@ ActionParameters = (
     | OpenUrlParams
     | OpenApplicationParams
     | NotifyParams
+    | HumanHelpParams
     | ProcessParams
     | ClipboardParams
     | SystemInfoParams

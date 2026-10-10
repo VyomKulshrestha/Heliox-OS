@@ -82,6 +82,7 @@ SAFE_ACTIONS: set[ActionType] = {
     ActionType.PACKAGE_SEARCH,
     ActionType.GNOME_SETTING_READ,
     ActionType.NOTIFY,
+    ActionType.REQUEST_HUMAN_HELP,
     ActionType.OPEN_URL,
     # Launching a locally registered application is a direct, reversible
     # user-interface action.  Pausing it for ten seconds made ordinary voice

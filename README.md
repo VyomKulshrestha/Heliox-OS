@@ -58,9 +58,9 @@ v0.13.0 strengthens truthful terminal outcomes, transactional live settings, aut
 
 | Surface              | Current evidence                                                                              | Important boundary                                                                             |
 | -------------------- | --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| Action schema        | 158 declared action types                                                                     | Availability depends on OS, dependencies, permissions, credentials, and policy                 |
-| Specialist mesh      | 21 executable specialists with providers for 158/158 declared actions                         | Provider coverage is not universal environment compatibility                                   |
-| Outcome verification | 22 actions have an independent observed post-condition verifier                               | The other 136 currently rely on the executor result                                            |
+| Action schema        | 159 declared action types                                                                     | Availability depends on OS, dependencies, permissions, credentials, and policy                 |
+| Specialist mesh      | 21 executable specialists with providers for 159/159 declared actions                         | Provider coverage is not universal environment compatibility                                   |
+| Outcome verification | 22 actions have an independent observed post-condition verifier                               | The other 137 currently rely on the executor result                                            |
 | Guarded fast path    | 26.476 ms median, 27.999 ms p95 across 100 non-LLM CPU-usage iterations; zero model calls     | This is not provider, browser, voice, camera, TTS, neural, or full-workflow latency            |
 | Subscription planning | 3/3 fixed Codex CLI cases; 14.708 s median; zero executed or destructive actions             | One account and planning only; not action-execution, Claude, or universal provider evidence     |
 | Intent dispatch      | 59/59 curated bounded-intent and ambiguous-fall-through regression cases                     | Fixed corpus; not population-level language-understanding accuracy                            |
@@ -72,7 +72,7 @@ v0.13.0 strengthens truthful terminal outcomes, transactional live settings, aut
 | Windows signing      | SignPath test-policy workflow signs and verifies EXE, MSI, and embedded application artifacts | The production certificate is pending; current public installers are not yet production-signed |
 
 > [!IMPORTANT]
-> **158/158 provider coverage does not mean 158 independently verified outcomes.** The generated catalog records the provider, permission tier, platform declarations, approval requirements, and verification method for every action.
+> **159/159 provider coverage does not mean 159 independently verified outcomes.** The generated catalog records the provider, permission tier, platform declarations, approval requirements, and verification method for every action.
 
 - [Human-readable evidence and limitations](https://www.helioxos.dev/proof.html)
 - [Detailed Markdown evidence](proof.md)

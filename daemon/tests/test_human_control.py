@@ -195,3 +195,31 @@ def test_file_actions_are_not_human_controlled():
     gate.take("requested")
     with agent_initiated():
         gate.check_agent_may_act(ActionType.FILE_WRITE)
+
+
+@pytest.mark.asyncio
+async def test_request_human_help_hands_the_desktop_to_the_person():
+    from pilot.actions import HumanHelpParams
+
+    gate, _ = _gate()
+    executor = SimpleNamespace(_human_control=gate)
+    action = SimpleNamespace(parameters=HumanHelpParams(help_needed="Sign in to Outlook", instructions="then resume"))
+
+    output = await Executor._exec_request_human_help(executor, action)
+
+    assert gate.holds_control()
+    assert gate.status().reason == "Heliox asked for help: Sign in to Outlook (then resume)"
+    assert "continue after they hand control back" in output
+    with agent_initiated():
+        gate.check_agent_may_act(ActionType.REQUEST_HUMAN_HELP)  # asking again is never refused
+
+
+def test_planner_fills_help_needed_from_common_synonyms():
+    from pilot.actions import HumanHelpParams
+    from pilot.agents.planner import Planner
+
+    planner = Planner(MagicMock(), MagicMock())
+    params = planner._parse_parameters(ActionType.REQUEST_HUMAN_HELP, {"reason": "Enter the 2FA code"})
+
+    assert isinstance(params, HumanHelpParams)
+    assert params.help_needed == "Enter the 2FA code"

@@ -2,7 +2,7 @@
 
 Heliox main uses capability-based discovery rather than a fixed roster. The
 current runtime registers 21 concrete specialists across 20 source-scoped
-gateway roles and covers all 158 declared actions.
+gateway roles and covers all 159 declared actions.
 
 Add an agent only when it provides a distinct capability or measurable
 reliability advantage. More classes are not a product goal by themselves.

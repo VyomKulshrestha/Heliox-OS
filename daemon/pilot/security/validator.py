@@ -54,6 +54,7 @@ NO_TARGET_REQUIRED = {
     ActionType.OPEN_URL,
     ActionType.OPEN_APPLICATION,
     ActionType.NOTIFY,
+    ActionType.REQUEST_HUMAN_HELP,
     ActionType.PACKAGE_UPDATE,
     ActionType.SHELL_COMMAND,
     ActionType.SHELL_SCRIPT,

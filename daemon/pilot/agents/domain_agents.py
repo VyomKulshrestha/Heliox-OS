@@ -210,6 +210,7 @@ class DesktopAutomationAgent(_ExecutorDomainAgent):
         {
             ActionType.OPEN_APPLICATION,
             ActionType.NOTIFY,
+            ActionType.REQUEST_HUMAN_HELP,
             ActionType.CLIPBOARD_READ,
             ActionType.CLIPBOARD_WRITE,
             ActionType.WINDOW_LIST,

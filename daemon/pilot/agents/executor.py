@@ -37,6 +37,7 @@ from pilot.actions import (
     GitParams,
     GitResolveParams,
     GnomeSettingParams,
+    HumanHelpParams,
     KeyboardParams,
     LogAnalyzeParams,
     MouseParams,
@@ -222,6 +223,7 @@ class Executor:
             ActionType.OPEN_URL: self._exec_open_url,
             ActionType.OPEN_APPLICATION: self._exec_open_application,
             ActionType.NOTIFY: self._exec_notify,
+            ActionType.REQUEST_HUMAN_HELP: self._exec_request_human_help,
             # -- Process management --
             ActionType.PROCESS_LIST: self._exec_process_list,
             ActionType.PROCESS_KILL: self._exec_process_kill,
@@ -1822,6 +1824,18 @@ class Executor:
         from pilot.system.applications import launch_application
 
         return await launch_application(params.name, params.args or [])
+
+    async def _exec_request_human_help(self, action: Action) -> str:
+        """Give the desktop to the person; autonomous work waits until they hand it back."""
+        params: HumanHelpParams = action.parameters  # type: ignore[assignment]
+        request = params.help_needed.strip()
+        if params.instructions.strip():
+            request += f" ({params.instructions.strip()})"
+        human_control = getattr(self, "_human_control", None)
+        if human_control is None:
+            return f"Asked the person for help: {request}. Human takeover is not available in this runtime."
+        human_control.take(f"Heliox asked for help: {request}")
+        return f"Asked the person for help: {request}. Heliox will continue after they hand control back."
 
     async def _exec_notify(self, action: Action) -> str:
         params: NotifyParams = action.parameters  # type: ignore[assignment]

@@ -200,7 +200,7 @@ Settings → Agent Gateway Policy shows the enforced floor per source and lets y
 `pilot.agents.agent_mesh.AgentMesh` register **21 concrete specialists across
 20 gateway roles**. Capability discovery indexes providers by concrete class,
 so Communication and Email can coexist despite sharing `comm_agent`.
-`agent_mesh_status` verifies all 158 declared actions have a provider and
+`agent_mesh_status` verifies all 159 declared actions have a provider and
 reports exact uncovered names if that contract regresses.
 
 Provider choice is based on exact action capability plus callback-observed

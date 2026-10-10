@@ -35,6 +35,7 @@ _EFFECTFUL_READ_ONLY_CATALOG_ENTRIES = {
     ActionType.OPEN_URL,
     ActionType.OPEN_APPLICATION,
     ActionType.NOTIFY,
+    ActionType.REQUEST_HUMAN_HELP,
 }
 
 
