@@ -19,7 +19,7 @@ evaluation.
 | Gnomon v4 | Qwen3.5-2B | Colab T4 | Promoted, superseded by v4.1 |
 | Gnomon v4.1 | Qwen3.5-2B | v4 weights, recalibrated | **Enabled** |
 | Gnomon v5 | Qwen3.5-2B | Kaggle T4 | Passed its rule, held back |
-| Gnomon v6 | Qwen3.5-2B | Kaggle T4 | Protocol v6 frozen; result pending |
+| Gnomon v6 | Qwen3.5-2B | Kaggle T4 | Failed G5 (general regression), not promoted |
 
 ## Why the earlier clean-base model failed
 
@@ -338,3 +338,28 @@ pre-registered rule: v5 is **held back** and v4.1 stays enabled, because
 confident unrequested side effects are the failure an authorization scorer
 must not have. Protocol v6 adds a zero-false-allowance check across the
 earlier sets.
+
+### Gnomon v6: Kaggle T4 run (failed G5, not promoted)
+
+Protocol v6 trained every score family, urgency included, at 2.5x and the scope
+families at 2x; all other settings matched v5. Training covered 3,350 rows in
+10,234 s on a Kaggle T4, peaking at 4.69 GiB. Artifact zip `d8620ad4...`
+matched Kaggle; adapter `aa9de17cff25...`, head `af133162802d...`. Per-kind
+temperatures: Noul 2.552, choice 2.360, score 0.151. Report and gates:
+[`gnomon_2b_v6_20261010.json`](../daemon/benchmarks/gnomon_2b_v6_20261010.json),
+[`gnomon_2b_v6_gates_20261010.json`](../daemon/benchmarks/gnomon_2b_v6_gates_20261010.json).
+
+| Gate measure | v4 | v5 | v6 |
+| --- | ---: | ---: | ---: |
+| Desktop held-out top-1 | 98.3% | 97.4% | 98.3% |
+| Desktop Noul false-allowance rate | 0% | 3.6% | 0% |
+| Never-trained families top-1 | 100% | 96.4% | 100% |
+| Release-v2 test top-1 | 60.9% | 67.2% | 54.7% |
+| Release-v2 held-source OOD top-1 (G5 needs >= 63%) | 67.7% | 67.7% | **30.2%** |
+
+The larger desktop share cost general decisions: held-source OOD fell from
+67.7% to 30.2%. The protocol requires all five gates, so v6 is **not
+promoted**, and it was not scored on the fresh seed-20261011 confirmatory set,
+which stays unused for the next candidate. v4.1 remains enabled. The next
+protocol should keep the desktop score data but scale the public-corpus rows
+with it, so G5 holds before any confirmatory look.

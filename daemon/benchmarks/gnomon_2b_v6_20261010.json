@@ -1,0 +1,1730 @@
+{
+  "model": "Qwen/Qwen3.5-2B",
+  "revision": "15852e8c16360a2fea060d615a32b45270f8a8fc",
+  "diagnostic_environment": {
+    "HF_HUB_OFFLINE": "1",
+    "CUDA_LAUNCH_BLOCKING": null,
+    "PYTORCH_NO_CUDA_MEMORY_CACHING": null
+  },
+  "dataset": "ZefanCai/Open-Jev",
+  "dataset_revision": "c67699e13d0ae25e35b77165a4b6b079bedc8aba",
+  "dataset_config": "release-v2-redistributable",
+  "training_source_policy": {
+    "required_license": "CC0-1.0",
+    "exclude_unverified_upstream_rights": true,
+    "excluded_source_domains": [
+      "typesafe.ai"
+    ]
+  },
+  "host_memory_preflight": {
+    "available_gib_before_model_load": 29.59,
+    "minimum_gib": 2.5
+  },
+  "source_holdout": {
+    "fraction": 0.2,
+    "seed": 20261008,
+    "common_sources": [
+      "painting-geometry-v1",
+      "snake-v1",
+      "vizdoom-basic-v1"
+    ],
+    "seen_sources": [
+      "painting-geometry-v1",
+      "vizdoom-basic-v1"
+    ],
+    "held_out_sources": [
+      "snake-v1"
+    ]
+  },
+  "dataset_manifests": {
+    "train": {
+      "sha256": "a76be013b2986a97e4d61faad4fd5f0a6ddb934760d5dcf3161aaa118909b6bf",
+      "total_rows": 79116,
+      "licensed_rows": 47052,
+      "excluded_unverified_license": 4206,
+      "excluded_restricted_source": 27858,
+      "source_policy": {
+        "required_license": "CC0-1.0",
+        "exclude_unverified_upstream_rights": true,
+        "excluded_source_domains": [
+          "typesafe.ai"
+        ]
+      },
+      "allowed_sources": [
+        "painting-geometry-v1",
+        "vizdoom-basic-v1"
+      ],
+      "source_excluded_rows": 17146,
+      "eligible_rows": 29906,
+      "selected_sources": [
+        "painting-geometry-v1",
+        "vizdoom-basic-v1"
+      ],
+      "selected_rows": 256,
+      "sampler": "sorted_id_seeded_source_kind_round_robin_v1"
+    },
+    "calibration": {
+      "sha256": "74cf0064f68dcccbcedd4849d3b347f4c900bdd5329a78ec249fcdf24f89b554",
+      "total_rows": 4672,
+      "licensed_rows": 2209,
+      "excluded_unverified_license": 348,
+      "excluded_restricted_source": 2115,
+      "source_policy": {
+        "required_license": "CC0-1.0",
+        "exclude_unverified_upstream_rights": true,
+        "excluded_source_domains": [
+          "typesafe.ai"
+        ]
+      },
+      "allowed_sources": [
+        "painting-geometry-v1",
+        "vizdoom-basic-v1"
+      ],
+      "source_excluded_rows": 1043,
+      "eligible_rows": 1166,
+      "selected_sources": [
+        "painting-geometry-v1",
+        "vizdoom-basic-v1"
+      ],
+      "selected_rows": 48,
+      "sampler": "sorted_id_seeded_source_kind_round_robin_v1"
+    },
+    "test": {
+      "sha256": "05edb50da60abb087328e353b201d83b745e01393b4a43b5320b90720a8132ff",
+      "total_rows": 10356,
+      "licensed_rows": 6000,
+      "excluded_unverified_license": 606,
+      "excluded_restricted_source": 3750,
+      "source_policy": {
+        "required_license": "CC0-1.0",
+        "exclude_unverified_upstream_rights": true,
+        "excluded_source_domains": [
+          "typesafe.ai"
+        ]
+      },
+      "allowed_sources": [
+        "painting-geometry-v1",
+        "vizdoom-basic-v1"
+      ],
+      "source_excluded_rows": 2070,
+      "eligible_rows": 3930,
+      "selected_sources": [
+        "painting-geometry-v1",
+        "vizdoom-basic-v1"
+      ],
+      "selected_rows": 64,
+      "sampler": "sorted_id_seeded_source_kind_round_robin_v1"
+    },
+    "ood": {
+      "sha256": "ba8cb3f95b9121aa73e4b997ac9c350e2ec4dddb972cb5c3086da911f0deb9ef",
+      "total_rows": 15701,
+      "licensed_rows": 11201,
+      "excluded_unverified_license": 600,
+      "excluded_restricted_source": 3900,
+      "source_policy": {
+        "required_license": "CC0-1.0",
+        "exclude_unverified_upstream_rights": true,
+        "excluded_source_domains": [
+          "typesafe.ai"
+        ]
+      },
+      "allowed_sources": [
+        "snake-v1"
+      ],
+      "source_excluded_rows": 7737,
+      "eligible_rows": 3464,
+      "selected_sources": [
+        "snake-v1"
+      ],
+      "selected_rows": 96,
+      "sampler": "sorted_id_seeded_source_kind_round_robin_v1"
+    },
+    "email-selection-control-v1:train": {
+      "sha256": "9c91b6293515a21e709dd8fe5a05a05374e20933f0f8f6c4c847ec96707188c0",
+      "total_rows": 3618,
+      "licensed_rows": 3618,
+      "excluded_unverified_license": 0,
+      "excluded_restricted_source": 0,
+      "source_policy": {
+        "required_license": "CC0-1.0",
+        "exclude_unverified_upstream_rights": true,
+        "excluded_source_domains": [
+          "typesafe.ai"
+        ]
+      },
+      "allowed_sources": null,
+      "source_excluded_rows": 0,
+      "eligible_rows": 3618,
+      "selected_sources": [
+        "email-selection-control-v1"
+      ],
+      "selected_rows": 32,
+      "sampler": "sorted_id_seeded_source_kind_round_robin_v1",
+      "config": "email-selection-control-v1"
+    },
+    "email-selection-control-v1:calibration": {
+      "sha256": "2fca99e888109d3a4e223e6b38f562c1c0f2563d62a48b831d778d10d10b8ac3",
+      "total_rows": 81,
+      "licensed_rows": 81,
+      "excluded_unverified_license": 0,
+      "excluded_restricted_source": 0,
+      "source_policy": {
+        "required_license": "CC0-1.0",
+        "exclude_unverified_upstream_rights": true,
+        "excluded_source_domains": [
+          "typesafe.ai"
+        ]
+      },
+      "allowed_sources": null,
+      "source_excluded_rows": 0,
+      "eligible_rows": 81,
+      "selected_sources": [
+        "email-selection-control-v1"
+      ],
+      "selected_rows": 16,
+      "sampler": "sorted_id_seeded_source_kind_round_robin_v1",
+      "config": "email-selection-control-v1"
+    },
+    "email-selection-control-v1:test": {
+      "sha256": "0b2aff2ca90e68d8346b4ea5cc23b045aad3f786a27371f8d9edb55feb677e02",
+      "total_rows": 432,
+      "licensed_rows": 432,
+      "excluded_unverified_license": 0,
+      "excluded_restricted_source": 0,
+      "source_policy": {
+        "required_license": "CC0-1.0",
+        "exclude_unverified_upstream_rights": true,
+        "excluded_source_domains": [
+          "typesafe.ai"
+        ]
+      },
+      "allowed_sources": null,
+      "source_excluded_rows": 0,
+      "eligible_rows": 432,
+      "selected_sources": [
+        "email-selection-control-v1"
+      ],
+      "selected_rows": 16,
+      "sampler": "sorted_id_seeded_source_kind_round_robin_v1",
+      "config": "email-selection-control-v1"
+    },
+    "mailroom-control-v1:train": {
+      "sha256": "5bc38433ab3758fc31d56a2f4f9e1aebb58881d1f21edf1bffdce49f38d43d32",
+      "total_rows": 73472,
+      "licensed_rows": 73472,
+      "excluded_unverified_license": 0,
+      "excluded_restricted_source": 0,
+      "source_policy": {
+        "required_license": "CC0-1.0",
+        "exclude_unverified_upstream_rights": true,
+        "excluded_source_domains": [
+          "typesafe.ai"
+        ]
+      },
+      "allowed_sources": null,
+      "source_excluded_rows": 0,
+      "eligible_rows": 73472,
+      "selected_sources": [
+        "mailroom-control-v1"
+      ],
+      "selected_rows": 96,
+      "sampler": "sorted_id_seeded_source_kind_round_robin_v1",
+      "config": "mailroom-control-v1"
+    },
+    "mailroom-control-v1:calibration": {
+      "sha256": "ad584458b9d498702d2c3fd5cb4427a8ea57e588ad3cc31a3cca3609213ccc3b",
+      "total_rows": 4018,
+      "licensed_rows": 4018,
+      "excluded_unverified_license": 0,
+      "excluded_restricted_source": 0,
+      "source_policy": {
+        "required_license": "CC0-1.0",
+        "exclude_unverified_upstream_rights": true,
+        "excluded_source_domains": [
+          "typesafe.ai"
+        ]
+      },
+      "allowed_sources": null,
+      "source_excluded_rows": 0,
+      "eligible_rows": 4018,
+      "selected_sources": [
+        "mailroom-control-v1"
+      ],
+      "selected_rows": 24,
+      "sampler": "sorted_id_seeded_source_kind_round_robin_v1",
+      "config": "mailroom-control-v1"
+    },
+    "mailroom-control-v1:test": {
+      "sha256": "605a9f4da39da089f8f9020e57ec57999ed5451ff3506c5629dbd056d5594280",
+      "total_rows": 8323,
+      "licensed_rows": 8323,
+      "excluded_unverified_license": 0,
+      "excluded_restricted_source": 0,
+      "source_policy": {
+        "required_license": "CC0-1.0",
+        "exclude_unverified_upstream_rights": true,
+        "excluded_source_domains": [
+          "typesafe.ai"
+        ]
+      },
+      "allowed_sources": null,
+      "source_excluded_rows": 0,
+      "eligible_rows": 8323,
+      "selected_sources": [
+        "mailroom-control-v1"
+      ],
+      "selected_rows": 32,
+      "sampler": "sorted_id_seeded_source_kind_round_robin_v1",
+      "config": "mailroom-control-v1"
+    }
+  },
+  "seed": 20261008,
+  "split_seed": 20261008,
+  "selected_rows": {
+    "train": 256,
+    "calibration": 48,
+    "test": 64,
+    "ood": 96
+  },
+  "evaluated_rows": {
+    "train": 3350,
+    "calibration": 303,
+    "test": 111,
+    "ood": 96,
+    "desktop_test": 362,
+    "desktop_family_ood": 60
+  },
+  "split_id_group_sha256": {
+    "train": "236118f738f68a351c1bd5d45ad8e2ad1768c11ef2299ade557d61e1cf5a0ee3",
+    "calibration": "1519f1c07654632afdf7507732e5fb30b8fd5c8718da2c86fdd07dc00b254f03",
+    "test": "1e57bb2a6dfb4345acd96138a1c84323af39d17392c22a52d148cc5968e3e44d",
+    "ood": "f3d499256bb968e398c7eccd138f8794bcf8b52bb84985b28db9d73bd1781005",
+    "desktop_test": "c09b685b5f24ebbfb1879d4995f531e6f388d669cd8f6ab220843e454bc71636",
+    "desktop_family_ood": "3c756027d809e568a5eb9b4f529a307886768b02289c685832f1e1c5d7ab38da"
+  },
+  "excluded_overlong": {
+    "train": 2,
+    "calibration": 2,
+    "test": 1,
+    "ood": 0,
+    "desktop_test": 0,
+    "desktop_family_ood": 0
+  },
+  "max_length": 1536,
+  "scope_history_budget": {},
+  "attention_implementation": "sdpa",
+  "model_dtype": "float16",
+  "training_checkpoint_sha256": "d1e64227b1b13e0a2e1df0ed3b0f386ede36cda01e6c83c5e86e2712482e2fd0",
+  "lora_rank": 8,
+  "accumulation": 4,
+  "candidate_microbatch_size": 2,
+  "prompt_style": "full_options_v2",
+  "initial_checkpoint": null,
+  "initialization": "base_yes_no_head_v1",
+  "backbone_quantization": "NF4 double quantization",
+  "checkpoint_every": 32,
+  "resumed": false,
+  "baseline_skipped_on_resume": true,
+  "baseline_skipped": true,
+  "learning_rates": {
+    "adapter": 0.0001,
+    "head": 0.0002
+  },
+  "brier_weight": 0.1,
+  "ordinal_weight": 0.1,
+  "ordinal_loss": "ranked_probability_score_v1",
+  "general_group_weighting": "none",
+  "scope_group_weighting": "none",
+  "scope_row_weight": 1.0,
+  "row_weights_sha256": null,
+  "calibration_temperature": 1.8123176774976293,
+  "kind_temperatures": {
+    "choice": 2.359770280197594,
+    "noul": 2.55198148796291,
+    "score": 0.15132868152923995
+  },
+  "baseline_test": null,
+  "baseline_ood": null,
+  "baseline_calibration_temperature": null,
+  "baseline_test_calibrated": null,
+  "baseline_ood_calibrated": null,
+  "trained_test": {
+    "rows": 111,
+    "top1_accuracy": 0.6846846846846847,
+    "mean_nll": 1.435596662959282,
+    "mean_brier": 0.15161230080173888,
+    "selective_prediction": {
+      "aurc": 0.23808592884871665,
+      "selection_score": "maximum_candidate_probability",
+      "tie_handling": "expected risk under random ordering within equal-score groups",
+      "risk_at_coverage": {
+        "0.5": {
+          "requested_coverage": 0.5,
+          "actual_coverage": 0.5045045045045045,
+          "retained_decisions": 56,
+          "selective_risk": 0.17857142857142858
+        },
+        "0.8": {
+          "requested_coverage": 0.8,
+          "actual_coverage": 0.8018018018018018,
+          "retained_decisions": 89,
+          "selective_risk": 0.25842696629213485
+        },
+        "0.9": {
+          "requested_coverage": 0.9,
+          "actual_coverage": 0.9009009009009009,
+          "retained_decisions": 100,
+          "selective_risk": 0.29
+        }
+      }
+    },
+    "by_kind": {
+      "choice": {
+        "rows": 45,
+        "top1_accuracy": 0.7111111111111111,
+        "mean_nll": 0.8499062189524046,
+        "mean_brier": 0.07654280656065432,
+        "selective_prediction": {
+          "aurc": 0.14497187062549888,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5111111111111111,
+              "retained_decisions": 23,
+              "selective_risk": 0.043478260869565216
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 0.8,
+              "retained_decisions": 36,
+              "selective_risk": 0.19444444444444445
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 0.9111111111111111,
+              "retained_decisions": 41,
+              "selective_risk": 0.2682926829268293
+            }
+          }
+        }
+      },
+      "noul": {
+        "rows": 45,
+        "top1_accuracy": 0.6444444444444445,
+        "mean_nll": 0.7784334072924541,
+        "mean_brier": 0.24656691624100036,
+        "selective_prediction": {
+          "aurc": 0.23036019753715836,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5111111111111111,
+              "retained_decisions": 23,
+              "selective_risk": 0.17391304347826086
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 0.8,
+              "retained_decisions": 36,
+              "selective_risk": 0.2777777777777778
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 0.9111111111111111,
+              "retained_decisions": 41,
+              "selective_risk": 0.36585365853658536
+            }
+          }
+        },
+        "confusion": {
+          "true_positive": 9,
+          "true_negative": 20,
+          "false_positive": 14,
+          "false_negative": 2
+        },
+        "balanced_accuracy": 0.7032085561497327
+      },
+      "score": {
+        "rows": 21,
+        "top1_accuracy": 0.7142857142857143,
+        "mean_nll": 4.098854590831507,
+        "mean_brier": 0.10900132680564566,
+        "selective_prediction": {
+          "aurc": 0.2866672103348352,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5238095238095238,
+              "retained_decisions": 11,
+              "selective_risk": 0.36363636363636365
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 0.8095238095238095,
+              "retained_decisions": 17,
+              "selective_risk": 0.29411764705882354
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 0.9047619047619048,
+              "retained_decisions": 19,
+              "selective_risk": 0.2631578947368421
+            }
+          }
+        },
+        "mean_rank_error": 0.5266087482593054,
+        "mean_ranked_probability_score": 0.11587519844075687
+      }
+    },
+    "by_source": {
+      "email-selection-control-v1": {
+        "rows": 15,
+        "top1_accuracy": 0.6,
+        "mean_nll": 1.4011532766943822,
+        "mean_brier": 0.21873138246419085,
+        "selective_prediction": {
+          "aurc": 0.2676123876123876,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5333333333333333,
+              "retained_decisions": 8,
+              "selective_risk": 0.25
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 0.8,
+              "retained_decisions": 12,
+              "selective_risk": 0.3333333333333333
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 0.9333333333333333,
+              "retained_decisions": 14,
+              "selective_risk": 0.35714285714285715
+            }
+          }
+        }
+      },
+      "mailroom-control-v1": {
+        "rows": 32,
+        "top1_accuracy": 1.0,
+        "mean_nll": 0.06048159284050625,
+        "mean_brier": 0.004592208220353672,
+        "selective_prediction": {
+          "aurc": 0.0,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5,
+              "retained_decisions": 16,
+              "selective_risk": 0.0
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 0.8125,
+              "retained_decisions": 26,
+              "selective_risk": 0.0
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 0.90625,
+              "retained_decisions": 29,
+              "selective_risk": 0.0
+            }
+          }
+        }
+      },
+      "painting-geometry-v1": {
+        "rows": 33,
+        "top1_accuracy": 0.5454545454545454,
+        "mean_nll": 3.376709106099727,
+        "mean_brier": 0.22652314650365887,
+        "selective_prediction": {
+          "aurc": 0.47529618690733866,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5151515151515151,
+              "retained_decisions": 17,
+              "selective_risk": 0.47058823529411764
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 0.8181818181818182,
+              "retained_decisions": 27,
+              "selective_risk": 0.4444444444444444
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 0.9090909090909091,
+              "retained_decisions": 30,
+              "selective_risk": 0.4666666666666667
+            }
+          }
+        }
+      },
+      "vizdoom-basic-v1": {
+        "rows": 31,
+        "top1_accuracy": 0.5483870967741935,
+        "mean_nll": 0.8053909343831404,
+        "mean_brier": 0.19115419852768048,
+        "selective_prediction": {
+          "aurc": 0.2764102966882963,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5161290322580645,
+              "retained_decisions": 16,
+              "selective_risk": 0.4375
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 0.8064516129032258,
+              "retained_decisions": 25,
+              "selective_risk": 0.36
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 0.9032258064516129,
+              "retained_decisions": 28,
+              "selective_risk": 0.39285714285714285
+            }
+          }
+        }
+      }
+    }
+  },
+  "trained_ood": {
+    "rows": 96,
+    "top1_accuracy": 0.3020833333333333,
+    "mean_nll": 1.0050934914295375,
+    "mean_brier": 0.2735457294380596,
+    "selective_prediction": {
+      "aurc": 0.8301644250145209,
+      "selection_score": "maximum_candidate_probability",
+      "tie_handling": "expected risk under random ordering within equal-score groups",
+      "risk_at_coverage": {
+        "0.5": {
+          "requested_coverage": 0.5,
+          "actual_coverage": 0.5,
+          "retained_decisions": 48,
+          "selective_risk": 0.8125
+        },
+        "0.8": {
+          "requested_coverage": 0.8,
+          "actual_coverage": 0.8020833333333334,
+          "retained_decisions": 77,
+          "selective_risk": 0.7142857142857143
+        },
+        "0.9": {
+          "requested_coverage": 0.9,
+          "actual_coverage": 0.90625,
+          "retained_decisions": 87,
+          "selective_risk": 0.7126436781609196
+        }
+      }
+    },
+    "by_kind": {
+      "choice": {
+        "rows": 48,
+        "top1_accuracy": 0.4791666666666667,
+        "mean_nll": 1.0657374630196832,
+        "mean_brier": 0.17642283178033694,
+        "selective_prediction": {
+          "aurc": 0.46186724770193455,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5,
+              "retained_decisions": 24,
+              "selective_risk": 0.4583333333333333
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 0.8125,
+              "retained_decisions": 39,
+              "selective_risk": 0.5128205128205128
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 0.9166666666666666,
+              "retained_decisions": 44,
+              "selective_risk": 0.5227272727272727
+            }
+          }
+        }
+      },
+      "noul": {
+        "rows": 48,
+        "top1_accuracy": 0.125,
+        "mean_nll": 0.9444495198393917,
+        "mean_brier": 0.3706686270957822,
+        "selective_prediction": {
+          "aurc": 0.9091045897425892,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5,
+              "retained_decisions": 24,
+              "selective_risk": 0.9166666666666666
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 0.8125,
+              "retained_decisions": 39,
+              "selective_risk": 0.8974358974358975
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 0.9166666666666666,
+              "retained_decisions": 44,
+              "selective_risk": 0.8636363636363636
+            }
+          }
+        },
+        "confusion": {
+          "true_positive": 6,
+          "true_negative": 0,
+          "false_positive": 42,
+          "false_negative": 0
+        },
+        "balanced_accuracy": 0.5
+      }
+    },
+    "by_source": {
+      "snake-v1": {
+        "rows": 96,
+        "top1_accuracy": 0.3020833333333333,
+        "mean_nll": 1.0050934914295375,
+        "mean_brier": 0.2735457294380596,
+        "selective_prediction": {
+          "aurc": 0.8301644250145209,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5,
+              "retained_decisions": 48,
+              "selective_risk": 0.8125
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 0.8020833333333334,
+              "retained_decisions": 77,
+              "selective_risk": 0.7142857142857143
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 0.90625,
+              "retained_decisions": 87,
+              "selective_risk": 0.7126436781609196
+            }
+          }
+        }
+      }
+    }
+  },
+  "adapter_sha256": "aa9de17cff257c5ce7fa104ca62b3ab5fa6d7dd4c96acaeae1fe4ee8e6cb45c1",
+  "head_sha256": "af133162802dc1ff362b8900c4bc3cbf3e8e7682dc38a38aefe59ad72c65d740",
+  "peak_vram_gib": 4.694,
+  "memory_note": null,
+  "elapsed_seconds": 10734.7,
+  "limitation": "Licensed public synthetic sample only; not proprietary Jev parity or Heliox execution authority.",
+  "extra_configs": [
+    "email-selection-control-v1:32:16:16",
+    "mailroom-control-v1:96:24:32"
+  ],
+  "score_label_sigma": 0.75,
+  "desktop_corpus": {
+    "corpus": "heliox_desktop_decisions_v4",
+    "seed": 20261002,
+    "license": "MIT (authored in this repository; no third-party or Jev-derived labels)",
+    "family_ood": [
+      "least_privilege",
+      "third_party_disclosure"
+    ],
+    "held_out_surface_variant": 3,
+    "rows": {
+      "train": 2968,
+      "calibration": 217,
+      "test": 362,
+      "family_ood": 60
+    },
+    "ids_sha256": {
+      "train": "814423e636a4a0b278313da57fc1c422860952c06f465cf701d7571e3391f3ce",
+      "calibration": "6a729ff4cf8fda0b4f047d88bcdbae9d75192d3c3d58ce4f2f8694bee7749886",
+      "test": "b136f0c8e9f3c9e6b04c15872be419b2c1e2435bcfb2fec03b18430d2c089c62",
+      "family_ood": "744ccf07ea308de8d1b1f3f57e9011d4d31eb0ccc9e7c878c9dd06ee66e2a8ad"
+    },
+    "kinds": {
+      "train": {
+        "noul": 1468,
+        "choice": 500,
+        "score": 1000
+      },
+      "calibration": {
+        "noul": 125,
+        "choice": 44,
+        "score": 48
+      },
+      "test": {
+        "noul": 208,
+        "choice": 74,
+        "score": 80
+      },
+      "family_ood": {
+        "noul": 36,
+        "choice": 24,
+        "score": 0
+      }
+    },
+    "noul_positive_fraction": {
+      "train": 0.48024523160762944,
+      "calibration": 0.472,
+      "test": 0.47115384615384615,
+      "family_ood": 0.3333333333333333
+    },
+    "train_scale": {
+      "action_risk": 2.5,
+      "approval_gate": 1.5,
+      "budget_fit": 2.5,
+      "compound_scope": 2.0,
+      "evidence_strength": 2.5,
+      "injection_next_step": 1.5,
+      "latest_instruction": 1.5,
+      "scope_authorization": 2.0,
+      "time_conversion": 3.0,
+      "urgency_rating": 2.5
+    }
+  },
+  "baseline_desktop_test": null,
+  "trained_desktop_test": {
+    "rows": 362,
+    "top1_accuracy": 0.9834254143646409,
+    "mean_nll": 0.06778448291099962,
+    "mean_brier": 0.014517762711899085,
+    "selective_prediction": {
+      "aurc": 0.0008137144341190241,
+      "selection_score": "maximum_candidate_probability",
+      "tie_handling": "expected risk under random ordering within equal-score groups",
+      "risk_at_coverage": {
+        "0.5": {
+          "requested_coverage": 0.5,
+          "actual_coverage": 0.5,
+          "retained_decisions": 181,
+          "selective_risk": 0.0
+        },
+        "0.8": {
+          "requested_coverage": 0.8,
+          "actual_coverage": 0.8011049723756906,
+          "retained_decisions": 290,
+          "selective_risk": 0.0
+        },
+        "0.9": {
+          "requested_coverage": 0.9,
+          "actual_coverage": 0.9005524861878453,
+          "retained_decisions": 326,
+          "selective_risk": 0.0
+        }
+      }
+    },
+    "by_kind": {
+      "choice": {
+        "rows": 74,
+        "top1_accuracy": 1.0,
+        "mean_nll": 0.060943023001610266,
+        "mean_brier": 0.004548687060649962,
+        "selective_prediction": {
+          "aurc": 0.0,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5,
+              "retained_decisions": 37,
+              "selective_risk": 0.0
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 0.8108108108108109,
+              "retained_decisions": 60,
+              "selective_risk": 0.0
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 0.9054054054054054,
+              "retained_decisions": 67,
+              "selective_risk": 0.0
+            }
+          }
+        }
+      },
+      "noul": {
+        "rows": 208,
+        "top1_accuracy": 0.9711538461538461,
+        "mean_nll": 0.09194051787457515,
+        "mean_brier": 0.023232710496203728,
+        "selective_prediction": {
+          "aurc": 0.0013308936022926646,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5,
+              "retained_decisions": 104,
+              "selective_risk": 0.0
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 0.8028846153846154,
+              "retained_decisions": 167,
+              "selective_risk": 0.0
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 0.9038461538461539,
+              "retained_decisions": 188,
+              "selective_risk": 0.0
+            }
+          }
+        },
+        "confusion": {
+          "true_positive": 92,
+          "true_negative": 110,
+          "false_positive": 0,
+          "false_negative": 6
+        },
+        "balanced_accuracy": 0.9693877551020409
+      },
+      "score": {
+        "rows": 80,
+        "top1_accuracy": 1.0,
+        "mean_nll": 0.011307142421888364,
+        "mean_brier": 0.0010802934501124536,
+        "selective_prediction": {
+          "aurc": 0.0,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5,
+              "retained_decisions": 40,
+              "selective_risk": 0.0
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 0.8,
+              "retained_decisions": 64,
+              "selective_risk": 0.0
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 0.9,
+              "retained_decisions": 72,
+              "selective_risk": 0.0
+            }
+          }
+        },
+        "mean_rank_error": 0.008875534641695037,
+        "mean_ranked_probability_score": 0.000719039920023943
+      }
+    },
+    "by_source": {
+      "heliox-desktop-action_risk": {
+        "rows": 20,
+        "top1_accuracy": 1.0,
+        "mean_nll": 0.03205230513483371,
+        "mean_brier": 0.004279785532643998,
+        "selective_prediction": {
+          "aurc": 0.0,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5,
+              "retained_decisions": 10,
+              "selective_risk": 0.0
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 0.8,
+              "retained_decisions": 16,
+              "selective_risk": 0.0
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 0.9,
+              "retained_decisions": 18,
+              "selective_risk": 0.0
+            }
+          }
+        },
+        "mean_rank_error": 0.024841434906132647,
+        "mean_ranked_probability_score": 0.002850498001735114
+      },
+      "heliox-desktop-ambiguous_referent": {
+        "rows": 20,
+        "top1_accuracy": 1.0,
+        "mean_nll": 0.09094504949786661,
+        "mean_brier": 0.005685831912792582,
+        "selective_prediction": {
+          "aurc": 0.0,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5,
+              "retained_decisions": 10,
+              "selective_risk": 0.0
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 0.8,
+              "retained_decisions": 16,
+              "selective_risk": 0.0
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 0.9,
+              "retained_decisions": 18,
+              "selective_risk": 0.0
+            }
+          }
+        }
+      },
+      "heliox-desktop-approval_gate": {
+        "rows": 35,
+        "top1_accuracy": 1.0,
+        "mean_nll": 0.042073888829614846,
+        "mean_brier": 0.0023660418550364554,
+        "selective_prediction": {
+          "aurc": 0.0,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5142857142857142,
+              "retained_decisions": 18,
+              "selective_risk": 0.0
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 0.8,
+              "retained_decisions": 28,
+              "selective_risk": 0.0
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 0.9142857142857143,
+              "retained_decisions": 32,
+              "selective_risk": 0.0
+            }
+          }
+        },
+        "confusion": {
+          "true_positive": 10,
+          "true_negative": 25,
+          "false_positive": 0,
+          "false_negative": 0
+        },
+        "balanced_accuracy": 1.0
+      },
+      "heliox-desktop-budget_fit": {
+        "rows": 20,
+        "top1_accuracy": 1.0,
+        "mean_nll": 0.005294714214678357,
+        "mean_brier": 1.9244143119012085e-05,
+        "selective_prediction": {
+          "aurc": 0.0,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5,
+              "retained_decisions": 10,
+              "selective_risk": 0.0
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 0.8,
+              "retained_decisions": 16,
+              "selective_risk": 0.0
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 0.9,
+              "retained_decisions": 18,
+              "selective_risk": 0.0
+            }
+          }
+        },
+        "mean_rank_error": 0.00422633462373591,
+        "mean_ranked_probability_score": 1.1918098460101434e-05
+      },
+      "heliox-desktop-compound_scope": {
+        "rows": 25,
+        "top1_accuracy": 1.0,
+        "mean_nll": 0.02582492346245937,
+        "mean_brier": 0.0015169286174919275,
+        "selective_prediction": {
+          "aurc": 0.0,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.52,
+              "retained_decisions": 13,
+              "selective_risk": 0.0
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 0.8,
+              "retained_decisions": 20,
+              "selective_risk": 0.0
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 0.92,
+              "retained_decisions": 23,
+              "selective_risk": 0.0
+            }
+          }
+        },
+        "confusion": {
+          "true_positive": 15,
+          "true_negative": 10,
+          "false_positive": 0,
+          "false_negative": 0
+        },
+        "balanced_accuracy": 1.0
+      },
+      "heliox-desktop-dependency_schedule": {
+        "rows": 10,
+        "top1_accuracy": 1.0,
+        "mean_nll": 0.013564968495512059,
+        "mean_brier": 8.05664801127886e-05,
+        "selective_prediction": {
+          "aurc": 0.0,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5,
+              "retained_decisions": 5,
+              "selective_risk": 0.0
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 0.8,
+              "retained_decisions": 8,
+              "selective_risk": 0.0
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 0.9,
+              "retained_decisions": 9,
+              "selective_risk": 0.0
+            }
+          }
+        }
+      },
+      "heliox-desktop-evidence_claim": {
+        "rows": 30,
+        "top1_accuracy": 1.0,
+        "mean_nll": 0.04218778328576356,
+        "mean_brier": 0.00261201957530337,
+        "selective_prediction": {
+          "aurc": 0.0,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5,
+              "retained_decisions": 15,
+              "selective_risk": 0.0
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 0.8,
+              "retained_decisions": 24,
+              "selective_risk": 0.0
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 0.9,
+              "retained_decisions": 27,
+              "selective_risk": 0.0
+            }
+          }
+        },
+        "confusion": {
+          "true_positive": 10,
+          "true_negative": 20,
+          "false_positive": 0,
+          "false_negative": 0
+        },
+        "balanced_accuracy": 1.0
+      },
+      "heliox-desktop-evidence_strength": {
+        "rows": 20,
+        "top1_accuracy": 1.0,
+        "mean_nll": 0.003686663807935334,
+        "mean_brier": 1.0202276548709363e-05,
+        "selective_prediction": {
+          "aurc": 0.0,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5,
+              "retained_decisions": 10,
+              "selective_risk": 0.0
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 0.8,
+              "retained_decisions": 16,
+              "selective_risk": 0.0
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 0.9,
+              "retained_decisions": 18,
+              "selective_risk": 0.0
+            }
+          }
+        },
+        "mean_rank_error": 0.0031082938431095638,
+        "mean_ranked_probability_score": 6.258737577234459e-06
+      },
+      "heliox-desktop-injection_next_step": {
+        "rows": 14,
+        "top1_accuracy": 1.0,
+        "mean_nll": 0.005395047947676896,
+        "mean_brier": 1.3509578571398094e-05,
+        "selective_prediction": {
+          "aurc": 0.0,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5,
+              "retained_decisions": 7,
+              "selective_risk": 0.0
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 0.8571428571428571,
+              "retained_decisions": 12,
+              "selective_risk": 0.0
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 0.9285714285714286,
+              "retained_decisions": 13,
+              "selective_risk": 0.0
+            }
+          }
+        }
+      },
+      "heliox-desktop-latest_instruction": {
+        "rows": 45,
+        "top1_accuracy": 0.8666666666666667,
+        "mean_nll": 0.29557447533324926,
+        "mean_brier": 0.09927983126653085,
+        "selective_prediction": {
+          "aurc": 0.024419461638715105,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5111111111111111,
+              "retained_decisions": 23,
+              "selective_risk": 0.0
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 0.8,
+              "retained_decisions": 36,
+              "selective_risk": 0.05555555555555555
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 0.9111111111111111,
+              "retained_decisions": 41,
+              "selective_risk": 0.0975609756097561
+            }
+          }
+        },
+        "confusion": {
+          "true_positive": 19,
+          "true_negative": 20,
+          "false_positive": 0,
+          "false_negative": 6
+        },
+        "balanced_accuracy": 0.88
+      },
+      "heliox-desktop-postcondition_verification": {
+        "rows": 30,
+        "top1_accuracy": 1.0,
+        "mean_nll": 0.04196233189900916,
+        "mean_brier": 0.003172756011383154,
+        "selective_prediction": {
+          "aurc": 0.0,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5,
+              "retained_decisions": 15,
+              "selective_risk": 0.0
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 0.8,
+              "retained_decisions": 24,
+              "selective_risk": 0.0
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 0.9,
+              "retained_decisions": 27,
+              "selective_risk": 0.0
+            }
+          }
+        },
+        "confusion": {
+          "true_positive": 15,
+          "true_negative": 15,
+          "false_positive": 0,
+          "false_negative": 0
+        },
+        "balanced_accuracy": 1.0
+      },
+      "heliox-desktop-preference_precedence": {
+        "rows": 20,
+        "top1_accuracy": 1.0,
+        "mean_nll": 0.048211826829394656,
+        "mean_brier": 0.0024886878206954585,
+        "selective_prediction": {
+          "aurc": 0.0,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5,
+              "retained_decisions": 10,
+              "selective_risk": 0.0
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 0.8,
+              "retained_decisions": 16,
+              "selective_risk": 0.0
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 0.9,
+              "retained_decisions": 18,
+              "selective_risk": 0.0
+            }
+          }
+        }
+      },
+      "heliox-desktop-scope_authorization": {
+        "rows": 20,
+        "top1_accuracy": 1.0,
+        "mean_nll": 0.037187176267825625,
+        "mean_brier": 0.0026958840934663613,
+        "selective_prediction": {
+          "aurc": 0.0,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5,
+              "retained_decisions": 10,
+              "selective_risk": 0.0
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 0.8,
+              "retained_decisions": 16,
+              "selective_risk": 0.0
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 0.9,
+              "retained_decisions": 18,
+              "selective_risk": 0.0
+            }
+          }
+        },
+        "confusion": {
+          "true_positive": 10,
+          "true_negative": 10,
+          "false_positive": 0,
+          "false_negative": 0
+        },
+        "balanced_accuracy": 1.0
+      },
+      "heliox-desktop-time_conversion": {
+        "rows": 10,
+        "top1_accuracy": 1.0,
+        "mean_nll": 0.15154658193513376,
+        "mean_brier": 0.01721176489172089,
+        "selective_prediction": {
+          "aurc": 0.0,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5,
+              "retained_decisions": 5,
+              "selective_risk": 0.0
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 0.8,
+              "retained_decisions": 8,
+              "selective_risk": 0.0
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 0.9,
+              "retained_decisions": 9,
+              "selective_risk": 0.0
+            }
+          }
+        }
+      },
+      "heliox-desktop-untrusted_instruction": {
+        "rows": 23,
+        "top1_accuracy": 1.0,
+        "mean_nll": 0.01897044136598773,
+        "mean_brier": 0.0007224237557822043,
+        "selective_prediction": {
+          "aurc": 0.0,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5217391304347826,
+              "retained_decisions": 12,
+              "selective_risk": 0.0
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 0.8260869565217391,
+              "retained_decisions": 19,
+              "selective_risk": 0.0
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 0.9130434782608695,
+              "retained_decisions": 21,
+              "selective_risk": 0.0
+            }
+          }
+        },
+        "confusion": {
+          "true_positive": 13,
+          "true_negative": 10,
+          "false_positive": 0,
+          "false_negative": 0
+        },
+        "balanced_accuracy": 1.0
+      },
+      "heliox-desktop-urgency_rating": {
+        "rows": 20,
+        "top1_accuracy": 1.0,
+        "mean_nll": 0.004194886530106058,
+        "mean_brier": 1.1941848138094014e-05,
+        "selective_prediction": {
+          "aurc": 0.0,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5,
+              "retained_decisions": 10,
+              "selective_risk": 0.0
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 0.8,
+              "retained_decisions": 16,
+              "selective_risk": 0.0
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 0.9,
+              "retained_decisions": 18,
+              "selective_risk": 0.0
+            }
+          }
+        },
+        "mean_rank_error": 0.0033260751938020195,
+        "mean_ranked_probability_score": 7.484842323322172e-06
+      }
+    }
+  },
+  "trained_desktop_family_ood": {
+    "rows": 60,
+    "top1_accuracy": 1.0,
+    "mean_nll": 0.058428562078349865,
+    "mean_brier": 0.0026812984565324116,
+    "selective_prediction": {
+      "aurc": 0.0,
+      "selection_score": "maximum_candidate_probability",
+      "tie_handling": "expected risk under random ordering within equal-score groups",
+      "risk_at_coverage": {
+        "0.5": {
+          "requested_coverage": 0.5,
+          "actual_coverage": 0.5,
+          "retained_decisions": 30,
+          "selective_risk": 0.0
+        },
+        "0.8": {
+          "requested_coverage": 0.8,
+          "actual_coverage": 0.8,
+          "retained_decisions": 48,
+          "selective_risk": 0.0
+        },
+        "0.9": {
+          "requested_coverage": 0.9,
+          "actual_coverage": 0.9,
+          "retained_decisions": 54,
+          "selective_risk": 0.0
+        }
+      }
+    },
+    "by_kind": {
+      "choice": {
+        "rows": 24,
+        "top1_accuracy": 1.0,
+        "mean_nll": 0.09875949582477728,
+        "mean_brier": 0.004632070800785284,
+        "selective_prediction": {
+          "aurc": 0.0,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5,
+              "retained_decisions": 12,
+              "selective_risk": 0.0
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 0.8333333333333334,
+              "retained_decisions": 20,
+              "selective_risk": 0.0
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 0.9166666666666666,
+              "retained_decisions": 22,
+              "selective_risk": 0.0
+            }
+          }
+        }
+      },
+      "noul": {
+        "rows": 36,
+        "top1_accuracy": 1.0,
+        "mean_nll": 0.031541272914064895,
+        "mean_brier": 0.0013807835603638294,
+        "selective_prediction": {
+          "aurc": 0.0,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5,
+              "retained_decisions": 18,
+              "selective_risk": 0.0
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 0.8055555555555556,
+              "retained_decisions": 29,
+              "selective_risk": 0.0
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 0.9166666666666666,
+              "retained_decisions": 33,
+              "selective_risk": 0.0
+            }
+          }
+        },
+        "confusion": {
+          "true_positive": 12,
+          "true_negative": 24,
+          "false_positive": 0,
+          "false_negative": 0
+        },
+        "balanced_accuracy": 1.0
+      }
+    },
+    "by_source": {
+      "heliox-desktop-least_privilege": {
+        "rows": 24,
+        "top1_accuracy": 1.0,
+        "mean_nll": 0.09875949582477728,
+        "mean_brier": 0.004632070800785284,
+        "selective_prediction": {
+          "aurc": 0.0,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5,
+              "retained_decisions": 12,
+              "selective_risk": 0.0
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 0.8333333333333334,
+              "retained_decisions": 20,
+              "selective_risk": 0.0
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 0.9166666666666666,
+              "retained_decisions": 22,
+              "selective_risk": 0.0
+            }
+          }
+        }
+      },
+      "heliox-desktop-third_party_disclosure": {
+        "rows": 36,
+        "top1_accuracy": 1.0,
+        "mean_nll": 0.031541272914064895,
+        "mean_brier": 0.0013807835603638294,
+        "selective_prediction": {
+          "aurc": 0.0,
+          "selection_score": "maximum_candidate_probability",
+          "tie_handling": "expected risk under random ordering within equal-score groups",
+          "risk_at_coverage": {
+            "0.5": {
+              "requested_coverage": 0.5,
+              "actual_coverage": 0.5,
+              "retained_decisions": 18,
+              "selective_risk": 0.0
+            },
+            "0.8": {
+              "requested_coverage": 0.8,
+              "actual_coverage": 0.8055555555555556,
+              "retained_decisions": 29,
+              "selective_risk": 0.0
+            },
+            "0.9": {
+              "requested_coverage": 0.9,
+              "actual_coverage": 0.9166666666666666,
+              "retained_decisions": 33,
+              "selective_risk": 0.0
+            }
+          }
+        },
+        "confusion": {
+          "true_positive": 12,
+          "true_negative": 24,
+          "false_positive": 0,
+          "false_negative": 0
+        },
+        "balanced_accuracy": 1.0
+      }
+    }
+  },
+  "trained_desktop_safety": {
+    "test": {
+      "heliox-desktop-approval_gate": {
+        "rows": 35,
+        "false_allowances": 0,
+        "false_warnings": 0
+      },
+      "heliox-desktop-compound_scope": {
+        "rows": 25,
+        "false_allowances": 0,
+        "false_warnings": 0
+      },
+      "heliox-desktop-evidence_claim": {
+        "rows": 30,
+        "false_allowances": 0,
+        "false_warnings": 0
+      },
+      "heliox-desktop-latest_instruction": {
+        "rows": 45,
+        "false_allowances": 0,
+        "false_warnings": 6
+      },
+      "heliox-desktop-postcondition_verification": {
+        "rows": 30,
+        "false_allowances": 0,
+        "false_warnings": 0
+      },
+      "heliox-desktop-scope_authorization": {
+        "rows": 20,
+        "false_allowances": 0,
+        "false_warnings": 0
+      },
+      "heliox-desktop-untrusted_instruction": {
+        "rows": 23,
+        "false_allowances": 0,
+        "false_warnings": 0
+      }
+    },
+    "family_ood": {
+      "heliox-desktop-third_party_disclosure": {
+        "rows": 36,
+        "false_allowances": 0,
+        "false_warnings": 0
+      }
+    }
+  }
+}
