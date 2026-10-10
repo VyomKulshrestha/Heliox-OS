@@ -220,8 +220,18 @@ def _snapshot_script(handle: int, max_elements: int) -> str:
         "$item = $queue.Dequeue(); $element = $item[0]; $depth = $item[1]; $visits++; "
         "try { $c = $element.Current } catch { continue }; "
         "$r = $c.BoundingRectangle; $t = $c.ControlType.ProgrammaticName; "
-        "if (-not $c.IsOffscreen -and $r.Width -gt 0 -and $r.Height -gt 0 -and "
-        "($types -contains $t -or ($t -eq 'ControlType.Text' -and $c.Name))) { "
+        "$visible = (-not $c.IsOffscreen -and $r.Width -gt 0 -and $r.Height -gt 0); "
+        "$keep = ($types -contains $t -or ($t -eq 'ControlType.Text' -and $c.Name)); "
+        # WinForms and owner-drawn controls often reach UI Automation as a bare named Pane or
+        # Custom leaf with no patterns. Keep those that are buttons by window class, or that
+        # still offer an action pattern; layout panes have children or no name and stay out.
+        "if ($visible -and -not $keep -and $c.Name -and ($t -eq 'ControlType.Pane' -or $t -eq 'ControlType.Custom')) { "
+        "$leaf = $true; try { $leaf = ($walker.GetFirstChild($element) -eq $null) } catch { }; "
+        "if ($leaf) { "
+        r"if ($c.ClassName -match '(^|\.)BUTTON(\.|$)') { $keep = $true; $t = 'ControlType.Button' } "
+        "else { $pats = @(); try { $pats = @($element.GetSupportedPatterns() | ForEach-Object { $_.ProgrammaticName }) } catch { }; "
+        "if ($pats -match 'Invoke|Toggle|ExpandCollapse|SelectionItem') { $keep = $true } } } }; "
+        "if ($visible -and $keep) { "
         "$rid = ''; try { $rid = ($element.GetRuntimeId() -join '.') } catch { }; "
         "[void]$found.Add(@{ t = $t; n = $c.Name; a = $c.AutomationId; x = [int]$r.X; y = [int]$r.Y; "
         "w = [int]$r.Width; h = [int]$r.Height; e = $c.IsEnabled; f = $c.HasKeyboardFocus; r = $rid }) }; "

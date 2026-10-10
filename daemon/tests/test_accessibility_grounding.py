@@ -309,3 +309,36 @@ def test_malformed_runtime_ids_are_dropped():
     snapshot = parse_snapshot(_payload({**SAVE, "r": "1; Remove-Item"}), WINDOW, captured_at=0.0)
 
     assert snapshot.elements[0].runtime_id == ""
+
+
+def test_snapshot_script_keeps_named_button_like_panes_but_not_layout_panes():
+    script = accessibility._snapshot_script(4242, 50)
+
+    # WinForms buttons reach UI Automation as a named Pane leaf whose window class says BUTTON.
+    assert "$t -eq 'ControlType.Pane' -or $t -eq 'ControlType.Custom'" in script
+    assert r"$c.ClassName -match '(^|\.)BUTTON(\.|$)'" in script
+    assert "$t = 'ControlType.Button'" in script
+    # Only leaves count: a panel that contains other controls is layout, not a target.
+    assert "$leaf = ($walker.GetFirstChild($element) -eq $null)" in script
+    # Other named leaves qualify only when they still offer an action pattern.
+    assert "'Invoke|Toggle|ExpandCollapse|SelectionItem'" in script
+    assert "if ($visible -and $keep)" in script
+
+
+def test_a_winforms_button_reported_as_a_pane_parses_as_a_clickable_button():
+    window = WindowIdentity(7, (0, 0, 300, 200))
+    payload = json.dumps(
+        {
+            "title": "Heliox WinForms probe",
+            "process": 1,
+            "elements": [
+                {"t": "ControlType.Button", "n": "Save report", "x": 10, "y": 10, "w": 80, "h": 24, "r": "42.1"}
+            ],
+        }
+    )
+
+    snapshot = accessibility.parse_snapshot(payload, window, captured_at=0.0)
+
+    [element] = snapshot.elements
+    assert (element.role, element.name, element.runtime_id) == ("Button", "Save report", "42.1")
+    assert "Save report" in snapshot.describe(10)
