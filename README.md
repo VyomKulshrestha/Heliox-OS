@@ -64,6 +64,7 @@ v0.13.0 strengthens truthful terminal outcomes, transactional live settings, aut
 | Guarded fast path    | 26.476 ms median, 27.999 ms p95 across 100 non-LLM CPU-usage iterations; zero model calls     | This is not provider, browser, voice, camera, TTS, neural, or full-workflow latency            |
 | Subscription planning | 3/3 fixed Codex CLI cases; 14.708 s median; zero executed or destructive actions             | One account and planning only; not action-execution, Claude, or universal provider evidence     |
 | Intent dispatch      | 59/59 curated bounded-intent and ambiguous-fall-through regression cases                     | Fixed corpus; not population-level language-understanding accuracy                            |
+| Typed decisions      | Gnomon v4.1 (Qwen3.5-2B QLoRA): 98.3% yes/no and 100% choice accuracy, 0 false allowances on a fresh 128-case authored set | Opt-in and advisory; authored labels; rating error 0.202 vs 0.024 for the hosted reference model |
 | Learned risk model   | 25,200 training, 5,400 calibration, and 5,400 temporal-validation samples; 5/5 direction invariants | Covers 12 coarse disk/process action transitions; deterministic policy remains authoritative |
 | Async responsiveness | 66 heartbeats during a real one-second CPU monitor; 16.575 ms maximum heartbeat interval      | Windows timer granularity and host load apply; this is not UI or hardware-input latency        |
 | Plugins              | 6 manifests in the generated public catalog                                                   | Marketplace and local plugins remain capability-constrained                                    |
@@ -254,7 +255,7 @@ installed `heliox-mcp` command:
 
 The local server exposes status, capabilities, task preview, submission,
 polling, cancellation, and optional local research-only typed-decision scoring
-for single or batched questions. Every submitted action requires visible
+with [Gnomon](docs/GNOMON_TRAINING.md) for single or batched questions. Every submitted action requires visible
 approval in Heliox; neither the MCP client nor the research scorer can approve
 its own work. See [MCP interfaces](docs/MCP.md) for the tool list and security
 boundary.
@@ -377,7 +378,8 @@ Open a [bug report](https://github.com/VyomKulshrestha/Heliox-OS/issues/new/choo
 - [Neural intent research controls](docs/NEURAL_INTENT.md)
 - [Intelligence evaluation and research map](docs/INTELLIGENCE_EVALUATION.md)
 - [Opt-in recorded workflows and local visual samples](docs/RECORDED_WORKFLOWS.md)
-- [Jev scope-decision study and held-out results](docs/JEV_SCOPE_STUDY.md)
+- [Gnomon typed-decision model: training, gates and results](docs/GNOMON_TRAINING.md)
+- [Public decision-corpus adaptation log](docs/PUBLIC_CORPUS_ADAPTATION.md)
 - [Forensics runbook](docs/FORENSICS_RUNBOOK.md)
 - [Contributing](CONTRIBUTING.md)
 - [Website agent index](https://www.helioxos.dev/llms.txt) and [repository agent index](llms.txt)

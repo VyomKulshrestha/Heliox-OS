@@ -1,7 +1,7 @@
 # One-step outcome ranker: failed transfer and coverage gate
 
 This is an offline study of **public synthetic MiniWoB pages**, not a Heliox
-runtime model or evidence of Jev parity. The task-page split, seed, candidate
+runtime model or evidence of reference-model parity. The task-page split, seed, candidate
 regularization values, and per-page success criterion in the
 [protocol](miniwob_reward_ranker_protocol_v1.json) were chosen before
 collection. The feature-extraction batch setting was corrected **after** an
@@ -15,7 +15,7 @@ The visual feature archive SHA-256 is
 `346efba11a300ce4510317b3abf028b905e7edf486d3ee93d97839d70c4a3ff9`;
 the opt-in public-page text archive SHA-256 is
 `6f2d87176d18a3cb287819a3d098ab048d4eb6970af8265c050a3346fa78081b`.
-Neither archive contains user desktop content or Jev outputs.
+Neither archive contains user desktop content or reference-model outputs.
 
 A frozen local Qwen3-0.6B model extracted each visible-state/candidate-action
 feature separately on CUDA (504 rows, at most 1,015 prompt tokens, 1.587 GiB
@@ -56,7 +56,7 @@ effect-then-visual-realization architecture in the
 It cannot answer unseen counterfactuals, show long-horizon task completion,
 establish real-desktop transfer, or authorize actions. The perfect goal-text
 baseline on eligible evaluation pairs also makes these particular pages too
-easy to support a Jev-like capability claim. A stronger future protocol needs
+easy to support a reference-style capability claim. A stronger future protocol needs
 diverse task goals and environment-disjoint, causally paired actions with
 independent success verification.
 

@@ -1,4 +1,4 @@
-# Open-Jev correctness scorer v1 — in-training diagnostic
+# Public-corpus correctness scorer v1 — in-training diagnostic
 
 Date: 2026-09-29
 
@@ -7,23 +7,23 @@ Status: research-only; no runtime integration or promotion.
 ## Important data-exposure correction
 
 This v1 run selected its fit and evaluation rows from the `train` split. The
-released Open-Jev checkpoint was trained on that full release-v2 training
+Released public baseline checkpoint was trained on that full release-v2 training
 mixture, so the reported 111-row comparison is **not an untouched or
 independent generalization result**. Its group exclusions prevented overlap
 with earlier Heliox experiments but could not remove the released checkpoint's
 training exposure. Treat every v1 metric below as an in-training diagnostic;
-do not use it to claim held-out improvement or Jev parity. The v2 protocol
+do not use it to claim held-out improvement or reference-model parity. The v2 protocol
 replaces this selection with fresh calibration-fit and OOD-evaluation rows.
 
 ## Why this experiment
 
-Open-Jev is a compact decision scorer: its released 2B artifact is a LoRA
+The public decision-corpus model is a compact decision scorer: its released 2B artifact is a LoRA
 adapter plus a scalar decision head that scores caller-supplied candidate
 answers, rather than a general chat model that generates the answer. That is a
 more relevant, locally runnable design target for Heliox's typed decisions
 than trying to imitate a proprietary general assistant. See the
-[Open-Jev model card](https://huggingface.co/ZefanCai/Open-Jev-2B) and
-[loader](https://github.com/Zefan-Cai/Open-Jev).
+Public-corpus model card and
+loader.
 
 Recent work also suggests two useful but distinct next steps: ASPIRE jointly
 trains self-evaluation and selective prediction, while COIN calibrates a
@@ -36,22 +36,22 @@ method. They are follow-up hypotheses, not claimed results. See
 ## Frozen setup
 
 - Protocol: [`opendec_correctness_head_v1.json`](opendec_correctness_head_v1.json).
-- Public dataset: Open-Jev release at revision
+- Public dataset: public-corpus release at revision
   `c67699e13d0ae25e35b77165a4b6b079bedc8aba`; 2,440 previously exposed groups
   were excluded before selecting 128 fit and 128 test groups.
-- The frozen Heliox RPS adapter and released Open-Jev adapter were evaluated
+- The frozen Heliox RPS adapter and released public baseline adapter were evaluated
   against the same train-split diagnostic rows. The logistic scorer was fit only on the
   fit partition. Long prompts were excluded rather than truncated: 13 fit and
   17 test rows exceeded the candidate's 512-token limit. This left 115 fit
   rows and 111 paired test rows.
 - Evaluation used the cached local model and GPU. No model or dataset download
-  was needed for this run. No TypeSafe Jev API calls or outputs were used.
+  was needed for this run. No the hosted reference model API calls or outputs were used.
 - The scorer is descriptive research. It cannot select, authorize, or execute
   desktop actions.
 
 ## Head-to-head result
 
-| Same train-split diagnostic rows | Released Open-Jev | Heliox RPS candidate | Candidate minus baseline |
+| Same train-split diagnostic rows | Released public baseline | Heliox RPS candidate | Candidate minus baseline |
 | --- | ---: | ---: | ---: |
 | Top-1 accuracy (111) | 81.98% | 82.88% | +0.90 pp (one row) |
 | Mean NLL | 0.3710 | 0.3240 | -0.0470 |
@@ -73,9 +73,9 @@ was [-0.00410, +0.00217]. Brier worsened from 0.08141 to 0.08697. The
 confidence score therefore remains rejected for runtime use; a tiny ranking
 change is not calibration evidence.
 
-The direct model comparison is a modest research signal, not Jev parity. It
-compares Heliox only with the public Open-Jev release and public benchmark
-labels—not TypeSafe Jev, live user intent, successful workflows, or real
+The direct model comparison is a modest research signal, not reference-model parity. It
+compares Heliox only with the public-corpus release and public benchmark
+labels—not the hosted reference model, live user intent, successful workflows, or real
 desktop task outcomes. No model checkpoint, threshold, confidence score, or
 authority was promoted. TypeSafe's current
 [terms](https://typesafe.ai/legal/mca) restrict using its services or outputs
@@ -84,7 +84,7 @@ product; this work deliberately uses no such outputs.
 
 ## Follow-up direction
 
-1. Keep the Open-Jev-style candidate scorer small and local; do not add a
+1. Keep the public-baseline-style candidate scorer small and local; do not add a
    general-purpose model call to every action.
 2. Collect explicitly opted-in Heliox-owned labels for whether a proposed
    decision was correct and whether the approved workflow achieved its goal;
@@ -107,7 +107,7 @@ python scripts/evaluate_general_decision_correctness_head.py --resume
 
 The evaluator now accepts only the checksum-frozen v2 protocol and writes
 resumable predictions and `report.json` under the ignored
-`benchmarks/.bench-state/openjev_correctness_head_v2/` directory. Model weights,
+`benchmarks/.bench-state/opendec_correctness_head_v2/` directory. Model weights,
 predictions, and caches are intentionally not committed. The historical v1
 artifacts remain unchanged for auditability; its original split and outputs
 are identified in `opendec_correctness_head_v1.json`.

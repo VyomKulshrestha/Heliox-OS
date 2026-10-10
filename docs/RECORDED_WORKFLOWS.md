@@ -118,5 +118,5 @@ the 16×16 grayscale feature is too coarse to establish real desktop world
 model quality. The published inverse probe in
 [INTELLIGENCE_EVALUATION.md](INTELLIGENCE_EVALUATION.md) shows that public
 desktop transitions still lack convincing action information. Do not claim
-Jev parity, reliable arbitrary-app replay, or autonomous approval from this
+reference-model parity, reliable arbitrary-app replay, or autonomous approval from this
 preview.

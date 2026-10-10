@@ -1,17 +1,17 @@
-# Independent Open-Jev candidate comparison (v3)
+# Independent public-corpus candidate comparison (v3)
 
 Status: research-only. The RPS candidate remains unpromoted and does not control
 Heliox actions.
 
 ## Result
 
-The frozen Heliox RPS candidate was compared with the released Open-Jev 2B
+The frozen Heliox RPS candidate was compared with the released public 2B baseline
 checkpoint on the same 482 previously unseen, group-disjoint public decisions.
 The selection started with 512 licensed test-split rows; 30 candidate prompts
 above its 512-token limit were excluded without truncation. The 482 common rows
 include 67 ordered Score decisions.
 
-| Decision set | Released Open-Jev | Heliox candidate | Candidate change |
+| Decision set | Released public baseline | Heliox candidate | Candidate change |
 | --- | ---: | ---: | ---: |
 | All: top-1 accuracy | 78.84% | 80.71% | +1.87 pp |
 | All: mean NLL | 0.5308 | 0.4477 | -0.0831 |
@@ -28,7 +28,7 @@ were also scored with a tie-aware risk/coverage metric. Maximum candidate
 probability ranks rows for this analysis; ties use expected risk under random
 ordering. This is not a correctness head or calibrated probability of success.
 
-| Selective metric ↓ | Released Open-Jev | Heliox candidate | Candidate change |
+| Selective metric ↓ | Released public baseline | Heliox candidate | Candidate change |
 | --- | ---: | ---: | ---: |
 | AURC (all 482) | 0.0593 | 0.0476 | -0.0117 |
 | Selective risk at 50% coverage | 2.49% | 1.66% | -0.83 pp |
@@ -55,7 +55,7 @@ calculation is in
 
 ## Selection and reproducibility
 
-- Dataset: licensed Open-Jev revision
+- Dataset: licensed public-corpus revision
   `c67699e13d0ae25e35b77165a4b6b079bedc8aba`.
 - Fresh selection: the held-out `test` split, seed `20261008`, 512 rows.
 - The checksum-pinned exclusion manifests cover 1,928 groups from prior
@@ -74,8 +74,8 @@ existing pinned CUDA environment and cached artifacts were reused.
 
 ## Limits and next use
 
-This compares with the public Open-Jev release, not proprietary TypeSafe Jev;
-it does not establish Jev parity. No TypeSafe Jev outputs were collected or used
+This compares with the public-corpus release, not the proprietary hosted reference model;
+it does not establish reference-model parity. No the hosted reference model outputs were collected or used
 as labels. The candidate was not tuned on this comparison. Treat these rows as
 consumed; any further tuning requires a new untouched selection. Product
 promotion still requires separate runtime, safety, approval-path, and live

@@ -6,7 +6,7 @@ observed. This probe applies that **replay principle**, not the paper's full
 recursive, long-horizon algorithm: each independently reset public MiniWoB
 state has two recorded click outcomes. Policies choose one without executing
 it again. Missing rewards and non-contrasting pairs are excluded rather than
-predicted. This is not a desktop trial or a Jev comparison.
+predicted. This is not a desktop trial or reference-model comparison.
 
 | Frozen run | Eligible validation | Eligible eval | Fixed-first eval | Selected eval | Gate |
 | --- | ---: | ---: | ---: | ---: | --- |

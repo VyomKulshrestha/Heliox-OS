@@ -1,7 +1,7 @@
 # Intelligence evaluation and research map
 
 The [2026-09-30 checkpoint](INTELLIGENCE_STATUS_2026-09-30.md) records current
-collaboration/learning fixes, live Jev reference calls, failed frozen visual
+collaboration/learning fixes, live reference-model answer calls, failed frozen visual
 transfer tests and a completed clean-base 2B study. The latter improved a narrow
 test split but did not improve source-held-out accuracy and worsened some
 probability-quality metrics. The generalized-intelligence goal remains unachieved.
@@ -41,7 +41,7 @@ activation. Classifier accuracy alone is not a product acceptance gate.
 
 ## Scope-advisory research and current state
 
-The earlier Jev-based scope experiments are historical research, not a
+The earlier the reference model-based scope experiments are historical research, not a
 repeatable training recipe or evidence of a current model. Under the current
 [TypeSafe Master Customer Agreement, section 2.3(b)](https://typesafe.ai/legal/mca),
 using provider outputs to distill, imitate, or develop a similar or competing
@@ -50,7 +50,7 @@ historical teacher-output training and tuning entry points remain disabled.
 The bounded `compare_general_reference` evaluation CLI separately requires explicit
 `--acknowledge-provider-terms` and a fresh report path; it does not fit weights
 or calibration to provider answers or establish output-training rights. The detailed
-[historical study](JEV_SCOPE_STUDY.md) is retained for audit and is not a
+historical study is retained for audit and is not a
 current product claim.
 
 The runtime no longer loads the historical output-derived scope checkpoint;
@@ -173,16 +173,16 @@ turned into fabricated training features.
 The shipped OS-impact head predicts coarse disk/process changes, not whether
 an arbitrary proposed tool call fulfills a user's task. Its stored temporal
 validation covers 5,400 samples across 12 action types; the benchmark checks
-the saved evidence and direction invariants, not fresh Jev-style reasoning.
+the saved evidence and direction invariants, not fresh reference-style reasoning.
 
 A separate [compact option-ranker probe](../daemon/benchmarks/typed_decision_probe_v2.md)
-uses only verified-CC0 Open-Jev rows and a tiny listwise byte model. Across two
+uses only verified-CC0 public-corpus rows and a tiny listwise byte model. Across two
 1,000-row OOD samples, full-context shuffling reduced top-1 by 12.1 points,
 while choice accuracy was 33.6–42.9% against 25.6–25.8% expected random choice;
 10-bin ECE remained 9.2–10.4%. It is not loaded by Heliox and provides no
 evidence of live desktop or multi-step transfer. This follows the independent
-Open-Jev pattern of ranking supplied choices in one pass; it does not reproduce
-Jev's private model or method. A scorer-only microbenchmark measured roughly
+Public-corpus pattern of ranking supplied choices in one pass; it does not reproduce
+the reference model's private model or method. A scorer-only microbenchmark measured roughly
 1.1 ms median on both CPU and CUDA, excluding Heliox's RPC and approval loop.
 
 An audit found that the earlier row-sampled `ood` partition shared source
@@ -198,7 +198,7 @@ runtime prompts still omit source names. Use
 `--source-holdout-fraction 0` only to reproduce the older row-held-out
 protocol. `--source-holdout-seed` selects source folds independently from
 `--split-seed`, which fixes sampled rows within each fold. A source-heldout
-score is still a small public-data probe, not Jev
+score is still a small public-data probe, not the reference model
 parity or evidence that the daemon can complete real desktop tasks.
 Before importing the model or allocating CUDA state, the trainer also checks
 available host RAM (2.5 GiB by default) to avoid starting a fine-tune while the
@@ -233,7 +233,7 @@ the original experimental report's "false allowances" field must not be read
 as a permission metric.
 
 This head is **not loaded by the daemon** or used as permission evidence. It
-does not establish Jev parity or world-model transition fidelity. Reproduce
+does not establish reference-model parity or world-model transition fidelity. Reproduce
 the experiment from `daemon/` with `scripts/train_world_multidomain_mlp.py`,
 the pinned feature checkpoints, and fresh artifact/report paths. The private
 local replay report is not a shipped benchmark.
@@ -266,7 +266,7 @@ excluded domain's test split. Held-out agentic and TBAC AUCs were 0.879 and
 The When2Call-excluded fold accepted all 100 When2Call test cases at 0.5,
 including all 50 dispreferred calls. This is a generalization failure: the
 current task-state head needs domain-specific training examples and cannot be
-called a transferable Jev-like world model. Reproduce with
+called a transferable reference-style world model. Reproduce with
 `scripts/evaluate_world_cross_domain.py` and fresh report path; the local
 feature checkpoints and generated report remain research-only. These domain
 families informed earlier hyperparameter exploration, so this diagnostic is
@@ -319,7 +319,7 @@ additional validation data. An environment-disjoint corpus of independently
 observed Heliox outcomes
 and prospective postcondition tests is required before considering any
 runtime integration. Lower token loss or a well-formed `<tool_response>` wrapper
-cannot authorize an action or establish Jev-level generalization.
+cannot authorize an action or establish the reference model-level generalization.
 
 ### Task-group-disjoint desktop transition probe
 
@@ -343,7 +343,7 @@ target-token loss from **2.741 to 1.643** at learning rate `1e-4`; no rows were
 excluded by the 1536-input/384-target token limits. This is a better-grounded
 *text transition* probe than the small tool-response sample above, but still
 does not measure actual screenshot
-prediction, Heliox task success, calibration, safety, or Jev parity. The adapter
+prediction, Heliox task success, calibration, safety, or reference-model parity. The adapter
 and source text stay in ignored local benchmark storage and are not loaded by
 the daemon. Reproduce the sampler, training, and generation diagnostics with
 `daemon/scripts/sample_grouped_world_transitions.py`,
@@ -419,7 +419,7 @@ GPU attempt terminated with a CUDA launch failure and
 coincident NVIDIA driver events, without a model report. The capped run
 finished without new driver events. Neither loss nor lexical overlap proves
 correct action effects, visual fidelity, cross-environment generalization,
-or Jev parity. The adapter remains ignored local research data and is not
+or reference-model parity. The adapter remains ignored local research data and is not
 loaded by the daemon.
 
 ### Action-conditioned latent world-model check
@@ -469,7 +469,7 @@ py -3.11 -m scripts.train_world_latent_transition --device cpu --selection-metri
 Text-hash vectors are not screenshot features or live UI embeddings. Neither
 cosine nor retrieval on sampled candidate descriptions establishes physical
 or visual prediction fidelity, uncertainty calibration, task success, action
-authority, or Jev parity. The result argues against staging this latent model
+authority, or reference-model parity. The result argues against staging this latent model
 in Heliox until a fresh, consented observed-state corpus and stronger
 environment-disjoint evaluation exist.
 
@@ -605,7 +605,7 @@ that paper does not validate Heliox's model. Full source, weight hashes, and
 scores are in the [bounded probe record](../daemon/benchmarks/world_gui_cc_ordered_probe_v1.json).
 Weights remain ignored local research artifacts, with **no promotion** to
 `UiJepaPredictor`. Mobile GUI pixels also do not establish desktop transfer,
-multi-step contextual consistency, safety, or Jev parity. The next necessary
+multi-step contextual consistency, safety, or reference-model parity. The next necessary
 evidence is richer screen/action context plus independent same-state,
 different-action outcomes or consented desktop trajectories; adding an
 arbitrary action-sensitivity loss to this data would not prove causality.
@@ -752,7 +752,7 @@ larger run was stopped before artifact creation when C: free space fell below
 [evidence record](../daemon/benchmarks/world_heliox_ui_navigation_probe_v1.json)
 pins the local feature, report, and weight hashes. These research weights are
 not compatible with or loaded by the live `UiJepaPredictor`; no promotion or
-Jev-parity claim follows from this experiment.
+reference-model parity claim follows from this experiment.
 
 The original spatial research model placed click coordinates only in a small
 local hotspot. Its shallow convolutional stack could not convey that location
@@ -768,7 +768,7 @@ head, paired-ranking loss, and photometric augmentation were also tried as
 development diagnostics and did not repair this failure. The
 [global-action evidence record](../daemon/benchmarks/world_visual_global_action_probe_v1.json)
 pins the CUDA reports and local weight hashes. This is a narrow, selected
-research improvement, not a live model, robust theme transfer, or Jev parity.
+research improvement, not a live model, robust theme transfer, or reference-model parity.
 
 A subsequent development run added a separate dark-theme fit/validation
 archive while keeping the primary light evaluation partition isolated. A
@@ -781,7 +781,7 @@ worse in **20/20** groups for each appearance, at **2.01022** and **0.00414**
 respectively. The [mixed-appearance evidence](../daemon/benchmarks/world_visual_multitheme_probe_v1.json)
 pins data, model, and transfer-report hashes. The two actions, one app, shared
 layout family, and tiny dark error margin make this a bounded development
-check—not independent GUI transfer, a calibrated execution gate, or Jev parity.
+check—not independent GUI transfer, a calibrated execution gate, or reference-model parity.
 No learned weights were promoted.
 
 The same global-coordinate architecture was also trained on the existing
@@ -876,7 +876,7 @@ forward-only model. It still preferred the correct click on only 24/44 whole
 frames, and its mean whole-frame margin favored the wrong action. The
 [frozen result](../daemon/benchmarks/world_visual_focus_seed200_results_v1.json)
 fails the overall gate; no weights are enabled in Heliox. This is a useful
-representation diagnostic, not a Jev-equivalent world model.
+representation diagnostic, not a reference-equivalent world model.
 
 A further research-only probe, inspired by the latent-displacement inverse
 objective in [Delta-JEPA](https://arxiv.org/html/2606.31232v1), predicts a
@@ -932,7 +932,7 @@ the paper-inspired model has no live loader. From `daemon/`, use
 the bounded GPU protocol. Hash checks reject mismatched source features or
 model weights. The failed transfer evidence blocks runtime promotion; the
 current 16×16 representation and one-step click-only supervision do not
-establish Jev-like multistep planning or general desktop transfer.
+establish reference-style multistep planning or general desktop transfer.
 
 The follow-up [branch coverage and transfer audit](../daemon/benchmarks/world_branch_transfer_seed700_results_v1.json)
 expanded valid evaluation coverage to 47 pairs across four families using
@@ -1122,5 +1122,5 @@ directory. It refuses to lower these sample gates or overwrite existing
 artifacts. Every observed outcome class must occur in both train and test
 groups; reports include per-class recall and test coverage so partial-class
 holdouts cannot inflate balanced accuracy. Tests use synthetic fixtures only;
-they are not user training evidence. This is not Jev imitation, parity, or
+they are not user training evidence. This is not the reference-model imitation, parity, or
 action authorization.
