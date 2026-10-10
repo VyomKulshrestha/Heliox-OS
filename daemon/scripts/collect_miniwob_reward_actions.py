@@ -12,8 +12,6 @@ import json
 from collections import Counter
 from pathlib import Path
 
-from playwright.sync_api import sync_playwright
-
 from scripts.collect_miniwob_branches import (
     SOURCE_COMMIT,
     SOURCE_REPO,
@@ -148,6 +146,9 @@ def require_disjoint_prestates(rows: list[dict]) -> None:
 
 
 def main() -> None:
+    # Optional dependency (pip install -e ".[browser]"); imported here so the helpers stay importable.
+    from playwright.sync_api import sync_playwright
+
     root = Path(__file__).resolve().parents[1] / "benchmarks/.bench-state"
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--train-tasks", required=True)

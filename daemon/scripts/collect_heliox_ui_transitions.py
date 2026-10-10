@@ -18,7 +18,6 @@ from urllib.parse import urlsplit
 
 import numpy as np
 from PIL import Image
-from playwright.sync_api import sync_playwright
 
 from pilot.agents.screen_vision import _world_embedding_from_frame
 
@@ -101,6 +100,9 @@ def _pair(page, url: str, family: int, index: int, width: int, height: int, them
 
 
 def main() -> None:
+    # Optional dependency (pip install -e ".[browser]"); imported here so the helpers stay importable.
+    from playwright.sync_api import sync_playwright
+
     state = Path(__file__).resolve().parents[1] / "benchmarks/.bench-state"
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--url", default="http://127.0.0.1:1420/")

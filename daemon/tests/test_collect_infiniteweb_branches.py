@@ -2,9 +2,15 @@
 
 import numpy as np
 import pytest
-from playwright.sync_api import sync_playwright
 
 from scripts import collect_infiniteweb_branches as collector
+
+try:
+    from playwright.sync_api import sync_playwright
+except ImportError:  # optional extra: pip install -e ".[browser]" && playwright install chromium
+    sync_playwright = None
+
+needs_browser = pytest.mark.skipif(sync_playwright is None, reason="needs the optional browser extra")
 
 
 def test_site_names_and_virtual_assets_are_bounded() -> None:
@@ -23,6 +29,7 @@ def test_site_names_and_virtual_assets_are_bounded() -> None:
             collector.asset_path(value)
 
 
+@needs_browser
 def test_collect_page_requires_two_distinct_outcomes_from_exact_resets() -> None:
     html = b"""<!doctype html><html><head><style>
         body { background: white; margin: 0; }
@@ -49,6 +56,7 @@ def test_collect_page_requires_two_distinct_outcomes_from_exact_resets() -> None
     assert all(len(row["state_text"]) <= 2048 and len(row["target_text"]) <= 2048 for row in pair)
 
 
+@needs_browser
 def test_focus_only_changes_are_not_collected_as_semantic_outcomes() -> None:
     html = b"""<!doctype html><html><body>
         <button style="width:160px;height:60px">A</button>
