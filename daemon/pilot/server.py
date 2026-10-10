@@ -3286,7 +3286,9 @@ class PilotServer:
                     )
 
             try:
-                if self._orchestrator:
+                # A dry run skipped the critic and the approval above, so it
+                # must never reach specialist agents: the executor simulates it.
+                if self._orchestrator and not dry_run:
                     orch_routing = self._orchestrator.get_routing_summary(plan)
                     await ws.send(_notification("orchestrator_routing", orch_routing))
                     if emit:
@@ -3325,6 +3327,7 @@ class PilotServer:
                         user_confirmed=needs_confirm and approved_decision in {"approved", "partially_approved"},
                         invocation_source=invocation_source,
                         scope_override=scope_override,
+                        dry_run=dry_run,
                     )
             except asyncio.CancelledError:
                 # ── Mid-flight cancellation: _handle_abort (Part 3) sets
@@ -3420,10 +3423,17 @@ class PilotServer:
             if dry_run:
                 from pilot.actions import VerificationResult
 
+                # Nothing ran, but a simulated action that fails validation or
+                # policy must not be reported as a plan that would succeed.
+                failed = [index for index, result in enumerate(results) if not result.success]
                 verification = VerificationResult(
-                    passed=True,
-                    details=["Dry run completed: no actions were executed."],
-                    failed_actions=[],
+                    passed=not failed,
+                    details=[
+                        f"Dry run: action {index + 1} would fail: {results[index].error or 'unknown error'}"
+                        for index in failed
+                    ]
+                    or ["Dry run completed: no actions were executed."],
+                    failed_actions=failed,
                     rollback_triggered=False,
                 )
             else:

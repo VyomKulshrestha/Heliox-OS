@@ -592,8 +592,13 @@ class Executor:
         action_index_offset: int = 0,
         allow_collaboration: bool = True,
         record_experience: bool = True,
+        dry_run: bool = False,
     ) -> list[ActionResult]:
-        """Acquire the shared effect lease before entering canonical execution."""
+        """Acquire the shared effect lease before entering canonical execution.
+
+        ``dry_run`` simulates the plan for this call only; the global
+        ``security.dry_run`` setting forces simulation for every call.
+        """
 
         kwargs = {
             "on_action_start": on_action_start,
@@ -608,6 +613,7 @@ class Executor:
             "critic_already_reviewed": critic_already_reviewed,
             "user_confirmed": user_confirmed,
             "action_index_offset": action_index_offset,
+            "dry_run": dry_run,
         }
         if not record_experience:
             controller_lease = getattr(self, "_controller_lease", None)
@@ -624,6 +630,7 @@ class Executor:
         if (
             allow_collaboration
             and collab is not None
+            and not dry_run
             and not self._config.security.dry_run
             and invocation_source
             not in {InvocationSource.GESTURE, InvocationSource.NEURAL, InvocationSource.NETWORK_AGENT}
@@ -662,6 +669,7 @@ class Executor:
         user_confirmed: bool = False,
         action_index_offset: int = 0,
         collaboration: tuple[Any, list[list[Action]]] | None = None,
+        dry_run: bool = False,
     ) -> list[ActionResult]:
         """Record and execute a plan through the one canonical action ingress."""
 
@@ -818,6 +826,7 @@ class Executor:
             "critic_already_reviewed": critic_already_reviewed,
             "user_confirmed": user_confirmed,
             "action_index_offset": action_index_offset,
+            "dry_run": dry_run,
         }
         if collaboration is not None:
             collab, batches = collaboration
@@ -853,6 +862,7 @@ class Executor:
         critic_already_reviewed: bool = False,
         user_confirmed: bool = False,
         action_index_offset: int = 0,
+        dry_run: bool = False,
     ) -> list[ActionResult]:
         """Execute all actions in a plan sequentially, with output chaining."""
         plan_id = plan_id or str(uuid.uuid4())[:8]
@@ -973,7 +983,7 @@ class Executor:
                     )
                 ]
 
-        if self._config.security.dry_run:
+        if dry_run or self._config.security.dry_run:
             return await self._execute_dry_run(plan, plan_id, on_action_start, on_action_complete)
 
         snapshot_id: str | None = None
