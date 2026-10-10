@@ -214,11 +214,11 @@ def verify_source_holdout(splits: Mapping[str, list[dict]], held_out_sources: se
 def load_split(
     split: str, limit: int, seed: int, *, allowed_sources: set[str] | None = None, config: str = DATASET_CONFIG
 ) -> tuple[list[dict], dict]:
+    if config != DATASET_CONFIG and config not in EXTRA_TRAINING_CONFIGS:
+        raise ValueError(f"Unsupported Open-Jev config: {config}")
     import pyarrow.parquet as parquet
     from huggingface_hub import hf_hub_download
 
-    if config != DATASET_CONFIG and config not in EXTRA_TRAINING_CONFIGS:
-        raise ValueError(f"Unsupported Open-Jev config: {config}")
     filename = f"data/{config}/{split}-00000-of-00001.parquet"
     path = Path(
         hf_hub_download(DATASET, filename, repo_type="dataset", revision=DATASET_REVISION, local_files_only=True)
