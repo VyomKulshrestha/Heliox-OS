@@ -197,3 +197,34 @@ def test_v2_scales_up_the_weakest_training_families(parts_v2) -> None:
     }
     assert groups["time_conversion"] == 2 * groups["dependency_schedule"]
     assert groups["budget_fit"] == 80 and groups["approval_gate"] == 60
+
+
+def test_v3_corpus_trains_risk_ratings_and_holds_out_urgency() -> None:
+    from benchmarks.desktop_decision_corpus import (
+        CONFIRMING_FOLLOW_UPS,
+        FAMILY_OOD_V3,
+        RISK_LEVELS,
+        UNRELATED_FOLLOW_UPS,
+    )
+
+    parts = generate(version="v3")
+    groups: dict[str, str] = {}
+    for split, rows in parts.items():
+        for row in rows:
+            validate_row(row)
+            assert groups.setdefault(row["group_id"], split) == split
+    fitting = parts["train"] + parts["calibration"]
+    assert {row["family"] for row in fitting}.isdisjoint(FAMILY_OOD_V3)
+    assert "action_risk" in {row["family"] for row in parts["train"]}
+    assert {row["family"] for row in parts["family_ood"]} == FAMILY_OOD_V3
+    rows = [row for split in parts.values() for row in split]
+    for row in rows:
+        state = json.loads(row["state_json"])
+        if row["family"] == "latest_instruction":
+            later = next((v for k, v in state.items() if k not in {"initial_request", "proposed_action"}), "")
+            if later in UNRELATED_FOLLOW_UPS + CONFIRMING_FOLLOW_UPS:
+                assert row["target"] == [0.0, 1.0]
+            if later == "Actually, never mind, don't do that.":
+                assert row["target"] == [1.0, 0.0]
+        if row["family"] == "action_risk" and "password" in state["proposed_action"].lower():
+            assert row["options"] == RISK_LEVELS and row["target"].index(1.0) == 3
