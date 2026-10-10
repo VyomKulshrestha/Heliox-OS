@@ -157,6 +157,10 @@ class SnapshotStore:
     def now(self) -> float:
         return self._clock()
 
+    def clear(self) -> None:
+        """Forget every snapshot, e.g. after the person handed control back."""
+        self._snapshots.clear()
+
     def add(self, snapshot: AccessibilitySnapshot) -> None:
         self._snapshots[snapshot.snapshot_id] = snapshot
         self._snapshots.move_to_end(snapshot.snapshot_id)

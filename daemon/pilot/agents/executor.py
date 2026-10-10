@@ -571,6 +571,10 @@ class Executor:
                     logger.error("Action in batch failed: %s", result.error)
         return failed
 
+    def set_human_control(self, gate: Any) -> None:
+        """Refuse agent-initiated desktop input while the person holds control."""
+        self._human_control = gate
+
     def set_controller_lease(self, lease: ControllerLeaseManager) -> None:
         self._controller_lease = lease
 
@@ -1439,6 +1443,21 @@ class Executor:
         user_confirmed: bool = False,
     ) -> ActionResult:
         """Execute a single validated action."""
+
+        human_control = getattr(self, "_human_control", None)
+        if human_control is not None:
+            from pilot.security.human_control import HumanControlRefused
+
+            try:
+                human_control.check_agent_may_act(action.action_type)
+            except HumanControlRefused as refusal:
+                return ActionResult(
+                    action=action,
+                    success=False,
+                    error=str(refusal),
+                    executed=False,
+                    skip_reason="human_control",
+                )
 
         # ── Feature 2: Neuro-Safe Destructive Action Gate ──
         stress_gate = getattr(self, "_stress_gate", None)

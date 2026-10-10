@@ -12,7 +12,7 @@ The Heliox OS UI and daemon communicate over a local WebSocket using the [JSON-R
 | Request timeout | 5 minutes |
 | Reconnect interval | 3 seconds (auto-reconnect on close) |
 
-The daemon currently registers **197 WebSocket RPC methods**. That is the API
+The daemon currently registers **200 WebSocket RPC methods**. That is the API
 surface count, not the action catalog: Heliox exposes **158 action
 types** through the guarded planner/executor system. This document names every
 registered RPC method; grouped tables are used where several methods share one
@@ -1307,6 +1307,27 @@ replay is submitted to the guarded autonomous executor. Errors return
 Replay is refused while a recording is active, for incomplete recordings, and
 for workflows with manual or coordinate-based steps unless `reviewed` is true.
 
+### Human Control
+
+The person can take the desktop back from Heliox at any time. While they hold
+control, desktop input that Heliox starts on its own (autonomous jobs,
+MCP-submitted work) is refused rather than queued, and autonomous jobs pause.
+The person's own typed, spoken or gestured commands still run. During
+autonomous work, physical mouse clicks, wheel turns and key presses also take
+control automatically on Windows; synthetic input, including Heliox's own, is
+ignored. Handing control back discards earlier accessibility snapshots, so the
+agent observes again before acting.
+
+| Method | Params | Result |
+| --- | --- | --- |
+| `take_control` | `{ "reason": "my turn" }` (optional) | control status |
+| `release_control` | `{}` | control status with a new `generation` |
+| `human_control_status` | `{}` | control status |
+
+Control status: `{ "status": "ok", "holder": "agent" or "human", "reason": "...",
+"since": 1791640000.0, "generation": 3, "armed": true,
+"physical_input_detection": true }`.
+
 ### Durable Voice/Gesture Workflows
 
 These workflows persist multi-step state, expose pause/resume/cancel controls,
@@ -1919,6 +1940,10 @@ For durable voice workflows, `status` may be `submitted`, `revising`, or
 - `autonomous_started`, `autonomous_decomposed`, `autonomous_step_start`,
   `autonomous_step_complete`, `autonomous_complete`, and
   `autonomous_cancelled` carry the current autonomous job object.
+- `autonomous_paused_for_human` and `autonomous_resumed` carry the job object
+  when a job waits for the person to hand the desktop back, and when it resumes.
+- `human_control` carries the control status (see Human Control) whenever the
+  holder changes.
 - `voice_gesture_workflow_state` carries the complete persisted workflow state
   whenever it changes.
 - `gesture_workflow_bindings_updated` carries the validated binding policy.

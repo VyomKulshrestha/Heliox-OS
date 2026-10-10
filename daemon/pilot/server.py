@@ -667,6 +667,9 @@ class PilotServer:
         self._speech_coordinator = CompanionSpeechCoordinator()
         self._interaction_runtime = InteractionRuntime(self._broadcast_notification)
         self._autonomous: Any = None
+        from pilot.security.human_control import HumanControlGate
+
+        self._human_control = HumanControlGate()
         self._self_healing: Any = None
         self._self_healing_started_monitors: set[str] = set()
         self._proactive: Any = None
@@ -913,6 +916,8 @@ class PilotServer:
 
         self._controller_lease = ControllerLeaseManager()
         self._executor.set_controller_lease(self._controller_lease)
+        self._human_control.add_listener(self._broadcast_human_control)
+        self._executor.set_human_control(self._human_control)
 
         # Neural input owns a separate signing/session authority. Its fixed
         # goals still converge on the same Executor, Agent Gateway, world
@@ -1168,6 +1173,7 @@ class PilotServer:
                 orchestrator=self._orchestrator,
                 multi_agent_router=self._multi_agent,
                 accessibility_observer=_accessibility_observation,
+                human_control=self._human_control,
             )
             self._autonomous.set_broadcast(self._broadcast_notification)
             self._autonomous.set_speech(self._speak_companion_text)
@@ -1469,6 +1475,9 @@ class PilotServer:
             "supervision_config_update": self._handle_supervision_config_update,
             "voice_gesture_workflow_submit": self._handle_voice_gesture_workflow_submit,
             "recorded_workflow_status": self._handle_recorded_workflow_status,
+            "take_control": self._handle_take_control,
+            "release_control": self._handle_release_control,
+            "human_control_status": self._handle_human_control_status,
             "recorded_workflow_start": self._handle_recorded_workflow_start,
             "recorded_workflow_stop": self._handle_recorded_workflow_stop,
             "recorded_workflow_list": self._handle_recorded_workflow_list,
@@ -10229,6 +10238,25 @@ def handle_tool(tool_name, params):
     async def _capture_recording_feature(self) -> dict[str, Any] | None:
         vision = self._screen_vision
         return await vision.capture_world_feature_now() if vision is not None else None
+
+    async def _broadcast_human_control(self, status: Any) -> None:
+        await self._broadcast_notification("human_control", status.to_dict())
+
+    async def _handle_take_control(self, params: dict, ws: ServerConnection) -> dict:
+        """Give the desktop to the person; Heliox's own desktop input pauses until released."""
+        reason = params.get("reason", "taken from the Heliox app")
+        if not isinstance(reason, str):
+            return {"status": "error", "message": "reason must be a string"}
+        self._human_control.take(reason or "taken from the Heliox app")
+        return {"status": "ok", **self._human_control.status().to_dict()}
+
+    async def _handle_release_control(self, params: dict, ws: ServerConnection) -> dict:
+        """Hand the desktop back; paused autonomous work observes again before acting."""
+        self._human_control.release()
+        return {"status": "ok", **self._human_control.status().to_dict()}
+
+    async def _handle_human_control_status(self, params: dict, ws: ServerConnection) -> dict:
+        return {"status": "ok", **self._human_control.status().to_dict()}
 
     async def _handle_recorded_workflow_status(self, params: dict, ws: ServerConnection) -> dict:
         return {

@@ -484,6 +484,27 @@ holding a stale confirmation wait until its timeout.
 
 ---
 
+## ✋ Human takeover of the desktop
+
+**What this is.** `pilot.security.human_control.HumanControlGate` lets the
+person take the desktop back from Heliox at any time, from the app
+(`take_control`) or physically. While the person holds control, desktop input
+that Heliox starts on its own (autonomous jobs, MCP-submitted work) is refused,
+not queued, and autonomous jobs pause for up to 15 minutes before giving up.
+The person's own typed, spoken or gestured commands still run.
+
+**Physical-input detection and its privacy boundary.** On Windows, while an
+autonomous job is running, low-level keyboard and mouse hooks report only that
+a physical key press, button press or wheel turn happened. Input marked by the
+OS as injected (`LLKHF_INJECTED`, `LLMHF_INJECTED`), which includes Heliox's
+own clicks and keystrokes, is ignored, and pointer moves never count. The hooks
+never read key codes, characters or coordinates, store nothing, and are removed
+when the last autonomous job ends. On other platforms takeover is explicit only.
+
+**Handback.** `release_control` starts a new generation and discards every
+accessibility snapshot, so element refs taken before the takeover are refused
+and the agent observes the screen again before its next action.
+
 ## 👁️ User Manual Supervision (opt-in)
 
 **What this is.** `pilot.agents.user_supervision.UserSupervisionEngine` watches the user's OWN independent screen/keyboard/mouse activity — never anything Heliox itself executes, that's the Live Execution Narrator's job above — and can offer a spoken cognitive check-in or a risk warning. This is the single biggest privacy surface in this codebase, built and gated with that weight in mind rather than as a routine feature toggle.

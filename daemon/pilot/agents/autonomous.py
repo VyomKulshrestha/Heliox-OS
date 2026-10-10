@@ -15,6 +15,7 @@ Architecture:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import re
@@ -27,6 +28,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Coroutine
 
 from pilot.actions import ActionPlan, ActionType
 from pilot.security.gateway import InvocationSource, TaskScopeOverride
+from pilot.security.human_control import agent_initiated
 
 if TYPE_CHECKING:
     from pilot.agents.decomposer import TaskDecomposer
@@ -187,8 +189,11 @@ class AutonomousExecutor:
         orchestrator: Any | None = None,
         multi_agent_router: Any | None = None,
         accessibility_observer: Callable[[], Awaitable[str]] | None = None,
+        human_control: Any | None = None,
     ) -> None:
         self._planner = planner
+        # HumanControlGate: the person can take the desktop back; jobs pause until it is returned.
+        self._human_control = human_control
         # Returns the focused window's element list with refs, or "" when unavailable.
         self._accessibility_observer = accessibility_observer
         self._executor = executor
@@ -335,7 +340,7 @@ class AutonomousExecutor:
 
             from pilot.intelligence.experience import experience_scope
 
-            with experience_scope(session_id=job.session_id, task_id=job.job_id):
+            with experience_scope(session_id=job.session_id, task_id=job.job_id), self._human_control_armed():
                 if multi_step:
                     await self._execute_multi_step(job, decomposition)
                 else:
@@ -525,6 +530,22 @@ class AutonomousExecutor:
 
                 step.completed_at = time.time()
                 await self._notify("autonomous_step_complete", job)
+
+    def _human_control_armed(self) -> contextlib.AbstractContextManager[None]:
+        if self._human_control is None:
+            return contextlib.nullcontext()
+        return self._human_control.armed()
+
+    async def _wait_for_desktop_control(self, job: AutonomousJob, progress: list[str]) -> bool:
+        """Pause while the person holds the desktop; False if they never hand it back."""
+        if self._human_control is None or not self._human_control.holds_control():
+            return True
+        await self._notify("autonomous_paused_for_human", job)
+        released = await self._human_control.wait_for_release()
+        if released:
+            progress.append("The person had control of the desktop; observing again before acting.")
+            await self._notify("autonomous_resumed", job)
+        return released
 
     async def _observe_screen_context(
         self,
@@ -758,6 +779,9 @@ class AutonomousExecutor:
         try:
             for round_index in range(MAX_AUTONOMOUS_ROUNDS_PER_STEP):
                 step.rounds = round_index + 1
+                if not await self._wait_for_desktop_control(job, progress):
+                    step.error = "The person kept control of the desktop; the task stopped waiting."
+                    break
                 vision_disabled = (
                     self._screen_vision is not None and getattr(self._screen_vision, "is_running", True) is False
                 )
@@ -841,6 +865,9 @@ class AutonomousExecutor:
                         step.error = "Autonomous execution was denied or its approval expired."
                         break
 
+                if self._human_control is not None and self._human_control.holds_control():
+                    progress.append(f"Round {round_index + 1} plan discarded: the person took control before it ran.")
+                    continue
                 is_interactive_round = self._is_interactive_plan(plan)
                 interactive_task = interactive_task or is_interactive_round
                 desktop_task = desktop_task or is_desktop_round
@@ -854,22 +881,23 @@ class AutonomousExecutor:
                     progress.append(f"Round {round_index + 1} blocked: {failure}")
                     step.error = failure
                     break
-                if self._orchestrator is not None:
-                    results = await self._orchestrator.execute_plan(
-                        goal,
-                        plan,
-                        plan_id=plan_id,
-                        scope_override=job.scope_override,
-                        user_confirmed=user_confirmed,
-                    )
-                else:
-                    results = await self._executor.execute(
-                        plan,
-                        plan_id=plan_id,
-                        invocation_source=invocation_source,
-                        scope_override=job.scope_override,
-                        user_confirmed=user_confirmed,
-                    )
+                with agent_initiated():
+                    if self._orchestrator is not None:
+                        results = await self._orchestrator.execute_plan(
+                            goal,
+                            plan,
+                            plan_id=plan_id,
+                            scope_override=job.scope_override,
+                            user_confirmed=user_confirmed,
+                        )
+                    else:
+                        results = await self._executor.execute(
+                            plan,
+                            plan_id=plan_id,
+                            invocation_source=invocation_source,
+                            scope_override=job.scope_override,
+                            user_confirmed=user_confirmed,
+                        )
                 target_window = planned_target
                 verification = await self._verifier.verify(plan, results)
                 completed_action_types.update(

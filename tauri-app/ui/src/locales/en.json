@@ -337,5 +337,13 @@
     "reset_desc": "Clear local settings and restore default configuration",
     "reset_button": "Reset",
     "reset_confirm": "Are you sure you want to reset all settings to defaults?"
+  },
+  "human_control": {
+    "you_have_control": "You have the desktop. Heliox paused its own clicks and typing.",
+    "reason": "Reason: {reason}",
+    "resume": "Resume Heliox",
+    "agent_working": "Heliox is working on its own.",
+    "take": "Take control",
+    "error": "Could not change control: {message}"
   }
 }

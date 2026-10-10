@@ -9,6 +9,7 @@
   import BudgetExceededDialog from "./lib/components/BudgetExceededDialog.svelte";
   import InterruptDialog from "./lib/components/InterruptDialog.svelte";
   import SupervisionAlertDialog from "./lib/components/SupervisionAlertDialog.svelte";
+  import HumanControlBanner from "./lib/components/HumanControlBanner.svelte";
   import ActivityLog from "./lib/components/ActivityLog.svelte";
   import SettingsPanel from "./lib/components/SettingsPanel.svelte";
   import SetupWizard from "./lib/components/SetupWizard.svelte";
@@ -253,6 +254,7 @@
           <RollbackDialog onconfirm={() => session.confirmRollback()} oncancel={() => session.cancelRollback()} />
         {/if}
 
+        <HumanControlBanner />
         {#if $session.rollback && !$session.rollbackPending}
           <div class="undo-banner">
             <span>{$_("rollback.banner")}</span>
