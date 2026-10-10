@@ -1093,6 +1093,23 @@ class Planner:
 
                 result = self._parse_response(raw_response, user_input)
 
+                if (
+                    result.error is None
+                    and attempt > 0
+                    and not result.actions
+                    and (last_parse_error or "").startswith("ACTION PARSING FAILED")
+                ):
+                    # The first attempt tried to act; an empty retry abandons the
+                    # request, which must not be reported as a finished conversation.
+                    result = ActionPlan(
+                        error=(
+                            "ACTION PARSING FAILED: the retry returned no actions for a request "
+                            f"the first attempt tried to act on. First error: {last_parse_error}"
+                        ),
+                        explanation=result.explanation,
+                        raw_input=user_input,
+                    )
+
                 if result.error is None:
                     if self._orchestrator and attempt == 0 and not error_context:
                         if self._orchestrator.is_complex_prompt(user_input):
@@ -1582,7 +1599,34 @@ class Planner:
         # Never coerce an unknown model label to a different capability.
         raise ValueError(f"'{clean}' is not a valid ActionType or supported alias")
 
+    # Models sometimes write the action schema with common synonyms, especially
+    # after compact action summaries appear in conversation history.
+    _ACTION_TYPE_SYNONYMS = ("type", "action", "tool")
+    _PARAMETER_SYNONYMS = ("params", "args", "arguments")
+
+    @classmethod
+    def _canonical_action_keys(cls, raw: object) -> dict:
+        """Map synonym keys onto action_type/parameters, or explain what is missing."""
+        if not isinstance(raw, dict):
+            raise ValueError(f"each action must be a JSON object, got {type(raw).__name__}")
+        canonical = dict(raw)
+        if "action_type" not in canonical:
+            for key in cls._ACTION_TYPE_SYNONYMS:
+                if isinstance(canonical.get(key), str):
+                    canonical["action_type"] = canonical.pop(key)
+                    break
+            else:
+                present = ", ".join(sorted(canonical)) or "none"
+                raise ValueError(f"missing required field 'action_type' (keys present: {present})")
+        if "parameters" not in canonical:
+            for key in cls._PARAMETER_SYNONYMS:
+                if isinstance(canonical.get(key), dict):
+                    canonical["parameters"] = canonical.pop(key)
+                    break
+        return canonical
+
     def _parse_action(self, raw: dict) -> Action:
+        raw = self._canonical_action_keys(raw)
         action_type = self._resolve_action_type(raw["action_type"])
         target = str(raw.get("target", "") or "")
         params_raw = raw.get("parameters", {}) or {}
@@ -1604,6 +1648,13 @@ class Planner:
                 params_raw[k] = v
 
         params_raw = self._normalize_params(action_type, params_raw, target)
+        if not target:
+            # The validator needs a target; models often put it only in the parameters.
+            for key in ("path", "url", "name"):
+                value = params_raw.get(key)
+                if isinstance(value, str) and value.strip():
+                    target = value.strip()
+                    break
         parameters = self._parse_parameters(action_type, params_raw)
 
         rollback = None
