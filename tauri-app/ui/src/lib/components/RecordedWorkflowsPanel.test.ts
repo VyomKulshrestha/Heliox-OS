@@ -16,7 +16,15 @@ describe("recorded workflow consent", () => {
     daemonMocks.call.mockReset();
     daemonMocks.call.mockImplementation((method: string) => {
       if (method === "recorded_workflow_status") {
-        return Promise.resolve({ status: "ok", active: false, name: "", capture_visual: false, step_count: 0, sample_count: 0, omitted_actions: 0 });
+        return Promise.resolve({
+          status: "ok",
+          active: false,
+          name: "",
+          capture_visual: false,
+          step_count: 0,
+          sample_count: 0,
+          omitted_actions: 0,
+        });
       }
       if (method === "recorded_workflow_list") return Promise.resolve({ status: "ok", workflows: [] });
       if (method === "recorded_workflow_start") return Promise.resolve({ status: "ok", active: true });
@@ -33,8 +41,12 @@ describe("recorded workflow consent", () => {
     await fireEvent.click(screen.getByLabelText(/I want Heliox to record actions/));
     await fireEvent.click(start);
     expect(daemonMocks.call).toHaveBeenCalledWith("recorded_workflow_start", {
-      name: "Morning review", goal: "", consent: true, capture_visual: false,
-      capture_manual: false, manual_consent: false,
+      name: "Morning review",
+      goal: "",
+      consent: true,
+      capture_visual: false,
+      capture_manual: false,
+      manual_consent: false,
     });
   });
 
@@ -49,8 +61,12 @@ describe("recorded workflow consent", () => {
     expect((start as HTMLButtonElement).disabled).toBe(false);
     await fireEvent.click(start);
     expect(daemonMocks.call).toHaveBeenCalledWith("recorded_workflow_start", {
-      name: "Desktop review", goal: "", consent: true, capture_visual: false,
-      capture_manual: true, manual_consent: true,
+      name: "Desktop review",
+      goal: "",
+      consent: true,
+      capture_visual: false,
+      capture_manual: true,
+      manual_consent: true,
     });
   });
 
@@ -65,8 +81,12 @@ describe("recorded workflow consent", () => {
     expect(screen.getByText(/rolling in-memory feature supports manual clicks/)).toBeTruthy();
     await fireEvent.click(screen.getByRole("button", { name: "Start recording" }));
     expect(daemonMocks.call).toHaveBeenCalledWith("recorded_workflow_start", {
-      name: "Visual review", goal: "", consent: true, capture_visual: true,
-      capture_manual: true, manual_consent: true,
+      name: "Visual review",
+      goal: "",
+      consent: true,
+      capture_visual: true,
+      capture_manual: true,
+      manual_consent: true,
     });
   });
 });
@@ -76,15 +96,34 @@ describe("recorded workflow goal feedback", () => {
     daemonMocks.call.mockReset();
     daemonMocks.call.mockImplementation((method: string) => {
       if (method === "recorded_workflow_status") return Promise.resolve({ status: "ok", active: false });
-      if (method === "recorded_workflow_list") return Promise.resolve({ status: "ok", workflows: [{
-        id: "flow-1", name: "Review", goal: "Check a status", steps: [], step_count: 1,
-        sample_count: 0, omitted_actions: 0, visual_gaps: 0, incomplete: false,
-        needs_review: false, overlap_warning: false, placeholders: [], schedule: null,
-        feedback_count: 0, feedback_visual_sample_count: 0,
-      }] });
-      if (method === "recorded_workflow_run") return Promise.resolve({
-        status: "submitted", job: { job_id: "job-1", status: "queued" },
-      });
+      if (method === "recorded_workflow_list")
+        return Promise.resolve({
+          status: "ok",
+          workflows: [
+            {
+              id: "flow-1",
+              name: "Review",
+              goal: "Check a status",
+              steps: [],
+              step_count: 1,
+              sample_count: 0,
+              omitted_actions: 0,
+              visual_gaps: 0,
+              incomplete: false,
+              needs_review: false,
+              overlap_warning: false,
+              placeholders: [],
+              schedule: null,
+              feedback_count: 0,
+              feedback_visual_sample_count: 0,
+            },
+          ],
+        });
+      if (method === "recorded_workflow_run")
+        return Promise.resolve({
+          status: "submitted",
+          job: { job_id: "job-1", status: "queued" },
+        });
       if (method === "autonomous_job") return Promise.resolve({ job_id: "job-1", status: "success" });
       if (method === "recorded_workflow_feedback") return Promise.resolve({ status: "ok" });
       throw new Error(`unexpected method: ${method}`);
@@ -99,7 +138,9 @@ describe("recorded workflow goal feedback", () => {
     await fireEvent.click(await screen.findByRole("button", { name: "Check run status" }));
     await fireEvent.click(await screen.findByRole("button", { name: "Not achieved" }));
     expect(daemonMocks.call).toHaveBeenCalledWith("recorded_workflow_feedback", {
-      workflow_id: "flow-1", job_id: "job-1", outcome: "not_achieved",
+      workflow_id: "flow-1",
+      job_id: "job-1",
+      outcome: "not_achieved",
     });
     expect(await screen.findByText("Goal-outcome rating saved locally.")).toBeTruthy();
   });
@@ -110,7 +151,10 @@ describe("recorded workflow goal feedback", () => {
     await fireEvent.click(screen.getByLabelText(/Capture local 16×16 before\/after features/));
     await fireEvent.click(screen.getByRole("button", { name: "Run with approvals" }));
     expect(daemonMocks.call).toHaveBeenCalledWith("recorded_workflow_run", {
-      workflow_id: "flow-1", reviewed: false, text_values: {}, capture_visual: true,
+      workflow_id: "flow-1",
+      reviewed: false,
+      text_values: {},
+      capture_visual: true,
     });
   });
 });

@@ -179,11 +179,13 @@ describe("session execution controls", () => {
       session_id: originalChat,
       input: "Summarize the open page",
     });
-    expect(get(session).queuedTasks).toMatchObject([{
-      taskId: "voice-next",
-      input: "Summarize the open page",
-      status: "queued",
-    }]);
+    expect(get(session).queuedTasks).toMatchObject([
+      {
+        taskId: "voice-next",
+        input: "Summarize the open page",
+        status: "queued",
+      },
+    ]);
 
     expect(session.newChat()).toBe(true);
     notify("queued_task_result", {

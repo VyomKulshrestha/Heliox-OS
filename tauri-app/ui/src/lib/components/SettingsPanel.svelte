@@ -1457,10 +1457,10 @@
   <section class="settings-group">
     <h3>Typed decision model · research</h3>
     <p class="setting-section-note">
-      Optional local MCP scoring for dynamic yes/no, choice, or ordered options. Disabled by default;
-      scores never approve actions or enter the Heliox planner. Candidate probabilities are assigned
-      by the model, not validated probabilities of correctness; choice/score confidence is
-      distribution concentration. Inputs are not saved or uploaded.
+      Optional local MCP scoring for dynamic yes/no, choice, or ordered options. Disabled by default; scores never
+      approve actions or enter the Heliox planner. Candidate probabilities are assigned by the model, not validated
+      probabilities of correctness; choice/score confidence is distribution concentration. Inputs are not saved or
+      uploaded.
     </p>
     {#if typedDecisionToast}
       <div class="root-toast" role="status">{typedDecisionToast}</div>
