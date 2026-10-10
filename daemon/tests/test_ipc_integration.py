@@ -302,27 +302,51 @@ async def test_real_neurod_bridge_calibrates_previews_commits_and_disconnects_fa
                 {"session_id": session_id, "scope": "navigate", "user_authorized": True},
             )
             assert armed["state"] == "armed_safe_ui"
-            preview_status = await wait_status(ui, lambda status: status.get("state") == "previewed")
-            preview_message = await wait_notification(ui, "neural_preview")
-            preview = preview_message["params"]
-            assert preview["intent_class"] == "focus_right"
-            assert preview["fusion"]["raw_media_excluded"] is True
 
-            wait_seconds = max(
-                0.0,
-                (int(preview["eligible_at_ns"]) - time.monotonic_ns()) / 1_000_000_000,
-            )
-            await asyncio.sleep(wait_seconds + 0.05)
-            result = await rpc(
-                ui,
-                "neural_commit",
-                {
-                    "preview_id": preview["preview_id"],
-                    "expected_revision": preview_status["state_revision"],
-                    "world_model_approved": False,
-                },
-            )
-            assert result["status"] == "committed"
+            async def pending_preview() -> tuple[dict, dict]:
+                """Return the status and the announcement of the preview pending right now."""
+                status = await wait_status(ui, lambda status: status.get("state") == "previewed")
+                await wait_notification(ui, "neural_preview")
+                deadline = asyncio.get_running_loop().time() + 5
+                while asyncio.get_running_loop().time() < deadline:
+                    for message in reversed(notifications):
+                        params = message.get("params") or {}
+                        if message.get("method") == "neural_preview" and params.get("preview_id") == status.get(
+                            "pending_preview"
+                        ):
+                            return status, params
+                    status = await rpc(ui, "neural_status")  # also collects newer notifications
+                    await asyncio.sleep(0.05)
+                raise AssertionError("the pending preview was never announced")
+
+            # The bridge keeps polling, so on a slow host a newer preview can replace the
+            # one just read; commit whichever preview is pending, with bounded retries.
+            for _attempt in range(3):
+                preview_status, preview = await pending_preview()
+                assert preview["intent_class"] == "focus_right"
+                assert preview["fusion"]["raw_media_excluded"] is True
+
+                wait_seconds = max(
+                    0.0,
+                    (int(preview["eligible_at_ns"]) - time.monotonic_ns()) / 1_000_000_000,
+                )
+                await asyncio.sleep(wait_seconds + 0.05)
+                result = await rpc(
+                    ui,
+                    "neural_commit",
+                    {
+                        "preview_id": preview["preview_id"],
+                        "expected_revision": preview_status["state_revision"],
+                        "world_model_approved": False,
+                    },
+                )
+                if result["status"] == "committed":
+                    break
+                assert any(
+                    reason in result.get("error", "")
+                    for reason in ("no longer current", "changed after preview", "expired")
+                ), result
+            assert result["status"] == "committed", result
             assert result["canonical_goal"] == "neural_ui.focus_right"
             assert "retry_allowed" not in result
 
