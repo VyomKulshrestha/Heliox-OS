@@ -31,7 +31,7 @@ from benchmarks.general_decision import (  # noqa: E402
     predict_correctness,
     verify_disjoint,
 )
-from scripts.evaluate_released_openjev_general import (  # noqa: E402
+from scripts.evaluate_released_opendec_general import (  # noqa: E402
     load_excluded_group_ids,
     select_archived_rows,
     select_fresh_rows,
@@ -39,7 +39,7 @@ from scripts.evaluate_released_openjev_general import (  # noqa: E402
 from scripts.score_general_decision import score_requests, verify_artifact  # noqa: E402
 from scripts.train_general_decision import encode_rows  # noqa: E402
 
-PROTOCOL = ROOT / "benchmarks/openjev_correctness_head_v2.json"
+PROTOCOL = ROOT / "benchmarks/opendec_correctness_head_v2.json"
 
 
 def sha256_file(path: Path) -> str:

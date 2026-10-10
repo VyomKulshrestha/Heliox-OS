@@ -11,7 +11,7 @@ import json
 from collections import Counter, defaultdict
 from pathlib import Path
 
-from benchmarks.jev_scope_suite import ScopeCase
+from benchmarks.refscope_suite import ScopeCase
 
 REPOSITORY = "NVIDIA/When2Call"
 REVISION = "ecc8d42388e91ab37e7e737d48e16e8ecea3d1dc"

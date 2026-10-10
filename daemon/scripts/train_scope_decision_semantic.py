@@ -17,16 +17,16 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import GroupKFold
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from benchmarks.jev_scope_augmentation import CASES as AUGMENTATION_CASES  # noqa: E402
-from benchmarks.jev_scope_challenge import CASES as CHALLENGE_CASES  # noqa: E402
-from benchmarks.jev_scope_fresh_final import CASES as FRESH_CASES  # noqa: E402
-from benchmarks.jev_scope_random_final import CASES as RANDOM_CASES  # noqa: E402
-from benchmarks.jev_scope_semantic_holdout import CASES as SEMANTIC_CASES  # noqa: E402
-from benchmarks.jev_scope_semantic_v3_holdout import CASES as SEMANTIC_V3_CASES  # noqa: E402
-from benchmarks.jev_scope_semantic_v4_holdout import CASES as SEMANTIC_V4_CASES  # noqa: E402
-from benchmarks.jev_scope_stress import CASES as STRESS_CASES  # noqa: E402
-from benchmarks.jev_scope_suite import CASES as ORIGINAL_CASES  # noqa: E402
-from benchmarks.jev_scope_unseen_final import CASES as UNSEEN_CASES  # noqa: E402
+from benchmarks.refscope_augmentation import CASES as AUGMENTATION_CASES  # noqa: E402
+from benchmarks.refscope_challenge import CASES as CHALLENGE_CASES  # noqa: E402
+from benchmarks.refscope_fresh_final import CASES as FRESH_CASES  # noqa: E402
+from benchmarks.refscope_random_final import CASES as RANDOM_CASES  # noqa: E402
+from benchmarks.refscope_semantic_holdout import CASES as SEMANTIC_CASES  # noqa: E402
+from benchmarks.refscope_semantic_v3_holdout import CASES as SEMANTIC_V3_CASES  # noqa: E402
+from benchmarks.refscope_semantic_v4_holdout import CASES as SEMANTIC_V4_CASES  # noqa: E402
+from benchmarks.refscope_stress import CASES as STRESS_CASES  # noqa: E402
+from benchmarks.refscope_suite import CASES as ORIGINAL_CASES  # noqa: E402
+from benchmarks.refscope_unseen_final import CASES as UNSEEN_CASES  # noqa: E402
 from benchmarks.scope_nli_features import BACKBONE, REVISION, NliFeatureExtractor, cached_paths  # noqa: E402
 from benchmarks.scope_semantic_head import MODEL_VERSION, combined_features, guarded_probabilities  # noqa: E402
 from scripts.train_scope_decision_challenge import _metrics, _rows  # noqa: E402
@@ -129,7 +129,7 @@ def train(root: Path, cache: Path, candidate: Path, metrics_path: Path) -> dict:
 def main() -> None:
     import sys
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    from scripts.jev_output_policy import block_jev_output_use
+    from scripts.reference_output_policy import block_jev_output_use
     block_jev_output_use()
 
     root = Path(__file__).resolve().parents[1]

@@ -25,7 +25,7 @@ def test_load_cases_requires_pinned_bytes_and_boolean_labels(tmp_path):
 
 
 def test_split_validation_keeps_same_task_together():
-    from benchmarks.jev_scope_suite import ScopeCase
+    from benchmarks.refscope_suite import ScopeCase
 
     rows = tuple(ScopeCase(str(index), f"Task {index // 2}", f"Tool {index}",
                            index % 2 == 0, "validation") for index in range(100))

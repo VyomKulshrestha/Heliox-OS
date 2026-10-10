@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from benchmarks.jev_scope_suite import ScopeCase
+from benchmarks.refscope_suite import ScopeCase
 from scripts.evaluate_qwen_instruct_scope import (
     case_signature,
     load_partial,

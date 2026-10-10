@@ -22,7 +22,7 @@ from scipy.optimize import minimize_scalar
 from sklearn.model_selection import GroupShuffleSplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from benchmarks.jev_scope_openjev_v1_holdout import CASES as COMPARISON_CASES  # noqa: E402
+from benchmarks.refscope_opendec_v1_holdout import CASES as COMPARISON_CASES  # noqa: E402
 from scripts.qwen_model_pin import MODEL, REVISION  # noqa: E402
 from scripts.train_scope_decision_challenge import _metrics, _rows  # noqa: E402
 from scripts.train_scope_decision_semantic import SUITES  # noqa: E402
@@ -241,7 +241,7 @@ def run(root: Path, output_dir: Path, report_path: Path) -> dict:
 def main() -> None:
     import sys
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    from scripts.jev_output_policy import block_jev_output_use
+    from scripts.reference_output_policy import block_jev_output_use
     block_jev_output_use()
 
     root = Path(__file__).resolve().parents[1]

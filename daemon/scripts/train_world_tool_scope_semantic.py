@@ -13,8 +13,8 @@ from pathlib import Path
 
 import numpy as np
 
-from benchmarks.jev_scope_qwen_v1_holdout import CASES as HELIOX_CASES
-from benchmarks.jev_scope_suite import ScopeCase
+from benchmarks.refscope_qwen_v1_holdout import CASES as HELIOX_CASES
+from benchmarks.refscope_suite import ScopeCase
 from scripts.evaluate_qwen_instruct_scope import MODEL_ID, MODEL_REVISION, SYSTEM_PROMPT
 from scripts.train_world_scope_semantic import (
     embed_cases,

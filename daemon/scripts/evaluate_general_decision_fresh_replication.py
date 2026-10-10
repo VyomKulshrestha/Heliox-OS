@@ -20,7 +20,7 @@ from scripts.evaluate_general_decision_artifact import (
     prediction_metrics,
     retain_tokenizable_rows,
 )
-from scripts.evaluate_released_openjev_general import (
+from scripts.evaluate_released_opendec_general import (
     OPENJEV_REPO,
     OPENJEV_REVISION,
     input_signature,
@@ -33,7 +33,7 @@ from scripts.score_general_decision import score_requests, verify_artifact
 from scripts.train_general_decision import encode_rows
 
 ROOT = Path(__file__).resolve().parents[1]
-PROTOCOL = ROOT / "benchmarks/openjev_scale_1024_rps_fresh_protocol_v3.json"
+PROTOCOL = ROOT / "benchmarks/opendec_scale_1024_rps_fresh_protocol_v3.json"
 
 
 def resolve_repo_path(value: str, *, allowed_root: Path, label: str) -> Path:
@@ -281,7 +281,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--protocol", type=Path, default=PROTOCOL)
     parser.add_argument("--output", type=Path,
-                        default=ROOT / "benchmarks/openjev_scale_1024_rps_fresh_v3.json")
+                        default=ROOT / "benchmarks/opendec_scale_1024_rps_fresh_v3.json")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--bootstrap-replicates", type=int, default=5000)
     parser.add_argument("--bootstrap-seed", type=int, default=20260929)

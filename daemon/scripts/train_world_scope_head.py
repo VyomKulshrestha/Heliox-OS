@@ -18,9 +18,9 @@ import numpy as np
 from sklearn.metrics import roc_auc_score
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from benchmarks.jev_scope_qwen_v1_holdout import CASES as HELIOX_CASES  # noqa: E402
+from benchmarks.refscope_qwen_v1_holdout import CASES as HELIOX_CASES  # noqa: E402
 from benchmarks.world_scope_head import world_scope_features  # noqa: E402
-from scripts.evaluate_openjev_checkpoint import scopejudge_cases  # noqa: E402
+from scripts.evaluate_opendec_checkpoint import scopejudge_cases  # noqa: E402
 
 PENALTIES = (0.0001, 0.001, 0.01, 0.1)
 

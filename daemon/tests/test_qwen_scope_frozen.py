@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from benchmarks.jev_scope_openjev_v1_holdout import CASES as PRIOR_CASES
-from benchmarks.jev_scope_qwen_v1_holdout import CASES, SCENARIOS
+from benchmarks.refscope_opendec_v1_holdout import CASES as PRIOR_CASES
+from benchmarks.refscope_qwen_v1_holdout import CASES, SCENARIOS
 from scripts.evaluate_qwen_scope_frozen import verify_artifact
 from scripts.train_qwen_scope_noul import MODEL, REVISION
 from scripts.train_scope_decision_semantic import SUITES

@@ -16,7 +16,7 @@ from benchmarks.desktop_decision_corpus import (
     manifest,
 )
 from benchmarks.general_decision import candidate_prompts, validate_row
-from scripts.compare_general_jev import load_local_cases
+from scripts.compare_general_reference import load_local_cases
 
 
 @pytest.fixture(scope="module")

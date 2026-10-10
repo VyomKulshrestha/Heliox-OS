@@ -15,7 +15,7 @@ from urllib.error import HTTPError
 from urllib.parse import urlsplit
 from urllib.request import ProxyHandler, Request, build_opener
 
-from scripts.evaluate_openjev_checkpoint import SUITES, scopejudge_cases
+from scripts.evaluate_opendec_checkpoint import SUITES, scopejudge_cases
 from scripts.evaluate_qwen_instruct_scope import (
     SYSTEM_PROMPT,
     case_signature,

@@ -19,8 +19,8 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from benchmarks.jev_scope_qwen_v1_holdout import CASES as HELIOX_CASES  # noqa: E402
-from scripts.evaluate_openjev_checkpoint import scopejudge_cases  # noqa: E402
+from benchmarks.refscope_qwen_v1_holdout import CASES as HELIOX_CASES  # noqa: E402
+from scripts.evaluate_opendec_checkpoint import scopejudge_cases  # noqa: E402
 from scripts.evaluate_qwen_instruct_scope import (  # noqa: E402
     MODEL_ID,
     MODEL_REVISION,
