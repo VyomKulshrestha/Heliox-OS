@@ -48,7 +48,7 @@ def test_generated_capability_catalog_matches_runtime(tmp_path: Path) -> None:
     )
     generated = json.loads(output.read_text(encoding="utf-8"))
 
-    assert generated["summary"]["action_types"] == len(ActionType) == 159
+    assert generated["summary"]["action_types"] == len(ActionType) == 160
     assert generated["summary"]["mesh"]["coverage_complete"] is True
     assert generated["summary"]["mesh"]["uncovered_action_types"] == []
     assert {entry["id"] for entry in generated["actions"]} == {action_type.value for action_type in ActionType}

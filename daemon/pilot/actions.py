@@ -195,6 +195,7 @@ class ActionType(StrEnum):
     BROWSER_WAIT = "browser_wait"
     BROWSER_CLOSE = "browser_close"
     BROWSER_PAGE_INFO = "browser_page_info"
+    BROWSER_SNAPSHOT = "browser_snapshot"
 
     # -- Reactive triggers --
     TRIGGER_CREATE = "trigger_create"
@@ -325,6 +326,7 @@ READ_ONLY_ACTIONS = {
     ActionType.BROWSER_SCREENSHOT,
     ActionType.BROWSER_LIST_TABS,
     ActionType.BROWSER_PAGE_INFO,
+    ActionType.BROWSER_SNAPSHOT,
     ActionType.BROWSER_WAIT,
     ActionType.TRIGGER_LIST,
     # Tier 2 read-only
@@ -745,6 +747,9 @@ class BrowserParams(BaseModel):
     wait_until: str = "domcontentloaded"
     state: str = "visible"  # For wait
     exact: bool = False  # For click_text
+    # Act on an element from browser_snapshot instead of a CSS selector; refused if the page changed.
+    element_ref: str | None = None
+    snapshot_id: str | None = None
     button: str = "left"  # For click
 
 

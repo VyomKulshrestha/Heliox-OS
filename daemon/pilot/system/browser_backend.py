@@ -50,3 +50,11 @@ class BrowserBackend(ABC):
     async def close(self) -> str: ...
     @abstractmethod
     async def get_page_info(self) -> str: ...
+
+    async def snapshot(self, limit: int = 150) -> str:
+        """List interactive elements with refs; backends without it say so."""
+        raise NotImplementedError("This browser backend does not support page snapshots")
+
+    async def resolve_ref(self, snapshot_id: str, ref: str) -> str:
+        """Map a snapshot ref to a selector, refusing refs from a changed page."""
+        raise NotImplementedError("This browser backend does not support element refs")

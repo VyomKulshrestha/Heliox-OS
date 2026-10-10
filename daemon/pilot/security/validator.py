@@ -143,6 +143,7 @@ NO_TARGET_REQUIRED = {
     ActionType.BROWSER_WAIT,
     ActionType.BROWSER_CLOSE,
     ActionType.BROWSER_PAGE_INFO,
+    ActionType.BROWSER_SNAPSHOT,
     ActionType.TRIGGER_CREATE,
     ActionType.TRIGGER_LIST,
     ActionType.TRIGGER_DELETE,

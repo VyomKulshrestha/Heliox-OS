@@ -19,7 +19,7 @@
   "sources": {
     "action_registry": {
       "path": "daemon/pilot/actions.py",
-      "sha256": "a8c522144ed9bda00fb13aa4f2609a6e1d08b0c2ee4554d65d8dcbc0621ee71f"
+      "sha256": "bc92b385ff0395f71dd7f22d1f3d34ac8363bebcbbd150f27dd5c44d466fe4ae"
     },
     "postcondition_verifier": {
       "path": "daemon/pilot/agents/verifier.py",
@@ -53,9 +53,9 @@
     ]
   },
   "summary": {
-    "action_types": 159,
+    "action_types": 160,
     "families": {
-      "browser": 23,
+      "browser": 24,
       "calendar": 7,
       "clipboard": 2,
       "code": 5,
@@ -86,7 +86,7 @@
     },
     "permission_tiers": {
       "destructive": 11,
-      "read_only": 55,
+      "read_only": 56,
       "system_modify": 35,
       "user_write": 58
     },
@@ -94,8 +94,8 @@
     "plugins": 6,
     "mesh": {
       "specialists": 21,
-      "registered_action_types": 159,
-      "available_action_types": 159,
+      "registered_action_types": 160,
+      "available_action_types": 160,
       "coverage_complete": true,
       "uncovered_action_types": []
     }
@@ -4631,6 +4631,39 @@
     },
     {
       "id": "browser_page_info",
+      "family": "browser",
+      "permission": {
+        "tier": 0,
+        "name": "read_only",
+        "approval_required": false,
+        "snapshot_required": false,
+        "irreversible": false
+      },
+      "platform_support": {
+        "platforms": [
+          "windows",
+          "macos",
+          "linux"
+        ],
+        "basis": "declared_product_target",
+        "note": "Availability can still depend on host tools, permissions, hardware, and configured integrations."
+      },
+      "providers": [
+        {
+          "id": "builtin:pilot.agents.web_agent.WebAgent",
+          "name": "WebAgent",
+          "role": "web_agent",
+          "source": "builtin"
+        }
+      ],
+      "verification": {
+        "method": "executor_result_only",
+        "independent_postcondition": false,
+        "note": "No independent post-condition check is currently registered."
+      }
+    },
+    {
+      "id": "browser_snapshot",
       "family": "browser",
       "permission": {
         "tier": 0,

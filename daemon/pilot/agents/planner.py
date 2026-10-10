@@ -144,6 +144,11 @@ BROWSER AUTOMATION (Headless, for reading/interacting):
 - browser_select, browser_hover, browser_scroll — Params: {{"selector": "...", "value": "..."}}
 - browser_extract, browser_extract_table, browser_extract_links — Params: {{"selector": "h1"}} -- Extracts text into PREV_OUTPUT
 - browser_page_info — Params: {{}} -- Returns the current URL and title without executing code
+- browser_snapshot — Params: {{}} -- Lists the page's visible interactive elements with refs (e1, e2...)
+  and a snapshot_id, flags sensitive fields and CAPTCHA/sign-in blockers. Prefer it over guessing
+  selectors: browser_click/browser_type/browser_select/browser_hover take {{"element_ref": "e3",
+  "snapshot_id": "bx1-a1b2c3"}}. Never type passwords, card numbers or one-time codes yourself;
+  use request_human_help.
 - browser_execute_js — Params: {{"script": "return document.title"}}
 - browser_screenshot — Params: {{"output_path": "path.png"}}
 - browser_new_tab, browser_close_tab, browser_switch_tab — Params: {{"url": "..."}} / {{"index": 0}}
@@ -2065,8 +2070,11 @@ class Planner:
             ActionType.BROWSER_WAIT,
             ActionType.BROWSER_CLOSE,
             ActionType.BROWSER_PAGE_INFO,
+            ActionType.BROWSER_SNAPSHOT,
         }
         if action_type in browser_types:
+            if "element_ref" not in params and isinstance(params.get("ref"), str):
+                params = {**params, "element_ref": params["ref"]}
             return BrowserParams(**params)
 
         trigger_types = {

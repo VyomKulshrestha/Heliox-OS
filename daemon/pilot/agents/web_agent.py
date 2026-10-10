@@ -44,6 +44,7 @@ WEB_ACTION_TYPES: set[ActionType] = {
     ActionType.BROWSER_WAIT,
     ActionType.BROWSER_CLOSE,
     ActionType.BROWSER_PAGE_INFO,
+    ActionType.BROWSER_SNAPSHOT,
     # URL / downloads
     ActionType.OPEN_URL,
     ActionType.DOWNLOAD_FILE,

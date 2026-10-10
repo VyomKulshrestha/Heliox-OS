@@ -200,7 +200,7 @@ Settings → Agent Gateway Policy shows the enforced floor per source and lets y
 `pilot.agents.agent_mesh.AgentMesh` register **21 concrete specialists across
 20 gateway roles**. Capability discovery indexes providers by concrete class,
 so Communication and Email can coexist despite sharing `comm_agent`.
-`agent_mesh_status` verifies all 159 declared actions have a provider and
+`agent_mesh_status` verifies all 160 declared actions have a provider and
 reports exact uncovered names if that contract regresses.
 
 Provider choice is based on exact action capability plus callback-observed
@@ -504,6 +504,14 @@ when the last autonomous job ends. On other platforms takeover is explicit only.
 **Handback.** `release_control` starts a new generation and discards every
 accessibility snapshot, so element refs taken before the takeover are refused
 and the agent observes the screen again before its next action.
+
+**Secrets and walls stay with the person.** `request_human_help` hands the
+desktop to the person for sign-ins, passwords, 2FA codes, CAPTCHAs and
+payments. `browser_snapshot` never returns field values, flags password, card
+and one-time-code fields as sensitive, reports CAPTCHA, bot-wall and sign-in
+blockers, and gives CAPTCHA widgets no element ref. Work Heliox starts on its
+own (autonomous jobs, MCP) is refused when it tries to type into a sensitive
+field; the person's own explicit commands are not.
 
 ## 👁️ User Manual Supervision (opt-in)
 

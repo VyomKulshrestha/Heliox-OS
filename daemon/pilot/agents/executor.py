@@ -330,6 +330,7 @@ class Executor:
             ActionType.BROWSER_WAIT: self._exec_browser_wait,
             ActionType.BROWSER_CLOSE: self._exec_browser_close,
             ActionType.BROWSER_PAGE_INFO: self._exec_browser_page_info,
+            ActionType.BROWSER_SNAPSHOT: self._exec_browser_snapshot,
             # -- Reactive triggers --
             ActionType.TRIGGER_CREATE: self._exec_trigger_create,
             ActionType.TRIGGER_LIST: self._exec_trigger_list,
@@ -2536,7 +2537,7 @@ class Executor:
 
     async def _exec_browser_click(self, action: Action) -> str:
         p: BrowserParams = action.parameters  # type: ignore[assignment]
-        return await self._get_browser_backend().click(p.selector, p.button, timeout=p.timeout)
+        return await self._get_browser_backend().click(await self._browser_target(p), p.button, timeout=p.timeout)
 
     async def _exec_browser_click_text(self, action: Action) -> str:
         p: BrowserParams = action.parameters  # type: ignore[assignment]
@@ -2544,15 +2545,17 @@ class Executor:
 
     async def _exec_browser_type(self, action: Action) -> str:
         p: BrowserParams = action.parameters  # type: ignore[assignment]
-        return await self._get_browser_backend().type(p.selector, p.text, p.clear_first, p.press_enter)
+        return await self._get_browser_backend().type(
+            await self._browser_target(p), p.text, p.clear_first, p.press_enter
+        )
 
     async def _exec_browser_select(self, action: Action) -> str:
         p: BrowserParams = action.parameters  # type: ignore[assignment]
-        return await self._get_browser_backend().select(p.selector, p.value)
+        return await self._get_browser_backend().select(await self._browser_target(p), p.value)
 
     async def _exec_browser_hover(self, action: Action) -> str:
         p: BrowserParams = action.parameters  # type: ignore[assignment]
-        return await self._get_browser_backend().hover(p.selector)
+        return await self._get_browser_backend().hover(await self._browser_target(p))
 
     async def _exec_browser_scroll(self, action: Action) -> str:
         p: BrowserParams = action.parameters  # type: ignore[assignment]
@@ -2614,6 +2617,17 @@ class Executor:
 
     async def _exec_browser_page_info(self, action: Action) -> str:
         return await self._get_browser_backend().get_page_info()
+
+    async def _exec_browser_snapshot(self, action: Action) -> str:
+        return await self._get_browser_backend().snapshot()
+
+    async def _browser_target(self, p: BrowserParams) -> str:
+        """Use a fresh browser_snapshot ref when given, else the CSS selector."""
+        if not p.element_ref:
+            return p.selector
+        if not p.snapshot_id:
+            raise ValueError("element_ref requires the snapshot_id of the browser_snapshot it came from")
+        return await self._get_browser_backend().resolve_ref(p.snapshot_id, p.element_ref)
 
     # ======================================================================
     # TIER 1: REACTIVE TRIGGERS
