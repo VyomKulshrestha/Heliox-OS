@@ -12,6 +12,7 @@
   import { onMount } from "svelte";
   import { _ } from "svelte-i18n";
   import { call, requireOkResult } from "../api/daemon";
+  import { changedFields, onConfigChange } from "../api/configSync";
 
   let enabled = $state(false);
   let keyboardMouseHookEnabled = $state(false);
@@ -24,8 +25,27 @@
   let saved = $state(false);
   let error = $state("");
   let hookWarningUnderstood = $state(false);
+  let restartNotice = $state("");
+  // What the daemon last reported; a save sends only the toggles changed here.
+  let savedValues = $state<Record<string, unknown> | null>(null);
 
-  onMount(loadStatus);
+  function formValues(): Record<string, unknown> {
+    return {
+      enabled,
+      keyboard_mouse_hook_enabled: keyboardMouseHookEnabled,
+      cognitive_coaching_enabled: cognitiveCoachingEnabled,
+      risk_pattern_detection_enabled: riskPatternDetectionEnabled,
+    };
+  }
+
+  const dirty = $derived(savedValues !== null && Object.keys(changedFields(savedValues, formValues())).length > 0);
+
+  onMount(() => {
+    void loadStatus();
+    return onConfigChange({ methods: ["supervision_config_update"] }, () => {
+      if (!dirty && !saving) void loadStatus();
+    });
+  });
 
   async function loadStatus() {
     try {
@@ -45,6 +65,7 @@
       cognitiveCoachingEnabled = result.cognitive_coaching_enabled ?? true;
       riskPatternDetectionEnabled = result.risk_pattern_detection_enabled ?? true;
       hookHealthy = result.hook_healthy ?? false;
+      savedValues = formValues();
       statusAvailable = true;
       error = "";
     } catch (cause) {
@@ -59,17 +80,21 @@
     saving = true;
     saved = false;
     error = "";
+    restartNotice = "";
     try {
+      const values = formValues();
       const result = requireOkResult(
-        (await call("supervision_config_update", {
-          enabled,
-          keyboard_mouse_hook_enabled: keyboardMouseHookEnabled,
-          cognitive_coaching_enabled: cognitiveCoachingEnabled,
-          risk_pattern_detection_enabled: riskPatternDetectionEnabled,
-        })) as { status?: string; message?: string; hook_healthy?: boolean },
+        (await call("supervision_config_update", savedValues ? changedFields(savedValues, values) : values)) as {
+          status?: string;
+          message?: string;
+          hook_healthy?: boolean;
+          restart_required?: boolean;
+        },
         "Supervision settings were not saved",
       );
       hookHealthy = result.hook_healthy ?? false;
+      savedValues = values;
+      if (result.restart_required) restartNotice = "Saved. Restart Heliox for the new timing to take effect.";
       saved = true;
       setTimeout(() => (saved = false), 2500);
     } catch (cause) {
@@ -105,6 +130,9 @@
   {#if loading}
     <div class="empty">Loading...</div>
   {:else}
+    {#if restartNotice}
+      <p class="panel-notice" role="status">{restartNotice}</p>
+    {/if}
     {#if error}
       <p class="panel-error" role="alert">{error}</p>
     {/if}
@@ -217,6 +245,12 @@
     text-align: center;
     color: var(--text-muted);
     font-size: 13px;
+  }
+
+  .panel-notice {
+    margin: 8px 0 0;
+    color: var(--text-secondary);
+    font-size: 12px;
   }
 
   .panel-error {

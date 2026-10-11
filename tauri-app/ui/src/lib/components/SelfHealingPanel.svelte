@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { _ } from "svelte-i18n";
   import { call, onNotification, offNotification, requireOkResult, type DaemonStatusResult } from "../api/daemon";
+  import { changedFields, onConfigChange } from "../api/configSync";
 
   interface HealingAttempt {
     attempt_id: string;
@@ -40,6 +41,15 @@
   let saved = $state(false);
   let error = $state("");
   let notificationHandler: ((method: string, params: unknown) => void) | null = null;
+  // The config the daemon last reported. Healing attempts refresh the status often; those
+  // refreshes must not overwrite toggles the person has changed but not saved yet.
+  let savedConfig = $state<Record<string, unknown> | null>(null);
+
+  function formConfig(): Record<string, unknown> {
+    return { enabled, auto_execute_max_tier: autoExecuteMaxTier, watched_metrics: [...watchedMetrics] };
+  }
+
+  const dirty = $derived(savedConfig !== null && Object.keys(changedFields(savedConfig, formConfig())).length > 0);
 
   onMount(() => {
     loadStatus();
@@ -47,8 +57,12 @@
       if (HEALING_NOTIFICATIONS.has(method)) loadStatus();
     };
     onNotification(notificationHandler);
+    const stopConfigSync = onConfigChange({ methods: ["self_healing_config_update"] }, () => {
+      if (!saving) loadStatus();
+    });
     return () => {
       if (notificationHandler) offNotification(notificationHandler);
+      stopConfigSync();
     };
   });
 
@@ -65,9 +79,12 @@
         attempts: HealingAttempt[];
       };
       requireOkResult(result, "Autonomous healing status is unavailable.");
-      enabled = result.enabled ?? false;
-      autoExecuteMaxTier = result.auto_execute_max_tier ?? 1;
-      watchedMetrics = result.watched_metrics ?? [...ALL_METRICS];
+      if (!dirty) {
+        enabled = result.enabled ?? false;
+        autoExecuteMaxTier = result.auto_execute_max_tier ?? 1;
+        watchedMetrics = result.watched_metrics ?? [...ALL_METRICS];
+        savedConfig = formConfig();
+      }
       monitors = result.monitors ?? {};
       attempts = result.attempts ?? [];
       statusAvailable = true;
@@ -89,13 +106,15 @@
   async function save() {
     saving = true;
     saved = false;
+    error = "";
     try {
-      const result = (await call("self_healing_config_update", {
-        enabled,
-        auto_execute_max_tier: autoExecuteMaxTier,
-        watched_metrics: watchedMetrics,
-      })) as { status: string; message?: string };
+      const values = formConfig();
+      const result = (await call(
+        "self_healing_config_update",
+        savedConfig ? changedFields(savedConfig, values) : values,
+      )) as { status: string; message?: string };
       if (result.status !== "ok") throw new Error(result.message || "Configuration was not saved");
+      savedConfig = values;
       await loadStatus();
       saved = true;
       setTimeout(() => (saved = false), 2500);

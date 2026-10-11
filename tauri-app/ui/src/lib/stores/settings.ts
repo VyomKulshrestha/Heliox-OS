@@ -1,5 +1,5 @@
 import { writable } from "svelte/store";
-import { call } from "../api/daemon";
+import { call, onConnectionState, onNotification } from "../api/daemon";
 
 export interface PilotSettings {
   model: {
@@ -237,98 +237,171 @@ function mergeSettings(current: PilotSettings, incoming: Partial<PilotSettings>)
   };
 }
 
+export type SettingsSaveResult = {
+  ok: boolean;
+  /** The daemon's reason when it refused the change (or why it could not be reached). */
+  message: string;
+  /** The daemon saved the value but only applies it after a restart. */
+  restartRequired: boolean;
+};
+
+const SETTINGS_CACHE_KEY = "heliox_settings";
+/** Set only when the person picks a theme; while absent the UI follows the OS. */
+const THEME_KEY = "heliox_theme";
+
+/** Problems the daemon hit reading config.toml; while non-empty it refuses to save. */
+export const settingsLoadErrors = writable<string[]>([]);
+/** Bumped whenever the daemon announces a config change, so panels can re-read their section. */
+export const configRevision = writable(0);
+
+function readJson(key: string): Record<string, any> | null {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCache(value: PilotSettings) {
+  try {
+    const { theme: _theme, ...rest } = value;
+    localStorage.setItem(SETTINGS_CACHE_KEY, JSON.stringify(rest));
+  } catch {
+    /* ignore */
+  }
+}
+
 function createSettings() {
   const { subscribe, set, update } = writable<PilotSettings>(defaultSettings);
+  let current = defaultSettings;
+  subscribe((value) => (current = value));
 
   // Helper utility to detect system-level operating system dark/light mode preference
   function getSystemTheme(): "light" | "dark" {
-    if (typeof window !== "undefined") {
+    if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
       return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
     }
     return "dark";
   }
 
-  async function load() {
+  function manualTheme(): "light" | "dark" | null {
     try {
-      const stored = localStorage.getItem("heliox_settings");
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        // Fallback to system preference matching if no theme key exists in saved cache
-        if (!parsed.theme) {
-          parsed.theme = getSystemTheme();
-        }
-        update((s) => mergeSettings(s, parsed));
-      } else {
-        // Apply detected system preference mode on fresh startup instances
-        update((s) => ({ ...s, theme: getSystemTheme() }));
+      const stored = localStorage.getItem(THEME_KEY);
+      if (stored === "light" || stored === "dark") return stored;
+      // Older builds kept the theme inside the settings cache and rewrote it on every load,
+      // so it cannot tell a choice from the OS default. Keep it only where it differs from the OS.
+      const legacy = readJson(SETTINGS_CACHE_KEY)?.theme;
+      if ((legacy === "light" || legacy === "dark") && legacy !== getSystemTheme()) {
+        localStorage.setItem(THEME_KEY, legacy);
+        return legacy;
       }
     } catch {
       /* ignore */
     }
+    return null;
+  }
 
-    call("get_config")
-      .then((config) => {
-        update((current) => {
-          const fullConfig = mergeSettings(current, config as Partial<PilotSettings>);
-          fullConfig.theme = current.theme;
-          fullConfig.hotkey = current.hotkey;
-          try {
-            localStorage.setItem("heliox_settings", JSON.stringify(fullConfig));
-          } catch {
-            /* ignore */
-          }
-          return fullConfig;
+  /** Read the daemon's saved config, which is the only source of truth for daemon-backed settings. */
+  async function reloadFromDaemon(): Promise<boolean> {
+    try {
+      const config = (await call("get_config")) as Partial<PilotSettings> & { load_errors?: unknown };
+      const { load_errors, ...incoming } = config ?? {};
+      settingsLoadErrors.set(Array.isArray(load_errors) ? load_errors.map(String) : []);
+      update((existing) => {
+        const merged = mergeSettings(existing, incoming as Partial<PilotSettings>);
+        merged.theme = existing.theme;
+        merged.hotkey = existing.hotkey;
+        writeCache(merged);
+        return merged;
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async function load() {
+    const cached = readJson(SETTINGS_CACHE_KEY);
+    update((s) => {
+      const merged = cached ? mergeSettings(s, cached as Partial<PilotSettings>) : { ...s };
+      merged.theme = manualTheme() ?? getSystemTheme();
+      return merged;
+    });
+    await reloadFromDaemon();
+  }
+
+  function applyLocally(section: string, values: Record<string, unknown>) {
+    update((s) => {
+      const next = section === "" ? { ...s, ...values } : { ...s, [section]: { ...(s as any)[section], ...values } };
+      writeCache(next as PilotSettings);
+      return next as PilotSettings;
+    });
+    if (section === "" && (values.theme === "light" || values.theme === "dark")) {
+      try {
+        localStorage.setItem(THEME_KEY, values.theme);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  async function updateSectionDetailed(section: string, values: Record<string, unknown>): Promise<SettingsSaveResult> {
+    const keys = Object.keys(values);
+    const localOnly = section === "" && keys.length > 0 && keys.every((key) => key === "theme" || key === "hotkey");
+    let restartRequired = false;
+
+    if (!localOnly) {
+      try {
+        const result = await call<{ status?: string; message?: string; restart_required?: boolean }>("update_config", {
+          section,
+          values,
         });
-      })
-      .catch(() => {});
+        if (result?.status !== "ok") {
+          return { ok: false, message: result?.message || "The daemon rejected the setting.", restartRequired };
+        }
+        restartRequired = Boolean(result.restart_required);
+      } catch (err) {
+        console.warn("Daemon rejected settings update:", err);
+        const message = err instanceof Error && err.message ? err.message : "The daemon could not be reached.";
+        return { ok: false, message, restartRequired };
+      }
+    }
+
+    applyLocally(section, values);
+    return { ok: true, message: "", restartRequired };
   }
 
   async function updateSection(
     section: string,
     values: Record<string, unknown>,
-    options: { requireDaemon?: boolean } = {},
+    _options: { requireDaemon?: boolean } = {},
   ): Promise<boolean> {
-    const keys = Object.keys(values);
-    const localOnly = section === "" && keys.length > 0 && keys.every((key) => key === "theme" || key === "hotkey");
-
-    if (!localOnly) {
-      try {
-        const result = await call<{ status?: string; message?: string }>("update_config", { section, values });
-        if (result?.status !== "ok") {
-          throw new Error(result?.message || "Daemon rejected the setting");
-        }
-      } catch (err) {
-        const qualifier = options.requireDaemon ? "required " : "";
-        console.warn(`Daemon rejected ${qualifier}settings update:`, err);
-        return false;
-      }
-    }
-
-    if (section === "") {
-      update((s) => ({ ...s, ...values }));
-    } else {
-      update((s) => ({
-        ...s,
-        [section]: { ...(s as any)[section], ...values },
-      }));
-    }
-
-    try {
-      const stored = JSON.parse(localStorage.getItem("heliox_settings") || "{}");
-      if (section === "") {
-        Object.assign(stored, values);
-      } else {
-        stored[section] = { ...(stored[section] || {}), ...values };
-      }
-      localStorage.setItem("heliox_settings", JSON.stringify(stored));
-    } catch {
-      /* ignore */
-    }
-
-    return true;
+    return (await updateSectionDetailed(section, values)).ok;
   }
 
-  load();
+  void load();
+
+  // Keep in step with the daemon: another window, a voice command, a hand edit of
+  // config.toml or a daemon restart can all change the saved settings.
+  let reloadTimer: ReturnType<typeof setTimeout> | null = null;
+  function scheduleReload() {
+    if (reloadTimer) clearTimeout(reloadTimer);
+    reloadTimer = setTimeout(() => {
+      reloadTimer = null;
+      void reloadFromDaemon().then(() => configRevision.update((n) => n + 1));
+    }, 150);
+  }
+  try {
+    onConnectionState((connected) => {
+      if (connected) scheduleReload();
+    });
+    onNotification((method) => {
+      if (method === "config_updated") scheduleReload();
+    });
+  } catch {
+    /* daemon client unavailable (tests with a partial mock) */
+  }
 
   // Reactive subscription side-effect to safely toggle HTML element tags dynamically
   subscribe((s) => {
@@ -342,16 +415,15 @@ function createSettings() {
     }
   });
 
-  // Event listener tracking OS level theme switches when manual overrides aren't present
-  if (typeof window !== "undefined") {
-    window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", (e) => {
-      const stored = localStorage.getItem("heliox_settings");
-      const hasManualTheme = stored && JSON.parse(stored).theme;
-      if (!hasManualTheme) {
-        updateSection("", { theme: e.matches ? "light" : "dark" });
+  // Follow the OS theme until the person picks one.
+  if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
+    window.matchMedia("(prefers-color-scheme: light)").addEventListener?.("change", (e) => {
+      if (!manualTheme()) {
+        update((s) => ({ ...s, theme: e.matches ? "light" : "dark" }));
       }
     });
   }
+
   async function reset(): Promise<boolean> {
     try {
       const result = await call<{ status?: string; message?: string }>("reset_config");
@@ -363,19 +435,25 @@ function createSettings() {
       return false;
     }
 
-    set(defaultSettings);
     try {
-      localStorage.removeItem("heliox_settings");
+      localStorage.removeItem(SETTINGS_CACHE_KEY);
+      localStorage.removeItem(THEME_KEY);
     } catch {
       /* ignore */
     }
+    // The daemon keeps some sections (server, restrictions) and its own defaults, so show
+    // what it saved rather than the UI's copy of the defaults.
+    set({ ...defaultSettings, theme: getSystemTheme(), hotkey: current.hotkey });
+    await reloadFromDaemon();
     return true;
   }
 
   return {
     subscribe,
     load,
+    reloadFromDaemon,
     updateSection,
+    updateSectionDetailed,
     reset,
   };
 }

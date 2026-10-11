@@ -42,13 +42,29 @@ describe("PeerMeshPanel", () => {
 
     await fireEvent.click(toggle);
 
-    await waitFor(() =>
-      expect(daemonMocks.call).toHaveBeenCalledWith("mesh_configure", {
-        enabled: true,
-        skill_sync_enabled: false,
-        collab_exec_enabled: false,
-      }),
-    );
+    await waitFor(() => expect(daemonMocks.call).toHaveBeenCalledWith("mesh_configure", { enabled: true }));
+  });
+
+  it("does not revert a sharing switch that was changed elsewhere", async () => {
+    let status = { ...offlineStatus };
+    daemonMocks.call.mockImplementation((method: string) => {
+      if (method === "mesh_status") return Promise.resolve(status);
+      if (method === "mesh_configure") return Promise.resolve({ ...status, enabled: true, configured_enabled: true });
+      throw new Error(`unexpected method: ${method}`);
+    });
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      render(PeerMeshPanel);
+      const toggle = await screen.findByRole("switch", { name: "Toggle Peer Mesh" });
+
+      status = { ...offlineStatus, skill_sync_enabled: true }; // set from another window
+      await vi.advanceTimersByTimeAsync(3100);
+      await fireEvent.click(toggle);
+
+      await waitFor(() => expect(daemonMocks.call).toHaveBeenCalledWith("mesh_configure", { enabled: true }));
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("does not claim success when the daemon rejects configuration", async () => {

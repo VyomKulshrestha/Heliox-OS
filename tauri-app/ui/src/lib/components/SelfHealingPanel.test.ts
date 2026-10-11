@@ -58,4 +58,38 @@ describe("self-healing approval results", () => {
     expect((await screen.findByRole("alert")).textContent).toContain("Confirmation already resolved");
     expect(daemonMocks.call).toHaveBeenCalledTimes(2);
   });
+
+  it("keeps unsaved edits when a healing update refreshes the status, and saves only them", async () => {
+    let daemonState = { enabled: false, auto_execute_max_tier: 1, watched_metrics: ["cpu", "memory", "disk"] };
+    daemonMocks.call.mockImplementation((method: string, params?: Record<string, unknown>) => {
+      if (method === "self_healing_status") {
+        return Promise.resolve({ status: "ok", ...daemonState, monitors: {}, attempts: [] });
+      }
+      if (method === "self_healing_config_update") {
+        daemonState = { ...daemonState, ...(params as object) };
+        return Promise.resolve({ status: "ok" });
+      }
+      throw new Error(`unexpected method: ${method}`);
+    });
+    render(SelfHealingPanel);
+    const toggle = await screen.findByRole("button", { name: "Toggle Autonomous Healing" });
+    await vi.waitFor(() => expect(daemonMocks.onNotification).toHaveBeenCalled());
+
+    await fireEvent.click(toggle); // switched on, not saved yet
+    daemonState = { ...daemonState, auto_execute_max_tier: 2 }; // changed in another window
+    for (const [handler] of daemonMocks.onNotification.mock.calls) {
+      handler("self_healing_attempt_updated", {});
+    }
+    await vi.waitFor(() =>
+      expect(daemonMocks.call.mock.calls.filter(([m]) => m === "self_healing_status").length).toBeGreaterThan(1),
+    );
+    expect(toggle.classList.contains("active")).toBe(true);
+
+    await fireEvent.click(screen.getByRole("button", { name: /save/i }));
+
+    await vi.waitFor(() =>
+      expect(daemonMocks.call).toHaveBeenCalledWith("self_healing_config_update", { enabled: true }),
+    );
+    expect(daemonState.auto_execute_max_tier).toBe(2);
+  });
 });

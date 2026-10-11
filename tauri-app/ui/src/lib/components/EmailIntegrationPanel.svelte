@@ -66,28 +66,36 @@
     message = "";
     failed = false;
     try {
+      // Save the account first so a refused account never leaves a mismatched password
+      // behind; if storing the new password fails, put the previous account back.
+      const previous = { ...$settings.email };
+      const saved = await settings.updateSectionDetailed("email", {
+        enabled,
+        imap_host: imapHost.trim(),
+        smtp_host: smtpHost.trim(),
+        smtp_port: smtpPort,
+        username: username.trim(),
+        password_provider: "email",
+      });
+      if (!saved.ok) throw new Error(saved.message || "The daemon did not confirm the email configuration.");
       if (password.trim()) {
-        const stored = await call<{ status: string; message?: string }>("store_api_key", {
-          provider: "email",
-          api_key: password.trim(),
-        });
-        if (stored.status !== "ok") throw new Error(stored.message || "The app password was not stored securely.");
+        let storeError = "";
+        try {
+          const stored = await call<{ status: string; message?: string }>("store_api_key", {
+            provider: "email",
+            api_key: password.trim(),
+          });
+          if (stored.status !== "ok") storeError = stored.message || "The app password was not stored securely.";
+        } catch (error) {
+          storeError = error instanceof Error ? error.message : "The app password was not stored securely.";
+        }
+        if (storeError) {
+          await settings.updateSectionDetailed("email", previous);
+          throw new Error(`${storeError} The previous email settings were kept.`);
+        }
         password = "";
         passwordSaved = true;
       }
-      const saved = await settings.updateSection(
-        "email",
-        {
-          enabled,
-          imap_host: imapHost.trim(),
-          smtp_host: smtpHost.trim(),
-          smtp_port: smtpPort,
-          username: username.trim(),
-          password_provider: "email",
-        },
-        { requireDaemon: true },
-      );
-      if (!saved) throw new Error("The daemon did not confirm the email configuration.");
       edited = false;
       message = enabled ? "Email settings saved. Test IMAP before using mail actions." : "Email integration disabled.";
     } catch (error) {

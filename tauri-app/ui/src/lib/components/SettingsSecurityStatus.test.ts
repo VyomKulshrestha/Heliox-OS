@@ -24,7 +24,10 @@ describe("Settings security status wiring", () => {
   it("requires acknowledged microphone enumeration before enabling selection", () => {
     expect(source).toContain('>("list_audio_input_devices")');
     expect(source).toContain('requireOkResult(result, "Microphone inputs are unavailable.")');
-    expect(source).toContain("disabled={speechSaving || audioInputDevices.length === 0}");
+    // Without a device list the picker stays locked, unless a saved device is missing and
+    // the person needs to switch back to Automatic.
+    expect(source).toMatch(/disabled=\{speechSaving \|\|\s+\(audioInputDevices\.length === 0 && /);
+    expect(source).toContain("Saved device (not connected)");
   });
 
   it("offers a non-executing speech-recognition test", () => {

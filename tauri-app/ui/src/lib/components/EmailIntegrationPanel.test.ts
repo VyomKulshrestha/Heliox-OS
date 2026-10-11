@@ -5,6 +5,7 @@ import EmailIntegrationPanel from "./EmailIntegrationPanel.svelte";
 const daemonMocks = vi.hoisted(() => ({ call: vi.fn() }));
 const settingsMocks = vi.hoisted(() => ({
   updateSection: vi.fn(),
+  updateSectionDetailed: vi.fn(),
   store: {
     subscribe(run: (next: unknown) => void) {
       run({
@@ -26,6 +27,7 @@ vi.mock("../stores/settings", () => ({
   settings: {
     subscribe: settingsMocks.store.subscribe,
     updateSection: settingsMocks.updateSection,
+    updateSectionDetailed: settingsMocks.updateSectionDetailed,
   },
 }));
 

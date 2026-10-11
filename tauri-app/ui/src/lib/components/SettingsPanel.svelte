@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { settings } from "../stores/settings";
+  import { settings, settingsLoadErrors, type SettingsSaveResult } from "../stores/settings";
   import { _, locale } from "svelte-i18n";
   import { session } from "../stores/session";
   import { call, requireOkResult, requireResultStatus, type DaemonStatusResult } from "../api/daemon";
@@ -51,10 +51,65 @@
     pendingConfirm = null;
     if (accepted && action) action();
   }
+  let settingsNotice = $state<{ text: string; kind: "error" | "info" } | null>(null);
+  let settingsNoticeTimer: ReturnType<typeof setTimeout> | null = null;
+  let lastSaveMessage = "";
+
+  function showSettingsNotice(text: string, kind: "error" | "info") {
+    settingsNotice = { text, kind };
+    if (settingsNoticeTimer) clearTimeout(settingsNoticeTimer);
+    settingsNoticeTimer = setTimeout(() => (settingsNotice = null), kind === "error" ? 8000 : 6000);
+  }
+
+  function notChanged(subject: string): string {
+    return `${subject} was not changed: ${lastSaveMessage || "the daemon could not confirm it."}`;
+  }
+
+  /**
+   * Save daemon-backed settings. When the daemon refuses, the input goes back to the saved
+   * value and the reason is shown (in the caller's own toast when `quiet`).
+   */
+  async function saveSetting(
+    section: string,
+    values: Record<string, unknown>,
+    options: { event?: Event; quiet?: boolean } = {},
+  ): Promise<boolean> {
+    const key = Object.keys(values)[0];
+    const saved: Record<string, unknown> = section === "" ? ($settings as any) : (($settings as any)[section] ?? {});
+    const previous = key === undefined ? undefined : saved[key];
+    const result: SettingsSaveResult = await settings.updateSectionDetailed(section, values);
+    lastSaveMessage = result.message;
+    if (!result.ok) {
+      const input = options.event?.target;
+      if (previous !== undefined && (input instanceof HTMLInputElement || input instanceof HTMLSelectElement)) {
+        if (input instanceof HTMLInputElement && input.type === "checkbox") input.checked = Boolean(previous);
+        else input.value = String(previous);
+      }
+      if (!options.quiet) showSettingsNotice(`Not saved: ${result.message}`, "error");
+      return false;
+    }
+    if (result.restartRequired) showSettingsNotice("Saved. Restart Heliox for this change to take effect.", "info");
+    return true;
+  }
+
   let apiKeyInput = $state("");
   let apiKeySaved = $state(false);
   let apiKeySaving = $state(false);
   let apiKeyError = $state("");
+  let storedApiKeyProviders = $state<string[]>([]);
+
+  async function refreshStoredApiKeys() {
+    try {
+      const result = await call<{ status: string; providers?: string[] }>("list_api_keys");
+      storedApiKeyProviders = result?.status === "ok" && Array.isArray(result.providers) ? result.providers : [];
+    } catch {
+      storedApiKeyProviders = [];
+    }
+  }
+
+  $effect(() => {
+    void refreshStoredApiKeys();
+  });
   let rootToast = $state("");
   let rootToastType = $state<"success" | "warning">("success");
   let rootSaving = $state(false);
@@ -111,14 +166,10 @@
     }
   });
 
+  const savedArtifactDir = $derived($settings.typed_decision?.artifact_dir || "");
+  const savedReportPath = $derived($settings.typed_decision?.report_path || "");
   $effect(() => {
-    const config = $settings.typed_decision;
-    if (config) {
-      typedDecisionPaths = {
-        artifact_dir: config.artifact_dir || "",
-        report_path: config.report_path || "",
-      };
-    }
+    typedDecisionPaths = { artifact_dir: savedArtifactDir, report_path: savedReportPath };
   });
 
   let hotkeyInput = $state("");
@@ -173,9 +224,9 @@
       });
   });
 
+  const subscriptionProvider = $derived($settings.model.subscription_provider);
   $effect(() => {
-    const provider = $settings.model.subscription_provider;
-    void refreshSubscriptionStatus(provider, false);
+    void refreshSubscriptionStatus(subscriptionProvider, false);
   });
 
   // Load the current hotkey when component mounts
@@ -279,11 +330,11 @@
 
   async function applyRootToggle(turningOn: boolean) {
     rootSaving = true;
-    const synced = await settings.updateSection("security", { root_enabled: turningOn }, { requireDaemon: true });
+    const synced = await saveSetting("security", { root_enabled: turningOn }, { quiet: true });
     rootSaving = false;
 
     if (!synced) {
-      rootToast = "Root policy was not changed because the Heliox daemon could not confirm it.";
+      rootToast = notChanged("Root policy");
       rootToastType = "warning";
       setTimeout(() => (rootToast = ""), 5000);
       return;
@@ -326,15 +377,11 @@
 
   async function applyAutoSnapshotToggle(turningOn: boolean) {
     snapshotSaving = true;
-    const synced = await settings.updateSection(
-      "security",
-      { snapshot_on_destructive: turningOn },
-      { requireDaemon: true },
-    );
+    const synced = await saveSetting("security", { snapshot_on_destructive: turningOn }, { quiet: true });
     snapshotSaving = false;
 
     if (!synced) {
-      snapshotToast = "Auto-Snapshot was not changed because the daemon could not confirm it.";
+      snapshotToast = notChanged("Auto-Snapshot");
       setTimeout(() => (snapshotToast = ""), 5000);
       return;
     }
@@ -372,11 +419,11 @@
 
   async function applyDryRunToggle(turningOn: boolean) {
     dryRunSaving = true;
-    const synced = await settings.updateSection("security", { dry_run: turningOn }, { requireDaemon: true });
+    const synced = await saveSetting("security", { dry_run: turningOn }, { quiet: true });
     dryRunSaving = false;
 
     if (!synced) {
-      dryRunToast = "Dry Run was not changed because the daemon could not confirm it.";
+      dryRunToast = notChanged("Dry Run");
       setTimeout(() => (dryRunToast = ""), 5000);
       return;
     }
@@ -403,26 +450,26 @@
   }
 
   function setMode(mode: string) {
-    settings.updateSection("model", { mode });
+    void saveSetting("model", { mode });
   }
 
   function setProvider(provider: string) {
-    settings.updateSection("model", { provider });
+    void saveSetting("model", { provider });
   }
 
   function setCloudProvider(cloud_provider: string) {
-    settings.updateSection("model", { cloud_provider, cloud_model: "", provider: "cloud" });
+    void saveSetting("model", { cloud_provider, cloud_model: "", provider: "cloud" });
   }
 
   function updateCloudModel(e: Event) {
     const val = (e.target as HTMLInputElement).value;
-    settings.updateSection("model", { cloud_model: val });
+    void saveSetting("model", { cloud_model: val }, { event: e });
   }
 
   async function setSubscriptionProvider(subscription_provider: "codex" | "claude") {
     subscriptionStatus = null;
     subscriptionActionMessage = "";
-    await settings.updateSection("model", {
+    await saveSetting("model", {
       provider: "subscription",
       subscription_provider,
       subscription_model: "",
@@ -431,17 +478,17 @@
   }
 
   function updateSubscriptionModel(e: Event) {
-    settings.updateSection("model", { subscription_model: (e.target as HTMLInputElement).value.trim() });
+    void saveSetting("model", { subscription_model: (e.target as HTMLInputElement).value.trim() }, { event: e });
   }
 
   function updateSubscriptionTimeout(e: Event) {
     const value = Number.parseInt((e.target as HTMLInputElement).value, 10);
-    if (Number.isFinite(value)) settings.updateSection("model", { subscription_timeout_seconds: value });
+    if (Number.isFinite(value)) saveSetting("model", { subscription_timeout_seconds: value }, { event: e });
   }
 
   function updateSubscriptionPromptCap(e: Event) {
     const value = Number.parseInt((e.target as HTMLInputElement).value, 10);
-    if (Number.isFinite(value)) settings.updateSection("model", { subscription_max_prompt_chars: value });
+    if (Number.isFinite(value)) saveSetting("model", { subscription_max_prompt_chars: value }, { event: e });
   }
 
   async function refreshSubscriptionStatus(provider = $settings.model.subscription_provider, refresh = true) {
@@ -526,22 +573,20 @@
   async function updateAudioInput(e: Event) {
     const val = (e.target as HTMLInputElement).value;
     speechSaving = true;
-    const synced = await settings.updateSection("voice", { input_device: val }, { requireDaemon: true });
+    const synced = await saveSetting("voice", { input_device: val }, { quiet: true, event: e });
     speechSaving = false;
     speechToast = synced
       ? "Microphone input saved. An active listener was refreshed automatically."
-      : "Microphone input was not changed because the daemon could not confirm it.";
+      : notChanged("Microphone input");
     setTimeout(() => (speechToast = ""), 5000);
   }
 
   async function updateSpeechRecognition(e: Event) {
     const target = e.target as HTMLSelectElement;
     speechSaving = true;
-    const synced = await settings.updateSection("voice", { [target.name]: target.value }, { requireDaemon: true });
+    const synced = await saveSetting("voice", { [target.name]: target.value }, { quiet: true, event: e });
     speechSaving = false;
-    speechToast = synced
-      ? "Speech recognition setting saved."
-      : "Speech recognition was not changed because the daemon could not confirm it.";
+    speechToast = synced ? "Speech recognition setting saved." : notChanged("Speech recognition");
     setTimeout(() => (speechToast = ""), 5000);
   }
 
@@ -550,27 +595,19 @@
     const ttsVoice =
       val === "kokoro_tts" ? "af_heart" : val === "pocket_tts" ? "alba" : ($settings.voice?.tts_voice ?? "af_heart");
     speechSaving = true;
-    const synced = await settings.updateSection(
-      "voice",
-      { tts_engine: val, tts_voice: ttsVoice },
-      { requireDaemon: true },
-    );
+    const synced = await saveSetting("voice", { tts_engine: val, tts_voice: ttsVoice }, { quiet: true, event: e });
     speechSaving = false;
     const engineName = val === "kokoro_tts" ? "Kokoro TTS" : val === "pocket_tts" ? "Pocket TTS" : "OS Voice";
-    speechToast = synced
-      ? `Speech engine changed to ${engineName}.`
-      : "Speech engine was not changed because the daemon could not confirm it.";
+    speechToast = synced ? `Speech engine changed to ${engineName}.` : notChanged("Speech engine");
     setTimeout(() => (speechToast = ""), 5000);
   }
 
   async function updateTtsVoice(e: Event) {
     const val = (e.target as HTMLInputElement).value;
     speechSaving = true;
-    const synced = await settings.updateSection("voice", { tts_voice: val }, { requireDaemon: true });
+    const synced = await saveSetting("voice", { tts_voice: val }, { quiet: true, event: e });
     speechSaving = false;
-    speechToast = synced
-      ? `TTS voice changed to ${val}.`
-      : "Speech voice was not changed because the daemon could not confirm it.";
+    speechToast = synced ? `TTS voice changed to ${val}.` : notChanged("Speech voice");
     setTimeout(() => (speechToast = ""), 5000);
   }
 
@@ -628,7 +665,7 @@
 
   function updateGpuLimit(e: Event) {
     const val = parseInt((e.target as HTMLInputElement).value) || 0;
-    settings.updateSection("model", { gpu_memory_limit_mb: val });
+    void saveSetting("model", { gpu_memory_limit_mb: val }, { event: e });
   }
 
   async function updateRetention(e: Event) {
@@ -636,10 +673,8 @@
     const parsed = Number.parseInt(input.value, 10);
     const val = Number.isFinite(parsed) ? Math.min(100, Math.max(1, parsed)) : 10;
     input.value = String(val);
-    const synced = await settings.updateSection("security", { snapshot_retention_count: val }, { requireDaemon: true });
-    snapshotToast = synced
-      ? `Snapshot retention saved at ${val}.`
-      : "Snapshot retention was not changed because the daemon could not confirm it.";
+    const synced = await saveSetting("security", { snapshot_retention_count: val }, { quiet: true, event: e });
+    snapshotToast = synced ? `Snapshot retention saved at ${val}.` : notChanged("Snapshot retention");
     setTimeout(() => (snapshotToast = ""), 5000);
   }
 
@@ -647,50 +682,62 @@
     const rawValue = Number((e.target as HTMLInputElement).value);
     if (!Number.isFinite(rawValue)) return;
     const capture_interval_seconds = Math.min(60, Math.max(0.5, rawValue));
-    settings.updateSection("screen_vision", { capture_interval_seconds });
+    void saveSetting("screen_vision", { capture_interval_seconds }, { event: e });
   }
 
   // Gesture cursor control drives the real OS mouse cursor - default off,
   // must be an explicit opt-in via this toggle (never silently enabled).
   async function toggleGestureCursor() {
     const turningOn = !$settings.gesture_cursor?.enabled;
-    const synced = await settings.updateSection("gesture_cursor", {
-      enabled: turningOn,
-    });
+    const synced = await saveSetting(
+      "gesture_cursor",
+      {
+        enabled: turningOn,
+      },
+      { quiet: true },
+    );
     gestureCursorToast = synced
       ? turningOn
         ? "Gesture Cursor enabled. Start the camera and explicitly enter Cursor Mode to control the pointer."
         : "Gesture Cursor disabled. Any active Cursor Mode was stopped."
-      : "Gesture Cursor was not changed because the daemon could not confirm it.";
+      : notChanged("Gesture Cursor");
     setTimeout(() => (gestureCursorToast = ""), 5000);
   }
 
   async function toggleGazeTracking() {
     const turningOn = !$settings.vision?.gaze_tracking_enabled;
-    const synced = await settings.updateSection("vision", {
-      gaze_tracking_enabled: turningOn,
-    });
+    const synced = await saveSetting(
+      "vision",
+      {
+        gaze_tracking_enabled: turningOn,
+      },
+      { quiet: true },
+    );
     if (synced && !turningOn) resetGazeRuntime();
     visionToast = synced
       ? turningOn
         ? "Gaze tracking enabled. Active camera controls switch to the compatible 3D backend automatically."
         : "Gaze tracking disabled. Active camera controls reconcile automatically."
-      : "Gaze tracking was not changed because the daemon could not confirm it.";
+      : notChanged("Gaze tracking");
     setTimeout(() => (visionToast = ""), 5000);
   }
 
   async function toggleEnhanced3DHandTracking() {
     const turningOn = $settings.vision?.mediapipe_backend !== "tasks";
-    const synced = await settings.updateSection("vision", {
-      mediapipe_backend: turningOn ? "tasks" : "legacy",
-    });
+    const synced = await saveSetting(
+      "vision",
+      {
+        mediapipe_backend: turningOn ? "tasks" : "legacy",
+      },
+      { quiet: true },
+    );
     visionToast = synced
       ? turningOn
         ? "Enhanced 3D hand tracking enabled. Active camera controls restart automatically."
         : $settings.vision?.gaze_tracking_enabled
           ? "Compatibility mode saved, but gaze still requires 3D tracking while both features are active."
           : "2D compatibility mode enabled. Active camera controls restart automatically."
-      : "Camera tracking was not changed because the daemon could not confirm it.";
+      : notChanged("Camera tracking");
     setTimeout(() => (visionToast = ""), 5000);
   }
 
@@ -701,31 +748,31 @@
     if (previewSaving) return;
     const turningOn = !$settings.preview?.enabled;
     previewSaving = true;
-    const synced = await settings.updateSection("preview", { enabled: turningOn }, { requireDaemon: true });
+    const synced = await saveSetting("preview", { enabled: turningOn }, { quiet: true });
     previewSaving = false;
     previewToast = synced
       ? turningOn
         ? "Preview gate enabled. Autonomous actions now require a real preview and approval."
         : "Preview gate disabled."
-      : "Preview was not changed because the daemon could not confirm it.";
+      : notChanged("Preview");
     setTimeout(() => (previewToast = ""), 5000);
   }
 
   async function saveTypedDecisionPaths() {
     if (typedDecisionSaving) return;
     typedDecisionSaving = true;
-    const saved = await settings.updateSection(
+    const saved = await saveSetting(
       "typed_decision",
       {
         artifact_dir: typedDecisionPaths.artifact_dir.trim(),
         report_path: typedDecisionPaths.report_path.trim(),
       },
-      { requireDaemon: true },
+      { quiet: true },
     );
     typedDecisionSaving = false;
     typedDecisionToast = saved
       ? "Local model paths saved. Scoring still requires explicit enablement."
-      : "Paths were not saved. Use absolute local paths and check that Heliox is connected.";
+      : `Paths were not saved: ${lastSaveMessage}`;
     setTimeout(() => (typedDecisionToast = ""), 5000);
   }
 
@@ -738,7 +785,7 @@
       return;
     }
     typedDecisionSaving = true;
-    const saved = await settings.updateSection(
+    const saved = await saveSetting(
       "typed_decision",
       {
         enabled: turningOn,
@@ -749,14 +796,14 @@
             }
           : {}),
       },
-      { requireDaemon: true },
+      { quiet: true },
     );
     typedDecisionSaving = false;
     typedDecisionToast = saved
       ? turningOn
         ? "Research-only scoring enabled. The model loads on its first MCP request."
         : "Scoring disabled and its model released from GPU memory."
-      : "The setting was not changed. Check the paths and daemon connection.";
+      : notChanged("The setting");
     setTimeout(() => (typedDecisionToast = ""), 5000);
   }
 
@@ -765,10 +812,8 @@
     if (!Number.isFinite(rawValue)) return;
     const sensitivity = Math.min(3, Math.max(0.1, rawValue));
     (e.target as HTMLInputElement).value = String(sensitivity);
-    const synced = await settings.updateSection("gesture_cursor", { sensitivity });
-    gestureCursorToast = synced
-      ? `Cursor sensitivity saved at ${sensitivity}.`
-      : "Sensitivity was not changed because the daemon could not confirm it.";
+    const synced = await saveSetting("gesture_cursor", { sensitivity }, { quiet: true, event: e });
+    gestureCursorToast = synced ? `Cursor sensitivity saved at ${sensitivity}.` : notChanged("Sensitivity");
     setTimeout(() => (gestureCursorToast = ""), 5000);
   }
 
@@ -777,10 +822,8 @@
     if (!Number.isFinite(rawValue)) return;
     const blend = Math.min(1, Math.max(0, rawValue));
     (e.target as HTMLInputElement).value = String(blend);
-    const synced = await settings.updateSection("gesture_cursor", { blend });
-    gestureCursorToast = synced
-      ? `Prediction blend saved at ${blend}.`
-      : "Prediction blend was not changed because the daemon could not confirm it.";
+    const synced = await saveSetting("gesture_cursor", { blend }, { quiet: true, event: e });
+    gestureCursorToast = synced ? `Prediction blend saved at ${blend}.` : notChanged("Prediction blend");
     setTimeout(() => (gestureCursorToast = ""), 5000);
   }
 
@@ -797,14 +840,18 @@
 
   async function toggleGestureCalibration() {
     const turningOn = !$settings.adaptive_calibration?.gesture_enabled;
-    const synced = await settings.updateSection("adaptive_calibration", {
-      gesture_enabled: turningOn,
-    });
+    const synced = await saveSetting(
+      "adaptive_calibration",
+      {
+        gesture_enabled: turningOn,
+      },
+      { quiet: true },
+    );
     gestureCalibrationToast = synced
       ? turningOn
         ? "Adaptive gesture calibration enabled."
         : "Adaptive gesture calibration paused."
-      : "Calibration was not changed because the daemon could not confirm it.";
+      : notChanged("Calibration");
     setTimeout(() => (gestureCalibrationToast = ""), 5000);
   }
 
@@ -851,16 +898,12 @@
 
   async function toggleVoiceCalibration() {
     const turningOn = !$settings.adaptive_calibration?.voice_wake_word_enabled;
-    const synced = await settings.updateSection(
-      "adaptive_calibration",
-      { voice_wake_word_enabled: turningOn },
-      { requireDaemon: true },
-    );
+    const synced = await saveSetting("adaptive_calibration", { voice_wake_word_enabled: turningOn }, { quiet: true });
     voiceCalibrationToast = synced
       ? turningOn
         ? "Adaptive wake-word matching enabled."
         : "Adaptive wake-word matching disabled."
-      : "Wake-word calibration was not changed because the daemon could not confirm it.";
+      : notChanged("Wake-word calibration");
     setTimeout(() => (voiceCalibrationToast = ""), 5000);
   }
 
@@ -888,15 +931,19 @@
 
   function updateOllamaModel(e: Event) {
     const val = (e.target as HTMLInputElement).value;
-    settings.updateSection("model", { ollama_model: val });
+    void saveSetting("model", { ollama_model: val }, { event: e });
   }
 
   async function saveApiKey() {
     if (!apiKeyInput.trim()) return;
+    const provider = $settings.model.cloud_provider;
+    if (!provider) {
+      apiKeyError = "Choose a cloud provider above before saving its API key.";
+      return;
+    }
     apiKeySaving = true;
     apiKeyError = "";
     try {
-      const provider = $settings.model.cloud_provider || "gemini";
       const result = await call<{ status: string; message?: string }>("store_api_key", {
         provider,
         api_key: apiKeyInput.trim(),
@@ -906,6 +953,7 @@
       }
       apiKeySaved = true;
       apiKeyInput = "";
+      void refreshStoredApiKeys();
       setTimeout(() => {
         apiKeySaved = false;
       }, 3000);
@@ -936,6 +984,13 @@
     settings.updateSection("", { theme: nextTheme });
   }
 
+  let notificationToast = $state("");
+
+  function showNotificationToast(text: string) {
+    notificationToast = text;
+    setTimeout(() => (notificationToast = ""), 6000);
+  }
+
   async function testNotification() {
     try {
       // Try Tauri native notification first
@@ -958,7 +1013,7 @@
     // Fallback: browser Notification API
     try {
       if (!("Notification" in window)) {
-        alert("Heliox OS — Notifications are not supported in this browser.");
+        showNotificationToast("Notifications are not supported in this browser.");
         return;
       }
       let perm = Notification.permission;
@@ -971,11 +1026,11 @@
           icon: "/favicon.png",
         });
       } else {
-        alert("Notification permission was denied. Enable it in your browser settings.");
+        showNotificationToast("Notification permission was denied. Allow it in your browser settings.");
       }
     } catch (err) {
       console.error("Browser notification failed:", err);
-      alert("Heliox OS — Test notification triggered! (popups blocked by browser)");
+      showNotificationToast("The test notification could not be shown. The browser may be blocking popups.");
     }
   }
 
@@ -987,21 +1042,28 @@
     blocked_commands: "",
   });
 
-  function addRestrictionEntry(key: RestrictionKey) {
+  let restrictionSaving = $state(false);
+
+  async function addRestrictionEntry(key: RestrictionKey) {
     const value = newRestrictionEntry[key].trim();
-    if (!value) return;
+    if (!value || restrictionSaving) return;
     const current = $settings.restrictions?.[key] ?? [];
     if (current.includes(value)) {
       newRestrictionEntry[key] = "";
       return;
     }
-    settings.updateSection("restrictions", { [key]: [...current, value] });
-    newRestrictionEntry[key] = "";
+    restrictionSaving = true;
+    const saved = await saveSetting("restrictions", { [key]: [...current, value] });
+    restrictionSaving = false;
+    if (saved) newRestrictionEntry[key] = ""; // a refused entry stays in the box to fix
   }
 
-  function removeRestrictionEntry(key: RestrictionKey, value: string) {
+  async function removeRestrictionEntry(key: RestrictionKey, value: string) {
+    if (restrictionSaving) return;
     const current = $settings.restrictions?.[key] ?? [];
-    settings.updateSection("restrictions", { [key]: current.filter((v) => v !== value) });
+    restrictionSaving = true;
+    await saveSetting("restrictions", { [key]: current.filter((v) => v !== value) });
+    restrictionSaving = false;
   }
 
   const restrictionFields: { key: RestrictionKey; labelKey: string; placeholder: string }[] = [
@@ -1022,6 +1084,30 @@
   {/if}
 
   <h2>{$_("settings.title")}</h2>
+
+  {#if $settingsLoadErrors.length > 0}
+    <div class="settings-banner settings-banner-error" role="alert">
+      <strong>Settings are read-only until config.toml is fixed.</strong>
+      Heliox could not read part of its config file and kept a copy next to it. Fix the file (or use Reset below) to save
+      changes again.
+      <ul>
+        {#each $settingsLoadErrors as problem}
+          <li><code>{problem}</code></li>
+        {/each}
+      </ul>
+    </div>
+  {/if}
+
+  {#if settingsNotice}
+    <div
+      class="settings-banner"
+      class:settings-banner-error={settingsNotice.kind === "error"}
+      class:settings-banner-info={settingsNotice.kind === "info"}
+      role={settingsNotice.kind === "error" ? "alert" : "status"}
+    >
+      {settingsNotice.text}
+    </div>
+  {/if}
 
   <section class="settings-group">
     <h3>{$_("settings.appearance")}</h3>
@@ -1709,9 +1795,13 @@
         class="input-md"
         value={$settings.voice?.input_device ?? "auto"}
         onchange={updateAudioInput}
-        disabled={speechSaving || audioInputDevices.length === 0}
+        disabled={speechSaving ||
+          (audioInputDevices.length === 0 && ($settings.voice?.input_device ?? "auto") === "auto")}
       >
         <option value="auto">Automatic (system default)</option>
+        {#if ($settings.voice?.input_device ?? "auto") !== "auto" && !audioInputDevices.some((device) => device.id === $settings.voice?.input_device)}
+          <option value={$settings.voice?.input_device}>Saved device (not connected)</option>
+        {/if}
         {#each audioInputDevices as device}
           <option value={device.id}>
             {device.name} — {device.hostapi}{device.is_default ? " (system default)" : ""}
@@ -1857,10 +1947,16 @@
         <span class="setting-desc">{$_("settings.provider_desc")}</span>
       </div>
       <div class="btn-group">
-        <button class:active={$settings.model.provider === "ollama"} onclick={() => setProvider("ollama")}
-          >Ollama</button
+        <button
+          class:active={$settings.model.provider === "ollama" || $settings.model.provider === "local"}
+          onclick={() => setProvider("ollama")}>Ollama</button
         >
         <button class:active={$settings.model.provider === "cloud"} onclick={() => setProvider("cloud")}>Cloud</button>
+        <button
+          class:active={$settings.model.provider === "subscription"}
+          onclick={() => setProvider("subscription")}
+          title="Use the signed-in Codex or Claude CLI chosen under Existing AI subscription">Subscription</button
+        >
       </div>
     </div>
 
@@ -1929,9 +2025,13 @@
           class="input-sm"
           value={$settings.model.idle_unload_seconds}
           onchange={(event) =>
-            settings.updateSection("model", {
-              idle_unload_seconds: Number.parseInt((event.target as HTMLInputElement).value, 10) || 0,
-            })}
+            saveSetting(
+              "model",
+              {
+                idle_unload_seconds: Number.parseInt((event.target as HTMLInputElement).value, 10) || 0,
+              },
+              { event },
+            )}
           min="0"
           max="86400"
           step="30"
@@ -1978,7 +2078,7 @@
           class="input-md"
           list="openrouter-model-options"
           value={$settings.model.cloud_model}
-          oninput={updateCloudModel}
+          onchange={updateCloudModel}
           placeholder="openrouter/auto or any OpenRouter model slug"
         />
         <datalist id="openrouter-model-options">
@@ -2014,6 +2114,13 @@
           {apiKeySaved ? $_("settings.saved") : apiKeySaving ? $_("settings.saving") : $_("settings.save")}
         </button>
       </div>
+      {#if $settings.model.cloud_provider}
+        <p class="api-key-status">
+          {storedApiKeyProviders.includes($settings.model.cloud_provider)
+            ? `A ${$settings.model.cloud_provider} key is saved in the OS credential store.`
+            : `No ${$settings.model.cloud_provider} key is saved yet.`}
+        </p>
+      {/if}
       {#if apiKeyError}
         <p class="api-key-error" role="alert">{apiKeyError}</p>
       {/if}
@@ -2030,8 +2137,11 @@
           {#each $settings.restrictions?.[field.key] ?? [] as entry}
             <span class="restriction-chip">
               <code>{entry}</code>
-              <button class="chip-remove" title="Remove" onclick={() => removeRestrictionEntry(field.key, entry)}
-                >&times;</button
+              <button
+                class="chip-remove"
+                title="Remove"
+                disabled={restrictionSaving}
+                onclick={() => removeRestrictionEntry(field.key, entry)}>&times;</button
               >
             </span>
           {:else}
@@ -2048,7 +2158,9 @@
               if (e.key === "Enter") addRestrictionEntry(field.key);
             }}
           />
-          <button class="btn-save" onclick={() => addRestrictionEntry(field.key)}>Add</button>
+          <button class="btn-save" disabled={restrictionSaving} onclick={() => addRestrictionEntry(field.key)}
+            >Add</button
+          >
         </div>
       </div>
     {/each}
@@ -2269,11 +2381,11 @@
       <div class="btn-group">
         <button
           class:active={$settings.model.rate_limit_enabled}
-          onclick={() => settings.updateSection("model", { rate_limit_enabled: true })}>On</button
+          onclick={() => saveSetting("model", { rate_limit_enabled: true })}>On</button
         >
         <button
           class:active={!$settings.model.rate_limit_enabled}
-          onclick={() => settings.updateSection("model", { rate_limit_enabled: false })}>Off</button
+          onclick={() => saveSetting("model", { rate_limit_enabled: false })}>Off</button
         >
       </div>
     </div>
@@ -2291,9 +2403,13 @@
         step="1"
         value={$settings.model.rate_limit_rpm}
         onchange={(event) =>
-          settings.updateSection("model", {
-            rate_limit_rpm: Number.parseInt((event.target as HTMLInputElement).value, 10) || 1,
-          })}
+          saveSetting(
+            "model",
+            {
+              rate_limit_rpm: Number.parseInt((event.target as HTMLInputElement).value, 10) || 1,
+            },
+            { event },
+          )}
       />
     </div>
 
@@ -2310,9 +2426,13 @@
         step="1"
         value={$settings.model.rate_limit_burst}
         onchange={(event) =>
-          settings.updateSection("model", {
-            rate_limit_burst: Number.parseInt((event.target as HTMLInputElement).value, 10) || 1,
-          })}
+          saveSetting(
+            "model",
+            {
+              rate_limit_burst: Number.parseInt((event.target as HTMLInputElement).value, 10) || 1,
+            },
+            { event },
+          )}
       />
     </div>
 
@@ -2326,11 +2446,11 @@
       <div class="btn-group">
         <button
           class:active={$settings.model.budget_enabled}
-          onclick={() => settings.updateSection("model", { budget_enabled: true })}>On</button
+          onclick={() => saveSetting("model", { budget_enabled: true })}>On</button
         >
         <button
           class:active={!$settings.model.budget_enabled}
-          onclick={() => settings.updateSection("model", { budget_enabled: false })}>Off</button
+          onclick={() => saveSetting("model", { budget_enabled: false })}>Off</button
         >
       </div>
     </div>
@@ -2347,9 +2467,13 @@
         step="0.5"
         value={$settings.model.budget_monthly_limit_usd}
         onchange={(e) =>
-          settings.updateSection("model", {
-            budget_monthly_limit_usd: parseFloat((e.target as HTMLInputElement).value) || 0,
-          })}
+          saveSetting(
+            "model",
+            {
+              budget_monthly_limit_usd: parseFloat((e.target as HTMLInputElement).value) || 0,
+            },
+            { event: e },
+          )}
       />
     </div>
 
@@ -2367,9 +2491,13 @@
         step="500"
         value={$settings.model.max_tokens_per_action}
         onchange={(e) =>
-          settings.updateSection("model", {
-            max_tokens_per_action: parseInt((e.target as HTMLInputElement).value, 10) || 0,
-          })}
+          saveSetting(
+            "model",
+            {
+              max_tokens_per_action: parseInt((e.target as HTMLInputElement).value, 10) || 0,
+            },
+            { event: e },
+          )}
       />
     </div>
 
@@ -2387,9 +2515,13 @@
         step="5000"
         value={$settings.model.max_tokens_per_task}
         onchange={(e) =>
-          settings.updateSection("model", {
-            max_tokens_per_task: parseInt((e.target as HTMLInputElement).value, 10) || 0,
-          })}
+          saveSetting(
+            "model",
+            {
+              max_tokens_per_task: parseInt((e.target as HTMLInputElement).value, 10) || 0,
+            },
+            { event: e },
+          )}
       />
     </div>
 
@@ -2407,7 +2539,11 @@
         step="0.01"
         value={$settings.model.max_usd_per_task}
         onchange={(e) =>
-          settings.updateSection("model", { max_usd_per_task: parseFloat((e.target as HTMLInputElement).value) || 0 })}
+          saveSetting(
+            "model",
+            { max_usd_per_task: parseFloat((e.target as HTMLInputElement).value) || 0 },
+            { event: e },
+          )}
       />
     </div>
 
@@ -2424,9 +2560,13 @@
         step="1"
         value={$settings.model.max_consecutive_failures}
         onchange={(e) =>
-          settings.updateSection("model", {
-            max_consecutive_failures: parseInt((e.target as HTMLInputElement).value, 10) || 1,
-          })}
+          saveSetting(
+            "model",
+            {
+              max_consecutive_failures: parseInt((e.target as HTMLInputElement).value, 10) || 1,
+            },
+            { event: e },
+          )}
       />
     </div>
   </section>
@@ -2458,6 +2598,9 @@
       </div>
       <button class="btn-save" onclick={testNotification}>{$_("settings.test_popup")}</button>
     </div>
+    {#if notificationToast}
+      <div class="root-toast root-toast-warning" role="status">{notificationToast}</div>
+    {/if}
   </section>
 
   <CalendarIntegrationPanel />
@@ -2812,6 +2955,35 @@
     background: var(--bg-tertiary);
   }
 
+  .settings-banner {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    margin: 0 0 12px;
+    padding: 10px 14px;
+    font-size: 12px;
+    line-height: 1.5;
+    border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+    background: var(--bg-secondary);
+  }
+
+  .settings-banner ul {
+    margin: 6px 0 0;
+    padding-left: 18px;
+  }
+
+  .settings-banner-error {
+    color: #f87171;
+    border-color: rgba(248, 113, 113, 0.4);
+    background: rgba(248, 113, 113, 0.1);
+  }
+
+  .settings-banner-info {
+    color: #60a5fa;
+    border-color: rgba(96, 165, 250, 0.4);
+    background: rgba(96, 165, 250, 0.1);
+  }
+
   /* Root Access Toast & Banner */
   .root-toast {
     padding: 10px 14px;
@@ -3037,6 +3209,12 @@
     font-size: 12px;
     font-weight: 600;
     color: var(--success, #10b981);
+  }
+
+  .api-key-status {
+    margin: 6px 0 0;
+    color: var(--text-secondary);
+    font-size: 11px;
   }
 
   .api-key-error {

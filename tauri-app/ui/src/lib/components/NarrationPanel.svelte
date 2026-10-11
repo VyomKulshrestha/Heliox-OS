@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { _ } from "svelte-i18n";
   import { call, requireOkResult, type DaemonStatusResult } from "../api/daemon";
+  import { changedFields, onConfigChange } from "../api/configSync";
 
   let enabled = $state(false);
   let narrateSteps = $state(true);
@@ -22,10 +23,31 @@
   let suggestionDismissedCount = $state(0);
   let resettingLearning = $state(false);
   let confirmingLearningReset = $state(false);
+  // What the daemon last reported, so a save sends only what was edited here and a
+  // change made elsewhere (voice, another window) is not overwritten with stale values.
+  let savedValues = $state<Record<string, unknown> | null>(null);
+
+  function formValues(): Record<string, unknown> {
+    return {
+      enabled,
+      narrate_steps: narrateSteps,
+      interrupt_on_risk: interruptOnRisk,
+      proactive_review_enabled: proactiveReviewEnabled,
+      live_corrections_enabled: liveCorrectionsEnabled,
+      follow_up_enabled: followUpEnabled,
+      confirm_timeout_seconds: confirmTimeoutSeconds,
+      advisory_timeout_seconds: advisoryTimeoutSeconds,
+    };
+  }
+
+  const dirty = $derived(savedValues !== null && Object.keys(changedFields(savedValues, formValues())).length > 0);
 
   onMount(() => {
     void loadStatus();
     void loadLearningStatus();
+    return onConfigChange({ methods: ["narration_config_update"] }, () => {
+      if (!dirty && !saving) void loadStatus();
+    });
   });
 
   async function loadStatus() {
@@ -52,6 +74,7 @@
       followUpEnabled = result.follow_up_enabled ?? true;
       confirmTimeoutSeconds = result.confirm_timeout_seconds ?? 120;
       advisoryTimeoutSeconds = result.advisory_timeout_seconds ?? 5;
+      savedValues = formValues();
       statusAvailable = true;
       error = "";
     } catch (cause) {
@@ -67,19 +90,15 @@
     saved = false;
     error = "";
     try {
+      const values = formValues();
       requireOkResult(
-        await call<DaemonStatusResult>("narration_config_update", {
-          enabled,
-          narrate_steps: narrateSteps,
-          interrupt_on_risk: interruptOnRisk,
-          proactive_review_enabled: proactiveReviewEnabled,
-          live_corrections_enabled: liveCorrectionsEnabled,
-          follow_up_enabled: followUpEnabled,
-          confirm_timeout_seconds: confirmTimeoutSeconds,
-          advisory_timeout_seconds: advisoryTimeoutSeconds,
-        }),
+        await call<DaemonStatusResult>(
+          "narration_config_update",
+          savedValues ? changedFields(savedValues, values) : values,
+        ),
         "Narration settings were not saved",
       );
+      savedValues = values;
       saved = true;
       setTimeout(() => (saved = false), 2500);
     } catch (cause) {
@@ -116,9 +135,10 @@
     resettingLearning = true;
     error = "";
     try {
+      // The counts above are proactive-suggestion learning; reset that, not the planner's online learner.
       requireOkResult(
-        (await call("online_learning_reset")) as DaemonStatusResult,
-        "The daemon did not reset learned adaptation.",
+        (await call("proactive_learning_reset")) as DaemonStatusResult,
+        "The daemon did not reset learned suggestion preferences.",
       );
       await loadLearningStatus();
     } catch (cause) {

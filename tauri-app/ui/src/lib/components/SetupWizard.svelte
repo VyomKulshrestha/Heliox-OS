@@ -111,8 +111,8 @@
         }
       }
 
-      // These now save to localStorage instantly (non-blocking daemon sync)
-      await settings.updateSection("model", {
+      // Setup is only complete once the daemon has saved each choice.
+      const modelSaved = await settings.updateSectionDetailed("model", {
         provider: modelProvider,
         ollama_model: ollamaModel,
         cloud_provider: cloudProvider,
@@ -120,6 +120,7 @@
         subscription_provider: subscriptionProvider,
         subscription_model: subscriptionModel,
       });
+      if (!modelSaved.ok) throw new Error(`The model choice was not saved: ${modelSaved.message}`);
 
       const folders = protectedFolders
         .split("\n")
@@ -130,10 +131,15 @@
         .map((p) => p.trim())
         .filter(Boolean);
 
-      await settings.updateSection("restrictions", {
-        protected_folders: folders,
-        protected_packages: packages,
+      // Add to what is already protected (a reset keeps restrictions); never drop entries here.
+      const current = $settings.restrictions;
+      const restrictionsSaved = await settings.updateSectionDetailed("restrictions", {
+        protected_folders: [...new Set([...(current?.protected_folders ?? []), ...folders])],
+        protected_packages: [...new Set([...(current?.protected_packages ?? []), ...packages])],
       });
+      if (!restrictionsSaved.ok) {
+        throw new Error(`The protected folders and packages were not saved: ${restrictionsSaved.message}`);
+      }
 
       // Cloud setup is incomplete until the daemon confirms that the key
       // reached a secure operating-system credential store.

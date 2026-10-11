@@ -65,28 +65,37 @@
         .split(/\r?\n/)
         .map((path) => path.trim())
         .filter(Boolean);
+      // Save the account first: if the daemon refuses it, the stored password still matches
+      // the account it was saved for. If storing the new password then fails, put the
+      // previous account back so the two never disagree.
+      const previous = { ...$settings.calendar };
+      const saved = await settings.updateSectionDetailed("calendar", {
+        enabled,
+        caldav_url: caldavUrl.trim(),
+        caldav_username: username.trim(),
+        caldav_password_provider: "caldav",
+        ics_files: localSources,
+      });
+      if (!saved.ok) throw new Error(saved.message || "The daemon did not confirm the calendar configuration.");
+
       if (password.trim()) {
-        const stored = await call<{ status: string; message?: string }>("store_api_key", {
-          provider: "caldav",
-          api_key: password.trim(),
-        });
-        if (stored.status !== "ok") throw new Error(stored.message || "The password was not stored securely.");
+        let storeError = "";
+        try {
+          const stored = await call<{ status: string; message?: string }>("store_api_key", {
+            provider: "caldav",
+            api_key: password.trim(),
+          });
+          if (stored.status !== "ok") storeError = stored.message || "The password was not stored securely.";
+        } catch (error) {
+          storeError = error instanceof Error ? error.message : "The password was not stored securely.";
+        }
+        if (storeError) {
+          await settings.updateSectionDetailed("calendar", previous);
+          throw new Error(`${storeError} The previous calendar settings were kept.`);
+        }
         password = "";
         passwordSaved = true;
       }
-
-      const saved = await settings.updateSection(
-        "calendar",
-        {
-          enabled,
-          caldav_url: caldavUrl.trim(),
-          caldav_username: username.trim(),
-          caldav_password_provider: "caldav",
-          ics_files: localSources,
-        },
-        { requireDaemon: true },
-      );
-      if (!saved) throw new Error("The daemon did not confirm the calendar configuration.");
       edited = false;
       message = enabled
         ? `Calendar settings saved with ${localSources.length} local source${localSources.length === 1 ? "" : "s"}. Test the CalDAV connection before using remote actions.`

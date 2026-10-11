@@ -25,12 +25,20 @@
   let notice = $state("");
   let refreshTimer: ReturnType<typeof setInterval> | null = null;
 
+  // The sharing switches follow the daemon (another window or a reset can change them)
+  // until the person flips one here without saving.
+  const draftEdited = $derived(
+    status !== null &&
+      (skillSyncEnabled !== status.skill_sync_enabled || collabExecEnabled !== status.collab_exec_enabled),
+  );
+
   async function refresh(syncDraft = true) {
     try {
       const next = await call<MeshStatus>("mesh_status");
       if (next.status !== "ok") throw new Error(next.reason || "Could not read Peer Mesh status.");
+      const followDaemon = syncDraft || !draftEdited;
       status = next;
-      if (syncDraft && !busy) {
+      if (followDaemon && !busy) {
         skillSyncEnabled = next.skill_sync_enabled;
         collabExecEnabled = next.collab_exec_enabled;
       }
@@ -53,10 +61,15 @@
     error = "";
     notice = "";
     try {
+      // Send only what changed here so a switch set elsewhere is not reverted.
       const result = await call<MeshStatus & { status: string; message?: string }>("mesh_configure", {
         enabled,
-        skill_sync_enabled: skillSyncEnabled,
-        collab_exec_enabled: collabExecEnabled,
+        ...(status === null || skillSyncEnabled !== status.skill_sync_enabled
+          ? { skill_sync_enabled: skillSyncEnabled }
+          : {}),
+        ...(status === null || collabExecEnabled !== status.collab_exec_enabled
+          ? { collab_exec_enabled: collabExecEnabled }
+          : {}),
         ...(secretInput ? { shared_secret: secretInput } : {}),
       });
       if (result.status !== "ok") throw new Error(result.message || "The daemon rejected Peer Mesh settings.");

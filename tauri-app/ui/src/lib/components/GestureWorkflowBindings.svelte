@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { _ } from "svelte-i18n";
   import { call, requireResultStatus } from "../api/daemon";
+  import { changedFields, onConfigChange } from "../api/configSync";
 
   interface Binding {
     gesture_name: string;
@@ -54,8 +55,24 @@
   let error = $state("");
   let supportedGestures = $state<string[]>([...FALLBACK_GESTURES]);
   let validationMessage = $derived(validateBindings());
+  // The bindings the daemon last reported; a save sends only what changed here.
+  let savedValues = $state<Record<string, unknown> | null>(null);
 
-  onMount(loadBindings);
+  function formValues(): Record<string, unknown> {
+    return {
+      enabled,
+      bindings: bindings.map((binding) => ({ ...binding, goal_template: binding.goal_template.trim() })),
+    };
+  }
+
+  const dirty = $derived(savedValues !== null && Object.keys(changedFields(savedValues, formValues())).length > 0);
+
+  onMount(() => {
+    void loadBindings();
+    return onConfigChange({ methods: ["gesture_workflow_bindings_update"] }, () => {
+      if (!dirty && !saving) void loadBindings();
+    });
+  });
 
   async function loadBindings() {
     loading = true;
@@ -72,6 +89,7 @@
       enabled = result.enabled ?? false;
       bindings = result.bindings ?? [];
       supportedGestures = result.supported_gestures?.length ? result.supported_gestures : [...FALLBACK_GESTURES];
+      savedValues = formValues();
       statusAvailable = true;
       error = "";
     } catch (cause) {
@@ -122,13 +140,11 @@
     saved = false;
     error = "";
     try {
-      const result = (await call("gesture_workflow_bindings_update", {
-        enabled,
-        bindings: bindings.map((binding) => ({
-          ...binding,
-          goal_template: binding.goal_template.trim(),
-        })),
-      })) as {
+      const values = formValues();
+      const result = (await call(
+        "gesture_workflow_bindings_update",
+        savedValues ? changedFields(savedValues, values) : values,
+      )) as {
         status: string;
         message?: string;
         enabled?: boolean;
@@ -139,6 +155,7 @@
       enabled = result.enabled ?? enabled;
       bindings = result.bindings ?? bindings;
       supportedGestures = result.supported_gestures?.length ? result.supported_gestures : supportedGestures;
+      savedValues = formValues();
       saved = true;
       setTimeout(() => (saved = false), 2500);
     } catch (cause) {
