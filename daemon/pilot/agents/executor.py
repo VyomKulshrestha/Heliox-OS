@@ -914,7 +914,9 @@ class Executor:
             # allowed plan was previously just discarded here. If a
             # narrator is configured, surface it and let the user stop the
             # plan before anything runs.
-            if self._narrator is not None and gateway_decision.critic_verdict is not None:
+            # A plan the person has just approved was shown with the same world-model and
+            # Gnomon reasons (autonomous approval carries them), so asking again adds nothing.
+            if self._narrator is not None and gateway_decision.critic_verdict is not None and not user_confirmed:
                 proceed = await self._narrator.on_plan_risk(plan, gateway_decision.critic_verdict)
                 if not proceed:
                     return [

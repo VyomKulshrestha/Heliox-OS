@@ -24,7 +24,11 @@
     } | null;
   };
 
+  type GnomonStatus = { state?: string; last_error?: string };
+
   let narration = $state<NarrationStatus>({});
+  let gnomon = $state<GnomonStatus>({ state: "disabled" });
+  let lastGnomonEscalated = $state<boolean | null>(null);
   let riskGate = $state<RiskGateStatus>({});
   let reachable = $state(false);
   let lastCompanionDecision = $state("");
@@ -39,6 +43,12 @@
     } catch {
       reachable = false;
     }
+    try {
+      const review = (await call("autonomy_review_status")) as { gnomon?: GnomonStatus };
+      gnomon = review.gnomon ?? { state: "disabled" };
+    } catch {
+      // Older daemons have no autonomy review; the other services still show.
+    }
   }
 
   function onDaemonNotification(method: string, params: unknown) {
@@ -52,6 +62,11 @@
           worst_action_type: String(payload.worst_action_type ?? "") || null,
         },
       };
+      const review = payload.gnomon as { escalate?: boolean } | null | undefined;
+      if (review && typeof review === "object") {
+        lastGnomonEscalated = Boolean(review.escalate);
+        gnomon = { ...gnomon, state: "ready" };
+      }
     } else if (method === "companion_plan_review") {
       lastCompanionDecision = String(payload.decision ?? "").toUpperCase();
     }
@@ -65,6 +80,26 @@
       return `Last plan ${Math.round(score * 100)}% risk`;
     }
     return riskGate.weights_loaded ? "Learned weights ready" : "Rule fallback ready";
+  });
+
+  let gnomonDetail = $derived.by(() => {
+    if (!reachable) return "Daemon unavailable";
+    switch (gnomon.state) {
+      case "ready":
+        return lastGnomonEscalated === null
+          ? "Reviewing autonomous plans"
+          : lastGnomonEscalated
+            ? "Last review asked for approval"
+            : "Last review: no concerns";
+      case "loading":
+        return "Loading on the GPU";
+      case "cold":
+        return "Loads when a task starts";
+      case "unavailable":
+        return `Unavailable: ${(gnomon.last_error || "not loaded").slice(0, 60)}`;
+      default:
+        return "Off in config";
+    }
   });
 
   let voiceActive = $derived(Boolean(narration.enabled && narration.narrate_steps));
@@ -115,6 +150,15 @@
         <small>{worldModelDetail}</small>
       </span>
     </div>
+    {#if gnomon.state && gnomon.state !== "disabled"}
+      <div class="service" class:active={reachable && (gnomon.state === "ready" || gnomon.state === "loading")}>
+        <span class="service-dot"></span>
+        <span class="service-copy">
+          <strong>Gnomon</strong>
+          <small>{gnomonDetail}</small>
+        </span>
+      </div>
+    {/if}
     <div class="service" class:active={voiceActive && reachable}>
       <span class="service-dot"></span>
       <span class="service-copy">

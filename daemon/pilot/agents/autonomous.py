@@ -309,8 +309,11 @@ class AutonomousExecutor:
         accessibility_observer: Callable[[], Awaitable[str]] | None = None,
         human_control: Any | None = None,
         job_store: Any | None = None,
+        reviewer: Any | None = None,
     ) -> None:
         self._planner = planner
+        # AutonomousReviewer: the world model and Gnomon review each plan; they can only add approval.
+        self._reviewer = reviewer
         # AutonomousJobStore: jobs survive a daemon restart as interrupted, resumable records.
         self._job_store = job_store
         # HumanControlGate: the person can take the desktop back; jobs pause until it is returned.
@@ -381,6 +384,7 @@ class AutonomousExecutor:
         self._jobs[job.job_id] = job
         await self._persist(job)
         await self._remember_active_goal(job)
+        self._warm_reviewer()
 
         # Launch in background — non-blocking
         task = asyncio.create_task(self._run_job(job))
@@ -403,6 +407,13 @@ class AutonomousExecutor:
             )
         except Exception:
             logger.warning("Could not persist autonomous working memory", exc_info=True)
+
+    def _warm_reviewer(self) -> None:
+        if self._reviewer is not None:
+            try:
+                self._reviewer.warm()
+            except Exception:
+                logger.debug("Could not warm the plan reviewer", exc_info=True)
 
     async def _persist(self, job: AutonomousJob) -> None:
         if self._job_store is None:
@@ -450,6 +461,7 @@ class AutonomousExecutor:
                 step.completed_at = 0.0
         await self._persist(job)
         await self._remember_active_goal(job)
+        self._warm_reviewer()
         self._active_tasks[job.job_id] = asyncio.create_task(self._run_job(job))
         logger.info("Autonomous job resumed: [%s] %s", job.job_id, job.goal[:80])
         return job
@@ -664,8 +676,13 @@ class AutonomousExecutor:
         plan_id_prefix: str = "",
         on_round_complete: Callable[[str, ActionPlan, list[Any], Any, bool], Coroutine[Any, Any, None]] | None = None,
         memory_task_id: str | None = None,
+        guidance: list[str] | None = None,
     ) -> JobStep:
         """Run one adaptive goal for durable workflow engines.
+
+        ``guidance`` is a list the caller may append to while the goal runs (for example a
+        spoken "also save it as shopping.txt"); each new entry reaches the planner on the
+        next round without restarting the step.
 
         ``AutonomousExecutor.submit`` remains the background-job API. This
         method exposes the same observe/act/verify loop to persisted voice and
@@ -678,15 +695,19 @@ class AutonomousExecutor:
             session_id=session_id,
         )
         step = JobStep(index=0, title="Execute", description=goal, status="running")
-        await self._execute_goal_loop(
-            job,
-            step,
-            goal,
-            invocation_source=invocation_source,
-            plan_id_prefix=plan_id_prefix,
-            on_round_complete=on_round_complete,
-            memory_task_id=memory_task_id,
-        )
+        self._warm_reviewer()
+        # Same takeover rule as background jobs: the person's physical input pauses the workflow.
+        with self._human_control_armed():
+            await self._execute_goal_loop(
+                job,
+                step,
+                goal,
+                invocation_source=invocation_source,
+                plan_id_prefix=plan_id_prefix,
+                on_round_complete=on_round_complete,
+                memory_task_id=memory_task_id,
+                guidance=guidance,
+            )
         return step
 
     async def _execute_multi_step(self, job: AutonomousJob, decomposition: Any) -> None:
@@ -1007,9 +1028,12 @@ class AutonomousExecutor:
         memory_task_id: str | None = None,
         specialist_context: str | None = None,
         initial_progress: list[str] | None = None,
+        guidance: list[str] | None = None,
     ) -> None:
         """Observe, act, verify, and re-plan until a step's real goal is complete."""
         progress: list[str] = list(initial_progress or [])
+        guidance_seen = 0
+        last_receipt = ""
         output_chunks: list[str] = []
         fingerprints: dict[str, int] = {}
         completed_action_types: set[str] = set()
@@ -1020,6 +1044,12 @@ class AutonomousExecutor:
         try:
             for round_index in range(MAX_AUTONOMOUS_ROUNDS_PER_STEP):
                 step.rounds = round_index + 1
+                if guidance is not None and len(guidance) > guidance_seen:
+                    # Spoken additions amend the goal itself, so they stay in view for every later round.
+                    for note in guidance[guidance_seen:]:
+                        goal = f"{goal}\nThe person added while you worked: {note}"
+                        progress.append(f"The person added: {note}")
+                    guidance_seen = len(guidance)
                 if not await self._wait_for_desktop_control(job, progress):
                     step.error = "The person kept control of the desktop; the task stopped waiting."
                     break
@@ -1079,6 +1109,14 @@ class AutonomousExecutor:
                         plan.explanation,
                         completion_evidence,
                     )
+                    rejection = ""
+                    if completion_claim and completion_evidence and evidence_matches and self._reviewer is not None:
+                        rejection = await self._reviewer.review_completion(
+                            goal, completion_evidence, last_receipt, self._required_exact_text(goal) or goal
+                        )
+                    if rejection:
+                        progress.append(f"Round {round_index + 1} completion claim rejected: {rejection}")
+                        continue
                     if completion_claim and completion_evidence and evidence_matches:
                         step.status = "success"
                         if self._memory is not None:
@@ -1114,12 +1152,22 @@ class AutonomousExecutor:
                     if plan_id_prefix
                     else f"autonomous-{job.job_id}:{step.index}:{round_index}"
                 )
+                review = None
+                if self._reviewer is not None:
+                    try:
+                        review = await self._reviewer.review_plan(
+                            job, plan, invocation_source, plan_id, untrusted_context="\n".join(output_chunks[-2:])
+                        )
+                    except Exception:
+                        logger.warning("Plan review failed; deterministic approval rules still apply", exc_info=True)
                 user_confirmed = False
-                if any(action.requires_confirmation or action.is_irreversible for action in plan.actions):
+                if any(action.requires_confirmation or action.is_irreversible for action in plan.actions) or (
+                    review is not None and review.requires_approval
+                ):
                     if self._approval is None:
                         step.error = "Autonomous execution requires UI approval, but no approval handler is available."
                         break
-                    user_confirmed = await self._approval(job, plan, plan_id)
+                    user_confirmed = await self._approval(job, plan, plan_id, review)
                     if not user_confirmed:
                         step.error = "Autonomous execution was denied or its approval expired."
                         break
@@ -1185,6 +1233,10 @@ class AutonomousExecutor:
 
                 outputs = [result.output for result in results if result.output]
                 errors = [result.error for result in results if result.error]
+                last_receipt = "; ".join(
+                    f"{result.action.action_type.value}: {'ok' if result.success else (result.error or 'failed')}"
+                    for result in results
+                )
                 if outputs:
                     output_chunks.extend(outputs)
                 verification_details = "; ".join(verification.details)

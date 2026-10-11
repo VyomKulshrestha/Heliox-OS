@@ -137,6 +137,8 @@ interface SessionState {
   confirmActions: PlanAction[];
   confirmReason: string;
   confirmRiskAssessment: Record<string, unknown> | null;
+  /** Gnomon's review of a plan an autonomous job wants to run (advisory; can only ask for approval). */
+  confirmGnomon: Record<string, unknown> | null;
   confirmSubmitting: boolean;
   confirmError: string;
   phase: string;
@@ -196,6 +198,7 @@ const initialState: SessionState = {
   confirmActions: [],
   confirmReason: "",
   confirmRiskAssessment: null,
+  confirmGnomon: null,
   confirmSubmitting: false,
   confirmError: "",
   phase: "",
@@ -657,6 +660,7 @@ function createSession() {
             p.risk_assessment && typeof p.risk_assessment === "object"
               ? (p.risk_assessment as Record<string, unknown>)
               : null,
+          confirmGnomon: p.gnomon && typeof p.gnomon === "object" ? (p.gnomon as Record<string, unknown>) : null,
           confirmSubmitting: false,
           confirmError: "",
         }));
@@ -973,6 +977,7 @@ function createSession() {
       confirmActions: [],
       confirmReason: "",
       confirmRiskAssessment: null,
+      confirmGnomon: null,
       confirmSubmitting: false,
       confirmError: "",
       streamingText: "",
@@ -1170,6 +1175,7 @@ function createSession() {
       confirmActions: [],
       confirmReason: "",
       confirmRiskAssessment: null,
+      confirmGnomon: null,
       confirmSubmitting: false,
       confirmError: "",
       streamingText: "",
@@ -1225,6 +1231,7 @@ function createSession() {
         confirmActions: [],
         confirmReason: "",
         confirmRiskAssessment: null,
+        confirmGnomon: null,
         confirmSubmitting: false,
         confirmError: "",
         streamingText: "",
@@ -1276,6 +1283,7 @@ function createSession() {
               confirmActions: [],
               confirmReason: "",
               confirmRiskAssessment: null,
+              confirmGnomon: null,
               confirmSubmitting: false,
               confirmError: "",
             }

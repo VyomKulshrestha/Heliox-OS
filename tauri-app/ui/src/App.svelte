@@ -246,6 +246,7 @@
             actions={$session.confirmActions}
             reason={$session.confirmReason}
             riskAssessment={$session.confirmRiskAssessment}
+            gnomon={$session.confirmGnomon}
             submitting={$session.confirmSubmitting}
             error={$session.confirmError}
             onconfirm={(approvedIndices) => session.confirm(true, approvedIndices)}

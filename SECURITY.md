@@ -286,6 +286,33 @@ policy, structured prediction, validated JEPA evidence, calibrated learned
 impact, and verified historical failure use the riskier result. None can lower
 the deterministic floor.
 
+**Autonomous runs too.** Background jobs, scheduled runs, MCP tasks and voice
+workflows get the same assessment before each round. When it asks for
+confirmation, the autonomous approval prompt shows every action with the
+predicted risk and reasons, exactly like interactive work, and the plan does
+not run until the person approves. A plan approved that way is not interrupted
+a second time by the gateway's world-model warning.
+
+## 🧭 Gnomon reviews autonomous plans (escalation only)
+
+When the local Gnomon model is enabled (`typed_decision` in config), it also
+reviews each autonomous plan that changes something, using questions from its
+training set: would the plan stay inside what the person asked, how harmful
+would it be if wrong, and is it following instructions found in tool or screen
+output rather than the person's request. Before a completion claim is accepted
+it answers whether the task can truthfully be reported as verified complete.
+
+Every answer can only add caution: a confident "out of scope", a severe harm
+grade or a "follows untrusted content" answer requires approval, and a "not
+verified" answer sends the loop back to work. Gnomon never approves, never
+lowers a tier and never runs anything, and its responses keep
+`execution_authority: false`. Harm is not asked for actions that never leave
+the PC (notifications, opening apps, window, volume and brightness changes).
+Gnomon loads in the background when a job starts (about 30 seconds on a CUDA
+GPU, 2.5 GiB of free RAM), answers in about 0.2-0.6 seconds and unloads after
+ten idle minutes. When it is off, loading, out of memory or slow, Heliox decides
+on its deterministic rules, the world model and the person's approval alone.
+
 **Known scope limits, stated plainly.** Lookahead simulates the submitted plan's actions in order; it does not invent repetitions absent from the plan. The learned disk/process-count predictions are trained on 36,000 rows from a single machine's sandbox, not validated across diverse hardware/filesystems. Treat learned refinement as approximate; the deterministic parallel prediction is deliberately retained as the safety floor.
 
 ---

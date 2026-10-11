@@ -12,7 +12,7 @@ The Heliox OS UI and daemon communicate over a local WebSocket using the [JSON-R
 | Request timeout | 5 minutes |
 | Reconnect interval | 3 seconds (auto-reconnect on close) |
 
-The daemon currently registers **208 WebSocket RPC methods**. That is the API
+The daemon currently registers **209 WebSocket RPC methods**. That is the API
 surface count, not the action catalog: Heliox exposes **162 action
 types** through the guarded planner/executor system. This document names every
 registered RPC method; grouped tables are used where several methods share one
@@ -1275,6 +1275,21 @@ approval and human-takeover rules apply as usual.
 **Params:** `{ "job_id": "abc123" }`
 **Result:** `{ "status": "resumed", "job": <job> }`, or
 `{ "status": "error", "message": "Only an interrupted job can be resumed" }`.
+
+#### `autonomy_review_status`
+Whether the world model and Gnomon take part in autonomous decisions right now.
+
+**Params:** `{}`
+**Result:** `{ "status": "ok", "world_model": { "enabled": true },
+"gnomon": { "state": "cold" | "loading" | "ready" | "unavailable" | "disabled",
+"last_error": "", "execution_authority": false } }`.
+
+Before each autonomous round the world model scores the plan and, when it is
+loaded, Gnomon reviews plans that change something. Either can only add an
+approval requirement. Each review is broadcast as `world_model_assessment`
+with the plan's `job_id` and a `gnomon` object (`escalate`, `reasons`,
+`scores`), and an escalated approval's `confirm_required` carries `reason`,
+`risk_assessment` (when the world model asked) and `gnomon`.
 
 #### Scheduled runs
 

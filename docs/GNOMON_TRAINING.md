@@ -110,6 +110,14 @@ RAM. Responses stay `research_only`, `advisory_only` and
 `execution_authority: false`. They are exposed through the local MCP
 `score_heliox_typed_decision` tool and never bypass Heliox approvals.
 
+When enabled, Gnomon also reviews autonomous plans (jobs, scheduled runs, MCP
+tasks and voice workflows) with four of its training families:
+`scope_authorization`, `action_risk`, `untrusted_instruction` and
+`postcondition_verification`. It can only require approval or reject a
+completion claim; see SECURITY.md, "Gnomon reviews autonomous plans". The MCP
+tool and the reviewer share one loaded copy, and the `autonomy_review_status`
+RPC reports whether it is cold, loading, ready or unavailable.
+
 ## Results
 
 ### Label check against the hosted reference model

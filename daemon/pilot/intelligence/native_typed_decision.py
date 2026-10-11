@@ -337,6 +337,15 @@ class LocalNextTokenTypedDecisionModel:
                 "answers": answers,
             }
 
+    def load(self) -> None:
+        """Load the model now (checksums, RAM and VRAM guards included) instead of on first score."""
+        with self._lock:
+            self._load()
+
+    @property
+    def loaded(self) -> bool:
+        return self._loaded
+
     def unload(self) -> None:
         """Release the local model and its CUDA allocation."""
         with self._lock:

@@ -675,6 +675,7 @@ class PilotServer:
         self._mcp_client = default_mcp_client()
         self._mcp_client_refresh: asyncio.Task[Any] | None = None
         self._scheduled_runs: Any = None
+        self._gnomon_reviewer: Any = None
         self._self_healing: Any = None
         self._self_healing_started_monitors: set[str] = set()
         self._proactive: Any = None
@@ -1170,7 +1171,12 @@ class PilotServer:
         # ── Autonomous Executor (JARVIS fire-and-forget) ──
         try:
             from pilot.agents.autonomous import AutonomousExecutor
+            from pilot.agents.autonomous_review import AutonomousReviewer
+            from pilot.intelligence.gnomon_reviewer import GnomonReviewer
             from pilot.workflows.autonomous_jobs import AutonomousJobStore
+
+            # Gnomon loads in the background when a job starts and only ever adds caution.
+            self._gnomon_reviewer = GnomonReviewer(self._typed_decision_model)
 
             self._autonomous = AutonomousExecutor(
                 planner=self._planner,
@@ -1184,6 +1190,11 @@ class PilotServer:
                 accessibility_observer=_accessibility_observation,
                 human_control=self._human_control,
                 job_store=AutonomousJobStore(),
+                reviewer=AutonomousReviewer(
+                    lambda: self.config,
+                    gnomon=self._gnomon_reviewer,
+                    on_assessment=self._publish_autonomous_assessment,
+                ),
             )
             # Jobs cut off by the last shutdown come back as interrupted; the person decides whether to resume.
             await self._autonomous.recover()
@@ -1471,6 +1482,7 @@ class PilotServer:
             "autonomous_submit": self._handle_autonomous_submit,
             "autonomous_cancel": self._handle_autonomous_cancel,
             "autonomous_resume": self._handle_autonomous_resume,
+            "autonomy_review_status": self._handle_autonomy_review_status,
             "scheduled_run_list": self._handle_scheduled_run_list,
             "scheduled_run_create": self._handle_scheduled_run_create,
             "scheduled_run_set_enabled": self._handle_scheduled_run_set_enabled,
@@ -4011,6 +4023,48 @@ class PilotServer:
             ),
         }
 
+    def _typed_decision_model(self) -> Any | None:
+        """The one shared Gnomon engine (not loaded until first use), or None when it is off.
+
+        The MCP scoring tool and the autonomous reviewer share this instance, so the
+        model is in memory at most once. Changing the config replaces it.
+        """
+        config = self.config.typed_decision
+        if not config.enabled or config.scoring_mode not in {"trained_head", "native_next_token"}:
+            return None
+        if config.scoring_mode == "trained_head" and (
+            not config.artifact_dir.strip() or not config.report_path.strip()
+        ):
+            return None
+        artifact_dir = str(Path(config.artifact_dir).expanduser()) if config.artifact_dir else ""
+        report_path = str(Path(config.report_path).expanduser()) if config.report_path else ""
+        engine_key = (
+            config.scoring_mode,
+            artifact_dir,
+            report_path,
+            config.model_id,
+            config.max_length,
+            config.temperature,
+        )
+        if self._typed_decision_engine_key != engine_key:
+            previous = self._typed_decision_engine
+            if previous is not None:
+                threading.Thread(target=previous.unload, name="gnomon-unload", daemon=True).start()
+            if config.scoring_mode == "native_next_token":
+                from pilot.intelligence.native_typed_decision import LocalNextTokenTypedDecisionModel
+
+                self._typed_decision_engine = LocalNextTokenTypedDecisionModel(
+                    config.model_id,
+                    max_length=config.max_length,
+                    temperature=config.temperature,
+                )
+            else:
+                from pilot.intelligence.typed_decision import LocalTypedDecisionModel
+
+                self._typed_decision_engine = LocalTypedDecisionModel(artifact_dir, report_path)
+            self._typed_decision_engine_key = engine_key
+        return self._typed_decision_engine
+
     async def _handle_mcp_typed_decision(
         self,
         params: dict[str, Any],
@@ -4076,34 +4130,12 @@ class PilotServer:
                 "message": "state must be text, a JSON object, or an array",
             }
         try:
-            from pilot.intelligence.typed_decision import LocalTypedDecisionModel, validate_decision
+            from pilot.intelligence.typed_decision import validate_decision
 
             if not typed_questions:
                 validate_decision(kind, question, options)
-            artifact_dir = str(Path(config.artifact_dir).expanduser()) if config.artifact_dir else ""
-            report_path = str(Path(config.report_path).expanduser()) if config.report_path else ""
-            engine_key = (
-                config.scoring_mode,
-                artifact_dir,
-                report_path,
-                config.model_id,
-                config.max_length,
-                config.temperature,
-            )
-            if self._typed_decision_engine_key != engine_key:
-                if self._typed_decision_engine is not None:
-                    await asyncio.to_thread(self._typed_decision_engine.unload)
-                if config.scoring_mode == "native_next_token":
-                    from pilot.intelligence.native_typed_decision import LocalNextTokenTypedDecisionModel
-
-                    self._typed_decision_engine = LocalNextTokenTypedDecisionModel(
-                        config.model_id,
-                        max_length=config.max_length,
-                        temperature=config.temperature,
-                    )
-                else:
-                    self._typed_decision_engine = LocalTypedDecisionModel(artifact_dir, report_path)
-                self._typed_decision_engine_key = engine_key
+            if self._typed_decision_model() is None:
+                raise ValueError("Configure the local typed-decision scorer before using it.")
             if typed_questions:
                 return await asyncio.to_thread(
                     self._typed_decision_engine.score_questions,
@@ -6685,14 +6717,26 @@ class PilotServer:
         )
         return job.to_dict()
 
-    async def _wait_for_autonomous_confirmation(self, job: Any, plan: Any, plan_id: str) -> bool:
-        """Pause a background plan at the same UI confirmation boundary as interactive work."""
+    async def _wait_for_autonomous_confirmation(self, job: Any, plan: Any, plan_id: str, review: Any = None) -> bool:
+        """Pause a background plan at the same UI confirmation boundary as interactive work.
+
+        When the world model or Gnomon asked for approval, every action of the plan is
+        shown and must be approved, as on the interactive path, with their reasons.
+        """
 
         required = {
             index for index, action in enumerate(plan.actions) if action.requires_confirmation or action.is_irreversible
         }
+        escalated = bool(review is not None and getattr(review, "requires_approval", False))
+        if escalated:
+            required = set(range(len(plan.actions)))
         if not required:
             return True
+        reason = (
+            review.summary()
+            if escalated and review.summary()
+            else "An autonomous task reached an action that requires explicit approval."
+        )
 
         pending = PendingConfirmation(plan_id=plan_id, event=asyncio.Event(), plan=plan)
         self._pending_confirms[plan_id] = pending
@@ -6711,7 +6755,9 @@ class PilotServer:
                         }
                         for index in sorted(required)
                     ],
-                    "reason": "An autonomous task reached an action that requires explicit approval.",
+                    "reason": reason,
+                    "risk_assessment": getattr(review, "risk_assessment", None) if escalated else None,
+                    "gnomon": getattr(review, "gnomon", None),
                 },
             )
             await asyncio.wait_for(pending.event.wait(), timeout=CONFIRM_TIMEOUT_SECONDS)
@@ -6723,6 +6769,28 @@ class PilotServer:
 
         approved = pending.approved_indices if pending.approved_indices is not None else required
         return pending.confirmed and required.issubset(approved)
+
+    async def _publish_autonomous_assessment(self, plan_id: str, payload: dict[str, Any]) -> None:
+        """Record and broadcast the world-model (and Gnomon) view of an autonomous plan."""
+        await self._append_experience(
+            ExperienceEventType.WORLD_PREDICTION,
+            plan_id=plan_id,
+            idempotency_key=f"plan:{plan_id}:world_prediction",
+            source="risk_gate",
+            payload=payload,
+            provenance={"component": "AutonomousReviewer", "policy_authority": "deterministic_rules"},
+        )
+        if self.config.gateway.risk_gate_enabled:
+            await self._broadcast_notification("world_model_assessment", {"plan_id": plan_id, **payload})
+
+    async def _handle_autonomy_review_status(self, params: dict, ws: ServerConnection) -> dict:
+        """Whether the world model and Gnomon are taking part in autonomous decisions right now."""
+        gnomon = self._gnomon_reviewer.status() if self._gnomon_reviewer is not None else {"state": "disabled"}
+        return {
+            "status": "ok",
+            "world_model": {"enabled": bool(self.config.gateway.enabled and self.config.gateway.risk_gate_enabled)},
+            "gnomon": gnomon,
+        }
 
     async def _handle_neural_status(self, params: dict, ws: ServerConnection) -> dict:
         self._require_rpc_role(ws, RpcClientRole.UI, RpcClientRole.NEURAL_SIDECAR)
@@ -8788,6 +8856,8 @@ def handle_tool(tool_name, params):
             supervision_hook.stop()
         if self._scheduled_runs is not None:
             await self._scheduled_runs.stop()
+        if self._gnomon_reviewer is not None:
+            await self._gnomon_reviewer.close()
         if self._autonomous is not None:
             await self._autonomous.stop()
 

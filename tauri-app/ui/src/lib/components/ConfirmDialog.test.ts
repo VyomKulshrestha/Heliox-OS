@@ -36,3 +36,33 @@ describe("ConfirmDialog", () => {
     expect(screen.getByText("screenshot")).toBeTruthy();
   });
 });
+
+describe("ConfirmDialog review notes", () => {
+  it("shows why an autonomous plan needs approval and what Gnomon said", () => {
+    render(ConfirmDialog, {
+      actions: [{ ...script, action_type: "keyboard_type", parameters: { text: "hello team" } }],
+      reason: "Gnomon judged this may go beyond what you asked (4% in scope).",
+      gnomon: { escalate: true, reasons: ["Gnomon judged this may go beyond what you asked (4% in scope)."] },
+      onconfirm: vi.fn(),
+      ondeny: vi.fn(),
+    });
+
+    expect(screen.getByText("Gnomon review")).toBeTruthy();
+    expect(screen.getAllByText("Gnomon judged this may go beyond what you asked (4% in scope).")).toHaveLength(2);
+    expect(screen.getByText("Advisory: Gnomon can ask for approval but never grants it.")).toBeTruthy();
+  });
+
+  it("keeps the world-model box for world-model escalations and hides Gnomon when it did not escalate", () => {
+    render(ConfirmDialog, {
+      actions: [script],
+      reason: "The world model predicts 90% risk.",
+      riskAssessment: { world_model_score: 0.9, prediction_sources: ["structured_transition"] },
+      gnomon: { escalate: false, reasons: [] },
+      onconfirm: vi.fn(),
+      ondeny: vi.fn(),
+    });
+
+    expect(screen.getByText(/90% predicted risk/)).toBeTruthy();
+    expect(screen.queryByText("Gnomon review")).toBeNull();
+  });
+});

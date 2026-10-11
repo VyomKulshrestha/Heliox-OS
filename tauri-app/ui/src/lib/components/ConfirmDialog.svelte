@@ -9,6 +9,7 @@
     ondeny: () => void;
     reason?: string;
     riskAssessment?: Record<string, unknown> | null;
+    gnomon?: Record<string, unknown> | null;
     submitting?: boolean;
     error?: string;
   }
@@ -19,6 +20,7 @@
     ondeny,
     reason = "",
     riskAssessment = null,
+    gnomon = null,
     submitting = false,
     error = "",
   }: Props = $props();
@@ -67,6 +69,20 @@
             ? riskAssessment.prediction_sources.join(" + ")
             : "world model"}
         </small>
+      </div>
+    {/if}
+
+    {#if reason && !riskAssessment}
+      <p class="confirm-reason">{reason}</p>
+    {/if}
+
+    {#if gnomon && gnomon.escalate}
+      <div class="gnomon-review" role="note">
+        <strong>Gnomon review</strong>
+        {#each Array.isArray(gnomon.reasons) ? gnomon.reasons : [] as line}
+          <span>{line}</span>
+        {/each}
+        <small>Advisory: Gnomon can ask for approval but never grants it.</small>
       </div>
     {/if}
 
@@ -288,6 +304,34 @@
     border-radius: var(--radius-sm);
     font-size: 12px;
     line-height: 1.4;
+  }
+
+  .confirm-reason {
+    margin: 0 0 14px;
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--text-primary);
+  }
+
+  .gnomon-review {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin: 0 0 14px;
+    padding: 10px 12px;
+    border: 1px solid var(--accent-muted);
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
+    font-size: 12px;
+    line-height: 1.4;
+  }
+
+  .gnomon-review strong {
+    color: var(--accent);
+  }
+
+  .gnomon-review small {
+    color: var(--text-muted);
   }
 
   .world-model-warning span {
