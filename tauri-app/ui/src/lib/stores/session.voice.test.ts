@@ -266,3 +266,38 @@ describe("voice workflow notes", () => {
     });
   });
 });
+
+describe("background approvals", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    notificationHandler = null;
+    vi.resetModules();
+  });
+
+  it("stay visible when the person types a new command", async () => {
+    const { session } = await import("./session");
+    notificationHandler!("confirm_required", {
+      plan_id: "autonomous-j1:0:0",
+      source: "scheduled",
+      actions: [{ action_type: "api_send_email", target: "team@example.com", parameters: {} }],
+      reason: "An autonomous task reached an action that requires explicit approval.",
+    });
+
+    await session.sendCommand("open notepad");
+
+    expect(get(session)).toMatchObject({ confirmRequired: true, confirmPlanId: "autonomous-j1:0:0" });
+  });
+
+  it("an interactive approval still resets with its own task", async () => {
+    const { session } = await import("./session");
+    notificationHandler!("confirm_required", {
+      plan_id: "interactive-plan",
+      actions: [{ action_type: "shell_command", target: "whoami", parameters: {} }],
+      reason: "Needs approval.",
+    });
+
+    await session.sendCommand("open notepad");
+
+    expect(get(session).confirmRequired).toBe(false);
+  });
+});

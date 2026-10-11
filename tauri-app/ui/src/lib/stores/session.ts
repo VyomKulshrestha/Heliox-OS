@@ -139,6 +139,8 @@ interface SessionState {
   confirmRiskAssessment: Record<string, unknown> | null;
   /** Gnomon's review of a plan an autonomous job wants to run (advisory; can only ask for approval). */
   confirmGnomon: Record<string, unknown> | null;
+  /** True when the pending approval belongs to background work (a job, scheduled run or workflow). */
+  confirmBackground: boolean;
   confirmSubmitting: boolean;
   confirmError: string;
   phase: string;
@@ -199,6 +201,7 @@ const initialState: SessionState = {
   confirmReason: "",
   confirmRiskAssessment: null,
   confirmGnomon: null,
+  confirmBackground: false,
   confirmSubmitting: false,
   confirmError: "",
   phase: "",
@@ -278,6 +281,22 @@ function estimateTokens(text: string): number {
 }
 
 // 2. Custom store creation managing real-time core states
+/** Approval fields to keep when the interactive task resets: a background approval stays visible. */
+function backgroundApproval(s: SessionState): Partial<SessionState> {
+  if (!s.confirmBackground || !s.confirmRequired) return { confirmBackground: false };
+  return {
+    confirmRequired: true,
+    confirmPlanId: s.confirmPlanId,
+    confirmActions: s.confirmActions,
+    confirmReason: s.confirmReason,
+    confirmRiskAssessment: s.confirmRiskAssessment,
+    confirmGnomon: s.confirmGnomon,
+    confirmSubmitting: s.confirmSubmitting,
+    confirmError: s.confirmError,
+    confirmBackground: true,
+  };
+}
+
 function createSession() {
   const { subscribe, update, set } = writable<SessionState>(initialState);
   let lastPersistedMessages: Message[] | null = null;
@@ -662,6 +681,7 @@ function createSession() {
               ? (p.risk_assessment as Record<string, unknown>)
               : null,
           confirmGnomon: p.gnomon && typeof p.gnomon === "object" ? (p.gnomon as Record<string, unknown>) : null,
+          confirmBackground: Boolean(p.source),
           confirmSubmitting: false,
           confirmError: "",
         }));
@@ -981,6 +1001,7 @@ function createSession() {
       confirmGnomon: null,
       confirmSubmitting: false,
       confirmError: "",
+      ...backgroundApproval(s),
       streamingText: "",
       terminalStatus: terminal.status,
       durableTask: undefined,
@@ -1179,6 +1200,7 @@ function createSession() {
       confirmGnomon: null,
       confirmSubmitting: false,
       confirmError: "",
+      ...backgroundApproval(s),
       streamingText: "",
       terminalStatus: "",
       messages: [...s.messages, { type: "user", text: input, timestamp: Date.now() }],
@@ -1235,6 +1257,7 @@ function createSession() {
         confirmGnomon: null,
         confirmSubmitting: false,
         confirmError: "",
+        ...backgroundApproval(s),
         streamingText: "",
         terminalStatus: "error",
         messages: [
