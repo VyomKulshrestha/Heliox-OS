@@ -560,8 +560,10 @@ and the agent observes the screen again before its next action.
 **Background input.** A single left click on an accessibility ref first tries
 UI Automation (Invoke, Toggle, SelectionItem or ExpandCollapse) on the exact
 element, found again by its RuntimeId, so the person's cursor does not move.
-It is the same `mouse_click` action with the same permission tier and human
-takeover check; elements without such a pattern get a physical click.
+WinForms buttons and checkboxes, which offer no such pattern, get a posted
+`BM_CLICK` on their own button window instead. It is the same `mouse_click`
+action with the same permission tier and human takeover check; elements with
+neither get a physical click.
 
 **Secrets and walls stay with the person.** `request_human_help` hands the
 desktop to the person for sign-ins, passwords, 2FA codes, CAPTCHAs and

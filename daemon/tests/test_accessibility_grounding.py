@@ -342,3 +342,19 @@ def test_a_winforms_button_reported_as_a_pane_parses_as_a_clickable_button():
     [element] = snapshot.elements
     assert (element.role, element.name, element.runtime_id) == ("Button", "Save report", "42.1")
     assert "Save report" in snapshot.describe(10)
+
+
+async def test_win32_buttons_without_a_pattern_are_pressed_with_bm_click(monkeypatch):
+    from pilot.system.platform_detect import Platform
+
+    monkeypatch.setattr(accessibility, "CURRENT_PLATFORM", Platform.WINDOWS)
+    run = AsyncMock(return_value=(0, "bm_click\n", ""))
+    monkeypatch.setattr(accessibility, "run_powershell", run)
+    element = parse_snapshot(_payload(RID), WINDOW, captured_at=0.0).elements[0]
+
+    assert await accessibility.press_in_background(WINDOW, element) == "bm_click"
+    script = run.await_args.args[0]
+    # Posted (not sent) to the button's own window, and only for BUTTON-class windows.
+    assert "PostMessage([IntPtr]$hwnd, 0x00F5" in script
+    assert r"ClassName -match '(^|\.)BUTTON(\.|$)'" in script
+    assert script.index("InvokePattern") < script.index("0x00F5")  # UI Automation patterns are tried first

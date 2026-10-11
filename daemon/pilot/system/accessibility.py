@@ -335,6 +335,15 @@ def _background_press_script(handle: int, runtime_id: str) -> str:
         "if ($element.TryGetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern, [ref]$pattern)) "
         "{ if ($pattern.Current.ExpandCollapseState -eq 'Expanded') { $pattern.Collapse() } else { $pattern.Expand() }; "
         "Write-Output 'expand_collapse'; exit 0 }; "
+        # WinForms buttons and checkboxes offer no pattern but are real Win32 buttons with their
+        # own window: BM_CLICK presses them without the cursor. Posted, so a button that opens a
+        # modal dialog cannot block this script.
+        "$hwnd = $element.Current.NativeWindowHandle; "
+        r"if ($hwnd -ne 0 -and $element.Current.ClassName -match '(^|\.)BUTTON(\.|$)') { "
+        "Add-Type -Namespace HelioxNative -Name User32 -MemberDefinition "
+        "'[DllImport(\"user32.dll\")] public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr w, IntPtr l);'; "
+        "if ([HelioxNative.User32]::PostMessage([IntPtr]$hwnd, 0x00F5, [IntPtr]::Zero, [IntPtr]::Zero)) "
+        "{ Write-Output 'bm_click'; exit 0 } }; "
         "Write-Output 'none'"
     )
 
