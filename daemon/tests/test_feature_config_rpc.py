@@ -68,7 +68,9 @@ async def test_screen_vision_interval_rejects_invalid_or_unbounded_values(value)
     )
 
     assert result["status"] == "error"
-    assert "capture_interval_seconds must be from 0.5 to 60.0" in result["message"]
+    # NaN is refused before the range check, as every non-finite number is.
+    expected = "must be a finite number" if value != value else "capture_interval_seconds must be from 0.5 to 60.0"
+    assert expected in result["message"]
     assert config.screen_vision.capture_interval_seconds == 3.0
     config.save.assert_not_called()
 
@@ -497,9 +499,13 @@ async def test_active_voice_listener_restarts_for_new_input_device(monkeypatch):
             self.is_running = True
             return "started"
 
-        async def stop(self):
+        async def stop(self, *, cancel_commands=True):
             self.is_running = False
+            self.cancelled_commands = cancel_commands
             return "stopped"
+
+        def adopt_command_tasks(self, tasks):
+            self.adopted = set(tasks)
 
     monkeypatch.setattr("pilot.system.voice.ContinuousVoiceListener", FakeListener)
 
@@ -540,9 +546,13 @@ async def test_failed_voice_device_restart_rolls_back_config_and_listener(monkey
             self.is_running = self.input_device != "missing-device"
             return "started" if self.is_running else "selected microphone is unavailable"
 
-        async def stop(self):
+        async def stop(self, *, cancel_commands=True):
             self.is_running = False
+            self.cancelled_commands = cancel_commands
             return "stopped"
+
+        def adopt_command_tasks(self, tasks):
+            self.adopted = set(tasks)
 
     monkeypatch.setattr("pilot.system.voice.ContinuousVoiceListener", FakeListener)
 

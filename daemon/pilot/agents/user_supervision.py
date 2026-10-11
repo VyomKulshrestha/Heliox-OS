@@ -102,6 +102,9 @@ class UserSupervisionEngine:
         snapshot floats ever appear in the returned signals."""
         cfg = self._cfg()
         signals: list[dict[str, Any]] = []
+        if not cfg.enabled:
+            # Opt-in privacy feature: nothing is read, however the task was started.
+            return {"triggered": False, "signals": signals}
 
         if cfg.keyboard_mouse_hook_enabled:
             hook_snap = await asyncio.to_thread(self._hook.snapshot)

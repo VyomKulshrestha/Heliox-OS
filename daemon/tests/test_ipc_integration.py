@@ -422,11 +422,19 @@ async def test_ipc_get_config(daemon_server):
 
 
 @pytest.mark.asyncio
+async def _reply(ws):
+    """The next JSON-RPC response; notifications such as config_updated may arrive in between."""
+    while True:
+        message = json.loads(await ws.recv())
+        if "id" in message:
+            return message
+
+
 async def test_ipc_update_screen_vision_interval(daemon_server):
     """Verify screen vision interval updates round-trip through config IPC."""
     async with websockets.connect(daemon_server) as ws:
         await ws.send(json.dumps({"jsonrpc": "2.0", "method": "auth", "params": {"token": "test-token"}, "id": "auth"}))
-        auth_resp = json.loads(await ws.recv())
+        auth_resp = await _reply(ws)
         assert auth_resp["result"]["status"] == "authenticated"
 
         request = {
@@ -440,11 +448,11 @@ async def test_ipc_update_screen_vision_interval(daemon_server):
         }
         await ws.send(json.dumps(request))
 
-        response = json.loads(await ws.recv())
+        response = await _reply(ws)
         assert response["result"]["status"] == "ok"
 
         await ws.send(json.dumps({"jsonrpc": "2.0", "method": "get_config", "id": "screen-cfg-2"}))
-        response = json.loads(await ws.recv())
+        response = await _reply(ws)
         assert response["result"]["screen_vision"]["capture_interval_seconds"] == 7.5
 
 

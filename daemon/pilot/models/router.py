@@ -539,7 +539,8 @@ class ModelRouter:
         )
 
         self._resolved_ollama_model = fallback
-        self._config.model.ollama_model = fallback
+        # Use the fallback for this run only; the person's chosen model stays in config.toml.
+        self._config.set_runtime_override("model", "ollama_model", fallback)
 
         return fallback
 
@@ -632,15 +633,14 @@ class ModelRouter:
             replacement = OllamaClient(self._config.model.ollama_base_url, self._config)
             previous = self._ollama
             self._ollama = replacement
-            await previous.close()
+            self._retire_client(previous)
 
         if "cloud_provider" in changed_keys:
             replacement_cloud = CloudClient(self._config, self._vault) if self._config.model.cloud_provider else None
             previous_cloud = self._cloud
             self._cloud = replacement_cloud
             self._clear_cloud_circuit()
-            if previous_cloud is not None:
-                await previous_cloud.close()
+            self._retire_client(previous_cloud)
 
         subscription_keys = {
             "provider",
@@ -653,7 +653,7 @@ class ModelRouter:
             replacement_subscription = SubscriptionCLIClient(self._config)
             previous_subscription = self._subscription
             self._subscription = replacement_subscription
-            await previous_subscription.close()
+            self._retire_client(previous_subscription)
 
         if "idle_unload_seconds" in changed_keys:
             await self._cancel_llamacpp_idle_unload()
@@ -667,6 +667,38 @@ class ModelRouter:
             else:
                 self._llamacpp.unload()
                 self._llamacpp = None
+
+    def _retire_client(self, client: Any) -> None:
+        """Close a replaced provider client after calls already using it have had time to finish.
+
+        Switching provider or model used to close the old client at once, failing the
+        generations of background jobs and voice tasks mid-answer (and killing a
+        subscription CLI's process). New calls use the replacement immediately.
+        """
+        if client is None:
+            return
+        retiring = getattr(self, "_retiring_clients", None)
+        if retiring is None:
+            retiring = self._retiring_clients = {}
+        grace = max(60.0, float(getattr(self._config.model, "subscription_timeout_seconds", 120) or 120))
+        task = asyncio.create_task(self._close_after(client, grace))
+        retiring[task] = client
+
+    async def _close_after(self, client: Any, delay: float) -> None:
+        try:
+            await asyncio.sleep(delay)
+        except asyncio.CancelledError:
+            pass  # shutting down: close now
+        finally:
+            getattr(self, "_retiring_clients", {}).pop(asyncio.current_task(), None)
+            await self._close_quietly(client)
+
+    @staticmethod
+    async def _close_quietly(client: Any) -> None:
+        try:
+            await client.close()
+        except Exception:
+            logger.warning("A replaced model client did not close cleanly", exc_info=True)
 
     def rate_limit_stats(self) -> dict[str, Any]:
         """Return current rate limiter state and lifetime counters."""
@@ -711,6 +743,15 @@ class ModelRouter:
 
     async def close(self) -> None:
         """Close provider subprocesses and the cache connection."""
+        retiring = dict(getattr(self, "_retiring_clients", {}))
+        for task in retiring:
+            task.cancel()
+        if retiring:
+            await asyncio.gather(*retiring, return_exceptions=True)
+        # A task cancelled before it ever ran never reached its own close; close those here.
+        for task, client in retiring.items():
+            if getattr(self, "_retiring_clients", {}).pop(task, None) is not None:
+                await self._close_quietly(client)
         await self._cancel_llamacpp_idle_unload()
         if self._llamacpp is not None:
             self._llamacpp.unload()

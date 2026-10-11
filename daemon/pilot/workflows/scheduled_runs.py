@@ -238,7 +238,9 @@ class ScheduledRunner:
         return await self._store.list()
 
     async def delete(self, run_id: str) -> bool:
-        return await self._store.delete(run_id)
+        # Under the lock: a tick that is starting this run would otherwise save it back.
+        async with self._lock:
+            return await self._store.delete(run_id)
 
     async def set_enabled(self, run_id: str, enabled: bool, now: float | None = None) -> ScheduledRun | None:
         async with self._lock:

@@ -185,7 +185,7 @@ async def test_learning_rpc_reports_and_resets_persisted_feedback(tmp_path):
     assert status["patterns"]["terminal_error"]["dismissed"] == 1
 
     reset = await server._handle_proactive_learning_reset({}, ws=None)
-    assert reset == {"enabled": True, "patterns": {}}
+    assert reset == {"status": "ok", "enabled": True, "patterns": {}}
     assert not engine._feedback_path.exists()
 
 

@@ -346,6 +346,10 @@ class McpClientManager:
         self._tools: dict[tuple[str, str], McpTool] = {}
         self._errors: dict[str, str] = {}
         self._lock = asyncio.Lock()
+        self._active_calls = 0
+        self._calls_idle = asyncio.Event()
+        self._calls_idle.set()
+        self._restarting = False
 
     def tool(self, server: str, name: str) -> McpTool | None:
         return self._tools.get((server, name))
@@ -356,9 +360,18 @@ class McpClientManager:
     async def refresh(self) -> dict[str, Any]:
         """(Re)start every configured server and cache its tools."""
         async with self._lock:
+            # A reload must not kill a tool call mid-operation (a destructive one could be left
+            # half done): stop new calls, let running ones finish, then restart the servers.
+            self._restarting = True
+            try:
+                if self._active_calls:
+                    await asyncio.wait_for(self._calls_idle.wait(), CALL_TIMEOUT_SECONDS + 5)
+            except TimeoutError:
+                logger.warning("MCP calls still running after %ss; restarting servers anyway", CALL_TIMEOUT_SECONDS)
             await self._close_sessions()
             self._tools.clear()
             self._errors.clear()
+            self._restarting = False
             for spec in load_server_specs(self._config_path):
                 session = McpStdioSession(spec)
                 try:
@@ -376,10 +389,19 @@ class McpClientManager:
         tool = self.tool(server, name)
         if tool is None:
             raise McpClientError(f"{server}.{name} is not a tool of a configured MCP server; run mcp_list_tools")
+        if self._restarting:
+            raise McpClientError("MCP servers are restarting; try again in a moment")
         session = self._sessions.get(server)
         if session is None or not session.running:
             raise McpClientError(f"MCP server {server!r} is not running; refresh the MCP servers")
-        text, is_error = await session.call_tool(name, arguments)
+        self._active_calls += 1
+        self._calls_idle.clear()
+        try:
+            text, is_error = await session.call_tool(name, arguments)
+        finally:
+            self._active_calls -= 1
+            if self._active_calls == 0:
+                self._calls_idle.set()
         if len(text) > MAX_RESULT_CHARS:
             text = text[:MAX_RESULT_CHARS] + f"\n... [{len(text) - MAX_RESULT_CHARS} more characters truncated]"
         label = "error" if is_error else "result"

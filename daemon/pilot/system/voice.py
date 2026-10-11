@@ -1620,7 +1620,19 @@ class ContinuousVoiceListener:
             # Normal transcription retains its Windows fallback path.
             logger.warning("Voice recognizer warmup unavailable: %s", error)
 
-    async def stop(self) -> str:
+    def adopt_command_tasks(self, tasks: set[asyncio.Task[None]]) -> None:
+        """Take over commands still running from a listener this one replaced."""
+        for task in tasks:
+            if not task.done():
+                self._command_tasks.add(task)
+                task.add_done_callback(self._command_tasks.discard)
+
+    async def stop(self, *, cancel_commands: bool = True) -> str:
+        """Stop listening; ``cancel_commands=False`` leaves commands it already started running.
+
+        Replacing the listener after a microphone setting change must not kill a
+        voice-started task in the middle of its work.
+        """
         self._running = False
         self._recorder.stop()
 
@@ -1643,10 +1655,11 @@ class ContinuousVoiceListener:
 
         current = asyncio.current_task()
         command_tasks = tuple(task for task in self._command_tasks if task is not current)
-        for task in command_tasks:
-            task.cancel()
-        if command_tasks:
-            await asyncio.gather(*command_tasks, return_exceptions=True)
+        if cancel_commands:
+            for task in command_tasks:
+                task.cancel()
+            if command_tasks:
+                await asyncio.gather(*command_tasks, return_exceptions=True)
 
         logger.info("Continuous voice listener stopped")
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import copy
 import csv
 import json
 import logging
@@ -177,6 +178,57 @@ def _sanitize_summary(text: object, limit: int = 160) -> str:
 
 
 CONFIRM_TIMEOUT_SECONDS = 300
+# RPCs that change saved settings. They run one at a time under the server's config lock,
+# pick up hand edits to the config files first, and announce ``config_updated`` so every
+# open window re-reads its settings instead of saving a stale copy over them.
+CONFIG_MUTATING_RPC_METHODS = frozenset(
+    {
+        "update_config",
+        "reset_config",
+        "narration_config_update",
+        "risk_gate_config_update",
+        "self_healing_config_update",
+        "supervision_config_update",
+        "gateway_policy_update",
+        "gesture_workflow_bindings_update",
+        "ssh_set_enabled",
+        "ssh_save_host",
+        "ssh_delete_host",
+        "air_handoff_set_enabled",
+        "mesh_configure",
+        "store_api_key",
+        "delete_api_key",
+    }
+)
+# Settings reads and writes must not wait behind a long ``execute`` on the same socket
+# (an approval wait can last five minutes); the config lock keeps writes ordered.
+SETTINGS_RPC_METHODS = CONFIG_MUTATING_RPC_METHODS | frozenset(
+    {
+        "get_config",
+        "narration_status",
+        "risk_gate_status",
+        "self_healing_status",
+        "supervision_status",
+        "gateway_policy_get",
+        "gesture_workflow_bindings_get",
+        "mesh_status",
+        "air_handoff_status",
+        "list_api_keys",
+        "autonomy_review_status",
+        "get_security_status",
+    }
+)
+# Vault entries owned by other features; the generic API-key RPCs must not overwrite or delete them.
+RESERVED_VAULT_NAMES = frozenset({"heliox_mesh"})
+RESERVED_VAULT_PREFIXES = ("ssh:", "air_handoff:")
+# Settings that are only read when Heliox starts; changing them returns restart_required.
+RESTART_REQUIRED_KEYS = {
+    "screen_vision": {"capture_timeout_seconds", "max_consecutive_timeouts", "auto_resume_after_seconds"},
+    "cognitive": {"enabled"},
+    "rss": {"enabled"},
+}
+RESTART_REQUIRED_SECTIONS = {"memory", "proxy", "redis"}
+
 # These control-plane RPCs must be dispatchable while a normal request is
 # paused. ``execute`` waits for ``confirm`` on the same WebSocket connection,
 # ``abort`` interrupts execution, ``interject`` revises it, and speech
@@ -706,6 +758,7 @@ class PilotServer:
         self._mcp_client = default_mcp_client()
         self._mcp_client_refresh: asyncio.Task[Any] | None = None
         self._scheduled_runs: Any = None
+        self._config_lock = asyncio.Lock()
         self._gnomon_reviewer: Any = None
         self._self_healing: Any = None
         self._self_healing_started_monitors: set[str] = set()
@@ -1823,7 +1876,7 @@ class PilotServer:
                     confirmation = self._pending_confirms.get(str(request.params.get("plan_id", "")))
                     if confirmation is not None:
                         confirmation.rpc_tasks.add(current_task)
-                if request.method in OUT_OF_BAND_RPC_METHODS:
+                if request.method in OUT_OF_BAND_RPC_METHODS or request.method in SETTINGS_RPC_METHODS:
                     response = await self._dispatch(request, websocket)
                 else:
                     async with request_lock:
@@ -1834,6 +1887,7 @@ class PilotServer:
                     # decision acknowledgement has actually been written.
                     if confirmation is not None and confirmation.resolved_by_task is current_task:
                         confirmation.event.set()
+                await self._announce_config_change(request, response)
             except websockets.exceptions.ConnectionClosed:
                 logger.warning("Connection lost during request handling: %s", remote)
             except Exception as e:
@@ -1895,8 +1949,47 @@ class PilotServer:
         handler = self._handlers.get(request.method)
         if handler is None:
             return _error_response(request.id, -32601, f"Method not found: {request.method}")
-        result = await handler(request.params, ws)
+        if request.method not in CONFIG_MUTATING_RPC_METHODS:
+            result = await handler(request.params, ws)
+            return _success_response(request.id, result)
+        async with self._config_lock:
+            reload_if_edited = getattr(self.config, "reload_if_edited", None)
+            if reload_if_edited is not None and reload_if_edited():
+                await self._broadcast_notification("config_updated", {"method": "reload", "section": ""})
+            result = await handler(request.params, ws)
         return _success_response(request.id, result)
+
+    async def _announce_config_change(self, request: JsonRpcRequest, response: str | None) -> None:
+        """Tell every open window that settings changed, after the caller has its reply."""
+        if request.method not in CONFIG_MUTATING_RPC_METHODS or not response:
+            return
+        try:
+            result = json.loads(response).get("result")
+        except ValueError:
+            return
+        if not isinstance(result, dict) or result.get("status") == "error" or result.get("error"):
+            return
+        section = request.params.get("section", "") if isinstance(request.params, dict) else ""
+        await self._broadcast_notification(
+            "config_updated", {"method": request.method, "section": section if isinstance(section, str) else ""}
+        )
+
+    def _save_section(self, section: str, previous: Any) -> dict[str, Any] | None:
+        """Save the config, or put ``section`` back to ``previous`` and return the error to send.
+
+        Keeps what runs and what is on disk the same: a change that could not be saved
+        is not left active until the next restart.
+        """
+        try:
+            self.config.save()
+        except Exception as exc:
+            setattr(self.config, section, previous)
+            logger.warning("%s settings were not saved; the previous values are back in effect", section)
+            return {
+                "status": "error",
+                "message": f"{section.replace('_', ' ').capitalize()} settings were not saved: {exc}",
+            }
+        return None
 
     # -- Core execution pipeline --
 
@@ -5169,8 +5262,10 @@ class PilotServer:
             deny_action_types=[str(a) for a in raw_deny] if raw_deny is not None else list(current.deny_action_types),
             allow_root=raw_allow_root if raw_allow_root is not None else current.allow_root,
         )
+        previous_gateway = copy.deepcopy(self.config.gateway)
         self.config.gateway.source_profiles[profile_name] = updated
-        self.config.save()
+        if (failure := self._save_section("gateway", previous_gateway)) is not None:
+            return failure
 
         return {"status": "ok", "profile": profile_name, "policy": asdict(updated)}
 
@@ -5414,6 +5509,8 @@ class PilotServer:
 
         data = asdict(self.config)
         data.pop("server", None)
+        # Settings shows a banner: Heliox is running on defaults and will not overwrite the file.
+        data["load_errors"] = self.config.load_errors
         return data
 
     async def _handle_get_security_status(self, params: dict, ws: ServerConnection) -> dict:
@@ -5457,6 +5554,40 @@ class PilotServer:
 
         logger.info("Windows accepted the Administrator restart request")
         return result
+
+    def _update_restrictions(self, values: dict[str, Any]) -> dict[str, Any]:
+        """Protected folders, protected packages and blocked commands from Settings.
+
+        These live in restrictions.toml, so the config.toml shape validator rejected every
+        change and the Settings lists could never be edited. The sandbox's allowed
+        commands stay file-only: widening the sandbox should not be one click away.
+        """
+        editable = {"protected_folders", "protected_packages", "blocked_commands"}
+        unknown = sorted(set(values) - editable)
+        if unknown:
+            return {"status": "error", "message": f"restrictions.{unknown[0]} cannot be changed from Settings"}
+        cleaned: dict[str, list[str]] = {}
+        for key, items in values.items():
+            if not isinstance(items, list) or len(items) > 500:
+                return {"status": "error", "message": f"restrictions.{key} must be a list of up to 500 entries"}
+            entries: list[str] = []
+            for item in items:
+                if not isinstance(item, str) or not item.strip() or len(item) > 1024:
+                    return {"status": "error", "message": f"restrictions.{key} entries must be non-empty text"}
+                if item.strip() not in entries:
+                    entries.append(item.strip())
+            cleaned[key] = entries
+        previous = {key: list(getattr(self.config.restrictions, key)) for key in cleaned}
+        for key, entries in cleaned.items():
+            setattr(self.config.restrictions, key, entries)
+        try:
+            self.config.save()
+        except Exception as exc:
+            for key, entries in previous.items():
+                setattr(self.config.restrictions, key, entries)
+            logger.warning("Restrictions update was not persisted", exc_info=True)
+            return {"status": "error", "message": f"Restrictions were not saved: {exc}"}
+        return {"status": "ok", "values": cleaned}
 
     async def _handle_update_config(self, params: dict, ws: ServerConnection) -> dict:
         """Update server configuration.
@@ -5502,6 +5633,26 @@ class PilotServer:
                 "message": "Use mesh_configure so peer authentication and runtime state change atomically",
             }
 
+        if section == "restrictions":
+            return self._update_restrictions(values)
+        # Sections with their own RPC: the generic path would skip their validation and runtime
+        # side effects (hooks, monitors, receivers), and "server" holds the daemon's auth token.
+        if section == "server":
+            return {
+                "status": "error",
+                "message": "Server settings can only be changed in config.toml while Heliox is stopped",
+            }
+        dedicated = {
+            "narration": "narration_config_update",
+            "supervision": "supervision_config_update",
+            "self_healing": "self_healing_config_update",
+            "gateway": "gateway_policy_update or risk_gate_config_update",
+            "ssh": "ssh_set_enabled and ssh_save_host",
+            "gesture_workflows": "gesture_workflow_bindings_update",
+        }
+        if section in dedicated:
+            return {"status": "error", "message": f"Use {dedicated[section]} to change {section} settings"}
+
         target = getattr(self.config, section, None)
         if target is None:
             return {"status": "error", "message": f"Unknown config section: {section}"}
@@ -5522,6 +5673,15 @@ class PilotServer:
         previous_values = {key: getattr(target, key) for key in values if hasattr(target, key)}
         normalized_values: dict[str, object] = {}
         for k, v in values.items():
+            if isinstance(v, float) and not math.isfinite(v):
+                # json.loads accepts NaN and Infinity; a NaN budget would switch the cost caps off.
+                return {"status": "error", "message": f"{section}.{k} must be a finite number"}
+            if section == "model" and k == "gpu_memory_limit_mb" and isinstance(v, int) and v < 0:
+                return {"status": "error", "message": "model.gpu_memory_limit_mb cannot be negative"}
+            if section == "calendar" and k == "caldav_password_provider" and v not in {"", "caldav"}:
+                return {"status": "error", "message": "calendar passwords are stored under the caldav vault entry"}
+            if section == "email" and k == "password_provider" and v not in {"", "email"}:
+                return {"status": "error", "message": "email passwords are stored under the email vault entry"}
             if hasattr(target, k):
                 if section == "model" and k == "provider":
                     if v not in {"ollama", "local", "cloud", "subscription"}:
@@ -5876,6 +6036,9 @@ class PilotServer:
                     "message": f"Model setting was not applied: {exc}",
                 }
 
+        restart_keys = RESTART_REQUIRED_KEYS.get(section, set())
+        if section in RESTART_REQUIRED_SECTIONS or restart_keys & set(normalized_values):
+            return {"status": "ok", "restart_required": True}
         return {"status": "ok"}
 
     async def _handle_calendar_test_connection(self, params: dict, ws: ServerConnection) -> dict:
@@ -5934,8 +6097,10 @@ class PilotServer:
         enabled = params.get("enabled")
         if not isinstance(enabled, bool):
             return {"status": "error", "message": "enabled must be a boolean"}
+        previous_ssh = copy.deepcopy(self.config.ssh)
         self.config.ssh.enabled = enabled
-        self.config.save()
+        if (failure := self._save_section("ssh", previous_ssh)) is not None:
+            return failure
         return {"status": "ok", "enabled": enabled}
 
     async def _handle_ssh_save_host(self, params: dict, ws: ServerConnection) -> dict:
@@ -5952,7 +6117,7 @@ class PilotServer:
         strict = params.get("strict_host_key_checking", True)
         private_key = str(params.get("private_key", ""))
         passphrase = str(params.get("passphrase", ""))
-        enabled = params.get("enabled", True)
+        enabled = params.get("enabled", self.config.ssh.enabled)
 
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", name):
             return {
@@ -5995,11 +6160,13 @@ class PilotServer:
             passphrase_provider=passphrase_provider,
             strict_host_key_checking=strict,
         )
+        previous_ssh = copy.deepcopy(self.config.ssh)
         self.config.ssh.allowed_hosts = [host for host in self.config.ssh.allowed_hosts if host.name != name] + [
             host_config
         ]
         self.config.ssh.enabled = enabled
-        self.config.save()
+        if (failure := self._save_section("ssh", previous_ssh)) is not None:
+            return failure
         return {"status": "ok", "name": name, "has_private_key": True}
 
     async def _handle_ssh_delete_host(self, params: dict, ws: ServerConnection) -> dict:
@@ -6017,8 +6184,10 @@ class PilotServer:
                 await self._vault.delete_key(host.passphrase_provider)
         except VaultUnavailableError as exc:
             return {"status": "error", "message": str(exc), "available": False}
+        previous_ssh = copy.deepcopy(self.config.ssh)
         self.config.ssh.allowed_hosts = [item for item in self.config.ssh.allowed_hosts if item.name != name]
-        self.config.save()
+        if (failure := self._save_section("ssh", previous_ssh)) is not None:
+            return failure
         return {"status": "ok"}
 
     async def _handle_ssh_test_connection(self, params: dict, ws: ServerConnection) -> dict:
@@ -6034,7 +6203,25 @@ class PilotServer:
         return await agent.test_connection(str(params.get("name", "")).strip())
 
     async def _handle_reset_config(self, params: dict, ws: ServerConnection) -> dict:
-        """Reset configuration to factory defaults."""
+        """Reset settings to factory defaults.
+
+        Keeps the server section (auth token, host, port: blanking the token locked every
+        window out), restrictions (protected folders are a safety choice, not a preference)
+        and the finished setup. Refuses while tasks run, because defaults include dry run
+        and approval settings a running job depends on.
+        """
+        from pilot.agents.autonomous import JobStatus
+
+        busy_jobs = [
+            job_id
+            for job_id in (list(self._autonomous._active_tasks) if self._autonomous is not None else [])
+            if (job := self._autonomous.get_job(job_id)) is not None
+            and job.status in {JobStatus.QUEUED, JobStatus.DECOMPOSING, JobStatus.RUNNING}
+        ]
+        if self._interactive_request_active or busy_jobs:
+            return {"status": "error", "message": "Stop the running tasks before resetting settings."}
+        previous = copy.deepcopy({name: getattr(self.config, name) for name in self.config.__dataclass_fields__})
+        previous_first_run = self.config.first_run_complete
 
         if self._air_handoff_server and self._air_handoff_server.running:
             await self._air_handoff_server.stop()
@@ -6055,6 +6242,8 @@ class PilotServer:
         default_config = PilotConfig()
 
         for field_name in default_config.__dataclass_fields__:
+            if field_name in {"server", "restrictions", "first_run_complete"}:
+                continue
             val = getattr(default_config, field_name)
             current = getattr(self.config, field_name)
 
@@ -6079,10 +6268,41 @@ class PilotServer:
             host="0.0.0.0",
             port=self.config.air_handoff.port,
         )
-        self.config.save()
+        self.config.first_run_complete = previous_first_run
+        self.config.clear_load_errors()  # the person chose to start over; saving is allowed again
+        try:
+            self.config.save()
+        except Exception as exc:
+            for name, value in previous.items():
+                setattr(self.config, name, value)
+            logger.warning("Settings reset was not saved; the previous settings are back", exc_info=True)
+            return {"status": "error", "message": f"Settings were not reset: {exc}"}
+
+        # Bring the running subsystems in line with the defaults, as update_config does per section.
+        model_router = self._model_router or (self._planner._model if self._planner is not None else None)
+        if model_router is not None:
+            try:
+                await model_router.reconfigure(set(self.config.model.__dataclass_fields__))
+            except Exception:
+                logger.warning("Model runtime did not take the default settings until restart", exc_info=True)
+        circuit_breaker = getattr(self, "_circuit_breaker", None)
+        if circuit_breaker is not None:
+            circuit_breaker.reconfigure(self.config.model.max_consecutive_failures)
+        if self._typed_decision_engine is not None:
+            try:
+                await asyncio.to_thread(self._typed_decision_engine.unload)
+            except Exception:
+                logger.warning("Could not release the local typed-decision model", exc_info=True)
+            self._typed_decision_engine = None
+            self._typed_decision_engine_key = None
+        if self._voice_listener is not None and self._voice_listener.is_running:
+            try:
+                await self._replace_voice_listener(list(self._voice_listener.wake_words))
+            except Exception:
+                logger.warning("Voice listener kept its previous recorder settings", exc_info=True)
         self._start_tts_warmup()
 
-        return {"status": "ok", "runtime_reconciled": True}
+        return {"status": "ok", "runtime_reconciled": True, "kept": ["server", "restrictions"]}
 
     # -- History --
 
@@ -6320,18 +6540,24 @@ class PilotServer:
         """
         provider = params.get("provider", "")
         key = params.get("api_key", "") or params.get("key", "")
-        if not provider or not key:
+        if not isinstance(provider, str) or not isinstance(key, str) or not provider or not key:
             return {"status": "error", "message": "provider and api_key are required"}
+        if provider in RESERVED_VAULT_NAMES or provider.startswith(RESERVED_VAULT_PREFIXES):
+            return {"status": "error", "message": f"{provider} is managed by its own feature"}
         from pilot.security.vault import VaultUnavailableError
 
         try:
             await self._vault.store_key(provider, key)
         except VaultUnavailableError as exc:
             return {"status": "error", "message": str(exc), "available": False}
-        if self.config.model.cloud_provider == provider:
-            from pilot.models.cloud import CloudClient
-
-            self._planner._model._cloud = CloudClient(self.config, self._vault)
+        model_router = self._model_router or (self._planner._model if self._planner is not None else None)
+        if self.config.model.cloud_provider == provider and model_router is not None:
+            # Rebuild the cloud client through the router so the old client is closed and a
+            # circuit opened by the missing key does not ignore the new one for a minute.
+            try:
+                await model_router.reconfigure({"cloud_provider"})
+            except Exception:
+                logger.warning("Cloud client did not pick up the new key until restart", exc_info=True)
         return {"status": "ok"}
 
     async def _handle_delete_api_key(self, params: dict, ws: ServerConnection) -> dict:
@@ -6345,8 +6571,10 @@ class PilotServer:
             A dict with status.
         """
         provider = params.get("provider", "")
-        if not provider:
+        if not isinstance(provider, str) or not provider:
             return {"status": "error", "message": "provider is required"}
+        if provider in RESERVED_VAULT_NAMES or provider.startswith(RESERVED_VAULT_PREFIXES):
+            return {"status": "error", "message": f"{provider} is managed by its own feature"}
         from pilot.security.vault import VaultUnavailableError
 
         try:
@@ -6537,6 +6765,9 @@ class PilotServer:
             y = int(params.get("y", 0))
         except (TypeError, ValueError):
             return {"status": "error", "message": "x/y must be integers"}
+        if not self.config.gesture_cursor.enabled:
+            # The camera must never drive the real cursor while the person has this switched off.
+            return {"status": "error", "message": "Gesture cursor control is off in Settings"}
 
         message = await input_control.mouse_move(x, y, duration=0.0)
         return {"status": "ok", "message": message}
@@ -6562,6 +6793,9 @@ class PilotServer:
             y = int(params.get("y", 0))
         except (TypeError, ValueError):
             return {"status": "error", "message": "x/y must be integers"}
+        if not self.config.gesture_cursor.enabled:
+            # The camera must never drive the real cursor while the person has this switched off.
+            return {"status": "error", "message": "Gesture cursor control is off in Settings"}
 
         message = await input_control.mouse_click(x, y, button="left")
         return {"status": "ok", "message": message}
@@ -6993,8 +7227,10 @@ class PilotServer:
             enabled = _validated_bool(params, "enabled", self.config.gateway.risk_gate_enabled)
         except ValueError as exc:
             return {"status": "error", "message": str(exc)}
+        previous_gateway = copy.deepcopy(self.config.gateway)
         self.config.gateway.risk_gate_enabled = enabled
-        self.config.save()
+        if (failure := self._save_section("gateway", previous_gateway)) is not None:
+            return failure
         return await self._handle_risk_gate_status({}, ws)
 
     async def _handle_self_healing_status(self, params: dict, ws: ServerConnection) -> dict:
@@ -7103,13 +7339,15 @@ class PilotServer:
         if enabled and not watched_metrics:
             return {"status": "error", "message": "select at least one watched metric"}
 
+        previous_self_healing = copy.deepcopy(self.config.self_healing)
         cfg.enabled = enabled
         cfg.auto_execute_max_tier = max_tier
         cfg.cooldown_seconds = cooldown
         cfg.confirm_timeout_seconds = confirm_timeout
         cfg.watched_metrics = watched_metrics
 
-        self.config.save()
+        if (failure := self._save_section("self_healing", previous_self_healing)) is not None:
+            return failure
         self._sync_self_healing_monitors()
         return {
             "status": "ok",
@@ -7199,6 +7437,7 @@ class PilotServer:
         except ValueError as exc:
             return {"status": "error", "message": str(exc)}
 
+        previous_narration = copy.deepcopy(self.config.narration)
         cfg.enabled = enabled
         cfg.narrate_steps = narrate_steps
         cfg.interrupt_on_risk = interrupt_on_risk
@@ -7209,7 +7448,8 @@ class PilotServer:
         cfg.max_auto_revisions = max_auto_revisions
         cfg.confirm_timeout_seconds = confirm_timeout_seconds
 
-        self.config.save()
+        if (failure := self._save_section("narration", previous_narration)) is not None:
+            return failure
         return {
             "status": "ok",
             "enabled": cfg.enabled,
@@ -7340,6 +7580,7 @@ class PilotServer:
         except ValueError as exc:
             return {"status": "error", "message": str(exc)}
 
+        previous_supervision = copy.deepcopy(cfg)
         cfg.enabled = enabled
         cfg.keyboard_mouse_hook_enabled = hook_enabled
         cfg.cognitive_coaching_enabled = coaching_enabled
@@ -7353,6 +7594,12 @@ class PilotServer:
         cfg.keystroke_buffer_max_chars = keystroke_buffer_max
         cfg.ocr_snippet_max_chars = ocr_snippet_max
 
+        if (failure := self._save_section("supervision", previous_supervision)) is not None:
+            return failure
+        restart_required = (
+            cfg.tick_interval_seconds != previous_supervision.tick_interval_seconds
+            or cfg.keystroke_buffer_max_chars != previous_supervision.keystroke_buffer_max_chars
+        )
         supervision_hook = getattr(self, "_supervision_hook", None)
         if supervision_hook is not None:
             if cfg.enabled and cfg.keyboard_mouse_hook_enabled and not (was_enabled and was_hook_enabled):
@@ -7367,9 +7614,9 @@ class PilotServer:
             elif not cfg.enabled and was_enabled:
                 background.stop("user_supervision")
 
-        self.config.save()
         return {
             "status": "ok",
+            "restart_required": restart_required,
             "enabled": cfg.enabled,
             "keyboard_mouse_hook_enabled": cfg.keyboard_mouse_hook_enabled,
             "cognitive_coaching_enabled": cfg.cognitive_coaching_enabled,
@@ -9990,8 +10237,11 @@ def handle_tool(tool_name, params):
         from pilot.system.voice import ContinuousVoiceListener
 
         previous = self._voice_listener
+        running_commands: set[asyncio.Task[None]] = set()
         if previous is not None and previous.is_running:
-            await previous.stop()
+            # Keep voice commands that are mid-task; only the microphone side restarts.
+            running_commands = {task for task in getattr(previous, "_command_tasks", set()) if not task.done()}
+            await previous.stop(cancel_commands=False)
 
         replacement = ContinuousVoiceListener(
             wake_words=wake_words,
@@ -10005,6 +10255,7 @@ def handle_tool(tool_name, params):
         if not replacement.is_running:
             self._voice_listener = None
             raise RuntimeError(result)
+        replacement.adopt_command_tasks(running_commands)
         return result
 
     async def _handle_voice_listener_start(self, params: dict, ws: ServerConnection) -> dict:
@@ -10920,9 +11171,11 @@ def handle_tool(tool_name, params):
                 "message": "enable at least one complete binding before enabling gesture workflows",
             }
 
+        previous_gesture_workflows = copy.deepcopy(self.config.gesture_workflows)
         self.config.gesture_workflows.enabled = enabled
         self.config.gesture_workflows.bindings = parsed
-        self.config.save()
+        if (failure := self._save_section("gesture_workflows", previous_gesture_workflows)) is not None:
+            return failure
         result = {
             "status": "ok",
             "enabled": self.config.gesture_workflows.enabled,
@@ -11001,12 +11254,13 @@ def handle_tool(tool_name, params):
         """Forget learned proactive-suggestion preferences."""
         if not self._proactive:
             return {
+                "status": "error",
                 "enabled": False,
                 "patterns": {},
                 "message": "Proactive engine not initialized",
             }
         self._proactive.reset_learning()
-        return self._proactive.get_learning_status()
+        return {"status": "ok", **self._proactive.get_learning_status()}
 
     async def _handle_online_learning_status(
         self,
@@ -11309,7 +11563,8 @@ def main() -> None:
         export_logs()
         return
     if args.dry_run:
-        config.security.dry_run = True
+        # For this run only: a Settings change must not save the CLI flag as the person's choice.
+        config.set_runtime_override("security", "dry_run", True)
         logger.info("Dry-run mode enabled via CLI flag")
     server = PilotServer(config)
 

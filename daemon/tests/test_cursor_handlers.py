@@ -27,6 +27,7 @@ def server(tmp_path, monkeypatch):
     used for lightweight handler tests elsewhere in this suite)."""
     monkeypatch.setattr("pilot.config.CONFIG_DIR", tmp_path)
     config = PilotConfig()
+    config.gesture_cursor.enabled = True
     return PilotServer(config)
 
 
@@ -66,3 +67,19 @@ async def test_cursor_click_rejects_non_numeric_coords(server):
 
     mock_click.assert_not_awaited()
     assert result["status"] == "error"
+
+
+@pytest.mark.asyncio
+async def test_cursor_rpcs_refuse_while_gesture_cursor_control_is_off(server):
+    server.config.gesture_cursor.enabled = False
+    with (
+        patch("pilot.system.input_control.mouse_move", new_callable=AsyncMock) as mock_move,
+        patch("pilot.system.input_control.mouse_click", new_callable=AsyncMock) as mock_click,
+    ):
+        moved = await server._handle_cursor_move({"x": 10, "y": 10}, None)
+        clicked = await server._handle_cursor_click({"x": 10, "y": 10}, None)
+
+    mock_move.assert_not_awaited()
+    mock_click.assert_not_awaited()
+    assert moved["status"] == clicked["status"] == "error"
+    assert "off in Settings" in moved["message"]

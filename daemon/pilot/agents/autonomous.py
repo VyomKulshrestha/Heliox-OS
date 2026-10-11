@@ -214,6 +214,8 @@ class AutonomousJob:
     resumed_count: int = 0
     # When set (scheduled runs), plans may only use these action types; anything else is refused.
     allowed_actions: list[str] | None = None
+    # Dry run as it was when the job started: turning it off mid-job must not make the rest real.
+    dry_run: bool = False
 
     @property
     def duration_seconds(self) -> float:
@@ -258,6 +260,7 @@ class AutonomousJob:
             "decomposition": self.decomposition,
             "resumed_count": self.resumed_count,
             "allowed_actions": self.allowed_actions,
+            "dry_run": self.dry_run,
         }
 
     @classmethod
@@ -285,6 +288,7 @@ class AutonomousJob:
             decomposition=decomposition if isinstance(decomposition, dict) else None,
             resumed_count=int(data.get("resumed_count", 0)),
             allowed_actions=[str(item) for item in allowed] if isinstance(allowed, list) else None,
+            dry_run=bool(data.get("dry_run", False)),
         )
 
 
@@ -380,6 +384,7 @@ class AutonomousExecutor:
             scope_override=scope_override,
             session_id=session_id,
             allowed_actions=allowed_actions,
+            dry_run=self._dry_run_now(),
         )
         self._jobs[job.job_id] = job
         await self._persist(job)
@@ -407,6 +412,10 @@ class AutonomousExecutor:
             )
         except Exception:
             logger.warning("Could not persist autonomous working memory", exc_info=True)
+
+    def _dry_run_now(self) -> bool:
+        config = getattr(self._executor, "_config", None)
+        return bool(getattr(getattr(config, "security", None), "dry_run", False))
 
     def _warm_reviewer(self) -> None:
         if self._reviewer is not None:
@@ -1190,7 +1199,20 @@ class AutonomousExecutor:
                     break
                 on_call_start, on_call_complete = self._tool_call_reporter(job, step, round_index)
                 with agent_initiated():
-                    if self._orchestrator is not None:
+                    if job.dry_run:
+                        # Simulate through the executor: the orchestrator's specialists would read
+                        # the global setting, which may have been switched off since the job began.
+                        results = await self._executor.execute(
+                            plan,
+                            on_action_start=on_call_start,
+                            on_action_complete=on_call_complete,
+                            plan_id=plan_id,
+                            invocation_source=invocation_source,
+                            scope_override=job.scope_override,
+                            user_confirmed=user_confirmed,
+                            dry_run=True,
+                        )
+                    elif self._orchestrator is not None:
                         results = await self._orchestrator.execute_plan(
                             goal,
                             plan,

@@ -173,8 +173,11 @@ class GnomonReviewer:
 
     def status(self) -> dict[str, Any]:
         state = self._state
+        current = self._engine_provider()
+        if state == "ready" and current is not self._loaded_engine:
+            state = "cold"  # Settings replaced or switched off the engine since it loaded
         if state in {"cold", "disabled"}:
-            state = "cold" if self._engine_provider() is not None else "disabled"
+            state = "cold" if current is not None else "disabled"
         return {"state": state, "last_error": self._last_error, "execution_authority": False}
 
     def warm(self) -> None:
@@ -221,9 +224,10 @@ class GnomonReviewer:
                 await self.unload()
 
     async def unload(self) -> None:
-        engine = self._engine_provider()
+        """Release the model this reviewer loaded (not whichever engine the config points at now)."""
         async with self._lock:
-            if engine is not None and self._state == "ready":
+            engine, self._loaded_engine = self._loaded_engine, None
+            if engine is not None:
                 await asyncio.to_thread(engine.unload)
             if self._state == "ready":
                 self._state = "cold"

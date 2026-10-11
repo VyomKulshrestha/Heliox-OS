@@ -71,7 +71,7 @@ async def test_factory_reset_reconciles_privileged_and_network_runtimes(monkeypa
 
     result = await server._handle_reset_config({}, MagicMock())
 
-    assert result == {"status": "ok", "runtime_reconciled": True}
+    assert result == {"status": "ok", "runtime_reconciled": True, "kept": ["server", "restrictions"]}
     old_receiver.stop.assert_awaited_once()
     old_manager.clear_ephemeral.assert_awaited_once()
     mesh.stop.assert_awaited_once()
