@@ -56,3 +56,40 @@ def test_malformed_restrictions_fall_back_to_built_in_safety_defaults(tmp_path, 
 
     assert loaded.restrictions == config_module.Restrictions()
     assert "Failed to load restrictions.toml" in caplog.text
+
+
+def test_saving_keeps_the_persons_comments(tmp_path, monkeypatch):
+    _redirect_config_files(tmp_path, monkeypatch)
+    config = PilotConfig()
+    config.save()
+    text = config_module.CONFIG_FILE.read_text(encoding="utf-8")
+    text = text.replace("[voice]\n", "# Voice tweaks I made by hand\n[voice]\n", 1)
+    text = text.replace("tts_engine =", "# keep the local engine\ntts_engine =", 1)
+    config_module.CONFIG_FILE.write_text(text + "# end of my notes\n", encoding="utf-8")
+
+    config.voice.tts_engine = "os_native"
+    config.save()
+
+    saved = config_module.CONFIG_FILE.read_text(encoding="utf-8")
+    assert "# Voice tweaks I made by hand\n[voice]\n" in saved
+    assert '# keep the local engine\ntts_engine = "os_native"' in saved
+    assert saved.rstrip().endswith("# end of my notes")
+    assert tomllib.loads(saved)["voice"]["tts_engine"] == "os_native"
+
+
+def test_a_briefly_locked_config_file_is_retried(tmp_path, monkeypatch):
+    _redirect_config_files(tmp_path, monkeypatch)
+    real_replace = config_module.os.replace
+    attempts = {"count": 0}
+
+    def locked_once(source, destination):
+        if destination == config_module.CONFIG_FILE and attempts["count"] == 0:
+            attempts["count"] += 1
+            raise PermissionError("held by another program")
+        real_replace(source, destination)
+
+    monkeypatch.setattr(config_module.os, "replace", locked_once)
+    PilotConfig().save()
+
+    assert attempts["count"] == 1
+    assert tomllib.loads(config_module.CONFIG_FILE.read_text(encoding="utf-8"))

@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 import sys
 import tempfile
-from dataclasses import dataclass, field
+import time
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -599,40 +601,195 @@ class PilotConfig:
 
     @classmethod
     def load(cls) -> PilotConfig:
-        """Load config from disk, creating defaults if missing."""
+        """Load config from disk, creating defaults if missing.
+
+        A file that cannot be read is copied aside and reported through
+        ``load_errors``; Heliox then runs on defaults but refuses to save, so one
+        typo can no longer turn into a silent overwrite of the person's settings.
+        """
         config = cls()
+        errors: list[str] = []
 
         if CONFIG_FILE.exists():
             try:
                 raw = tomllib.loads(CONFIG_FILE.read_text(encoding="utf-8"))
                 _validate_config_types(raw)
-                config = _merge_config(config, raw)
+                # Merge into a fresh object so a failure part-way leaves the defaults intact.
+                config = _merge_config(cls(), raw)
             except Exception as e:
+                backup = _keep_unreadable_copy(CONFIG_FILE)
                 logger.error(f"Failed to load config.toml: {e}. Falling back to safe defaults.")
+                errors.append(f"config.toml could not be read ({e}). A copy was kept at {backup}.")
 
         if RESTRICTIONS_FILE.exists():
             try:
                 raw = tomllib.loads(RESTRICTIONS_FILE.read_text(encoding="utf-8"))
                 config.restrictions = _parse_restrictions(raw)
             except Exception as e:
+                backup = _keep_unreadable_copy(RESTRICTIONS_FILE)
                 logger.error(
                     "Failed to load restrictions.toml: %s. Falling back to built-in safety restrictions.",
                     e,
                 )
+                errors.append(f"restrictions.toml could not be read ({e}). A copy was kept at {backup}.")
 
+        config._load_errors = errors
+        config._disk_signature = _disk_signature()
         return config
+
+    @property
+    def load_errors(self) -> list[str]:
+        return list(getattr(self, "_load_errors", []))
+
+    def clear_load_errors(self) -> None:
+        """The person chose to start over (Reset to defaults); saving is allowed again."""
+        self._load_errors = []
+
+    def set_runtime_override(self, section: str, key: str, value: Any) -> None:
+        """Change a value for this run only; save() keeps writing the person's own value.
+
+        Used for the --dry-run flag and for a fallback model picked because the configured
+        one is missing, so neither becomes a saved setting behind the person's back.
+        """
+        overrides = getattr(self, "_runtime_overrides", None)
+        if overrides is None:
+            overrides = self._runtime_overrides = {}
+        target = getattr(self, section)
+        overrides.setdefault((section, key), getattr(target, key))
+        if getattr(self, "_runtime_override_values", None) is None:
+            self._runtime_override_values = {}
+        self._runtime_override_values[(section, key)] = value
+        setattr(target, key, value)
+
+    def reload_if_edited(self) -> bool:
+        """Adopt edits made to the config files while Heliox runs; True when something was reloaded.
+
+        Only configs that were loaded from or saved to disk take part, so test configs
+        built in memory never pick up the person's real files.
+        """
+        known = getattr(self, "_disk_signature", None)
+        if known is None or known == _disk_signature():
+            return False
+        fresh = type(self).load()
+        if fresh.load_errors:
+            self._load_errors = fresh.load_errors
+            return False
+        for item in fields(self):
+            setattr(self, item.name, getattr(fresh, item.name))
+        for (section, key), value in getattr(self, "_runtime_override_values", {}).items():
+            # The file now holds the person's value; keep this run's override on top of it.
+            target = getattr(self, section)
+            self._runtime_overrides[(section, key)] = getattr(target, key)
+            setattr(target, key, value)
+        self._disk_signature = fresh._disk_signature
+        logger.info("Picked up changes made to the Heliox config files")
+        return True
 
     def save(self) -> None:
         """Persist current config to disk."""
+        if self.load_errors:
+            raise ConfigWriteBlocked(
+                "Heliox could not read your config file, so it will not overwrite it: "
+                + " ".join(self.load_errors)
+                + " Fix the file and restart Heliox, or use Reset to defaults."
+            )
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
         data = _config_to_dict(self)
+        for (section, key), original in getattr(self, "_runtime_overrides", {}).items():
+            if section in data and isinstance(data[section], dict):
+                data[section][key] = original
         restrictions = data.pop("restrictions", {})
 
-        _atomic_write_text(CONFIG_FILE, tomli_w.dumps(data))
+        _atomic_write_text(CONFIG_FILE, _carry_comments(_read_text(CONFIG_FILE), tomli_w.dumps(data)))
 
         if restrictions:
-            _atomic_write_text(RESTRICTIONS_FILE, tomli_w.dumps(restrictions))
+            _atomic_write_text(
+                RESTRICTIONS_FILE, _carry_comments(_read_text(RESTRICTIONS_FILE), tomli_w.dumps(restrictions))
+            )
+        self._disk_signature = _disk_signature()
+
+
+class ConfigWriteBlocked(RuntimeError):
+    """The config file on disk could not be read, so saving would destroy it."""
+
+
+def _file_signature(path: Path) -> tuple[int, int] | None:
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return (stat.st_mtime_ns, stat.st_size)
+
+
+def _disk_signature() -> tuple[tuple[int, int] | None, tuple[int, int] | None]:
+    return (_file_signature(CONFIG_FILE), _file_signature(RESTRICTIONS_FILE))
+
+
+def _keep_unreadable_copy(path: Path) -> Path:
+    """Copy an unreadable config file aside before anything can replace it."""
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    backup = path.with_name(f"{path.name}.unreadable-{stamp}")
+    try:
+        shutil.copy2(path, backup)
+    except OSError:
+        logger.warning("Could not keep a copy of %s", path, exc_info=True)
+    return backup
+
+
+def _read_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return ""
+
+
+def _comment_anchor(line: str, section: str) -> tuple[str, str | None] | None:
+    stripped = line.strip()
+    if stripped.startswith("["):
+        return (stripped, None)
+    if stripped and "=" in stripped and not stripped.startswith("#"):
+        return (section, stripped.split("=", 1)[0].strip().strip('"').strip("'"))
+    return None
+
+
+def _carry_comments(old_text: str, new_text: str) -> str:
+    """Keep the person's comment lines when the config is rewritten.
+
+    tomli_w writes values only, so every settings save used to delete notes the
+    person wrote in config.toml. A comment block directly above a section header
+    or a key is put back above the same header or key; comments whose section or
+    key no longer exists, and comments at the end of a value line, are dropped.
+    """
+    if "#" not in old_text:
+        return new_text
+    comments: dict[tuple[str, str | None], list[str]] = {}
+    pending: list[str] = []
+    section = ""
+    for line in old_text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            pending.append(line.rstrip())
+            continue
+        anchor = _comment_anchor(line, section)
+        if anchor is None:
+            continue
+        if anchor[1] is None:
+            section = anchor[0]
+        if pending:
+            comments[anchor] = pending
+            pending = []
+    output: list[str] = []
+    section = ""
+    for line in new_text.splitlines():
+        anchor = _comment_anchor(line, section)
+        if anchor is not None:
+            if anchor[1] is None:
+                section = anchor[0]
+            output.extend(comments.pop(anchor, []))
+        output.append(line)
+    output.extend(pending)  # a comment block at the very end of the file
+    return "\n".join(output) + "\n"
 
 
 def _atomic_write_text(path: Path, content: str) -> None:
@@ -645,7 +802,16 @@ def _atomic_write_text(path: Path, content: str) -> None:
             handle.write(content)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temp_path, path)
+        # On Windows another program (antivirus, an indexer, an editor) can hold the file for a
+        # moment; retry briefly instead of failing the setting change.
+        for attempt in range(5):
+            try:
+                os.replace(temp_path, path)
+                break
+            except PermissionError:
+                if attempt == 4:
+                    raise
+                time.sleep(0.05 * (attempt + 1))
     except BaseException:
         temp_path.unlink(missing_ok=True)
         raise
