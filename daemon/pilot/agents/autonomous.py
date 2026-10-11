@@ -939,7 +939,11 @@ class AutonomousExecutor:
             "Otherwise use screen_detect_elements with a narrow description followed by mouse_click "
             "at x=0,y=0 when coordinates are not already measured. Do not claim completion merely because "
             "an application opened or an input action returned success. Requirements containing 'exactly' "
-            "are case-sensitive and must be visibly matched before claiming completion."
+            "are case-sensitive and must be visibly matched before claiming completion. "
+            "If the goal cannot be achieved with the actions available to you (for example a scheduled "
+            "run's approved list), or needs something only the person can provide, return an empty actions "
+            'array and begin the explanation with "GOAL_BLOCKED:" and the reason. Never send, write or '
+            "report information you have not actually obtained during this task."
         )
 
     @staticmethod
@@ -1057,6 +1061,14 @@ class AutonomousExecutor:
                 is_desktop_round = any(action.action_type in _DESKTOP_LOOP_ACTIONS for action in plan.actions)
                 if vision_disabled and is_desktop_round:
                     step.error = "Screen vision is disabled; interactive actions were not executed."
+                    break
+
+                if not plan.actions and plan.explanation.strip().lower().startswith("goal_blocked:"):
+                    reason = plan.explanation.strip().split(":", 1)[1].strip() or "no reason given"
+                    step.error = f"Blocked: {reason[:300]}"
+                    progress.append(
+                        f"Round {round_index + 1}: the planner reported the goal is blocked: {reason[:200]}"
+                    )
                     break
 
                 if not plan.actions:

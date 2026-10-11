@@ -248,3 +248,24 @@ async def test_scheduled_run_rpcs_create_list_toggle_run_and_delete(tmp_path):
     assert [run["name"] for run in listed["runs"]] == ["Morning report"]
     assert (await server._handle_scheduled_run_delete({"run_id": run_id}, ws))["deleted"] is True
     assert (await server._handle_scheduled_run_list({}, ws))["runs"] == []
+
+
+async def test_a_goal_the_approved_actions_cannot_reach_fails_honestly():
+    async def plan(goal, **kwargs):
+        assert "GOAL_BLOCKED" in kwargs["screen_context"]  # the planner is told how to say so
+        return ActionPlan(
+            actions=[], explanation="GOAL_BLOCKED: only notify is approved, so the disk cannot be measured"
+        )
+
+    executor = SimpleNamespace(execute=AsyncMock())
+    autonomous = AutonomousExecutor(
+        planner=SimpleNamespace(plan=plan), executor=executor, verifier=SimpleNamespace(), decomposer=None
+    )
+    job = AutonomousJob(job_id="b1", goal="report free disk space", allowed_actions=["notify"])
+    step = JobStep(index=0, title="Execute", description=job.goal)
+
+    await autonomous._execute_goal_loop(job, step, job.goal)
+
+    assert step.status == "failed"
+    assert step.error == "Blocked: only notify is approved, so the disk cannot be measured"
+    executor.execute.assert_not_awaited()
