@@ -2101,29 +2101,31 @@
         <span class="setting-label">{$_("settings.api_key")}</span>
         <span class="setting-desc">{$_("settings.api_key_desc")}</span>
       </div>
-      <div class="api-key-row">
-        <input
-          type="password"
-          class="input-md"
-          bind:value={apiKeyInput}
-          placeholder={$settings.model.cloud_provider === "openrouter"
-            ? "sk-or-v1-..."
-            : $_("settings.api_key_placeholder")}
-        />
-        <button class="btn-save" onclick={saveApiKey} disabled={apiKeySaving}>
-          {apiKeySaved ? $_("settings.saved") : apiKeySaving ? $_("settings.saving") : $_("settings.save")}
-        </button>
+      <div class="api-key-field">
+        <div class="api-key-row">
+          <input
+            type="password"
+            class="input-md"
+            bind:value={apiKeyInput}
+            placeholder={$settings.model.cloud_provider === "openrouter"
+              ? "sk-or-v1-..."
+              : $_("settings.api_key_placeholder")}
+          />
+          <button class="btn-save" onclick={saveApiKey} disabled={apiKeySaving}>
+            {apiKeySaved ? $_("settings.saved") : apiKeySaving ? $_("settings.saving") : $_("settings.save")}
+          </button>
+        </div>
+        {#if $settings.model.cloud_provider}
+          <p class="api-key-status">
+            {storedApiKeyProviders.includes($settings.model.cloud_provider)
+              ? `A ${$settings.model.cloud_provider} key is saved in the OS credential store.`
+              : `No ${$settings.model.cloud_provider} key is saved yet.`}
+          </p>
+        {/if}
+        {#if apiKeyError}
+          <p class="api-key-error" role="alert">{apiKeyError}</p>
+        {/if}
       </div>
-      {#if $settings.model.cloud_provider}
-        <p class="api-key-status">
-          {storedApiKeyProviders.includes($settings.model.cloud_provider)
-            ? `A ${$settings.model.cloud_provider} key is saved in the OS credential store.`
-            : `No ${$settings.model.cloud_provider} key is saved yet.`}
-        </p>
-      {/if}
-      {#if apiKeyError}
-        <p class="api-key-error" role="alert">{apiKeyError}</p>
-      {/if}
     </div>
   </section>
 
@@ -2862,6 +2864,13 @@
     width: auto;
   }
 
+  .api-key-field {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
+  }
+
   .api-key-row {
     display: flex;
     gap: 6px;
@@ -3212,13 +3221,15 @@
   }
 
   .api-key-status {
-    margin: 6px 0 0;
+    margin: 0;
     color: var(--text-secondary);
     font-size: 11px;
+    text-align: right;
   }
 
   .api-key-error {
-    margin: 6px 0 0;
+    margin: 0;
+    text-align: right;
     max-width: 520px;
     color: var(--danger, #ef4444);
     font-size: 11px;

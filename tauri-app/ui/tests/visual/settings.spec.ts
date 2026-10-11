@@ -237,16 +237,13 @@ test.describe("Settings Panel", () => {
     await section.getByRole("button", { name: "Toggle disk monitoring" }).click();
     await section.getByRole("button", { name: "Save" }).click();
 
+    // Only the edited field is sent, so a change made elsewhere to the other fields is kept.
     await expect
       .poll(() => page.evaluate(() => (window as any).__self_healing_update__))
-      .toMatchObject({
-        method: "self_healing_config_update",
-        params: {
-          enabled: true,
-          auto_execute_max_tier: 1,
-          watched_metrics: ["cpu", "memory"],
-        },
-      });
+      .toMatchObject({ method: "self_healing_config_update" });
+    expect(await page.evaluate(() => (window as any).__self_healing_update__.params)).toEqual({
+      watched_metrics: ["cpu", "memory"],
+    });
   });
 
   test("specialist mesh shows expanded agents and complete action coverage", async ({ page }) => {
