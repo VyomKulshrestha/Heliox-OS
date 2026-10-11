@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { PlanAction } from "../stores/session";
+  import { describeAction } from "../utils/actionDetails";
   import { _ } from "svelte-i18n";
 
   interface Props {
@@ -72,20 +73,28 @@
     <ul class="confirm-list">
       {#each actions as action, i}
         <li>
-          <label class="confirm-checkbox">
-            <input type="checkbox" checked={approved[i]} disabled={submitting} onchange={() => toggle(i)} />
-          </label>
-          <strong>{action.action_type}</strong> on
-          <code>{action.target}</code>
-          {#if action.requires_root}
-            <span class="root-tag">{$_("tier.root")}</span>
-          {/if}
-          {#if action.destructive}
-            <span class="destructive-tag">{$_("tier.destructive")}</span>
-          {/if}
-          {#if action.irreversible}
-            <span class="irreversible-tag">{$_("tier.irreversible")}</span>
-          {/if}
+          <div class="confirm-row">
+            <label class="confirm-checkbox">
+              <input type="checkbox" checked={approved[i]} disabled={submitting} onchange={() => toggle(i)} />
+            </label>
+            <strong>{action.action_type}</strong> on
+            <code>{action.target}</code>
+            {#if action.requires_root}
+              <span class="root-tag">{$_("tier.root")}</span>
+            {/if}
+            {#if action.destructive}
+              <span class="destructive-tag">{$_("tier.destructive")}</span>
+            {/if}
+            {#if action.irreversible}
+              <span class="irreversible-tag">{$_("tier.irreversible")}</span>
+            {/if}
+          </div>
+          {#each describeAction(action) as detail (detail.label)}
+            <div class="action-detail">
+              <span class="detail-label">{detail.label}</span>
+              {#if detail.code}<pre>{detail.value}</pre>{:else}<span class="detail-value">{detail.value}</span>{/if}
+            </div>
+          {/each}
         </li>
       {/each}
     </ul>
@@ -127,7 +136,9 @@
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
     padding: 24px;
-    max-width: 480px;
+    max-width: 560px;
+    max-height: calc(100vh - 48px);
+    overflow-y: auto;
     width: 100%;
     box-shadow: var(--shadow);
   }
@@ -165,10 +176,42 @@
     border-radius: var(--radius-sm);
     margin-bottom: 6px;
     font-size: 13px;
+  }
+
+  .confirm-row {
     display: flex;
     align-items: center;
     gap: 6px;
     flex-wrap: wrap;
+  }
+
+  .action-detail {
+    display: grid;
+    gap: 3px;
+    margin-top: 8px;
+  }
+
+  .detail-label {
+    color: var(--text-muted);
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .detail-value {
+    overflow-wrap: anywhere;
+  }
+
+  .action-detail pre {
+    max-height: 180px;
+    margin: 0;
+    overflow: auto;
+    padding: 8px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-primary);
+    font: 11px/1.45 var(--font-mono);
+    white-space: pre-wrap;
+    word-break: break-word;
   }
 
   .confirm-list code {
