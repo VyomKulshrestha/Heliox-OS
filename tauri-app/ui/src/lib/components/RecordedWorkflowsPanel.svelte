@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { call, requireOkResult, requireResultStatus, type DaemonStatusResult } from "../api/daemon";
+  import ConfirmPrompt from "./ConfirmPrompt.svelte";
 
   interface Step {
     action_type: string;
@@ -61,6 +62,7 @@
   let reviewed = $state<Record<string, boolean>>({});
   let textValues = $state<Record<string, Record<string, string>>>({});
   let captureReplayVisual = $state<Record<string, boolean>>({});
+  let pendingDelete = $state<Workflow | null>(null);
   let lastRun = $state<{
     workflowId: string;
     jobId: string;
@@ -293,8 +295,14 @@
     }
   }
 
-  async function remove(workflow: Workflow) {
-    if (busy || !window.confirm(`Delete saved workflow “${workflow.name}” and its local visual samples?`)) return;
+  function askToRemove(workflow: Workflow) {
+    if (!busy) pendingDelete = workflow;
+  }
+
+  async function confirmRemove() {
+    const workflow = pendingDelete;
+    pendingDelete = null;
+    if (!workflow || busy) return;
     busy = true;
     error = "";
     notice = "";
@@ -312,6 +320,16 @@
     }
   }
 </script>
+
+{#if pendingDelete}
+  <ConfirmPrompt
+    message={`Delete saved workflow “${pendingDelete.name}” and its local visual samples?`}
+    confirmLabel="Delete workflow"
+    danger={true}
+    onconfirm={() => void confirmRemove()}
+    oncancel={() => (pendingDelete = null)}
+  />
+{/if}
 
 <section class="recorded-panel" aria-labelledby="recorded-title">
   <div class="heading">
@@ -495,7 +513,7 @@
             {#if workflow.schedule}<button class="secondary" disabled={busy} onclick={() => void unschedule(workflow)}
                 >Remove schedule</button
               >{/if}
-            <button class="danger" disabled={busy} onclick={() => void remove(workflow)}>Delete</button>
+            <button class="danger" disabled={busy} onclick={() => askToRemove(workflow)}>Delete</button>
           </div>
           {#if lastRun?.workflowId === workflow.id}
             <div class="run-feedback">

@@ -1,10 +1,12 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ScheduledRunsPanel from "./ScheduledRunsPanel.svelte";
 
 const daemonMocks = vi.hoisted(() => ({ call: vi.fn() }));
 
 vi.mock("../api/daemon", () => ({ call: daemonMocks.call }));
+
+afterEach(cleanup);
 
 const morning = {
   run_id: "r1",
@@ -96,7 +98,82 @@ describe("ScheduledRunsPanel", () => {
     );
     await fireEvent.click(screen.getByRole("button", { name: "Run now" }));
     await waitFor(() => expect(daemonMocks.call).toHaveBeenCalledWith("scheduled_run_now", { run_id: "r1" }));
+    await fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Delete schedule" }));
+    await waitFor(() => expect(screen.queryByText("Morning disk report")).toBeNull());
+  });
+
+  it("puts the switch back and shows the daemon's message when turning a schedule off fails", async () => {
+    daemonMocks.call.mockImplementation((method: string) => {
+      if (method === "scheduled_run_list") return Promise.resolve({ status: "ok", runs: [morning] });
+      return Promise.resolve({ status: "error", message: "No such scheduled run" });
+    });
+    render(ScheduledRunsPanel);
+    const toggle = (await screen.findByLabelText("Enable Morning disk report")) as HTMLInputElement;
+
+    await fireEvent.click(toggle);
+
+    expect((await screen.findByRole("alert")).textContent).toContain("No such scheduled run");
+    expect(toggle.checked).toBe(true);
+    expect(toggle.disabled).toBe(false);
+  });
+
+  it("puts the switch back when the toggle request cannot reach the daemon", async () => {
+    daemonMocks.call.mockImplementation((method: string) => {
+      if (method === "scheduled_run_list")
+        return Promise.resolve({ status: "ok", runs: [{ ...morning, enabled: false }] });
+      return Promise.reject(new Error("Cannot connect to Heliox OS daemon"));
+    });
+    render(ScheduledRunsPanel);
+    const toggle = (await screen.findByLabelText("Enable Morning disk report")) as HTMLInputElement;
+
+    await fireEvent.click(toggle);
+
+    expect((await screen.findByRole("alert")).textContent).toContain("Cannot connect to Heliox OS daemon");
+    expect(toggle.checked).toBe(false);
+  });
+
+  it("leaves the run state alone when Run now fails and shows why", async () => {
+    const neverRun = { ...morning, last_status: "", last_job_status: "" };
+    daemonMocks.call.mockImplementation((method: string) => {
+      if (method === "scheduled_run_list") return Promise.resolve({ status: "ok", runs: [neverRun] });
+      return Promise.resolve({
+        status: "error",
+        message: "The run could not start",
+        run: { ...neverRun, last_status: "started", last_job_status: "running" },
+      });
+    });
+    render(ScheduledRunsPanel);
+
+    await fireEvent.click(await screen.findByRole("button", { name: "Run now" }));
+
+    expect((await screen.findByRole("alert")).textContent).toContain("The run could not start");
+    expect(screen.getByText(/Not run yet/)).toBeTruthy();
+    expect(screen.queryByText(/Last run/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Starting..." })).toBeNull();
+    expect((screen.getByRole("button", { name: "Run now" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("asks before deleting and deletes nothing when the prompt is cancelled", async () => {
+    daemonMocks.call.mockImplementation((method: string) =>
+      Promise.resolve(
+        method === "scheduled_run_list" ? { status: "ok", runs: [morning] } : { status: "ok", deleted: true },
+      ),
+    );
+    render(ScheduledRunsPanel);
+
+    await fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
+    const prompt = screen.getByRole("alertdialog", { name: "Delete schedule" });
+    expect(prompt.textContent).toContain('Delete the schedule "Morning disk report"?');
+    await fireEvent.keyDown(prompt, { key: "Escape" });
+
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(daemonMocks.call).not.toHaveBeenCalledWith("scheduled_run_delete", expect.anything());
+    expect(screen.getByText("Morning disk report")).toBeTruthy();
+
     await fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Delete schedule" }));
+    await waitFor(() => expect(daemonMocks.call).toHaveBeenCalledWith("scheduled_run_delete", { run_id: "r1" }));
     await waitFor(() => expect(screen.queryByText("Morning disk report")).toBeNull());
   });
 });

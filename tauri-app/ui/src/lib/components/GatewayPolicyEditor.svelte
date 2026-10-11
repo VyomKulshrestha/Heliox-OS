@@ -1,14 +1,18 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { call, requireOkResult, type DaemonStatusResult } from "../api/daemon";
+  import { changedFields, onConfigChange } from "../api/configSync";
 
-  interface SourceProfile {
+  type SourceProfile = {
     max_tier: Record<string, number>;
     deny_action_types: string[];
     allow_root: boolean;
-  }
+  };
 
   const TIER_NAMES = ["READ_ONLY", "USER_WRITE", "SYSTEM_MODIFY", "DESTRUCTIVE", "ROOT_CRITICAL"];
+  // The gateway enforces ROOT_CRITICAL for a family a profile leaves unset (pilot/security/gateway.py),
+  // so the editor shows that instead of guessing a lower ceiling the daemon is not applying.
+  const ROOT_CRITICAL = 4;
   const FAMILIES = ["shell", "browsing", "system_control", "other"];
   const PROFILE_ORDER = [
     "interactive",
@@ -31,15 +35,32 @@
   ];
 
   let profiles = $state<Record<string, SourceProfile>>({});
+  // The policy as the daemon last reported or accepted it; edits are measured against this.
+  let savedProfiles = $state.raw<Record<string, SourceProfile>>({});
   let loading = $state(true);
   let savingProfile = $state<string | null>(null);
   let savedProfile = $state<string | null>(null);
   let error = $state("");
 
-  onMount(loadPolicy);
+  onMount(() => {
+    void loadPolicy();
+    // Another window, a voice command or a reset can change the policy. Pick that up, but never
+    // over edits the person has not saved yet.
+    return onConfigChange({ methods: ["gateway_policy_update"] }, () => {
+      if (!hasUnsavedChanges()) void loadPolicy(true);
+    });
+  });
 
-  async function loadPolicy() {
-    loading = true;
+  function withAllFamilies(profile: SourceProfile): SourceProfile {
+    const maxTier: Record<string, number> = Object.fromEntries(FAMILIES.map((family) => [family, ROOT_CRITICAL]));
+    return {
+      ...profile,
+      max_tier: { ...maxTier, ...(profile.max_tier ?? {}) },
+      deny_action_types: [...(profile.deny_action_types ?? [])],
+    };
+  }
+
+  async function loadPolicy(background = false) {
     error = "";
     try {
       const result = requireOkResult(
@@ -48,9 +69,14 @@
         },
         "The daemon did not return the gateway policy.",
       );
-      profiles = result.profiles ?? {};
+      // An edit started while the reload was on its way wins over the reloaded copy.
+      if (background && hasUnsavedChanges()) return;
+      const loaded = Object.fromEntries(
+        Object.entries(result.profiles ?? {}).map(([name, profile]) => [name, withAllFamilies(profile)]),
+      );
+      profiles = loaded;
+      savedProfiles = $state.snapshot(profiles);
     } catch (cause) {
-      profiles = {};
       error = cause instanceof Error ? cause.message : "Could not load the gateway policy.";
     } finally {
       loading = false;
@@ -63,6 +89,25 @@
     return [...known, ...extra];
   }
 
+  /** Only what the person changed in this profile since the last load or save. */
+  function profileChanges(name: string): Partial<SourceProfile> {
+    const saved = savedProfiles[name];
+    const next = $state.snapshot(profiles[name]);
+    if (!saved) return next;
+    const changes = changedFields(saved, next);
+    // The daemon merges max_tier per family, so untouched families are left out as well.
+    if (changes.max_tier) changes.max_tier = changedFields(saved.max_tier, next.max_tier) as Record<string, number>;
+    return changes;
+  }
+
+  function hasChanges(name: string): boolean {
+    return Object.keys(profileChanges(name)).length > 0;
+  }
+
+  function hasUnsavedChanges(): boolean {
+    return Object.keys(profiles).some(hasChanges);
+  }
+
   function updateTier(name: string, family: string, e: Event) {
     const tier = Number((e.target as HTMLSelectElement).value);
     profiles = { ...profiles, [name]: { ...profiles[name], max_tier: { ...profiles[name].max_tier, [family]: tier } } };
@@ -73,19 +118,20 @@
   }
 
   async function saveProfile(name: string) {
+    const sent = $state.snapshot(profiles[name]);
+    const changes = profileChanges(name);
+    if (Object.keys(changes).length === 0) return;
     savingProfile = name;
     savedProfile = null;
     error = "";
     try {
+      // gateway_policy_update accepts any subset of max_tier/deny_action_types/allow_root and keeps
+      // the rest, so a change made elsewhere to another field is not overwritten with stale values.
       requireOkResult(
-        (await call("gateway_policy_update", {
-          profile: name,
-          max_tier: profiles[name].max_tier,
-          deny_action_types: profiles[name].deny_action_types,
-          allow_root: profiles[name].allow_root,
-        })) as DaemonStatusResult,
+        (await call("gateway_policy_update", { profile: name, ...changes })) as DaemonStatusResult,
         "The daemon did not save the gateway policy.",
       );
+      savedProfiles = { ...savedProfiles, [name]: sent };
       savedProfile = name;
       setTimeout(() => {
         if (savedProfile === name) savedProfile = null;
@@ -120,7 +166,11 @@
         <div class="profile-card">
           <div class="profile-card-header">
             <strong class="profile-name">{name}</strong>
-            <button class="btn-save" onclick={() => saveProfile(name)} disabled={savingProfile === name}>
+            <button
+              class="btn-save"
+              onclick={() => saveProfile(name)}
+              disabled={savingProfile === name || !hasChanges(name)}
+            >
               {savingProfile === name ? "Saving..." : savedProfile === name ? "✓ Saved" : "Save"}
             </button>
           </div>
@@ -131,8 +181,9 @@
                 <span class="family-label">{family}</span>
                 <select
                   class="input-sm"
-                  value={profile.max_tier[family] ?? 0}
+                  value={profile.max_tier[family] ?? ROOT_CRITICAL}
                   onchange={(e) => updateTier(name, family, e)}
+                  aria-label={`${family} ceiling for ${name}`}
                 >
                   {#each TIER_NAMES as tierName, tierValue}
                     <option value={tierValue}>{tierName}</option>

@@ -27,6 +27,7 @@
   onMount(loadEvents);
 
   async function loadEvents() {
+    loading = true;
     loadError = "";
     try {
       const result = requireOkResult(
@@ -84,6 +85,7 @@
     <h2>Permission Audit Log</h2>
     <div class="header-right">
       <span class="count">{events.length} events</span>
+      <button class="verify-btn" onclick={loadEvents} disabled={loading}>Refresh</button>
       <button class="verify-btn" onclick={verifyIntegrity} disabled={verifying}>
         {verifying ? "Verifying..." : "Verify Integrity"}
       </button>

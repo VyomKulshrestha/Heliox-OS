@@ -31,7 +31,29 @@
   let familyFilter = $state("");
   let decisionFilter = $state("");
 
-  onMount(loadEvents);
+  // Source choices come from the daemon's gateway policy profiles. Sources that only show up in
+  // recorded events (an untagged "unknown" caller, or a source with no profile of its own) are
+  // added as they appear so they can be filtered too.
+  let policySources = $state<string[]>([]);
+  let seenSources = $state<string[]>([]);
+  const sourceOptions = $derived([...new Set([...policySources, ...seenSources])]);
+
+  onMount(() => {
+    void loadSources();
+    void loadEvents();
+  });
+
+  async function loadSources() {
+    try {
+      const result = requireOkResult(
+        (await call("gateway_policy_get")) as DaemonStatusResult & { profiles?: Record<string, unknown> },
+        "The daemon did not return the gateway policy.",
+      );
+      policySources = Object.keys(result.profiles ?? {});
+    } catch {
+      // The filter still offers every source seen in the loaded events.
+    }
+  }
 
   async function loadEvents() {
     loading = true;
@@ -46,6 +68,10 @@
         "The daemon did not return the gateway audit log.",
       );
       events = result.events ?? [];
+      const newSources = events
+        .map((event) => event.source_profile)
+        .filter((source) => source && !seenSources.includes(source));
+      if (newSources.length) seenSources = [...new Set([...seenSources, ...newSources])];
     } catch (cause) {
       events = [];
       loadError = cause instanceof Error ? cause.message : "Could not load the gateway audit log.";
@@ -94,6 +120,7 @@
     <h2>Agent Gateway Audit Log</h2>
     <div class="header-right">
       <span class="count">{events.length} events</span>
+      <button class="verify-btn" onclick={loadEvents} disabled={loading}>Refresh</button>
       <button class="verify-btn" onclick={verifyIntegrity} disabled={verifying}>
         {verifying ? "Verifying..." : "Verify Integrity"}
       </button>
@@ -101,13 +128,11 @@
   </div>
 
   <div class="filter-bar">
-    <select class="input-sm" bind:value={sourceFilter} onchange={loadEvents}>
+    <select class="input-sm" bind:value={sourceFilter} onchange={loadEvents} aria-label="Filter by source">
       <option value="">All sources</option>
-      <option value="interactive">interactive</option>
-      <option value="autonomous">autonomous</option>
-      <option value="web_agent">web_agent</option>
-      <option value="voice">voice</option>
-      <option value="gesture">gesture</option>
+      {#each sourceOptions as source (source)}
+        <option value={source}>{source}</option>
+      {/each}
     </select>
     <select class="input-sm" bind:value={familyFilter} onchange={loadEvents}>
       <option value="">All families</option>

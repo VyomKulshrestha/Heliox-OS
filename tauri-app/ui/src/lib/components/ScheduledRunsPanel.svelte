@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { call } from "../api/daemon";
+  import ConfirmPrompt from "./ConfirmPrompt.svelte";
 
   type ScheduledRun = {
     run_id: string;
@@ -25,6 +26,9 @@
   let error = $state("");
   let busy = $state(false);
   let showForm = $state(false);
+  // Schedules with a toggle, run or delete request in flight; their row buttons wait for the answer.
+  let pending = $state<Record<string, "toggle" | "run" | "delete">>({});
+  let pendingDelete = $state<ScheduledRun | null>(null);
 
   let name = $state("");
   let goal = $state("");
@@ -73,13 +77,47 @@
     }
   }
 
-  async function update(method: string, run: ScheduledRun, extra: Record<string, unknown> = {}) {
-    const result = await request(method, { run_id: run.run_id, ...extra });
-    if (result?.run) runs = runs.map((item) => (item.run_id === run.run_id ? result.run! : item));
+  async function withPending<T>(run: ScheduledRun, action: "toggle" | "run" | "delete", work: () => Promise<T>) {
+    pending = { ...pending, [run.run_id]: action };
+    try {
+      return await work();
+    } finally {
+      const rest = { ...pending };
+      delete rest[run.run_id];
+      pending = rest;
+    }
   }
 
-  async function remove(run: ScheduledRun) {
-    if (await request("scheduled_run_delete", { run_id: run.run_id })) {
+  function replaceRun(updated: ScheduledRun) {
+    runs = runs.map((item) => (item.run_id === updated.run_id ? updated : item));
+  }
+
+  async function setEnabled(run: ScheduledRun, event: Event) {
+    const box = event.currentTarget as HTMLInputElement;
+    const enabled = box.checked;
+    const result = await withPending(run, "toggle", () =>
+      request("scheduled_run_set_enabled", { run_id: run.run_id, enabled }),
+    );
+    if (result?.run) {
+      replaceRun(result.run);
+    } else {
+      // The daemon kept the old setting, so the box must show it again.
+      box.checked = runs.find((item) => item.run_id === run.run_id)?.enabled ?? !enabled;
+    }
+  }
+
+  async function runNow(run: ScheduledRun) {
+    // On failure the daemon's message is shown and the row keeps its last known state;
+    // only a confirmed start replaces it.
+    const result = await withPending(run, "run", () => request("scheduled_run_now", { run_id: run.run_id }));
+    if (result?.run) replaceRun(result.run);
+  }
+
+  async function confirmDelete() {
+    const run = pendingDelete;
+    pendingDelete = null;
+    if (!run) return;
+    if (await withPending(run, "delete", () => request("scheduled_run_delete", { run_id: run.run_id }))) {
       runs = runs.filter((item) => item.run_id !== run.run_id);
     }
   }
@@ -104,6 +142,18 @@
 
   onMount(() => void load());
 </script>
+
+{#if pendingDelete}
+  <ConfirmPrompt
+    message={`Delete the schedule "${pendingDelete.name}"?
+
+Heliox will stop running it on its timetable. A run that already started keeps going.`}
+    confirmLabel="Delete schedule"
+    danger={true}
+    onconfirm={() => void confirmDelete()}
+    oncancel={() => (pendingDelete = null)}
+  />
+{/if}
 
 <section class="schedule-card" aria-labelledby="scheduled-runs-heading">
   <div class="section-title">
@@ -169,12 +219,15 @@
               ><input
                 type="checkbox"
                 checked={run.enabled}
+                disabled={run.run_id in pending}
                 aria-label={`Enable ${run.name}`}
-                onchange={() => update("scheduled_run_set_enabled", run, { enabled: !run.enabled })}
+                onchange={(event) => setEnabled(run, event)}
               /> On</label
             >
-            <button type="button" onclick={() => update("scheduled_run_now", run)}>Run now</button>
-            <button type="button" onclick={() => remove(run)}>Delete</button>
+            <button type="button" disabled={run.run_id in pending} onclick={() => runNow(run)}>
+              {pending[run.run_id] === "run" ? "Starting..." : "Run now"}
+            </button>
+            <button type="button" disabled={run.run_id in pending} onclick={() => (pendingDelete = run)}>Delete</button>
           </div>
         </li>
       {/each}

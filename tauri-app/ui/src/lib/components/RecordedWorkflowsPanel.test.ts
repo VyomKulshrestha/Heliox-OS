@@ -158,3 +158,59 @@ describe("recorded workflow goal feedback", () => {
     });
   });
 });
+
+describe("recorded workflow delete", () => {
+  beforeEach(() => {
+    daemonMocks.call.mockReset();
+    daemonMocks.call.mockImplementation((method: string) => {
+      if (method === "recorded_workflow_status") return Promise.resolve({ status: "ok", active: false });
+      if (method === "recorded_workflow_list")
+        return Promise.resolve({
+          status: "ok",
+          workflows: [
+            {
+              id: "flow-1",
+              name: "Review",
+              goal: "Check a status",
+              steps: [],
+              step_count: 1,
+              sample_count: 0,
+              omitted_actions: 0,
+              visual_gaps: 0,
+              incomplete: false,
+              needs_review: false,
+              overlap_warning: false,
+              placeholders: [],
+              schedule: null,
+              feedback_count: 0,
+              feedback_visual_sample_count: 0,
+            },
+          ],
+        });
+      if (method === "recorded_workflow_delete") return Promise.resolve({ status: "ok" });
+      throw new Error(`unexpected method: ${method}`);
+    });
+  });
+
+  it("asks in the app before deleting and deletes nothing when cancelled", async () => {
+    const nativeConfirm = vi.spyOn(window, "confirm");
+    render(RecordedWorkflowsPanel);
+    await fireEvent.click(await screen.findByText("Review"));
+
+    await fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    const prompt = screen.getByRole("alertdialog", { name: "Delete workflow" });
+    expect(prompt.textContent).toContain("Delete saved workflow “Review” and its local visual samples?");
+    await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(daemonMocks.call).not.toHaveBeenCalledWith("recorded_workflow_delete", expect.anything());
+
+    await fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Delete workflow" }));
+
+    expect(daemonMocks.call).toHaveBeenCalledWith("recorded_workflow_delete", { workflow_id: "flow-1" });
+    expect(await screen.findByText("Saved workflow deleted.")).toBeTruthy();
+    expect(nativeConfirm).not.toHaveBeenCalled();
+    nativeConfirm.mockRestore();
+  });
+});
