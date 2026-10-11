@@ -93,10 +93,14 @@
     loading = true;
     error = "";
     try {
-      status = requireOkResult(
+      const result = requireOkResult(
         (await call("agent_mesh_status")) as MeshStatus & DaemonStatusResult,
         "The daemon did not return the specialist mesh.",
       );
+      if (!result.delegation || !result.sources || !Array.isArray(result.uncovered_action_types)) {
+        throw new Error("The daemon's specialist mesh status is incomplete.");
+      }
+      status = result;
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : String(cause);
       error = /method not found.*agent_mesh/i.test(message)

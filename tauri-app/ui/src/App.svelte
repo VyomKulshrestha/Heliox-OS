@@ -727,7 +727,9 @@
     pointer-events: none;
   }
 
-  .chat-panel.inactive > :not(.input-row) {
+  /* :global so child components (the services strip, the background) are hidden too;
+     a scoped selector only matched App's own elements, leaving them over other tabs. */
+  .chat-panel.inactive > :global(:not(.input-row)) {
     display: none;
   }
 
@@ -742,7 +744,7 @@
     pointer-events: none;
   }
 
-  .chat-panel.inactive .input-row > :not(.gesture-control-host) {
+  .chat-panel.inactive .input-row > :global(:not(.gesture-control-host)) {
     display: none;
   }
 

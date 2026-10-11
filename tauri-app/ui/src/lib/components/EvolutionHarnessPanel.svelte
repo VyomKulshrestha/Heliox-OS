@@ -70,6 +70,9 @@
         call("evolution_status") as Promise<HarnessStatus>,
         call("evolution_runs", { limit: 50 }) as Promise<{ runs: EvolutionRun[] }>,
       ]);
+      if (!statusResult?.runner) {
+        throw new Error((statusResult as { message?: string })?.message || "The evolution status is incomplete.");
+      }
       status = statusResult;
       runs = runResult.runs ?? [];
       if (!selectedRunId && runs.length) selectedRunId = runs[0].run_id;
@@ -97,7 +100,12 @@
     selectedRunId = runId;
     confirmation = "";
     error = "";
-    await loadCandidates();
+    try {
+      await loadCandidates();
+    } catch (cause) {
+      candidates = [];
+      error = `Could not load candidates: ${cause instanceof Error ? cause.message : String(cause)}`;
+    }
   }
 
   async function createRun() {

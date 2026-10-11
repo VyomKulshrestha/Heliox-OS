@@ -74,6 +74,11 @@
         call("strategy_evolution_status") as Promise<StrategyStatus>,
         call("strategy_candidates", { include_content: true, limit: 50 }) as Promise<{ candidates: Candidate[] }>,
       ]);
+      if (!statusResult?.candidate_counts || !Array.isArray(statusResult.pareto_front)) {
+        throw new Error(
+          (statusResult as { message?: string })?.message || "The strategy evolution status is incomplete.",
+        );
+      }
       status = statusResult;
       candidates = candidateResult.candidates ?? [];
     } catch (cause) {

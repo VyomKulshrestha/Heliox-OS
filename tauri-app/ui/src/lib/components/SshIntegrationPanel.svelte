@@ -35,7 +35,8 @@
         "ssh_list_hosts",
       );
       if (result.status !== "ok") throw new Error(result.message || "SSH hosts could not be loaded.");
-      enabled = result.enabled;
+      if (!Array.isArray(result.hosts)) throw new Error("The daemon's SSH host list is incomplete.");
+      enabled = Boolean(result.enabled);
       hosts = result.hosts;
     } catch (error) {
       message = error instanceof Error ? error.message : "SSH hosts could not be loaded.";

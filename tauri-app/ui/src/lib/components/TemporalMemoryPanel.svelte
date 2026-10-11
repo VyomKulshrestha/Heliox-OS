@@ -41,6 +41,9 @@
         (await call("temporal_memory_status", { limit: 50 })) as MemoryStatus & DaemonStatusResult,
         "The daemon rejected the memory status request.",
       );
+      if (!Array.isArray(result.facts) || !result.counts?.facts) {
+        throw new Error("The daemon's memory status is incomplete.");
+      }
       memory = result;
     } catch (cause) {
       memory = null;

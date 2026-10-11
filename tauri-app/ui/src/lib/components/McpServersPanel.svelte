@@ -26,6 +26,7 @@
     try {
       const next = await call<McpClientStatus>(method);
       if (next.status !== "ok") throw new Error(next.message || "Could not read MCP servers.");
+      if (!Array.isArray(next.servers)) throw new Error("The daemon's MCP server list is incomplete.");
       status = next;
     } catch (err) {
       error = err instanceof Error ? err.message : "Could not read MCP servers.";
