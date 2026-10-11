@@ -349,9 +349,27 @@ Return the daemon's full runtime configuration.
     "prediction_ms": 80.0,
     "blend": 0.3
   },
-  "first_run_complete": true
+  "first_run_complete": true,
+  "load_errors": []
 }
 ```
+
+`load_errors` lists problems Heliox hit reading `config.toml` or
+`restrictions.toml` at startup (for example a TOML syntax error). The daemon
+keeps a copy of the unreadable file next to it as
+`config.toml.unreadable-YYYYmmdd-HHMMSS` and runs on defaults for the broken
+part. While `load_errors` is non-empty every settings write is refused, so the
+defaults are never saved over the person's file; fix the file or use
+`reset_config` to start over.
+
+Settings RPCs (`get_config`, `update_config`, `reset_config`, the dedicated
+`*_config_update` / `*_status` RPCs listed below, `store_api_key`,
+`delete_api_key`, `list_api_keys`) are dispatched out of band, so they answer
+while an `execute` on the same socket is waiting for approval. Writes run one at
+a time under a daemon-wide lock. Before each write the daemon reloads
+`config.toml` if it was edited by hand since the last read; values set only for
+this run (`--dry-run`, an automatic Ollama model fallback) are re-applied on top
+and are never written to disk. Comments in `config.toml` are kept on save.
 
 #### `update_config`
 Update one config section.
@@ -365,7 +383,29 @@ Update one config section.
 ```
 Use `section: ""` with `values: { "first_run_complete": true }` to set top-level fields.
 
-**Result:** `{ "status": "ok" }` or `{ "status": "error", "message": "..." }`
+**Result:** `{ "status": "ok" }`, `{ "status": "ok", "restart_required": true }`,
+or `{ "status": "error", "message": "..." }`. Nothing is saved on error, and a
+failed disk write puts the previous values back in memory.
+
+- `restart_required: true` means the value was saved but is read only at
+  startup: any key in `memory`, `proxy` or `redis`; `screen_vision`
+  `capture_timeout_seconds`, `max_consecutive_timeouts` and
+  `auto_resume_after_seconds`; `cognitive.enabled`; `rss.enabled`.
+- Numbers must be finite (`NaN` and infinities are refused);
+  `model.gpu_memory_limit_mb` must be 0 or more.
+- `calendar.caldav_password_provider` may only be `""` or `"caldav"`, and
+  `email.password_provider` only `""` or `"email"`, so a setting cannot point a
+  feature at another feature's stored secret.
+- Sections that have their own RPC are refused here, because the generic path
+  would skip their validation and runtime side effects: `server` (holds the
+  daemon's auth token; edit `config.toml` while Heliox is stopped), `narration`,
+  `supervision`, `self_healing`, `gateway`, `ssh`, `gesture_workflows`,
+  `air_handoff` and `network` (use `mesh_configure`).
+- `section: "restrictions"` accepts only `protected_folders`,
+  `protected_packages` and `blocked_commands`, each a list of at most 500
+  non-empty strings of at most 1024 characters (duplicates are dropped). It
+  returns `{ "status": "ok", "values": { ...cleaned lists } }`.
+  `sandbox_allowed_commands` cannot be changed over IPC.
 
 #### `get_security_status`
 Return both the configured Heliox root policy and whether the current daemon
@@ -392,7 +432,14 @@ pretending elevation succeeded.
 Reset persisted configuration fields to `PilotConfig` defaults.
 
 **Params:** `{}`
-**Result:** `{ "status": "ok" }`
+**Result:** `{ "status": "ok", "runtime_reconciled": true, "kept": ["server", "restrictions"] }`
+
+`server` (the auth token and port), `restrictions` and `first_run_complete` are
+kept. The reset is refused with `{ "status": "error", "message": "Stop the
+running tasks before resetting settings." }` while a request or an autonomous
+job is running. After saving, the daemon rebuilds the model clients, the circuit
+breaker and the voice listener from the new values and releases the Gnomon
+model, and clears `load_errors`.
 
 ---
 
@@ -458,11 +505,19 @@ keyring and fails closed if the platform store is unavailable.
 **Params:** `{ "provider": "openai", "api_key": "sk-..." }`
 **Result:** `{ "status": "ok" }`
 
+Saving the key for the selected cloud provider rebuilds the cloud client through
+the model router; generations already using the old client finish before it is
+closed. Entries owned by other features (`heliox_mesh`, and names starting
+with `ssh:` or `air_handoff:`) are refused with
+`{ "status": "error", "message": "<name> is managed by its own feature" }`.
+
 #### `delete_api_key`
 Delete a stored API key.
 
 **Params:** `{ "provider": "openai" }`
 **Result:** `{ "status": "ok" }`
+
+The same reserved names are refused.
 
 #### `list_api_keys`
 List all providers with stored keys.
@@ -1477,8 +1532,10 @@ Return per-pattern accept/dismiss evidence, learned priority/timing, and
 temporary suppression state stored on-device.
 
 #### `proactive_learning_reset`
-Forget learned proactive-suggestion preferences and return the reset status.
-This does not delete the immutable experience ledger.
+Forget learned proactive-suggestion preferences and return the reset status
+(`{ "status": "ok", "enabled": true, "patterns": {} }`, or `status: "error"`
+when the proactive engine is not running). This does not delete the immutable
+experience ledger.
 
 ---
 
@@ -2094,6 +2151,20 @@ vectors, or recording keys. The sidecar itself is excluded from ordinary UI
 broadcast recipients.
 
 ---
+
+### `config_updated`
+Sent to every connected window after a settings write succeeds, whoever made it
+(a Settings panel, another window, a voice command, `reset_config`). Windows
+re-read the affected settings instead of saving a stale copy over the change.
+
+```json
+{ "jsonrpc": "2.0", "method": "config_updated", "params": { "method": "narration_config_update", "section": "" } }
+```
+
+`method` is the RPC that made the change; `section` is the `update_config`
+section (empty for dedicated RPCs). `method: "reload"` means the daemon picked
+up a hand edit of `config.toml` before a write. The notification is sent after
+the reply to the request that caused it, and never for a refused write.
 
 ### `feature_announcement`
 Emitted once on startup when a new daemon version introduces new capabilities.

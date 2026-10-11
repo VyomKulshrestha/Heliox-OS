@@ -520,6 +520,41 @@ This is built into the validator and applies whatever `protected_folders`
 says, so a prompt-injected plan cannot read the token or register a program
 for Heliox to run.
 
+### Changing settings over IPC
+
+Settings change only through the daemon's settings RPCs, and those are written
+to keep the saved safety settings intact:
+
+- **Allow-listed sections.** `update_config` refuses `server` (it holds the
+  auth token) and every section that has its own RPC (`narration`,
+  `supervision`, `self_healing`, `gateway`, `ssh`, `gesture_workflows`,
+  `air_handoff`, `network`), so their validation and runtime side effects
+  cannot be skipped. `restrictions` accepts only the three protection lists,
+  each bounded and de-duplicated; `sandbox_allowed_commands` cannot be changed
+  over IPC. Non-finite numbers are refused, and the calendar and email password
+  fields can only name their own vault entry.
+- **No silent loss of protections.** If `config.toml` or `restrictions.toml`
+  cannot be read at startup, Heliox keeps a copy of the file, runs on defaults
+  for the broken part and refuses every settings write until the file is fixed
+  or the person resets, so defaults are never saved over their protections.
+  `get_config` reports the problem as `load_errors` and the Settings page shows
+  it. A reset keeps `restrictions` and the `server` section, and is refused
+  while a request or background job is running.
+- **One writer at a time.** Writes are serialised under one lock, a failed disk
+  write restores the previous values in memory, and a hand edit of
+  `config.toml` is reloaded before the next write instead of being overwritten.
+  Every successful write is announced to all open windows (`config_updated`) so
+  a stale window cannot save an old copy over a newer safety setting. Values
+  set only for one run (`--dry-run`, an automatic model fallback) are never
+  written to disk.
+- **Vault names owned by features.** The generic `store_api_key` and
+  `delete_api_key` RPCs refuse `heliox_mesh` and names starting with `ssh:` or
+  `air_handoff:`, so a client cannot replace the mesh secret or an SSH key
+  through the API-key path.
+- **Dry run is fixed per job.** A background job records whether dry run was on
+  when it was submitted and keeps that mode until it ends; turning dry run off
+  mid-job does not let that job start changing the system.
+
 ## 🔌 Tools from the person's MCP servers
 
 `pilot.mcp_client` starts only the servers listed in `mcp_servers.json`, each
@@ -627,6 +662,8 @@ field; the person's own explicit commands are not.
 - Raw keystrokes are buffered *only* in a small, bounded, in-memory deque — purely to be joined into a short-lived local string, pattern-matched, and then immediately discarded, regardless of whether anything matched. That joined string never gets logged, returned, or persisted anywhere — only the matched pattern's *name* (e.g. `"destructive_shell_command"`), or `None`, ever leaves `snapshot()`.
 - Mouse clicks are counted, never located — click coordinates are never read, buffered, or stored anywhere in this codebase; only a click-rate number exists.
 - The OCR snippet used for both triggers is processed in-memory per tick and never persisted verbatim — only the derived cognitive snapshot and matched-pattern name ever reach a notification or log.
+
+**Switched off means nothing is read.** While `config.supervision.enabled` is false, each tick returns at once without running OCR or reading the hook's buffer, even if the hook flag is still set from earlier.
 
 **A tiered opt-in, not one switch.** `config.supervision.enabled` (screen/OCR-based cognitive coaching + risk warnings) and `config.supervision.keyboard_mouse_hook_enabled` (the global keyboard/mouse hook) are deliberately separate flags — a user can turn on the milder capability without ever installing the hook. Both default to `False`. The Settings UI gates the hook toggle further, behind a one-time "I understand" checkbox, since it exceeds every other privacy warning already in this app (including the gesture-cursor-control warning).
 
