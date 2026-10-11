@@ -563,6 +563,15 @@ autonomous source floor (no root, no arbitrary page JavaScript, no registry
 writes or shutdown) still applies. A run that came due while Heliox was off is
 skipped rather than fired late.
 
+## 🎙️ Voice can deny, never approve
+
+Spoken "no", "deny" or "don't" denies whichever approval is pending, including
+background, scheduled and workflow approvals, because denying is always safe.
+Spoken "yes" or "approve" never approves: Heliox points to the visible dialog.
+Voice-started workflows run under the same voice permission ceiling as
+interactive voice commands (the `voice` source profile is passed as their
+scope override), and they arm the human takeover watcher like background jobs.
+
 ## ✋ Human takeover of the desktop
 
 **What this is.** `pilot.security.human_control.HumanControlGate` lets the

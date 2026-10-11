@@ -215,3 +215,54 @@ describe("voice command session notifications", () => {
     expect(state.messages.some((message) => message.type === "assistant")).toBe(false);
   });
 });
+
+describe("voice workflow notes", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    notificationHandler = null;
+    vi.resetModules();
+  });
+
+  it("shows a started voice workflow as a note, not an unexpected-status error", async () => {
+    const { session } = await import("./session");
+
+    notificationHandler!("confirm_required", {
+      plan_id: "background-plan",
+      actions: [{ action_type: "shell_script", target: "powershell", parameters: {} }],
+      reason: "An autonomous task reached an action that requires explicit approval.",
+    });
+    notificationHandler!("voice_result", {
+      command: "open notepad, write a list and save it",
+      status: "submitted",
+      result: "I’m on it. Keep speaking if you want to correct or redirect me.",
+    });
+
+    const state = get(session);
+    expect(state.messages.at(-1)).toMatchObject({
+      type: "system",
+      text: "I’m on it. Keep speaking if you want to correct or redirect me.",
+    });
+    expect(state.confirmRequired).toBe(true); // an unrelated pending approval stays visible
+  });
+
+  it("shows what a mid-task utterance did", async () => {
+    const { session } = await import("./session");
+
+    notificationHandler!("voice_result", {
+      command: "also save it",
+      status: "queued",
+      result: "Got it, I'll include that.",
+    });
+    expect(get(session).messages.at(-1)).toMatchObject({ type: "system", text: "Got it, I'll include that." });
+
+    notificationHandler!("voice_result", {
+      command: "what are you doing",
+      status: "answered",
+      message: "I'm working on: write the shopping list. Step 2 of 3.",
+    });
+    expect(get(session).messages.at(-1)).toMatchObject({
+      type: "result",
+      text: "I'm working on: write the shopping list. Step 2 of 3.",
+    });
+  });
+});

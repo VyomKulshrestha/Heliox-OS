@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Callable, Coroutine
 
@@ -62,6 +63,45 @@ PAUSED_WINDOW_SECONDS = 1800.0
 # be swallowed as workflow control.
 CONTINUE_PHRASES = frozenset({"continue", "resume", "keep going"})
 CANCEL_PHRASES = frozenset({"cancel", "stop", "never mind", "nevermind"})
+PAUSE_PHRASES = frozenset({"pause", "wait", "hold on", "hang on", "one moment", "one sec", "one second"})
+STATUS_PHRASES = frozenset(
+    {
+        "status",
+        "what are you doing",
+        "what are you doing now",
+        "how is it going",
+        "how's it going",
+        "where are you",
+        "are you done",
+        "what's happening",
+        "what is happening",
+        "progress",
+    }
+)
+# Approval answers belong to the visible approval flow, never to a workflow correction.
+APPROVAL_WORDS = frozenset(
+    {
+        "yes",
+        "yeah",
+        "yep",
+        "no",
+        "nope",
+        "ok",
+        "okay",
+        "sure",
+        "approve",
+        "approved",
+        "deny",
+        "denied",
+        "confirm",
+        "go ahead",
+        "do it",
+    }
+)
+# Spoken additions that extend the task rather than change it.
+AMEND_PREFIXES = ("also ", "and ", "then ", "after that ", "plus ", "add ", "and then ")
+# Gnomon's "still wanted" probability above which an utterance amends instead of restarting.
+STILL_WANTED_AMEND = 0.7
 START_WORKFLOW_PREFIXES = (
     "start a workflow to ",
     "start workflow to ",
@@ -94,6 +134,52 @@ NATURAL_WORKFLOW_VERBS = frozenset(
     }
 )
 
+# Everyday desktop verbs. A spoken request with two of them in sequence ("open Notepad,
+# write a shopping list and save it") is a multi-step task for the adaptive
+# observe -> act -> verify loop, not a one-shot plan.
+DESKTOP_ACTION_VERBS = NATURAL_WORKFLOW_VERBS | frozenset(
+    {
+        "add",
+        "attach",
+        "change",
+        "check",
+        "click",
+        "close",
+        "copy",
+        "delete",
+        "download",
+        "draft",
+        "export",
+        "fill",
+        "go",
+        "import",
+        "install",
+        "launch",
+        "move",
+        "navigate",
+        "open",
+        "paste",
+        "play",
+        "print",
+        "read",
+        "remove",
+        "rename",
+        "reply",
+        "save",
+        "search",
+        "select",
+        "set",
+        "share",
+        "sign",
+        "start",
+        "type",
+        "upload",
+        "write",
+    }
+)
+SEQUENCE_MARKERS = (" and ", " then ", " after ", " before ", ", ")
+APP_CONTEXT_MARKERS = (" in ", " using ", " inside ")
+
 
 def extract_voice_workflow_goal(command_text: str) -> str | None:
     """Return the explicit workflow goal from a recognized voice phrase."""
@@ -111,14 +197,29 @@ def should_start_voice_workflow(command_text: str) -> bool:
     normalized = " ".join(command_text.lower().strip().split())
     if not normalized or normalized in CONTINUE_PHRASES | CANCEL_PHRASES:
         return False
-    words = normalized.replace(",", " ").split()
+    words = [word.strip(".,!?") for word in normalized.replace(",", " , ").split() if word.strip(".,!?")]
     if len(words) < 4:
         return False
-    has_workflow_verb = any(word.rstrip(".,!?") in NATURAL_WORKFLOW_VERBS for word in words)
-    has_sequence = any(marker in f" {normalized} " for marker in (" and ", " then ", " after ", " before "))
-    has_app_context = any(marker in f" {normalized} " for marker in (" in ", " using ", " inside "))
+    padded = f" {normalized} "
+    has_workflow_verb = any(word in NATURAL_WORKFLOW_VERBS for word in words)
+    action_verbs = sum(1 for word in words if word in DESKTOP_ACTION_VERBS)
+    has_sequence = any(marker in padded for marker in SEQUENCE_MARKERS)
+    has_app_context = any(marker in padded for marker in APP_CONTEXT_MARKERS)
     strong_goal = normalized.startswith(("take care of ", "handle ", "do this task", "complete this task"))
-    return strong_goal or (has_workflow_verb and (has_sequence or has_app_context))
+    return (
+        strong_goal
+        or (has_workflow_verb and (has_sequence or has_app_context))
+        or (action_verbs >= 2 and has_sequence)
+        or (action_verbs >= 1 and has_app_context and len(words) >= 6)
+    )
+
+
+@dataclass(frozen=True)
+class InstructionOutcome:
+    """What a mid-task utterance did to a workflow, and what to tell the person."""
+
+    kind: str  # cancelled | paused | status | corrected | amended | resumed
+    message: str
 
 
 class VoiceGestureWorkflowEngine:
@@ -139,8 +240,13 @@ class VoiceGestureWorkflowEngine:
         memory: MemoryStore | None = None,
         pending_trigger_window_seconds: float = WAITING_FOR_TRIGGER_SECONDS,
         paused_window_seconds: float = PAUSED_WINDOW_SECONDS,
+        instruction_judge: Callable[[str, str, str], Coroutine[Any, Any, float | None]] | None = None,
     ) -> None:
         self._planner = planner
+        # Gnomon's latest-instruction check (probability the current step is still wanted).
+        self._instruction_judge = instruction_judge
+        # Spoken additions per workflow; every adaptive step reads new entries each round.
+        self._guidance: dict[str, list[str]] = {}
         self._executor = executor
         self._decomposer = decomposer
         self._workflow_store = workflow_store
@@ -354,23 +460,101 @@ class VoiceGestureWorkflowEngine:
         return await self._workflow_store.get(workflow_id)
 
     async def handle_running_instruction(self, invocation_source: str, command_text: str) -> bool:
-        """Apply any new utterance to the active or awaiting workflow."""
+        """Apply a new utterance to the active or awaiting workflow; True if it was consumed."""
+        return await self.apply_instruction(invocation_source, command_text) is not None
+
+    async def apply_instruction(self, invocation_source: str, command_text: str) -> InstructionOutcome | None:
+        """Decide what a mid-task utterance means and apply it, or return None to leave it alone.
+
+        A running workflow, or one waiting for a retry decision inside its short trigger
+        window, claims speech. A paused workflow claims only continue and cancel, so an
+        unrelated command half an hour later is not appended to it. Approval answers go
+        to the approval flow. Status questions are answered without touching the work,
+        pause phrases pause at the next step boundary, spoken additions amend the running
+        step, and anything else corrects it and replans.
+        """
+        phrase = " ".join(command_text.strip().lower().split()).rstrip(".!?")
+        if not phrase or phrase in APPROVAL_WORDS:
+            return None
         workflow = await self._workflow_store.find_active_for_source(invocation_source)
         if workflow is None:
             workflow = await self._workflow_store.find_pending_for_source(
                 invocation_source,
                 within_seconds=self._paused_window_seconds,
             )
-        if workflow is None:
-            return False
-        phrase = " ".join(command_text.strip().lower().split()).rstrip(".!?")
+            if workflow is None or await self.expire_if_stale(workflow.workflow_id):
+                return None
+            if workflow.state == WorkflowState.PAUSED.value and phrase not in CONTINUE_PHRASES | CANCEL_PHRASES:
+                return None
         if phrase in CANCEL_PHRASES:
-            return await self.cancel(workflow.workflow_id)
+            return (
+                InstructionOutcome("cancelled", "I stopped that task.")
+                if await self.cancel(workflow.workflow_id)
+                else None
+            )
         if phrase in CONTINUE_PHRASES:
             if workflow.state in {WorkflowState.PAUSED.value, WorkflowState.WAITING_FOR_TRIGGER.value}:
-                return await self.resume(workflow.workflow_id) is not None
-            return True
-        return await self.correct(workflow.workflow_id, command_text) is not None
+                if await self.resume(workflow.workflow_id) is None:
+                    return None
+            return InstructionOutcome("resumed", "Continuing.")
+        if phrase in STATUS_PHRASES:
+            return InstructionOutcome("status", self._status_line(workflow))
+        if phrase in PAUSE_PHRASES:
+            if await self.pause(workflow.workflow_id):
+                return InstructionOutcome("paused", "I'll pause after this step. Say continue when you're ready.")
+            return InstructionOutcome("status", self._status_line(workflow))
+        if workflow.state in {
+            WorkflowState.PENDING.value,
+            WorkflowState.DECOMPOSING.value,
+            WorkflowState.RUNNING.value,
+        }:
+            if await self._is_addition(workflow, command_text, phrase):
+                await self._amend(workflow, command_text)
+                return InstructionOutcome("amended", "Got it, I'll include that.")
+        if await self.correct(workflow.workflow_id, command_text) is None:
+            return None
+        return InstructionOutcome("corrected", "I updated the active task and I'm replanning now.")
+
+    @staticmethod
+    def _status_line(workflow: VoiceGestureWorkflow) -> str:
+        current = next((step for step in workflow.steps if step.status in {"running", "pending"}), None)
+        if current is None:
+            return f"I'm working on: {workflow.goal[:120]}."
+        total = len(workflow.steps)
+        position = f" Step {current.index + 1} of {total}." if total > 1 else ""
+        # Single-step workflows carry a generic title; the description says what is happening.
+        label = current.title if total > 1 and current.title else current.description.splitlines()[0]
+        return f"I'm working on: {label[:120]}.{position}"
+
+    async def _is_addition(self, workflow: VoiceGestureWorkflow, command_text: str, phrase: str) -> bool:
+        """Gnomon decides when loaded; otherwise a leading "also" / "and" / "then" marks an addition."""
+        if self._instruction_judge is not None:
+            current = next((step for step in workflow.steps if step.status in {"running", "pending"}), None)
+            try:
+                still_wanted = await self._instruction_judge(
+                    workflow.goal, command_text, current.description if current else workflow.goal
+                )
+            except Exception:
+                still_wanted = None
+            if still_wanted is not None:
+                return still_wanted >= STILL_WANTED_AMEND
+        return phrase.startswith(AMEND_PREFIXES)
+
+    async def _amend(self, workflow: VoiceGestureWorkflow, command_text: str) -> None:
+        addition = " ".join(command_text.strip().split())
+        self._guidance.setdefault(workflow.workflow_id, []).append(addition)
+        if self._memory is not None:
+            try:
+                await self._memory.put_working(
+                    session_id=workflow.invocation_source,
+                    task_id=workflow.workflow_id,
+                    key="latest_addition",
+                    value=addition,
+                    priority=1.0,
+                    ttl_seconds=self._paused_window_seconds,
+                )
+            except Exception:
+                logger.warning("Could not persist workflow addition memory", exc_info=True)
 
     async def list_workflows(self, include_terminal: bool = False) -> list[dict[str, Any]]:
         workflows = await self._workflow_store.list(include_terminal=include_terminal)
@@ -441,6 +625,13 @@ class VoiceGestureWorkflowEngine:
                 if not remaining:
                     return
 
+                if len(workflow.steps) > 1:
+                    step = remaining[0]
+                    await self._say(
+                        f"Step {step.index + 1} of {len(workflow.steps)}: {step.title or step.description[:80]}",
+                        "task_narration",
+                        f"voice-workflow:{workflow_id}:{step.index}:start",
+                    )
                 stop = await self._run_step(workflow, remaining[0])
                 if stop:
                     return
@@ -592,6 +783,7 @@ class VoiceGestureWorkflowEngine:
             plan_id_prefix=sub_plan_id,
             on_round_complete=record_round,
             memory_task_id=workflow.workflow_id,
+            guidance=self._guidance.setdefault(workflow.workflow_id, []),
         )
         if adaptive_step.status != "success":
             await self._workflow_store.update_step(
@@ -608,6 +800,12 @@ class VoiceGestureWorkflowEngine:
                 trigger_deadline=self._deadline_iso(self._pending_trigger_window_seconds),
             )
             await self._notify(workflow.workflow_id)
+            reason = " ".join((adaptive_step.error or "it was not verified").split())[:160]
+            await self._say(
+                f"I couldn't finish that step: {reason}. Say continue to retry, tell me what to change, or say cancel.",
+                "task_failure",
+                f"voice-workflow:{workflow.workflow_id}:{step.index}:blocked",
+            )
             return True
 
         await self._workflow_store.update_step(
@@ -638,6 +836,14 @@ class VoiceGestureWorkflowEngine:
         await self._notify(workflow.workflow_id)
         await self._announce_completion(workflow.workflow_id)
         return True
+
+    async def _say(self, text: str, channel: str, key: str) -> None:
+        if self._speech is None:
+            return
+        try:
+            await self._speech(text, channel, key)
+        except Exception:
+            logger.debug("Workflow speech failed", exc_info=True)
 
     async def _announce_completion(self, workflow_id: str) -> None:
         if self._speech is None:

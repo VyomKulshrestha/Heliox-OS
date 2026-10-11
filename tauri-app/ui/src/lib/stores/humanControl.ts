@@ -28,6 +28,8 @@ const DEFAULT_STATE: HumanControlState = {
 
 const JOB_STARTED = new Set(["autonomous_started"]);
 const JOB_ENDED = new Set(["autonomous_complete", "autonomous_cancelled"]);
+// Voice workflows drive the desktop through the same loop, so they count as work to take back.
+const WORKFLOW_ACTIVE_STATES = new Set(["pending", "decomposing", "running"]);
 
 function jobId(params: Record<string, unknown>): string {
   const job = (params.job ?? params) as Record<string, unknown>;
@@ -46,6 +48,17 @@ function createHumanControl() {
     const p = (params ?? {}) as Record<string, unknown>;
     if (method === "human_control") {
       applyStatus(p);
+      return;
+    }
+    if (method === "voice_gesture_workflow_state") {
+      const workflowId = String(p.workflow_id ?? "");
+      if (!workflowId) return;
+      const key = `workflow:${workflowId}`;
+      const active = WORKFLOW_ACTIVE_STATES.has(String(p.state ?? ""));
+      store.update((state) => {
+        const others = state.activeJobs.filter((job) => job !== key);
+        return { ...state, activeJobs: active ? [...others, key] : others };
+      });
       return;
     }
     const id = jobId(p);

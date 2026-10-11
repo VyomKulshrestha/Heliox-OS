@@ -215,6 +215,37 @@ MAX_ATTENTION_NOTIFICATION_BUFFER = 64
 # affirmative phrases are detected only so they can be rejected clearly while
 # a visible confirmation is pending, instead of being misread as a plan
 # correction and cancelling/replanning the request.
+VOICE_DENIALS = frozenset(
+    {
+        "no",
+        "nope",
+        "deny",
+        "deny it",
+        "do not",
+        "dont",
+        "don t",
+        "do not do that",
+        "don t do that",
+        "dont do that",
+        "cancel that",
+        "reject",
+        "reject it",
+    }
+)
+VOICE_STOP_PHRASES = frozenset(
+    {
+        "stop",
+        "cancel",
+        "stop it",
+        "stop that",
+        "stop everything",
+        "cancel everything",
+        "stop all tasks",
+        "cancel all tasks",
+        "never mind",
+        "nevermind",
+    }
+)
 VOICE_APPROVAL_ATTEMPTS = frozenset(
     {
         "approve",
@@ -1331,6 +1362,8 @@ class PilotServer:
                 memory=self._memory,
                 pending_trigger_window_seconds=self.config.gesture_workflows.pending_trigger_window_seconds,
                 paused_window_seconds=self.config.gesture_workflows.paused_window_seconds,
+                # Gnomon decides whether a spoken addition amends the running step or replaces it.
+                instruction_judge=self._gnomon_reviewer.still_wanted if self._gnomon_reviewer is not None else None,
             )
             self._voice_gesture_workflows.set_broadcast(self._broadcast_notification)
             self._voice_gesture_workflows.set_speech(self._speak_companion_text)
@@ -9469,24 +9502,29 @@ def handle_tool(tool_name, params):
         """
         if not self._voice_gesture_workflows:
             return False
-        if await self._voice_gesture_workflows.handle_running_instruction("voice", command_text):
+        outcome = await self._voice_gesture_workflows.apply_instruction("voice", command_text)
+        if outcome is not None:
             normalized = " ".join(command_text.lower().split()).rstrip(".!?")
-            cancelled = normalized in {"cancel", "stop", "never mind", "nevermind"}
-            message = "I stopped that task." if cancelled else "I updated the active task and I’m replanning now."
+            status = {
+                "cancelled": "cancelled",
+                "corrected": "revising",
+                "status": "answered",
+            }.get(outcome.kind, "queued")
             await self._broadcast_notification(
                 "voice_result",
                 {
                     "command": command_text,
-                    "status": "cancelled" if cancelled else "revising",
-                    "result": message,
-                    "coordinated_correction": not cancelled,
+                    "status": status,
+                    "message": outcome.message,
+                    "result": outcome.message,
+                    "coordinated_correction": outcome.kind == "corrected",
                 },
             )
             if self._voice_listener and self._voice_listener.is_running:
                 self._spawn_interaction_speech(
-                    message,
-                    channel=SpeechChannel.TASK_FAILURE if cancelled else SpeechChannel.TASK_NARRATION,
-                    dedupe_key=f"voice-workflow-update:{normalized}",
+                    outcome.message,
+                    channel=SpeechChannel.TASK_FAILURE if outcome.kind == "cancelled" else SpeechChannel.TASK_NARRATION,
+                    dedupe_key=f"voice-workflow-update:{outcome.kind}:{normalized}",
                 )
             return True
         if await self._voice_gesture_workflows.handle_control_phrase("voice", command_text):
@@ -9503,13 +9541,15 @@ def handle_tool(tool_name, params):
             goal = command_text.strip()
         if not goal:
             return False
-        workflow = await self._voice_gesture_workflows.start(goal, InvocationSource.VOICE)
+        _source, voice_scope = self._execution_scope_for_source("voice")
+        workflow = await self._voice_gesture_workflows.start(goal, InvocationSource.VOICE, voice_scope)
         message = "I’m on it. Keep speaking if you want to correct or redirect me."
         await self._broadcast_notification(
             "voice_result",
             {
                 "command": command_text,
                 "status": "submitted",
+                "message": message,
                 "result": message,
                 "workflow": workflow.to_dict(),
             },
@@ -9618,199 +9658,22 @@ def handle_tool(tool_name, params):
         )
         return True
 
-    async def _voice_command_dispatch_legacy(self, command_text: str) -> None:
-        """Called by ContinuousVoiceListener when a voice command is recognized.
+    async def _stop_background_jobs(self) -> int:
+        """Cancel every running autonomous job; returns how many were stopped."""
+        if self._autonomous is None:
+            return 0
+        from pilot.agents.autonomous import JobStatus
 
-        Runs the legacy voice planner/executor path and speaks the result back.
-
-        Args:
-            command_text: The recognized voice command text.
-        """
-        logger.info("Voice command received: '%s'", command_text)
-
-        if self.config.voice.barge_in_enabled and self._speech_coordinator.status()["active"]:
-            await self._speech_coordinator.stop_all()
-            await self._broadcast_notification(
-                "voice_status",
-                {"status": "interrupted", "reason": "new voice command"},
-            )
-
-        if self._interactive_request_active:
-            result = await self._handle_interject({"input": command_text}, None)
-            await self._broadcast_notification(
-                "voice_result",
-                {
-                    "command": command_text,
-                    "status": result.get("status", "error"),
-                    "message": result.get("message", ""),
-                    "coordinated_correction": True,
-                },
-            )
-            return
-
-        language = getattr(
-            self._voice_listener,
-            "last_detected_language",
-            self.config.voice.language if self.config.voice.language != "auto" else "en",
-        )
-
-        await self._broadcast_notification(
-            "voice_command",
-            {
-                "command": command_text,
-                "status": "executing",
-                "language": language,
-            },
-        )
-
-        try:
-            screen_ctx = ""
-            if self._screen_vision:
-                try:
-                    base_ctx = self._screen_vision.get_context_for_planner()
-                    screen_ctx = f"{base_ctx}\nUser language: {language}"
-                except Exception:
-                    screen_ctx = f"User language: {language}"
-            else:
-                screen_ctx = f"User language: {language}"
-            if self._recent_companion_context:
-                screen_ctx = f"{screen_ctx}\n\n[RECENT COMPANION CONTEXT]\n{self._recent_companion_context}"
-            if self._subconscious:
-                try:
-                    persona_context = await self._subconscious.get_persona_context()
-                    if persona_context:
-                        screen_ctx = (
-                            f"{screen_ctx}\n\n[LEARNED USER BEHAVIOR]\n"
-                            f"{persona_context}\n"
-                            "Treat these as preferences, never as permission to bypass "
-                            "confirmation, safety policy, or the user's current request."
-                        )
-                except Exception:
-                    logger.debug("Could not load learned persona context for voice", exc_info=True)
-
-            # Plan with multilingual context — single call only
-            plan = await self._planner.plan(command_text, screen_context=screen_ctx)
-            if plan.error:
-                await self._broadcast_notification(
-                    "voice_result",
-                    {
-                        "command": command_text,
-                        "status": "error",
-                        "message": plan.error,
-                        "language": language,
-                    },
-                )
-                await self._speak_voice_response(
-                    f"Sorry, I couldn't process that. {plan.error[:100]}",
-                    channel=SpeechChannel.TASK_FAILURE,
-                    dedupe_key=f"voice-plan-error:{command_text.casefold()}",
-                )
-                return
-
-            await self._broadcast_notification(
-                "plan_preview",
-                {
-                    "plan_id": "voice",
-                    "actions": [a.model_dump() for a in plan.actions],
-                    "explanation": plan.explanation,
-                    "source": "voice",
-                    "language": language,
-                },
-            )
-
-            from pilot.security.gateway import DEFAULT_SOURCE_PROFILES, InvocationSource, TaskScopeOverride
-
-            if self._orchestrator:
-                # Route through the specialist-agent orchestrator (same one
-                # interactive text commands use) instead of a monolithic
-                # executor call. Individual specialists set their own
-                # invocation_source (e.g. WebAgent hardcodes WEB_AGENT); this
-                # scope_override narrows whichever one applies down to at
-                # most the "voice" profile's ceiling, so a voice-originated
-                # plan can never end up wider than voice's restrictions just
-                # because it got routed to a specialist with a more
-                # permissive default. See TaskScopeOverride/
-                # resolve_effective_profile in pilot.security.gateway.
-                voice_profile = self.config.gateway.source_profiles.get("voice", DEFAULT_SOURCE_PROFILES["voice"])
-                voice_scope_override = TaskScopeOverride(
-                    max_tier=voice_profile.max_tier,
-                    deny_action_types=voice_profile.deny_action_types,
-                    allow_root=voice_profile.allow_root,
-                )
-                results = await self._orchestrator.execute_plan(
-                    command_text,
-                    plan,
-                    plan_id="voice",
-                    scope_override=voice_scope_override,
-                )
-            else:
-                results = await self._executor.execute(
-                    plan,
-                    plan_id="voice",
-                    invocation_source=InvocationSource.VOICE,
-                )
-            verification = await self._verifier.verify(plan, results)
-
-            output_parts = []
-            for r in results:
-                if r.output:
-                    output_parts.append(r.output[:200])
-
-            result_text = " ".join(output_parts) if output_parts else plan.explanation
-            status = "success" if verification.passed else "partial"
-            await self._broadcast_notification(
-                "voice_result",
-                {
-                    "command": command_text,
-                    "status": status,
-                    "result": result_text[:500],
-                    "language": language,
-                    "companion_follow_up": None,
-                },
-            )
-
-            spoken = result_text[:300] if len(result_text) < 300 else result_text[:297] + "..."
-            await self._speak_voice_response(
-                spoken,
-                channel=SpeechChannel.FINAL_ANSWER,
-                dedupe_key=f"voice-result:{command_text.casefold()}",
-            )
-            if (
-                verification.passed
-                and self.config.narration.follow_up_enabled
-                and self._execution_companion
-                and hasattr(self._execution_companion, "follow_up")
-            ):
-                self._spawn_companion_follow_up(
-                    user_input=command_text,
-                    plan=plan,
-                    results=results,
-                    verification=verification,
-                    result_text=result_text,
-                    speak=True,
-                )
-
-        except Exception as e:
-            logger.error("Voice command execution failed: %s", e)
-
-            await self._broadcast_notification(
-                "voice_result",
-                {
-                    "command": command_text,
-                    "status": "error",
-                    "message": str(e),
-                    "language": language,
-                },
-            )
-
-            try:
-                await self._speak_voice_response(
-                    "Sorry, something went wrong while executing your request.",
-                    channel=SpeechChannel.TASK_FAILURE,
-                    dedupe_key=f"voice-exception:{command_text.casefold()}",
-                )
-            except Exception:
-                pass
+        running = [
+            job.job_id
+            for job in (self._autonomous.get_job(job_id) for job_id in list(self._autonomous._active_tasks))
+            if job is not None and job.status in {JobStatus.QUEUED, JobStatus.DECOMPOSING, JobStatus.RUNNING}
+        ]
+        stopped = 0
+        for job_id in running:
+            if await self._autonomous.cancel(job_id):
+                stopped += 1
+        return stopped
 
     async def _voice_command_dispatch(self, command_text: str) -> None:
         """Run voice through the same safe interaction path as typed input."""
@@ -9829,7 +9692,13 @@ def handle_tool(tool_name, params):
                 for character in command_text.casefold()
             ).split()
         )
-        pending_approval = self._pending_confirms.get(self._active_plan_id)
+        # Any pending approval counts: interactive, a background job, a scheduled run or a workflow.
+        pending_plan_id = (
+            self._active_plan_id
+            if self._active_plan_id in self._pending_confirms
+            else next(reversed(self._pending_confirms), "")
+        )
+        pending_approval = self._pending_confirms.get(pending_plan_id) if pending_plan_id else None
         if pending_approval is not None and normalized_command in VOICE_APPROVAL_ATTEMPTS:
             message = "For safety, approve this request in the visible Heliox confirmation dialog."
             await self._broadcast_notification(
@@ -9838,14 +9707,41 @@ def handle_tool(tool_name, params):
                     "command": command_text,
                     "status": "approval_required",
                     "message": message,
-                    "plan_id": self._active_plan_id,
+                    "plan_id": pending_plan_id,
                 },
             )
             await self._speak_voice_response(
                 message,
                 channel=SpeechChannel.APPROVAL_RISK,
-                dedupe_key=f"voice-approval-boundary:{self._active_plan_id}",
+                dedupe_key=f"voice-approval-boundary:{pending_plan_id}",
             )
+            return
+        if pending_approval is not None and normalized_command in VOICE_DENIALS:
+            # Denying is always safe, so it works by voice; approving still needs the visible dialog.
+            await self._handle_confirm({"plan_id": pending_plan_id, "confirmed": False}, None)
+            message = "Okay, I won't run that."
+            await self._broadcast_notification(
+                "voice_result",
+                {"command": command_text, "status": "answered", "message": message, "plan_id": pending_plan_id},
+            )
+            await self._speak_voice_response(
+                message, channel=SpeechChannel.TASK_NARRATION, dedupe_key=f"voice-deny:{pending_plan_id}"
+            )
+            return
+
+        if not self._interactive_request_active and normalized_command in VOICE_STOP_PHRASES:
+            # "Stop" with no interactive task stops background work instead of becoming a new task.
+            stopped = await self._stop_background_jobs()
+            message = (
+                f"Stopped {stopped} background task{'s' if stopped != 1 else ''}." if stopped else "Okay, stopped."
+            )
+            await self._broadcast_notification(
+                "voice_result", {"command": command_text, "status": "answered", "message": message}
+            )
+            if stopped:
+                await self._speak_voice_response(
+                    message, channel=SpeechChannel.TASK_NARRATION, dedupe_key=f"voice-stop:{uuid.uuid4()}"
+                )
             return
 
         if self._interactive_request_active:

@@ -2002,9 +2002,32 @@ Result of a voice-triggered command execution.
 
 On error: `{ "command": "...", "status": "error", "message": "..." }`
 
-For durable voice workflows, `status` may be `submitted`, `revising`, or
-`cancelled` and the payload may include `workflow` or
-`coordinated_correction: true`.
+For durable voice workflows, `status` may be `submitted`, `revising`,
+`answered`, `queued` or `cancelled`, with the spoken text in both `message`
+and `result`, and the payload may include `workflow` or
+`coordinated_correction: true`. A spoken request with two everyday desktop
+verbs in sequence ("open Notepad, write a shopping list and save it"), or a
+longer request naming an app, starts an adaptive workflow under the voice
+permission ceiling. While it runs:
+
+- "cancel" / "stop" cancels it (`cancelled`);
+- "wait", "hold on" or "pause" pauses it at the next step boundary (`queued`);
+- "what are you doing" or "status" is answered without touching the work
+  (`answered`);
+- an addition ("also save it as shopping.txt") amends the running step
+  without restarting it (`queued`); Gnomon's latest-instruction check decides
+  addition versus replacement when it is loaded, otherwise a leading "also",
+  "and" or "then" marks an addition;
+- anything else corrects the step and replans (`revising`).
+
+Approval answers never change a workflow. "No", "deny" or "don't" denies the
+pending approval (interactive, background, scheduled or workflow) and is
+reported as `answered`; "yes" or "approve" returns `approval_required`,
+because approval stays in the visible dialog. "Stop" with no interactive task
+cancels running background jobs instead of being planned as a new task. A
+paused workflow claims only continue and cancel, and a failed step says why
+and waits about 90 seconds for continue, a correction or cancel. Multi-step
+workflows announce each step as it starts.
 
 ### Autonomous and workflow progress
 

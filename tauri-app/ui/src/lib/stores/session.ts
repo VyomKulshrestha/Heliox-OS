@@ -515,8 +515,9 @@ function createSession() {
           }));
           break;
         }
-        if (status === "answered" || status === "revising" || status === "queued") {
-          const message = String(p.message ?? "").trim();
+        // A started voice workflow is not a finished task: show the note, keep loading and approvals as they are.
+        if (status === "answered" || status === "revising" || status === "queued" || status === "submitted") {
+          const message = String(p.message ?? p.result ?? "").trim();
           if (message) {
             update((s) => ({
               ...s,

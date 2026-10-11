@@ -222,12 +222,26 @@ class TestVoiceStartPhrase:
             "complete the expense report in Hermes",
             "find the invoice and then update the record",
             "do this task for me in the accounting app",
+            "open Notepad, write a shopping list and save it on the desktop",
+            "open Chrome then search for flights to Delhi",
+            "write an email to Priya about the invoice in Outlook",
+            "rename the report and move it to the archive folder",
         ],
     )
     def test_natural_multi_step_app_goal_starts_workflow(self, command):
         assert should_start_voice_workflow(command) is True
 
-    @pytest.mark.parametrize("command", ["open github", "good morning", "stop", "show system info"])
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "open github",
+            "good morning",
+            "stop",
+            "show system info",
+            "what is the weather and the time",
+            "open spotify please",
+        ],
+    )
     def test_short_or_conversational_command_stays_on_fast_voice_path(self, command):
         assert should_start_voice_workflow(command) is False
 

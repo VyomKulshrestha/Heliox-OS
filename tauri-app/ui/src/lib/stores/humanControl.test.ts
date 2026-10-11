@@ -44,6 +44,17 @@ describe("humanControl store", () => {
     expect(read().activeJobs).toEqual([]);
   });
 
+  it("also offers take-over while a voice workflow drives the desktop", async () => {
+    const { read } = await load();
+
+    capturedHandler!("voice_gesture_workflow_state", { workflow_id: "w1", state: "running" });
+    expect(read().activeJobs).toEqual(["workflow:w1"]);
+    capturedHandler!("voice_gesture_workflow_state", { workflow_id: "w1", state: "running" });
+    expect(read().activeJobs).toEqual(["workflow:w1"]);
+    capturedHandler!("voice_gesture_workflow_state", { workflow_id: "w1", state: "success" });
+    expect(read().activeJobs).toEqual([]);
+  });
+
   it("follows the daemon's human_control notifications", async () => {
     const { read } = await load();
 
