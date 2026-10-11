@@ -23,7 +23,8 @@ else:
 
 import tomli_w
 
-from pilot.security.gateway import DEFAULT_SOURCE_PROFILES, SourceProfile
+from pilot.actions import PermissionTier
+from pilot.security.gateway import DEFAULT_SOURCE_PROFILES, ActionFamily, SourceProfile
 
 
 def _xdg(env_var: str, fallback: str) -> Path:
@@ -1149,8 +1150,14 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
                 if not isinstance(profile_raw, dict):
                     continue
                 default = parsed_profiles.get(name, SourceProfile())
+                if "max_tier" in profile_raw and isinstance(profile_raw["max_tier"], dict):
+                    # A family left out of a written max_tier table is read-only, not unlimited.
+                    max_tier = {family.value: int(PermissionTier.READ_ONLY) for family in ActionFamily}
+                    max_tier.update({str(k): int(v) for k, v in profile_raw["max_tier"].items()})
+                else:
+                    max_tier = dict(default.max_tier)
                 parsed_profiles[name] = SourceProfile(
-                    max_tier={str(k): int(v) for k, v in profile_raw.get("max_tier", default.max_tier).items()},
+                    max_tier=max_tier,
                     deny_action_types=[str(a) for a in profile_raw.get("deny_action_types", default.deny_action_types)],
                     allow_root=bool(profile_raw.get("allow_root", default.allow_root)),
                 )

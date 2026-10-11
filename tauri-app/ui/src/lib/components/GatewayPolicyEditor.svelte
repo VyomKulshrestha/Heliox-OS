@@ -10,9 +10,9 @@
   };
 
   const TIER_NAMES = ["READ_ONLY", "USER_WRITE", "SYSTEM_MODIFY", "DESTRUCTIVE", "ROOT_CRITICAL"];
-  // The gateway enforces ROOT_CRITICAL for a family a profile leaves unset (pilot/security/gateway.py),
-  // so the editor shows that instead of guessing a lower ceiling the daemon is not applying.
-  const ROOT_CRITICAL = 4;
+  // The gateway treats a family a profile leaves unset as READ_ONLY (pilot/security/gateway.py),
+  // so the editor shows that rather than a wider ceiling the daemon is not applying.
+  const READ_ONLY = 0;
   const FAMILIES = ["shell", "browsing", "system_control", "other"];
   const PROFILE_ORDER = [
     "interactive",
@@ -52,7 +52,7 @@
   });
 
   function withAllFamilies(profile: SourceProfile): SourceProfile {
-    const maxTier: Record<string, number> = Object.fromEntries(FAMILIES.map((family) => [family, ROOT_CRITICAL]));
+    const maxTier: Record<string, number> = Object.fromEntries(FAMILIES.map((family) => [family, READ_ONLY]));
     return {
       ...profile,
       max_tier: { ...maxTier, ...(profile.max_tier ?? {}) },
@@ -181,7 +181,7 @@
                 <span class="family-label">{family}</span>
                 <select
                   class="input-sm"
-                  value={profile.max_tier[family] ?? ROOT_CRITICAL}
+                  value={profile.max_tier[family] ?? READ_ONLY}
                   onchange={(e) => updateTier(name, family, e)}
                   aria-label={`${family} ceiling for ${name}`}
                 >

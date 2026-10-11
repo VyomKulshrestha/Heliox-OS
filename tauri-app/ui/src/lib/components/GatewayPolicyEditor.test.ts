@@ -70,15 +70,15 @@ describe("gateway policy editing", () => {
     daemonMocks.offNotification.mockReset();
   });
 
-  it("shows ROOT_CRITICAL (tier 4) for a family the daemon policy leaves unset", async () => {
+  it("shows READ_ONLY (tier 0) for a family the daemon policy leaves unset", async () => {
     serve({ autonomous: { ...autonomous, max_tier: { shell: 1 } } });
     render(GatewayPolicyEditor);
     await screen.findByLabelText("shell ceiling for autonomous");
 
     for (const family of ["browsing", "system_control", "other"]) {
       const box = select(`${family} ceiling for autonomous`);
-      expect(box.value).toBe("4");
-      expect(box.selectedOptions[0].textContent).toBe("ROOT_CRITICAL");
+      expect(box.value).toBe("0");
+      expect(box.selectedOptions[0].textContent).toBe("READ_ONLY");
     }
     expect(select("shell ceiling for autonomous").value).toBe("1");
     // Showing the default is not an edit, so there is nothing to save yet.

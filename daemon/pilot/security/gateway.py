@@ -190,13 +190,17 @@ class SourceProfile:
     """The enforced floor for one InvocationSource: a per-family tier
     ceiling, an explicit deny list, and whether root/Tier-4 actions are
     reachable at all (independent of the per-family tier ceiling, since a
-    ceiling of ROOT_CRITICAL would otherwise implicitly allow root)."""
+    ceiling of ROOT_CRITICAL would otherwise implicitly allow root).
+
+    Defaults fail closed: a profile that does not say otherwise is read-only
+    with root denied, and a family missing from ``max_tier`` is treated as
+    READ_ONLY when a plan is checked."""
 
     max_tier: dict[str, int] = field(
-        default_factory=lambda: {f.value: int(PermissionTier.ROOT_CRITICAL) for f in ActionFamily}
+        default_factory=lambda: {f.value: int(PermissionTier.READ_ONLY) for f in ActionFamily}
     )
     deny_action_types: list[str] = field(default_factory=list)
-    allow_root: bool = True
+    allow_root: bool = False
 
 
 DEFAULT_SOURCE_PROFILES: dict[str, SourceProfile] = {
@@ -205,6 +209,7 @@ DEFAULT_SOURCE_PROFILES: dict[str, SourceProfile] = {
     # the critic; the gateway must not add any additional restriction here.
     "interactive": SourceProfile(
         max_tier={f.value: int(PermissionTier.ROOT_CRITICAL) for f in ActionFamily},
+        allow_root=True,
     ),
     "autonomous": SourceProfile(
         max_tier={
@@ -324,6 +329,7 @@ DEFAULT_SOURCE_PROFILES: dict[str, SourceProfile] = {
     # instead of silently defaulting to an untagged floor.
     "system_agent": SourceProfile(
         max_tier={f.value: int(PermissionTier.ROOT_CRITICAL) for f in ActionFamily},
+        allow_root=True,
     ),
     # SshAgent never routes through the shared Executor at all (it opens
     # its own Paramiko connections, hard-restricted to
@@ -574,7 +580,9 @@ class AgentGateway:
     def _profile_for(self, source: InvocationSource) -> SourceProfile:
         profiles = self._config.gateway.source_profiles
         key = source.value if source != InvocationSource.UNKNOWN else DEFAULT_UNKNOWN_SOURCE_PROFILE
-        return profiles.get(key) or DEFAULT_SOURCE_PROFILES["interactive"]
+        # A source with no saved profile gets its built-in one, and a source with neither
+        # gets the read-only default; it never inherits the interactive profile's full access.
+        return profiles.get(key) or DEFAULT_SOURCE_PROFILES.get(key) or SourceProfile()
 
     async def authorize(
         self,
@@ -600,7 +608,8 @@ class AgentGateway:
         for index, action in enumerate(plan.actions):
             family = action_family(action.action_type)
             tier = int(action.permission_tier)
-            ceiling = profile.max_tier.get(family.value, int(PermissionTier.ROOT_CRITICAL))
+            # A family the profile does not list is read-only (fail closed).
+            ceiling = profile.max_tier.get(family.value, int(PermissionTier.READ_ONLY))
 
             action_reason = ""
             if action.action_type.value in profile.deny_action_types:
