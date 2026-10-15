@@ -20,6 +20,31 @@ def test_committed_software_benchmark_bundle_has_truthful_passing_contracts() ->
     assert world_model["validation"]["disk_improvement_percent"] > 0
     assert world_model["validation"]["process_improvement_percent"] > 0
     assert "no claim" in report["claim_boundary"].lower()
+    if "coadaptation_simulated_users" in report:
+        _assert_coadaptation_contracts(report["coadaptation_simulated_users"])
+
+
+def _assert_coadaptation_contracts(entry: dict) -> None:
+    """Bundles captured after the co-adaptation suite landed carry its quick run: simulated users on the tuning
+    families, labelled in-sample, every hard agency invariant at zero and nothing promoted to runtime."""
+    assert entry["benchmark"] == "coadaptation_simulated_users"
+    assert entry["evidence_kind"] == "simulated"
+    assert entry["split"] == "tune" and entry["in_sample"] is True
+    assert entry["families"] == ["F1", "F3"]
+    boundary = "simulated users only; tuning families, in-sample; no claim about people"
+    assert entry["claim_boundary"] == boundary
+    assert entry["promoted_to_runtime"] is False
+    assert len(entry["protocol_sha256"]) == 64
+    for family in entry["families"]:
+        assert entry["metrics"]["by_family"][family]["label"] == "tuning families, in-sample"
+    for policy, audit in entry["agency_audit"].items():
+        assert audit["passed"], policy
+
+
+def test_coadaptation_contracts_hold_for_a_quick_run_entry() -> None:
+    from benchmarks.coadaptation_suite import benchmark
+
+    _assert_coadaptation_contracts(benchmark(quick=True))
 
 
 def test_committed_subscription_planning_evidence_is_bounded_and_non_destructive() -> None:

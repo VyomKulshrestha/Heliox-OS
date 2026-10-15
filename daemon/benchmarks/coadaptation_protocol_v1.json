@@ -1,0 +1,167 @@
+{
+  "protocol_id": "coadapt-study-v1",
+  "status": "draft_pending_pilot",
+  "source_commit": null,
+  "pinned_hashes": {"prior_table": null, "policy": null, "analysis_script": null, "consent_text": null},
+  "evidence_kind": "live_human",
+  "population": {
+    "pilot_n": 3,
+    "confirmatory_n": 16,
+    "eligibility": "adults, nonclinical, self-selected",
+    "excluded_from_confirmatory": ["pilot"],
+    "n_rule": "largest N needed at power 0.8 by the validation and holdout simulated families F2, F4, F6 (section 18.3); never the tuning families"
+  },
+  "design": {
+    "sessions": 3,
+    "min_hours_between_sessions": 20,
+    "max_days": 14,
+    "block_trials": 8,
+    "session1": "practice + Phase A (12 blocks, permuted rounds)",
+    "later_sessions": "practice + Phase A-lite (6) + Phase B (10 blocks in two halves of 3 adaptive, 1 probe, 1 comparator; positions counterbalanced, section 12.3)",
+    "comparator": "best fixed assisted regime by session-1 realized utility (rank_fixed_regimes)",
+    "idle_epochs_per_session": 2,
+    "trial_limits_ms": {"pointing": 10000, "menu": 15000},
+    "layout_grid": {
+      "pointing": {"w_px": [16, 28, 44], "gap_px": [2, 8], "d_px": [120, 240, 360], "grids": ["4x3", "6x2"]},
+      "menu": {"n_items": [6, 12, 16], "item_h_px": 24, "item_w_px": 220, "button_h_px": 32},
+      "fit_px": [640, 420]
+    },
+    "retention_days_min": 90,
+    "analysis_within_days_of_last_session": 60
+  },
+  "hyperparameters": {
+    "ambiguity_threshold": 0.25,
+    "unintended_activation_tolerance": 0.05,
+    "noninferiority_margin": 0.01,
+    "upper_bound_credibility": 0.95,
+    "exploration_floor": 0.1,
+    "switching_penalty": 0.1,
+    "thompson_draws": 256
+  },
+  "utility_weights": {
+    "primary": "the participant's priorities logged with each block's L1 decision",
+    "secondary": [0.5, 0.5, 0.5]
+  },
+  "hypotheses": [
+    {
+      "id": "H1",
+      "claim": "prediction",
+      "contrast": "FULL against PHYSICS_ONLY and against PERSON_STATIC",
+      "score": "mean per-trial prequential log score summed over complete, ua, correction, veto and log_time (censored: log P(T >= limit)); each outcome also reported",
+      "scoring_set": {"primary": "Phase A and A-lite trials", "secondary": "all trials"},
+      "rule": "95% grouped-bootstrap CI of the per-participant mean difference excludes 0",
+      "chaining": "forward-chaining by session"
+    },
+    {
+      "id": "H2",
+      "claim": "decision",
+      "contrast": "adaptive Phase B blocks against concurrent assistance_off probe blocks (superiority) and concurrent comparator blocks (non-inferiority)",
+      "ni_margin": 0.05,
+      "burn_in_trials": 3,
+      "outcome": "mean realized utility per trial (section 21.2), each participant under their own logged priorities",
+      "secondary": ["all trials", "protocol weights", "switched-blocks-only contrast", "doubly robust OPE of S_2 and S_3, reported only when G5 passes"],
+      "keyboard_sessions": "non-inferiority contrast only"
+    },
+    {
+      "id": "H3",
+      "claim": "agency",
+      "hard_invariants": "zero violations of A1-A12 (any violation fails the study)",
+      "override_rule": "adaptive override rate <= concurrent comparator override rate + 5 percentage points",
+      "control_rule": "B3 control ratings in adaptive blocks non-inferior to concurrent comparator and probe blocks, margin 0.5 on the 1-7 scale",
+      "burn_in_trials": 3,
+      "predictability": "descriptive, by session"
+    },
+    {
+      "id": "H4",
+      "claim": "today",
+      "contrast": "FULL against NO_TODAY",
+      "rule": "as H1"
+    },
+    {
+      "id": "H5",
+      "claim": "co-adaptation",
+      "contrast": "FULL against NO_PRACTICE_SWITCH",
+      "rule": "as H1",
+      "probe_throughput": "descriptive"
+    },
+    {
+      "id": "H6",
+      "claim": "safety",
+      "contrast": "adaptive UA rate minus assistance_off probe UA rate, concurrent Phase B blocks",
+      "margin_pp": 2.0,
+      "rule": "upper 95% bound of the difference <= +2 percentage points",
+      "burn_in_trials": 3,
+      "idle_ua": "descriptive"
+    },
+    {
+      "id": "H7",
+      "claim": "gaze",
+      "exploratory": true,
+      "contrast": "target-posterior Brier score with and without the gaze prior, idle UA not raised"
+    },
+    {
+      "id": "H8",
+      "claim": "for this user",
+      "contrast": "FULL started from the leave-one-participant-out population prior against POPULATION (the same prior, no person updates)",
+      "rule": "as H1"
+    },
+    {
+      "id": "H9",
+      "claim": "across sessions",
+      "contrast": "FULL against SESSION_ONLY on the first 24 active trials of sessions 2 and 3",
+      "session_only_keeps": ["practice_counters", "n_item_eff"],
+      "per_outcome": true,
+      "eligibility": "participants whose sessions 2 and 3 ran with cross-session learning effective; the rest are counted and left out",
+      "rule": "as H1"
+    }
+  ],
+  "ope": {
+    "weights": "per-decision product within each block (section 19)",
+    "clip": 20,
+    "min_ess": 30,
+    "refusal": "reported as not estimated; never re-run with another threshold, clip, block set or estimator"
+  },
+  "ope_validation": {
+    "n_sim": null,
+    "estimator_check_coverage": null,
+    "in_sample": {
+      "S_2": {"coverage": null, "coverage_not_refused": null, "mean_bias": null, "refusal_rate": null, "median_ess": null},
+      "S_3": {"coverage": null, "coverage_not_refused": null, "mean_bias": null, "refusal_rate": null, "median_ess": null}
+    },
+    "out_of_sample_S_2": {"coverage": null, "coverage_not_refused": null, "mean_bias": null, "refusal_rate": null, "median_ess": null},
+    "power_run_refusal_rates": null
+  },
+  "gates": {
+    "G1": "H1",
+    "G2": "H2",
+    "G3": "H6",
+    "G4": "H3",
+    "G5": "OPE validity: estimator check >= 43/50 at the human design, in-sample coverage of S_2 and S_3 >= 43/50 (refusals count as not covering), and the human DR estimates of S_2 and S_3 not refused; otherwise not passed (section 19)",
+    "G6": "H5 (log-score part)"
+  },
+  "analysis": {
+    "bootstrap": {"replicates": 5000, "seed": 20261015, "grouping": "participant then session"},
+    "prequential": "forward-chaining by session",
+    "looks": 1,
+    "optional_stopping": false
+  },
+  "exclusions": [
+    "technical failure on > 20% of trials",
+    "trials during DPR or size change",
+    "interrupted trials",
+    "withdrawn participants (data erased)"
+  ],
+  "do_not_tune_on": ["confirmatory sessions"],
+  "failure_handling": "report null or negative results unchanged; errata appended, never rewritten",
+  "limitations": [
+    "700x500 window",
+    "artificial task",
+    "small N",
+    "single device per participant",
+    "coarse gaze",
+    "blocks are announced, so expectations may differ by block type",
+    "comparator chosen from about 16 trials per arm (winner's curse)",
+    "per-person regime differences are mostly prior-driven"
+  ],
+  "promoted_to_runtime": false
+}

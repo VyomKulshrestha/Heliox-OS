@@ -1090,6 +1090,226 @@ claimed as shipped training data. Any future artifact must retain dataset and
 license provenance, environment-disjoint validation, the exact action
 vocabulary, and the frozen gating metrics above.
 
+## Assistance co-adaptation
+
+Assistance co-adaptation (`daemon/pilot/coadaptation/`, described in
+[COADAPTATION.md](COADAPTATION.md)) chooses how a consented selection study
+presents targets: a block regime such as `enlarge_target:1.5` or
+`confirm_selection:hold_700`, a response to an ambiguous press from a per-block
+table, and an occasional offer to switch input. It is opt-in and
+presentation-only. It never grants or widens authority, never lets a learned or
+exploratory choice commit an ambiguous press, and stores nothing before
+consent. All evidence below is simulated or contract-level. No human study has
+reported, so there is no claim that it improves selection for people.
+
+### Simulated-user benchmark
+
+Run from `daemon/`:
+
+```powershell
+.venv/Scripts/python.exe -m benchmarks.coadaptation_suite --quick --json
+.venv/Scripts/python.exe -m benchmarks.coadaptation_suite --full --power
+$env:HELIOX_RUN_SLOW_TESTS = "1"
+.venv/Scripts/python.exe -m pytest tests/test_coadaptation_ope_simulated.py -q -p no:cacheprovider --timeout=1800
+```
+
+The OPE validation takes 8 to 17 minutes depending on machine load, so it is
+opt-in: the default test suite and CI skip it unless `HELIOX_RUN_SLOW_TESTS=1`.
+
+Keep `--full` and `--power` in one command. Each of them spends the protocol's
+one holdout look, so running them as two commands spends the look on the first,
+and the second exits with code 2 unless `--allow-extra-look` is given, which
+marks its report `extra_holdout_look: true`.
+
+Every output goes under `daemon/benchmarks/.bench-state/`, which git ignores:
+`coadaptation_quick_<sha12>.json`, `coadaptation_full_<sha12>.json` (with the
+power analysis under `metrics.power` when `--power` is given too) and
+`coadaptation_ope_validation_<sha12>.json`; `--power` run on its own writes
+`coadaptation_power_<sha12>.json` instead. `<sha12>` is the first 12 hex
+digits of the SHA-256 of the frozen simulation protocol
+`daemon/benchmarks/coadaptation_sim_protocol_v1.json` (population seed
+20261015, runner seed 7, 40 people per family, 3 sessions). Each report carries
+`evidence_kind: "simulated"`, its claim boundary and
+`promoted_to_runtime: false`.
+
+The six families differ in how far they depart from the forms the engine's
+model assumes. F1 and F3 use the model's own forms and F5 differs only in its
+endpoint noise; the validation family F2 and the holdout families F4 and F6
+use several forms the model lacks.
+
+| Family | Simulated population | Split | Day and session structure | Forms outside the model |
+| --- | --- | --- | --- | --- |
+| F1 | precise mouse | tune | day offset (SD 0.15 in log spread and log time) plus fatigue within the session | none |
+| F3 | hand-pointer novice, tracking loss on 15% of trials | tune | day offset plus fatigue | none |
+| F5 | fast, slip-prone mouse | tune | day offset plus fatigue | Student-t endpoints |
+| F2 | touchpad | validate | one step of +0.25 log spread and +0.10 log time at a trial drawn between 30% and 70% of the session | delayed switch cost, heteroscedastic endpoints, exponential practice |
+| F4 | high-frequency jitter on a mouse | holdout | random walk within the session (per-trial SD 0.03 in log spread, 0.015 in log time) | hyperbolic switch cost, skewed overshoot, regime-dependent aiming, annoyance-driven burden |
+| F6 | interruption-averse mouse | holdout | none | delayed switch cost, heteroscedastic endpoints, regime-dependent aiming, annoyance-driven burden, exponential practice |
+
+`--quick` runs F1 and F3 with 5 people each, 2 sessions (so adaptive, probe and
+comparator blocks run) and policies 1 (fixed `assistance_off`), 4 (uniform
+random) and 9 (the full engine). It is deterministic, finishes in under a
+minute and is labelled "tuning families, in-sample". The registered quick result
+for protocol hash `7f39916e9c76` reports, per family and policy, realized
+utility per trial with a grouped-bootstrap interval, completion, unintended
+activations, overrides and burden. Mean realized utility per trial over the 5
+people, with 95% intervals:
+
+| Family | Fixed `assistance_off` | Uniform random | Full engine |
+| --- | --- | --- | --- |
+| F1 | 1.11 [0.90, 1.28] | 0.62 [0.48, 0.74] | 0.90 [0.70, 1.07] |
+| F3 | -0.21 [-0.78, 0.42] | 0.01 [-0.48, 0.45] | 0.36 [0.19, 0.51] |
+
+On F1, a precise mouse population, the engine did not beat leaving assistance
+off. On F3, the hand-pointer novices, it scored highest. All three policies had
+zero constraint violations and zero acting under ambiguity, and every hard
+agency invariant was zero. These are tuning-family numbers on the kind of
+simulated people the defaults were chosen on; they are not evidence about the
+holdout families or about people.
+
+Each quick and full report also scores prediction: the prequential log score,
+Brier score, 10-bin ECE and CRPS of the `FULL` model against `NO_TODAY` (the
+same model without the day term) per family, replayed on the same Phase A and
+A-lite trials. F1, F3 and F5 have day offsets, F2 has a step inside the
+session, F4 drifts within the session and F6 has no day effect, so the families
+separate what the day term can and cannot fit. In the registered quick run,
+`FULL` minus `NO_TODAY` in mean per-trial log score was +0.001 [-0.013, 0.016]
+on F1 and -0.015 [-0.021, -0.008] on F3: over two sessions the day term did not
+improve prediction in either tuning family.
+
+`--full` (every family and policy, reported per split) and `--power` each spend
+the protocol's one holdout look, and running both in one command spends it once.
+The suite appends each look to
+`daemon/benchmarks/.bench-state/coadaptation_holdout_looks.jsonl` with the
+protocol hash and families, and refuses a second look for the same hash unless
+`--allow-extra-look` is given; such a report is marked
+`extra_holdout_look: true`. Holdout and tuning results are never pooled. No
+holdout look has been spent for this protocol.
+
+### Human study protocol
+
+`daemon/benchmarks/coadaptation_protocol_v1.json` is a draft
+(`draft_pending_pilot`); the analysis script refuses a confirmatory run until
+its status is `frozen_before_collection`, and runs under a draft only with
+`--exploratory`, labelled as such. Each participant runs 3 sessions of 8-trial
+blocks. Session 1 is Phase A: 12 randomized blocks in permuted rounds. Sessions
+2 and 3 add 6 A-lite blocks and 10 Phase B blocks in two halves, each half with
+3 adaptive blocks, 1 `assistance_off` probe block and 1 comparator block (the
+participant's best fixed regime by session-1 realized utility). Probe and
+comparator blocks run in the same session as the adaptive blocks, so the H2, H3
+and H6 contrasts compare blocks run concurrently. The primary contrasts leave
+out the first three trials of every Phase B block; block ratings stay whole,
+and all trials and the switched-blocks-only contrast are secondary analyses.
+Realized utility is scored under each participant's own logged priorities
+(protocol weights 0.5, 0.5, 0.5 are secondary) with no switching penalty.
+
+The confirmatory N is the largest N that the `--power` run needs at power 0.8
+on the validation and holdout families F2, F4 and F6, never on the tuning
+families. The draft holds 16 as a placeholder until that run. H9 compares
+`FULL` with `SESSION_ONLY` on the first 24 active trials of sessions 2 and 3,
+per outcome. `SESSION_ONLY` resets the filters, the spread, the idle rates and
+the drift statistics at each session start but keeps the exposure counts
+(practice counters and `n_item_eff`), so H9 measures what carrying the model
+across sessions adds beyond familiarity with the items.
+
+Run the pre-registered analysis from `daemon/`:
+
+```powershell
+.venv/Scripts/python.exe -m scripts.evaluate_coadaptation_study --bundle <export.enc> --protocol benchmarks/coadaptation_protocol_v1.json --output <fresh-dir> --exploratory
+```
+
+It decrypts each export with the participant's OS-keyring key, reads every
+entry through the record classes, re-derives every seed, selecting draw and L2
+table draw, recomputes the posterior of every verified trial, runs the agency
+audit and writes `results.json` and `results.md` with every gate and
+`promoted_to_runtime: false` to a directory that must not exist yet.
+
+### Off-policy evaluation
+
+Off-policy estimates (`core/ope.py`) evaluate frozen snapshots: `S_k` is the
+engine rebuilt from the stored rows up to the first Phase B decision of session
+k. Each Phase A or A-lite block is one unit. Its weight is a product of
+per-decision propensity ratios inside the block: the block regime's ratio, then
+the ratio of each L2 table draw and offer draw made up to and including trial t
+for the reward of trial t; the burden term takes the full product. Cap
+responses, fixed-rule responses and relabelled fallbacks have propensity 1 and
+drop out. The estimand is the value of one block run under the target, given
+the logged previous regime and the regimes still available in that block's
+permuted round; target mass outside that set is withheld through the
+normalisation of section 19 and reported. IPS, SNIPS and doubly robust
+estimates use clip 20, and an estimate whose effective sample size is below 30
+is refused.
+
+A refusal is reported as "not estimated" with its ESS and is never re-run with
+another threshold, clip, block set or estimator. It means the logged blocks put
+too little weight on what the target would do, so the data cannot say how the
+target would perform; it is not evidence that the target is worse.
+
+`S_2` and `S_3` are evaluated in sample, on blocks whose data shaped them, so
+their estimates run high. In the simulated validation the mean bias was +0.035
+utility per trial for `S_2` and +0.024 for `S_3`. The out-of-sample estimate of
+`S_2` on session 3's A-lite blocks avoids that bias but has little support.
+
+The validation is sized to the human design: 50 seeded studies of 16 simulated
+people (the protocol's `confirmatory_n`), F1 and F3 in equal numbers, 3
+sessions with the study's block counts, switch cost and practice on, and truth
+from counterfactual replays of each logged block with its remaining arms. The
+asserted estimator check evaluates study j+1's frozen `S_2`, mixed half and
+half with the uniform policy, on study j's Phase A and A-lite blocks of
+sessions 1 and 2. In the run for protocol hash `7f39916e9c76` the doubly robust
+interval covered the truth in 50 of 50 studies (43 required), with mean errors
+of -0.016 for doubly robust, -0.011 for clipped IPS and -0.015 for SNIPS
+(Monte Carlo standard error about 0.011) and median ESS 79. All three are
+inside the 0.02 limit the test sets for these clipped estimators, the doubly
+robust error closest to it, and the unclipped doubly robust and IPS errors are
+within three Monte Carlo standard errors of zero. The analysis's own targets,
+written without a pass threshold, predict how often the human estimates will be
+refused at N = 16:
+
+| Target | Coverage | Refused | Median ESS | Mean bias |
+| --- | --- | --- | --- | --- |
+| In-sample `S_2` | 47 of 50 | 4% | 42.2 | +0.035 |
+| In-sample `S_3` | 50 of 50 | 0% | 56.1 | +0.024 |
+| Out-of-sample `S_2` | 0 of 50 | 100% | 16.1 | not estimated |
+
+The out-of-sample estimate of `S_2` is therefore expected to be "not estimated"
+in the study. The run registered for this protocol hash took 958 seconds (about
+16 minutes) on the development machine while the UI test suite ran alongside it;
+on a quiet machine it takes about 8.5 minutes. That is past the 10-minute budget,
+and it does not finish under `--timeout=900` on a loaded machine, so the command
+above uses `--timeout=1800`.
+
+G5 is restated as OPE validity: it passes only when the estimator check passed,
+the in-sample coverage of `S_2` and of `S_3` is at least 43 of 50 (refusals
+count as not covering), and both human in-sample doubly robust estimates have
+ESS of at least 30. A pass licenses reporting H2's in-sample OPE; the
+out-of-sample `S_2` estimate is reported only when its own ESS reaches 30. G5
+no longer compares the first Phase B blocks with an OPE estimate.
+
+### Agency audit
+
+`core/audit.py` checks twelve invariants over the decisions, trials, sessions,
+burden reports, rule history, consent periods and alarm events of a bundle:
+preference violations under the rules in force when each applied variant was
+issued (A1), acting under ambiguity (A2), commits without an activation (A3),
+forbidden variants in exploration (A4), learned `act` at L2 (A5), writes outside
+a consent period (A6), propensity and explanation coverage (A7, A8, which pass
+at 1.0), a veto taking effect at the next adaptive or randomized decision of
+that level (A9), authority fields (A10), draw mismatches including the cap count
+and revert regimes (A11), and irreversible single-activation commits (A12).
+Every other invariant passes at 0, and one violation fails a study (H3). The suite
+runs the audit on every simulated policy; the export round-trip test runs it on
+a real service's encrypted export.
+
+### Claim boundary
+
+Simulated users only until the pre-registered study reports. The simulated
+families encode assumptions about people; a good score on them, and especially
+on the tuning families, says the code behaves as designed under those
+assumptions. Nothing here is promoted to runtime defaults, and the study's
+results, when they exist, apply to the consented, nonclinical adults it
+enrolled.
+
 ## Review order
 
 1. Validate data and artifact provenance.

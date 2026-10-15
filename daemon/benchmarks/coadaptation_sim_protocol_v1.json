@@ -1,0 +1,162 @@
+{
+  "protocol_id": "coadapt-sim-v1",
+  "status": "frozen",
+  "evidence_kind": "simulated",
+  "source": "pilot.coadaptation.core.simulator (spec section 18)",
+  "families": {
+    "F1": "precise mouse",
+    "F2": "touchpad",
+    "F3": "hand-pointer novice: wide spread, tracking loss",
+    "F4": "high-frequency jitter (motor-noise parameter)",
+    "F5": "fast and slip-prone",
+    "F6": "interruption-averse: strong dislike of confirm and ask, more vetoes"
+  },
+  "family_forms": {
+    "F1": {
+      "switch_form": "exp3",
+      "endpoint_form": "gaussian",
+      "aiming_form": "regime_independent",
+      "burden_form": "time_driven",
+      "practice_form": "power",
+      "day_form": "offset_fatigue"
+    },
+    "F2": {
+      "switch_form": "delayed",
+      "endpoint_form": "heteroscedastic_d",
+      "aiming_form": "regime_independent",
+      "burden_form": "time_driven",
+      "practice_form": "exponential",
+      "day_form": "step"
+    },
+    "F3": {
+      "switch_form": "exp3",
+      "endpoint_form": "gaussian",
+      "aiming_form": "regime_independent",
+      "burden_form": "time_driven",
+      "practice_form": "power",
+      "day_form": "offset_fatigue"
+    },
+    "F4": {
+      "switch_form": "hyperbolic",
+      "endpoint_form": "skew_overshoot",
+      "aiming_form": "regime_dependent",
+      "burden_form": "annoyance_driven",
+      "practice_form": "power",
+      "day_form": "random_walk"
+    },
+    "F5": {
+      "switch_form": "exp3",
+      "endpoint_form": "student_t3",
+      "aiming_form": "regime_independent",
+      "burden_form": "time_driven",
+      "practice_form": "power",
+      "day_form": "offset_fatigue"
+    },
+    "F6": {
+      "switch_form": "delayed",
+      "endpoint_form": "heteroscedastic_d",
+      "aiming_form": "regime_dependent",
+      "burden_form": "annoyance_driven",
+      "practice_form": "exponential",
+      "day_form": "none"
+    }
+  },
+  "splits": {
+    "tune": ["F1", "F3", "F5"],
+    "validate": ["F2"],
+    "holdout": ["F4", "F6"]
+  },
+  "population_seed": 20261015,
+  "runner_seed": 7,
+  "people_per_family": 40,
+  "sessions": 3,
+  "hyperparameters": {
+    "ambiguity_threshold": 0.25,
+    "unintended_activation_tolerance": 0.05,
+    "noninferiority_margin": 0.01,
+    "upper_bound_credibility": 0.95,
+    "exploration_floor": 0.1,
+    "switching_penalty": 0.1,
+    "thompson_draws": 256
+  },
+  "policies": [
+    "1_fixed_assistance_off",
+    "2_best_fixed_regime",
+    "3_rule_heuristic",
+    "4_uniform_random",
+    "5_engine_physics_only",
+    "6_engine_person_static",
+    "7_engine_no_practice_switch",
+    "8_engine_no_today",
+    "9_engine_full",
+    "10_oracle",
+    "11a_ablation_no_ambiguity_rule",
+    "11b_ablation_no_safety_filter"
+  ],
+  "metrics": [
+    "realized_utility_per_trial",
+    "regret_vs_oracle_per_day",
+    "completion",
+    "ua_per_trial",
+    "ua_per_idle_minute",
+    "corrections_per_trial",
+    "median_time_ms",
+    "p95_time_ms",
+    "throughput_bits_s",
+    "simulated_burden",
+    "veto_rate",
+    "override_rate",
+    "switch_rate",
+    "regime_entropy_bits",
+    "constraint_violations",
+    "acting_under_ambiguity",
+    "preference_replacements",
+    "prequential_log_score",
+    "brier",
+    "ece_10_bin",
+    "crps",
+    "full_vs_no_today",
+    "ope_bias_and_coverage",
+    "trials_until_within_5_percent_of_oracle",
+    "probe_detection_of_reliance_drift",
+    "power_and_n_needed"
+  ],
+  "analysis": {
+    "primary_utility": "mean realized utility per trial (section 21.2) under each simulated person's priorities; observed outcomes only; no switching penalty",
+    "burn_in_trials": 3,
+    "bootstrap": {"replicates": 5000, "quick_replicates": 200, "grouping": "simulated person"},
+    "never_pooled": "tuning-family results are labelled 'tuning families, in-sample' and never pooled with validation or holdout results"
+  },
+  "quick": {
+    "families": ["F1", "F3"],
+    "people_per_family": 5,
+    "sessions": 2,
+    "policies": ["1_fixed_assistance_off", "4_uniform_random", "9_engine_full"]
+  },
+  "ope_validation": {
+    "studies": 50,
+    "families": ["F1", "F3"],
+    "n_sim": "population.confirmatory_n of coadaptation_protocol_v1.json",
+    "estimator_check": {
+      "target": "study (j + 1) mod 50's frozen S_2, mixed half and half with the uniform policy over each step's safe set",
+      "blocks": "study j's Phase A and A-lite blocks of sessions 1 and 2",
+      "coverage_min": 43
+    },
+    "analysis_targets": ["in_sample S_2", "in_sample S_3", "out_of_sample S_2"],
+    "counterfactual_replays": 8,
+    "clip": 20,
+    "min_ess": 30
+  },
+  "power": {
+    "candidate_n": [8, 12, 16, 20, 24, 32, 40, 48, 64],
+    "resamples": 400,
+    "target_power": 0.8,
+    "n_families": ["F2", "F4", "F6"],
+    "hypotheses": ["H1", "H2", "H3", "H6", "H8", "H9"],
+    "decision_rule": "two-sided 95% interval of the per-person mean difference (normal approximation over resampled people)"
+  },
+  "do_not_tune_on": ["F2", "F4", "F6"],
+  "holdout_looks_allowed": 1,
+  "claim_boundary": "simulated users only; no claim about people",
+  "promoted_to_runtime": false
+}

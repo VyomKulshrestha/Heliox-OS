@@ -15,6 +15,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 DAEMON_ROOT = REPO_ROOT / "daemon"
 sys.path.insert(0, str(DAEMON_ROOT))
 
+from benchmarks.coadaptation_suite import benchmark as benchmark_coadaptation  # noqa: E402
 from benchmarks.event_loop_responsiveness import benchmark as benchmark_event_loop  # noqa: E402
 from benchmarks.intent_dispatch_suite import benchmark as benchmark_intents  # noqa: E402
 from benchmarks.local_status_suite import benchmark_suite as benchmark_status  # noqa: E402
@@ -48,6 +49,8 @@ async def build_bundle() -> dict:
         "event_loop_responsiveness": await benchmark_event_loop(heartbeat_interval_ms=10.0),
         "intent_dispatch": benchmark_intents(),
         "learned_risk_world_model": benchmark_world_model(iterations=1000),
+        # Simulated users only (tuning families, in-sample); never a claim about people.
+        "coadaptation_simulated_users": benchmark_coadaptation(quick=True),
     }
 
 
