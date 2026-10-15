@@ -60,6 +60,19 @@ export async function mockTauriIpc(page: Page): Promise<void> {
       },
     };
 
+    // Status reads the Chat and Settings tabs re-send on a timer (every 1.5 to 5 s). Recording them as the last
+    // send could replace the request a test is polling for between the click that sent it and the next poll.
+    const timerPolledMethods = new Set([
+      "air_handoff_status",
+      "get_security_status",
+      "get_snapshot_status",
+      "get_uptime",
+      "list_wake_variants",
+      "mesh_status",
+      "neural_status",
+      "voice_listener_stats",
+    ]);
+
     // Mock WebSocket to simulate daemon connection and intercept messages
     (window as any).WebSocket = class {
       static OPEN = 1;
@@ -83,7 +96,7 @@ export async function mockTauriIpc(page: Page): Promise<void> {
       send(data: string) {
         // Intercept sent messages and store them globally for tests to inspect
         const request = JSON.parse(data);
-        (window as any).__last_ws_send__ = request;
+        if (!timerPolledMethods.has(request.method)) (window as any).__last_ws_send__ = request;
 
         if (request.method === "risk_gate_status" && (window as any).__mock_risk_gate_status_missing__) {
           setTimeout(() => {
@@ -129,11 +142,60 @@ export async function mockTauriIpc(page: Page): Promise<void> {
           request.method === "subscription_status" ||
           request.method === "subscription_login" ||
           request.method === "update_config" ||
+          request.method === "co_adaptation_status" ||
           request.method.startsWith("air_handoff_")
         ) {
           let result: Record<string, unknown>;
           if (request.method === "auth") {
             result = { status: "ok" };
+          } else if (request.method === "co_adaptation_status") {
+            // Available, off, default settings, nobody has consented yet.
+            result = {
+              status: "ok",
+              available: true,
+              config: {
+                enabled: false,
+                adaptive_enabled: false,
+                learn_across_sessions: false,
+                gaze_prior_enabled: false,
+                hand_pointer_enabled: false,
+                ambiguity_threshold: 0.25,
+                unintended_activation_tolerance: 0.05,
+                noninferiority_margin: 0.01,
+                upper_bound_credibility: 0.95,
+                exploration_floor: 0.1,
+                switching_penalty: 0.1,
+                burden_prompt_every_blocks: 1,
+                day_boundary_hour: 4,
+              },
+              keyring_available: true,
+              store: {
+                exists: false,
+                bytes: 0,
+                participants: 0,
+                sessions: 0,
+                decisions: 0,
+                trials: 0,
+                burden_reports: 0,
+                oldest_recorded_at: null,
+                pruned_sessions: 0,
+              },
+              participants: [],
+              preferences: [],
+              proposals: [],
+              protocol: { protocol_id: "coadapt-study-v1", sha256: "0".repeat(64) },
+              versions: {
+                strategy: "coadapt-strategies-v1",
+                feature_schema: "coadapt-features-v1",
+                model: "coadapt-owm-v1",
+                prior: "literature-v1",
+                policy: "coadapt-policy-v1",
+                sdk: "0.1.0",
+                consent_text: "coadapt-consent-v1",
+              },
+              authority: "presentation_only",
+              execution_authority: false,
+            };
           } else if (request.method === "get_security_status") {
             result = {
               status: "ok",

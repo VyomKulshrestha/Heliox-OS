@@ -12,6 +12,7 @@
   import RiskWorldModelPanel from "./RiskWorldModelPanel.svelte";
   import TemporalMemoryPanel from "./TemporalMemoryPanel.svelte";
   import OnlineLearningPanel from "./OnlineLearningPanel.svelte";
+  import CoAdaptationPanel from "./coadaptation/CoAdaptationPanel.svelte";
   import StrategyEvolutionPanel from "./StrategyEvolutionPanel.svelte";
   import EvolutionHarnessPanel from "./EvolutionHarnessPanel.svelte";
   import AgentMeshPanel from "./AgentMeshPanel.svelte";
@@ -2318,6 +2319,10 @@
 
   <section class="settings-group feature-panel-section">
     <OnlineLearningPanel />
+  </section>
+
+  <section class="settings-group feature-panel-section">
+    <CoAdaptationPanel />
   </section>
 
   <section class="settings-group feature-panel-section">

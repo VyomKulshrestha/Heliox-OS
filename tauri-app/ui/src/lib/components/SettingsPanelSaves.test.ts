@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import "../../i18n";
+import SettingsPanel from "./SettingsPanel.svelte";
 
 const daemonMocks = vi.hoisted(() => ({ call: vi.fn() }));
 const settingsMocks = vi.hoisted(() => {
@@ -124,8 +125,9 @@ describe("SettingsPanel saves", () => {
     settingsMocks.setLoadErrors([]);
   });
 
+  // SettingsPanel is imported once at module level (vi.mock calls are hoisted above it), so loading its
+  // ~40 modules does not count against a test's timeout when the full suite runs in parallel.
   async function renderPanel() {
-    const { default: SettingsPanel } = await import("./SettingsPanel.svelte");
     return render(SettingsPanel);
   }
 

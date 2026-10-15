@@ -46,7 +46,7 @@
   import { multimodal } from "../stores/multimodal";
   import { invoke } from "../api/invoke";
   import { call, offNotification, onNotification, requireResultStatus } from "../api/daemon";
-  import { tick } from "svelte";
+  import { tick, untrack } from "svelte";
   import { Hands, type Results } from "@mediapipe/hands";
   import { FilesetResolver, HandLandmarker, FaceLandmarker } from "@mediapipe/tasks-vision";
   import {
@@ -110,6 +110,27 @@
   } from "../gesture/workflowBindingRuntime";
   import { LatestAsyncDispatcher } from "../gesture/latestAsyncDispatcher";
   import { airHandoff } from "../stores/airHandoff";
+  import {
+    createGestureArm,
+    createPinchHysteresis,
+    gazeEventAllowed,
+    normalizedPointer,
+  } from "../gesture/studyPointerTracker";
+  import {
+    GESTURE_APPROVAL_MESSAGE_KEYS,
+    GESTURE_APPROVAL_MESSAGES,
+    gestureApprovalDecision,
+    sendGestureAnswer,
+  } from "../gesture/approvalGesture";
+  import { studyActive } from "../stores/coadaptation";
+  import {
+    publishStudyPointerFrame,
+    reportStudyPointerHandLost,
+    reportStudyPointerPalmExit,
+    setStudyPointerAvailable,
+    studyPointer,
+  } from "../stores/studyPointer";
+  import { _ } from "svelte-i18n";
 
   // ── Props ──
   let {
@@ -305,11 +326,14 @@
   const cursorMoveDispatcher = new LatestAsyncDispatcher(dispatchGestureCursor);
 
   function moveGestureCursor(x: number, y: number): void {
+    // The selection study uses its own in-window pointer; the OS cursor never moves while it is requested.
+    if ($studyPointer.requested) return;
     if (Date.now() < cursorRetryAfter) return;
     cursorMoveDispatcher.enqueue({ x, y });
   }
 
   async function clickGestureCursor(x: number, y: number): Promise<void> {
+    if ($studyPointer.requested) return;
     try {
       if (isTauriRuntime()) {
         await invoke("click_gesture_cursor");
@@ -350,6 +374,7 @@
 
   function toggleCursorMode() {
     if (!$settings.gesture_cursor?.enabled) return;
+    if (!cursorModeActive && $studyPointer.requested) return; // Cursor Mode and the study pointer exclude each other
     if (cursorModeActive) {
       exitCursorMode();
     } else {
@@ -409,6 +434,102 @@
     } else {
       pinchClickFired = false;
     }
+  }
+
+  // ── Selection-study pointer and discrete-gesture re-arm (spec 17.2 F2, 17.4) ──
+  //
+  // While the selection study requests the hand pointer, every verified frame
+  // publishes the filtered index tip and the measured pinch into the study's
+  // own store (stores/studyPointer.ts), which alone decides when a press may
+  // start. The OS cursor is never moved or clicked, Cursor Mode is off, and the
+  // open palm (which pauses the study) is the only discrete gesture.
+  //
+  // When the study pointer is released (any pause, exit, modal or approval)
+  // every discrete gesture stays disarmed until the hand has been out of view
+  // for 200 ms and is verified again for HAND_ACQUIRE_FRAMES frames, or no hand
+  // was seen for 500 ms, and a gesture must begin after that re-arm. The pose
+  // held in the study therefore never starts a workflow, navigates a tab or
+  // answers an approval. Approve gestures are also disarmed whenever a
+  // confirmation dialog becomes visible, so approving by gesture always needs a
+  // hand that came back after the dialog appeared.
+  const STUDY_HAND_LOST_MS = 200;
+  const discreteArm = createGestureArm({ absentMs: 200, idleMs: 500, acquireFrames: HAND_ACQUIRE_FRAMES });
+  const approveArm = createGestureArm({ absentMs: 200, idleMs: 500, acquireFrames: HAND_ACQUIRE_FRAMES });
+  const studyPinch = createPinchHysteresis(PINCH_DISTANCE_THRESHOLD);
+  let studyPointerWasRequested = false;
+  let studyHandSeen = false;
+  let studyLastHandAt = 0;
+  let studyPalmLatched = false;
+  // performance.now() of the frame on which the current candidate gesture was first seen.
+  let candidateStartedAt = 0;
+  let lastSeenConfirmVisibleSince: number | null = null;
+
+  const studyPointerRequested = $derived($studyPointer.requested);
+  const confirmVisibleSince = $derived($session.confirmVisibleSince);
+
+  function effectivePinchThreshold(): number {
+    return $settings.adaptive_calibration?.gesture_enabled
+      ? gestureCalibration.getEffectivePinchThreshold(PINCH_DISTANCE_THRESHOLD)
+      : PINCH_DISTANCE_THRESHOLD;
+  }
+
+  /** Handles `$studyPointer.requested` changing. Runs from an effect and again at the top of every camera frame,
+   * so the edge is applied before that frame can dispatch anything. */
+  function syncStudyPointerRequested(requested: boolean) {
+    if (requested === studyPointerWasRequested) return;
+    studyPointerWasRequested = requested;
+    if (requested) {
+      // The study starts or resumes: no pinch, palm or recognised pose from before carries into it.
+      if (cursorModeActive) exitCursorMode();
+      studyPinch.reset();
+      studyHandSeen = false;
+      studyPalmLatched = false;
+      candidateGesture = "";
+      candidateCount = 0;
+      currentGesture = "";
+      confidence = 0;
+    } else {
+      discreteArm.disarm(performance.now());
+      studyPinch.reset();
+      studyHandSeen = false;
+    }
+  }
+
+  $effect(() => {
+    const requested = studyPointerRequested;
+    untrack(() => syncStudyPointerRequested(requested));
+  });
+
+  $effect(() => {
+    const since = confirmVisibleSince;
+    untrack(() => {
+      if (since !== null && since !== lastSeenConfirmVisibleSince) approveArm.disarm(performance.now());
+      lastSeenConfirmVisibleSince = since;
+    });
+  });
+
+  function studyPointerModeActive(): boolean {
+    return isActive && $studyPointer.requested;
+  }
+
+  /** A frame without a verified hand: after more than 200 ms the loss is reported once and the pinch reopens. */
+  function noteStudyHandAbsent(frameAt: number) {
+    if (studyHandSeen && frameAt - studyLastHandAt > STUDY_HAND_LOST_MS) {
+      studyHandSeen = false;
+      studyPinch.reset();
+      reportStudyPointerHandLost();
+    }
+  }
+
+  function publishStudyPointer(filteredLandmarks: Landmark[], frameAt: number) {
+    studyHandSeen = true;
+    studyLastHandAt = frameAt;
+    const indexTip = filteredLandmarks[8];
+    const thumbTip = filteredLandmarks[4];
+    const pinchDistance = Math.hypot(thumbTip.x - indexTip.x, thumbTip.y - indexTip.y);
+    const pinchClosed = studyPinch.update(pinchDistance, effectivePinchThreshold());
+    const { nx, ny } = normalizedPointer(indexTip, $settings.gesture_cursor?.sensitivity ?? 1);
+    publishStudyPointerFrame({ nx, ny, pinchClosed, quality: handSignalQuality, t: frameAt });
   }
 
   // Finger trail tracking for air drawing
@@ -823,6 +944,7 @@
 
     isActive = true;
     onActiveChange(true);
+    setStudyPointerAvailable(true);
     showCamera = true;
     fingerTrail = [];
 
@@ -851,6 +973,13 @@
     // 1. Stop the animation frame loop FIRST (prevents new MediaPipe sends)
     isActive = false;
     onActiveChange(false);
+    // The study sees the hand pointer go away: a hand it was following is reported lost, so no press survives.
+    if (studyHandSeen) {
+      studyHandSeen = false;
+      studyPinch.reset();
+      reportStudyPointerHandLost();
+    }
+    setStudyPointerAvailable(false);
     if (animFrameId) {
       cancelAnimationFrame(animFrameId);
       animFrameId = 0;
@@ -982,7 +1111,8 @@
             if (shouldSendGazeUpdate(estimate.region, lastGazeRegion, now, lastGazeSentAt)) {
               lastGazeRegion = estimate.region;
               lastGazeSentAt = now;
-              void sendGazeEvent(estimate.region, estimate.confidence);
+              // During a selection study gaze stays local (gazeRuntime only): no gaze_event RPC, no ledger row.
+              if (gazeEventAllowed($studyActive)) void sendGazeEvent(estimate.region, estimate.confidence);
             }
           } else if (stabilized.state === "settling") {
             updateGazeRuntime({
@@ -1065,12 +1195,21 @@
     worldLandmarks: Landmark[] | null,
     handednessScore: number | undefined,
   ) {
+    const frameAt = performance.now();
     const handAssessment = assessHandFrame(landmarks, handednessScore);
     handSignalQuality = handAssessment.quality;
     handDiagnostic = handFrameRejectionMessage(handAssessment);
     lastWorldLandmarks = handAssessment.reliable ? worldLandmarks : null;
 
+    // Both arms watch every frame, so a hand that leaves and comes back re-arms them (spec 17.4).
+    const handVerified = Boolean(landmarks && handAssessment.reliable);
+    syncStudyPointerRequested($studyPointer.requested);
+    discreteArm.frame(handVerified, frameAt);
+    approveArm.frame(handVerified, frameAt);
+    const studyMode = studyPointerModeActive();
+
     if (!landmarks || !handAssessment.reliable) {
+      if (studyMode) noteStudyHandAbsent(frameAt);
       clearLandmarks();
       handDetected = false;
       handAcquiring = false;
@@ -1105,6 +1244,8 @@
       confidence = 0;
       candidateGesture = "";
       candidateCount = 0;
+      // The study store runs its own acquisition (`ready`) and pinch-open gate (`pressArmed`) on these frames.
+      if (studyMode) publishStudyPointer(landmarkFilter.filter(landmarks, Date.now()), frameAt);
       drawLandmarks(landmarks);
       return;
     }
@@ -1202,6 +1343,27 @@
       }
     }
 
+    if (studyMode) {
+      // Nothing is recognised as a pending gesture while the study holds the hand pointer.
+      candidateGesture = "";
+      candidateCount = 0;
+      currentGesture = "";
+      confidence = 0;
+      // Open palm keeps first priority, as in Cursor Mode: it pauses the study and publishes no pointer frame.
+      if (gesture.name === "palm") {
+        if (!studyPalmLatched) {
+          studyPalmLatched = true;
+          reportStudyPointerPalmExit();
+        }
+        drawLandmarks(landmarks);
+        return;
+      }
+      studyPalmLatched = false;
+      publishStudyPointer(filteredLandmarks, frameAt);
+      drawLandmarks(landmarks);
+      return;
+    }
+
     if (cursorModeActive) {
       const workflowId = pendingWorkflowId;
       const controlIntent = workflowId ? classifyControlGesture(gesture.name) : "unknown";
@@ -1265,12 +1427,13 @@
             const workflowId = pendingWorkflowId;
             const controlIntent = workflowId ? classifyControlGesture(gesture.name) : "unknown";
             const boundGoal = gestureWorkflowBindings[gesture.name];
-            void dispatchRecognizedGesture(gesture, boundGoal, controlIntent, workflowId);
+            void dispatchRecognizedGesture(gesture, candidateStartedAt, boundGoal, controlIntent, workflowId);
           }
         }
       } else {
         candidateGesture = gesture.name;
         candidateCount = 1;
+        candidateStartedAt = frameAt;
       }
     } else {
       if (candidateGesture !== "") {
@@ -1669,7 +1832,14 @@
     return null;
   }
 
-  function executeGestureAction(gesture: string) {
+  /** A refused approve gesture says why, in the chat and next to the camera controls (visible on every tab). */
+  function showApprovalGestureNotice(emoji: string, messageKey: string, message: string) {
+    const text = $_(messageKey, { default: message });
+    showWorkflowFeedback(text, true);
+    session.addSystemMessage(`${emoji} ${text}`);
+  }
+
+  function executeGestureAction(gesture: string, gestureStartedAt: number) {
     const emoji = GESTURE_EMOJIS[gesture] || "🖐️";
     const action = defaultGestureAction(gesture);
     if (action === "abort") {
@@ -1677,9 +1847,27 @@
       return;
     }
     if (action === "confirm" || action === "deny") {
-      if ($session.confirmRequired) {
-        void session.confirm(action === "confirm");
-        session.addSystemMessage(`${emoji} ${action === "confirm" ? "Approval accepted." : "Approval denied."}`);
+      const visibleSince = $session.confirmVisibleSince;
+      const decision = gestureApprovalDecision({
+        action,
+        confirmRequired: $session.confirmRequired,
+        planId: $session.confirmPlanId,
+        confirmVisible: $session.confirmVisible,
+        visibleForMs: visibleSince === null ? null : performance.now() - visibleSince,
+        armed: approveArm.armed,
+        gestureStartedAfterArm: approveArm.allows(gestureStartedAt),
+        selection: $session.confirmSelection,
+      });
+      if (decision.kind === "approve" || decision.kind === "deny") {
+        // The chat line waits for the daemon's reply and says what it recorded: a gesture that sent nothing (an
+        // answer already in flight) or an answer the daemon refused never reads "accepted" or "denied".
+        void sendGestureAnswer(
+          decision.kind === "approve",
+          (accepted) => session.confirm(accepted, undefined, { inputChannel: "gesture" }),
+          (text) => session.addSystemMessage(`${emoji} ${text}`),
+        );
+      } else if (decision.kind === "refuse") {
+        showApprovalGestureNotice(emoji, GESTURE_APPROVAL_MESSAGE_KEYS[decision.reason], decision.message);
       } else {
         session.addSystemMessage(`${emoji} ${gesture.replace(/_/g, " ")} recognized · no approval is pending.`);
       }
@@ -1692,10 +1880,21 @@
 
   async function dispatchRecognizedGesture(
     gesture: Gesture,
+    gestureStartedAt: number,
     boundGoal: string | undefined,
     controlIntent: "continue" | "cancel" | "unknown",
     workflowId: string | null,
   ) {
+    // Every discrete dispatch (workflow control, Air Handoff, bound workflows, built-in actions and onGesture
+    // navigation) passes here. After the study pointer is released nothing runs until the hand left and came back,
+    // and a pose recognised before that re-arm is dropped even if it completes later (spec 17.4).
+    if (!discreteArm.allows(gestureStartedAt)) {
+      if (defaultGestureAction(gesture.name) === "confirm" && $session.confirmRequired) {
+        const emoji = GESTURE_EMOJIS[gesture.name] || "🖐️";
+        showApprovalGestureNotice(emoji, GESTURE_APPROVAL_MESSAGE_KEYS.rearm, GESTURE_APPROVAL_MESSAGES.rearm);
+      }
+      return;
+    }
     const handoffCommand = airHandoffGestureCommand($airHandoff.gestureArmed, Boolean($airHandoff.draft), gesture.name);
     const owner = selectGestureDispatchOwner({
       hasPendingWorkflow: Boolean(workflowId),
@@ -1742,7 +1941,7 @@
           data: { source: "on_device_camera", raw_landmarks_excluded: true },
         }).catch((cause) => console.warn("Gesture fusion context unavailable.", cause));
 
-        executeGestureAction(gesture.name);
+        executeGestureAction(gesture.name, gestureStartedAt);
         gestureHistory = [...gestureHistory.slice(-4), gesture.name];
         onGesture(gesture.name);
         trackGestureForCalibration(gesture.name, gesture.metricValue ?? 0);
@@ -1921,9 +2120,12 @@
       class:error={cursorRuntimePhase === "error"}
       class:waiting={cursorRuntimePhase === "waiting"}
       onclick={toggleCursorMode}
+      disabled={studyPointerRequested}
       title={cursorModeActive
         ? `${cursorRuntimeMessage}. Gesture commands are paused; show an open palm to exit.`
-        : "Enable gesture cursor control — point to move, pinch to click"}
+        : studyPointerRequested
+          ? "Cursor Mode is off while the selection study uses the hand pointer"
+          : "Enable gesture cursor control — point to move, pinch to click"}
     >
       {#if !cursorModeActive}
         🖱️ Cursor Mode

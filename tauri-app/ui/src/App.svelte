@@ -28,7 +28,7 @@
   import { session } from "./lib/stores/session";
   import type { Message } from "./lib/stores/session";
   import { settings } from "./lib/stores/settings";
-  import { tick, onDestroy } from "svelte";
+  import { tick, onDestroy, onMount, untrack } from "svelte";
   import { Copy } from "@lucide/svelte";
   import ScrollToBottom from "./lib/components/ScrollToBottom.svelte";
   import { shouldFollowLatest } from "./lib/utils/scrollPolicy";
@@ -39,13 +39,15 @@
   import ChatSessionControls from "./lib/components/ChatSessionControls.svelte";
   import InteractiveServices from "./lib/components/InteractiveServices.svelte";
   import NeuralControlOverlay from "./lib/components/NeuralControlOverlay.svelte";
+  import SelectionStudy from "./lib/components/coadaptation/SelectionStudy.svelte";
   import { narration } from "./lib/stores/narration";
   import { neural } from "./lib/stores/neural";
   import { supervision } from "./lib/stores/supervision";
+  import { coadaptation, studyActive } from "./lib/stores/coadaptation";
   import { _, isLoading } from "svelte-i18n";
 
   let isDragging = $state(false);
-  let activeTab: "chat" | "log" | "dashboard" | "settings" | "plugins" = $state("chat");
+  let activeTab: "chat" | "log" | "dashboard" | "settings" | "plugins" | "study" = $state("chat");
   let showWizard = $derived(
     !$settings.first_run_complete && localStorage.getItem("heliox_first_run_complete") !== "true",
   );
@@ -70,11 +72,39 @@
   let blockingSafetyDecision = $derived(
     activeModal === "confirmation" || activeModal === "rollback" || activeModal === "interrupt",
   );
+  let documentVisible = $state(typeof document === "undefined" || document.visibilityState === "visible");
+  let previousStudyActive = false;
 
   $effect(() => {
     const connected = $session.daemonConnected;
-    if (connected && !previousDaemonConnection) daemonConnectionEpoch += 1;
+    if (connected && !previousDaemonConnection) {
+      daemonConnectionEpoch += 1;
+      void coadaptation.load();
+    }
     previousDaemonConnection = connected;
+  });
+  onMount(() => {
+    void coadaptation.load();
+  });
+  // The study tab exists only while a study session is open: open it when the session starts, and leave it for
+  // Settings (where the study is started) when the session ends.
+  $effect(() => {
+    const active = $studyActive;
+    untrack(() => {
+      if (active && !previousStudyActive) activeTab = "study";
+      else if (!active && previousStudyActive && activeTab === "study") activeTab = "settings";
+      previousStudyActive = active;
+    });
+  });
+  // An approval, rollback, narration interrupt or any other App modal takes the person from the study to the
+  // Command tab, where the modal is shown; the study is paused through its `paused` prop. From any other tab App
+  // does not switch, so unsaved Settings edits are not lost.
+  $effect(() => {
+    if (activeTab === "study" && activeModal !== null) activeTab = "chat";
+  });
+  // Gestures may approve only a dialog the person can see (spec 17.2 F2).
+  $effect(() => {
+    session.setConfirmVisible(activeTab === "chat" && activeModal === "confirmation" && documentVisible && !showWizard);
   });
   $effect(() => {
     showScrollFAB = !isAtBottom;
@@ -91,6 +121,8 @@
   // Handle gesture events for particle effects and navigation
   function onGestureDetected(gesture: string) {
     particleBurst?.gestureBurst(gesture);
+    // A hand moving over the study surface must not switch tabs under the person.
+    if (activeTab === "study") return;
     if (gesture === "swipe_left" || gesture === "two_finger_swipe_left") {
       if (activeTab === "settings") activeTab = "log";
       else if (activeTab === "log") activeTab = "chat";
@@ -176,6 +208,7 @@
   });
 </script>
 
+<svelte:document onvisibilitychange={() => (documentVisible = document.visibilityState === "visible")} />
 {#if showWizard}
   <SetupWizard oncomplete={onSetupComplete} />
 {/if}
@@ -226,6 +259,14 @@
         title="Open Settings"
         onclick={() => (activeTab = "settings")}>{$_("app.tab_settings")}</button
       >
+      {#if $studyActive}
+        <button
+          class="tab"
+          class:active={activeTab === "study"}
+          title="Open the selection study"
+          onclick={() => (activeTab = "study")}>{$_("app.tab_study")}</button
+        >
+      {/if}
     </nav>
     <div class="titlebar-right">
       <ChatSessionControls onactivate={() => (activeTab = "chat")} />
@@ -242,16 +283,20 @@
 
         <InteractiveServices onconfigure={() => (activeTab = "settings")} />
         {#if activeModal === "confirmation"}
-          <ConfirmDialog
-            actions={$session.confirmActions}
-            reason={$session.confirmReason}
-            riskAssessment={$session.confirmRiskAssessment}
-            gnomon={$session.confirmGnomon}
-            submitting={$session.confirmSubmitting}
-            error={$session.confirmError}
-            onconfirm={(approvedIndices) => session.confirm(true, approvedIndices)}
-            ondeny={() => session.confirm(false)}
-          />
+          <!-- Keyed by plan: a new approval never inherits the previous dialog's checkboxes. -->
+          {#key $session.confirmPlanId}
+            <ConfirmDialog
+              actions={$session.confirmActions}
+              reason={$session.confirmReason}
+              riskAssessment={$session.confirmRiskAssessment}
+              gnomon={$session.confirmGnomon}
+              submitting={$session.confirmSubmitting}
+              error={$session.confirmError}
+              onselectionchange={(indices) => session.setConfirmSelection($session.confirmPlanId, indices)}
+              onconfirm={(approvedIndices) => session.confirm(true, approvedIndices, { inputChannel: "dialog" })}
+              ondeny={() => session.confirm(false, undefined, { inputChannel: "dialog" })}
+            />
+          {/key}
         {:else if activeModal === "rollback"}
           <RollbackDialog onconfirm={() => session.confirmRollback()} oncancel={() => session.cancelRollback()} />
         {/if}
@@ -381,7 +426,11 @@
           <CommandHistory onReplay={handleReplay} />
           <VoiceControl />
           <CommandInput prefill={prefillText} />
-          <div class="gesture-control-host" class:camera-active={cameraControlsActive}>
+          <div
+            class="gesture-control-host"
+            class:camera-active={cameraControlsActive}
+            class:study-minimized={$studyActive}
+          >
             <GestureControl
               onGesture={onGestureDetected}
               onActiveChange={(active) => (cameraControlsActive = active)}
@@ -395,6 +444,31 @@
           </div>
         </div>
       </div>
+      <!-- Outside the connection-epoch key, so a daemon reconnect pauses the study instead of destroying it. Kept
+           mounted (hidden) on other tabs; any App modal or another tab pauses it. -->
+      {#if $studyActive}
+        <div class="study-panel" class:inactive={activeTab !== "study"}>
+          <svelte:boundary>
+            <SelectionStudy
+              paused={activeModal !== null || activeTab !== "study"}
+              onexit={() => {
+                if ($studyActive) void coadaptation.exitStudy();
+              }}
+            />
+            {#snippet failed(error)}
+              <div class="empty-state">
+                <h2>The selection study stopped</h2>
+                <p style="font-family: var(--font-mono); font-size: 11px;">
+                  {error instanceof Error ? error.message : String(error)}
+                </p>
+                <div class="suggestions">
+                  <button class="suggestion" onclick={() => void coadaptation.exitStudy()}>Close the study</button>
+                </div>
+              </div>
+            {/snippet}
+          </svelte:boundary>
+        </div>
+      {/if}
       {#key daemonConnectionEpoch}
         {#if activeTab === "log"}
           <ActivityLog />
@@ -754,6 +828,44 @@
 
   .chat-panel.inactive .gesture-control-host.camera-active {
     pointer-events: auto;
+  }
+
+  .study-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    position: relative;
+  }
+
+  .study-panel.inactive {
+    display: none;
+  }
+
+  /* During a selection study the fixed bottom-right camera preview shrinks to a 64 x 48 thumbnail above the camera
+     button, and its badges and the gesture status readouts are hidden, so they take as little of the study surface
+     as possible. The camera keeps running for the hand pointer, and the button still stops it. */
+  .gesture-control-host.study-minimized :global(.camera-pip) {
+    width: 64px;
+    height: 48px;
+    bottom: 56px;
+    border-radius: 8px;
+  }
+
+  .gesture-control-host.study-minimized
+    :global(
+      :is(
+        .pip-badge,
+        .pip-hand-badge,
+        .pip-gaze-badge,
+        .pip-gesture-tag,
+        .cam-trail,
+        .gesture-label,
+        .gesture-history,
+        .spatial-status
+      )
+    ) {
+    display: none;
   }
 
   .results {

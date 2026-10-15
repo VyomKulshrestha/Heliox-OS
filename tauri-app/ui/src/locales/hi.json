@@ -8,7 +8,8 @@
     "tab_plugins": "प्लगइन्स",
     "tab_settings": "सेटिंग्स",
     "export_json": "JSON निर्यात करें",
-    "export_csv": "CSV निर्यात करें"
+    "export_csv": "CSV निर्यात करें",
+    "tab_study": "अध्ययन"
   },
   "neural": {
     "task_launcher": "न्यूरल स्वायत्त कार्य लॉन्चर",

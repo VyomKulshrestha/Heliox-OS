@@ -301,3 +301,59 @@ describe("background approvals", () => {
     expect(get(session).confirmRequired).toBe(false);
   });
 });
+
+describe("typed or spoken text during an approval", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    notificationHandler = null;
+    daemonMocks.call.mockReset();
+    daemonMocks.call.mockResolvedValue(undefined);
+    vi.resetModules();
+  });
+
+  async function pendingApproval() {
+    const { session } = await import("./session");
+    notificationHandler!("voice_command", { command: "delete the old logs" });
+    notificationHandler!("confirm_required", {
+      plan_id: "plan-typed",
+      actions: [{ index: 0, action_type: "file_delete", target: "C:/Temp/old.log", parameters: {} }],
+      reason: "Deleting files needs approval.",
+    });
+    notificationHandler!("status", { phase: "awaiting approval" });
+    return session;
+  }
+
+  it.each([
+    [
+      "approval_requires_dialog",
+      "Approve in the visible confirmation dialog. Speech and typed text can deny but never approve.",
+    ],
+    ["denied", "Okay, I won't run that."],
+    ["not_denied", "That approval was already answered, so nothing was denied. Say or press Stop to cancel the task."],
+  ])("handles the %s interject status: phase restored and the daemon's text shown", async (status, message) => {
+    const session = await pendingApproval();
+    daemonMocks.call.mockResolvedValueOnce({ status, plan_id: "plan-typed", message });
+
+    await session.sendCommand(status === "approval_requires_dialog" ? "yes" : "no");
+
+    expect(daemonMocks.call).toHaveBeenCalledWith("interject", {
+      input: status === "approval_requires_dialog" ? "yes" : "no",
+      mode: "correct",
+    });
+    const state = get(session);
+    expect(state.phase).toBe("awaiting approval");
+    expect(state.messages.at(-1)).toMatchObject({ type: "system", text: message });
+    expect(state.messages.some((entry) => entry.type === "error")).toBe(false);
+    // The approval itself is untouched here; the daemon resolves it and the task result clears it.
+    expect(state).toMatchObject({ confirmRequired: true, confirmPlanId: "plan-typed" });
+  });
+
+  it("falls back to the documented text when the daemon sends none", async () => {
+    const session = await pendingApproval();
+    daemonMocks.call.mockResolvedValueOnce({ status: "denied", plan_id: "plan-typed" });
+
+    await session.sendCommand("cancel");
+
+    expect(get(session).messages.at(-1)).toMatchObject({ type: "system", text: "Okay, I won't run that." });
+  });
+});

@@ -2,11 +2,14 @@
   import type { PlanAction } from "../stores/session";
   import { describeAction } from "../utils/actionDetails";
   import { _ } from "svelte-i18n";
+  import { onMount, tick, untrack } from "svelte";
 
   interface Props {
     actions: PlanAction[];
     onconfirm: (approvedIndices: number[]) => void;
     ondeny: () => void;
+    /** Called on mount and on every toggle with the indices that are checked, so a gesture approves only these. */
+    onselectionchange?: (approvedIndices: number[]) => void;
     reason?: string;
     riskAssessment?: Record<string, unknown> | null;
     gnomon?: Record<string, unknown> | null;
@@ -18,12 +21,24 @@
     actions,
     onconfirm,
     ondeny,
+    onselectionchange,
     reason = "",
     riskAssessment = null,
     gnomon = null,
     submitting = false,
     error = "",
   }: Props = $props();
+
+  /** Key events this soon after mount are ignored, so typing carried over from the chat box cannot answer. */
+  const KEY_GUARD_MS = 300;
+  const titleId = $props.id();
+
+  let dialogEl: HTMLDivElement | undefined = $state();
+  let denyButton: HTMLButtonElement | undefined = $state();
+  let mountedAt = Number.POSITIVE_INFINITY;
+  // Keys whose keydown this dialog accepted; a keyup without one (a key held since before the dialog opened) is
+  // swallowed so it cannot activate the focused button.
+  const acceptedKeys = new Set<string>();
 
   let approved = $state<boolean[]>([]);
   let anyApproved = $derived(approved.some((v) => v));
@@ -34,6 +49,48 @@
     }
   });
 
+  // Compared by value: `actions` comes from the session store, which the report itself updates, so reporting on
+  // every store change would loop. The report runs only when the checked set really changes (and once on mount).
+  const checkedKey = $derived(checkedIndices().join(","));
+  $effect(() => {
+    const key = checkedKey;
+    untrack(() => onselectionchange?.(key ? key.split(",").map(Number) : []));
+  });
+
+  /** Input types that take no typed text; focus on one of them is not someone typing. */
+  const NON_TEXT_INPUT_TYPES = new Set([
+    "button",
+    "checkbox",
+    "color",
+    "file",
+    "hidden",
+    "image",
+    "radio",
+    "range",
+    "reset",
+    "submit",
+  ]);
+
+  function isTextEntry(element: Element | null): boolean {
+    if (element instanceof HTMLTextAreaElement) return true;
+    if (element instanceof HTMLInputElement) return !NON_TEXT_INPUT_TYPES.has(element.type);
+    return element instanceof HTMLElement && element.isContentEditable;
+  }
+
+  onMount(() => {
+    mountedAt = performance.now();
+    // Someone typing in a text field (the chat box) when the approval arrives would press a focused Deny with their
+    // next Space or Enter, long after the 300 ms guard. Their focus goes to the dialog box instead, where no key
+    // answers: Tab reaches the buttons and Escape still denies. Otherwise the initial focus is on Deny.
+    const typing = isTextEntry(document.activeElement);
+    // After the pending update, so a tab switch to Command made for this approval has shown the dialog first.
+    void tick().then(() => (typing || isTextEntry(document.activeElement) ? dialogEl : denyButton)?.focus());
+  });
+
+  function checkedIndices(): number[] {
+    return actions.map((a, i) => (approved[i] ? (a.index ?? i) : -1)).filter((i) => i !== -1);
+  }
+
   function toggle(i: number) {
     if (submitting) return;
     approved[i] = !approved[i];
@@ -41,16 +98,78 @@
 
   function handleConfirm() {
     if (submitting) return;
-    const approvedIndices = actions.map((a, i) => (approved[i] ? (a.index ?? i) : -1)).filter((i) => i !== -1);
-    onconfirm(approvedIndices);
+    onconfirm(checkedIndices());
+  }
+
+  function handleDeny() {
+    if (submitting) return;
+    ondeny();
+  }
+
+  function swallow(event: KeyboardEvent) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  function focusableElements(): HTMLElement[] {
+    if (!dialogEl) return [];
+    return Array.from(
+      dialogEl.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
+      ),
+    );
+  }
+
+  function handleKeydown(event: KeyboardEvent) {
+    if (event.repeat || performance.now() - mountedAt < KEY_GUARD_MS) {
+      swallow(event);
+      return;
+    }
+    acceptedKeys.add(event.key);
+    if (event.key === "Escape") {
+      swallow(event);
+      handleDeny();
+    } else if (event.key === "Tab") {
+      const focusable = focusableElements();
+      if (focusable.length === 0) {
+        swallow(event);
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement;
+      // Focus on the dialog box itself (a click on its text) counts as outside the cycle of its controls.
+      const inside = active instanceof HTMLElement && active !== dialogEl && Boolean(dialogEl?.contains(active));
+      if (!inside || (event.shiftKey && active === first)) {
+        swallow(event);
+        (event.shiftKey ? last : first).focus();
+      } else if (!event.shiftKey && active === last) {
+        swallow(event);
+        first.focus();
+      }
+    }
+    // Enter and Space keep their native meaning: they press the focused button or toggle the focused checkbox.
+  }
+
+  function handleKeyup(event: KeyboardEvent) {
+    if (!acceptedKeys.delete(event.key)) swallow(event);
   }
 </script>
 
 <div class="confirm-overlay">
-  <div class="confirm-dialog">
+  <div
+    class="confirm-dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby={titleId}
+    tabindex="-1"
+    bind:this={dialogEl}
+    onkeydowncapture={handleKeydown}
+    onkeyupcapture={handleKeyup}
+  >
     <div class="confirm-header">
       <span class="warn-icon">&#9888;</span>
-      <span>{$_("confirm.title")}</span>
+      <span id={titleId}>{$_("confirm.title")}</span>
     </div>
 
     <p class="confirm-body">
@@ -120,8 +239,12 @@
     {/if}
 
     <div class="confirm-actions">
-      <button class="btn-deny" title={$_("confirm.deny")} disabled={submitting} onclick={ondeny}
-        >{$_("confirm.deny")}</button
+      <button
+        class="btn-deny"
+        title={$_("confirm.deny")}
+        disabled={submitting}
+        bind:this={denyButton}
+        onclick={handleDeny}>{$_("confirm.deny")}</button
       >
       <button
         class="btn-confirm"

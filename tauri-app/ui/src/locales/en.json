@@ -8,7 +8,8 @@
     "tab_plugins": "Plugins",
     "tab_settings": "Settings",
     "export_json": "Export JSON",
-    "export_csv": "Export CSV"
+    "export_csv": "Export CSV",
+    "tab_study": "Study"
   },
   "neural": {
     "title": "Neural Intent (Research)",
@@ -136,7 +137,13 @@
     "body": "The following actions require your approval before execution. Uncheck any you don't want to run — the rest will be skipped.",
     "deny": "Deny",
     "approve": "Approve & Execute",
-    "submitting": "Sending decision..."
+    "submitting": "Sending decision...",
+    "nothing_checked": "Nothing is checked. Check the actions you want to approve, or deny."
+  },
+  "gesture": {
+    "approve_not_visible": "Open the Command tab to approve. Gestures can approve only a dialog you have had time to see.",
+    "approve_rearm": "Lower your hand out of view, then raise it to approve by gesture.",
+    "no_approval_pending": "No approval is pending."
   },
   "interrupt": {
     "title": "Heliox paused",

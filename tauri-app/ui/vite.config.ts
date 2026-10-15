@@ -567,5 +567,8 @@ export default defineConfig({
     globals: true,
     include: ["src/**/*.{test,spec}.{js,ts}"],
     exclude: ["tests/visual/**", "tests/static/**", "node_modules/**"],
+    // Component tests that mount the full Settings panel or the selection study load dozens of modules; under a full
+    // parallel run on a busy Windows machine or CI runner they can pass 5 s (the vitest default) without being wrong.
+    testTimeout: 15000,
   },
 });

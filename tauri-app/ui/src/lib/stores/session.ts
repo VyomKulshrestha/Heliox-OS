@@ -1,4 +1,5 @@
 import { writable, get } from "svelte/store";
+import { _ } from "svelte-i18n";
 import { call, connect, isConnected, onConnectionState, onNotification, requireOkResult } from "../api/daemon";
 import { classifyExecuteResponse, normalizeActionResult, repairLegacyPlanFallback } from "../utils/executeResponse";
 import {
@@ -126,6 +127,57 @@ export interface QueuedTask {
   status: "queued" | "running";
 }
 
+/** The authority channel that answered an approval; recorded by the daemon as `input_channel`. Pointer versus
+ * keyboard is never distinguished. */
+export type ConfirmInputChannel = "dialog" | "gesture" | "voice_deny" | "internal" | "unknown";
+
+/** What the visible ConfirmDialog currently shows as checked, for the plan it was rendered for. */
+export interface ConfirmSelection {
+  planId: string;
+  indices: number[];
+}
+
+/** Shown when a channel other than the dialog's own buttons tries to approve with nothing checked. */
+export const NOTHING_CHECKED_MESSAGE = "Nothing is checked. Check the actions you want to approve, or deny.";
+
+/**
+ * What became of one `session.confirm` call. A caller may say "accepted" or "denied" only for `recorded` with the
+ * matching `confirmed` value: anything else means the daemon did not take this answer.
+ */
+export type ConfirmOutcome =
+  /** Nothing was sent: another answer is in flight, the request has no plan ID, or a channel without checkboxes
+   * tried to approve with nothing checked. */
+  | { kind: "not_sent"; reason: "submitting" | "missing_plan" | "nothing_checked" }
+  /** The daemon replied ok. `confirmed` is the decision it says it recorded, or null when the reply did not say. */
+  | { kind: "recorded"; confirmed: boolean | null }
+  /** The daemon refused the answer or the call failed. `errorShown` is true when the chat already shows
+   * "Approval failed: …" for it (the plan was still pending when the reply came). */
+  | { kind: "rejected"; message: string; errorShown: boolean };
+
+/** Fallback text for the interject replies to typed or spoken text during an approval (daemon F6). */
+function interjectApprovalMessage(status: string): string | null {
+  switch (status) {
+    case "approval_requires_dialog":
+      return "Approve in the visible confirmation dialog. Speech and typed text can deny but never approve.";
+    case "denied":
+      return "Okay, I won't run that.";
+    case "not_denied":
+      return "That approval was already answered, so nothing was denied. Say or press Stop to cancel the task.";
+    default:
+      return null;
+  }
+}
+
+/** The translated message when i18n is ready, else the English text (tests, early start-up). */
+function localizedMessage(key: string, english: string): string {
+  try {
+    const text = get(_)(key, { default: english });
+    return typeof text === "string" && text ? text : english;
+  } catch {
+    return english;
+  }
+}
+
 interface SessionState {
   activeSessionId: string;
   daemonConnected: boolean;
@@ -143,6 +195,13 @@ interface SessionState {
   confirmBackground: boolean;
   confirmSubmitting: boolean;
   confirmError: string;
+  /** Reported by ConfirmDialog on mount and on every toggle; null until it reports for the current approval. */
+  confirmSelection: ConfirmSelection | null;
+  /** Set by App: Command tab active, the confirmation is the active modal and the document is visible. */
+  confirmVisible: boolean;
+  /** performance.now() when the dialog last became visible (or showed a new approval while visible); null while
+   * hidden. Gesture approval needs at least a second of it. */
+  confirmVisibleSince: number | null;
   phase: string;
   interaction: InteractionState | null;
   liveActions: LiveActionState[];
@@ -204,6 +263,9 @@ const initialState: SessionState = {
   confirmBackground: false,
   confirmSubmitting: false,
   confirmError: "",
+  confirmSelection: null,
+  confirmVisible: false,
+  confirmVisibleSince: null,
   phase: "",
   interaction: null,
   liveActions: [],
@@ -294,6 +356,15 @@ function backgroundApproval(s: SessionState): Partial<SessionState> {
     confirmSubmitting: s.confirmSubmitting,
     confirmError: s.confirmError,
     confirmBackground: true,
+  };
+}
+
+/** A new or resumed approval starts with no reported selection, and a dialog that is already visible counts as
+ * newly shown, so a gesture can never approve it on the strength of the previous approval's selection or time. */
+function freshApprovalPresentation(s: SessionState): Partial<SessionState> {
+  return {
+    confirmSelection: null,
+    confirmVisibleSince: s.confirmVisible ? performance.now() : null,
   };
 }
 
@@ -684,6 +755,7 @@ function createSession() {
           confirmBackground: Boolean(p.source),
           confirmSubmitting: false,
           confirmError: "",
+          ...freshApprovalPresentation(s),
         }));
         companion.speak({
           channel: "approval_risk",
@@ -920,6 +992,7 @@ function createSession() {
               : null,
           confirmSubmitting: false,
           confirmError: "",
+          ...freshApprovalPresentation(s),
         }));
       } else if (result.status === "error" && !result.task_id) {
         throw new Error(String(result.message ?? "The interrupted task could not be resumed."));
@@ -1091,6 +1164,7 @@ function createSession() {
           status: string;
           message?: string;
         };
+        const approvalNote = interjectApprovalMessage(result.status);
         if (result.status === "answered") {
           update((s) => ({
             ...s,
@@ -1107,6 +1181,11 @@ function createSession() {
         } else if (result.status === "no_active_execution") {
           update((s) => ({ ...s, phase: previousPhase }));
           addSystemMessage("That task had just finished. Send the message again to start a new task.");
+        } else if (approvalNote !== null) {
+          // Typed or spoken text during an approval: an approval word is refused (only the dialog approves), and
+          // a denial word is reported as denied only when the daemon says the denial took effect. Nothing replans.
+          update((s) => ({ ...s, phase: previousPhase }));
+          addSystemMessage(result.message || approvalNote);
         } else {
           update((s) => ({ ...s, phase: previousPhase }));
           addErrorMessage(
@@ -1272,9 +1351,36 @@ function createSession() {
     }
   }
 
-  async function confirm(accepted: boolean, approvedIndices?: number[]) {
+  /** ConfirmDialog reports what it shows as checked, so another channel can approve exactly that and no more. */
+  function setConfirmSelection(planId: string, indices: number[]) {
+    const current = get({ subscribe }).confirmSelection;
+    if (
+      current?.planId === planId &&
+      current.indices.length === indices.length &&
+      current.indices.every((index, i) => index === indices[i])
+    ) {
+      return;
+    }
+    update((s) => ({ ...s, confirmSelection: { planId, indices: [...indices] } }));
+  }
+
+  /** App reports whether the person can see the dialog; `confirmVisibleSince` restarts each time it appears. */
+  function setConfirmVisible(visible: boolean) {
+    if (get({ subscribe }).confirmVisible === visible) return;
+    update((s) => ({
+      ...s,
+      confirmVisible: visible,
+      confirmVisibleSince: visible ? performance.now() : null,
+    }));
+  }
+
+  async function confirm(
+    accepted: boolean,
+    approvedIndices?: number[],
+    opts: { inputChannel?: ConfirmInputChannel } = {},
+  ): Promise<ConfirmOutcome> {
     const confirmation = get({ subscribe });
-    if (confirmation.confirmSubmitting) return;
+    if (confirmation.confirmSubmitting) return { kind: "not_sent", reason: "submitting" };
     const planId = confirmation.confirmPlanId;
 
     if (!planId) {
@@ -1282,12 +1388,27 @@ function createSession() {
         ...s,
         confirmError: "This approval request is missing its plan ID. Wait for the plan to refresh and try again.",
       }));
-      return;
+      return { kind: "not_sent", reason: "missing_plan" };
+    }
+
+    let indices = approvedIndices;
+    if (accepted && indices === undefined && opts.inputChannel !== undefined) {
+      // A channel without its own checkboxes (a gesture) approves only what the dialog reported as checked for
+      // this plan. Sending no indices would approve every action that needs approval, unchecked ones included.
+      const selection = confirmation.confirmSelection;
+      if (!selection || selection.planId !== planId || selection.indices.length === 0) {
+        update((s) => ({ ...s, confirmError: localizedMessage("confirm.nothing_checked", NOTHING_CHECKED_MESSAGE) }));
+        return { kind: "not_sent", reason: "nothing_checked" };
+      }
+      indices = [...selection.indices];
     }
 
     const params: Record<string, unknown> = { plan_id: planId, confirmed: accepted };
-    if (approvedIndices !== undefined) {
-      params.approved_indices = approvedIndices;
+    if (indices !== undefined) {
+      params.approved_indices = indices;
+    }
+    if (opts.inputChannel !== undefined) {
+      params.input_channel = opts.inputChannel;
     }
 
     update((s) => ({ ...s, confirmSubmitting: true, confirmError: "" }));
@@ -1314,10 +1435,14 @@ function createSession() {
           : s,
       );
       if (Boolean(result.resume_required)) {
-        await resumeDurableTask();
+        // Not awaited: the outcome describes the answer, and the resumed task may run for a long time. The resume
+        // reports its own failures in the chat.
+        void resumeDurableTask();
       }
+      return { kind: "recorded", confirmed: typeof result.confirmed === "boolean" ? result.confirmed : null };
     } catch (err) {
       const message = String(err instanceof Error ? err.message : err);
+      const errorShown = get({ subscribe }).confirmPlanId === planId;
       update((s) =>
         s.confirmPlanId === planId
           ? {
@@ -1335,6 +1460,7 @@ function createSession() {
             }
           : s,
       );
+      return { kind: "rejected", message, errorShown };
     }
   }
 
@@ -1563,6 +1689,8 @@ function createSession() {
     subscribe,
     sendCommand,
     confirm,
+    setConfirmSelection,
+    setConfirmVisible,
     requestRollback,
     cancelRollback,
     confirmRollback,

@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "test:unit": "vitest",
-    "test:static": "node tests/static/no-remote-mediapipe.test.mjs",
+    "test:static": "node tests/static/no-remote-mediapipe.test.mjs && node tests/static/coadaptation-authority.test.mjs && node tests/static/gesture-gaze-study.test.mjs",
     "test:e2e:approval": "playwright test --config playwright.approval.config.ts",
     "test:visual": "playwright test",
     "test:visual:update": "playwright test --update-snapshots"
