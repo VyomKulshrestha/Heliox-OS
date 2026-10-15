@@ -1,0 +1,3491 @@
+{
+ "seed": 20261015,
+ "cases": [
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.0,
+    "act": 1.0,
+    "confirm_selection:second_click": 0.0,
+    "confirm_selection:hold_700": 0.0
+   },
+   "u": 0.8744169187381158,
+   "expected": "act"
+  },
+  {
+   "order": [
+    "no_offer",
+    "offer_modality:keyboard",
+    "offer_modality:pointer"
+   ],
+   "propensities": {
+    "no_offer": 0.0,
+    "offer_modality:keyboard": 0.6675206375612738,
+    "offer_modality:pointer": 0.3324793624387262
+   },
+   "u": 0.5047616692735525,
+   "expected": "offer_modality:keyboard"
+  },
+  {
+   "order": [
+    "no_offer",
+    "offer_modality:keyboard",
+    "offer_modality:pointer"
+   ],
+   "propensities": {
+    "no_offer": 0.0,
+    "offer_modality:keyboard": 0.0,
+    "offer_modality:pointer": 1.0
+   },
+   "u": 0.0,
+   "expected": "offer_modality:pointer"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:hold_400",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.25,
+    "act": 0.0,
+    "enlarge_target:1.5": 0.25,
+    "enlarge_target:2.0": 0.25,
+    "confirm_selection:hold_400": 0.25,
+    "confirm_selection:hold_700": 0.0
+   },
+   "u": 0.5547618414083368,
+   "expected": "enlarge_target:2.0"
+  },
+  {
+   "order": [
+    "act",
+    "confirm_selection:second_click",
+    "wait_for_evidence",
+    "ask_clarification:2",
+    "ask_clarification:3"
+   ],
+   "propensities": {
+    "act": 0.0,
+    "confirm_selection:second_click": 0.0,
+    "wait_for_evidence": 0.7719937681457429,
+    "ask_clarification:2": 0.228006231854257,
+    "ask_clarification:3": 0.0
+   },
+   "u": 0.9999999999999999,
+   "expected": "ask_clarification:2"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.0,
+    "act": 0.0,
+    "confirm_selection:second_click": 1.0,
+    "confirm_selection:hold_700": 0.0
+   },
+   "u": 0.7647115656562423,
+   "expected": "confirm_selection:second_click"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:hold_400",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.0,
+    "act": 0.11384101166306568,
+    "enlarge_target:1.5": 0.48088421083396615,
+    "enlarge_target:2.0": 0.0,
+    "confirm_selection:hold_400": 0.0,
+    "confirm_selection:hold_700": 0.40527477750296814
+   },
+   "u": 0.0,
+   "expected": "act"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.0,
+    "act": 0.0,
+    "enlarge_target:1.5": 0.0,
+    "enlarge_target:2.0": 0.0,
+    "confirm_selection:second_click": 0.0,
+    "confirm_selection:hold_700": 1.0
+   },
+   "u": 0.03568896640078445,
+   "expected": "confirm_selection:hold_700"
+  },
+  {
+   "order": [
+    "no_offer",
+    "offer_modality:keyboard",
+    "offer_modality:pointer"
+   ],
+   "propensities": {
+    "no_offer": 0.0,
+    "offer_modality:keyboard": 0.0,
+    "offer_modality:pointer": 1.0
+   },
+   "u": 0.0,
+   "expected": "offer_modality:pointer"
+  },
+  {
+   "order": [
+    "no_offer",
+    "offer_modality:keyboard",
+    "offer_modality:pointer"
+   ],
+   "propensities": {
+    "no_offer": 0.3333333333333333,
+    "offer_modality:keyboard": 0.3333333333333333,
+    "offer_modality:pointer": 0.3333333333333333
+   },
+   "u": 0.6364737675824316,
+   "expected": "offer_modality:keyboard"
+  },
+  {
+   "order": [
+    "no_offer",
+    "offer_modality:keyboard",
+    "offer_modality:pointer"
+   ],
+   "propensities": {
+    "no_offer": 0.0,
+    "offer_modality:keyboard": 0.0,
+    "offer_modality:pointer": 1.0
+   },
+   "u": 0.0,
+   "expected": "offer_modality:pointer"
+  },
+  {
+   "order": [
+    "act",
+    "confirm_selection:second_click",
+    "wait_for_evidence",
+    "ask_clarification:2",
+    "ask_clarification:3"
+   ],
+   "propensities": {
+    "act": 0.33416804302012054,
+    "confirm_selection:second_click": 0.2527540404016668,
+    "wait_for_evidence": 0.20225684075414277,
+    "ask_clarification:2": 0.21082107582406992,
+    "ask_clarification:3": 0.0
+   },
+   "u": 0.0,
+   "expected": "act"
+  },
+  {
+   "order": [
+    "no_offer",
+    "offer_modality:keyboard",
+    "offer_modality:pointer"
+   ],
+   "propensities": {
+    "no_offer": 0.5,
+    "offer_modality:keyboard": 0.5,
+    "offer_modality:pointer": 0.0
+   },
+   "u": 0.6895251291655483,
+   "expected": "offer_modality:keyboard"
+  },
+  {
+   "order": [
+    "act",
+    "confirm_selection:second_click",
+    "wait_for_evidence",
+    "ask_clarification:2",
+    "ask_clarification:3"
+   ],
+   "propensities": {
+    "act": 0.5915481113834101,
+    "confirm_selection:second_click": 0.23052304899933831,
+    "wait_for_evidence": 0.0,
+    "ask_clarification:2": 0.10683942575992132,
+    "ask_clarification:3": 0.07108941385733013
+   },
+   "u": 0.9999999999999999,
+   "expected": "ask_clarification:3"
+  },
+  {
+   "order": [
+    "act",
+    "confirm_selection:second_click",
+    "wait_for_evidence",
+    "ask_clarification:2",
+    "ask_clarification:3"
+   ],
+   "propensities": {
+    "act": 0.0,
+    "confirm_selection:second_click": 0.713016604157149,
+    "wait_for_evidence": 0.20257431599381193,
+    "ask_clarification:2": 0.08440907984903909,
+    "ask_clarification:3": 0.0
+   },
+   "u": 0.0,
+   "expected": "confirm_selection:second_click"
+  },
+  {
+   "order": [
+    "no_offer",
+    "offer_modality:keyboard",
+    "offer_modality:pointer"
+   ],
+   "propensities": {
+    "no_offer": 0.0,
+    "offer_modality:keyboard": 1.0,
+    "offer_modality:pointer": 0.0
+   },
+   "u": 0.12424799256830155,
+   "expected": "offer_modality:keyboard"
+  },
+  {
+   "order": [
+    "no_offer",
+    "offer_modality:keyboard",
+    "offer_modality:pointer"
+   ],
+   "propensities": {
+    "no_offer": 0.0,
+    "offer_modality:keyboard": 0.5,
+    "offer_modality:pointer": 0.5
+   },
+   "u": 0.30389953247880896,
+   "expected": "offer_modality:keyboard"
+  },
+  {
+   "order": [
+    "act",
+    "confirm_selection:second_click",
+    "wait_for_evidence",
+    "ask_clarification:2",
+    "ask_clarification:3"
+   ],
+   "propensities": {
+    "act": 0.0,
+    "confirm_selection:second_click": 0.20593984428255538,
+    "wait_for_evidence": 0.0,
+    "ask_clarification:2": 0.21899830569497306,
+    "ask_clarification:3": 0.5750618500224716
+   },
+   "u": 0.8638159746025272,
+   "expected": "ask_clarification:3"
+  },
+  {
+   "order": [
+    "act",
+    "confirm_selection:second_click",
+    "wait_for_evidence",
+    "ask_clarification:2",
+    "ask_clarification:3"
+   ],
+   "propensities": {
+    "act": 0.20963921098525679,
+    "confirm_selection:second_click": 0.31141835481489244,
+    "wait_for_evidence": 0.10184483046880352,
+    "ask_clarification:2": 0.0,
+    "ask_clarification:3": 0.3770976037310472
+   },
+   "u": 0.9999999999999999,
+   "expected": "ask_clarification:3"
+  },
+  {
+   "order": [
+    "act",
+    "confirm_selection:second_click",
+    "wait_for_evidence",
+    "ask_clarification:2",
+    "ask_clarification:3"
+   ],
+   "propensities": {
+    "act": 0.0,
+    "confirm_selection:second_click": 0.0,
+    "wait_for_evidence": 0.9507594425740163,
+    "ask_clarification:2": 0.0,
+    "ask_clarification:3": 0.04924055742598366
+   },
+   "u": 0.8000224616049474,
+   "expected": "wait_for_evidence"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.00794491545882533,
+    "act": 0.4677855344799838,
+    "confirm_selection:second_click": 0.367871251999292,
+    "confirm_selection:hold_700": 0.15639829806189898
+   },
+   "u": 0.9999999999999999,
+   "expected": "confirm_selection:hold_700"
+  },
+  {
+   "order": [
+    "no_offer",
+    "offer_modality:keyboard",
+    "offer_modality:pointer"
+   ],
+   "propensities": {
+    "no_offer": 0.0,
+    "offer_modality:keyboard": 1.0,
+    "offer_modality:pointer": 0.0
+   },
+   "u": 0.9999999999999999,
+   "expected": "offer_modality:keyboard"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:hold_400",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.0,
+    "act": 0.0,
+    "enlarge_target:1.5": 0.26621130137501975,
+    "enlarge_target:2.0": 0.5073802214352527,
+    "confirm_selection:hold_400": 0.2264084771897275,
+    "confirm_selection:hold_700": 0.0
+   },
+   "u": 0.9999999999999999,
+   "expected": "confirm_selection:hold_400"
+  },
+  {
+   "order": [
+    "no_offer",
+    "offer_modality:keyboard",
+    "offer_modality:pointer"
+   ],
+   "propensities": {
+    "no_offer": 0.5,
+    "offer_modality:keyboard": 0.0,
+    "offer_modality:pointer": 0.5
+   },
+   "u": 0.4383709125122349,
+   "expected": "no_offer"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:hold_400",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.0,
+    "act": 0.0,
+    "enlarge_target:1.5": 0.0,
+    "enlarge_target:2.0": 0.0,
+    "confirm_selection:hold_400": 1.0,
+    "confirm_selection:hold_700": 0.0
+   },
+   "u": 0.6870615048683102,
+   "expected": "confirm_selection:hold_400"
+  },
+  {
+   "order": [
+    "act",
+    "confirm_selection:second_click",
+    "wait_for_evidence",
+    "ask_clarification:2",
+    "ask_clarification:3"
+   ],
+   "propensities": {
+    "act": 0.0,
+    "confirm_selection:second_click": 1.0,
+    "wait_for_evidence": 0.0,
+    "ask_clarification:2": 0.0,
+    "ask_clarification:3": 0.0
+   },
+   "u": 0.1010866821023837,
+   "expected": "confirm_selection:second_click"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.39964044521806036,
+    "act": 0.0,
+    "enlarge_target:1.5": 0.0,
+    "enlarge_target:2.0": 0.0,
+    "confirm_selection:second_click": 0.35099241787799834,
+    "confirm_selection:hold_700": 0.24936713690394124
+   },
+   "u": 0.9999999999999999,
+   "expected": "confirm_selection:hold_700"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:hold_400",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.0,
+    "act": 0.0,
+    "enlarge_target:1.5": 0.0,
+    "enlarge_target:2.0": 0.0,
+    "confirm_selection:hold_400": 1.0,
+    "confirm_selection:hold_700": 0.0
+   },
+   "u": 0.17721599531768883,
+   "expected": "confirm_selection:hold_400"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.6902755736790122,
+    "act": 0.0,
+    "confirm_selection:second_click": 0.309724426320988,
+    "confirm_selection:hold_700": 0.0
+   },
+   "u": 0.6902755736790122,
+   "expected": "confirm_selection:second_click"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.20124086966231775,
+    "act": 0.0,
+    "confirm_selection:second_click": 0.40508142808812475,
+    "confirm_selection:hold_700": 0.39367770224955745
+   },
+   "u": 0.1507244012265374,
+   "expected": "assistance_off"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:hold_400",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.0,
+    "act": 0.23844304403502606,
+    "enlarge_target:1.5": 0.30556308712426844,
+    "enlarge_target:2.0": 0.0,
+    "confirm_selection:hold_400": 0.0,
+    "confirm_selection:hold_700": 0.4559938688407056
+   },
+   "u": 0.9999999999999999,
+   "expected": "confirm_selection:hold_700"
+  },
+  {
+   "order": [
+    "no_offer",
+    "offer_modality:keyboard",
+    "offer_modality:pointer"
+   ],
+   "propensities": {
+    "no_offer": 0.0,
+    "offer_modality:keyboard": 1.0,
+    "offer_modality:pointer": 0.0
+   },
+   "u": 0.19138427292648275,
+   "expected": "offer_modality:keyboard"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.3292116565024365,
+    "act": 0.00446284871178669,
+    "enlarge_target:1.5": 0.0999845979525851,
+    "enlarge_target:2.0": 0.2716676731803838,
+    "confirm_selection:second_click": 0.29467322365280785,
+    "confirm_selection:hold_700": 0.0
+   },
+   "u": 1.0,
+   "expected": "confirm_selection:second_click"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.0,
+    "act": 1.0,
+    "confirm_selection:second_click": 0.0,
+    "confirm_selection:hold_700": 0.0
+   },
+   "u": 0.2334514013873622,
+   "expected": "act"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:hold_400",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.0,
+    "act": 0.3515106420812578,
+    "enlarge_target:1.5": 0.3721183137981387,
+    "enlarge_target:2.0": 0.0757169012842858,
+    "confirm_selection:hold_400": 0.04219887889922,
+    "confirm_selection:hold_700": 0.1584552639370977
+   },
+   "u": 0.0,
+   "expected": "act"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.0,
+    "act": 0.0,
+    "enlarge_target:1.5": 0.5058889999432923,
+    "enlarge_target:2.0": 0.06604214563143154,
+    "confirm_selection:second_click": 0.42806885442527615,
+    "confirm_selection:hold_700": 0.0
+   },
+   "u": 0.7323112272005593,
+   "expected": "confirm_selection:second_click"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.0,
+    "act": 0.05436026318413628,
+    "confirm_selection:second_click": 0.4306685748844694,
+    "confirm_selection:hold_700": 0.5149711619313943
+   },
+   "u": 0.0,
+   "expected": "act"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.3635551126695042,
+    "act": 0.0,
+    "confirm_selection:second_click": 0.3656793680528158,
+    "confirm_selection:hold_700": 0.27076551927768
+   },
+   "u": 0.9999999999999999,
+   "expected": "confirm_selection:hold_700"
+  },
+  {
+   "order": [
+    "act",
+    "confirm_selection:second_click",
+    "wait_for_evidence",
+    "ask_clarification:2",
+    "ask_clarification:3"
+   ],
+   "propensities": {
+    "act": 0.3333333333333333,
+    "confirm_selection:second_click": 0.3333333333333333,
+    "wait_for_evidence": 0.0,
+    "ask_clarification:2": 0.3333333333333333,
+    "ask_clarification:3": 0.0
+   },
+   "u": 0.40230497283589317,
+   "expected": "confirm_selection:second_click"
+  },
+  {
+   "order": [
+    "no_offer",
+    "offer_modality:keyboard",
+    "offer_modality:pointer"
+   ],
+   "propensities": {
+    "no_offer": 1.0,
+    "offer_modality:keyboard": 0.0,
+    "offer_modality:pointer": 0.0
+   },
+   "u": 0.0,
+   "expected": "no_offer"
+  },
+  {
+   "order": [
+    "act",
+    "confirm_selection:second_click",
+    "wait_for_evidence",
+    "ask_clarification:2",
+    "ask_clarification:3"
+   ],
+   "propensities": {
+    "act": 0.0,
+    "confirm_selection:second_click": 0.4195643309655448,
+    "wait_for_evidence": 0.17766717775777288,
+    "ask_clarification:2": 0.22873995197036545,
+    "ask_clarification:3": 0.1740285393063168
+   },
+   "u": 0.09637943341075184,
+   "expected": "confirm_selection:second_click"
+  },
+  {
+   "order": [
+    "act",
+    "confirm_selection:second_click",
+    "wait_for_evidence",
+    "ask_clarification:2",
+    "ask_clarification:3"
+   ],
+   "propensities": {
+    "act": 0.23460984774761687,
+    "confirm_selection:second_click": 0.0,
+    "wait_for_evidence": 0.5151965030235519,
+    "ask_clarification:2": 0.13920480685067937,
+    "ask_clarification:3": 0.11098884237815189
+   },
+   "u": 0.8890111576218481,
+   "expected": "ask_clarification:3"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:hold_400",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.0,
+    "act": 0.2877579215227245,
+    "enlarge_target:1.5": 0.0,
+    "enlarge_target:2.0": 0.0,
+    "confirm_selection:hold_400": 0.2553446455376586,
+    "confirm_selection:hold_700": 0.4568974329396168
+   },
+   "u": 0.3363813970343147,
+   "expected": "confirm_selection:hold_400"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.33176056116048647,
+    "act": 0.11914925767003542,
+    "enlarge_target:1.5": 0.17567017757506767,
+    "enlarge_target:2.0": 0.16661818606496387,
+    "confirm_selection:second_click": 0.043008464557316405,
+    "confirm_selection:hold_700": 0.16379335297213007
+   },
+   "u": 0.0,
+   "expected": "assistance_off"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.18573273175900273,
+    "act": 0.0,
+    "enlarge_target:1.5": 0.0,
+    "enlarge_target:2.0": 0.0,
+    "confirm_selection:second_click": 0.29728679903084765,
+    "confirm_selection:hold_700": 0.5169804692101496
+   },
+   "u": 0.9999999999999999,
+   "expected": "confirm_selection:hold_700"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.779104893106567,
+    "act": 0.0,
+    "confirm_selection:second_click": 0.22089510689343295,
+    "confirm_selection:hold_700": 0.0
+   },
+   "u": 0.9999999999999999,
+   "expected": "confirm_selection:second_click"
+  },
+  {
+   "order": [
+    "act",
+    "confirm_selection:second_click",
+    "wait_for_evidence",
+    "ask_clarification:2",
+    "ask_clarification:3"
+   ],
+   "propensities": {
+    "act": 0.2,
+    "confirm_selection:second_click": 0.2,
+    "wait_for_evidence": 0.2,
+    "ask_clarification:2": 0.2,
+    "ask_clarification:3": 0.2
+   },
+   "u": 0.6751486819230094,
+   "expected": "ask_clarification:2"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:hold_400",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.0,
+    "act": 0.17663815101327204,
+    "enlarge_target:1.5": 0.22147054504368124,
+    "enlarge_target:2.0": 0.2899761538563208,
+    "confirm_selection:hold_400": 0.0,
+    "confirm_selection:hold_700": 0.31191515008672593
+   },
+   "u": 0.0,
+   "expected": "act"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:hold_400",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.36427449854655086,
+    "act": 0.0,
+    "enlarge_target:1.5": 0.0,
+    "enlarge_target:2.0": 0.4187052237707105,
+    "confirm_selection:hold_400": 0.0,
+    "confirm_selection:hold_700": 0.21702027768273863
+   },
+   "u": 0.0,
+   "expected": "assistance_off"
+  },
+  {
+   "order": [
+    "act",
+    "confirm_selection:second_click",
+    "wait_for_evidence",
+    "ask_clarification:2",
+    "ask_clarification:3"
+   ],
+   "propensities": {
+    "act": 0.4464986020220688,
+    "confirm_selection:second_click": 0.5535013979779311,
+    "wait_for_evidence": 0.0,
+    "ask_clarification:2": 0.0,
+    "ask_clarification:3": 0.0
+   },
+   "u": 0.9999999999999999,
+   "expected": "confirm_selection:second_click"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.0,
+    "act": 0.18341841069292694,
+    "enlarge_target:1.5": 0.39013390602798,
+    "enlarge_target:2.0": 0.0,
+    "confirm_selection:second_click": 0.42644768327909305,
+    "confirm_selection:hold_700": 0.0
+   },
+   "u": 0.07467372697272445,
+   "expected": "act"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.14675758715091308,
+    "act": 0.05825652534287355,
+    "enlarge_target:1.5": 0.3586038681154003,
+    "enlarge_target:2.0": 0.0,
+    "confirm_selection:second_click": 0.43638201939081306,
+    "confirm_selection:hold_700": 0.0
+   },
+   "u": 0.9999999999999999,
+   "expected": "confirm_selection:second_click"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.0,
+    "act": 0.0,
+    "confirm_selection:second_click": 0.7411184905948565,
+    "confirm_selection:hold_700": 0.2588815094051436
+   },
+   "u": 0.0,
+   "expected": "confirm_selection:second_click"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.0,
+    "act": 0.0,
+    "confirm_selection:second_click": 0.0,
+    "confirm_selection:hold_700": 1.0
+   },
+   "u": 0.13852272195680293,
+   "expected": "confirm_selection:hold_700"
+  },
+  {
+   "order": [
+    "no_offer",
+    "offer_modality:keyboard",
+    "offer_modality:pointer"
+   ],
+   "propensities": {
+    "no_offer": 0.5,
+    "offer_modality:keyboard": 0.5,
+    "offer_modality:pointer": 0.0
+   },
+   "u": 0.19667543440249935,
+   "expected": "no_offer"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:hold_400",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.0,
+    "act": 0.0,
+    "enlarge_target:1.5": 0.0,
+    "enlarge_target:2.0": 0.0,
+    "confirm_selection:hold_400": 1.0,
+    "confirm_selection:hold_700": 0.0
+   },
+   "u": 0.3342719086189053,
+   "expected": "confirm_selection:hold_400"
+  },
+  {
+   "order": [
+    "act",
+    "confirm_selection:second_click",
+    "wait_for_evidence",
+    "ask_clarification:2",
+    "ask_clarification:3"
+   ],
+   "propensities": {
+    "act": 0.4792241451780802,
+    "confirm_selection:second_click": 0.2880793941952112,
+    "wait_for_evidence": 0.0,
+    "ask_clarification:2": 0.0,
+    "ask_clarification:3": 0.2326964606267086
+   },
+   "u": 0.13639423561594044,
+   "expected": "act"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:hold_400",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.0,
+    "act": 0.35816975640849685,
+    "enlarge_target:1.5": 0.4057345260932428,
+    "enlarge_target:2.0": 0.2360957174982604,
+    "confirm_selection:hold_400": 0.0,
+    "confirm_selection:hold_700": 0.0
+   },
+   "u": 0.0,
+   "expected": "act"
+  },
+  {
+   "order": [
+    "no_offer",
+    "offer_modality:keyboard",
+    "offer_modality:pointer"
+   ],
+   "propensities": {
+    "no_offer": 0.2051076041513748,
+    "offer_modality:keyboard": 0.45630980609021393,
+    "offer_modality:pointer": 0.33858258975841116
+   },
+   "u": 0.0,
+   "expected": "no_offer"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.0,
+    "act": 0.8614284589578847,
+    "confirm_selection:second_click": 0.0,
+    "confirm_selection:hold_700": 0.1385715410421154
+   },
+   "u": 0.0,
+   "expected": "act"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.9981201677530386,
+    "act": 0.0,
+    "confirm_selection:second_click": 0.001879832246961457,
+    "confirm_selection:hold_700": 0.0
+   },
+   "u": 1.0,
+   "expected": "confirm_selection:second_click"
+  },
+  {
+   "order": [
+    "no_offer",
+    "offer_modality:keyboard",
+    "offer_modality:pointer"
+   ],
+   "propensities": {
+    "no_offer": 0.5,
+    "offer_modality:keyboard": 0.0,
+    "offer_modality:pointer": 0.5
+   },
+   "u": 0.7274420222291648,
+   "expected": "offer_modality:pointer"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.0,
+    "act": 0.18877175015230724,
+    "confirm_selection:second_click": 0.02757596804628991,
+    "confirm_selection:hold_700": 0.7836522818014029
+   },
+   "u": 0.40715194468564564,
+   "expected": "confirm_selection:hold_700"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:hold_400",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.0,
+    "act": 0.525333464542518,
+    "enlarge_target:1.5": 0.0,
+    "enlarge_target:2.0": 0.45201350771735954,
+    "confirm_selection:hold_400": 0.0,
+    "confirm_selection:hold_700": 0.022653027740122563
+   },
+   "u": 0.9773469722598775,
+   "expected": "confirm_selection:hold_700"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.5111636654938799,
+    "act": 0.4888363345061201,
+    "confirm_selection:second_click": 0.0,
+    "confirm_selection:hold_700": 0.0
+   },
+   "u": 0.5111636654938799,
+   "expected": "act"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:hold_400",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.0,
+    "act": 0.24241659004840227,
+    "enlarge_target:1.5": 0.0,
+    "enlarge_target:2.0": 0.0,
+    "confirm_selection:hold_400": 0.2550651031415765,
+    "confirm_selection:hold_700": 0.5025183068100213
+   },
+   "u": 0.0,
+   "expected": "act"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:hold_400",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.0,
+    "act": 0.0,
+    "enlarge_target:1.5": 0.0,
+    "enlarge_target:2.0": 0.0,
+    "confirm_selection:hold_400": 1.0,
+    "confirm_selection:hold_700": 0.0
+   },
+   "u": 0.45052054545481257,
+   "expected": "confirm_selection:hold_400"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.0,
+    "act": 1.0,
+    "confirm_selection:second_click": 0.0,
+    "confirm_selection:hold_700": 0.0
+   },
+   "u": 0.10811867433185429,
+   "expected": "act"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.0,
+    "act": 0.3962528266643387,
+    "enlarge_target:1.5": 0.246053331138444,
+    "enlarge_target:2.0": 0.0,
+    "confirm_selection:second_click": 0.0,
+    "confirm_selection:hold_700": 0.3576938421972173
+   },
+   "u": 0.9918140735262659,
+   "expected": "confirm_selection:hold_700"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.3126020676995369,
+    "act": 0.0,
+    "enlarge_target:1.5": 0.0,
+    "enlarge_target:2.0": 0.25070451815274947,
+    "confirm_selection:second_click": 0.0658611640523337,
+    "confirm_selection:hold_700": 0.3708322500953799
+   },
+   "u": 0.0,
+   "expected": "assistance_off"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.0,
+    "act": 0.3309411918730494,
+    "enlarge_target:1.5": 0.0,
+    "enlarge_target:2.0": 0.0,
+    "confirm_selection:second_click": 0.5709364680598248,
+    "confirm_selection:hold_700": 0.09812234006712577
+   },
+   "u": 0.0,
+   "expected": "act"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.0,
+    "act": 1.0,
+    "enlarge_target:1.5": 0.0,
+    "enlarge_target:2.0": 0.0,
+    "confirm_selection:second_click": 0.0,
+    "confirm_selection:hold_700": 0.0
+   },
+   "u": 0.2015298959490388,
+   "expected": "act"
+  },
+  {
+   "order": [
+    "act",
+    "confirm_selection:second_click",
+    "wait_for_evidence",
+    "ask_clarification:2",
+    "ask_clarification:3"
+   ],
+   "propensities": {
+    "act": 0.0,
+    "confirm_selection:second_click": 0.0,
+    "wait_for_evidence": 0.0,
+    "ask_clarification:2": 1.0,
+    "ask_clarification:3": 0.0
+   },
+   "u": 0.910429741388354,
+   "expected": "ask_clarification:2"
+  },
+  {
+   "order": [
+    "no_offer",
+    "offer_modality:keyboard",
+    "offer_modality:pointer"
+   ],
+   "propensities": {
+    "no_offer": 0.48686023094640435,
+    "offer_modality:keyboard": 0.0,
+    "offer_modality:pointer": 0.5131397690535956
+   },
+   "u": 0.9999999999999999,
+   "expected": "offer_modality:pointer"
+  },
+  {
+   "order": [
+    "act",
+    "confirm_selection:second_click",
+    "wait_for_evidence",
+    "ask_clarification:2",
+    "ask_clarification:3"
+   ],
+   "propensities": {
+    "act": 0.0,
+    "confirm_selection:second_click": 0.0,
+    "wait_for_evidence": 0.3333333333333333,
+    "ask_clarification:2": 0.3333333333333333,
+    "ask_clarification:3": 0.3333333333333333
+   },
+   "u": 0.7338701061637638,
+   "expected": "ask_clarification:3"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.3418509400787321,
+    "act": 0.057525730712613715,
+    "enlarge_target:1.5": 0.10077130188454733,
+    "enlarge_target:2.0": 0.30410206406999435,
+    "confirm_selection:second_click": 0.01194936135128872,
+    "confirm_selection:hold_700": 0.1838006019028238
+   },
+   "u": 0.9999999999999999,
+   "expected": "confirm_selection:hold_700"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.0,
+    "act": 0.29519720745425476,
+    "enlarge_target:1.5": 0.26684867839713405,
+    "enlarge_target:2.0": 0.25737810479256945,
+    "confirm_selection:second_click": 0.15539714691853898,
+    "confirm_selection:hold_700": 0.025178862437502728
+   },
+   "u": 0.9999999999999999,
+   "expected": "confirm_selection:hold_700"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.8892198852342532,
+    "act": 0.0,
+    "confirm_selection:second_click": 0.0,
+    "confirm_selection:hold_700": 0.11078011476574684
+   },
+   "u": 1.0,
+   "expected": "confirm_selection:hold_700"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.16666666666666666,
+    "act": 0.16666666666666666,
+    "enlarge_target:1.5": 0.16666666666666666,
+    "enlarge_target:2.0": 0.16666666666666666,
+    "confirm_selection:second_click": 0.16666666666666666,
+    "confirm_selection:hold_700": 0.16666666666666666
+   },
+   "u": 0.9577889224858243,
+   "expected": "confirm_selection:hold_700"
+  },
+  {
+   "order": [
+    "act",
+    "confirm_selection:second_click",
+    "wait_for_evidence",
+    "ask_clarification:2",
+    "ask_clarification:3"
+   ],
+   "propensities": {
+    "act": 1.0,
+    "confirm_selection:second_click": 0.0,
+    "wait_for_evidence": 0.0,
+    "ask_clarification:2": 0.0,
+    "ask_clarification:3": 0.0
+   },
+   "u": 0.0,
+   "expected": "act"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.30120372905826637,
+    "act": 0.0,
+    "enlarge_target:1.5": 0.10788816871797566,
+    "enlarge_target:2.0": 0.27687920178376624,
+    "confirm_selection:second_click": 0.0,
+    "confirm_selection:hold_700": 0.31402890043999176
+   },
+   "u": 0.6859710995600082,
+   "expected": "confirm_selection:hold_700"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.0,
+    "act": 1.0,
+    "confirm_selection:second_click": 0.0,
+    "confirm_selection:hold_700": 0.0
+   },
+   "u": 1.0,
+   "expected": "act"
+  },
+  {
+   "order": [
+    "act",
+    "confirm_selection:second_click",
+    "wait_for_evidence",
+    "ask_clarification:2",
+    "ask_clarification:3"
+   ],
+   "propensities": {
+    "act": 0.0,
+    "confirm_selection:second_click": 1.0,
+    "wait_for_evidence": 0.0,
+    "ask_clarification:2": 0.0,
+    "ask_clarification:3": 0.0
+   },
+   "u": 0.5959787528507047,
+   "expected": "confirm_selection:second_click"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.4779624708142115,
+    "act": 0.0,
+    "confirm_selection:second_click": 0.0,
+    "confirm_selection:hold_700": 0.5220375291857885
+   },
+   "u": 0.0,
+   "expected": "assistance_off"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.4457410773719,
+    "act": 0.0,
+    "confirm_selection:second_click": 0.0,
+    "confirm_selection:hold_700": 0.5542589226281001
+   },
+   "u": 0.4457410773719,
+   "expected": "confirm_selection:hold_700"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.04899385563529404,
+    "act": 0.07878198367537338,
+    "confirm_selection:second_click": 0.0,
+    "confirm_selection:hold_700": 0.8722241606893325
+   },
+   "u": 0.9999999999999999,
+   "expected": "confirm_selection:hold_700"
+  },
+  {
+   "order": [
+    "no_offer",
+    "offer_modality:keyboard",
+    "offer_modality:pointer"
+   ],
+   "propensities": {
+    "no_offer": 0.0,
+    "offer_modality:keyboard": 0.0,
+    "offer_modality:pointer": 1.0
+   },
+   "u": 0.6970687310869697,
+   "expected": "offer_modality:pointer"
+  },
+  {
+   "order": [
+    "act",
+    "confirm_selection:second_click",
+    "wait_for_evidence",
+    "ask_clarification:2",
+    "ask_clarification:3"
+   ],
+   "propensities": {
+    "act": 0.0,
+    "confirm_selection:second_click": 0.0,
+    "wait_for_evidence": 0.0,
+    "ask_clarification:2": 1.0,
+    "ask_clarification:3": 0.0
+   },
+   "u": 0.5722845408881813,
+   "expected": "ask_clarification:2"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:hold_400",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.5412175643757229,
+    "act": 0.0,
+    "enlarge_target:1.5": 0.0,
+    "enlarge_target:2.0": 0.269836455242144,
+    "confirm_selection:hold_400": 0.1889459803821331,
+    "confirm_selection:hold_700": 0.0
+   },
+   "u": 0.0,
+   "expected": "assistance_off"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.17364274984219305,
+    "act": 0.0,
+    "enlarge_target:1.5": 0.0,
+    "enlarge_target:2.0": 0.0,
+    "confirm_selection:second_click": 0.5210157601719472,
+    "confirm_selection:hold_700": 0.30534148998585975
+   },
+   "u": 0.9999999999999999,
+   "expected": "confirm_selection:hold_700"
+  },
+  {
+   "order": [
+    "act",
+    "confirm_selection:second_click",
+    "wait_for_evidence",
+    "ask_clarification:2",
+    "ask_clarification:3"
+   ],
+   "propensities": {
+    "act": 0.0,
+    "confirm_selection:second_click": 0.0,
+    "wait_for_evidence": 1.0,
+    "ask_clarification:2": 0.0,
+    "ask_clarification:3": 0.0
+   },
+   "u": 0.8521288667762359,
+   "expected": "wait_for_evidence"
+  },
+  {
+   "order": [
+    "act",
+    "confirm_selection:second_click",
+    "wait_for_evidence",
+    "ask_clarification:2",
+    "ask_clarification:3"
+   ],
+   "propensities": {
+    "act": 0.0,
+    "confirm_selection:second_click": 1.0,
+    "wait_for_evidence": 0.0,
+    "ask_clarification:2": 0.0,
+    "ask_clarification:3": 0.0
+   },
+   "u": 0.8938109264771545,
+   "expected": "confirm_selection:second_click"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:hold_400",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.0,
+    "act": 0.0,
+    "enlarge_target:1.5": 0.0,
+    "enlarge_target:2.0": 0.0,
+    "confirm_selection:hold_400": 0.0,
+    "confirm_selection:hold_700": 1.0
+   },
+   "u": 0.7249341214150536,
+   "expected": "confirm_selection:hold_700"
+  },
+  {
+   "order": [
+    "no_offer",
+    "offer_modality:keyboard",
+    "offer_modality:pointer"
+   ],
+   "propensities": {
+    "no_offer": 1.0,
+    "offer_modality:keyboard": 0.0,
+    "offer_modality:pointer": 0.0
+   },
+   "u": 0.022275200263520034,
+   "expected": "no_offer"
+  },
+  {
+   "order": [
+    "act",
+    "confirm_selection:second_click",
+    "wait_for_evidence",
+    "ask_clarification:2",
+    "ask_clarification:3"
+   ],
+   "propensities": {
+    "act": 0.5,
+    "confirm_selection:second_click": 0.0,
+    "wait_for_evidence": 0.5,
+    "ask_clarification:2": 0.0,
+    "ask_clarification:3": 0.0
+   },
+   "u": 0.7534943283860436,
+   "expected": "wait_for_evidence"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.426778314053573,
+    "act": 0.5732216859464271,
+    "confirm_selection:second_click": 0.0,
+    "confirm_selection:hold_700": 0.0
+   },
+   "u": 0.9999999999999999,
+   "expected": "act"
+  },
+  {
+   "order": [
+    "no_offer",
+    "offer_modality:keyboard",
+    "offer_modality:pointer"
+   ],
+   "propensities": {
+    "no_offer": 0.3333333333333333,
+    "offer_modality:keyboard": 0.3333333333333333,
+    "offer_modality:pointer": 0.3333333333333333
+   },
+   "u": 0.20852841048548854,
+   "expected": "no_offer"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.0,
+    "act": 0.5,
+    "confirm_selection:second_click": 0.5,
+    "confirm_selection:hold_700": 0.0
+   },
+   "u": 0.03643082231160022,
+   "expected": "act"
+  },
+  {
+   "order": [
+    "act",
+    "confirm_selection:second_click",
+    "wait_for_evidence",
+    "ask_clarification:2",
+    "ask_clarification:3"
+   ],
+   "propensities": {
+    "act": 0.15308180400933594,
+    "confirm_selection:second_click": 0.316656384725823,
+    "wait_for_evidence": 0.20476708619384848,
+    "ask_clarification:2": 0.0,
+    "ask_clarification:3": 0.32549472507099264
+   },
+   "u": 0.46973818873515893,
+   "expected": "wait_for_evidence"
+  },
+  {
+   "order": [
+    "no_offer",
+    "offer_modality:keyboard",
+    "offer_modality:pointer"
+   ],
+   "propensities": {
+    "no_offer": 0.8617372401427262,
+    "offer_modality:keyboard": 0.1382627598572738,
+    "offer_modality:pointer": 0.0
+   },
+   "u": 0.4253661418296345,
+   "expected": "no_offer"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:hold_400",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.25,
+    "act": 0.0,
+    "enlarge_target:1.5": 0.25,
+    "enlarge_target:2.0": 0.25,
+    "confirm_selection:hold_400": 0.0,
+    "confirm_selection:hold_700": 0.25
+   },
+   "u": 0.42143137295239697,
+   "expected": "enlarge_target:1.5"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:hold_400",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.3333333333333333,
+    "act": 0.3333333333333333,
+    "enlarge_target:1.5": 0.3333333333333333,
+    "enlarge_target:2.0": 0.0,
+    "confirm_selection:hold_400": 0.0,
+    "confirm_selection:hold_700": 0.0
+   },
+   "u": 0.4079477084563907,
+   "expected": "act"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:hold_400",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.0,
+    "act": 0.0,
+    "enlarge_target:1.5": 0.0,
+    "enlarge_target:2.0": 1.0,
+    "confirm_selection:hold_400": 0.0,
+    "confirm_selection:hold_700": 0.0
+   },
+   "u": 0.08356075100336846,
+   "expected": "enlarge_target:2.0"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:hold_400",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.2,
+    "act": 0.2,
+    "enlarge_target:1.5": 0.0,
+    "enlarge_target:2.0": 0.2,
+    "confirm_selection:hold_400": 0.2,
+    "confirm_selection:hold_700": 0.2
+   },
+   "u": 0.0408503191861731,
+   "expected": "assistance_off"
+  },
+  {
+   "order": [
+    "act",
+    "confirm_selection:second_click",
+    "wait_for_evidence",
+    "ask_clarification:2",
+    "ask_clarification:3"
+   ],
+   "propensities": {
+    "act": 0.0,
+    "confirm_selection:second_click": 0.0,
+    "wait_for_evidence": 0.7856610154160796,
+    "ask_clarification:2": 0.21433898458392048,
+    "ask_clarification:3": 0.0
+   },
+   "u": 0.0,
+   "expected": "wait_for_evidence"
+  },
+  {
+   "order": [
+    "no_offer",
+    "offer_modality:keyboard",
+    "offer_modality:pointer"
+   ],
+   "propensities": {
+    "no_offer": 0.20833298359469832,
+    "offer_modality:keyboard": 0.39075909076239446,
+    "offer_modality:pointer": 0.4009079256429072
+   },
+   "u": 0.9999999999999999,
+   "expected": "offer_modality:pointer"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.3662431601175415,
+    "act": 0.1721450736139304,
+    "enlarge_target:1.5": 0.26793139616444656,
+    "enlarge_target:2.0": 0.18719679533517117,
+    "confirm_selection:second_click": 0.0,
+    "confirm_selection:hold_700": 0.006483574768910317
+   },
+   "u": 0.8063196298959183,
+   "expected": "enlarge_target:2.0"
+  },
+  {
+   "order": [
+    "no_offer",
+    "offer_modality:keyboard",
+    "offer_modality:pointer"
+   ],
+   "propensities": {
+    "no_offer": 0.0,
+    "offer_modality:keyboard": 0.0,
+    "offer_modality:pointer": 1.0
+   },
+   "u": 0.9999999999999999,
+   "expected": "offer_modality:pointer"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:hold_400",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.0,
+    "act": 0.2443963352406556,
+    "enlarge_target:1.5": 0.25153840630364943,
+    "enlarge_target:2.0": 0.2405617124844728,
+    "confirm_selection:hold_400": 0.19201714791732133,
+    "confirm_selection:hold_700": 0.07148639805390082
+   },
+   "u": 0.0,
+   "expected": "act"
+  },
+  {
+   "order": [
+    "act",
+    "confirm_selection:second_click",
+    "wait_for_evidence",
+    "ask_clarification:2",
+    "ask_clarification:3"
+   ],
+   "propensities": {
+    "act": 0.0,
+    "confirm_selection:second_click": 0.0,
+    "wait_for_evidence": 0.0,
+    "ask_clarification:2": 1.0,
+    "ask_clarification:3": 0.0
+   },
+   "u": 0.13976250195348816,
+   "expected": "ask_clarification:2"
+  },
+  {
+   "order": [
+    "no_offer",
+    "offer_modality:keyboard",
+    "offer_modality:pointer"
+   ],
+   "propensities": {
+    "no_offer": 0.3938830184246936,
+    "offer_modality:keyboard": 0.44804313124214534,
+    "offer_modality:pointer": 0.15807385033316093
+   },
+   "u": 0.6385308619950416,
+   "expected": "offer_modality:keyboard"
+  },
+  {
+   "order": [
+    "no_offer",
+    "offer_modality:keyboard",
+    "offer_modality:pointer"
+   ],
+   "propensities": {
+    "no_offer": 0.0,
+    "offer_modality:keyboard": 0.0,
+    "offer_modality:pointer": 1.0
+   },
+   "u": 0.9423765175874056,
+   "expected": "offer_modality:pointer"
+  },
+  {
+   "order": [
+    "no_offer",
+    "offer_modality:keyboard",
+    "offer_modality:pointer"
+   ],
+   "propensities": {
+    "no_offer": 0.0,
+    "offer_modality:keyboard": 1.0,
+    "offer_modality:pointer": 0.0
+   },
+   "u": 0.9983467479721178,
+   "expected": "offer_modality:keyboard"
+  },
+  {
+   "order": [
+    "no_offer",
+    "offer_modality:keyboard",
+    "offer_modality:pointer"
+   ],
+   "propensities": {
+    "no_offer": 0.0,
+    "offer_modality:keyboard": 0.0,
+    "offer_modality:pointer": 1.0
+   },
+   "u": 0.9999999999999999,
+   "expected": "offer_modality:pointer"
+  },
+  {
+   "order": [
+    "no_offer",
+    "offer_modality:keyboard",
+    "offer_modality:pointer"
+   ],
+   "propensities": {
+    "no_offer": 0.19212941651596677,
+    "offer_modality:keyboard": 0.0,
+    "offer_modality:pointer": 0.8078705834840332
+   },
+   "u": 0.6167886063135318,
+   "expected": "offer_modality:pointer"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.0,
+    "act": 0.0,
+    "confirm_selection:second_click": 1.0,
+    "confirm_selection:hold_700": 0.0
+   },
+   "u": 0.3382441869933941,
+   "expected": "confirm_selection:second_click"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.09915295048817928,
+    "act": 0.0,
+    "enlarge_target:1.5": 0.0,
+    "enlarge_target:2.0": 0.2316636783108471,
+    "confirm_selection:second_click": 0.425760670402861,
+    "confirm_selection:hold_700": 0.24342270079811254
+   },
+   "u": 0.7565772992018873,
+   "expected": "confirm_selection:hold_700"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.30829811708840976,
+    "act": 0.07958227082034518,
+    "enlarge_target:1.5": 0.0,
+    "enlarge_target:2.0": 0.0,
+    "confirm_selection:second_click": 0.18387563035126153,
+    "confirm_selection:hold_700": 0.4282439817399836
+   },
+   "u": 0.0,
+   "expected": "assistance_off"
+  },
+  {
+   "order": [
+    "no_offer",
+    "offer_modality:keyboard",
+    "offer_modality:pointer"
+   ],
+   "propensities": {
+    "no_offer": 0.0,
+    "offer_modality:keyboard": 1.0,
+    "offer_modality:pointer": 0.0
+   },
+   "u": 0.0,
+   "expected": "offer_modality:keyboard"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.585410091650143,
+    "act": 0.0,
+    "confirm_selection:second_click": 0.0,
+    "confirm_selection:hold_700": 0.414589908349857
+   },
+   "u": 0.9999999999999999,
+   "expected": "confirm_selection:hold_700"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.3333333333333333,
+    "act": 0.3333333333333333,
+    "confirm_selection:second_click": 0.0,
+    "confirm_selection:hold_700": 0.3333333333333333
+   },
+   "u": 0.6179409923998397,
+   "expected": "act"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.0,
+    "act": 0.07631029711536175,
+    "confirm_selection:second_click": 0.4068268366995738,
+    "confirm_selection:hold_700": 0.5168628661850645
+   },
+   "u": 0.9999999999999999,
+   "expected": "confirm_selection:hold_700"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.40284834504659667,
+    "act": 0.32422476939489414,
+    "enlarge_target:1.5": 0.2729268855585092,
+    "enlarge_target:2.0": 0.0,
+    "confirm_selection:second_click": 0.0,
+    "confirm_selection:hold_700": 0.0
+   },
+   "u": 0.8575773391314301,
+   "expected": "enlarge_target:1.5"
+  },
+  {
+   "order": [
+    "act",
+    "confirm_selection:second_click",
+    "wait_for_evidence",
+    "ask_clarification:2",
+    "ask_clarification:3"
+   ],
+   "propensities": {
+    "act": 0.0,
+    "confirm_selection:second_click": 0.0,
+    "wait_for_evidence": 0.0,
+    "ask_clarification:2": 0.5825996734719396,
+    "ask_clarification:3": 0.4174003265280604
+   },
+   "u": 0.5246376112787235,
+   "expected": "ask_clarification:2"
+  },
+  {
+   "order": [
+    "act",
+    "confirm_selection:second_click",
+    "wait_for_evidence",
+    "ask_clarification:2",
+    "ask_clarification:3"
+   ],
+   "propensities": {
+    "act": 0.4121664357337912,
+    "confirm_selection:second_click": 0.33277055660697047,
+    "wait_for_evidence": 0.0,
+    "ask_clarification:2": 0.2550630076592384,
+    "ask_clarification:3": 0.0
+   },
+   "u": 0.9999999999999999,
+   "expected": "ask_clarification:2"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.351015389010087,
+    "act": 0.03646027767744358,
+    "confirm_selection:second_click": 0.2666520915324875,
+    "confirm_selection:hold_700": 0.34587224177998194
+   },
+   "u": 0.9999999999999999,
+   "expected": "confirm_selection:hold_700"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.3333333333333333,
+    "act": 0.0,
+    "confirm_selection:second_click": 0.3333333333333333,
+    "confirm_selection:hold_700": 0.3333333333333333
+   },
+   "u": 0.9921155142414765,
+   "expected": "confirm_selection:hold_700"
+  },
+  {
+   "order": [
+    "no_offer",
+    "offer_modality:keyboard",
+    "offer_modality:pointer"
+   ],
+   "propensities": {
+    "no_offer": 0.6453856536208482,
+    "offer_modality:keyboard": 0.3546143463791518,
+    "offer_modality:pointer": 0.0
+   },
+   "u": 0.9999999999999999,
+   "expected": "offer_modality:keyboard"
+  },
+  {
+   "order": [
+    "act",
+    "confirm_selection:second_click",
+    "wait_for_evidence",
+    "ask_clarification:2",
+    "ask_clarification:3"
+   ],
+   "propensities": {
+    "act": 0.0,
+    "confirm_selection:second_click": 0.13931287109027615,
+    "wait_for_evidence": 0.0,
+    "ask_clarification:2": 0.0,
+    "ask_clarification:3": 0.8606871289097239
+   },
+   "u": 0.2519867641221256,
+   "expected": "ask_clarification:3"
+  },
+  {
+   "order": [
+    "act",
+    "confirm_selection:second_click",
+    "wait_for_evidence",
+    "ask_clarification:2",
+    "ask_clarification:3"
+   ],
+   "propensities": {
+    "act": 0.0,
+    "confirm_selection:second_click": 0.25,
+    "wait_for_evidence": 0.25,
+    "ask_clarification:2": 0.25,
+    "ask_clarification:3": 0.25
+   },
+   "u": 0.9557441114867959,
+   "expected": "ask_clarification:3"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.015454188066778257,
+    "act": 0.0,
+    "enlarge_target:1.5": 0.10548634250753643,
+    "enlarge_target:2.0": 0.3794383179165236,
+    "confirm_selection:second_click": 0.0,
+    "confirm_selection:hold_700": 0.4996211515091618
+   },
+   "u": 0.5882957189961898,
+   "expected": "confirm_selection:hold_700"
+  },
+  {
+   "order": [
+    "act",
+    "confirm_selection:second_click",
+    "wait_for_evidence",
+    "ask_clarification:2",
+    "ask_clarification:3"
+   ],
+   "propensities": {
+    "act": 0.0,
+    "confirm_selection:second_click": 0.0,
+    "wait_for_evidence": 0.0,
+    "ask_clarification:2": 0.0,
+    "ask_clarification:3": 1.0
+   },
+   "u": 0.5647935012254727,
+   "expected": "ask_clarification:3"
+  },
+  {
+   "order": [
+    "act",
+    "confirm_selection:second_click",
+    "wait_for_evidence",
+    "ask_clarification:2",
+    "ask_clarification:3"
+   ],
+   "propensities": {
+    "act": 0.25,
+    "confirm_selection:second_click": 0.25,
+    "wait_for_evidence": 0.0,
+    "ask_clarification:2": 0.25,
+    "ask_clarification:3": 0.25
+   },
+   "u": 0.1491359889524314,
+   "expected": "act"
+  },
+  {
+   "order": [
+    "no_offer",
+    "offer_modality:keyboard",
+    "offer_modality:pointer"
+   ],
+   "propensities": {
+    "no_offer": 0.0,
+    "offer_modality:keyboard": 0.5,
+    "offer_modality:pointer": 0.5
+   },
+   "u": 0.20267446516117316,
+   "expected": "offer_modality:keyboard"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.15917680916568325,
+    "act": 0.19677619031227359,
+    "enlarge_target:1.5": 0.0,
+    "enlarge_target:2.0": 0.20024583465341964,
+    "confirm_selection:second_click": 0.2493301500701506,
+    "confirm_selection:hold_700": 0.1944710157984729
+   },
+   "u": 0.9999999999999999,
+   "expected": "confirm_selection:hold_700"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.08634591077654975,
+    "act": 0.0638398569541988,
+    "confirm_selection:second_click": 0.5443987254318848,
+    "confirm_selection:hold_700": 0.30541550683736657
+   },
+   "u": 0.0,
+   "expected": "assistance_off"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.0,
+    "act": 0.0,
+    "enlarge_target:1.5": 0.0,
+    "enlarge_target:2.0": 1.0,
+    "confirm_selection:second_click": 0.0,
+    "confirm_selection:hold_700": 0.0
+   },
+   "u": 0.12251444141443324,
+   "expected": "enlarge_target:2.0"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.5,
+    "act": 0.5,
+    "confirm_selection:second_click": 0.0,
+    "confirm_selection:hold_700": 0.0
+   },
+   "u": 0.11292840156396167,
+   "expected": "assistance_off"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:hold_400",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.3252305540419163,
+    "act": 0.0,
+    "enlarge_target:1.5": 0.3362821318474269,
+    "enlarge_target:2.0": 0.110576934404954,
+    "confirm_selection:hold_400": 0.22791037970570283,
+    "confirm_selection:hold_700": 0.0
+   },
+   "u": 0.35448878407176876,
+   "expected": "enlarge_target:1.5"
+  },
+  {
+   "order": [
+    "no_offer",
+    "offer_modality:keyboard",
+    "offer_modality:pointer"
+   ],
+   "propensities": {
+    "no_offer": 0.3333333333333333,
+    "offer_modality:keyboard": 0.3333333333333333,
+    "offer_modality:pointer": 0.3333333333333333
+   },
+   "u": 0.7715275135708302,
+   "expected": "offer_modality:pointer"
+  },
+  {
+   "order": [
+    "act",
+    "confirm_selection:second_click",
+    "wait_for_evidence",
+    "ask_clarification:2",
+    "ask_clarification:3"
+   ],
+   "propensities": {
+    "act": 0.24561561583790698,
+    "confirm_selection:second_click": 0.21063987490616976,
+    "wait_for_evidence": 0.11783255789686427,
+    "ask_clarification:2": 0.15267807585687856,
+    "ask_clarification:3": 0.2732338755021805
+   },
+   "u": 0.9423186967103208,
+   "expected": "ask_clarification:3"
+  },
+  {
+   "order": [
+    "act",
+    "confirm_selection:second_click",
+    "wait_for_evidence",
+    "ask_clarification:2",
+    "ask_clarification:3"
+   ],
+   "propensities": {
+    "act": 0.17134697838187424,
+    "confirm_selection:second_click": 0.0,
+    "wait_for_evidence": 0.35265184491329876,
+    "ask_clarification:2": 0.476001176704827,
+    "ask_clarification:3": 0.0
+   },
+   "u": 0.15479047605774,
+   "expected": "act"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.0,
+    "act": 0.18339153410332676,
+    "enlarge_target:1.5": 0.0,
+    "enlarge_target:2.0": 0.3737605853700289,
+    "confirm_selection:second_click": 0.4428478805266445,
+    "confirm_selection:hold_700": 0.0
+   },
+   "u": 0.9999999999999999,
+   "expected": "confirm_selection:second_click"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:hold_400",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.21342121898370037,
+    "act": 0.23815453308513385,
+    "enlarge_target:1.5": 0.0,
+    "enlarge_target:2.0": 0.13222032678919682,
+    "confirm_selection:hold_400": 0.41620392114196897,
+    "confirm_selection:hold_700": 0.0
+   },
+   "u": 0.0,
+   "expected": "assistance_off"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.14238680723293667,
+    "act": 0.23106649187758288,
+    "enlarge_target:1.5": 0.0,
+    "enlarge_target:2.0": 0.6265467008894805,
+    "confirm_selection:second_click": 0.0,
+    "confirm_selection:hold_700": 0.0
+   },
+   "u": 0.14238680723293667,
+   "expected": "act"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.0,
+    "act": 0.5858765959310641,
+    "enlarge_target:1.5": 0.19002433617676875,
+    "enlarge_target:2.0": 0.040305091469620226,
+    "confirm_selection:second_click": 0.11642599010703171,
+    "confirm_selection:hold_700": 0.06736798631551509
+   },
+   "u": 0.9999999999999999,
+   "expected": "confirm_selection:hold_700"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.21399564605552474,
+    "act": 0.285799517263581,
+    "confirm_selection:second_click": 0.0,
+    "confirm_selection:hold_700": 0.5002048366808943
+   },
+   "u": 1.0,
+   "expected": "confirm_selection:hold_700"
+  },
+  {
+   "order": [
+    "no_offer",
+    "offer_modality:keyboard",
+    "offer_modality:pointer"
+   ],
+   "propensities": {
+    "no_offer": 0.0,
+    "offer_modality:keyboard": 0.0,
+    "offer_modality:pointer": 1.0
+   },
+   "u": 0.5280310982530929,
+   "expected": "offer_modality:pointer"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.11466709480192426,
+    "act": 0.16060975899461363,
+    "enlarge_target:1.5": 0.0,
+    "enlarge_target:2.0": 0.0,
+    "confirm_selection:second_click": 0.07737363939275953,
+    "confirm_selection:hold_700": 0.6473495068107025
+   },
+   "u": 0.11466709480192426,
+   "expected": "act"
+  },
+  {
+   "order": [
+    "no_offer",
+    "offer_modality:keyboard",
+    "offer_modality:pointer"
+   ],
+   "propensities": {
+    "no_offer": 0.0,
+    "offer_modality:keyboard": 0.23739724064372905,
+    "offer_modality:pointer": 0.762602759356271
+   },
+   "u": 0.6397941054040136,
+   "expected": "offer_modality:pointer"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:hold_400",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.26723132675803546,
+    "act": 0.07696178515454018,
+    "enlarge_target:1.5": 0.0,
+    "enlarge_target:2.0": 0.35727969125509795,
+    "confirm_selection:hold_400": 0.0,
+    "confirm_selection:hold_700": 0.2985271968323264
+   },
+   "u": 0.7014728031676736,
+   "expected": "confirm_selection:hold_700"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.3333333333333333,
+    "act": 0.3333333333333333,
+    "enlarge_target:1.5": 0.0,
+    "enlarge_target:2.0": 0.3333333333333333,
+    "confirm_selection:second_click": 0.0,
+    "confirm_selection:hold_700": 0.0
+   },
+   "u": 0.8804847804024333,
+   "expected": "enlarge_target:2.0"
+  },
+  {
+   "order": [
+    "no_offer",
+    "offer_modality:keyboard",
+    "offer_modality:pointer"
+   ],
+   "propensities": {
+    "no_offer": 0.0,
+    "offer_modality:keyboard": 0.611206709203949,
+    "offer_modality:pointer": 0.38879329079605096
+   },
+   "u": 0.16731604318398097,
+   "expected": "offer_modality:keyboard"
+  },
+  {
+   "order": [
+    "no_offer",
+    "offer_modality:keyboard",
+    "offer_modality:pointer"
+   ],
+   "propensities": {
+    "no_offer": 1.0,
+    "offer_modality:keyboard": 0.0,
+    "offer_modality:pointer": 0.0
+   },
+   "u": 0.9999999999999999,
+   "expected": "no_offer"
+  },
+  {
+   "order": [
+    "no_offer",
+    "offer_modality:keyboard",
+    "offer_modality:pointer"
+   ],
+   "propensities": {
+    "no_offer": 0.0,
+    "offer_modality:keyboard": 0.35538869469672546,
+    "offer_modality:pointer": 0.6446113053032746
+   },
+   "u": 0.9999999999999999,
+   "expected": "offer_modality:pointer"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.0,
+    "act": 0.0,
+    "enlarge_target:1.5": 0.2471620291392765,
+    "enlarge_target:2.0": 0.374592371773143,
+    "confirm_selection:second_click": 0.0,
+    "confirm_selection:hold_700": 0.3782455990875805
+   },
+   "u": 0.9999999999999999,
+   "expected": "confirm_selection:hold_700"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:hold_400",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.0,
+    "act": 0.2768589558467771,
+    "enlarge_target:1.5": 0.0,
+    "enlarge_target:2.0": 0.40488529237900706,
+    "confirm_selection:hold_400": 0.08955220188839656,
+    "confirm_selection:hold_700": 0.22870354988581937
+   },
+   "u": 0.9999999999999999,
+   "expected": "confirm_selection:hold_700"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.0,
+    "act": 0.2113074881465041,
+    "enlarge_target:1.5": 0.0,
+    "enlarge_target:2.0": 0.30492131576652454,
+    "confirm_selection:second_click": 0.0,
+    "confirm_selection:hold_700": 0.48377119608697144
+   },
+   "u": 0.04277529914974898,
+   "expected": "act"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:hold_400",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.0,
+    "act": 1.0,
+    "enlarge_target:1.5": 0.0,
+    "enlarge_target:2.0": 0.0,
+    "confirm_selection:hold_400": 0.0,
+    "confirm_selection:hold_700": 0.0
+   },
+   "u": 0.14312925133060184,
+   "expected": "act"
+  },
+  {
+   "order": [
+    "no_offer",
+    "offer_modality:keyboard",
+    "offer_modality:pointer"
+   ],
+   "propensities": {
+    "no_offer": 0.0,
+    "offer_modality:keyboard": 0.6245240204452602,
+    "offer_modality:pointer": 0.3754759795547399
+   },
+   "u": 1.0,
+   "expected": "offer_modality:pointer"
+  },
+  {
+   "order": [
+    "act",
+    "confirm_selection:second_click",
+    "wait_for_evidence",
+    "ask_clarification:2",
+    "ask_clarification:3"
+   ],
+   "propensities": {
+    "act": 0.024855491365561404,
+    "confirm_selection:second_click": 0.3537032451198775,
+    "wait_for_evidence": 0.009357288656714806,
+    "ask_clarification:2": 0.20996181446457743,
+    "ask_clarification:3": 0.40212216039326887
+   },
+   "u": 0.0,
+   "expected": "act"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:hold_400",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 1.0,
+    "act": 0.0,
+    "enlarge_target:1.5": 0.0,
+    "enlarge_target:2.0": 0.0,
+    "confirm_selection:hold_400": 0.0,
+    "confirm_selection:hold_700": 0.0
+   },
+   "u": 0.09044598952140048,
+   "expected": "assistance_off"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:hold_400",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.7219633211168041,
+    "act": 0.0,
+    "enlarge_target:1.5": 0.002833300401958328,
+    "enlarge_target:2.0": 0.27520337848123766,
+    "confirm_selection:hold_400": 0.0,
+    "confirm_selection:hold_700": 0.0
+   },
+   "u": 1.0,
+   "expected": "enlarge_target:2.0"
+  },
+  {
+   "order": [
+    "no_offer",
+    "offer_modality:keyboard",
+    "offer_modality:pointer"
+   ],
+   "propensities": {
+    "no_offer": 0.0,
+    "offer_modality:keyboard": 1.0,
+    "offer_modality:pointer": 0.0
+   },
+   "u": 1.0,
+   "expected": "offer_modality:keyboard"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 1.0,
+    "act": 0.0,
+    "confirm_selection:second_click": 0.0,
+    "confirm_selection:hold_700": 0.0
+   },
+   "u": 0.7305750774351351,
+   "expected": "assistance_off"
+  },
+  {
+   "order": [
+    "no_offer",
+    "offer_modality:keyboard",
+    "offer_modality:pointer"
+   ],
+   "propensities": {
+    "no_offer": 0.2295301357476717,
+    "offer_modality:keyboard": 0.0,
+    "offer_modality:pointer": 0.7704698642523283
+   },
+   "u": 1.0,
+   "expected": "offer_modality:pointer"
+  },
+  {
+   "order": [
+    "no_offer",
+    "offer_modality:keyboard",
+    "offer_modality:pointer"
+   ],
+   "propensities": {
+    "no_offer": 1.0,
+    "offer_modality:keyboard": 0.0,
+    "offer_modality:pointer": 0.0
+   },
+   "u": 1.0,
+   "expected": "no_offer"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:hold_400",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.0,
+    "act": 1.0,
+    "enlarge_target:1.5": 0.0,
+    "enlarge_target:2.0": 0.0,
+    "confirm_selection:hold_400": 0.0,
+    "confirm_selection:hold_700": 0.0
+   },
+   "u": 0.6472622805138907,
+   "expected": "act"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.2,
+    "act": 0.0,
+    "enlarge_target:1.5": 0.2,
+    "enlarge_target:2.0": 0.2,
+    "confirm_selection:second_click": 0.2,
+    "confirm_selection:hold_700": 0.2
+   },
+   "u": 0.44495406307118224,
+   "expected": "enlarge_target:2.0"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.0,
+    "act": 0.0,
+    "enlarge_target:1.5": 1.0,
+    "enlarge_target:2.0": 0.0,
+    "confirm_selection:second_click": 0.0,
+    "confirm_selection:hold_700": 0.0
+   },
+   "u": 0.7062341888728466,
+   "expected": "enlarge_target:1.5"
+  },
+  {
+   "order": [
+    "act",
+    "confirm_selection:second_click",
+    "wait_for_evidence",
+    "ask_clarification:2",
+    "ask_clarification:3"
+   ],
+   "propensities": {
+    "act": 0.0,
+    "confirm_selection:second_click": 0.0,
+    "wait_for_evidence": 0.6202158854690897,
+    "ask_clarification:2": 0.3797841145309103,
+    "ask_clarification:3": 0.0
+   },
+   "u": 0.9999999999999999,
+   "expected": "ask_clarification:2"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.3572772989994426,
+    "act": 0.0,
+    "enlarge_target:1.5": 0.0,
+    "enlarge_target:2.0": 0.0,
+    "confirm_selection:second_click": 0.6427227010005575,
+    "confirm_selection:hold_700": 0.0
+   },
+   "u": 0.6815484046292074,
+   "expected": "confirm_selection:second_click"
+  },
+  {
+   "order": [
+    "act",
+    "confirm_selection:second_click",
+    "wait_for_evidence",
+    "ask_clarification:2",
+    "ask_clarification:3"
+   ],
+   "propensities": {
+    "act": 0.0,
+    "confirm_selection:second_click": 0.5804219012482449,
+    "wait_for_evidence": 0.0,
+    "ask_clarification:2": 0.4195780987517551,
+    "ask_clarification:3": 0.0
+   },
+   "u": 0.4539763971844172,
+   "expected": "confirm_selection:second_click"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.011748945641960992,
+    "act": 0.27875020689439645,
+    "confirm_selection:second_click": 0.7095008474636425,
+    "confirm_selection:hold_700": 0.0
+   },
+   "u": 0.22254526449581946,
+   "expected": "act"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.0,
+    "act": 1.0,
+    "confirm_selection:second_click": 0.0,
+    "confirm_selection:hold_700": 0.0
+   },
+   "u": 0.4588761416377942,
+   "expected": "act"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.21921870464986185,
+    "act": 0.12732424826630534,
+    "enlarge_target:1.5": 0.22186435214363562,
+    "enlarge_target:2.0": 0.0,
+    "confirm_selection:second_click": 0.15662614977964684,
+    "confirm_selection:hold_700": 0.27496654516055036
+   },
+   "u": 0.9999999999999999,
+   "expected": "confirm_selection:hold_700"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.0,
+    "act": 0.0,
+    "enlarge_target:1.5": 0.1922643549311188,
+    "enlarge_target:2.0": 0.8077356450688812,
+    "confirm_selection:second_click": 0.0,
+    "confirm_selection:hold_700": 0.0
+   },
+   "u": 0.0,
+   "expected": "enlarge_target:1.5"
+  },
+  {
+   "order": [
+    "act",
+    "confirm_selection:second_click",
+    "wait_for_evidence",
+    "ask_clarification:2",
+    "ask_clarification:3"
+   ],
+   "propensities": {
+    "act": 0.25,
+    "confirm_selection:second_click": 0.25,
+    "wait_for_evidence": 0.25,
+    "ask_clarification:2": 0.0,
+    "ask_clarification:3": 0.25
+   },
+   "u": 0.8681472942083223,
+   "expected": "ask_clarification:3"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.08125433496994067,
+    "act": 0.09673397435131659,
+    "confirm_selection:second_click": 0.49569869224483165,
+    "confirm_selection:hold_700": 0.3263129984339111
+   },
+   "u": 0.9221295307456786,
+   "expected": "confirm_selection:hold_700"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.21260815355213886,
+    "act": 0.0,
+    "enlarge_target:1.5": 0.0,
+    "enlarge_target:2.0": 0.33940434730685903,
+    "confirm_selection:second_click": 0.1832635117727537,
+    "confirm_selection:hold_700": 0.2647239873682483
+   },
+   "u": 0.2896078995919501,
+   "expected": "enlarge_target:2.0"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:hold_400",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.1217750253989055,
+    "act": 0.0,
+    "enlarge_target:1.5": 0.2502588094152697,
+    "enlarge_target:2.0": 0.24827316331113827,
+    "confirm_selection:hold_400": 0.2256573129112268,
+    "confirm_selection:hold_700": 0.1540356889634598
+   },
+   "u": 0.9999999999999999,
+   "expected": "confirm_selection:hold_700"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.0,
+    "act": 0.45551631208943266,
+    "enlarge_target:1.5": 0.0,
+    "enlarge_target:2.0": 0.0,
+    "confirm_selection:second_click": 0.0,
+    "confirm_selection:hold_700": 0.5444836879105673
+   },
+   "u": 0.0,
+   "expected": "act"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.4713526570311543,
+    "act": 0.3412584498360071,
+    "confirm_selection:second_click": 0.18738889313283846,
+    "confirm_selection:hold_700": 0.0
+   },
+   "u": 0.9999999999999999,
+   "expected": "confirm_selection:second_click"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:hold_400",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.0,
+    "act": 0.895921689350113,
+    "enlarge_target:1.5": 0.104078310649887,
+    "enlarge_target:2.0": 0.0,
+    "confirm_selection:hold_400": 0.0,
+    "confirm_selection:hold_700": 0.0
+   },
+   "u": 0.895921689350113,
+   "expected": "enlarge_target:1.5"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 1.0,
+    "act": 0.0,
+    "confirm_selection:second_click": 0.0,
+    "confirm_selection:hold_700": 0.0
+   },
+   "u": 0.2696204475752715,
+   "expected": "assistance_off"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:hold_400",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.0,
+    "act": 0.8488018867766368,
+    "enlarge_target:1.5": 0.0,
+    "enlarge_target:2.0": 0.15119811322336324,
+    "confirm_selection:hold_400": 0.0,
+    "confirm_selection:hold_700": 0.0
+   },
+   "u": 0.0,
+   "expected": "act"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.2642742021461421,
+    "act": 0.7156647039130332,
+    "confirm_selection:second_click": 0.0,
+    "confirm_selection:hold_700": 0.020061093940824715
+   },
+   "u": 0.5409756935408276,
+   "expected": "act"
+  },
+  {
+   "order": [
+    "no_offer",
+    "offer_modality:keyboard",
+    "offer_modality:pointer"
+   ],
+   "propensities": {
+    "no_offer": 0.0,
+    "offer_modality:keyboard": 0.3159706873978141,
+    "offer_modality:pointer": 0.6840293126021859
+   },
+   "u": 0.012817664730529588,
+   "expected": "offer_modality:keyboard"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "enlarge_target:1.5",
+    "enlarge_target:2.0",
+    "confirm_selection:hold_400",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.0,
+    "act": 0.0,
+    "enlarge_target:1.5": 1.0,
+    "enlarge_target:2.0": 0.0,
+    "confirm_selection:hold_400": 0.0,
+    "confirm_selection:hold_700": 0.0
+   },
+   "u": 0.5661386564937825,
+   "expected": "enlarge_target:1.5"
+  },
+  {
+   "order": [
+    "no_offer",
+    "offer_modality:keyboard",
+    "offer_modality:pointer"
+   ],
+   "propensities": {
+    "no_offer": 0.5,
+    "offer_modality:keyboard": 0.0,
+    "offer_modality:pointer": 0.5
+   },
+   "u": 0.8523170313158955,
+   "expected": "offer_modality:pointer"
+  },
+  {
+   "order": [
+    "no_offer",
+    "offer_modality:keyboard",
+    "offer_modality:pointer"
+   ],
+   "propensities": {
+    "no_offer": 0.9067057145017785,
+    "offer_modality:keyboard": 0.09329428549822151,
+    "offer_modality:pointer": 0.0
+   },
+   "u": 0.0,
+   "expected": "no_offer"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.20061984955819145,
+    "act": 0.0,
+    "confirm_selection:second_click": 0.7993801504418085,
+    "confirm_selection:hold_700": 0.0
+   },
+   "u": 0.9645312172769245,
+   "expected": "confirm_selection:second_click"
+  },
+  {
+   "order": [
+    "act",
+    "confirm_selection:second_click",
+    "wait_for_evidence",
+    "ask_clarification:2",
+    "ask_clarification:3"
+   ],
+   "propensities": {
+    "act": 0.06976820131813975,
+    "confirm_selection:second_click": 0.0,
+    "wait_for_evidence": 0.41643727671212993,
+    "ask_clarification:2": 0.14316388018443083,
+    "ask_clarification:3": 0.37063064178529953
+   },
+   "u": 0.4355740518045963,
+   "expected": "wait_for_evidence"
+  },
+  {
+   "order": [
+    "act",
+    "confirm_selection:second_click",
+    "wait_for_evidence",
+    "ask_clarification:2",
+    "ask_clarification:3"
+   ],
+   "propensities": {
+    "act": 0.34499853278347725,
+    "confirm_selection:second_click": 0.25771748740567046,
+    "wait_for_evidence": 0.0,
+    "ask_clarification:2": 0.3972839798108523,
+    "ask_clarification:3": 0.0
+   },
+   "u": 0.6027160201891477,
+   "expected": "ask_clarification:2"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.0,
+    "act": 1.0,
+    "confirm_selection:second_click": 0.0,
+    "confirm_selection:hold_700": 0.0
+   },
+   "u": 0.31533159244899,
+   "expected": "act"
+  },
+  {
+   "order": [
+    "act",
+    "confirm_selection:second_click",
+    "wait_for_evidence",
+    "ask_clarification:2",
+    "ask_clarification:3"
+   ],
+   "propensities": {
+    "act": 0.3424400483923024,
+    "confirm_selection:second_click": 0.16495995311398384,
+    "wait_for_evidence": 0.0,
+    "ask_clarification:2": 0.1484000809986793,
+    "ask_clarification:3": 0.3441999174950344
+   },
+   "u": 0.9999999999999999,
+   "expected": "ask_clarification:3"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.0,
+    "act": 0.0,
+    "confirm_selection:second_click": 0.5,
+    "confirm_selection:hold_700": 0.5
+   },
+   "u": 0.07966194704986818,
+   "expected": "confirm_selection:second_click"
+  },
+  {
+   "order": [
+    "act",
+    "confirm_selection:second_click",
+    "wait_for_evidence",
+    "ask_clarification:2",
+    "ask_clarification:3"
+   ],
+   "propensities": {
+    "act": 0.0,
+    "confirm_selection:second_click": 0.5088540734785962,
+    "wait_for_evidence": 0.0,
+    "ask_clarification:2": 0.0,
+    "ask_clarification:3": 0.4911459265214037
+   },
+   "u": 0.0,
+   "expected": "confirm_selection:second_click"
+  },
+  {
+   "order": [
+    "assistance_off",
+    "act",
+    "confirm_selection:second_click",
+    "confirm_selection:hold_700"
+   ],
+   "propensities": {
+    "assistance_off": 0.4366517608178431,
+    "act": 0.2290949420976495,
+    "confirm_selection:second_click": 0.0,
+    "confirm_selection:hold_700": 0.33425329708450735
+   },
+   "u": 0.9999999999999999,
+   "expected": "confirm_selection:hold_700"
+  },
+  {
+   "order": [
+    "act",
+    "confirm_selection:second_click",
+    "wait_for_evidence",
+    "ask_clarification:2",
+    "ask_clarification:3"
+   ],
+   "propensities": {
+    "act": 0.037543327291654875,
+    "confirm_selection:second_click": 0.1796192673293395,
+    "wait_for_evidence": 0.0,
+    "ask_clarification:2": 0.601499057145249,
+    "ask_clarification:3": 0.1813383482337567
+   },
+   "u": 0.8186616517662434,
+   "expected": "ask_clarification:3"
+  }
+ ]
+}

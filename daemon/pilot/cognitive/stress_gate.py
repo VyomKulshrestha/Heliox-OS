@@ -167,8 +167,10 @@ class StressGate:
     async def evaluate(self, action_type: ActionType) -> GateDecision:
         """Evaluate whether an action should be gated due to stress.
 
-        Returns a GateDecision. If gated=True, the executor should pause
-        and request explicit user confirmation.
+        Returns a GateDecision. If gated=True, the executor announces a
+        ten-second pause and then continues; the pause is a window in which
+        the person can cancel the task with Stop. It does not ask for, wait
+        for or record a confirmation.
         """
         self._total_evaluated += 1
 

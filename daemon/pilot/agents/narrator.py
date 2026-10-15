@@ -208,19 +208,22 @@ class ExecutionNarrator:
         self, *, reason: str, context: dict[str, Any], timeout_seconds: float | None = None
     ) -> bool:
         if not self._broadcast_fn:
-            return True
+            # Nobody can be asked, so the risky step does not run (fail closed, like a timeout).
+            return False
 
         from pilot.server import PendingConfirmation
 
         plan_id = f"interrupt_{uuid.uuid4().hex[:8]}"
-        pending = PendingConfirmation(plan_id=plan_id, event=asyncio.Event())
+        task_id = get_experience_context().task_id
+        # The task id lets typed or spoken text during this task deny the interrupt, and never approve it.
+        pending = PendingConfirmation(plan_id=plan_id, event=asyncio.Event(), task_id=task_id)
         self._pending_confirms[plan_id] = pending
 
         effective_timeout = timeout_seconds if timeout_seconds is not None else self._cfg().confirm_timeout_seconds
         await self._broadcast_fn(
             "execution_interrupt",
             {
-                "task_id": get_experience_context().task_id,
+                "task_id": task_id,
                 "plan_id": plan_id,
                 "reason": reason,
                 "timeout_seconds": effective_timeout,

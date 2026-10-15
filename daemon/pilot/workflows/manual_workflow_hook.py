@@ -14,18 +14,90 @@ from typing import Any, Callable
 from pilot.workflows.recorded_workflows import RecordedWorkflowStore
 
 
-def _is_heliox_foreground() -> bool:
-    """Best-effort exclusion of the Heliox UI (including its browser tab)."""
-    if sys.platform != "win32":
-        return False
+def _normalized_name(text: str) -> str:
+    """Lowercase, hyphens and underscores as spaces, whitespace collapsed."""
+    return " ".join(text.lower().replace("-", " ").replace("_", " ").split())
+
+
+def _is_heliox_window_title(title: str) -> bool:
+    """Whether a window title is the Heliox desktop window, titled "Heliox-OS" (tauri.conf.json).
+
+    Only that whole title counts, with hyphens, underscores and spacing normalised. A browser page, editor or
+    folder window whose title merely mentions the project ("GitHub - VyomKulshrestha/Heliox-OS ...",
+    "server.py - Heliox-OS - Visual Studio Code") is someone else's window and is recorded.
+    """
+    return _normalized_name(title) == "heliox os"
+
+
+def _is_heliox_executable(image_path: str) -> bool:
+    """Whether a process image is the Heliox desktop app: "heliox-os.exe" in development, "Heliox-OS.exe" when
+    installed."""
+    name = image_path.replace("\\", "/").rsplit("/", 1)[-1]
+    if name.lower().endswith(".exe"):
+        name = name[:-4]
+    return _normalized_name(name) == "heliox os"
+
+
+def _foreground_window_title() -> tuple[int, str]:
+    """The foreground window handle and its title."""
     import ctypes
 
     user32 = ctypes.windll.user32
     user32.GetForegroundWindow.restype = ctypes.c_void_p
     user32.GetWindowTextW.argtypes = (ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int)
+    window = user32.GetForegroundWindow() or 0
     title = ctypes.create_unicode_buffer(512)
-    user32.GetWindowTextW(user32.GetForegroundWindow(), title, len(title))
-    return "heliox os" in title.value.lower()
+    user32.GetWindowTextW(window, title, len(title))
+    return window, title.value
+
+
+def _window_process_image(window: int) -> str | None:
+    """The image path of the process that owns ``window``, or None when Windows does not say."""
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+    user32.GetWindowThreadProcessId.argtypes = (ctypes.c_void_p, ctypes.POINTER(wintypes.DWORD))
+    kernel32.OpenProcess.restype = ctypes.c_void_p
+    kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    kernel32.QueryFullProcessImageNameW.argtypes = (
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        ctypes.c_wchar_p,
+        ctypes.POINTER(wintypes.DWORD),
+    )
+    kernel32.CloseHandle.argtypes = (ctypes.c_void_p,)
+
+    process_id = wintypes.DWORD(0)
+    user32.GetWindowThreadProcessId(window, ctypes.byref(process_id))
+    if not process_id.value:
+        return None
+    process_query_limited_information = 0x1000
+    handle = kernel32.OpenProcess(process_query_limited_information, False, process_id.value)
+    if not handle:
+        return None
+    try:
+        image = ctypes.create_unicode_buffer(1024)
+        size = wintypes.DWORD(len(image))
+        if not kernel32.QueryFullProcessImageNameW(handle, 0, image, ctypes.byref(size)):
+            return None
+        return image.value
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def _is_heliox_foreground() -> bool:
+    """Best-effort exclusion of the Heliox desktop window: its exact title and, when Windows names the owning
+    process, the Heliox executable, so a folder or page that happens to be titled "Heliox-OS" is still recorded.
+    The process is looked up only for a window with that title."""
+    if sys.platform != "win32":
+        return False
+    window, title = _foreground_window_title()
+    if not _is_heliox_window_title(title):
+        return False
+    image = _window_process_image(window)
+    return image is None or _is_heliox_executable(image)
 
 
 class ManualWorkflowHook:

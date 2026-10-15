@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 import shutil
 import sys
@@ -64,6 +65,9 @@ PERMISSION_AUDIT_DB_FILE = DATA_DIR / "permission_audit.db"
 PERMISSION_AUDIT_KEY_FILE = DATA_DIR / "permission_audit.key"
 AGENT_GATEWAY_AUDIT_DB_FILE = DATA_DIR / "agent_gateway_audit.db"
 AGENT_GATEWAY_AUDIT_KEY_FILE = DATA_DIR / "agent_gateway_audit.key"
+CO_ADAPTATION_DB_FILE = DATA_DIR / "co_adaptation.db"
+CO_ADAPTATION_PREFERENCES_FILE = DATA_DIR / "co_adaptation_preferences.json"
+CO_ADAPTATION_EXPORTS_DIR = DATA_DIR / "co_adaptation_exports"
 LOG_FILE = STATE_DIR / "pilot.log"
 
 # Derived directories shared across modules — use these instead of hardcoded paths
@@ -435,6 +439,56 @@ class SupervisionConfig:
 
 
 @dataclass
+class CoAdaptationConfig:
+    """Assistance co-adaptation (see pilot.coadaptation and docs/COADAPTATION.md). Off by default: it observes how
+    the person selects things inside Heliox's own study surface and changes presentation only. Anything stored also
+    needs an active, purpose-bound consent record. It never changes approvals, permissions or execution.
+
+    No key needs a restart. A change reaches the study at the next session_begin, which stores the effective
+    settings in the new session's row; an open session keeps the settings it started with. Only enabled = False
+    acts at once: it ends open sessions.
+
+    Study sessions follow the study protocol: they pin exploration_floor and switching_penalty to the protocol's
+    values whatever is set here, and take ambiguity_threshold, unintended_activation_tolerance,
+    noninferiority_margin and upper_bound_credibility from here only where the value is stricter than the
+    protocol's (a lower threshold, tolerance or margin, a higher credibility). The session row lists the keys whose
+    value here differs from the protocol."""
+
+    enabled: bool = False
+    adaptive_enabled: bool = False  # Phase B learned choices; also needs purpose adaptive_assistance
+    learn_across_sessions: bool = False  # also needs purpose cross_session_learning
+    gaze_prior_enabled: bool = False  # also needs vision.gaze_tracking_enabled and purpose gaze_prior
+    hand_pointer_enabled: bool = False  # also needs purpose hand_pointer and a running camera
+    ambiguity_threshold: float = 0.25  # [0.05, 0.25]: the person may only make τ stricter; never learned
+    unintended_activation_tolerance: float = 0.05  # [0.0, 0.2]; a study session uses it only when stricter
+    noninferiority_margin: float = 0.01  # [0.0, 0.05]; a study session uses it only when stricter
+    upper_bound_credibility: float = 0.95  # [0.8, 0.99]; a study session uses it only when stricter (higher)
+    exploration_floor: float = 0.1  # [0.0, 0.3]; a study session uses the protocol's value
+    switching_penalty: float = 0.1  # [0.0, 1.0]; a study session uses the protocol's value
+    burden_prompt_every_blocks: int = 1  # [1, 8]
+    day_boundary_hour: int = 4  # [0, 23]
+
+
+# Inclusive ranges of the numeric co_adaptation keys. The loader clamps a hand-edited value into its range;
+# co_adaptation_config_update rejects a value outside it.
+CO_ADAPTATION_FLOAT_RANGES: dict[str, tuple[float, float]] = {
+    "ambiguity_threshold": (0.05, 0.25),
+    "unintended_activation_tolerance": (0.0, 0.2),
+    "noninferiority_margin": (0.0, 0.05),
+    "upper_bound_credibility": (0.8, 0.99),
+    "exploration_floor": (0.0, 0.3),
+    "switching_penalty": (0.0, 1.0),
+}
+CO_ADAPTATION_INT_RANGES: dict[str, tuple[int, int]] = {
+    "burden_prompt_every_blocks": (1, 8),
+    "day_boundary_hour": (0, 23),
+}
+CO_ADAPTATION_BOOL_KEYS = frozenset(
+    {"enabled", "adaptive_enabled", "learn_across_sessions", "gaze_prior_enabled", "hand_pointer_enabled"}
+)
+
+
+@dataclass
 class ProxyConfig:
     http: str | None = None
     https: str | None = None
@@ -585,6 +639,7 @@ class PilotConfig:
     narration: NarrationConfig = field(default_factory=NarrationConfig)
     preview: PreviewConfig = field(default_factory=PreviewConfig)
     supervision: SupervisionConfig = field(default_factory=SupervisionConfig)
+    co_adaptation: CoAdaptationConfig = field(default_factory=CoAdaptationConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     rss: RSSConfig = field(default_factory=RSSConfig)
     calendar: CalendarConfig = field(default_factory=CalendarConfig)
@@ -954,6 +1009,21 @@ def _validate_config_types(raw: dict) -> None:
             "keystroke_buffer_max_chars": int,
             "ocr_snippet_max_chars": int,
         },
+        "co_adaptation": {
+            "enabled": bool,
+            "adaptive_enabled": bool,
+            "learn_across_sessions": bool,
+            "gaze_prior_enabled": bool,
+            "hand_pointer_enabled": bool,
+            "ambiguity_threshold": (int, float),
+            "unintended_activation_tolerance": (int, float),
+            "noninferiority_margin": (int, float),
+            "upper_bound_credibility": (int, float),
+            "exploration_floor": (int, float),
+            "switching_penalty": (int, float),
+            "burden_prompt_every_blocks": int,
+            "day_boundary_hour": int,
+        },
         "memory": {
             "checkpoint_interval_seconds": int,
             "pruning_interval_seconds": int,
@@ -1264,6 +1334,19 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
             config.supervision.keystroke_buffer_max_chars = int(s_raw["keystroke_buffer_max_chars"])
         if "ocr_snippet_max_chars" in s_raw:
             config.supervision.ocr_snippet_max_chars = int(s_raw["ocr_snippet_max_chars"])
+
+    if "co_adaptation" in raw and isinstance(raw["co_adaptation"], dict):
+        ca_raw = raw["co_adaptation"]
+        for key in sorted(CO_ADAPTATION_BOOL_KEYS):
+            if key in ca_raw:
+                setattr(config.co_adaptation, key, bool(ca_raw[key]))
+        for key, (low, high) in CO_ADAPTATION_FLOAT_RANGES.items():
+            # min/max would turn a NaN into the upper bound, so a non-finite value is ignored.
+            if key in ca_raw and math.isfinite(float(ca_raw[key])):
+                setattr(config.co_adaptation, key, max(low, min(high, float(ca_raw[key]))))
+        for key, (low, high) in CO_ADAPTATION_INT_RANGES.items():
+            if key in ca_raw:
+                setattr(config.co_adaptation, key, max(low, min(high, int(ca_raw[key]))))
 
     if "memory" in raw:
         for k, v in raw["memory"].items():

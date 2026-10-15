@@ -500,3 +500,39 @@ async def test_stimulus_markers_are_daemon_stamped_bounded_and_audited(tmp_path)
             event=NeuralStimulusEvent.TARGET_ON,
             client_performance_ms=26.0,
         )
+
+
+@pytest.mark.asyncio
+async def test_gate_state_reports_disconnected_armed_and_preview_without_verifying_the_audit_chain(tmp_path) -> None:
+    signer = NeuralIntentSigner(b"k" * 32)
+    goals = NeuralGoalRegistry()
+    idle = NeuralController(
+        config=PilotConfig(),
+        gate=NeuralIntentGate(signer=signer, safe_goals={command_id: command_id for command_id in goals.command_ids}),
+        executor=AsyncMock(),
+        goals=goals,
+        audit_store=NeuralAuditStore(tmp_path / "idle.db", tmp_path / "idle.key"),
+    )
+    audit = NeuralAuditStore(tmp_path / "neural.db", tmp_path / "neural.key")
+    controller, signer, session_id, _ = await _controller(NeuralScope.NAVIGATE, audit_store=audit)
+    intent = await _intent(
+        controller,
+        signer,
+        session_id,
+        intent_class=NeuralIntentClass.SELECT,
+        scope=NeuralScope.NAVIGATE,
+    )
+
+    with patch.object(
+        NeuralAuditStore, "verify_chain", new=AsyncMock(side_effect=AssertionError("audit chain verified"))
+    ) as verify_chain:
+        disconnected = await idle.gate_state()
+        armed = await controller.gate_state()
+        await controller.preview(intent)
+        previewed = await controller.gate_state()
+
+    assert disconnected == "disconnected"
+    assert armed == "armed_safe_ui"
+    assert previewed == "previewed"
+    verify_chain.assert_not_awaited()
+    assert all(isinstance(state, str) for state in (disconnected, armed, previewed))

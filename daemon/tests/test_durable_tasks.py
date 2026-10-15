@@ -379,3 +379,74 @@ async def test_startup_recovery_does_not_silently_run_queued_user_task(store):
     assert recovered.interrupted_tasks == 1
     assert task is not None
     assert task.status == TaskStatus.INTERRUPTED
+
+
+async def _approval(store: DurableTaskStore, plan_id: str, status: ApprovalStatus | None = None, indices=None):
+    await store.create_task(task_id=f"task-{plan_id}", session_id="session-1", user_input="delete file")
+    await store.create_approval(
+        task_id=f"task-{plan_id}",
+        plan_id=plan_id,
+        request={"action_indices": [0, 2]},
+        timeout_seconds=300,
+    )
+    if status is not None:
+        await store.resolve_approval(plan_id, status, approved_indices=indices)
+    approval = await store.get_approval(plan_id)
+    assert approval is not None
+    return approval
+
+
+@pytest.mark.asyncio
+async def test_unconsumed_pending_approval_is_denied(store):
+    await _approval(store, "plan-pending")
+
+    denied = await store.deny_unconsumed_approval("plan-pending")
+
+    assert denied is not None
+    assert denied.status == ApprovalStatus.DENIED
+    assert denied.approved_indices == []
+    assert denied.resolved_at
+    with pytest.raises(ApprovalConflict):
+        await store.resolve_approval("plan-pending", ApprovalStatus.APPROVED, approved_indices=[0, 2])
+
+
+@pytest.mark.asyncio
+async def test_unconsumed_approved_approval_is_flipped_to_denied(store):
+    approved = await _approval(store, "plan-approved", ApprovalStatus.APPROVED, [0, 2])
+
+    denied = await store.deny_unconsumed_approval("plan-approved")
+
+    assert denied is not None
+    assert denied.status == ApprovalStatus.DENIED
+    assert denied.approved_indices == []
+    assert denied.resolved_at >= approved.resolved_at
+    assert denied.approval_id == approved.approval_id
+    assert await store.get_approval("plan-approved") == denied
+
+
+@pytest.mark.parametrize("status", [ApprovalStatus.EXPIRED, ApprovalStatus.DENIED, ApprovalStatus.DISCONNECTED])
+@pytest.mark.asyncio
+async def test_final_approvals_are_left_unchanged(store, tmp_path, status):
+    if status == ApprovalStatus.DISCONNECTED:
+        await _approval(store, "plan-final")
+        connection = sqlite3.connect(tmp_path / "durable.db")
+        connection.execute(
+            "UPDATE durable_approvals SET status = ?, resolved_at = ? WHERE plan_id = 'plan-final'",
+            (ApprovalStatus.DISCONNECTED.value, "2026-10-15T10:00:00+00:00"),
+        )
+        connection.commit()
+        connection.close()
+        before = await store.get_approval("plan-final")
+    else:
+        before = await _approval(store, "plan-final", status)
+
+    after = await store.deny_unconsumed_approval("plan-final")
+
+    assert after == before
+    assert after is not None and after.status == status
+
+
+@pytest.mark.asyncio
+async def test_denying_an_unknown_plan_returns_none(store):
+    assert await store.deny_unconsumed_approval("no-such-plan") is None
+    assert await store.get_approval("no-such-plan") is None

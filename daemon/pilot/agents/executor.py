@@ -88,6 +88,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("pilot.agents.executor")
 
+# Spoken and shown when the stress gate pauses a gated action. Nobody confirms anything during the pause: the
+# action continues after ten seconds unless the person stops the task.
+STRESS_PAUSE_PHRASE = "Pausing ten seconds before continuing. Say or press Stop to cancel."
+
 _EXIT_CODE_PATTERN = re.compile(r"\[EXIT CODE:\s*(-?\d+)\]")
 _SWALLOWED_EXCEPTION_PATTERN = re.compile(
     r"^\s*(?:an\s+)?unexpected\s+error\s+(?:occurred|occured)\s*:",
@@ -1476,7 +1480,7 @@ class Executor:
                 logger.warning(f"Cognitive stress triggered for {action.action_type}. Pausing 10s.")
                 import asyncio
 
-                phrase = "Your focus state is low. Confirming in 10 seconds."
+                phrase = STRESS_PAUSE_PHRASE
                 try:
                     if self._speech:
                         await self._speech(

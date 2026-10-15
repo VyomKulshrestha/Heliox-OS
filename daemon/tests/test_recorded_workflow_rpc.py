@@ -1,6 +1,7 @@
 """Recorder RPCs preserve consent and guarded autonomous replay."""
 
 import asyncio
+import json
 import time
 from datetime import UTC, datetime, timedelta
 
@@ -205,3 +206,72 @@ async def test_replay_visual_capture_is_scoped_and_opt_in(tmp_path) -> None:
     assert ordinary["status"] == opted_in["status"] == "submitted"
     assert observed == ["", workflow_id]
     assert store._replay_visual_workflow.get() == ""
+
+
+class _Broadcasts:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict, object]] = []
+
+    async def __call__(self, method: str, params: dict, *, exclude: object = None) -> None:
+        self.calls.append((method, params, exclude))
+
+    def status_changes(self) -> list[dict]:
+        return [params for method, params, _ in self.calls if method == "recorded_workflow_status_changed"]
+
+
+@pytest.mark.asyncio
+async def test_start_and_stop_announce_the_new_recording_state(tmp_path) -> None:
+    server = PilotServer(PilotConfig())
+    server._recorded_workflows = RecordedWorkflowStore(tmp_path / "recordings.enc", key_provider=lambda: b"k" * 32)
+    broadcasts = _Broadcasts()
+    server._broadcast_notification = broadcasts
+
+    started = await server._handle_recorded_workflow_start({"name": "Review", "consent": True}, None)
+    assert started["status"] == "ok"
+    assert broadcasts.status_changes() == [{"active": True}]
+
+    stopped = await server._handle_recorded_workflow_stop({"save": False}, None)
+    assert stopped["status"] == "ok"
+    assert broadcasts.status_changes() == [{"active": True}, {"active": False}]
+
+
+@pytest.mark.asyncio
+async def test_failed_start_or_stop_announces_nothing(tmp_path, monkeypatch) -> None:
+    server = PilotServer(PilotConfig())
+    server._recorded_workflows = RecordedWorkflowStore(tmp_path / "recordings.enc", key_provider=lambda: b"k" * 32)
+    broadcasts = _Broadcasts()
+    server._broadcast_notification = broadcasts
+
+    no_consent = await server._handle_recorded_workflow_start({"name": "Review", "consent": False}, None)
+
+    def fail_start(_self):
+        raise RuntimeError("OS hook unavailable")
+
+    monkeypatch.setattr(ManualWorkflowHook, "start", fail_start)
+    hook_failed = await server._handle_recorded_workflow_start(
+        {"name": "Manual", "consent": True, "capture_manual": True, "manual_consent": True}, None
+    )
+    nothing_to_stop = await server._handle_recorded_workflow_stop({"save": False}, None)
+
+    assert [no_consent["status"], hook_failed["status"], nothing_to_stop["status"]] == ["error", "error", "error"]
+    assert broadcasts.status_changes() == []
+
+
+@pytest.mark.asyncio
+async def test_the_announcement_skips_only_the_callers_socket(tmp_path) -> None:
+    class _Client:
+        def __init__(self) -> None:
+            self.sent: list[dict] = []
+
+        async def send(self, raw: str) -> None:
+            self.sent.append(json.loads(raw))
+
+    server = PilotServer(PilotConfig())
+    server._recorded_workflows = RecordedWorkflowStore(tmp_path / "recordings.enc", key_provider=lambda: b"k" * 32)
+    caller, other = _Client(), _Client()
+    server._clients = {caller, other}
+
+    await server._handle_recorded_workflow_start({"name": "Review", "consent": True}, caller)
+
+    assert caller.sent == []
+    assert other.sent == [{"jsonrpc": "2.0", "method": "recorded_workflow_status_changed", "params": {"active": True}}]

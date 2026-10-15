@@ -162,7 +162,7 @@ async def test_stress_gate_uses_shared_priority_speech_when_wired(tmp_path):
 
     direct_speak.assert_not_awaited()
     speech.assert_awaited_once_with(
-        "Your focus state is low. Confirming in 10 seconds.",
+        "Pausing ten seconds before continuing. Say or press Stop to cancel.",
         "approval_risk",
         "stress-gate:cpu_usage",
     )

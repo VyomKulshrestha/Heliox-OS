@@ -379,3 +379,33 @@ class TestActionPreviewInterrupt:
         result = await narrator.on_action_preview(_action(ActionType.BROWSER_CLICK), _preview())
         assert result is False
         assert broadcast.calls[0][1]["timeout_seconds"] == 0.05
+
+
+class TestFailClosedWithoutChannel:
+    @pytest.mark.asyncio
+    async def test_interrupt_without_broadcast_fn_returns_false(self):
+        pending_confirms: dict = {}
+        narrator = ExecutionNarrator(config=_config(), pending_confirms=pending_confirms, broadcast_fn=None)
+
+        result = await narrator._interrupt_and_wait(reason="risky", context={"kind": "test"}, timeout_seconds=5.0)
+
+        assert result is False
+        assert pending_confirms == {}
+
+    @pytest.mark.asyncio
+    async def test_risky_plan_without_broadcast_fn_does_not_proceed(self):
+        narrator = ExecutionNarrator(config=_config(), pending_confirms={}, broadcast_fn=None)
+
+        result = await narrator.on_plan_risk(ActionPlan(actions=[], raw_input="x"), {"verdict": "WARN"})
+
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_preview_without_broadcast_fn_does_not_proceed(self):
+        config = PilotConfig()
+        config.preview.enabled = True
+        narrator = ExecutionNarrator(config=config, pending_confirms={}, broadcast_fn=None)
+
+        result = await narrator.on_action_preview(_action(ActionType.BROWSER_CLICK), _preview())
+
+        assert result is False

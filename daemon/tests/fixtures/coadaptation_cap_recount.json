@@ -1,0 +1,2301 @@
+{
+ "schema_version": 1,
+ "description": "Cap recount parity cases (spec 9.3), shared by the daemon (test_coadaptation_engine.py) and the UI reducer (commitRules.test.ts). Each block has an interruption cap (null = none), whether pin_act is active, and trials in order. A trial lists reducer inputs in order: activations and trial-level events (veto, refresh). An activation names its governing regime (the trial's cue-time regime, or the revert regime from the revert on), whether A_gate > tau, whether it has a literal hit, n_plausible, whether the hit is irreversible (rule C9), whether the response comes from a pin_act collapse, the L2 response the table draw or the fixed rule would give before the cap rule (null when the activation is not routed to L2), and what happened next. expected.k_before is the block's count k before the activation (an idle epoch counts from 0 on its own); expected.result is the immediate response (set once), expected.outcome the final outcome, expected.source and expected.variant the applied L2 response (null when none). L1 confirm and hold steps count at most once per trial; L2 confirm steps, C9 confirm steps and clarification prompts count each time; the count reads result, never outcome.",
+ "tau": 0.25,
+ "then_values": [
+  "aborted",
+  "cancelled",
+  "choice",
+  "confirmed",
+  "hold_completed",
+  "interrupt",
+  "limit",
+  "none_of_these",
+  "released"
+ ],
+ "blocks": [
+  {
+   "id": "B01",
+   "description": "L1 confirm regime: a cancelled confirm step, then a re-confirm in the same trial (adds 1 once)",
+   "interruption_cap": null,
+   "pin_act": false,
+   "trials": [
+    {
+     "kind": "active",
+     "regime": "confirm_selection:second_click",
+     "plain_regime": "assistance_off",
+     "items": [
+      {
+       "type": "activation",
+       "regime": "confirm_selection:second_click",
+       "ambiguous": false,
+       "hit": true,
+       "n_plausible": 1,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": null,
+       "then": "cancelled",
+       "expected": {
+        "k_before": 0,
+        "variant": null,
+        "source": null,
+        "result": "confirming",
+        "outcome": "cancelled"
+       }
+      },
+      {
+       "type": "activation",
+       "regime": "confirm_selection:second_click",
+       "ambiguous": false,
+       "hit": true,
+       "n_plausible": 1,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": null,
+       "then": "confirmed",
+       "expected": {
+        "k_before": 1,
+        "variant": null,
+        "source": null,
+        "result": "confirming",
+        "outcome": "committed"
+       }
+      }
+     ],
+     "end": "committed",
+     "expected": {
+      "verification": "ok",
+      "k_after": 1
+     }
+    },
+    {
+     "kind": "active",
+     "regime": "confirm_selection:second_click",
+     "plain_regime": "assistance_off",
+     "items": [
+      {
+       "type": "activation",
+       "regime": "confirm_selection:second_click",
+       "ambiguous": false,
+       "hit": true,
+       "n_plausible": 1,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": null,
+       "then": "confirmed",
+       "expected": {
+        "k_before": 1,
+        "variant": null,
+        "source": null,
+        "result": "confirming",
+        "outcome": "committed"
+       }
+      }
+     ],
+     "end": "committed",
+     "expected": {
+      "verification": "ok",
+      "k_after": 2
+     }
+    }
+   ]
+  },
+  {
+   "id": "B02",
+   "description": "Hold regime: an early release then a re-hold (adds 1 once); an aborted hold then a re-hold",
+   "interruption_cap": null,
+   "pin_act": false,
+   "trials": [
+    {
+     "kind": "active",
+     "regime": "confirm_selection:hold_700",
+     "plain_regime": "assistance_off",
+     "items": [
+      {
+       "type": "activation",
+       "regime": "confirm_selection:hold_700",
+       "ambiguous": false,
+       "hit": true,
+       "n_plausible": 1,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": null,
+       "then": "released",
+       "expected": {
+        "k_before": 0,
+        "variant": null,
+        "source": null,
+        "result": "held",
+        "outcome": "cancelled"
+       }
+      },
+      {
+       "type": "activation",
+       "regime": "confirm_selection:hold_700",
+       "ambiguous": false,
+       "hit": true,
+       "n_plausible": 1,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": null,
+       "then": "hold_completed",
+       "expected": {
+        "k_before": 1,
+        "variant": null,
+        "source": null,
+        "result": "held",
+        "outcome": "committed"
+       }
+      }
+     ],
+     "end": "committed",
+     "expected": {
+      "verification": "ok",
+      "k_after": 1
+     }
+    },
+    {
+     "kind": "active",
+     "regime": "confirm_selection:hold_700",
+     "plain_regime": "assistance_off",
+     "items": [
+      {
+       "type": "activation",
+       "regime": "confirm_selection:hold_700",
+       "ambiguous": false,
+       "hit": true,
+       "n_plausible": 1,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": null,
+       "then": "aborted",
+       "expected": {
+        "k_before": 1,
+        "variant": null,
+        "source": null,
+        "result": "held",
+        "outcome": "aborted"
+       }
+      },
+      {
+       "type": "activation",
+       "regime": "confirm_selection:hold_700",
+       "ambiguous": false,
+       "hit": true,
+       "n_plausible": 1,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": null,
+       "then": "hold_completed",
+       "expected": {
+        "k_before": 2,
+        "variant": null,
+        "source": null,
+        "result": "held",
+        "outcome": "committed"
+       }
+      }
+     ],
+     "end": "committed",
+     "expected": {
+      "verification": "ok",
+      "k_after": 2
+     }
+    }
+   ]
+  },
+  {
+   "id": "B03",
+   "description": "Clarification answered 'None of these', then a second prompt answered with a choice (each adds 1)",
+   "interruption_cap": null,
+   "pin_act": false,
+   "trials": [
+    {
+     "kind": "active",
+     "regime": "act",
+     "plain_regime": "assistance_off",
+     "items": [
+      {
+       "type": "activation",
+       "regime": "act",
+       "ambiguous": true,
+       "hit": true,
+       "n_plausible": 2,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": {
+        "variant": "ask_clarification:2",
+        "source": "table"
+       },
+       "then": "none_of_these",
+       "expected": {
+        "k_before": 0,
+        "variant": "ask_clarification:2",
+        "source": "table",
+        "result": "asked",
+        "outcome": "cancelled"
+       }
+      },
+      {
+       "type": "activation",
+       "regime": "act",
+       "ambiguous": true,
+       "hit": true,
+       "n_plausible": 2,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": {
+        "variant": "ask_clarification:2",
+        "source": "table"
+       },
+       "then": "choice",
+       "expected": {
+        "k_before": 1,
+        "variant": "ask_clarification:2",
+        "source": "table",
+        "result": "asked",
+        "outcome": "committed"
+       }
+      }
+     ],
+     "end": "committed",
+     "expected": {
+      "verification": "ok",
+      "k_after": 2
+     }
+    }
+   ]
+  },
+  {
+   "id": "B04",
+   "description": "Act-guarded trial with two L2 confirm steps and two clarification prompts (each adds 1)",
+   "interruption_cap": null,
+   "pin_act": false,
+   "trials": [
+    {
+     "kind": "active",
+     "regime": "act",
+     "plain_regime": "assistance_off",
+     "items": [
+      {
+       "type": "activation",
+       "regime": "act",
+       "ambiguous": true,
+       "hit": true,
+       "n_plausible": 2,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": {
+        "variant": "confirm_selection:second_click",
+        "source": "table"
+       },
+       "then": "cancelled",
+       "expected": {
+        "k_before": 0,
+        "variant": "confirm_selection:second_click",
+        "source": "table",
+        "result": "confirming",
+        "outcome": "cancelled"
+       }
+      },
+      {
+       "type": "activation",
+       "regime": "act",
+       "ambiguous": true,
+       "hit": true,
+       "n_plausible": 2,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": {
+        "variant": "confirm_selection:second_click",
+        "source": "table"
+       },
+       "then": "cancelled",
+       "expected": {
+        "k_before": 1,
+        "variant": "confirm_selection:second_click",
+        "source": "table",
+        "result": "confirming",
+        "outcome": "cancelled"
+       }
+      },
+      {
+       "type": "activation",
+       "regime": "act",
+       "ambiguous": true,
+       "hit": true,
+       "n_plausible": 2,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": {
+        "variant": "ask_clarification:2",
+        "source": "table"
+       },
+       "then": "none_of_these",
+       "expected": {
+        "k_before": 2,
+        "variant": "ask_clarification:2",
+        "source": "table",
+        "result": "asked",
+        "outcome": "cancelled"
+       }
+      },
+      {
+       "type": "activation",
+       "regime": "act",
+       "ambiguous": true,
+       "hit": true,
+       "n_plausible": 2,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": {
+        "variant": "ask_clarification:2",
+        "source": "table"
+       },
+       "then": "choice",
+       "expected": {
+        "k_before": 3,
+        "variant": "ask_clarification:2",
+        "source": "table",
+        "result": "asked",
+        "outcome": "committed"
+       }
+      }
+     ],
+     "end": "committed",
+     "expected": {
+      "verification": "ok",
+      "k_after": 4
+     }
+    }
+   ]
+  },
+  {
+   "id": "B05",
+   "description": "Cap 2: once two steps are used, later ambiguous activations get wait_for_evidence (source cap)",
+   "interruption_cap": 2,
+   "pin_act": false,
+   "trials": [
+    {
+     "kind": "active",
+     "regime": "act",
+     "plain_regime": "assistance_off",
+     "items": [
+      {
+       "type": "activation",
+       "regime": "act",
+       "ambiguous": true,
+       "hit": true,
+       "n_plausible": 2,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": {
+        "variant": "confirm_selection:second_click",
+        "source": "table"
+       },
+       "then": "confirmed",
+       "expected": {
+        "k_before": 0,
+        "variant": "confirm_selection:second_click",
+        "source": "table",
+        "result": "confirming",
+        "outcome": "committed"
+       }
+      }
+     ],
+     "end": "committed",
+     "expected": {
+      "verification": "ok",
+      "k_after": 1
+     }
+    },
+    {
+     "kind": "active",
+     "regime": "act",
+     "plain_regime": "assistance_off",
+     "items": [
+      {
+       "type": "activation",
+       "regime": "act",
+       "ambiguous": true,
+       "hit": true,
+       "n_plausible": 2,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": {
+        "variant": "ask_clarification:2",
+        "source": "table"
+       },
+       "then": "choice",
+       "expected": {
+        "k_before": 1,
+        "variant": "ask_clarification:2",
+        "source": "table",
+        "result": "asked",
+        "outcome": "committed"
+       }
+      }
+     ],
+     "end": "committed",
+     "expected": {
+      "verification": "ok",
+      "k_after": 2
+     }
+    },
+    {
+     "kind": "active",
+     "regime": "act",
+     "plain_regime": "assistance_off",
+     "items": [
+      {
+       "type": "activation",
+       "regime": "act",
+       "ambiguous": true,
+       "hit": true,
+       "n_plausible": 2,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": {
+        "variant": "confirm_selection:second_click",
+        "source": "table"
+       },
+       "then": null,
+       "expected": {
+        "k_before": 2,
+        "variant": "wait_for_evidence",
+        "source": "cap",
+        "result": "none",
+        "outcome": "none"
+       }
+      },
+      {
+       "type": "activation",
+       "regime": "act",
+       "ambiguous": true,
+       "hit": true,
+       "n_plausible": 2,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": {
+        "variant": "ask_clarification:2",
+        "source": "table"
+       },
+       "then": null,
+       "expected": {
+        "k_before": 2,
+        "variant": "wait_for_evidence",
+        "source": "cap",
+        "result": "none",
+        "outcome": "none"
+       }
+      },
+      {
+       "type": "activation",
+       "regime": "act",
+       "ambiguous": false,
+       "hit": true,
+       "n_plausible": 1,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": null,
+       "then": null,
+       "expected": {
+        "k_before": 2,
+        "variant": null,
+        "source": null,
+        "result": "committed",
+        "outcome": "committed"
+       }
+      }
+     ],
+     "end": "committed",
+     "expected": {
+      "verification": "ok",
+      "k_after": 2
+     }
+    }
+   ]
+  },
+  {
+   "id": "B06",
+   "description": "Cap 1: wait_for_evidence from the table adds nothing; the cap applies after one prompt",
+   "interruption_cap": 1,
+   "pin_act": false,
+   "trials": [
+    {
+     "kind": "active",
+     "regime": "act",
+     "plain_regime": "assistance_off",
+     "items": [
+      {
+       "type": "activation",
+       "regime": "act",
+       "ambiguous": true,
+       "hit": true,
+       "n_plausible": 2,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": {
+        "variant": "wait_for_evidence",
+        "source": "table"
+       },
+       "then": null,
+       "expected": {
+        "k_before": 0,
+        "variant": "wait_for_evidence",
+        "source": "table",
+        "result": "none",
+        "outcome": "none"
+       }
+      },
+      {
+       "type": "activation",
+       "regime": "act",
+       "ambiguous": true,
+       "hit": true,
+       "n_plausible": 2,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": {
+        "variant": "ask_clarification:2",
+        "source": "table"
+       },
+       "then": "choice",
+       "expected": {
+        "k_before": 0,
+        "variant": "ask_clarification:2",
+        "source": "table",
+        "result": "asked",
+        "outcome": "committed"
+       }
+      }
+     ],
+     "end": "committed",
+     "expected": {
+      "verification": "ok",
+      "k_after": 1
+     }
+    },
+    {
+     "kind": "active",
+     "regime": "act",
+     "plain_regime": "assistance_off",
+     "items": [
+      {
+       "type": "activation",
+       "regime": "act",
+       "ambiguous": true,
+       "hit": true,
+       "n_plausible": 2,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": {
+        "variant": "confirm_selection:second_click",
+        "source": "table"
+       },
+       "then": null,
+       "expected": {
+        "k_before": 1,
+        "variant": "wait_for_evidence",
+        "source": "cap",
+        "result": "none",
+        "outcome": "none"
+       }
+      },
+      {
+       "type": "activation",
+       "regime": "act",
+       "ambiguous": false,
+       "hit": true,
+       "n_plausible": 1,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": null,
+       "then": null,
+       "expected": {
+        "k_before": 1,
+        "variant": null,
+        "source": null,
+        "result": "committed",
+        "outcome": "committed"
+       }
+      }
+     ],
+     "end": "committed",
+     "expected": {
+      "verification": "ok",
+      "k_after": 1
+     }
+    }
+   ]
+  },
+  {
+   "id": "B07",
+   "description": "C9 confirm steps on an irreversible literal hit count each time (cancelled, then confirmed)",
+   "interruption_cap": null,
+   "pin_act": false,
+   "trials": [
+    {
+     "kind": "active",
+     "regime": "act",
+     "plain_regime": "assistance_off",
+     "items": [
+      {
+       "type": "activation",
+       "regime": "act",
+       "ambiguous": false,
+       "hit": true,
+       "n_plausible": 1,
+       "irreversible": true,
+       "pin_act": false,
+       "l2": null,
+       "then": "cancelled",
+       "expected": {
+        "k_before": 0,
+        "variant": null,
+        "source": null,
+        "result": "confirming",
+        "outcome": "cancelled"
+       }
+      },
+      {
+       "type": "activation",
+       "regime": "act",
+       "ambiguous": false,
+       "hit": true,
+       "n_plausible": 1,
+       "irreversible": true,
+       "pin_act": false,
+       "l2": null,
+       "then": "confirmed",
+       "expected": {
+        "k_before": 1,
+        "variant": null,
+        "source": null,
+        "result": "confirming",
+        "outcome": "committed"
+       }
+      }
+     ],
+     "end": "committed",
+     "expected": {
+      "verification": "ok",
+      "k_after": 2
+     }
+    }
+   ]
+  },
+  {
+   "id": "B08",
+   "description": "pin_act collapse at the cap (cap 0): act on a hit, wait_for_evidence without one, never cap",
+   "interruption_cap": 0,
+   "pin_act": true,
+   "trials": [
+    {
+     "kind": "active",
+     "regime": "act",
+     "plain_regime": "assistance_off",
+     "items": [
+      {
+       "type": "activation",
+       "regime": "act",
+       "ambiguous": true,
+       "hit": true,
+       "n_plausible": 2,
+       "irreversible": false,
+       "pin_act": true,
+       "l2": null,
+       "then": null,
+       "expected": {
+        "k_before": 0,
+        "variant": "act",
+        "source": "table",
+        "result": "committed",
+        "outcome": "committed"
+       }
+      }
+     ],
+     "end": "committed",
+     "expected": {
+      "verification": "ok",
+      "k_after": 0
+     }
+    },
+    {
+     "kind": "active",
+     "regime": "act",
+     "plain_regime": "assistance_off",
+     "items": [
+      {
+       "type": "activation",
+       "regime": "act",
+       "ambiguous": true,
+       "hit": false,
+       "n_plausible": 2,
+       "irreversible": false,
+       "pin_act": true,
+       "l2": null,
+       "then": null,
+       "expected": {
+        "k_before": 0,
+        "variant": "wait_for_evidence",
+        "source": "table",
+        "result": "none",
+        "outcome": "none"
+       }
+      },
+      {
+       "type": "activation",
+       "regime": "act",
+       "ambiguous": false,
+       "hit": true,
+       "n_plausible": 1,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": null,
+       "then": null,
+       "expected": {
+        "k_before": 0,
+        "variant": null,
+        "source": null,
+        "result": "committed",
+        "outcome": "committed"
+       }
+      }
+     ],
+     "end": "committed",
+     "expected": {
+      "verification": "ok",
+      "k_after": 0
+     }
+    },
+    {
+     "kind": "active",
+     "regime": "act",
+     "plain_regime": "assistance_off",
+     "items": [
+      {
+       "type": "activation",
+       "regime": "act",
+       "ambiguous": false,
+       "hit": true,
+       "n_plausible": 1,
+       "irreversible": true,
+       "pin_act": false,
+       "l2": null,
+       "then": "confirmed",
+       "expected": {
+        "k_before": 0,
+        "variant": null,
+        "source": null,
+        "result": "confirming",
+        "outcome": "committed"
+       }
+      }
+     ],
+     "end": "committed",
+     "expected": {
+      "verification": "ok",
+      "k_after": 1
+     }
+    },
+    {
+     "kind": "active",
+     "regime": "act",
+     "plain_regime": "assistance_off",
+     "items": [
+      {
+       "type": "activation",
+       "regime": "act",
+       "ambiguous": true,
+       "hit": true,
+       "n_plausible": 2,
+       "irreversible": true,
+       "pin_act": true,
+       "l2": null,
+       "then": "confirmed",
+       "expected": {
+        "k_before": 1,
+        "variant": "act",
+        "source": "table",
+        "result": "confirming",
+        "outcome": "committed"
+       }
+      }
+     ],
+     "end": "committed",
+     "expected": {
+      "verification": "ok",
+      "k_after": 2
+     }
+    }
+   ]
+  },
+  {
+   "id": "B09",
+   "description": "A confirm step still open at the trial limit counts (outcome open_at_end)",
+   "interruption_cap": null,
+   "pin_act": false,
+   "trials": [
+    {
+     "kind": "active",
+     "regime": "confirm_selection:second_click",
+     "plain_regime": "assistance_off",
+     "items": [
+      {
+       "type": "activation",
+       "regime": "confirm_selection:second_click",
+       "ambiguous": false,
+       "hit": true,
+       "n_plausible": 1,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": null,
+       "then": "limit",
+       "expected": {
+        "k_before": 0,
+        "variant": null,
+        "source": null,
+        "result": "confirming",
+        "outcome": "open_at_end"
+       }
+      }
+     ],
+     "end": "limit",
+     "expected": {
+      "verification": "ok",
+      "k_after": 1
+     }
+    },
+    {
+     "kind": "active",
+     "regime": "confirm_selection:second_click",
+     "plain_regime": "assistance_off",
+     "items": [
+      {
+       "type": "activation",
+       "regime": "confirm_selection:second_click",
+       "ambiguous": false,
+       "hit": true,
+       "n_plausible": 1,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": null,
+       "then": "confirmed",
+       "expected": {
+        "k_before": 1,
+        "variant": null,
+        "source": null,
+        "result": "confirming",
+        "outcome": "committed"
+       }
+      }
+     ],
+     "end": "committed",
+     "expected": {
+      "verification": "ok",
+      "k_after": 2
+     }
+    }
+   ]
+  },
+  {
+   "id": "B10",
+   "description": "A trial reverted from one confirm regime to another ('Not this time'; plain is hold_700): adds 1",
+   "interruption_cap": 2,
+   "pin_act": false,
+   "trials": [
+    {
+     "kind": "active",
+     "regime": "confirm_selection:second_click",
+     "plain_regime": "confirm_selection:hold_700",
+     "items": [
+      {
+       "type": "activation",
+       "regime": "confirm_selection:second_click",
+       "ambiguous": false,
+       "hit": true,
+       "n_plausible": 1,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": null,
+       "then": "cancelled",
+       "expected": {
+        "k_before": 0,
+        "variant": null,
+        "source": null,
+        "result": "confirming",
+        "outcome": "cancelled"
+       }
+      },
+      {
+       "type": "veto",
+       "level": "block_regime"
+      },
+      {
+       "type": "activation",
+       "regime": "confirm_selection:hold_700",
+       "ambiguous": false,
+       "hit": true,
+       "n_plausible": 1,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": null,
+       "then": "hold_completed",
+       "expected": {
+        "k_before": 1,
+        "variant": null,
+        "source": null,
+        "result": "held",
+        "outcome": "committed"
+       }
+      }
+     ],
+     "end": "committed",
+     "expected": {
+      "verification": "ok",
+      "k_after": 1
+     }
+    },
+    {
+     "kind": "active",
+     "regime": "confirm_selection:second_click",
+     "plain_regime": "confirm_selection:hold_700",
+     "items": [
+      {
+       "type": "activation",
+       "regime": "confirm_selection:second_click",
+       "ambiguous": false,
+       "hit": true,
+       "n_plausible": 1,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": null,
+       "then": "confirmed",
+       "expected": {
+        "k_before": 1,
+        "variant": null,
+        "source": null,
+        "result": "confirming",
+        "outcome": "committed"
+       }
+      }
+     ],
+     "end": "committed",
+     "expected": {
+      "verification": "ok",
+      "k_after": 2
+     }
+    },
+    {
+     "kind": "active",
+     "regime": "confirm_selection:second_click",
+     "plain_regime": "confirm_selection:hold_700",
+     "items": [
+      {
+       "type": "activation",
+       "regime": "confirm_selection:second_click",
+       "ambiguous": false,
+       "hit": true,
+       "n_plausible": 1,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": null,
+       "then": "confirmed",
+       "expected": {
+        "k_before": 2,
+        "variant": null,
+        "source": null,
+        "result": "confirming",
+        "outcome": "committed"
+       }
+      }
+     ],
+     "end": "committed",
+     "expected": {
+      "verification": "ok",
+      "k_after": 3
+     }
+    }
+   ]
+  },
+  {
+   "id": "B11",
+   "description": "Cap 8 under hold_700 with an early release and a re-hold in every trial: k reaches 8 after trial 8",
+   "interruption_cap": 8,
+   "pin_act": false,
+   "trials": [
+    {
+     "kind": "active",
+     "regime": "confirm_selection:hold_700",
+     "plain_regime": "assistance_off",
+     "items": [
+      {
+       "type": "activation",
+       "regime": "confirm_selection:hold_700",
+       "ambiguous": false,
+       "hit": true,
+       "n_plausible": 1,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": null,
+       "then": "released",
+       "expected": {
+        "k_before": 0,
+        "variant": null,
+        "source": null,
+        "result": "held",
+        "outcome": "cancelled"
+       }
+      },
+      {
+       "type": "activation",
+       "regime": "confirm_selection:hold_700",
+       "ambiguous": false,
+       "hit": true,
+       "n_plausible": 1,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": null,
+       "then": "hold_completed",
+       "expected": {
+        "k_before": 1,
+        "variant": null,
+        "source": null,
+        "result": "held",
+        "outcome": "committed"
+       }
+      }
+     ],
+     "end": "committed",
+     "expected": {
+      "verification": "ok",
+      "k_after": 1
+     }
+    },
+    {
+     "kind": "active",
+     "regime": "confirm_selection:hold_700",
+     "plain_regime": "assistance_off",
+     "items": [
+      {
+       "type": "activation",
+       "regime": "confirm_selection:hold_700",
+       "ambiguous": false,
+       "hit": true,
+       "n_plausible": 1,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": null,
+       "then": "released",
+       "expected": {
+        "k_before": 1,
+        "variant": null,
+        "source": null,
+        "result": "held",
+        "outcome": "cancelled"
+       }
+      },
+      {
+       "type": "activation",
+       "regime": "confirm_selection:hold_700",
+       "ambiguous": false,
+       "hit": true,
+       "n_plausible": 1,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": null,
+       "then": "hold_completed",
+       "expected": {
+        "k_before": 2,
+        "variant": null,
+        "source": null,
+        "result": "held",
+        "outcome": "committed"
+       }
+      }
+     ],
+     "end": "committed",
+     "expected": {
+      "verification": "ok",
+      "k_after": 2
+     }
+    },
+    {
+     "kind": "active",
+     "regime": "confirm_selection:hold_700",
+     "plain_regime": "assistance_off",
+     "items": [
+      {
+       "type": "activation",
+       "regime": "confirm_selection:hold_700",
+       "ambiguous": false,
+       "hit": true,
+       "n_plausible": 1,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": null,
+       "then": "released",
+       "expected": {
+        "k_before": 2,
+        "variant": null,
+        "source": null,
+        "result": "held",
+        "outcome": "cancelled"
+       }
+      },
+      {
+       "type": "activation",
+       "regime": "confirm_selection:hold_700",
+       "ambiguous": false,
+       "hit": true,
+       "n_plausible": 1,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": null,
+       "then": "hold_completed",
+       "expected": {
+        "k_before": 3,
+        "variant": null,
+        "source": null,
+        "result": "held",
+        "outcome": "committed"
+       }
+      }
+     ],
+     "end": "committed",
+     "expected": {
+      "verification": "ok",
+      "k_after": 3
+     }
+    },
+    {
+     "kind": "active",
+     "regime": "confirm_selection:hold_700",
+     "plain_regime": "assistance_off",
+     "items": [
+      {
+       "type": "activation",
+       "regime": "confirm_selection:hold_700",
+       "ambiguous": false,
+       "hit": true,
+       "n_plausible": 1,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": null,
+       "then": "released",
+       "expected": {
+        "k_before": 3,
+        "variant": null,
+        "source": null,
+        "result": "held",
+        "outcome": "cancelled"
+       }
+      },
+      {
+       "type": "activation",
+       "regime": "confirm_selection:hold_700",
+       "ambiguous": false,
+       "hit": true,
+       "n_plausible": 1,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": null,
+       "then": "hold_completed",
+       "expected": {
+        "k_before": 4,
+        "variant": null,
+        "source": null,
+        "result": "held",
+        "outcome": "committed"
+       }
+      }
+     ],
+     "end": "committed",
+     "expected": {
+      "verification": "ok",
+      "k_after": 4
+     }
+    },
+    {
+     "kind": "active",
+     "regime": "confirm_selection:hold_700",
+     "plain_regime": "assistance_off",
+     "items": [
+      {
+       "type": "activation",
+       "regime": "confirm_selection:hold_700",
+       "ambiguous": false,
+       "hit": true,
+       "n_plausible": 1,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": null,
+       "then": "released",
+       "expected": {
+        "k_before": 4,
+        "variant": null,
+        "source": null,
+        "result": "held",
+        "outcome": "cancelled"
+       }
+      },
+      {
+       "type": "activation",
+       "regime": "confirm_selection:hold_700",
+       "ambiguous": false,
+       "hit": true,
+       "n_plausible": 1,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": null,
+       "then": "hold_completed",
+       "expected": {
+        "k_before": 5,
+        "variant": null,
+        "source": null,
+        "result": "held",
+        "outcome": "committed"
+       }
+      }
+     ],
+     "end": "committed",
+     "expected": {
+      "verification": "ok",
+      "k_after": 5
+     }
+    },
+    {
+     "kind": "active",
+     "regime": "confirm_selection:hold_700",
+     "plain_regime": "assistance_off",
+     "items": [
+      {
+       "type": "activation",
+       "regime": "confirm_selection:hold_700",
+       "ambiguous": false,
+       "hit": true,
+       "n_plausible": 1,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": null,
+       "then": "released",
+       "expected": {
+        "k_before": 5,
+        "variant": null,
+        "source": null,
+        "result": "held",
+        "outcome": "cancelled"
+       }
+      },
+      {
+       "type": "activation",
+       "regime": "confirm_selection:hold_700",
+       "ambiguous": false,
+       "hit": true,
+       "n_plausible": 1,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": null,
+       "then": "hold_completed",
+       "expected": {
+        "k_before": 6,
+        "variant": null,
+        "source": null,
+        "result": "held",
+        "outcome": "committed"
+       }
+      }
+     ],
+     "end": "committed",
+     "expected": {
+      "verification": "ok",
+      "k_after": 6
+     }
+    },
+    {
+     "kind": "active",
+     "regime": "confirm_selection:hold_700",
+     "plain_regime": "assistance_off",
+     "items": [
+      {
+       "type": "activation",
+       "regime": "confirm_selection:hold_700",
+       "ambiguous": false,
+       "hit": true,
+       "n_plausible": 1,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": null,
+       "then": "released",
+       "expected": {
+        "k_before": 6,
+        "variant": null,
+        "source": null,
+        "result": "held",
+        "outcome": "cancelled"
+       }
+      },
+      {
+       "type": "activation",
+       "regime": "confirm_selection:hold_700",
+       "ambiguous": false,
+       "hit": true,
+       "n_plausible": 1,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": null,
+       "then": "hold_completed",
+       "expected": {
+        "k_before": 7,
+        "variant": null,
+        "source": null,
+        "result": "held",
+        "outcome": "committed"
+       }
+      }
+     ],
+     "end": "committed",
+     "expected": {
+      "verification": "ok",
+      "k_after": 7
+     }
+    },
+    {
+     "kind": "active",
+     "regime": "confirm_selection:hold_700",
+     "plain_regime": "assistance_off",
+     "items": [
+      {
+       "type": "activation",
+       "regime": "confirm_selection:hold_700",
+       "ambiguous": false,
+       "hit": true,
+       "n_plausible": 1,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": null,
+       "then": "released",
+       "expected": {
+        "k_before": 7,
+        "variant": null,
+        "source": null,
+        "result": "held",
+        "outcome": "cancelled"
+       }
+      },
+      {
+       "type": "activation",
+       "regime": "confirm_selection:hold_700",
+       "ambiguous": false,
+       "hit": true,
+       "n_plausible": 1,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": null,
+       "then": "hold_completed",
+       "expected": {
+        "k_before": 8,
+        "variant": null,
+        "source": null,
+        "result": "held",
+        "outcome": "committed"
+       }
+      }
+     ],
+     "end": "committed",
+     "expected": {
+      "verification": "ok",
+      "k_after": 8
+     }
+    }
+   ]
+  },
+  {
+   "id": "B12",
+   "description": "An interrupted trial's steps count toward the block's k (cap 3)",
+   "interruption_cap": 3,
+   "pin_act": false,
+   "trials": [
+    {
+     "kind": "active",
+     "regime": "act",
+     "plain_regime": "assistance_off",
+     "items": [
+      {
+       "type": "activation",
+       "regime": "act",
+       "ambiguous": true,
+       "hit": true,
+       "n_plausible": 2,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": {
+        "variant": "ask_clarification:2",
+        "source": "table"
+       },
+       "then": "choice",
+       "expected": {
+        "k_before": 0,
+        "variant": "ask_clarification:2",
+        "source": "table",
+        "result": "asked",
+        "outcome": "committed"
+       }
+      }
+     ],
+     "end": "committed",
+     "expected": {
+      "verification": "ok",
+      "k_after": 1
+     }
+    },
+    {
+     "kind": "active",
+     "regime": "act",
+     "plain_regime": "assistance_off",
+     "items": [
+      {
+       "type": "activation",
+       "regime": "act",
+       "ambiguous": true,
+       "hit": true,
+       "n_plausible": 2,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": {
+        "variant": "confirm_selection:second_click",
+        "source": "table"
+       },
+       "then": "interrupt",
+       "expected": {
+        "k_before": 1,
+        "variant": "confirm_selection:second_click",
+        "source": "table",
+        "result": "confirming",
+        "outcome": "open_at_end"
+       }
+      }
+     ],
+     "end": "interrupt",
+     "expected": {
+      "verification": "interrupted",
+      "k_after": 2
+     }
+    },
+    {
+     "kind": "active",
+     "regime": "act",
+     "plain_regime": "assistance_off",
+     "items": [
+      {
+       "type": "activation",
+       "regime": "act",
+       "ambiguous": true,
+       "hit": true,
+       "n_plausible": 2,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": {
+        "variant": "ask_clarification:2",
+        "source": "table"
+       },
+       "then": "choice",
+       "expected": {
+        "k_before": 2,
+        "variant": "ask_clarification:2",
+        "source": "table",
+        "result": "asked",
+        "outcome": "committed"
+       }
+      }
+     ],
+     "end": "committed",
+     "expected": {
+      "verification": "ok",
+      "k_after": 3
+     }
+    },
+    {
+     "kind": "active",
+     "regime": "act",
+     "plain_regime": "assistance_off",
+     "items": [
+      {
+       "type": "activation",
+       "regime": "act",
+       "ambiguous": true,
+       "hit": true,
+       "n_plausible": 2,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": {
+        "variant": "confirm_selection:second_click",
+        "source": "table"
+       },
+       "then": null,
+       "expected": {
+        "k_before": 3,
+        "variant": "wait_for_evidence",
+        "source": "cap",
+        "result": "none",
+        "outcome": "none"
+       }
+      },
+      {
+       "type": "activation",
+       "regime": "act",
+       "ambiguous": false,
+       "hit": true,
+       "n_plausible": 1,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": null,
+       "then": null,
+       "expected": {
+        "k_before": 3,
+        "variant": null,
+        "source": null,
+        "result": "committed",
+        "outcome": "committed"
+       }
+      }
+     ],
+     "end": "committed",
+     "expected": {
+      "verification": "ok",
+      "k_after": 3
+     }
+    }
+   ]
+  },
+  {
+   "id": "B13",
+   "description": "An idle epoch counts from 0 on its own and uses the fixed L2 rule (cap 1)",
+   "interruption_cap": 1,
+   "pin_act": false,
+   "trials": [
+    {
+     "kind": "active",
+     "regime": "act",
+     "plain_regime": "assistance_off",
+     "items": [
+      {
+       "type": "activation",
+       "regime": "act",
+       "ambiguous": true,
+       "hit": true,
+       "n_plausible": 2,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": {
+        "variant": "ask_clarification:2",
+        "source": "table"
+       },
+       "then": "choice",
+       "expected": {
+        "k_before": 0,
+        "variant": "ask_clarification:2",
+        "source": "table",
+        "result": "asked",
+        "outcome": "committed"
+       }
+      }
+     ],
+     "end": "committed",
+     "expected": {
+      "verification": "ok",
+      "k_after": 1
+     }
+    },
+    {
+     "kind": "idle",
+     "regime": "act",
+     "plain_regime": "assistance_off",
+     "items": [
+      {
+       "type": "activation",
+       "regime": "act",
+       "ambiguous": true,
+       "hit": true,
+       "n_plausible": 2,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": {
+        "variant": "ask_clarification:2",
+        "source": "fixed_rule"
+       },
+       "then": "none_of_these",
+       "expected": {
+        "k_before": 0,
+        "variant": "ask_clarification:2",
+        "source": "fixed_rule",
+        "result": "asked",
+        "outcome": "cancelled"
+       }
+      },
+      {
+       "type": "activation",
+       "regime": "act",
+       "ambiguous": true,
+       "hit": true,
+       "n_plausible": 2,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": {
+        "variant": "ask_clarification:2",
+        "source": "fixed_rule"
+       },
+       "then": null,
+       "expected": {
+        "k_before": 1,
+        "variant": "wait_for_evidence",
+        "source": "cap",
+        "result": "none",
+        "outcome": "none"
+       }
+      }
+     ],
+     "end": "limit",
+     "expected": {
+      "verification": "ok",
+      "k_after": 1
+     }
+    }
+   ]
+  },
+  {
+   "id": "B14",
+   "description": "assistance_off: commits and activations without a hit add nothing (cap 0)",
+   "interruption_cap": 0,
+   "pin_act": false,
+   "trials": [
+    {
+     "kind": "active",
+     "regime": "assistance_off",
+     "plain_regime": "assistance_off",
+     "items": [
+      {
+       "type": "activation",
+       "regime": "assistance_off",
+       "ambiguous": false,
+       "hit": false,
+       "n_plausible": 1,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": null,
+       "then": null,
+       "expected": {
+        "k_before": 0,
+        "variant": null,
+        "source": null,
+        "result": "none",
+        "outcome": "none"
+       }
+      },
+      {
+       "type": "activation",
+       "regime": "assistance_off",
+       "ambiguous": true,
+       "hit": true,
+       "n_plausible": 2,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": null,
+       "then": null,
+       "expected": {
+        "k_before": 0,
+        "variant": null,
+        "source": null,
+        "result": "committed",
+        "outcome": "committed"
+       }
+      }
+     ],
+     "end": "committed",
+     "expected": {
+      "verification": "ok",
+      "k_after": 0
+     }
+    }
+   ]
+  },
+  {
+   "id": "B15",
+   "description": "Cap 0 in an act-guarded block: every ambiguous activation gets the cap response",
+   "interruption_cap": 0,
+   "pin_act": false,
+   "trials": [
+    {
+     "kind": "active",
+     "regime": "act",
+     "plain_regime": "assistance_off",
+     "items": [
+      {
+       "type": "activation",
+       "regime": "act",
+       "ambiguous": true,
+       "hit": true,
+       "n_plausible": 2,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": {
+        "variant": "confirm_selection:second_click",
+        "source": "table"
+       },
+       "then": null,
+       "expected": {
+        "k_before": 0,
+        "variant": "wait_for_evidence",
+        "source": "cap",
+        "result": "none",
+        "outcome": "none"
+       }
+      },
+      {
+       "type": "activation",
+       "regime": "act",
+       "ambiguous": false,
+       "hit": true,
+       "n_plausible": 1,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": null,
+       "then": null,
+       "expected": {
+        "k_before": 0,
+        "variant": null,
+        "source": null,
+        "result": "committed",
+        "outcome": "committed"
+       }
+      }
+     ],
+     "end": "committed",
+     "expected": {
+      "verification": "ok",
+      "k_after": 0
+     }
+    },
+    {
+     "kind": "active",
+     "regime": "act",
+     "plain_regime": "assistance_off",
+     "items": [
+      {
+       "type": "activation",
+       "regime": "act",
+       "ambiguous": true,
+       "hit": false,
+       "n_plausible": 2,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": {
+        "variant": "ask_clarification:2",
+        "source": "table"
+       },
+       "then": null,
+       "expected": {
+        "k_before": 0,
+        "variant": "wait_for_evidence",
+        "source": "cap",
+        "result": "none",
+        "outcome": "none"
+       }
+      },
+      {
+       "type": "activation",
+       "regime": "act",
+       "ambiguous": false,
+       "hit": true,
+       "n_plausible": 1,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": null,
+       "then": null,
+       "expected": {
+        "k_before": 0,
+        "variant": null,
+        "source": null,
+        "result": "committed",
+        "outcome": "committed"
+       }
+      }
+     ],
+     "end": "committed",
+     "expected": {
+      "verification": "ok",
+      "k_after": 0
+     }
+    }
+   ]
+  },
+  {
+   "id": "B16",
+   "description": "A refresh under a new freeze keeps act; responses after the revert use the fixed L2 rule",
+   "interruption_cap": null,
+   "pin_act": false,
+   "trials": [
+    {
+     "kind": "active",
+     "regime": "act",
+     "plain_regime": "assistance_off",
+     "items": [
+      {
+       "type": "activation",
+       "regime": "act",
+       "ambiguous": true,
+       "hit": true,
+       "n_plausible": 2,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": {
+        "variant": "wait_for_evidence",
+        "source": "table"
+       },
+       "then": null,
+       "expected": {
+        "k_before": 0,
+        "variant": "wait_for_evidence",
+        "source": "table",
+        "result": "none",
+        "outcome": "none"
+       }
+      },
+      {
+       "type": "refresh",
+       "regime": "act",
+       "interruption_cap": null,
+       "freeze": "act"
+      },
+      {
+       "type": "activation",
+       "regime": "act",
+       "ambiguous": true,
+       "hit": true,
+       "n_plausible": 2,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": {
+        "variant": "ask_clarification:2",
+        "source": "fixed_rule"
+       },
+       "then": "choice",
+       "expected": {
+        "k_before": 0,
+        "variant": "ask_clarification:2",
+        "source": "fixed_rule",
+        "result": "asked",
+        "outcome": "committed"
+       }
+      }
+     ],
+     "end": "committed",
+     "expected": {
+      "verification": "ok",
+      "k_after": 1
+     }
+    }
+   ]
+  },
+  {
+   "id": "B17",
+   "description": "An L2 'Not this time' reverts the trial to the plain regime (no L2 after the revert)",
+   "interruption_cap": null,
+   "pin_act": false,
+   "trials": [
+    {
+     "kind": "active",
+     "regime": "act",
+     "plain_regime": "assistance_off",
+     "items": [
+      {
+       "type": "activation",
+       "regime": "act",
+       "ambiguous": true,
+       "hit": true,
+       "n_plausible": 2,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": {
+        "variant": "confirm_selection:second_click",
+        "source": "table"
+       },
+       "then": "cancelled",
+       "expected": {
+        "k_before": 0,
+        "variant": "confirm_selection:second_click",
+        "source": "table",
+        "result": "confirming",
+        "outcome": "cancelled"
+       }
+      },
+      {
+       "type": "veto",
+       "level": "ambiguity_response"
+      },
+      {
+       "type": "activation",
+       "regime": "assistance_off",
+       "ambiguous": true,
+       "hit": true,
+       "n_plausible": 2,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": null,
+       "then": null,
+       "expected": {
+        "k_before": 1,
+        "variant": null,
+        "source": null,
+        "result": "committed",
+        "outcome": "committed"
+       }
+      }
+     ],
+     "end": "committed",
+     "expected": {
+      "verification": "ok",
+      "k_after": 1
+     }
+    }
+   ]
+  },
+  {
+   "id": "B18",
+   "description": "The cap is reached inside a trial by a cancelled L2 confirm; the next ambiguous activation gets cap",
+   "interruption_cap": 1,
+   "pin_act": false,
+   "trials": [
+    {
+     "kind": "active",
+     "regime": "act",
+     "plain_regime": "assistance_off",
+     "items": [
+      {
+       "type": "activation",
+       "regime": "act",
+       "ambiguous": true,
+       "hit": true,
+       "n_plausible": 2,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": {
+        "variant": "confirm_selection:second_click",
+        "source": "table"
+       },
+       "then": "cancelled",
+       "expected": {
+        "k_before": 0,
+        "variant": "confirm_selection:second_click",
+        "source": "table",
+        "result": "confirming",
+        "outcome": "cancelled"
+       }
+      },
+      {
+       "type": "activation",
+       "regime": "act",
+       "ambiguous": true,
+       "hit": true,
+       "n_plausible": 2,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": {
+        "variant": "ask_clarification:2",
+        "source": "table"
+       },
+       "then": null,
+       "expected": {
+        "k_before": 1,
+        "variant": "wait_for_evidence",
+        "source": "cap",
+        "result": "none",
+        "outcome": "none"
+       }
+      },
+      {
+       "type": "activation",
+       "regime": "act",
+       "ambiguous": false,
+       "hit": true,
+       "n_plausible": 1,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": null,
+       "then": null,
+       "expected": {
+        "k_before": 1,
+        "variant": null,
+        "source": null,
+        "result": "committed",
+        "outcome": "committed"
+       }
+      }
+     ],
+     "end": "committed",
+     "expected": {
+      "verification": "ok",
+      "k_after": 1
+     }
+    }
+   ]
+  },
+  {
+   "id": "B19",
+   "description": "Hold regime under a cap of 2 (minimum caution keeps it): a no-hit activation adds nothing; an aborted hold and its re-hold add 1 once; k may pass the cap because an L1 regime is never capped",
+   "interruption_cap": 2,
+   "pin_act": false,
+   "trials": [
+    {
+     "kind": "active",
+     "regime": "confirm_selection:hold_700",
+     "plain_regime": "confirm_selection:hold_700",
+     "items": [
+      {
+       "type": "activation",
+       "regime": "confirm_selection:hold_700",
+       "ambiguous": false,
+       "hit": false,
+       "n_plausible": 1,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": null,
+       "then": null,
+       "expected": {
+        "k_before": 0,
+        "variant": null,
+        "source": null,
+        "result": "none",
+        "outcome": "none"
+       }
+      },
+      {
+       "type": "activation",
+       "regime": "confirm_selection:hold_700",
+       "ambiguous": false,
+       "hit": true,
+       "n_plausible": 1,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": null,
+       "then": "hold_completed",
+       "expected": {
+        "k_before": 0,
+        "variant": null,
+        "source": null,
+        "result": "held",
+        "outcome": "committed"
+       }
+      }
+     ],
+     "end": "committed",
+     "expected": {
+      "verification": "ok",
+      "k_after": 1
+     }
+    },
+    {
+     "kind": "active",
+     "regime": "confirm_selection:hold_700",
+     "plain_regime": "confirm_selection:hold_700",
+     "items": [
+      {
+       "type": "activation",
+       "regime": "confirm_selection:hold_700",
+       "ambiguous": false,
+       "hit": true,
+       "n_plausible": 1,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": null,
+       "then": "aborted",
+       "expected": {
+        "k_before": 1,
+        "variant": null,
+        "source": null,
+        "result": "held",
+        "outcome": "aborted"
+       }
+      },
+      {
+       "type": "activation",
+       "regime": "confirm_selection:hold_700",
+       "ambiguous": false,
+       "hit": true,
+       "n_plausible": 1,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": null,
+       "then": "hold_completed",
+       "expected": {
+        "k_before": 2,
+        "variant": null,
+        "source": null,
+        "result": "held",
+        "outcome": "committed"
+       }
+      }
+     ],
+     "end": "committed",
+     "expected": {
+      "verification": "ok",
+      "k_after": 2
+     }
+    },
+    {
+     "kind": "active",
+     "regime": "confirm_selection:hold_700",
+     "plain_regime": "confirm_selection:hold_700",
+     "items": [
+      {
+       "type": "activation",
+       "regime": "confirm_selection:hold_700",
+       "ambiguous": false,
+       "hit": true,
+       "n_plausible": 1,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": null,
+       "then": "hold_completed",
+       "expected": {
+        "k_before": 2,
+        "variant": null,
+        "source": null,
+        "result": "held",
+        "outcome": "committed"
+       }
+      }
+     ],
+     "end": "committed",
+     "expected": {
+      "verification": "ok",
+      "k_after": 3
+     }
+    }
+   ]
+  },
+  {
+   "id": "B20",
+   "description": "Three plausible candidates: ask_clarification:3 from the table, then a C9 confirm, then the cap",
+   "interruption_cap": 2,
+   "pin_act": false,
+   "trials": [
+    {
+     "kind": "active",
+     "regime": "act",
+     "plain_regime": "assistance_off",
+     "items": [
+      {
+       "type": "activation",
+       "regime": "act",
+       "ambiguous": true,
+       "hit": true,
+       "n_plausible": 3,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": {
+        "variant": "ask_clarification:3",
+        "source": "table"
+       },
+       "then": "choice",
+       "expected": {
+        "k_before": 0,
+        "variant": "ask_clarification:3",
+        "source": "table",
+        "result": "asked",
+        "outcome": "committed"
+       }
+      }
+     ],
+     "end": "committed",
+     "expected": {
+      "verification": "ok",
+      "k_after": 1
+     }
+    },
+    {
+     "kind": "active",
+     "regime": "act",
+     "plain_regime": "assistance_off",
+     "items": [
+      {
+       "type": "activation",
+       "regime": "act",
+       "ambiguous": false,
+       "hit": true,
+       "n_plausible": 1,
+       "irreversible": true,
+       "pin_act": false,
+       "l2": null,
+       "then": "confirmed",
+       "expected": {
+        "k_before": 1,
+        "variant": null,
+        "source": null,
+        "result": "confirming",
+        "outcome": "committed"
+       }
+      }
+     ],
+     "end": "committed",
+     "expected": {
+      "verification": "ok",
+      "k_after": 2
+     }
+    },
+    {
+     "kind": "active",
+     "regime": "act",
+     "plain_regime": "assistance_off",
+     "items": [
+      {
+       "type": "activation",
+       "regime": "act",
+       "ambiguous": true,
+       "hit": true,
+       "n_plausible": 3,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": {
+        "variant": "ask_clarification:3",
+        "source": "table"
+       },
+       "then": null,
+       "expected": {
+        "k_before": 2,
+        "variant": "wait_for_evidence",
+        "source": "cap",
+        "result": "none",
+        "outcome": "none"
+       }
+      },
+      {
+       "type": "activation",
+       "regime": "act",
+       "ambiguous": false,
+       "hit": true,
+       "n_plausible": 1,
+       "irreversible": false,
+       "pin_act": false,
+       "l2": null,
+       "then": null,
+       "expected": {
+        "k_before": 2,
+        "variant": null,
+        "source": null,
+        "result": "committed",
+        "outcome": "committed"
+       }
+      }
+     ],
+     "end": "committed",
+     "expected": {
+      "verification": "ok",
+      "k_after": 2
+     }
+    }
+   ]
+  }
+ ]
+}

@@ -651,6 +651,66 @@ class DurableTaskStore:
             raise DurableTaskError(f"Approval disappeared: {plan_id}")
         return approval
 
+    async def deny_unconsumed_approval(self, plan_id: str) -> DurableApproval | None:
+        """Record a denial that won over an approval the waiting task had not consumed yet.
+
+        A PENDING or APPROVED row becomes DENIED with no approved indices, so a plan that was approved and
+        then denied (an interject correction or Stop) never resumes after a restart. EXPIRED, DENIED and
+        DISCONNECTED rows stay as they are. The caller either holds the in-memory confirmation's decision lock
+        and has checked that the confirmation is still registered, which is what "unconsumed" means here, or
+        is the waiter that consumed the denial and makes the durable row agree with it.
+        Returns None when no row exists.
+        """
+        return await self._override_unconsumed_approval(plan_id, ApprovalStatus.DENIED)
+
+    async def expire_unconsumed_approval(self, plan_id: str) -> DurableApproval | None:
+        """Record that a plan's approval ended unanswered: the confirmation timed out, the daemon stopped, or
+        an approval's reply never reached the UI.
+
+        A PENDING or APPROVED row becomes EXPIRED with no approved indices, so the plan never resumes after a
+        restart. EXPIRED, DENIED and DISCONNECTED rows stay as they are. Returns None when no row exists.
+        """
+        return await self._override_unconsumed_approval(plan_id, ApprovalStatus.EXPIRED)
+
+    async def _override_unconsumed_approval(self, plan_id: str, status: ApprovalStatus) -> DurableApproval | None:
+        if status not in {ApprovalStatus.DENIED, ApprovalStatus.EXPIRED}:
+            raise ValueError("An unconsumed approval can only become denied or expired")
+        pool = self._require_pool()
+        async with pool.write() as db:
+            await db.execute("BEGIN IMMEDIATE")
+            try:
+                cursor = await db.execute(
+                    "SELECT status FROM durable_approvals WHERE plan_id = ?",
+                    (plan_id,),
+                )
+                row = await cursor.fetchone()
+                await cursor.close()
+                if row is None:
+                    await db.rollback()
+                    return None
+                if ApprovalStatus(row[0]) in {ApprovalStatus.PENDING, ApprovalStatus.APPROVED}:
+                    await db.execute(
+                        """
+                        UPDATE durable_approvals
+                        SET status = ?, approved_indices_json = '[]', resolved_at = ?
+                        WHERE plan_id = ? AND status IN (?, ?)
+                        """,
+                        (
+                            status.value,
+                            self._now(),
+                            plan_id,
+                            ApprovalStatus.PENDING.value,
+                            ApprovalStatus.APPROVED.value,
+                        ),
+                    )
+                    await db.commit()
+                else:
+                    await db.rollback()
+            except Exception:
+                await db.rollback()
+                raise
+        return await self.get_approval(plan_id)
+
     async def claim_action(
         self,
         *,

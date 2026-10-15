@@ -28,6 +28,12 @@ from websockets.asyncio.server import Server, ServerConnection
 
 from pilot import __version__
 from pilot.config import (
+    CO_ADAPTATION_BOOL_KEYS,
+    CO_ADAPTATION_DB_FILE,
+    CO_ADAPTATION_EXPORTS_DIR,
+    CO_ADAPTATION_FLOAT_RANGES,
+    CO_ADAPTATION_INT_RANGES,
+    CO_ADAPTATION_PREFERENCES_FILE,
     DATA_DIR,
     DB_FILE,
     EXPERIENCE_DB_FILE,
@@ -94,7 +100,6 @@ from pilot.system.companion_speech import (
 )
 from pilot.system.interaction import InteractionPhase, InteractionRuntime, acknowledgement_for
 from pilot.workflows.durable_tasks import (
-    ApprovalConflict,
     ApprovalStatus,
     DurableTaskStore,
     InvalidTaskTransition,
@@ -177,7 +182,30 @@ def _sanitize_summary(text: object, limit: int = 160) -> str:
     return clean[: max(0, limit - 3)] + "..."
 
 
+def _normalize_spoken_phrase(text: str) -> str:
+    """Casefold, turn punctuation into spaces and collapse whitespace, for matching exact spoken phrases."""
+    return " ".join(
+        "".join(
+            character if character.isalnum() or character.isspace() else " " for character in text.casefold()
+        ).split()
+    )
+
+
+def _co_adaptation_config_dict(config: Any) -> dict[str, Any]:
+    """Every co_adaptation setting as plain JSON values."""
+    from dataclasses import asdict
+
+    return asdict(config)
+
+
 CONFIRM_TIMEOUT_SECONDS = 300
+# The authority channel that answered a confirmation, recorded in APPROVAL_RESOLVED. It never says whether a
+# pointer or a keyboard pressed the dialog's button.
+CONFIRM_INPUT_CHANNELS = ("dialog", "gesture", "voice_deny", "internal", "unknown")
+# Resolution paths of a confirmation that ended without an answer the plan may act on. The waiter reads each as
+# expired: "timeout" (nobody answered in time), "shutdown" (the daemon stopped first) and "unacknowledged" (an
+# approval whose reply never reached the UI, so the person was never shown that it was accepted).
+CONFIRM_UNANSWERED_PATHS = ("timeout", "shutdown", "unacknowledged")
 # RPCs that change saved settings. They run one at a time under the server's config lock,
 # pick up hand edits to the config files first, and announce ``config_updated`` so every
 # open window re-reads its settings instead of saving a stale copy over them.
@@ -198,6 +226,9 @@ CONFIG_MUTATING_RPC_METHODS = frozenset(
         "mesh_configure",
         "store_api_key",
         "delete_api_key",
+        "co_adaptation_config_update",
+        "co_adaptation_consent_grant",
+        "co_adaptation_consent_revoke",
     }
 )
 # Settings reads and writes must not wait behind a long ``execute`` on the same socket
@@ -216,6 +247,12 @@ SETTINGS_RPC_METHODS = CONFIG_MUTATING_RPC_METHODS | frozenset(
         "list_api_keys",
         "autonomy_review_status",
         "get_security_status",
+        "co_adaptation_status",
+        "co_adaptation_preference_set",
+        "co_adaptation_preference_retract",
+        "co_adaptation_learning_reset",
+        "co_adaptation_erase",
+        "co_adaptation_results",
     }
 )
 # Vault entries owned by other features; the generic API-key RPCs must not overwrite or delete them.
@@ -248,6 +285,23 @@ OUT_OF_BAND_RPC_METHODS = frozenset(
         "recorded_workflow_status",
         "recorded_workflow_stop",
     }
+)
+# The selection study's RPCs run out-of-band too: a study trial must not wait behind an ``execute`` on the
+# same socket. They touch only the co-adaptation service, never a pending approval or the executor.
+CO_ADAPTATION_RPC_METHODS = frozenset(
+    {
+        "co_adaptation_session_begin",
+        "co_adaptation_session_resume",
+        "co_adaptation_recommend",
+        "co_adaptation_record_trial",
+        "co_adaptation_report_burden",
+        "co_adaptation_session_end",
+        "co_adaptation_export",
+    }
+)
+# Neural gate states in which the selection study refuses to start, resume or record a trial.
+NEURAL_ARMED_STATES = frozenset(
+    {"armed_safe_ui", "armed_safe_desktop", "candidate_intent", "previewed", "committed", "cooldown"}
 )
 
 # Attention-aware timing is allowed to defer only passive, replaceable
@@ -440,6 +494,45 @@ class PendingConfirmation:
     resolved: bool = False
     resolved_by_task: asyncio.Task[Any] | None = field(default=None, repr=False)
     rpc_tasks: set[asyncio.Task[Any]] = field(default_factory=set, repr=False)
+    # Authority audit data for APPROVAL_RESOLVED: the channel that answered (dialog, gesture, voice_deny,
+    # internal, unknown; never pointer versus keyboard) and the path that resolved the confirmation.
+    input_channel: str = "unknown"
+    resolution_path: str = ""
+    # The action indices a plan approval covers. None for narrator, self-healing and threat-containment
+    # confirmations, which keep accepting a confirm without approved_indices.
+    required_indices: frozenset[int] | None = None
+    # True once the resolving confirm's reply was written to its socket, or at once for a confirm that has no
+    # reply to deliver. An approval that is never acknowledged is never acted on.
+    acknowledged: bool = False
+    # The interactive task that raised this confirmation when it is not the task's own plan approval (a narrator
+    # interrupt during a step), so typed or spoken text during that task can answer it like the plan approval.
+    task_id: str = ""
+
+
+@dataclass(frozen=True)
+class _ConfirmationDecision:
+    """What a confirmation waiter read under the decision lock; it never reads the pending object again."""
+
+    confirmed: bool
+    approved_indices: set[int] | None
+    expired: bool
+    input_channel: str
+    resolution_path: str
+
+
+def _release_unacknowledged_confirmation(pending: PendingConfirmation) -> None:
+    """Wake the waiter of a confirmation whose confirm reply was never written, failing closed.
+
+    An approval nobody was shown as accepted is withdrawn before the event is set, so no waiter acts on it: the plan
+    waiters read it as expired ("unacknowledged") and the narrator, self-healing and threat-containment waiters read a
+    denial. A denial stays a denial. These writes take no lock: the confirmation is already resolved, so every other
+    writer that can still run (a denial or the shutdown release) also only moves it toward a denial.
+    """
+    if pending.confirmed:
+        pending.confirmed = False
+        pending.approved_indices = set()
+        pending.resolution_path = "unacknowledged"
+    pending.event.set()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -720,6 +813,12 @@ class PilotServer:
         self._memory: Any = None
         self._experience_ledger: ExperienceLedger | None = None
         self._online_learning: Any = None
+        # Assistance co-adaptation service (pilot.coadaptation, loaded lazily in initialize()).
+        self._co_adaptation: Any = None
+        # Set when the service erased a participant whose consent expired; _settle_co_adaptation_consent then turns
+        # co_adaptation.enabled off if no active consent remains, as a revoke does.
+        self._co_adaptation_consent_lapsed = False
+        self._co_adaptation_lapse_task: asyncio.Task[None] | None = None
         self._strategy_evolution: Any = None
         self._evolution_harness: Any = None
         self._active_experience_context = ExperienceContext()
@@ -925,6 +1024,27 @@ class PilotServer:
         self._online_learning = VerifiedOnlineLearner(DATA_DIR / "online_learning_state.json")
         await self._online_learning.initialize(self._experience_ledger)
         self._experience_ledger.subscribe(self._online_learning.consume)
+
+        # ── Assistance co-adaptation (opt-in, presentation-only) ──
+        # Imported here so that importing pilot.server never loads pilot.coadaptation. The service receives
+        # settings, paths and the broadcast function only: no executor, ledger, memory or pending approval.
+        try:
+            from pilot.coadaptation.service import CoAdaptationService
+
+            co_adaptation = CoAdaptationService(
+                settings_provider=lambda: self.config.co_adaptation,
+                gaze_tracking_enabled=lambda: self.config.vision.gaze_tracking_enabled,
+                db_path=CO_ADAPTATION_DB_FILE,
+                preferences_path=CO_ADAPTATION_PREFERENCES_FILE,
+                exports_dir=CO_ADAPTATION_EXPORTS_DIR,
+                broadcast_fn=self._co_adaptation_notify,
+            )
+            await co_adaptation.start()
+            self._co_adaptation = co_adaptation
+            # start() erases consents that expired while the daemon was off.
+            await self._settle_co_adaptation_consent()
+        except Exception:
+            logger.warning("CoAdaptationService init failed (non-critical)", exc_info=True)
 
         # ── Plan History Audit Log ──
         self._plan_history = PlanHistoryStore()
@@ -1654,6 +1774,23 @@ class PilotServer:
             "get_plan_detail": self._handle_get_plan_detail,
             # ── Threat Containment (Issue #365) ──
             "threat_containment_stats": self._handle_threat_containment_stats,
+            # ── Assistance co-adaptation (presentation-only; no approval or execution path) ──
+            "co_adaptation_status": self._handle_co_adaptation_status,
+            "co_adaptation_config_update": self._handle_co_adaptation_config_update,
+            "co_adaptation_consent_grant": self._handle_co_adaptation_consent_grant,
+            "co_adaptation_consent_revoke": self._handle_co_adaptation_consent_revoke,
+            "co_adaptation_preference_set": self._handle_co_adaptation_preference_set,
+            "co_adaptation_preference_retract": self._handle_co_adaptation_preference_retract,
+            "co_adaptation_learning_reset": self._handle_co_adaptation_learning_reset,
+            "co_adaptation_erase": self._handle_co_adaptation_erase,
+            "co_adaptation_results": self._handle_co_adaptation_results,
+            "co_adaptation_export": self._handle_co_adaptation_export,
+            "co_adaptation_session_begin": self._handle_co_adaptation_session_begin,
+            "co_adaptation_session_resume": self._handle_co_adaptation_session_resume,
+            "co_adaptation_recommend": self._handle_co_adaptation_recommend,
+            "co_adaptation_record_trial": self._handle_co_adaptation_record_trial,
+            "co_adaptation_report_burden": self._handle_co_adaptation_report_burden,
+            "co_adaptation_session_end": self._handle_co_adaptation_session_end,
         }
 
         # ── LAN Mesh Network (opt-in via config) ──
@@ -1672,12 +1809,14 @@ class PilotServer:
                     self._mesh_error = str(exc)
                 logger.warning("HelioxMesh init failed (non-critical)", exc_info=True)
 
-    async def _broadcast_notification(self, method: str, params: Any) -> None:
+    async def _broadcast_notification(self, method: str, params: Any, *, exclude: Any = None) -> None:
         """Broadcast a notification to all connected clients.
 
         Args:
             method: The notification method name.
             params: The notification parameters.
+            exclude: A connection that must not receive this notification
+                (a caller that already has the result in its reply).
         """
         # ── Feature 5: Attention-Optimized Notification Timing ──
         # Only explicitly passive telemetry may be delayed. Unknown and
@@ -1740,6 +1879,8 @@ class PilotServer:
         # was silently never delivered outside that one buffered-flush edge case.
         msg = _notification(method, params)
         for client in list(self._clients):
+            if exclude is not None and client is exclude:
+                continue
             try:
                 await client.send(msg)
             except Exception:
@@ -1876,7 +2017,11 @@ class PilotServer:
                     confirmation = self._pending_confirms.get(str(request.params.get("plan_id", "")))
                     if confirmation is not None:
                         confirmation.rpc_tasks.add(current_task)
-                if request.method in OUT_OF_BAND_RPC_METHODS or request.method in SETTINGS_RPC_METHODS:
+                if (
+                    request.method in OUT_OF_BAND_RPC_METHODS
+                    or request.method in SETTINGS_RPC_METHODS
+                    or request.method in CO_ADAPTATION_RPC_METHODS
+                ):
                     response = await self._dispatch(request, websocket)
                 else:
                     async with request_lock:
@@ -1886,6 +2031,7 @@ class PilotServer:
                     # The blocked execution must not resume until the UI's
                     # decision acknowledgement has actually been written.
                     if confirmation is not None and confirmation.resolved_by_task is current_task:
+                        confirmation.acknowledged = True
                         confirmation.event.set()
                 await self._announce_config_change(request, response)
             except websockets.exceptions.ConnectionClosed:
@@ -1899,6 +2045,9 @@ class PilotServer:
             finally:
                 if confirmation is not None and current_task is not None:
                     confirmation.rpc_tasks.discard(current_task)
+                    if confirmation.resolved_by_task is current_task and not confirmation.acknowledged:
+                        # The reply was never written (the socket closed or this task was cancelled with it).
+                        _release_unacknowledged_confirmation(confirmation)
 
         # ── Normal message loop ────────────────────────────────────────────
         try:
@@ -3402,6 +3551,14 @@ class PilotServer:
                         sorted(denied_indices),
                     )
                     plan.actions = [a for i, a in enumerate(plan.actions) if i not in denied_indices]
+                    # A resume must never run an unchecked action. A durable approval records the approved
+                    # indices against the checkpoint's full plan, and resume_task drops the others. Without one,
+                    # the checkpoint itself must hold only the approved plan; nothing has run yet, so it restarts
+                    # from the first approved action.
+                    if self._checkpoint_store and (
+                        self._durable_tasks is None or await self._durable_tasks.get_approval(plan_id) is None
+                    ):
+                        await self._checkpoint_store.start_plan(plan_id, user_input, plan)
             elif not dry_run:
                 if emit:
                     skip_phase = await emit.phase_start("confirmation", "confirmation_skipped")
@@ -4538,13 +4695,28 @@ class PilotServer:
                 "approval": approval.request,
                 "expires_at": approval.expires_at,
             }
-        if approval is not None and approval.status in {
-            ApprovalStatus.DENIED,
-            ApprovalStatus.EXPIRED,
-        }:
+        # Only an APPROVED row resumes, and only with the actions it approved: the checkpoint of a durable plan
+        # keeps the plan as it was shown for approval, so every required action the person left unchecked is
+        # dropped here, also when the approval was answered after a restart.
+        denied_indices: frozenset[int] = frozenset()
+        refusal = ""
+        if approval is not None:
+            if approval.status != ApprovalStatus.APPROVED:
+                refusal = f"Task approval was {approval.status.value}."
+            else:
+                try:
+                    required = {int(index) for index in approval.request.get("action_indices", [])}
+                    approved = {int(index) for index in approval.approved_indices} & required
+                except (AttributeError, TypeError, ValueError):
+                    refusal = "Task approval could not be read, so nothing was resumed."
+                else:
+                    if required and not approved:
+                        refusal = "Task approval approved none of the actions that needed approval."
+                    denied_indices = frozenset(required - approved)
+        if refusal:
             response = {
                 "status": "cancelled",
-                "message": f"Task approval was {approval.status.value}.",
+                "message": refusal,
                 "task_id": task.task_id,
                 "plan_id": task.plan_id,
             }
@@ -4587,6 +4759,7 @@ class PilotServer:
                             "_authorized_task_id": task.task_id,
                         },
                         ws,
+                        denied_indices=denied_indices,
                     )
                 else:
                     if task.status != TaskStatus.PLANNING:
@@ -4613,8 +4786,19 @@ class PilotServer:
             self._active_experience_context = ExperienceContext()
             self._start_queued_execute_worker()
 
-    async def _handle_resume_plan(self, params: dict[str, Any], ws: ServerConnection) -> dict:
-        """Resume a previously checkpointed plan from its last completed action."""
+    async def _handle_resume_plan(
+        self,
+        params: dict[str, Any],
+        ws: ServerConnection,
+        *,
+        denied_indices: frozenset[int] = frozenset(),
+    ) -> dict:
+        """Resume a previously checkpointed plan from its last completed action.
+
+        ``denied_indices`` are the checkpoint's action indices the durable approval left unchecked (passed only by
+        ``resume_task``). They are dropped before anything runs, so the resumed plan is the approved plan: the
+        checkpoint's completed count and the action indices then refer to it, as they did when it first ran.
+        """
         plan_id = str(params.get("plan_id", "")).strip()
         if not plan_id:
             return {"status": "error", "message": "resume_plan requires plan_id"}
@@ -4634,8 +4818,24 @@ class PilotServer:
         if checkpoint is None:
             return {"status": "error", "message": f"No checkpoint found for plan_id: {plan_id}"}
 
-        completed_count = max(0, min(checkpoint.completed_count, len(checkpoint.plan.actions)))
-        remaining_actions = checkpoint.plan.actions[completed_count:]
+        approved_plan = checkpoint.plan
+        if denied_indices:
+            if max(denied_indices) >= len(checkpoint.plan.actions):
+                return {
+                    "status": "error",
+                    "message": "The approval does not match this plan's checkpoint, so nothing was resumed.",
+                    "plan_id": plan_id,
+                }
+            approved_plan = checkpoint.plan.model_copy(
+                update={
+                    "actions": [
+                        action for index, action in enumerate(checkpoint.plan.actions) if index not in denied_indices
+                    ]
+                }
+            )
+
+        completed_count = max(0, min(checkpoint.completed_count, len(approved_plan.actions)))
+        remaining_actions = approved_plan.actions[completed_count:]
         await ws.send(
             _notification(
                 "status",
@@ -4651,12 +4851,12 @@ class PilotServer:
         if not remaining_actions:
             from pilot.response_contract import partial_failure_message, success_message
 
-            verification = await self._verifier.verify(checkpoint.plan, checkpoint.results)
+            verification = await self._verifier.verify(approved_plan, checkpoint.results)
             if verification.passed:
                 await self._checkpoint_store.mark_status(plan_id, "complete")
                 status = "success"
                 message = success_message(
-                    checkpoint.plan,
+                    approved_plan,
                     checkpoint.results,
                     verification,
                     dry_run=False,
@@ -4681,8 +4881,8 @@ class PilotServer:
 
         remaining_plan = ActionPlan(
             actions=remaining_actions,
-            explanation=checkpoint.plan.explanation,
-            raw_input=checkpoint.plan.raw_input,
+            explanation=approved_plan.explanation,
+            raw_input=approved_plan.raw_input,
         )
 
         async def _on_action_start(action: Any) -> None:
@@ -4735,8 +4935,8 @@ class PilotServer:
 
         verification_payload: dict[str, Any] = {}
         verification = None
-        if not failed and len(combined_results) >= len(checkpoint.plan.actions):
-            verification = await self._verifier.verify(checkpoint.plan, combined_results)
+        if not failed and len(combined_results) >= len(approved_plan.actions):
+            verification = await self._verifier.verify(approved_plan, combined_results)
             verification_payload = verification.model_dump()
             if not verification.passed:
                 final_status = "partial_failure"
@@ -4744,7 +4944,7 @@ class PilotServer:
 
         from pilot.response_contract import partial_failure_message, success_message
 
-        completed_all = len(combined_results) >= len(checkpoint.plan.actions)
+        completed_all = len(combined_results) >= len(approved_plan.actions)
         if final_status in {"failed", "partial_failure"}:
             response_status = "partial_failure"
             terminal_message = partial_failure_message(combined_results, verification)
@@ -4752,13 +4952,13 @@ class PilotServer:
             response_status = "interrupted"
             terminal_message = (
                 f"Task was interrupted after {len(combined_results)} of "
-                f"{len(checkpoint.plan.actions)} actions. No unfinished action was reported as complete."
+                f"{len(approved_plan.actions)} actions. No unfinished action was reported as complete."
             )
             await self._checkpoint_store.mark_status(plan_id, "interrupted")
         else:
             response_status = "success"
             terminal_message = success_message(
-                checkpoint.plan,
+                approved_plan,
                 combined_results,
                 verification,
                 dry_run=False,
@@ -4862,6 +5062,7 @@ class PilotServer:
             if force_all_actions
             else [i for i, a in enumerate(plan.actions) if a.requires_confirmation or a.is_irreversible]
         )
+        pending.required_indices = frozenset(confirm_indices)
 
         def _dump_confirm_action(idx: int, a: Any) -> dict[str, Any]:
             payload = a.model_dump()
@@ -4920,18 +5121,13 @@ class PilotServer:
         )
 
         required = set(confirm_indices)
-        try:
-            await asyncio.wait_for(pending.event.wait(), timeout=CONFIRM_TIMEOUT_SECONDS)
-        except TimeoutError:
-            logger.warning("Confirmation timed out for plan %s", plan_id)
+        decision = await self._consume_confirmation(pending)
+        if decision.expired:
+            logger.warning("Confirmation for plan %s ended unanswered (%s)", plan_id, decision.resolution_path)
             if self._durable_tasks is not None and self._active_task_id:
-                try:
-                    await self._durable_tasks.resolve_approval(
-                        plan_id,
-                        ApprovalStatus.EXPIRED,
-                    )
-                except ApprovalConflict:
-                    logger.info("Approval %s resolved concurrently with timeout", plan_id)
+                # An approval whose reply never reached the UI was already written as APPROVED; it must not
+                # resume after a restart either.
+                await self._close_durable_approval(plan_id, ApprovalStatus.EXPIRED)
             await self._append_experience(
                 ExperienceEventType.APPROVAL_RESOLVED,
                 plan_id=plan_id,
@@ -4941,56 +5137,123 @@ class PilotServer:
                     "decision": "expired",
                     "approved_indices": [],
                     "required_indices": sorted(required),
+                    "input_channel": decision.input_channel,
+                    "resolution_path": decision.resolution_path,
                 },
                 provenance={"component": "PilotServer._wait_for_confirmation"},
             )
             return False, set(), required
-        finally:
-            self._pending_confirms.pop(plan_id, None)
 
         approved = (
-            (pending.approved_indices if pending.approved_indices is not None else required)
-            if pending.confirmed
+            (decision.approved_indices if decision.approved_indices is not None else required)
+            if decision.confirmed
             else set()
         )
         if self._durable_tasks is not None and self._active_task_id:
-            persisted = await self._durable_tasks.get_approval(plan_id)
-            if persisted is not None and persisted.status == ApprovalStatus.PENDING:
-                await self._durable_tasks.resolve_approval(
-                    plan_id,
-                    ApprovalStatus.APPROVED if pending.confirmed else ApprovalStatus.DENIED,
-                    approved_indices=sorted(approved & required),
-                )
+            if decision.confirmed:
+                persisted = await self._durable_tasks.get_approval(plan_id)
+                if persisted is not None and persisted.status == ApprovalStatus.PENDING:
+                    await self._durable_tasks.resolve_approval(
+                        plan_id,
+                        ApprovalStatus.APPROVED,
+                        approved_indices=sorted(approved & required),
+                    )
+            else:
+                # The plan does not run, so the durable row must not say APPROVED either. This also repeats a
+                # denial whose durable write failed in _resolve_pending_denied.
+                await self._close_durable_approval(plan_id, ApprovalStatus.DENIED)
         await self._append_experience(
             ExperienceEventType.APPROVAL_RESOLVED,
             plan_id=plan_id,
             idempotency_key=f"plan:{plan_id}:approval:resolved",
             source="permission_gate",
             payload={
-                "decision": "approved" if pending.confirmed else "denied",
+                "decision": "approved" if decision.confirmed else "denied",
                 "approved_indices": sorted(approved & required),
                 "required_indices": sorted(required),
+                "input_channel": decision.input_channel,
+                "resolution_path": decision.resolution_path,
             },
             provenance={"component": "PilotServer._wait_for_confirmation"},
         )
-        return pending.confirmed, (approved & required), required
+        return decision.confirmed, (approved & required), required
+
+    async def _consume_confirmation(self, pending: PendingConfirmation) -> _ConfirmationDecision:
+        """Wait for a pending confirmation, then take it out of the registry and read its decision.
+
+        The pop and the read happen once, inside ``pending.decision_lock``, and callers use only the
+        returned copy. ``_resolve_pending_denied`` writes a denial under the same lock before its first
+        await, so this either reads the decision before the denial runs (the denial then finds the entry
+        gone and reports that nothing was denied) or reads the denial. A timeout that finds the
+        confirmation unresolved marks it resolved here, so a later confirm or denial is refused; a
+        timeout that finds it resolved reads that decision.
+
+        A confirmation nobody answered in a way the plan may act on reads as expired, with
+        ``input_channel`` "internal": the timeout above, a shutdown release, and an approval whose
+        confirm reply was never written ("unacknowledged"), including one still being written when
+        the timeout fires.
+        """
+        timed_out = False
+        try:
+            try:
+                await asyncio.wait_for(pending.event.wait(), timeout=CONFIRM_TIMEOUT_SECONDS)
+            except TimeoutError:
+                timed_out = True
+            async with pending.decision_lock:
+                self._pending_confirms.pop(pending.plan_id, None)
+                if timed_out and not pending.resolved:
+                    pending.resolved = True
+                    unanswered = "timeout"
+                elif pending.resolution_path in CONFIRM_UNANSWERED_PATHS:
+                    unanswered = pending.resolution_path
+                elif pending.resolved and pending.confirmed and not pending.acknowledged:
+                    unanswered = "unacknowledged"
+                else:
+                    unanswered = ""
+                expired = bool(unanswered)
+                return _ConfirmationDecision(
+                    confirmed=pending.confirmed and not expired,
+                    approved_indices=None if pending.approved_indices is None else set(pending.approved_indices),
+                    expired=expired,
+                    input_channel="internal" if expired else pending.input_channel,
+                    resolution_path=unanswered or pending.resolution_path or "confirm_rpc",
+                )
+        finally:
+            # A cancelled wait must not leave the entry registered.
+            if self._pending_confirms.get(pending.plan_id) is pending:
+                self._pending_confirms.pop(pending.plan_id, None)
 
     async def _handle_confirm(self, params: dict[str, Any], ws: ServerConnection) -> dict:
         """Resolve a pending confirmation request from the UI.
 
         Args:
-            params: JSON-RPC parameters containing plan_id, confirmed status,
-                and an optional approved_indices list for per-action granular
-                approval (omit/empty to approve all confirmation-requiring
-                actions, preserving the old all-or-nothing behavior).
+            params: JSON-RPC parameters containing plan_id, a JSON boolean
+                confirmed, an optional input_channel (the authority channel:
+                dialog, gesture, voice_deny, internal or unknown) and an
+                optional approved_indices list for per-action granular
+                approval (omit to approve all confirmation-requiring actions,
+                preserving the old all-or-nothing behavior for clients that
+                do not name a channel).
             ws: The WebSocket connection.
 
         Returns:
             A dict with status and confirmation result.
         """
         plan_id = params.get("plan_id", "")
-        confirmed = params.get("confirmed", False)
         raw_approved = params.get("approved_indices")
+        try:
+            confirmed = _validated_bool(params, "confirmed", False)
+        except ValueError:
+            return {"status": "error", "message": "confirmed must be a boolean"}
+        raw_channel = params.get("input_channel")
+        if raw_channel is not None and (not isinstance(raw_channel, str) or raw_channel not in CONFIRM_INPUT_CHANNELS):
+            return {"status": "error", "message": f"input_channel must be one of {', '.join(CONFIRM_INPUT_CHANNELS)}"}
+        input_channel = raw_channel or "unknown"
+        if confirmed and input_channel == "voice_deny":
+            return {"status": "error", "message": "voice_deny can only deny"}
+        # A client that names its channel must say exactly which actions it approves. Older clients
+        # (no channel) and narrator, self-healing and threat-containment confirms keep approving all.
+        indices_required = confirmed and raw_channel is not None and raw_approved is None
 
         pending = self._pending_confirms.get(plan_id)
         if pending is None:
@@ -4999,18 +5262,20 @@ class PilotServer:
             durable = await self._durable_tasks.get_approval(plan_id)
             if durable is None or durable.status != ApprovalStatus.PENDING:
                 return {"status": "error", "message": f"No pending confirmation for plan_id: {plan_id}"}
+            if indices_required:
+                return {"status": "error", "message": "approved_indices is required"}
             try:
                 required = {int(index) for index in durable.request.get("action_indices", [])}
                 approved = (
                     required
-                    if bool(confirmed) and raw_approved is None
+                    if confirmed and raw_approved is None
                     else {int(index) for index in (raw_approved or [])} & required
                 )
             except (TypeError, ValueError):
                 approved = set()
             resolved = await self._durable_tasks.resolve_approval(
                 plan_id,
-                ApprovalStatus.APPROVED if bool(confirmed) else ApprovalStatus.DENIED,
+                ApprovalStatus.APPROVED if confirmed else ApprovalStatus.DENIED,
                 approved_indices=sorted(approved),
             )
             return {
@@ -5020,6 +5285,8 @@ class PilotServer:
                 "task_id": resolved.task_id,
             }
 
+        if indices_required and pending.required_indices is not None:
+            return {"status": "error", "message": "approved_indices is required"}
         if raw_approved is not None and not isinstance(raw_approved, list):
             return {"status": "error", "message": "approved_indices must be a list"}
         try:
@@ -5031,7 +5298,7 @@ class PilotServer:
             if pending.resolved:
                 return {"status": "error", "message": f"Confirmation already resolved for plan_id: {plan_id}"}
 
-            decision = bool(confirmed)
+            decision = confirmed
             if self._durable_tasks is not None:
                 durable = await self._durable_tasks.get_approval(plan_id)
                 if durable is not None and durable.status == ApprovalStatus.PENDING:
@@ -5048,14 +5315,83 @@ class PilotServer:
             pending.confirmed = decision
             pending.approved_indices = approved_indices
             pending.resolved = True
+            pending.input_channel = input_channel
+            if not pending.resolution_path:
+                pending.resolution_path = "voice_deny" if input_channel == "voice_deny" else "confirm_rpc"
             pending.resolved_by_task = asyncio.current_task()
 
             # Direct/internal callers have no JSON-RPC acknowledgement to
             # deliver. Socket RPCs are released by _process_request only after
             # their response is written, closing the UI acknowledgement race.
             if pending.resolved_by_task not in pending.rpc_tasks:
+                pending.acknowledged = True
                 pending.event.set()
             return {"status": "ok", "confirmed": decision}
+
+    async def _resolve_pending_denied(
+        self,
+        plan_id: str,
+        *,
+        resolution_path: str,
+        input_channel: str = "internal",
+    ) -> bool:
+        """Deny a pending confirmation under its decision lock. Denial wins over an approval that the waiter has not
+        consumed yet: the in-memory decision is changed before the first await, and the waiter pops the entry and reads
+        the decision inside the same lock, so it reads either the approval before this helper runs (then this helper
+        finds the entry gone and returns False) or the denial after it. A later approval is refused because the
+        confirmation is resolved. Returns True only when the denial took effect.
+
+        The event is set even when the durable write fails or this call is cancelled during it, so the waiter reads
+        the denial at once instead of at the timeout; the waiter then writes the durable denial again."""
+        pending = self._pending_confirms.get(plan_id)
+        if pending is None:
+            return False
+        async with pending.decision_lock:
+            if self._pending_confirms.get(plan_id) is not pending:
+                return False  # consumed while we waited for the lock
+            # No await between the registration check and these writes.
+            pending.confirmed = False
+            pending.approved_indices = set()
+            pending.resolved = True
+            pending.resolution_path = resolution_path
+            pending.input_channel = input_channel
+            try:
+                # An approval the socket confirm already wrote as APPROVED must not resume after a restart.
+                await self._close_durable_approval(plan_id, ApprovalStatus.DENIED)
+            finally:
+                pending.event.set()
+        return True
+
+    async def _close_durable_approval(self, plan_id: str, status: ApprovalStatus) -> None:
+        """Write a denial or an expiry over a plan's durable approval, failing closed. Never raises an ordinary error.
+
+        When that write fails (a locked or broken task database), the approval may still read APPROVED, so the active
+        durable task that owns the plan is asked to cancel instead: a restart then finalises it as cancelled rather
+        than resuming a plan that did not run. The in-memory decision stands either way.
+        """
+        store = self._durable_tasks
+        if store is None:
+            return
+        try:
+            if status == ApprovalStatus.EXPIRED:
+                await store.expire_unconsumed_approval(plan_id)
+            else:
+                await store.deny_unconsumed_approval(plan_id)
+            return
+        except Exception:
+            logger.warning("Durable %s of plan %s failed", status.value, plan_id, exc_info=True)
+        task_id = self._active_task_id
+        if not task_id or plan_id != self._active_plan_id:
+            return
+        try:
+            await store.request_cancel(task_id)
+        except Exception:
+            logger.warning(
+                "Durable cancel of task %s failed too; its approval for plan %s may still read approved",
+                task_id,
+                plan_id,
+                exc_info=True,
+            )
 
     async def _handle_rollback_plan(self, params: dict[str, Any], ws: ServerConnection) -> dict:
         """Roll back the filesystem snapshot taken before a plan executed.
@@ -5269,6 +5605,23 @@ class PilotServer:
 
         return {"status": "ok", "profile": profile_name, "policy": asdict(updated)}
 
+    def _interactive_pending_confirmation(self) -> str:
+        """The plan_id of the confirmation the interactive task is waiting on, or "" when it waits on none.
+
+        That is the task's own plan approval, or else the newest narrator interrupt raised by one of its steps
+        (registered under its own ``interrupt_...`` id with the task's id). Confirmations of other tasks and of
+        background jobs are never returned.
+        """
+        if self._active_plan_id and self._active_plan_id in self._pending_confirms:
+            return self._active_plan_id
+        task_id = self._active_experience_context.task_id or self._active_task_id
+        if not task_id:
+            return ""
+        for plan_id, pending in reversed(list(self._pending_confirms.items())):
+            if pending.task_id == task_id:
+                return plan_id
+        return ""
+
     async def _handle_interject(
         self,
         params: dict[str, Any],
@@ -5293,6 +5646,35 @@ class PilotServer:
             return await self._answer_active_task_question(text)
         if requested_mode not in {"", "correct", "stop"}:
             return {"status": "error", "message": "Unsupported in-task mode."}
+        plan_id = self._interactive_pending_confirmation()
+        if requested_mode != "stop" and plan_id:
+            # Typed or spoken text never answers an approval. "Yes" is not a correction either: it would deny
+            # and replan what the person tried to approve. Denials resolve the approval directly, and the reply
+            # says "denied" only when the denial took effect. This covers the plan approval and a narrator
+            # interrupt raised by a step of this task.
+            phrase = _normalize_spoken_phrase(text)
+            if phrase in VOICE_APPROVAL_ATTEMPTS:
+                return {
+                    "status": "approval_requires_dialog",
+                    "plan_id": plan_id,
+                    "message": (
+                        "Approve in the visible confirmation dialog. Speech and typed text can deny but never approve."
+                    ),
+                }
+            if phrase in VOICE_DENIALS:
+                denied = await self._resolve_pending_denied(
+                    plan_id, resolution_path="interject_deny", input_channel="voice_deny"
+                )
+                if denied:
+                    return {"status": "denied", "plan_id": plan_id, "message": "Okay, I won't run that."}
+                return {
+                    "status": "not_denied",
+                    "plan_id": plan_id,
+                    "message": (
+                        "That approval was already answered, so nothing was denied. "
+                        "Say or press Stop to cancel the task."
+                    ),
+                }
         active_context = self._active_experience_context
         await self._append_experience(
             ExperienceEventType.USER_CORRECTION,
@@ -5344,18 +5726,17 @@ class PilotServer:
         # The primary confirmation wait is not inside _active_execution_task.
         # Resolve only this interactive plan's confirmation; unrelated
         # background confirmations must remain untouched.
-        pending = self._pending_confirms.get(self._active_plan_id)
-        if pending is not None:
-            pending.confirmed = False
-            pending.event.set()
+        try:
+            await self._resolve_pending_denied(self._active_plan_id, resolution_path="interject_correction")
+        finally:
+            # The running step stops even when this call is cancelled during the durable denial write.
+            task = self._active_execution_task
+            if task is not None and not task.done():
+                task.cancel()
 
-        task = self._active_execution_task
-        if task is not None and not task.done():
-            task.cancel()
+            from pilot.system.pty_session import PtySessionManager
 
-        from pilot.system.pty_session import PtySessionManager
-
-        PtySessionManager.interrupt_all()
+            PtySessionManager.interrupt_all()
         await self._broadcast_notification(
             "companion_interjection",
             {
@@ -5463,8 +5844,12 @@ class PilotServer:
         aborted_something = False
 
         if self._durable_tasks is not None and self._active_task_id:
-            await self._durable_tasks.request_cancel(self._active_task_id)
-            aborted_something = True
+            # A failed durable write must not stop the in-memory cancel, the task cancel or the PTY interrupt.
+            try:
+                await self._durable_tasks.request_cancel(self._active_task_id)
+                aborted_something = True
+            except Exception:
+                logger.warning("Durable cancel of task %s failed during Stop", self._active_task_id, exc_info=True)
 
         if self._cancel_event and not self._cancel_event.is_set():
             self._cancel_event.set()
@@ -5473,20 +5858,19 @@ class PilotServer:
         # A confirmation wait is outside _active_execution_task. Resolve the
         # active prompt as denied so Stop/MCP cancellation returns immediately
         # instead of leaving the request blocked until its five-minute timeout.
-        pending = self._pending_confirms.get(self._active_plan_id)
-        if pending is not None:
-            pending.confirmed = False
-            pending.event.set()
-            aborted_something = True
+        try:
+            if await self._resolve_pending_denied(self._active_plan_id, resolution_path="abort"):
+                aborted_something = True
+        finally:
+            # The task cancel and the PTY interrupt run even when this call is cancelled during the durable denial.
+            task = self._active_execution_task
+            if task is not None and not task.done():
+                task.cancel()
+                aborted_something = True
 
-        task = self._active_execution_task
-        if task is not None and not task.done():
-            task.cancel()
-            aborted_something = True
+            from pilot.system.pty_session import PtySessionManager
 
-        from pilot.system.pty_session import PtySessionManager
-
-        PtySessionManager.interrupt_all()
+            PtySessionManager.interrupt_all()
 
         if aborted_something:
             logger.info("Abort signal received — cancel_event set and in-flight execution task cancelled")
@@ -5649,6 +6033,7 @@ class PilotServer:
             "gateway": "gateway_policy_update or risk_gate_config_update",
             "ssh": "ssh_set_enabled and ssh_save_host",
             "gesture_workflows": "gesture_workflow_bindings_update",
+            "co_adaptation": "co_adaptation_config_update",
         }
         if section in dedicated:
             return {"status": "error", "message": f"Use {dedicated[section]} to change {section} settings"}
@@ -6301,6 +6686,13 @@ class PilotServer:
             except Exception:
                 logger.warning("Voice listener kept its previous recorder settings", exc_info=True)
         self._start_tts_warmup()
+        # The defaults turn co-adaptation off, which ends open study sessions. A reset never deletes
+        # co-adaptation data or the person's assistance rules.
+        if self._co_adaptation is not None:
+            try:
+                await self._co_adaptation.on_config_changed(previous["co_adaptation"])
+            except Exception:
+                logger.warning("Co-adaptation did not take the default settings", exc_info=True)
 
         return {"status": "ok", "runtime_reconciled": True, "kept": ["server", "restrictions"]}
 
@@ -7006,6 +7398,7 @@ class PilotServer:
         )
 
         pending = PendingConfirmation(plan_id=plan_id, event=asyncio.Event(), plan=plan)
+        pending.required_indices = frozenset(required)
         self._pending_confirms[plan_id] = pending
         try:
             await self._broadcast_notification(
@@ -7027,15 +7420,16 @@ class PilotServer:
                     "gnomon": getattr(review, "gnomon", None),
                 },
             )
-            await asyncio.wait_for(pending.event.wait(), timeout=CONFIRM_TIMEOUT_SECONDS)
-        except TimeoutError:
+        except BaseException:
+            self._pending_confirms.pop(plan_id, None)
+            raise
+        decision = await self._consume_confirmation(pending)
+        if decision.expired:
             logger.warning("Autonomous confirmation timed out for plan %s", plan_id)
             return False
-        finally:
-            self._pending_confirms.pop(plan_id, None)
 
-        approved = pending.approved_indices if pending.approved_indices is not None else required
-        return pending.confirmed and required.issubset(approved)
+        approved = decision.approved_indices if decision.approved_indices is not None else required
+        return decision.confirmed and required.issubset(approved)
 
     async def _publish_autonomous_assessment(self, plan_id: str, payload: dict[str, Any]) -> None:
         """Record and broadcast the world-model (and Gnomon) view of an autonomous plan."""
@@ -9080,6 +9474,25 @@ def handle_tool(tool_name, params):
                 },
             )
 
+    async def _release_pending_confirmations_for_shutdown(self) -> None:
+        """Release every waiting confirmation because the daemon is stopping, and say so in its audit fields.
+
+        Nobody answered these, so each one still unresolved (or approved without its reply reaching the UI) is
+        resolved under its decision lock as "shutdown" from the "internal" channel, never as a confirm RPC. Plan
+        waiters read that as expired (the durable approval becomes EXPIRED, not DENIED); the other waiters read a
+        denial. A decision that was already answered and acknowledged is left as it is.
+        """
+        for pending in list(self._pending_confirms.values()):
+            async with pending.decision_lock:
+                if not pending.resolved or (pending.confirmed and not pending.acknowledged):
+                    pending.confirmed = False
+                    pending.approved_indices = set()
+                    pending.resolved = True
+                    pending.resolution_path = "shutdown"
+                    pending.input_channel = "internal"
+                pending.event.set()
+        self._pending_confirms.clear()
+
     async def stop(self) -> None:
         """Stop the Pilot daemon server and clean up all resources."""
         self._running = False
@@ -9093,9 +9506,7 @@ def handle_tool(tool_name, params):
             self._manual_workflow_hook = None
         if self._recorded_workflows is not None:
             await self._recorded_workflows.stop_manual_visual_capture(save=False)
-        for pending in self._pending_confirms.values():
-            pending.event.set()
-        self._pending_confirms.clear()
+        await self._release_pending_confirmations_for_shutdown()
 
         queued_worker = self._queued_execute_worker
         if queued_worker is not None and not queued_worker.done():
@@ -9207,6 +9618,13 @@ def handle_tool(tool_name, params):
         if self._agent_mesh is not None:
             await self._agent_mesh.close()
             self._agent_mesh = None
+        lapse_task, self._co_adaptation_lapse_task = self._co_adaptation_lapse_task, None
+        if lapse_task is not None and not lapse_task.done():
+            lapse_task.cancel()
+            await asyncio.gather(lapse_task, return_exceptions=True)
+        if self._co_adaptation is not None:
+            await self._co_adaptation.close()
+            self._co_adaptation = None
         if self._experience_ledger:
             await self._experience_ledger.close()
             self._experience_ledger = None
@@ -9933,12 +10351,7 @@ def handle_tool(tool_name, params):
                 {"status": "interrupted", "reason": "new voice command"},
             )
 
-        normalized_command = " ".join(
-            "".join(
-                character if character.isalnum() or character.isspace() else " "
-                for character in command_text.casefold()
-            ).split()
-        )
+        normalized_command = _normalize_spoken_phrase(command_text)
         # Any pending approval counts: interactive, a background job, a scheduled run or a workflow.
         pending_plan_id = (
             self._active_plan_id
@@ -9965,8 +10378,14 @@ def handle_tool(tool_name, params):
             return
         if pending_approval is not None and normalized_command in VOICE_DENIALS:
             # Denying is always safe, so it works by voice; approving still needs the visible dialog.
-            await self._handle_confirm({"plan_id": pending_plan_id, "confirmed": False}, None)
-            message = "Okay, I won't run that."
+            result = await self._handle_confirm(
+                {"plan_id": pending_plan_id, "confirmed": False, "input_channel": "voice_deny"}, None
+            )
+            message = (
+                "Okay, I won't run that."
+                if result.get("status") == "ok"
+                else "That approval was already answered, so nothing was denied. Say or press Stop to cancel the task."
+            )
             await self._broadcast_notification(
                 "voice_result",
                 {"command": command_text, "status": "answered", "message": message, "plan_id": pending_plan_id},
@@ -10569,9 +10988,10 @@ def handle_tool(tool_name, params):
                 self._manual_workflow_hook = hook
                 if capture_visual:
                     self._recorded_workflows.start_manual_visual_capture()
-            return {"status": "ok", **session}
         except (ValueError, RuntimeError) as exc:
             return {"status": "error", "message": str(exc)}
+        await self._announce_recorded_workflow_status(True, ws)
+        return {"status": "ok", **session}
 
     async def _handle_recorded_workflow_stop(self, params: dict, ws: ServerConnection) -> dict:
         try:
@@ -10582,9 +11002,18 @@ def handle_tool(tool_name, params):
                 self._manual_workflow_hook = None
             await self._recorded_workflows.stop_manual_visual_capture(save=_validated_bool(params, "save", False))
             result = await asyncio.to_thread(self._recorded_workflows.stop, save=_validated_bool(params, "save", False))
-            return {"status": "ok", **result}
         except (ValueError, RuntimeError) as exc:
             return {"status": "error", "message": str(exc)}
+        await self._announce_recorded_workflow_status(False, ws)
+        return {"status": "ok", **result}
+
+    async def _announce_recorded_workflow_status(self, active: bool, caller: ServerConnection | None) -> None:
+        """Tell the other windows that a recording started or stopped; a running selection study pauses on it.
+
+        The caller already has the new state in its reply, so the notification skips the caller's own socket,
+        whose replies stay the only messages it receives for its requests.
+        """
+        await self._broadcast_notification("recorded_workflow_status_changed", {"active": active}, exclude=caller)
 
     async def _handle_recorded_workflow_list(self, params: dict, ws: ServerConnection) -> dict:
         try:
@@ -11293,6 +11722,217 @@ def handle_tool(tool_name, params):
         if self._proactive is not None:
             self._proactive.reset_learning()
         return {"status": "ok", **(await self._online_learning.reset())}
+
+    # -- Assistance co-adaptation --
+    #
+    # These handlers reach only the co-adaptation service, the co_adaptation config section and the read-only
+    # study refusal check. They never touch a pending approval, the experience ledger or anything that runs.
+
+    async def _co_adaptation_call(self, method: str, params: dict) -> dict:
+        service = self._co_adaptation
+        if service is None:
+            if method == "status":
+                return {
+                    "status": "ok",
+                    "available": False,
+                    "config": _co_adaptation_config_dict(self.config.co_adaptation),
+                    "message": "Co-adaptation is unavailable on this daemon.",
+                    "authority": "presentation_only",
+                    "execution_authority": False,
+                }
+            return {"status": "error", "message": "Co-adaptation is unavailable on this daemon."}
+        return await getattr(service, method)(params if isinstance(params, dict) else {})
+
+    async def _co_adaptation_study_refusal(self) -> str | None:
+        """Start refusals, re-checked at session_begin, session_resume, recommend (block_regime and ambiguity_table)
+        and record_trial. Each attribute may be None when the server was built without initialize() (RPC tests)."""
+        if self._recorded_workflows is not None and self._recorded_workflows.status().get("active"):
+            return "recording_active"
+        if self._interactive_request_active:
+            return "task_running"
+        if self._neural_controller is not None:
+            state = await self._neural_controller.gate_state()
+            if state in NEURAL_ARMED_STATES:
+                return "neural_armed"
+        return None
+
+    async def _co_adaptation_study_call(self, method: str, params: dict) -> dict:
+        """Delegate a study RPC unless a recording, a running task or armed neural input refuses it."""
+        reason = await self._co_adaptation_study_refusal()
+        if reason is not None:
+            return {"status": "refused", "reason": reason}
+        return await self._co_adaptation_call(method, params)
+
+    async def _set_co_adaptation_enabled(self, enabled: bool) -> dict[str, Any] | None:
+        """Save a new co_adaptation.enabled, or put the section back and return the error to send."""
+        if self.config.co_adaptation.enabled == enabled:
+            return None
+        previous = copy.deepcopy(self.config.co_adaptation)
+        self.config.co_adaptation.enabled = enabled
+        if (failure := self._save_section("co_adaptation", previous)) is not None:
+            return failure
+        if self._co_adaptation is not None:
+            await self._co_adaptation.on_config_changed(previous)
+        return None
+
+    async def _co_adaptation_notify(self, method: str, params: dict) -> None:
+        """The service's broadcast function: forward the notification, and act on an expired consent.
+
+        Expiry has the effect of a revoke (spec 10.7), including turning co_adaptation.enabled off when no active
+        consent remains. "expired" can arrive during a consent grant or revoke, which holds the config lock that
+        turning the feature off needs too, so the check runs in its own task.
+        """
+        await self._broadcast_notification(method, params)
+        if method == "co_adaptation_updated" and isinstance(params, dict) and params.get("reason") == "expired":
+            self._co_adaptation_consent_lapsed = True
+            if self._co_adaptation_lapse_task is None or self._co_adaptation_lapse_task.done():
+                self._co_adaptation_lapse_task = asyncio.create_task(self._settle_co_adaptation_consent())
+
+    async def _settle_co_adaptation_consent(self) -> None:
+        """After an expired consent was erased, turn the feature off when no active consent remains, then tell
+        every open window. Never raises."""
+        try:
+            async with self._config_lock:
+                service = self._co_adaptation
+                if service is None or not self._co_adaptation_consent_lapsed:
+                    return
+                self._co_adaptation_consent_lapsed = False
+                if not self.config.co_adaptation.enabled or service.has_active_consent():
+                    return
+                failure = await self._set_co_adaptation_enabled(False)
+            if failure is not None:
+                logger.warning("Co-adaptation stayed on after its last consent expired: %s", failure["message"])
+                return
+            await self._broadcast_notification(
+                "config_updated", {"method": "co_adaptation_config_update", "section": "co_adaptation"}
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("Co-adaptation could not settle an expired consent", exc_info=True)
+
+    async def _turn_off_co_adaptation_without_consent(self) -> dict[str, Any] | None:
+        """Turn co_adaptation.enabled off when the service has no active consent. The caller holds the config lock
+        (a config-mutating RPC). Returns the error to send when the setting could not be saved."""
+        service = self._co_adaptation
+        if service is None or not self.config.co_adaptation.enabled or service.has_active_consent():
+            return None
+        return await self._set_co_adaptation_enabled(False)
+
+    async def _handle_co_adaptation_status(self, params: dict, ws: ServerConnection) -> dict:
+        """Settings, consent, store size, rules and fallbacks of the co-adaptation feature."""
+        result = await self._co_adaptation_call("status", params)
+        # The status call prunes expired consents; the reply shows the setting after that prune took effect.
+        lapse_task = self._co_adaptation_lapse_task
+        if lapse_task is not None and not lapse_task.done():
+            await asyncio.shield(lapse_task)
+        if isinstance(result, dict) and isinstance(result.get("config"), dict):
+            result["config"] = {**result["config"], "enabled": self.config.co_adaptation.enabled}
+        return result
+
+    async def _handle_co_adaptation_config_update(self, params: dict, ws: ServerConnection) -> dict:
+        """Change co_adaptation settings. Turning the feature on needs an active consent; none needs a restart."""
+        values = params if isinstance(params, dict) else {}
+        current = self.config.co_adaptation
+        updates: dict[str, Any] = {}
+        try:
+            for key in values:
+                if key in CO_ADAPTATION_BOOL_KEYS:
+                    updates[key] = _validated_bool(values, key, getattr(current, key))
+                elif key in CO_ADAPTATION_FLOAT_RANGES:
+                    low, high = CO_ADAPTATION_FLOAT_RANGES[key]
+                    updates[key] = _validated_float(values, key, getattr(current, key), minimum=low, maximum=high)
+                elif key in CO_ADAPTATION_INT_RANGES:
+                    low, high = CO_ADAPTATION_INT_RANGES[key]
+                    updates[key] = _validated_int(values, key, getattr(current, key), minimum=low, maximum=high)
+                else:
+                    return {"status": "error", "message": f"Unknown co-adaptation setting: {key}"}
+        except ValueError as exc:
+            return {"status": "error", "message": str(exc)}
+        service = self._co_adaptation
+        if updates.get("enabled") is True and (service is None or not service.has_active_consent()):
+            return {"status": "error", "message": "Grant consent before turning co-adaptation on."}
+
+        previous = copy.deepcopy(current)
+        for key, value in updates.items():
+            setattr(current, key, value)
+        if (failure := self._save_section("co_adaptation", previous)) is not None:
+            return failure
+        if service is not None:
+            await service.on_config_changed(previous)
+        return {
+            "status": "ok",
+            "config": _co_adaptation_config_dict(self.config.co_adaptation),
+            "restart_required": False,
+        }
+
+    async def _handle_co_adaptation_consent_grant(self, params: dict, ws: ServerConnection) -> dict:
+        """Grant or update a participant's consent, then turn the feature on unless ``enable`` is false."""
+        values = params if isinstance(params, dict) else {}
+        try:
+            enable = _validated_bool(values, "enable", True)
+        except ValueError as exc:
+            return {"status": "error", "message": str(exc)}
+        # A consent that expired but was not pruned yet still leaves no active consent: a grant starts from off,
+        # so ``enable: false`` keeps the feature off.
+        if (failure := await self._turn_off_co_adaptation_without_consent()) is not None:
+            return failure
+        result = await self._co_adaptation_call("grant_consent", values)
+        if result.get("status") != "ok":
+            return result
+        if enable and (failure := await self._set_co_adaptation_enabled(True)) is not None:
+            return failure
+        return {**result, "config": _co_adaptation_config_dict(self.config.co_adaptation)}
+
+    async def _handle_co_adaptation_consent_revoke(self, params: dict, ws: ServerConnection) -> dict:
+        """Withdraw a participant's consent (always erases), and turn the feature off when no consent remains."""
+        result = await self._co_adaptation_call("revoke_consent", params)
+        # Also after a revoke that failed part-way: the participant's consent is gone even if the erase is not.
+        if (failure := await self._turn_off_co_adaptation_without_consent()) is not None:
+            return failure
+        if result.get("status") != "ok":
+            return result
+        return {**result, "config": _co_adaptation_config_dict(self.config.co_adaptation)}
+
+    async def _handle_co_adaptation_preference_set(self, params: dict, ws: ServerConnection) -> dict:
+        return await self._co_adaptation_call("set_preference", params)
+
+    async def _handle_co_adaptation_preference_retract(self, params: dict, ws: ServerConnection) -> dict:
+        return await self._co_adaptation_call("retract_preference", params)
+
+    async def _handle_co_adaptation_learning_reset(self, params: dict, ws: ServerConnection) -> dict:
+        return await self._co_adaptation_call("reset_learning", params)
+
+    async def _handle_co_adaptation_erase(self, params: dict, ws: ServerConnection) -> dict:
+        return await self._co_adaptation_call("erase", params)
+
+    async def _handle_co_adaptation_results(self, params: dict, ws: ServerConnection) -> dict:
+        return await self._co_adaptation_call("results", params)
+
+    async def _handle_co_adaptation_export(self, params: dict, ws: ServerConnection) -> dict:
+        return await self._co_adaptation_call("export", params)
+
+    async def _handle_co_adaptation_session_begin(self, params: dict, ws: ServerConnection) -> dict:
+        return await self._co_adaptation_study_call("begin_session", params)
+
+    async def _handle_co_adaptation_session_resume(self, params: dict, ws: ServerConnection) -> dict:
+        return await self._co_adaptation_study_call("resume_session", params)
+
+    async def _handle_co_adaptation_recommend(self, params: dict, ws: ServerConnection) -> dict:
+        level = params.get("level") if isinstance(params, dict) else None
+        if level in {"block_regime", "ambiguity_table"}:
+            return await self._co_adaptation_study_call("recommend", params)
+        return await self._co_adaptation_call("recommend", params)
+
+    async def _handle_co_adaptation_record_trial(self, params: dict, ws: ServerConnection) -> dict:
+        # A refused trial is not stored; the study marks it interrupted and sends it again after a resume.
+        return await self._co_adaptation_study_call("record_trial", params)
+
+    async def _handle_co_adaptation_report_burden(self, params: dict, ws: ServerConnection) -> dict:
+        return await self._co_adaptation_call("report_burden", params)
+
+    async def _handle_co_adaptation_session_end(self, params: dict, ws: ServerConnection) -> dict:
+        return await self._co_adaptation_call("end_session", params)
 
     async def _handle_proactive_accept(self, params: dict, ws: ServerConnection) -> dict:
         """Accept a proactive suggestion — execute the suggested action.

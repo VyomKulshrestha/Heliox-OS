@@ -506,6 +506,11 @@ class NeuralController:
             ),
         }
 
+    async def gate_state(self) -> str:
+        """The gate's session state only. Unlike status(), it does not verify the audit chain, so it is cheap
+        enough to check on every selection-study trial."""
+        return str((await self._gate.status())["state"])
+
     async def record_stimulus_marker(
         self,
         session_id: UUID,
