@@ -47,8 +47,11 @@ available as a reference to the guarded planner.
 Input received while Heliox executes an action or awaits approval is
 excluded from the manual stream, so user actions at exactly those times may
 also be missed. Such mixed sessions carry a visible overlap warning and need
-review; on Windows, the hook also excludes a
-foreground window titled “Heliox OS” as a best-effort safeguard. Hook health
+review; on Windows, the hook also excludes, as a best-effort safeguard, a
+foreground window whose whole title is “Heliox-OS” (compared with case, hyphens,
+underscores and spacing normalised) and, when Windows names the process that owns
+the window, only when that process is the Heliox executable. A browser page,
+editor or folder whose title merely mentions Heliox-OS is recorded. Hook health
 is shown while recording. The hook stops when the recording stops or the daemon
 exits. Global hooks may miss elevated/UAC screens or fail silently; a manual
 workflow is therefore a draft, not a faithful or safe replay guarantee.

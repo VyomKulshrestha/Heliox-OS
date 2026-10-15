@@ -12,7 +12,7 @@ The Heliox OS UI and daemon communicate over a local WebSocket using the [JSON-R
 | Request timeout | 5 minutes |
 | Reconnect interval | 3 seconds (auto-reconnect on close) |
 
-The daemon currently registers **209 WebSocket RPC methods**. That is the API
+The daemon currently registers **225 WebSocket RPC methods**. That is the API
 surface count, not the action catalog: Heliox exposes **162 action
 types** through the guarded planner/executor system. This document names every
 registered RPC method; grouped tables are used where several methods share one
@@ -127,6 +127,32 @@ approving the task. Explicit “read my screen” uses local OCR on demand.
 `{ "status": "answered", "message": "..." }`, `{ "status": "aborted" }`,
 or a clear disabled/no-active-task response.
 
+While the active task waits for approval, typed or spoken text never answers the
+approval and never becomes a correction of it (except with `mode: "stop"`, which
+stops the task as usual). The text is matched after lowercasing and turning
+punctuation into spaces, the same way spoken commands are matched:
+
+- An approval phrase ("yes", "go ahead", "approve", "confirm it", ...) returns
+  `{ "status": "approval_requires_dialog", "plan_id": "...", "message": "Approve
+  in the visible confirmation dialog. Speech and typed text can deny but never
+  approve." }`. The approval stays pending and nothing is logged as a correction.
+- A denial phrase ("no", "deny it", "don't do that", "cancel that", ...) denies
+  the approval under its decision lock (`input_channel: "voice_deny"`,
+  `resolution_path: "interject_deny"`) and returns `{ "status": "denied",
+  "plan_id": "...", "message": "Okay, I won't run that." }` only when the denial
+  took effect, so the plan does not run. When the approval was already answered
+  and consumed, the reply is `{ "status": "not_denied", "plan_id": "...",
+  "message": "That approval was already answered, so nothing was denied. Say or
+  press Stop to cancel the task." }`.
+
+The same guard applies while a step of the running task waits on a narrator
+`execution_interrupt`: an approval phrase leaves the interrupt pending, a denial
+phrase denies it, and the reply's `plan_id` is the interrupt's `interrupt_...` id.
+
+Neither branch writes a `USER_CORRECTION`, sets a live correction or replans. Any
+other text keeps the correction behaviour above, which denies the pending
+approval with `resolution_path: "interject_correction"`.
+
 #### `queue_execute` / `cancel_queued_execute`
 The authenticated UI may queue up to ten additional interactive tasks while
 one is active. Queued tasks run serially through the ordinary planner,
@@ -150,6 +176,15 @@ restart.
 `awaiting_approval` object, or the resumed execution result with
 `resumed: true`. The raw token is never stored; the task journal stores its
 hash. Durable plans cannot be resumed with `resume_plan` alone.
+
+A plan resumes only from an APPROVED durable approval, and only with the actions
+it approved: every action that needed approval and is not in the approval's
+`approved_indices` is dropped before anything runs. An approval that is not
+APPROVED (denied or expired), or that approved none of the actions that needed
+approval, returns `{ "status": "cancelled", "message": "...", "task_id": "...",
+"plan_id": "..." }` and finalizes the task. When an action index of the approval
+is missing from the plan's checkpoint, the approval does not match the
+checkpoint: the reply is `{ "status": "error", ... }` and nothing runs.
 
 #### `resume_plan`
 Resume a legacy/non-durable checkpoint from its first incomplete action.
@@ -192,12 +227,21 @@ Returns immediately — cancellation propagates asynchronously. The in-flight
 ```
 `{ "status": "no_active_execution" }` if nothing was running to stop.
 
+A pending approval of the active plan is denied under its decision lock
+(`resolution_path: "abort"`). A durable approval row that a `confirm` already
+marked APPROVED but that the waiting request had not yet acted on is turned into
+DENIED, so the aborted plan never resumes after a restart. If that durable write
+fails, the denial still takes effect: the waiting request reads it at once, the
+running step is cancelled, live PTY sessions are interrupted, and the durable task
+is marked `cancellation_requested`, so a restart finalizes it as cancelled instead
+of resuming it.
+
 #### `confirm`
 Resolve a pending confirmation gate (see `confirm_required` notification).
 
 **Params:**
 ```json
-{ "plan_id": "a3b2c1f5", "confirmed": true, "approved_indices": [0, 2] }
+{ "plan_id": "a3b2c1f5", "confirmed": true, "approved_indices": [0, 2], "input_channel": "dialog" }
 ```
 `approved_indices` is optional — a list of `plan.actions` indices (matching
 the `index` field on each action in the `confirm_required` payload) the user
@@ -205,6 +249,35 @@ approved out of those requiring confirmation, for per-action granular
 approval. Omit it (or send `confirmed: false`) for the old all-or-nothing
 behavior: omitting it while `confirmed: true` approves every action that
 required confirmation.
+
+- `confirmed` must be a JSON boolean. `"false"`, `1` and other values return
+  `{ "status": "error", "message": "confirmed must be a boolean" }`.
+- `input_channel` is optional and names the authority channel that answered:
+  `dialog`, `gesture`, `voice_deny`, `internal` or `unknown` (the default). Any
+  other value returns `{ "status": "error", "message": "input_channel must be one
+  of dialog, gesture, voice_deny, internal, unknown" }`. The channel never says
+  whether a pointer or a keyboard pressed the dialog's button.
+- `confirmed: true` with `input_channel: "voice_deny"` returns `{ "status":
+  "error", "message": "voice_deny can only deny" }`. Voice never approves.
+- For a plan approval (an interactive or autonomous plan, or a durable approval
+  after a restart), `confirmed: true` with an `input_channel` and without
+  `approved_indices` returns `{ "status": "error", "message": "approved_indices is
+  required" }`. A client that names its channel must say exactly which actions it
+  approves. Narrator, self-healing and threat-containment confirmations keep the
+  behaviour above, and so do clients that send no channel.
+- A confirmation that is already answered, or that a denial already resolved,
+  returns `Confirmation already resolved for plan_id: ...`.
+
+The channel and the resolution path are recorded in the `APPROVAL_RESOLVED`
+ledger event as `input_channel` and `resolution_path` (`confirm_rpc`,
+`voice_deny`, `interject_deny`, `interject_correction` or `abort`). A plan
+approval that ended without an answer the plan may act on is recorded with
+`decision: "expired"`, `input_channel: "internal"` and one of three paths:
+`timeout` (nobody answered in time), `shutdown` (the daemon stopped first; the
+durable approval is left EXPIRED, not DENIED) or `unacknowledged` (an approval
+whose `confirm` reply never reached the UI, so the person was never shown that it
+was accepted; it expires and the plan does not run). Decision latency is not
+recorded.
 
 **Result:**
 ```json
@@ -400,7 +473,8 @@ failed disk write puts the previous values back in memory.
   would skip their validation and runtime side effects: `server` (holds the
   daemon's auth token; edit `config.toml` while Heliox is stopped), `narration`,
   `supervision`, `self_healing`, `gateway`, `ssh`, `gesture_workflows`,
-  `air_handoff` and `network` (use `mesh_configure`).
+  `co_adaptation` (use `co_adaptation_config_update`), `air_handoff` and
+  `network` (use `mesh_configure`).
 - `section: "restrictions"` accepts only `protected_folders`,
   `protected_packages` and `blocked_commands`, each a list of at most 500
   non-empty strings of at most 1024 characters (duplicates are dropped). It
@@ -439,7 +513,9 @@ kept. The reset is refused with `{ "status": "error", "message": "Stop the
 running tasks before resetting settings." }` while a request or an autonomous
 job is running. After saving, the daemon rebuilds the model clients, the circuit
 breaker and the voice listener from the new values and releases the Gnomon
-model, and clears `load_errors`.
+model, and clears `load_errors`. The `co_adaptation` defaults turn assistance
+co-adaptation off and end any open study session; the reset never deletes
+co-adaptation participants, study data or assistance rules.
 
 ---
 
@@ -1414,6 +1490,16 @@ replay is submitted to the guarded autonomous executor. Errors return
 Replay is refused while a recording is active, for incomplete recordings, and
 for workflows with manual or coordinate-based steps unless `reviewed` is true.
 
+After a successful `recorded_workflow_start` or `recorded_workflow_stop` the
+daemon sends `recorded_workflow_status_changed` to the other windows (see
+section 2); a failed start or stop sends nothing. On Windows, manual-input
+recording skips input while the desktop app's window, titled "Heliox-OS", is
+in the foreground. The check compares the foreground window's whole title (case,
+hyphens and underscores ignored) and, when Windows names the owning process,
+requires the Heliox executable, so a page or editor whose title only mentions the
+project is recorded. It does not cover the UI opened in a browser (the page is
+titled "Pilot"), and on Linux and macOS nothing is skipped.
+
 ### Human Control
 
 The person can take the desktop back from Heliox at any time. While they hold
@@ -1682,6 +1768,725 @@ Update supervision config. Unlike `narration_config_update`/`self_healing_config
 #### Notifications
 - `supervision_cognitive_checkin` — a sustained stress/cognitive-load threshold crossing from a real OCR snippet + window-title stimulus fed to `CognitiveEngine.predict_cognitive_state()`. Payload: `{ "message": "...", "attention_score": 0.4, "stress_level": 0.9, "cognitive_load": 0.5 }`.
 - `supervision_risk_warning` — the OCR snippet or the keystroke hook's buffer matched a known destructive-action pattern. Payload: `{ "pattern": "destructive_shell_command", "source": "ocr"|"keystroke", "message": "..." }` — deliberately never includes the matched text itself, only the pattern's name.
+
+---
+
+### Assistance co-adaptation
+
+Opt-in research on assisted selection inside Heliox's own window (the Selection
+Study tab; see [`docs/COADAPTATION.md`](docs/COADAPTATION.md)). It is off by
+default (`co_adaptation.enabled = false`), and nothing is stored until a
+participant has an active, purpose-bound consent record. It changes only how
+study targets are presented and what a selection needs from the person. Every
+recommendation carries `"authority": "presentation_only"` and
+`"execution_authority": false`. No co-adaptation RPC reads, answers or records an
+approval: there is no `co_adaptation_record_approval`, and a call leaves every
+pending confirmation and the experience ledger unchanged. None of these methods
+is open to the neural sidecar or the local MCP bridge.
+
+| Method | Dispatch set | Purpose |
+| --- | --- | --- |
+| `co_adaptation_status` | settings | Settings, store size, participants, rules, fallbacks |
+| `co_adaptation_config_update` | config-mutating | Change `co_adaptation` settings |
+| `co_adaptation_consent_grant` | config-mutating | Create a participant or update its consent |
+| `co_adaptation_consent_revoke` | config-mutating | Withdraw consent and erase the participant |
+| `co_adaptation_preference_set` | settings | Save an assistance rule |
+| `co_adaptation_preference_retract` | settings | Remove an assistance rule |
+| `co_adaptation_learning_reset` | settings | Reset what was learned for a participant |
+| `co_adaptation_erase` | settings | Erase today's study data of a participant |
+| `co_adaptation_results` | settings | The participant's own results, from stored rows |
+| `co_adaptation_export` | study | Write an encrypted export file |
+| `co_adaptation_session_begin` | study | Start a study session |
+| `co_adaptation_session_resume` | study | Continue a paused session |
+| `co_adaptation_recommend` | study | A block regime, an ambiguity table or an offer |
+| `co_adaptation_record_trial` | study | Store and verify one trial |
+| `co_adaptation_report_burden` | study | Store one burden rating |
+| `co_adaptation_session_end` | study | End a session and summarise it |
+
+- **config-mutating** (`CONFIG_MUTATING_RPC_METHODS`): run one at a time under the
+  config lock and are followed by `config_updated`.
+- **settings** (`SETTINGS_RPC_METHODS`): out of band, without the config lock.
+- **study** (`CO_ADAPTATION_RPC_METHODS`): out of band, so a study trial never
+  waits behind an `execute` on the same socket.
+
+`update_config` refuses `section: "co_adaptation"` ("Use co_adaptation_config_update
+to change co_adaptation settings"). `reset_config` restores the section's
+defaults (which turns the feature off and ends open sessions) and never deletes
+participants, study data or assistance rules.
+
+When the daemon could not start the co-adaptation service, `co_adaptation_status`
+returns `{ "status": "ok", "available": false, "config": {...}, "message":
+"Co-adaptation is unavailable on this daemon.", "authority": "presentation_only",
+"execution_authority": false }` and every other method returns `{ "status":
+"error", "message": "Co-adaptation is unavailable on this daemon." }`. When the
+OS keyring is unavailable the service starts degraded: status, revoke, erase and
+the retention prune work, and every other method returns `{ "status": "refused",
+"reason": "keyring_unavailable" }`. A revoke or prune in this state deletes the
+rows and export files and leaves the participant's key for a later retry (see
+`co_adaptation_consent_revoke`).
+
+The retention prune runs at service start, at the start of `co_adaptation_status`
+and `co_adaptation_session_begin`, when a call on an open session finds its
+consent expired, and otherwise every 24 hours. An expired consent is refused at
+once, but its rows, exports and key can remain for up to 24 hours after expiry
+while the daemon keeps running and none of those calls arrives.
+
+Identifiers used below:
+
+- Modalities: `mouse`, `touchpad`, `pen`, `touch`, `keyboard`, `hand_pointer`.
+- L1 regime ids: `assistance_off` (the plain interface: the literal click
+  commits and nothing is interpreted), `act`, `enlarge_target:1.5`,
+  `enlarge_target:2.0`, `confirm_selection:second_click`,
+  `confirm_selection:hold_400` (hand pointer only), `confirm_selection:hold_700`.
+- L2 responses (`L2_OPTIONS`, always in this order): `act`,
+  `confirm_selection:second_click`, `wait_for_evidence`, `ask_clarification:2`,
+  `ask_clarification:3`.
+- L3 offers: `no_offer`, `offer_modality:keyboard`, `offer_modality:pointer`.
+- Consent purposes: `selection_study` (required), `adaptive_assistance`,
+  `cross_session_learning`, `gaze_prior`, `hand_pointer`, `research_export`.
+- Participant keys are generated by the daemon and match `^p-[0-9a-f]{8}$`.
+
+#### `co_adaptation_status`
+**Params:** `{}`. Runs the lazy retention prune first. Never fails.
+
+**Result:**
+```json
+{
+  "status": "ok",
+  "available": true,
+  "config": { "enabled": false, "adaptive_enabled": false, "...": "every CoAdaptationConfig field" },
+  "keyring_available": true,
+  "erasure_pending": false,
+  "store": { "exists": true, "bytes": 123456, "participants": 1, "sessions": 3, "decisions": 420,
+             "trials": 330, "burden_reports": 40, "oldest_recorded_at": "2026-10-15T10:00:00+00:00",
+             "pruned_sessions": 0 },
+  "participants": [{
+    "participant_key": "p-3fa29c1e",
+    "label": "Lab A",
+    "consent": { "consent_id": "...", "purposes": ["selection_study"], "granted_at": "...",
+                 "expires_at": "...", "retention_days": 90, "consent_text_version": "coadapt-consent-v1",
+                 "consent_text_sha256": "...", "protocol_id": "coadapt-study-v1", "active": true },
+    "model": { "trials_seen": 330, "sessions_seen": 3, "last_day_index": 740000, "drift_flags": [],
+               "calibration_suspended": false, "learn_across_sessions_effective": false },
+    "fallbacks": { "mouse": { "...": "FallbacksV1" } },
+    "sessions": 3,
+    "last_session_at": "..."
+  }],
+  "preferences": ["PreferenceV1", "..."],
+  "proposals": [{ "participant_key": "p-3fa29c1e", "kind": "forbid_variant",
+                  "variant": "ask_clarification:3", "reason": "three_vetoes" }],
+  "protocol": { "protocol_id": "coadapt-study-v1", "sha256": "..." },
+  "versions": { "strategy": "coadapt-strategies-v1", "feature_schema": "coadapt-features-v1",
+                "model": "coadapt-owm-v1", "prior": "literature-v1", "policy": "coadapt-policy-v1",
+                "sdk": "0.1.0", "consent_text": "coadapt-consent-v1" },
+  "authority": "presentation_only",
+  "execution_authority": false
+}
+```
+`label` is the decrypted display label, or null (always null while the keyring
+is unavailable). `fallbacks` is given per modality for every participant with an
+active consent. A proposal is only a suggestion: nothing is written until the
+person accepts it. `erasure_pending` is true while the pending-erasure list
+described under `co_adaptation_consent_revoke` still holds a keyring key, an
+export file or a participant's rules after the prune this call ran; it is the
+only sign of an expiry erasure that could not finish, so a client should show it.
+
+#### `co_adaptation_config_update`
+**Params:** any subset of the `co_adaptation` settings:
+
+| Key | Type | Default | Range |
+| --- | --- | --- | --- |
+| `enabled` | bool | `false` | |
+| `adaptive_enabled` | bool | `false` | also needs purpose `adaptive_assistance` |
+| `learn_across_sessions` | bool | `false` | also needs purpose `cross_session_learning` |
+| `gaze_prior_enabled` | bool | `false` | also needs `vision.gaze_tracking_enabled` and purpose `gaze_prior` |
+| `hand_pointer_enabled` | bool | `false` | also needs purpose `hand_pointer` and a running camera |
+| `ambiguity_threshold` | number | `0.25` | 0.05 to 0.25 (can only be made stricter) |
+| `unintended_activation_tolerance` | number | `0.05` | 0.0 to 0.2; a study session uses at most 0.05 (stricter only) |
+| `noninferiority_margin` | number | `0.01` | 0.0 to 0.05; a study session uses at most 0.01 (stricter only) |
+| `upper_bound_credibility` | number | `0.95` | 0.8 to 0.99; a study session uses at least 0.95 (stricter only) |
+| `exploration_floor` | number | `0.1` | 0.0 to 0.3; study sessions always use the protocol's 0.1 |
+| `switching_penalty` | number | `0.1` | 0.0 to 1.0; study sessions always use the protocol's 0.1 |
+| `burden_prompt_every_blocks` | integer | `1` | 1 to 8 |
+| `day_boundary_hour` | integer | `4` | 0 to 23 |
+
+**Result:** `{ "status": "ok", "config": {...}, "restart_required": false }`.
+
+**Errors:** `Unknown co-adaptation setting: <key>`; a strict type error such as
+`enabled must be a boolean`, `ambiguity_threshold must be numeric` or
+`day_boundary_hour must be an integer`; a range error such as
+`ambiguity_threshold must be at most 0.25`; `Grant consent before turning
+co-adaptation on.` when `enabled: true` arrives while no participant has an
+active consent. A failed save puts the previous values back and returns the save
+error. Nothing needs a restart. A change reaches the study at the next
+`co_adaptation_session_begin`, which stores the effective settings in the new
+session; an open session keeps the settings it started with. Only `enabled:
+false` acts at once: it ends open sessions. A hand-edited `config.toml` value
+outside a range is clamped into it when the file is loaded.
+
+Study sessions follow the frozen protocol (`coadapt-study-v1`).
+`exploration_floor` and `switching_penalty` always take the protocol's values,
+and `ambiguity_threshold`, `unintended_activation_tolerance`,
+`noninferiority_margin` and `upper_bound_credibility` take the stricter of the
+saved value and the protocol's. A looser value is accepted, saved and returned
+by `co_adaptation_status`, but it does not change what a session runs with. The
+stored session row lists in `protocol_deviations` every setting whose saved
+value differs from the protocol's, also when the effective value did not
+change.
+
+#### `co_adaptation_consent_grant`
+**Params:**
+```json
+{
+  "participant_key": null,
+  "label": "Lab A",
+  "purposes": ["selection_study", "gaze_prior"],
+  "retention_days": 90,
+  "consent_text_version": "coadapt-consent-v1",
+  "consent_text_sha256": "<64 hex>",
+  "protocol_id": "coadapt-study-v1",
+  "protocol_sha256": "<64 hex>",
+  "authorized": true,
+  "enable": true
+}
+```
+- `participant_key: null` creates a participant with a new daemon-generated key,
+  its encryption key in the OS keyring, the optional encrypted `label` (at most 32
+  characters, new participants only) and the consent record. The database file is
+  created at this point, not before.
+- The key of a participant whose consent is active updates that consent. The
+  earlier record is kept with `replaced_at`, the new expiry is the earlier of the
+  old expiry and `granted_at + retention_days` (an update never extends
+  retention), and a purpose that is removed deletes what was stored only for it:
+  export files for `research_export`, the gaze-check accuracy and every stored gaze
+  region for `gaze_prior`, the hand summaries for `hand_pointer` (followed by a
+  model rebuild). An update that removes a purpose while the participant has an
+  open session is refused.
+- Any other key is refused (`unknown_participant`); keys are never reused.
+- After a successful grant the daemon sets `co_adaptation.enabled = true` unless
+  `enable` is `false` (it must be a JSON boolean), and saves; a failed save turns
+  it back off and returns the save error.
+
+**Result:**
+```json
+{
+  "status": "ok",
+  "participant_key": "p-3fa29c1e",
+  "consent": { "...": "ConsentSummary, as in co_adaptation_status" },
+  "config": { "...": "co_adaptation settings" },
+  "removed": { "purposes": [], "export_files": 0, "trials_rewritten": 0, "sessions_rewritten": 0,
+               "export_files_left": 0 }
+}
+```
+`removed` lists the purposes an update removed and the counts of deleted export
+files and rewritten trial and session rows (empty lists and zeros for a first
+grant or an update that removes nothing). `export_files_left` counts export files
+that could not be deleted yet; they go on the pending-erasure list described
+under `co_adaptation_consent_revoke`.
+
+**Errors:** `authorized` not literally `true`; `selection_study` missing; a bad
+hash; `retention_days` outside 1 to 365; a malformed or unknown key; `Secure OS
+key storage is unavailable; co-adaptation stays off.`; and
+`{ "status": "refused", "reason": "session_active", "message": "Stop the running
+session before removing a permission." }`.
+
+#### `co_adaptation_consent_revoke`
+**Params:** `{ "participant_key": "p-3fa29c1e" }`
+
+Withdrawal always erases: the participant's in-memory state is evicted, every row
+and export file is deleted, the keyring key is destroyed (so encrypted columns of
+leftover database pages become unreadable), and the participant's own rules are
+deleted. Rules set for everyone on the device stay. When no active consent
+remains, the daemon sets `co_adaptation.enabled = false` and saves.
+
+**Result:** `{ "status": "ok", "erased": { "rows": 412, "key_destroyed": true,
+"export_files": 1, "rules_deleted": 2, "export_files_left": 0, "pending": false },
+"config": {...} }`
+
+`key_destroyed` is `false` when the OS keyring could not be reached (degraded
+mode), and `export_files_left` counts export files that could not be deleted, for
+example because another program holds them open. `pending` is true when either
+happened or when the participant's rules could not be removed from an unreadable
+rules file. The rows are gone in every case. What is left stays on the
+pending-erasure list `co_adaptation_pending_erasure.json` next to the database,
+which holds only pseudonymous participant keys and export file names. The daemon
+retries that list at every service start, `co_adaptation_status`
+and prune, and on a repeated revoke, which completes what is left instead of
+returning `ignored`. Until the key is deleted it decrypts the encrypted columns of
+database backups and leftover pages and any export copied elsewhere, so a client
+should tell the person when `pending` is true.
+
+#### `co_adaptation_preference_set`
+**Params:** `{ "kind": "...", "scope": { "context": "study"|"all", "modality":
+"<modality>"|null, "participant_key": "p-xxxxxxxx"|null }, "value": ... }`
+
+| `kind` | `value` |
+| --- | --- |
+| `forbid_variant` | a variant id or a family (`confirm_selection`, `ask_clarification`, `enlarge_target`, `offer_modality`) |
+| `pin_regime` | an L1 regime id other than `assistance_off` |
+| `pin_act` | `true` ("Always select exactly what I click") |
+| `min_caution` | a variant id in caution order |
+| `max_interruptions_per_block` | an integer 0 to 8 |
+| `priorities` | `{ "fewer_mistakes": f, "faster": f, "fewer_interruptions": f }`, each in [0, 1] |
+| `freeze_adaptation` | `{ "regime": "<L1 regime id, assistance_off included>" }` |
+
+Works without consent (rules are settings, kept in
+`co_adaptation_preferences.json`). A participant key in the scope must belong to
+an existing participant; labels are never accepted.
+
+**Result:**
+```json
+{
+  "status": "ok",
+  "preference": { "pref_id": "...", "kind": "forbid_variant", "scope": {...}, "value": "act",
+                  "origin": "explicit_user", "created_at": "...", "retracted_at": null },
+  "notes": [],
+  "refresh_required": true,
+  "refresh_seq": 4,
+  "fallbacks": { "...": "FallbacksV1 of the participant in the scope" }
+}
+```
+`refresh_required`, `refresh_seq` and `fallbacks` describe the participant named
+in the scope; for a device-wide rule they are `false`, `null` and `null`, and a
+running study learns of the change from `co_adaptation_updated`. `notes` explains
+an accepted combination (a cap against a minimum caution that leaves only confirm
+regimes).
+
+**Errors:** a rule that conflicts with an active rule whose scope overlaps it is
+rejected and nothing is written:
+```json
+{
+  "status": "error",
+  "reason": "preference_conflict",
+  "message": "You already pinned ...; pinning ... would contradict it. Remove that rule and save this one, or keep it.",
+  "conflicting": [{ "pref_id": "...", "summary": "..." }]
+}
+```
+Conflicts include a pin or freeze of a forbidden regime or of one below an active
+minimum caution, a cap below the block's 8 trials against a frozen or pinned
+confirm or hold regime, a freeze and a pin naming different regimes, and two pins
+or two freezes naming different regimes. The message names each conflicting rule;
+the UI's "Remove that rule" button retracts the rules in `conflicting` and then
+retries. Overlapping minimum cautions combine to the strictest and overlapping
+caps to the smallest; they are not conflicts. Forbidding `wait_for_evidence` is
+rejected, and so is any rule that would leave a modality with no allowed regime.
+
+#### `co_adaptation_preference_retract`
+**Params:** `{ "pref_id": "..." }`
+
+**Result:** `{ "status": "ok", "refresh_required": false, "refresh_seq": null,
+"fallbacks": null }` (filled in as for `preference_set` when the rule applied to a
+participant), or `{ "status": "error", "message": "Unknown rule" }`.
+
+#### `co_adaptation_learning_reset`
+**Params:** `{ "participant_key": "p-3fa29c1e" }`
+
+Ends the participant's open session first, then puts the model, spread and
+practice counters back to the prior. Data and consent are kept; a later rebuild
+ignores rows recorded before the reset.
+
+**Result:** `{ "status": "ok", "model": {...}, "session_ended": true }`
+
+#### `co_adaptation_erase`
+**Params:** `{ "participant_key": "p-3fa29c1e", "scope": "today" }`
+
+Ends the participant's open session first, then deletes today's sessions with
+their decisions, trials, burden reports and events, and every export file written
+since the earliest erased session started (older exports cannot contain those
+rows). Full erasure is `co_adaptation_consent_revoke`.
+
+**Result:** `{ "status": "ok", "erased": { "rows": 96, "export_files": 1,
+"export_files_left": 0 }, "session_ended": false }`. `export_files_left` counts
+export files that could not be deleted yet and are retried from the
+pending-erasure list described under `co_adaptation_consent_revoke`.
+
+#### `co_adaptation_results`
+**Params:** `{ "participant_key": "p-3fa29c1e", "scope": "today"|"all" }`
+
+**Result:** computed from stored rows only, never from simulated data:
+```json
+{
+  "status": "ok",
+  "evidence_kind": "live_human",
+  "claim": "Your data on this device; not a general result.",
+  "per_regime": [{ "variant": "act", "trials": 40, "completion": 0.97, "ua_per_100": 3.0,
+                   "idle_ua_per_min": 0.0, "corrections_per_trial": 0.1, "median_time_ms": 1450,
+                   "p95_time_ms": 3100, "throughput_bits_s": 4.1,
+                   "burden": { "effort": 3.2, "intrusiveness": 2.0, "control": 5.5 },
+                   "verification": { "ok": 38, "fallback": 1, "draw_mismatch": 0,
+                                     "posterior_mismatch": 0, "interrupted": 1 } }],
+  "calibration": { "ua": { "brier": 0.03, "ece": 0.02, "log_score": -0.15, "n": 330, "bins": [...] },
+                   "complete": {...}, "log_time": { "coverage90": 0.88, "n": 330 } },
+  "probe_trend": [{ "session_number": 2, "throughput_bits_s": 4.0, "ua_per_100": 5.0 }],
+  "drift_flags": [],
+  "allowed_now": { "eligible": ["act", "enlarge_target:1.5"],
+                   "excluded": { "confirm_selection:hold_700": "forbidden_by_you" } },
+  "predictions_now": { "act": "PredictionV1" }
+}
+```
+
+#### `co_adaptation_export`
+**Params:** `{ "participant_key": "p-3fa29c1e" }`. Needs the `research_export`
+purpose.
+
+Writes `co_adaptation_exports/coadapt_<participant_key>_<UTC yyyymmddTHHMMSSZ>.enc`
+under the data directory: a plaintext JSON header line, then the AES-256-GCM
+encrypted bundle. The display label is never exported, and there is no upload
+path.
+
+**Result:** `{ "status": "ok", "path": "...", "sha256": "...", "bytes": 48213 }`,
+or `{ "status": "refused", "reason": "purpose_missing" }`.
+
+#### Study RPCs
+
+Status values: `ok`, `recorded`, `ignored` (reasons `disabled`, `no_consent`,
+`consent_expired`, `purpose_missing`, `unknown_session`, `session_closed`),
+`refused` (reasons below) and `error` (with `message`).
+
+The daemon re-checks three start refusals before `co_adaptation_session_begin`,
+`co_adaptation_session_resume`, `co_adaptation_recommend` for `block_regime` and
+`ambiguity_table`, and `co_adaptation_record_trial`, and answers `{ "status":
+"refused", "reason": ... }` without reaching the study service:
+
+- `recording_active`: a recorded workflow is being captured;
+- `task_running`: an interactive task is running;
+- `neural_armed`: the neural gate is in `armed_safe_ui`, `armed_safe_desktop`,
+  `candidate_intent`, `previewed`, `committed` or `cooldown`.
+
+A refused trial is not stored; the study marks it interrupted
+(`interruption_reason: "refused"`), pauses, and sends it again after a successful
+resume. The study service itself may refuse with `disabled`, `no_consent`,
+`consent_expired`, `purpose_missing`, `consent_text_changed`,
+`protocol_changed`, `session_active` (one open session per participant),
+`hand_pointer_not_allowed`, `no_allowed_regime`, `keyring_unavailable` or
+`preferences_unreadable`.
+
+`co_adaptation_session_begin` returns `preferences_unreadable` while
+`co_adaptation_preferences.json` cannot be read: it is not valid JSON, has an
+unknown `schema_version`, holds an invalid rule, or holds a rule whose `origin` is
+not `explicit_user`. An unreadable rules file never loosens anything, so no study
+session starts until the file is fixed or removed. Meanwhile
+`co_adaptation_status` lists no rules (`preferences: []`) and no `model` or
+`fallbacks`, and `co_adaptation_preference_set` and
+`co_adaptation_preference_retract` return `{ "status": "error", "message": "The
+co-adaptation rules file cannot be read." }`. The daemon reads the file again when
+it starts, so restart Heliox after fixing or removing it. Removing the file
+deletes every rule, device-wide rules included.
+
+#### `co_adaptation_session_begin`
+**Params:**
+```json
+{
+  "participant_key": "p-3fa29c1e",
+  "context": "study",
+  "consent_text_sha256": "<64 hex>",
+  "device": { "modality": "mouse", "pointer_types": ["mouse"], "dpr": 1.25, "surface_w": 700,
+              "surface_h": 500, "gaze": false, "hand_pointer": false },
+  "protocol_id": "coadapt-study-v1",
+  "gaze_check": { "accuracy": 0.8 }
+}
+```
+`gaze_check` is the result of the study's gaze check, or `null` when none ran.
+The accuracy is stored only when the gaze purpose is in effect, and gaze is used
+for the session only when it is in effect and the accuracy is at least 0.6.
+
+**Result:**
+```json
+{
+  "status": "ok",
+  "session_id": "...",
+  "participant_key": "p-3fa29c1e",
+  "day_index": 740000,
+  "session_number": 2,
+  "plan": { "session_number": 2, "end_questionnaire": true,
+            "blocks": [{ "index": 0, "phase": "practice", "task": "pointing", "trials": 8,
+                         "idle_after": false, "burden_after": false }] },
+  "layout_seed": 1234567,
+  "spread": { "mouse": 1.02 },
+  "floors": { "mouse": 1.0 },
+  "thresholds": { "ambiguity": 0.25,
+                  "bins": { "b1": [0.25, 0.4], "b2": [0.4, 0.6], "b3": [0.6, 1.0] } },
+  "gaze_prior": false,
+  "hand_pointer": false,
+  "burden_prompt_every_blocks": 1,
+  "evidence_kind": "live_human",
+  "fallbacks": { "...": "FallbacksV1, issued_at = the session's start" },
+  "refresh_seq": 0
+}
+```
+`spread` and `floors` are the posterior parameters for the session's modality
+until the first L1 recommendation; both are `{}` in a keyboard session, which has
+no spread. `thresholds` come from the settings stored with the session and hold
+for the whole session. `refresh_seq` is the participant's current refresh value,
+which the study stores as its last applied value. The session's random salt is
+never returned. Block phases are `practice`, `A`, `A_lite`, `B` (adaptive),
+`probe` (`assistance_off`) and `comparator` (the best fixed assisted regime of
+session 1).
+
+#### `co_adaptation_session_resume`
+**Params:** `{ "session_id": "..." }`. Called before the study continues a
+paused session.
+
+**Result:** `{ "status": "ok", "refresh_required": false, "refresh_seq": 3,
+"fallbacks": {...} }`, or `ignored` with `unknown_session`, `session_closed`,
+`no_consent` or `consent_expired`. With `refresh_required: true` the study ends
+the current block before it shows another trial and requests fresh decisions
+(see **Refresh sequence** below).
+
+#### `co_adaptation_recommend`
+**Params:** `{ "session_id": "...", "decision_id": "<uuid4>", "level":
+"block_regime"|"ambiguity_table"|"offer", "context": {...} }`. Context keys:
+
+- `block_regime`: `block_index`, `layouts` (one `LayoutSummaryV1` per planned
+  trial), `previous_regime`, `session_minute`, `trials_today`,
+  `hand_quality_recent`;
+- `ambiguity_table`: the same plus `block_decision_id`, `start_trial_index` (0 at
+  the block start; the next trial's index for a table requested after a veto) and
+  `trials_in_block` (rows to draw, from `start_trial_index` to the block's end);
+- `offer`: `block_index`, `trial_index`, `task`, `struggle_kind`,
+  `keyboard_available`.
+
+**Result:** `{ "status": "ok", "logged": true, "recommendation":
+RecommendationV1 | AmbiguityTableV1 }`. Without consent, or while disabled:
+`{ "status": "ignored", "reason": "...", "logged": false, "recommendation": ... }`
+with the baseline (`{ "variant": "assistance_off" }` at L1, an empty table with
+`cells: []` at L2, `{ "variant": "no_offer" }` at L3, each with the authority
+fields). A reused `decision_id` returns `Duplicate decision_id`. When the
+person's rules and the calibration suspension leave no regime, the reply is
+`{ "status": "refused", "reason": "no_allowed_regime" }` and the block does not
+start.
+
+```json
+RecommendationV1 = {
+  "decision_id": "...", "level": "block_regime", "mode": "adaptive",
+  "variant": "enlarge_target:1.5", "params": { "scale": 1.5 },
+  "eligible": ["act", "enlarge_target:1.5", "enlarge_target:2.0", "confirm_selection:second_click"],
+  "excluded": { "confirm_selection:hold_700": "forbidden_by_you", "assistance_off": "probe_schedule" },
+  "propensities": { "assistance_off": 0, "act": 0.05, "enlarge_target:1.5": 0.82, "enlarge_target:2.0": 0.08,
+                    "confirm_selection:second_click": 0.05, "confirm_selection:hold_700": 0 },
+  "p_thompson": {...}, "exploration": 0.1, "fallback": false, "protocol_deviation": false,
+  "round_index": null,
+  "spread": { "r": 1.02, "floor": 1.0 },
+  "priorities": { "fewer_mistakes": 0.5, "faster": 0.5, "fewer_interruptions": 0.5 },
+  "predictions": { "act": "PredictionV1", "...": "..." },
+  "explanation": "ExplanationV1", "seed": "9f2c...", "versions": {...},
+  "authority": "presentation_only", "execution_authority": false
+}
+
+PredictionV1 = {
+  "variant": "act", "p_complete": { "mean": 0.97, "lo90": 0.93, "hi90": 0.99 }, "p_unintended": {...},
+  "ucb_unintended": 0.06, "p_correction": {...}, "p_veto": {...},
+  "time_ms": { "mean": 1400, "lo90": 800, "hi90": 2600 },
+  "burden": { "effort": 3.1, "intrusiveness": 2.2, "control": 5.4 },
+  "evidence": { "trials_person": 120, "trials_today": 30, "source": "today" },
+  "authority": "presentation_only"
+}
+
+ExplanationV1 = {
+  "summary_key": "coadaptation.explain.adaptive", "values": {...},
+  "contrasts": [{ "metric": "slips", "variant": "enlarge_target:1.5", "baseline": "assistance_off",
+                  "variant_mean": 0.04, "baseline_mean": 0.09, "delta_ci90": [-0.08, -0.01] }],
+  "excluded": [["confirm_selection:hold_700", "forbidden_by_you"]],
+  "evidence_source": "today", "trials_person": 120, "trials_today": 30
+}
+
+AmbiguityTableV1 = {
+  "decision_id": "...", "level": "ambiguity_table", "block_decision_id": "...", "mode": "adaptive",
+  "ambiguity_threshold": 0.25,
+  "bins": [{ "id": "b1", "lo": 0.25, "hi": 0.4 }, { "id": "b2", "lo": 0.4, "hi": 0.6 },
+           { "id": "b3", "lo": 0.6, "hi": 1.0 }],
+  "cells": [{ "cell_id": "b1:p2:h1", "bin": "b1", "n_plausible": 2, "has_hit": true,
+              "order": ["act", "confirm_selection:second_click", "wait_for_evidence",
+                        "ask_clarification:2", "ask_clarification:3"],
+              "propensities": { "act": 0, "confirm_selection:second_click": 0.45, "wait_for_evidence": 0.1,
+                                "ask_clarification:2": 0.45, "ask_clarification:3": 0 },
+              "eligible": ["confirm_selection:second_click", "wait_for_evidence", "ask_clarification:2"],
+              "excluded": { "act": "ambiguous_activation", "ask_clarification:3": "not_applicable" } }],
+  "start_trial_index": 0,
+  "draws": [[0.12, 0.88, 0.40, 0.05]],
+  "max_draws_per_trial": 4,
+  "after_max": "wait_for_evidence",
+  "explanation": "ExplanationV1", "seed": "...", "versions": {...},
+  "authority": "presentation_only", "execution_authority": false
+}
+```
+- `mode` is one of `randomized` (Phase A and A-lite permuted blocks), `adaptive`
+  (Phase B learned choice), `probe` (`assistance_off`), `comparator` (the best fixed
+  assisted regime from session 1, with the uniform L2 propensities of Phase A),
+  `pinned` (a freeze, a pin or the `pin_act` collapse, propensity 1) and `baseline`
+  (practice).
+- `spread` (L1 only) is the `{r, floor}` pair the UI must use for every posterior
+  of the block and echo in `TrialV1.spread`; it is `null` in a keyboard session.
+- `priorities` (L1 only) are the weights in force at the decision; the analysis
+  scores the block with them.
+- `ambiguity_threshold` and `bins` are the session's own values.
+- `draws` holds one row per trial from `start_trial_index` to the block's end.
+- `order` is always `L2_OPTIONS` order. Outside a `pin_act` collapse `act` has
+  propensity 0 and is excluded with `ambiguous_activation`, so no learned,
+  exploratory or fallback choice commits an ambiguous activation.
+- Propensities, draws, spread values and seeds are never rounded, so the UI's
+  table selection and the daemon's re-derivation see identical floats.
+
+#### `co_adaptation_record_trial`
+**Params:** `{ "session_id": "...", "trial": TrialV1 }`
+
+**Result:**
+```json
+{
+  "status": "recorded",
+  "verification": "ok",
+  "labels": { "complete": true, "ua": false, "correction": false, "veto": false, "time_ms": 1380.0 },
+  "preference_violation": false,
+  "refresh_required": false,
+  "refresh_seq": 3,
+  "fallbacks": null
+}
+```
+`verification` is `ok`, `draw_mismatch`, `posterior_mismatch`, `interrupted` or
+`fallback`; `labels` is null when the trial is not learned from. Only `ok` trials
+update the model. The call is idempotent per `trial_id`: a repeat returns the
+stored result, which never reverts a trial again. `refresh_seq` is the
+participant's current value; a drift alarm or calibration suspension fired by this
+trial raises it by one and sets `refresh_required` with fresh `fallbacks`.
+
+#### `co_adaptation_report_burden`
+**Params:** `{ "session_id": "...", "report": BurdenV1 }`
+
+**Result:** `{ "status": "recorded" }`
+
+#### `co_adaptation_session_end`
+**Params:** `{ "session_id": "...", "reason": "completed"|"stopped"|"abandoned"|"interrupted" }`
+
+**Result:** `{ "status": "ok", "summary": SessionSummaryV1 }` with `trials`,
+`completion`, `ua_rate`, `idle_ua_per_min`, `median_time_ms`, `burden_mean`,
+`overrides`, `regime_entropy_bits`, `switch_rate`, `allowed_now`, `excluded_now`
+and `predictions`.
+
+#### Refresh sequence
+
+A rule saved or retracted, a calibration suspension or a drift alarm marks the
+participant's open decisions stale and refreshes the open session even when no
+decision is open (a practice block, or a block whose regime request failed, runs
+on fallbacks the change made stale). Each such change raises the participant's
+`refresh_seq` once (a counter that starts at 0 when the daemon starts and only
+increases while it runs). The `refresh_required` reply and the
+`co_adaptation_updated` broadcast for one change carry the same value, a later
+`co_adaptation_record_trial` or `co_adaptation_session_resume` reply that reports
+the same stale state repeats it, and `co_adaptation_session_begin` and
+`co_adaptation_session_resume` return the current value.
+
+The study applies a refresh only when its `refresh_seq` is greater than the last
+value it applied. It then pauses input until it holds fallbacks issued after the
+change, reverts the current trial to the fresh `fallbacks.refresh` regime (or
+interrupts it when that is `null`, or when the trial was already reverted for a
+different change), and ends the block after that trial. So a trial is reverted or
+interrupted at most once per `refresh_seq`. Ending the block is not deduplicated:
+a refresh applied while no trial is in progress (paused, block intro, burden
+prompt or idle epoch) ends the block before the next trial, and any reply with
+`refresh_required` ends the block when the block's decisions were requested
+before the last applied refresh. While a freeze or pin is in force,
+`fallbacks.refresh` is the frozen or pinned regime, so a refresh never moves a
+paused block off the regime the person kept.
+
+#### Payload schemas
+
+All study payloads are validated with `extra="forbid"` and reject `NaN` and
+infinities.
+
+```text
+RectV1            cx, cy in [-10, 10000]; w, h in (0, 2000]
+LayoutSummaryV1   task in {pointing, menu, idle}; n_candidates 1..32; w_px, h_px (0, 400]; gap_px [0, 200];
+                  id_bar [0, 12]; menu_n 0..32; origin_x, origin_y [-10, 10000] (home or menu button centre);
+                  presses_mean [1, 64] optional (pointing grids: the mean keyboard presses over the
+                  candidates; without it the keyboard prior approximates the grid)
+DeviceV1          modality; pointer_types: up to 4 of {mouse, pen, touch}; dpr (0, 8];
+                  surface_w, surface_h (0, 20000]; gaze bool; hand_pointer bool
+SpreadV1          r (0, 20]; floor [0, 50]
+GazeCheckV1       accuracy [0, 1]
+ActivationGazeV1  region in {center, left, right, up, down}; conf [0, 1]
+L2AppliedV1       decision_id uuid; cell_id ^b[123]:p[123]:h[01]$; draw_index 0..4; variant in L2_OPTIONS;
+                  source in {table, fixed_rule, fallback, cap}; fallback_reason in {late, rpc_error, stale_table}
+                  when source = fallback, else null
+ActivationV1      index 0..31; t_ms [0, 60000]; modality; x, y integers [-100, 20000]; hit_index int|null;
+                  press_index int -1..31 (never null; -1 when the press hit no candidate); a_gate [0, 1];
+                  n_plausible 1..3; expanded_index int|null (enlarge regimes only);
+                  hit_rect RectV1|null (frozen at the press; null iff hit_index is null);
+                  gaze ActivationGazeV1|null (the region and confidence used, gaze sessions only);
+                  l2 L2AppliedV1|null; irreversible_rule bool;
+                  result in {committed, confirming, held, asked, none} (the immediate response, never overwritten);
+                  outcome in {committed, cancelled, aborted, open_at_end, none} (what finally happened to it);
+                  committed_index int|null
+RevertV1          reason in {veto, refresh}; from_activation 0..32; regime (an L1 id: fallbacks.plain for a veto,
+                  fallbacks.refresh for a refresh); fallbacks_issued_at ISO-8601 UTC of the fallbacks applied
+MovementSummaryV1 rt_ms, mt_ms [0, 60000]; path_ratio [1, 50]; submovements 0..50; peak_speed_px_s [0, 50000];
+                  reentries 0..50; endpoint_dx_norm, endpoint_dy_norm [-20, 20]
+OfferResponseV1   decision_id; variant in L3 offers; response in {accepted, dismissed, ignored};
+                  fallback_reason in {late, rpc_error, null} (set: no offer was shown, variant no_offer, ignored)
+VetoV1            decision_id; level in {block_regime, ambiguity_response}
+HandSummaryV1     quality_mean, quality_min [0, 1]; tracking_losses 0..100
+GazeSummaryV1     agreed_with_intended bool|null
+TrialV1           trial_id uuid; block_index 0..64; trial_index 0..64; task; regime; regime_decision_id;
+                  table_decision_ids up to 4; applied_regime; l1_fallback_reason in {late, rpc_error, null};
+                  fallbacks_issued_at ISO-8601 UTC (the fallbacks held at the cue);
+                  spread SpreadV1|null (null iff the session's modality is keyboard);
+                  layout LayoutSummaryV1; candidates 1..32 RectV1 (cue-time); surface_w, surface_h, dpr;
+                  reversible list[bool] (one per candidate); cue_at ISO-8601 UTC; intended_index int|null
+                  (null iff task is idle); modality; activations up to 32; revert RevertV1|null;
+                  committed_index int|null; commit_t_ms [0, 60000]|null;
+                  commit_via in {direct, confirm, hold, ask, none}; corrections 0..50; time_ms [0, 60000];
+                  limit_ms in {10000, 15000, 30000}; duration_ms [0, 60000]; movement MovementSummaryV1|null;
+                  veto VetoV1|null; offers up to 2 OfferResponseV1; hand HandSummaryV1|null;
+                  gaze GazeSummaryV1|null; interrupted bool;
+                  interruption_reason in {modal, hidden, blur, resize, palm_exit, paused, daemon, refused,
+                  refresh, no_allowed_regime, null}; explanation_views 0..20
+BurdenV1          block_index 0..64|null; scope in {block, session}; effort, intrusiveness, control 1..7|null;
+                  tlx {mental, physical, temporal, performance, effort, frustration: 0..100|null}|null;
+                  predictability 1..7|null; preferred_regime L1 id|null; skipped list of item names
+FallbacksV1       l1, plain, refresh, practice: L1 id|null; freezable: up to 6 L1 ids in caution order
+                  (may be empty); freeze_conflict {message, conflicting: [pref_id]}|null; l2: up to 3 L2 ids;
+                  interruption_cap 0..8|null; issued_at ISO-8601 UTC
+PreferenceV1      pref_id, kind, scope, value, origin = "explicit_user", created_at, retracted_at
+```
+
+- **Keyboard activations** (`modality: "keyboard"`): `x` and `y` are the focused
+  candidate's cue-time centre rounded with `floor(c + 0.5)`; `hit_index` and
+  `press_index` are the focused candidate; `a_gate` 0; `n_plausible` 1;
+  `expanded_index` null; `hit_rect` that candidate's cue-time rect; `gaze` null.
+  Keyboard sessions carry no spread.
+- **`ActivationV1.result`** is set when the activation is applied: `committed`
+  (committed a candidate on this activation), `confirming` (opened a confirm step,
+  the irreversible-candidate rule included), `held` (started a hold), `asked`
+  (showed a clarification) or `none` (`wait_for_evidence` from any source, the
+  interruption cap, or no literal hit where one is needed). `outcome` is `none`
+  exactly when `result` is `none`. The daemon recounts the interruption cap from
+  `result`.
+- **`L2AppliedV1.source`**: `table` (a table draw), `fixed_rule` (idle epochs and
+  reverted trials), `fallback` (a late, failed or stale table, with
+  `fallback_reason`) or `cap` (`wait_for_evidence` after the block reached
+  `max_interruptions_per_block`). The daemon checks `fixed_rule`, `fallback` and
+  `cap` responses against the fallbacks issued when they were applied. A
+  `stale_table` fallback names the table requested after a veto, which had not
+  arrived yet; the daemon relabels the table it names `baseline` unless the
+  same trial then applied that table's draws.
+- **`TrialV1.l1_fallback_reason`** is set only when the UI applied
+  `fallbacks.l1` because the regime arrived late or the call failed; L2 and L3
+  fallbacks are recorded on the activation and the offer.
+- **`TrialV1.interruption_reason: "no_allowed_regime"`**: "Not this time" was
+  pressed while `fallbacks.plain` was null; the trial records the veto, has no
+  revert, and the block ends.
+- **`FallbacksV1`**: `l1` is the fallback block regime (the frozen or pinned
+  regime while one is in force, else the most cautious regime the rules allow and
+  the calibration state permits); `plain` is the regime a "Not this time" revert
+  applies (`assistance_off` when the rules allow it and calibration is not
+  suspended); `refresh` is the regime a refresh revert applies (the frozen or
+  pinned regime while one is in force, else `plain`); `practice` has the same
+  value as `refresh` and is used for the practice block; `freezable` lists the
+  regimes "Pause adapting" may freeze at; `freeze_conflict` is the conflict
+  (`{message, conflicting}`) that blocks a freeze of the current regime, which the
+  study shows with "Remove that rule" when `freezable` is empty;
+  `interruption_cap` is the smallest active `max_interruptions_per_block`;
+  `issued_at` is when the fallbacks were computed, which trials echo so each
+  applied rule is judged under the rules the study held at that moment.
 
 ---
 
@@ -2078,9 +2883,14 @@ permission ceiling. While it runs:
 - anything else corrects the step and replans (`revising`).
 
 Approval answers never change a workflow. "No", "deny" or "don't" denies the
-pending approval (interactive, background, scheduled or workflow) and is
-reported as `answered`; "yes" or "approve" returns `approval_required`,
-because approval stays in the visible dialog. "Stop" with no interactive task
+pending approval (interactive, background, scheduled or workflow) through
+`confirm` with `input_channel: "voice_deny"` and is reported as `answered`. The
+message is "Okay, I won't run that." only when the denial took effect; when the
+approval was already answered it says so instead. Unlike a denial sent through
+`interject`, it does not override an approval the waiting task has not acted on
+yet: `confirm` refuses any approval that is already resolved. "yes" or
+"approve" returns `approval_required`, because approval stays in the visible
+dialog. "Stop" with no interactive task
 cancels running background jobs instead of being planned as a new task. A
 paused workflow claims only continue and cancel, and a failed step says why
 and waits about 90 seconds for continue, a correction or cancel. Multi-step
@@ -2152,6 +2962,43 @@ broadcast recipients.
 
 ---
 
+### `co_adaptation_updated`
+Broadcast by the co-adaptation service to every window when consent, rules or
+learned state change.
+
+```json
+{ "jsonrpc": "2.0", "method": "co_adaptation_updated",
+  "params": { "reason": "preferences", "participant_key": "p-3fa29c1e", "refresh_seq": 4 } }
+```
+
+`reason` is one of `consent`, `revoked`, `expired`, `preferences`, `reset`,
+`erased`, `drift`, `calibration_suspended` and `proposal`. `refresh_seq` is set
+only for `preferences`, `drift` and `calibration_suspended` when the change
+marked that participant's open session stale, and equals the `refresh_seq` of
+the `refresh_required` reply for the same change. A preference change sends one
+notification per participant whose open session it marked stale; when it marked
+none, it sends one notification with the rule's `participant_key` (null for a
+device-wide rule) and `refresh_seq: null`, which only reloads status. During a
+study the notification acts as `refresh_required` only for the running
+participant and only when its `refresh_seq` is greater than the last one the
+study applied (see **Refresh sequence** in section 1); otherwise it reloads
+status. `revoked`, `expired`, `reset` and `erased` for the running participant
+stop the study, because the daemon has already ended the session. The
+notification is never deferred by attention-aware timing.
+
+### `recorded_workflow_status_changed`
+Sent after a successful `recorded_workflow_start` or `recorded_workflow_stop`,
+with the new state. A running selection study pauses on it, and the daemon
+re-checks for an active recording at the next study resume, block start or
+recorded trial.
+
+```json
+{ "jsonrpc": "2.0", "method": "recorded_workflow_status_changed", "params": { "active": true } }
+```
+
+It goes to every window except the one whose request made the change, which
+already has the new state in its reply.
+
 ### `config_updated`
 Sent to every connected window after a settings write succeeds, whoever made it
 (a Settings panel, another window, a voice command, `reset_config`). Windows
@@ -2187,10 +3034,10 @@ must not replay it through browser `speechSynthesis`; that path is only a
 fallback when daemon speech did not own the utterance.
 
 ```json
-{ "text": "Your focus state is low. Confirming in 10 seconds.", "source": "stress_gate" }
+{ "text": "Pausing ten seconds before continuing. Say or press Stop to cancel.", "source": "stress_gate" }
 ```
 
-`source` is one of `stress_gate` (executor.py's cognitive-stress-gate pause) or `autonomous_job` (AutonomousExecutor's end-of-job announcement).
+`source` is one of `stress_gate` (executor.py's cognitive-stress-gate pause) or `autonomous_job` (AutonomousExecutor's end-of-job announcement). The stress-gate pause asks for nothing: the action continues after ten seconds unless the person stops the task.
 
 ---
 

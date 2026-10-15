@@ -380,6 +380,85 @@ no display session) degrades to a clear error rather than a crash.
 
 ---
 
+## Selection study pointer and gesture approval
+
+### Study pointer mode
+
+The selection study (Settings → Assistance & co-adaptation → Run a selection
+session) can use the hand as a pointer inside Heliox's own window. While a
+hand-pointer session runs and is not paused, the study requests the pointer
+(`studyPointer.requested` in `stores/studyPointer.ts`), and with the camera on
+`GestureControl.svelte` works differently:
+
+- Each verified frame publishes the filtered index fingertip (no prediction),
+  mirrored and scaled like Cursor Mode but mapped to the study area, together
+  with a measured pinch. The OS cursor is never moved or clicked:
+  `move_gesture_cursor`, `click_gesture_cursor`, `cursor_move` and
+  `cursor_click` are not called, and Cursor Mode is switched off and cannot be
+  turned on until the study releases the pointer.
+- The pinch counts as closed after 2 consecutive frames below the pinch
+  threshold and as open again only above 1.3 times the threshold.
+- A hand loss cancels. When no verified hand has been seen for more than
+  200 ms, the study is told once, the published pinch is forced open and a
+  press or hold in progress ends. After the hand is found again it must be
+  verified for 8 frames, and then the pinch must be seen open on 8 consecutive
+  fresh frames before any press can start. The same rule applies after every
+  study pause, so a pinch held closed through a tracking loss or a pause never
+  selects anything.
+- An open palm pauses the study. It is checked first on every frame, as in
+  Cursor Mode. Every other gesture is ignored while the study holds the
+  pointer.
+- While a study session is open, the camera preview shrinks to a 64 × 48 px
+  thumbnail above the camera button, and its badges and the gesture readouts
+  are hidden, so the bottom-right camera controls take as little of the study
+  area as possible.
+
+### After the study pauses or ends
+
+When the study releases the pointer (Pause, Esc, an open palm, an approval or
+any other dialog, leaving the Study tab, or the end of the session), every
+gesture is disarmed: approve, deny, tab navigation and gestures bound to
+workflows. Gestures work again only after the hand has been out of view for at
+least 200 ms and is then verified on 8 frames, or after no hand has been seen
+for 500 ms. A gesture must also begin after that point: one whose recognition
+began earlier is dropped even if it completes later. A pose held when the
+study paused can therefore never start a workflow.
+
+### Approving and denying by gesture
+
+Thumbs up and palm push approve; thumbs down and palm pull deny
+(`gesture/actionPolicy.ts`). Approval by gesture is narrower than the dialog's
+own Approve button:
+
+- It sends only the actions checked in the dialog. The dialog reports its
+  checked boxes when it opens and on every change. If nothing is checked, or
+  the reported boxes belong to an earlier approval, nothing is sent and Heliox
+  says "Nothing is checked. Check the actions you want to approve, or deny."
+- The dialog must be on screen: the Command tab is open, the approval is the
+  active dialog, the window is visible, and it has been visible for at least
+  1 second. Otherwise Heliox says "Open the Command tab to approve. Gestures
+  can approve only a dialog you have had time to see."
+- Each time a dialog appears or shows a new approval, approve gestures are
+  disarmed until the hand leaves the camera view and comes back, under the
+  same 200 ms, 8-frame and 500 ms rule as above. A thumbs up held while the
+  dialog appears does nothing, and Heliox says "Lower your hand out of view,
+  then raise it to approve by gesture."
+- Deny by gesture works whenever gestures are armed, whatever the dialog's
+  state. The dialog's Deny button and a spoken or typed denial work at once in
+  every case.
+- The daemon records which channel answered (`input_channel` is `gesture` or
+  `dialog`), never whether a pointer or a key was used.
+
+### Gaze during a study
+
+While a selection study session is open, in any input mode and whether or not
+it is paused, gaze readings stay on the device. `gazeRuntime` is still
+updated, and the study reads it locally, but no `gaze_event` RPC is sent, so
+no gaze reading reaches the daemon's experience ledger. Sending resumes when
+the session ends.
+
+---
+
 ## Gesture Calibration (on-device continual learning)
 
 A **lightweight, on-by-default** personalization loop that nudges exactly
@@ -574,6 +653,10 @@ de-identified detector outputs should enter local benchmark fixtures.
 | `face minTrackingConfidence` | 0.6 | Gaze face tracking threshold |
 | `GAZE_INFERENCE_INTERVAL_MS` | 500 | Maximum gaze sampling rate while sharing the UI thread with hand tracking |
 | `GAZE_HEARTBEAT_MS` | 750 | Refresh interval for a stable accepted gaze region |
+| `HAND_ACQUIRE_FRAMES` | 8 | Verified frames before a hand counts as present; also the re-arm and study press gates |
+| Gesture re-arm (`createGestureArm`) | 200 / 500 ms | Hand out of view for 200 ms then 8 verified frames, or 500 ms with no hand |
+| `GESTURE_APPROVAL_MIN_VISIBLE_MS` | 1000 | How long the approval dialog must be visible before a gesture may approve it |
+| Study pinch hysteresis | 2 frames / 1.3× | Closed after 2 frames below the pinch threshold; open above 1.3 times it |
 
 ---
 
@@ -615,6 +698,10 @@ To add a new gesture:
 | `tauri-app/ui/src/lib/gesture/cameraSignalBenchmark.test.ts` | Metric arithmetic, timestamp validation, false-activation, and gaze-flicker tests |
 | `tauri-app/ui/src/lib/gesture/calibration.ts` | On-device gesture calibration — EMA, reversal detection, localStorage store |
 | `tauri-app/ui/src/lib/gesture/calibration.test.ts` | Unit tests for calibration EMA/clamping/reversal-pairing logic |
+| `tauri-app/ui/src/lib/gesture/studyPointerTracker.ts` | Study pinch hysteresis, normalized study pointer, gesture re-arm gate, gaze send rule during a study |
+| `tauri-app/ui/src/lib/gesture/approvalGesture.ts` | What an approve or deny gesture may do with a pending approval (visible 1 s, re-armed hand, checked actions only) |
+| `tauri-app/ui/src/lib/stores/studyPointer.ts` | In-window study pointer state and its press gate (`ready`, `pressArmed`) |
+| `tauri-app/ui/tests/static/gesture-gaze-study.test.mjs` | Static checks: no gaze RPC during a study, every gesture dispatch behind the re-arm gate |
 | `tauri-app/ui/src/lib/utils/runtime.ts` | `isTauriRuntime()` — used to pick the native vs. daemon-RPC cursor path |
 | `tauri-app/ui/src/lib/stores/settings.ts` | `gesture_cursor`, `adaptive_calibration`, `vision.mediapipe_backend`, `vision.gaze_tracking_enabled` settings sections |
 | `tauri-app/ui/src/lib/components/SettingsPanel.svelte` | Gesture Cursor Control + Gesture/Voice Calibration settings UI |

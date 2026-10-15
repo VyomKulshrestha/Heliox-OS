@@ -29,6 +29,7 @@ This policy covers the following Heliox OS components:
 - **🖱️ Gesture Cursor Control** — the continuous gesture-to-cursor bridge (off by default, opt-in only) that drives the real OS mouse cursor; the one capability in Heliox OS that acts without a per-action confirmation gate, so its escape hatches (open palm, stop button, disabling the setting) and screen-bounds clamping are treated as security-relevant, not just UX
 - **🚪 Agent Gateway** — source-scoped permission floors, tamper-evident audit logging, and dry-run/simulation coverage for shell, browsing, and system-control actions, layered alongside the tier-based `PermissionChecker` (see the dedicated section below)
 - **🧠 Neural Intent Research Controls** — role-separated sidecar authentication, signed/replay-safe intent, explicit non-neural arming and commit, fixed Tier 0/1 goals, encrypted consented recording, and a hard prohibition on physical authority
+- **Assistance co-adaptation** — opt-in, consented, presentation-only selection assistance in Heliox's own study tab, its encrypted local store, and the import and RPC boundaries that keep it out of the authority path (see the dedicated section below)
 
 **Out of scope:**
 - Bugs solely in third-party plugin business logic that Heliox does not
@@ -128,7 +129,9 @@ grant permission, remove deterministic warnings, or execute by itself.
 - The durable task journal uses hashed resume capabilities and per-action
   execution claims. A completed claim replays its stored result; an interrupted
   or expired claim becomes uncertain and must be reconciled rather than
-  repeated.
+  repeated. An approval that was granted and then denied by a correction or by
+  Stop before the waiting task acted on it is stored as denied, so the plan is
+  cancelled, not resumed, after a restart (see **Mid-flight Cancellation**).
 - Temporal memory retains provenance, confidence, validity, contradiction, and
   retraction state. It is advisory and cannot prove current machine state.
 - Online adaptation learns only from new ledger events and verified callbacks.
@@ -160,6 +163,166 @@ file, MCP, browser-search, or dynamic-tool activity. Output is treated as
 untrusted model text and must pass the same structured Planner, policy,
 approval, Executor, and Verifier contracts as every other provider. Prompt and
 process output sizes, runtime, and serialized context are bounded.
+
+---
+
+## Co-adaptation assistance (opt-in, presentation-only)
+
+**What this is.** `pilot.coadaptation` learns, per consenting participant, which
+kind of selection help works for them inside Heliox's own Selection Study tab:
+larger targets, a second click, a hold, a short clarification, or nothing. It is
+off by default, it changes only how Heliox-rendered study targets are presented
+and what a selection needs from the person, and it is research software: no
+claim that it improves selection for people is made until the pre-registered
+study reports. See [Co-adaptation](docs/COADAPTATION.md).
+
+**Authority contract.** Co-adaptation is a learned component under the same rule
+as the others above: it can add caution or change presentation, and it can never
+grant or widen authority. Precedence, top to bottom: the authority layer
+(permissions, Agent Gateway, risk gate, approval dialog semantics), then rule C9
+(a candidate the host marks irreversible never commits on one activation; it
+needs at least a second explicit input whatever the regime or the person's
+rules), then the person's explicit rules, then deterministic agency rules, then
+the probabilistic safety filter, then the learned policy. Commit rules decide
+when the person's own input is accepted as a selection. They never decide what
+runs: in Heliox a committed study target does nothing, and an SDK host runs only
+what its own authority layer allows for a selection the person made. Nothing
+commits on a timeout, on silence, on gaze or on an unanswered prompt.
+
+- Every recommendation carries `authority: "presentation_only"` and
+  `execution_authority: false` and holds no plan id, action index, action type,
+  coordinate command or callable. No strategy is an `ActionType`, and
+  `actions.py`, the verifier registry and `capabilities.json` are unchanged.
+- The 16 co-adaptation RPC handlers reach only the co-adaptation service, the
+  `co_adaptation` config section and a read-only start check (recording status,
+  the interactive-task flag and the neural gate state). A source scan rejects any
+  reference to pending confirmations, the executor, `confirm`, the permission
+  checker, the gateway, memory, the experience ledger, input control or the
+  cursor. A runtime test calls every co-adaptation RPC with a real ledger and a
+  pending approval and checks that neither changes.
+- There is no approval RPC and no approval data: nothing about approval dialogs
+  is sent to, stored by or learned by co-adaptation. No co-adaptation method is
+  open to the neural sidecar or the local MCP bridge.
+- Import isolation: code under `pilot/coadaptation` imports no authority,
+  execution, memory, cognitive, multimodal, neural, intelligence, workflow,
+  server or config module (AST tests), and importing `pilot.coadaptation.service`
+  in a fresh interpreter loads none of `pilot.actions`, `pilot.security`,
+  `pilot.agents`, `pilot.neural` or `pilot.config` (subprocess test). The server
+  imports the service lazily inside `initialize()`, so importing `pilot.server`
+  loads no co-adaptation code. The service receives a settings provider, a
+  gaze-flag provider, file paths, a key provider, the broadcast function and a
+  clock, and nothing else.
+
+**Consent and data handling.** Off at three levels: `co_adaptation.enabled` is
+false, every write needs an active consent record for the participant, and each
+use of the data is a separate purpose (`selection_study`, which is required;
+`adaptive_assistance`; `cross_session_learning`; `gaze_prior`; `hand_pointer`;
+`research_export`). A consent is typed, names the consent text by version and
+SHA-256, expires after the retention the person chose (30 to 365 days, default
+90) and can be withdrawn at any time. The database file, keyring entry and
+export folder do not exist before the first grant. Data stays on the device in
+its own store (`co_adaptation.db`, separate from `experience.db`), each sensitive
+column encrypted with AES-256-GCM under a per-participant key held by the OS
+keyring; if the keyring is unavailable, the feature stays off. Participant keys
+are generated by the daemon (`p-` and 8 hex characters), a display label is
+stored only encrypted, and co-adaptation code keeps nothing in browser storage.
+Rules set for everyone on the device are protective settings: they live in
+`co_adaptation_preferences.json`, survive withdrawal and `reset_config`, and are
+removed one by one in Settings. A consent update never extends the original
+expiry and deletes what a removed purpose stored. Anyone who uses Heliox on the
+device can view and erase every participant; on a shared lab machine the
+operator controls access to the device.
+
+**Biometric-derived data.** Movement summaries (reaction and movement time, path
+ratio, submovements, peak speed, endpoint offsets), hand-tracking quality
+summaries and per-activation gaze regions with their confidence are behavioural,
+biometric-derived data. Each is stored only under its purpose, only as these
+summaries, and never used to infer health, cognitive or emotional state. Never
+stored: video, camera images, landmarks, gaze samples, raw pointer paths, typed
+text, transcripts, window titles, screen content and cognitive-engine values.
+While a study session is active the UI sends no `gaze_event`, so study gaze adds
+no `BIOMETRIC_DERIVED` row to the experience ledger.
+
+**Erasure.** Withdrawal always erases: the participant's in-memory state is
+evicted first, then every row and export file is deleted and the keyring key is
+destroyed, so encrypted columns in leftover database pages and backups become
+unreadable (crypto-shredding; for an erasure that cannot finish at once, see
+below). The participant's own rules are deleted too.
+Plaintext columns (ids, timestamps, enum levels, versions) of pages SQLite has
+not reused are not covered by crypto-shredding; `secure_delete` is on, and when
+no participant remains the database files are deleted. Consent expiry erases the
+same way, also for a participant whose consent expired while Heliox was closed.
+An expired consent is refused at once for study sessions, results and export, but
+the erasure itself runs at the next daemon start, `co_adaptation_status` read,
+`co_adaptation_session_begin` or call on that participant's open session, and
+otherwise from a prune that runs every 24 hours. While Heliox keeps running and
+nobody opens Settings or the study, expired rows, exports and the key can
+therefore remain for up to 24 hours after the chosen period ends. Withdrawal
+erases at once. "Erase today" deletes the day's sessions and every export written
+since the earliest of them started. An export the person copied elsewhere is
+outside Heliox's reach.
+
+**Erasure that cannot finish at once.** When the OS keyring cannot be reached
+(the service then starts degraded, for example because the Secret Service is
+locked or not running at login), withdrawal and the expiry prune still delete
+every row and export file, but the key stays in the keyring for now, and the
+revoke reply carries `key_destroyed: false` and `pending: true`. An export file
+another program holds open is handled the same way and counted in
+`export_files_left`.
+What is left goes on a pending-erasure list next to the database
+(`co_adaptation_pending_erasure.json`, which holds only pseudonymous participant
+keys and export file names). Heliox retries it at every daemon start,
+`co_adaptation_status` read and prune, and on a repeated withdrawal, and deletes
+the list once it is empty; while it is not empty, `co_adaptation_status` reports
+`erasure_pending: true`. Until the retry succeeds, the key still decrypts the
+encrypted columns of backups and leftover pages and any export copied elsewhere,
+so crypto-shredding takes effect only when the keyring can be reached again.
+
+**What the probabilistic layers are, and are not.** The safety filter removes a
+variant whose credible upper bound on unintended activations exceeds the larger of
+the person's tolerance and the baseline's predicted mean plus a margin. It is a
+heuristic screen on model predictions with no guaranteed error rate: it ignores
+the baseline's own uncertainty, and it can admit a variant with an upper bound of
+5% absolute whenever the baseline predicts less than 4%. Calibration suspension
+(rule C7) is a tripwire for gross miscalibration: with 50 to 100 buffered trials
+it catches a true rate twice the predicted upper bound only about 14 to 21% of the
+time when that bound is 0.02 (38 to 55% at 0.05, 56 to 87% at 0.10). Neither is an
+authority control. The hard limits are the ambiguity rule (no learned,
+exploratory or fallback choice commits an ambiguous activation beyond the plain
+interface), rule C9 and the person's own rules.
+
+**Approval audit keys.** The only ledger change in this work is two additive
+payload keys on the existing `APPROVAL_RESOLVED` event. `input_channel` records
+the authority channel that answered (`dialog`, `gesture`, `voice_deny`,
+`internal`, `unknown`); it never records whether a pointer or a keyboard pressed
+the dialog's button. `resolution_path` records how the confirmation was resolved
+(`confirm_rpc`, `voice_deny`, `interject_deny`, `interject_correction`, `abort`),
+or why a plan approval ended without an answer the plan may act on, recorded as
+`decision: "expired"` from the `internal` channel: `timeout` (nobody answered in
+time), `shutdown` (the daemon stopped first; the durable approval is left
+EXPIRED, not DENIED) or `unacknowledged` (an approval whose `confirm` reply never
+reached the UI, so the person was never shown that it was accepted; it expires and
+the plan does not run). Decision latency is not written to the ledger, and no
+`ExperienceEventType` is added.
+
+**Known scope limits, stated plainly.** These stay as they are and are separate
+tasks:
+
+- Neural auto-commit after the 800 ms cancel window follows a positive, gated
+  neural selection of reversible Tier 0/1 goals; co-adaptation neither copies it
+  nor learns from it.
+- The Gesture Cursor's predicted-pinch OS click and its missing device-pixel-ratio
+  handling are untouched; the study uses its own in-window pointer and never moves
+  the OS cursor.
+- The Rust cursor commands run without a setting check. Co-adaptation code never
+  calls them (static test); hardening them is a separate task.
+- ScreenVisionAgent auto-start and the Cognitive Engine and supervision ingestion
+  of study input cadence remain; none of them feeds the co-adaptation model.
+- The `gaze_gesture_cursor_coexistence` release scenario passes only on
+  synthetic fixtures, and the study makes no claim about it.
+- Proactive suggestion dwell, voice clarification, AutonomousReviewer, the risk
+  gate, temporal memory, the ledger vocabulary, `ActionType` and the capability
+  catalog receive no co-adaptation output.
 
 ---
 
@@ -478,6 +641,8 @@ model itself.
 - `record_gaze()` — gaze region/confidence from the frontend's webcam gaze tracking, via `multimodal.fusion.on_gaze_event()`. Previously used only for a small intent-confidence bonus; an off-center gaze now also registers as a mild attention/distraction signal.
 - A small auditable keyword table (mirrors `pilot.security.risk_patterns`' "named rule, never persist the source text" contract) applied to whatever `stimulus_description` a caller passes. This parameter existed on the API since the TRIBE v2 days but `_predict_with_heuristics()` never actually read it — every caller building a real stimulus string (OCR snippet + window title in `UserSupervisionEngine`, app/window/VLM description in `screen_vision.py`) was doing that work for nothing. Only two bounded floats are ever derived from the text; the string itself is never stored or logged.
 
+**The stress pause is a cancel window, not a confirmation.** When `StressGate` gates an action, the executor says and shows "Pausing ten seconds before continuing. Say or press Stop to cancel." and continues after ten seconds unless the person stops the task. The pause asks for nothing and records nothing as approved: the action has already passed the permission, gateway and validation checks, an action the person approved in the dialog is not paused at all, and the pause only adds time to stop the task. The earlier wording ("Your focus state is low. Confirming in 10 seconds.") suggested a confirmation that did not exist. Timing and gating are unchanged, because acting on the stress estimate itself would act on a confounded heuristic.
+
 **Confidence now reflects real data richness** (how many signal streams have recent samples) instead of two fixed constants — still capped at 0.6, well below what a real trained model would report, so downstream consumers never mistake this for more certain than it is.
 
 **Known scope limits, stated plainly.** These are frequency/cadence/keyword/threshold heuristics, not a neural cognitive-state model. Intent-affinity scoring uses Jaccard word-overlap (intersection/union) plus a multi-word phrase-containment boost rather than a semantic model — it disambiguates literal wording, not meaning. If a genuinely open, permissively-licensed model in this space becomes available, swapping it in only requires reimplementing `CognitiveEngine`'s method surface (`predict_cognitive_state`/`predict_attention_map`/`predict_intent_affinity`) — every consumer (`AttentionAwareUI`, `StressGate`, `IntentPredictor`, `UserSupervisionEngine`, `screen_vision.py`, `subconscious.py`, `fusion.py`) already treats it as a duck-typed dependency injected at construction time, not tribev2/TRIBE-specific.
@@ -498,6 +663,44 @@ model itself.
 Cancellation also resolves an active approval future as denied. This lets an
 MCP-owned or interactive task leave `awaiting_approval` immediately instead of
 holding a stale confirmation wait until its timeout.
+
+**A denial is reported only for a plan that does not run.** Stop, a live
+correction and a denial phrase sent to the running task through `interject`
+(typed, or push-to-talk text) all deny a pending approval through one helper
+that holds the approval's decision lock. It writes the denial to the
+pending object before its first `await`, then turns an approval that a `confirm`
+already stored as APPROVED (but that the waiting task has not acted on) into
+DENIED in the durable store, then wakes the waiting task. The waiting task removes
+the approval from the pending list and reads the decision under the same lock, so
+it reads either the approval, before any denial ran (the denial then finds the
+approval gone and reports that nothing was denied), or the denial. A `confirm`
+that arrives after a denial is refused because the approval is resolved. Because
+the durable row says DENIED before the task writes its `APPROVAL_RESOLVED` event,
+the ledger and the durable store agree even if the process stops in between, and
+after a restart `resume_task` finalizes a corrected or aborted plan as cancelled
+("Task approval was denied.") instead of running it. The same locked read is used
+by the autonomous approval wait.
+
+If the durable denial write fails (a locked or broken task database), the denial
+still takes effect: the waiting task reads it at once, Stop and a correction
+still cancel the running step and interrupt live PTY sessions, and the durable
+task is marked `cancellation_requested`, so a restart finalizes it as cancelled
+instead of resuming a plan whose row may still read APPROVED.
+
+`resume_task` runs a plan only from an APPROVED durable approval and only with
+the actions that approval approved: an action that needed approval and is not in
+its `approved_indices` is dropped before anything runs. An approval that is not
+APPROVED, or that approved none of the actions that needed approval, returns
+`cancelled`; an approval whose action indices the plan's checkpoint does not
+have is an error, and nothing runs.
+
+The always-on voice listener does not use that helper. Its spoken "no" is sent
+as `confirm` with `input_channel: "voice_deny"`, and `confirm` refuses an
+approval that is already resolved. If the person clicks Approve and says "no"
+before the waiting task has acted on the approval, the spoken denial does not
+override it: the plan runs, the durable row and the ledger record the approval,
+and the listener replies that the approval was already answered, so nothing was
+denied, and points to Stop, which cancels the task.
 
 **Known scope limits, stated plainly.**
 - **The main typed and voice interaction path is covered** — voice dispatch now
@@ -604,9 +807,73 @@ skipped rather than fired late.
 Spoken "no", "deny" or "don't" denies whichever approval is pending, including
 background, scheduled and workflow approvals, because denying is always safe.
 Spoken "yes" or "approve" never approves: Heliox points to the visible dialog.
+A spoken denial is sent as `confirm` with `input_channel: "voice_deny"`, and the
+daemon refuses `confirmed: true` on that channel. Because `confirm` refuses an
+approval that is already resolved, a spoken denial changes nothing once the
+approval was answered in the dialog, even if the task has not acted on it yet;
+Heliox then says that nothing was denied and points to Stop.
+
+The same rule covers text sent to a running task, typed or from push-to-talk.
+While the task waits for approval, an approval phrase sent through `interject`
+returns `approval_requires_dialog` and leaves the approval pending; it is no
+longer treated as a correction, which used to deny and replan exactly what the
+person tried to approve. A denial phrase denies the approval directly, under the
+approval's decision lock, without logging a correction or replanning. Heliox
+answers "Okay, I won't run that." only when the denial took effect. If the
+approval had already been answered and acted on, the reply says that nothing was
+denied and points to Stop, so Heliox never claims to have stopped a plan that is
+running. The same rule covers a narrator `execution_interrupt` raised by a step
+of the running task: an approval phrase leaves it pending, a denial phrase denies
+it, and the reply names the interrupt's `interrupt_...` id as its `plan_id`.
 Voice-started workflows run under the same voice permission ceiling as
 interactive voice commands (the `voice` source profile is passed as their
 scope override), and they arm the human takeover watcher like background jobs.
+
+## Gesture approval needs a visible dialog and a fresh hand
+
+A thumbs-up or palm push approves only the actions checked in the confirmation
+dialog of that plan, exactly as the dialog's Approve button would; an unchecked
+action is never approved by gesture. The dialog is rebuilt for each plan, so
+checkbox state never carries over from an earlier approval, and an empty or
+unreported selection sends nothing ("Nothing is checked"). The daemon backs this
+up: a `confirm` that names the gesture channel without `approved_indices` is
+refused for plan approvals.
+
+Gesture approval also needs the dialog to be on screen: the Command tab is
+showing, the confirmation is the active dialog, the window is visible, and it has
+been visible for at least one second. After the dialog appears, the hand must
+leave the camera view and come back (or no hand be seen for half a second) before
+a gesture can approve, and the gesture must start after that re-arm; otherwise
+Heliox says "Lower your hand out of view, then raise it to approve by gesture." A hand that was pointing or pinching in the
+selection study therefore cannot approve a dialog the person has not seen. Deny
+by gesture keeps working once gestures are armed, and the dialog's Deny button
+and spoken denial work at once in every case.
+
+When the study's hand-pointer mode ends (a pause, an exit, a modal or an
+approval), every discrete gesture waits, approve, deny, navigation and gestures
+bound to workflows included: it re-arms only after the hand has left the view
+and come back, or after 500 ms without a hand, and a gesture that began before
+the re-arm is dropped. A pose held during the study can therefore never start a
+bound workflow.
+
+## Manual workflow recording skips the desktop app's window
+
+Manual-input workflow recording (a separate consent on top of recording
+consent) ignores input while the Heliox desktop app's window is in the
+foreground. The check runs on Windows only and reads the foreground window's
+title: it lowercases the title, treats hyphens and underscores as spaces and
+skips input only when the whole title is then "heliox os", which is the desktop
+app's "Heliox-OS" title. When Windows names the process that owns that window,
+the process must also be the Heliox executable. A browser page, editor or folder
+whose title only mentions the project is recorded. Before, clicks inside the
+desktop app, including selection-study clicks, could be captured. The check does
+not cover the UI opened in a browser, whose page is titled "Pilot", and on Linux
+and macOS nothing is skipped, so in those cases clicks and keystrokes inside
+Heliox's own UI go into the recording.
+Independently, the selection study refuses to start or
+continue while any recording is active: the daemon re-checks at every block
+start, resume and recorded trial, and the study pauses as soon as a
+`recorded_workflow_status_changed` notification says a recording started.
 
 ## ✋ Human takeover of the desktop
 
