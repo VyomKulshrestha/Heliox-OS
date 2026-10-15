@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import math
 import subprocess
 import sys
 from datetime import timedelta
@@ -510,7 +511,9 @@ def test_fixture_regeneration_reproduces_the_committed_file(tmp_path: Path) -> N
         check=True,
         capture_output=True,
     )
-    assert out.read_bytes() == FIXTURE.read_bytes()
+    # Compared as parsed JSON: line endings change with core.autocrlf, and the last float digits change with the
+    # platform's math library.
+    _assert_json_close(json.loads(out.read_text(encoding="utf-8")), json.loads(FIXTURE.read_text(encoding="utf-8")))
 
 
 # ------------------------------------------------------------------------------------------------- hooks, tables
@@ -600,3 +603,20 @@ def test_recommendation_payload_shape() -> None:
     for word in ("stress", "attention", "health"):
         assert word not in text
     assert AH2 and l2 and timedelta and Decision and AmbiguityTable  # imported helpers stay in use
+
+
+def _assert_json_close(actual: object, expected: object, path: str = "$") -> None:
+    """Equal JSON, with floats compared to 1e-9 relative: the last digits differ between platforms' math libraries."""
+    if isinstance(expected, float) or isinstance(actual, float):
+        assert isinstance(actual, (int, float)) and isinstance(expected, (int, float)), path
+        assert math.isclose(actual, expected, rel_tol=1e-9, abs_tol=1e-12), (path, actual, expected)
+    elif isinstance(expected, dict):
+        assert isinstance(actual, dict) and actual.keys() == expected.keys(), path
+        for key in expected:
+            _assert_json_close(actual[key], expected[key], f"{path}.{key}")
+    elif isinstance(expected, list):
+        assert isinstance(actual, list) and len(actual) == len(expected), path
+        for index, (a, e) in enumerate(zip(actual, expected, strict=True)):
+            _assert_json_close(a, e, f"{path}[{index}]")
+    else:
+        assert actual == expected, (path, actual, expected)

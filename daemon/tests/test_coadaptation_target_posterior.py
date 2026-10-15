@@ -180,8 +180,9 @@ def test_fixture_cli_reproduces_the_committed_fixture(tmp_path: Path) -> None:
         check=True,
         capture_output=True,
     )
-    # The CLI writes LF line endings; a Windows checkout with core.autocrlf may turn the committed copy into CRLF.
-    assert out.read_bytes() == FIXTURE.read_bytes().replace(b"\r\n", b"\n")
+    # Compared as parsed JSON: line endings change with core.autocrlf, and the last float digits change with the
+    # platform's math library. Same structure and values to 1e-9 relative is the parity contract.
+    _assert_json_close(json.loads(out.read_text(encoding="utf-8")), json.loads(FIXTURE.read_text(encoding="utf-8")))
 
 
 def test_fixture_contents() -> None:
@@ -225,3 +226,20 @@ def test_fixture_contents() -> None:
             assert abs(a - b) <= 1e-12 + 1e-9 * abs(b)
         assert (res.n_plausible, res.has_hit, res.hit_index) == (exp["n_plausible"], exp["has_hit"], exp["hit_index"])
         assert abs(res.ambiguity_gate - exp["ambiguity_gate"]) <= 1e-12
+
+
+def _assert_json_close(actual: object, expected: object, path: str = "$") -> None:
+    """Equal JSON, with floats compared to 1e-9 relative: the last digits differ between platforms' math libraries."""
+    if isinstance(expected, float) or isinstance(actual, float):
+        assert isinstance(actual, (int, float)) and isinstance(expected, (int, float)), path
+        assert math.isclose(actual, expected, rel_tol=1e-9, abs_tol=1e-12), (path, actual, expected)
+    elif isinstance(expected, dict):
+        assert isinstance(actual, dict) and actual.keys() == expected.keys(), path
+        for key in expected:
+            _assert_json_close(actual[key], expected[key], f"{path}.{key}")
+    elif isinstance(expected, list):
+        assert isinstance(actual, list) and len(actual) == len(expected), path
+        for index, (a, e) in enumerate(zip(actual, expected, strict=True)):
+            _assert_json_close(a, e, f"{path}[{index}]")
+    else:
+        assert actual == expected, (path, actual, expected)

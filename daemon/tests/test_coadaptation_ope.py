@@ -554,7 +554,7 @@ def test_estimates_carry_a_grouped_interval_with_two_participants() -> None:
     ]
     estimate = ips(blocks, _uniform_target)
     assert estimate.ci95 is not None
-    assert estimate.ci95[0] <= estimate.value <= estimate.ci95[1]
+    assert estimate.ci95[0] - 1e-9 <= estimate.value <= estimate.ci95[1] + 1e-9  # bounds may round past the value
 
 
 # -------------------------------------------------------------------------------------------------- frozen target
