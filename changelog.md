@@ -1,12 +1,29 @@
 ---
 title: Heliox OS changelog
 canonical_url: https://www.helioxos.dev/changelog.md
-last_updated: 2026-08-27
+last_updated: 2026-10-16
 ---
 
 # Heliox OS changelog
 
 This page is generated from the changelog shipped by the Heliox daemon. It distinguishes published installers from draft and source-only milestones; current limitations remain in the proof center.
+
+## 0.14.0 — Co-Adaptive Assistance and Governed Desktop Agency
+
+Status: **Published**
+
+Released: **2026-10-16**
+
+Consented assistance co-adaptation, accessibility-grounded desktop control, durable and scheduled autonomy, MCP tools, voice-first control while working, and fail-closed settings and approvals
+
+- **Assistance Co-Adaptation** — An opt-in, consented selection study models how a person, the interface and Heliox adapt to each other and predicts which help suits this person today (a larger target, a confirm step, a clarifying question or another input) within rules the person sets. It changes presentation only, never commits an ambiguous selection by guessing, and every published result so far comes from simulated users.
+- **Accessibility-Grounded Desktop Control** — Desktop clicks are grounded in the accessibility tree instead of pixels, buttons can be pressed in the background without moving the cursor, browser actions use page snapshots, and the person can take the desktop back at any time while Heliox can hand it over when it needs help. No virtual machine is involved.
+- **Durable and Scheduled Autonomy** — Autonomous jobs survive daemon restarts and resume only when the person asks, scheduled runs are limited to an approved list of actions, unreachable goals are reported instead of faked, and each tool call of background work appears as a card in chat.
+- **Tools from Your MCP Servers** — Heliox can call tools from the person's own MCP servers listed in mcp_servers.json. Read-only tools run directly, every other tool asks first, and Settings shows each server with a reload button.
+- **Voice-First Control While Heliox Works** — Speaking while a task runs does what the person means: corrections, questions and a spoken no reach the running task, background approval dialogs stay open while the person keeps working, and the approval dialog shows what an action will actually run. The world model reviews every autonomous plan.
+- **Fail-Closed Settings and Approvals** — Settings change safely while work runs and survive unreadable or hand-edited config files; an action family a gateway profile does not list is read-only; an approval that is never answered expires instead of running; a plan resumed after a restart runs only the ticked actions; and a gesture can approve only a dialog the person can see.
+
+[Release artifacts](https://github.com/VyomKulshrestha/Heliox-OS/releases/tag/v0.14.0)
 
 ## 0.13.0 — Verified Autonomy and Runtime Hardening
 

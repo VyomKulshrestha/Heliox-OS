@@ -7,7 +7,7 @@
   "codeRepository": "https://github.com/VyomKulshrestha/Heliox-OS",
   "issueTracker": "https://github.com/VyomKulshrestha/Heliox-OS/issues",
   "url": "https://www.helioxos.dev/",
-  "version": "0.13.0",
+  "version": "0.14.0",
   "license": "https://spdx.org/licenses/MIT.html",
   "programmingLanguage": ["Python", "Rust", "TypeScript", "Svelte"],
   "operatingSystem": ["Windows", "macOS", "Linux"],

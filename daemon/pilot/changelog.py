@@ -10,11 +10,88 @@ from typing import Any
 
 logger = logging.getLogger("pilot.changelog")
 
-VERSION = "0.13.0"
-PUBLIC_RELEASE_VERSION = "0.13.0"
-PUBLISHED_RELEASE_VERSIONS = ("0.13.0", "0.12.0", "0.11.1", "0.9.0")
+VERSION = "0.14.0"
+PUBLIC_RELEASE_VERSION = "0.14.0"
+PUBLISHED_RELEASE_VERSIONS = ("0.14.0", "0.13.0", "0.12.0", "0.11.1", "0.9.0")
 
 CHANGELOG = {
+    "0.14.0": {
+        "title": "Co-Adaptive Assistance and Governed Desktop Agency",
+        "date": "2026-10-16",
+        "features": [
+            {
+                "name": "Assistance Co-Adaptation",
+                "description": (
+                    "An opt-in, consented selection study models how a person, the interface and Heliox adapt "
+                    "to each other and predicts which help suits this person today (a larger target, a confirm "
+                    "step, a clarifying question or another input) within rules the person sets. It changes "
+                    "presentation only, never commits an ambiguous selection by guessing, and every published "
+                    "result so far comes from simulated users."
+                ),
+                "jarvis_announce": (
+                    "I can now run a consented selection study that learns which kind of help suits you, "
+                    "within your own rules."
+                ),
+            },
+            {
+                "name": "Accessibility-Grounded Desktop Control",
+                "description": (
+                    "Desktop clicks are grounded in the accessibility tree instead of pixels, buttons can be "
+                    "pressed in the background without moving the cursor, browser actions use page snapshots, "
+                    "and the person can take the desktop back at any time while Heliox can hand it over when "
+                    "it needs help. No virtual machine is involved."
+                ),
+                "jarvis_announce": (
+                    "I now act on real interface elements instead of pixels, and you can take the desktop back "
+                    "at any time."
+                ),
+            },
+            {
+                "name": "Durable and Scheduled Autonomy",
+                "description": (
+                    "Autonomous jobs survive daemon restarts and resume only when the person asks, scheduled "
+                    "runs are limited to an approved list of actions, unreachable goals are reported instead "
+                    "of faked, and each tool call of background work appears as a card in chat."
+                ),
+                "jarvis_announce": "Background jobs now survive restarts and scheduled runs stay inside an approved list.",
+            },
+            {
+                "name": "Tools from Your MCP Servers",
+                "description": (
+                    "Heliox can call tools from the person's own MCP servers listed in mcp_servers.json. "
+                    "Read-only tools run directly, every other tool asks first, and Settings shows each server "
+                    "with a reload button."
+                ),
+                "jarvis_announce": "I can now use tools from your own MCP servers, asking before anything that changes state.",
+            },
+            {
+                "name": "Voice-First Control While Heliox Works",
+                "description": (
+                    "Speaking while a task runs does what the person means: corrections, questions and a "
+                    "spoken no reach the running task, background approval dialogs stay open while the person "
+                    "keeps working, and the approval dialog shows what an action will actually run. The world "
+                    "model reviews every autonomous plan."
+                ),
+                "jarvis_announce": "You can now talk to me while I work, and I show exactly what each approval will run.",
+            },
+            {
+                "name": "Fail-Closed Settings and Approvals",
+                "description": (
+                    "Settings change safely while work runs and survive unreadable or hand-edited config files; "
+                    "an action family a gateway profile does not list is read-only; an approval that is never "
+                    "answered expires instead of running; a plan resumed after a restart runs only the ticked "
+                    "actions; and a gesture can approve only a dialog the person can see."
+                ),
+                "jarvis_announce": (
+                    "Unanswered approvals now expire instead of running, and I only resume the actions you ticked."
+                ),
+            },
+        ],
+        "summary": (
+            "Consented assistance co-adaptation, accessibility-grounded desktop control, durable and scheduled "
+            "autonomy, MCP tools, voice-first control while working, and fail-closed settings and approvals"
+        ),
+    },
     "0.13.0": {
         "title": "Verified Autonomy and Runtime Hardening",
         "date": "2026-08-27",

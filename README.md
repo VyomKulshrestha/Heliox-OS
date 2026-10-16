@@ -39,9 +39,9 @@ User intent → Planner → Permission and risk gates → Specialist → Executo
                     ↘ durable task state, memory, audit, cancellation and recovery ↗
 ```
 
-Published release: **v0.13.0** · Python **3.11+** · Windows is the primary hardware-development platform.
+Published release: **v0.14.0** · Python **3.11+** · Windows is the primary hardware-development platform.
 
-v0.13.0 strengthens truthful terminal outcomes, transactional live settings, authenticated peer collaboration, multimodal and neural arbitration, runtime cleanup, and measured execution quality. Provider subscriptions, integrations, peers, hardware inputs, and host actions remain subject to their documented availability and safety boundaries.
+v0.14.0 adds a consented assistance co-adaptation study, accessibility-grounded desktop control with human takeover, restart-surviving and scheduled autonomous jobs, tools from your own MCP servers, voice-first control while a task runs, and fail-closed settings, gateway profiles and approvals. Provider subscriptions, integrations, peers, hardware inputs, and host actions remain subject to their documented availability and safety boundaries.
 
 ## Why Heliox
 
@@ -61,12 +61,12 @@ v0.13.0 strengthens truthful terminal outcomes, transactional live settings, aut
 | Action schema        | 162 declared action types                                                                     | Availability depends on OS, dependencies, permissions, credentials, and policy                 |
 | Specialist mesh      | 21 executable specialists with providers for 162/162 declared actions                         | Provider coverage is not universal environment compatibility                                   |
 | Outcome verification | 22 actions have an independent observed post-condition verifier                               | The other 140 currently rely on the executor result                                            |
-| Guarded fast path    | 26.476 ms median, 27.999 ms p95 across 100 non-LLM CPU-usage iterations; zero model calls     | This is not provider, browser, voice, camera, TTS, neural, or full-workflow latency            |
+| Guarded fast path    | 26.155 ms median, 27.354 ms p95 across 100 non-LLM CPU-usage iterations; zero model calls     | This is not provider, browser, voice, camera, TTS, neural, or full-workflow latency            |
 | Subscription planning | 3/3 fixed Codex CLI cases; 14.708 s median; zero executed or destructive actions             | One account and planning only; not action-execution, Claude, or universal provider evidence     |
 | Intent dispatch      | 59/59 curated bounded-intent and ambiguous-fall-through regression cases                     | Fixed corpus; not population-level language-understanding accuracy                            |
 | Typed decisions      | Gnomon v4.1 (Qwen3.5-2B QLoRA): 98.3% yes/no and 100% choice accuracy, 0 false allowances on a fresh 128-case authored set | Opt-in; reviews autonomous plans but can only ask for approval; authored labels; rating error 0.202 vs 0.024 for the hosted reference model |
 | Learned risk model   | 25,200 training, 5,400 calibration, and 5,400 temporal-validation samples; 5/5 direction invariants | Covers 12 coarse disk/process action transitions; deterministic policy remains authoritative |
-| Async responsiveness | 66 heartbeats during a real one-second CPU monitor; 16.575 ms maximum heartbeat interval      | Windows timer granularity and host load apply; this is not UI or hardware-input latency        |
+| Async responsiveness | 65 heartbeats during a real one-second CPU monitor; 16.651 ms maximum heartbeat interval      | Windows timer granularity and host load apply; this is not UI or hardware-input latency        |
 | Plugins              | 6 manifests in the generated public catalog                                                   | Marketplace and local plugins remain capability-constrained                                    |
 | CI                   | Python, frontend, visual, Rust, marketplace, and installer gates                              | CI does not prove camera, microphone, speaker, EEG, or human accuracy                          |
 | Windows signing      | SignPath test-policy workflow signs and verifies EXE, MSI, and embedded application artifacts | The production certificate is pending; current public installers are not yet production-signed |
@@ -77,7 +77,7 @@ v0.13.0 strengthens truthful terminal outcomes, transactional live settings, aut
 - [Human-readable evidence and limitations](https://www.helioxos.dev/proof.html)
 - [Detailed Markdown evidence](proof.md)
 - [Machine-readable capability catalog](capabilities.json)
-- [Current software benchmark snapshot](docs/evidence/software-benchmarks-2026-09-25.json)
+- [v0.14.0 release software benchmark snapshot](docs/evidence/software-benchmarks-2026-10-16.json)
 - [Raw subscription-planning evidence](docs/evidence/subscription-planning-codex-2026-08-16.json)
 - [Historical guarded fast-path benchmark](docs/evidence/react-latency-2026-08-12.json)
 - [Live CI history](https://github.com/VyomKulshrestha/Heliox-OS/actions)

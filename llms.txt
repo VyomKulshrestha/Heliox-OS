@@ -5,7 +5,7 @@
 Important interpretation notes:
 
 - Heliox OS is a desktop application, not an operating-system kernel or a replacement for Windows, macOS, or Linux.
-- The published v0.13.0 installers declare 157 action types across 21 executable specialists. Provider coverage does not establish universal host availability or independent outcome verification.
+- The published v0.14.0 installers declare 162 action types across 21 executable specialists. Provider coverage does not establish universal host availability or independent outcome verification.
 - Commands run through typed permissions, confirmation gates, verification, and recovery controls; documentation must not imply unrestricted autonomy.
 - Neural-intent support is research infrastructure. Synthetic and recorded-EEG tests do not establish live brain control, human accuracy, medical use, or clinical efficacy.
 - Local-first features can still call explicitly configured model or integration providers. Current `main` supports local Ollama plus Gemini, OpenAI, OpenRouter, Claude, and Meta adapters. OpenRouter accepts exact catalog model IDs, including current DeepSeek IDs; this is not a claim that every catalog model is a separately integrated backend. Consult the privacy and security documents before making data-handling claims.
@@ -36,7 +36,7 @@ Important interpretation notes:
 ## Releases and Support
 
 - [Releases](https://github.com/VyomKulshrestha/Heliox-OS/releases): Published desktop installers and release notes.
-- [v0.13.0 release notes](https://github.com/VyomKulshrestha/Heliox-OS/blob/main/docs/releases/v0.13.0.md): Current features, verification snapshot, upgrade guidance, and evidence boundaries.
+- [v0.14.0 release notes](https://github.com/VyomKulshrestha/Heliox-OS/blob/main/docs/releases/v0.14.0.md): Current features, verification snapshot, upgrade guidance, and evidence boundaries.
 - [Generated Changelog](https://github.com/VyomKulshrestha/Heliox-OS/blob/main/changelog.md): Release milestones generated from the changelog shipped by the daemon.
 - [Machine-readable Releases](https://github.com/VyomKulshrestha/Heliox-OS/blob/main/releases.json): Current version and structured release features.
 - [JSON Feed](https://github.com/VyomKulshrestha/Heliox-OS/blob/main/releases.feed.json): JSON Feed 1.1 release updates.
