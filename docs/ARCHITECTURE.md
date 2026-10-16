@@ -422,6 +422,29 @@ The mesh exposes approved plugin tools as guarded external providers for
 diagnostics, but does not execute plugin code directly. Plugin calls remain
 behind the capability broker and planner approval path.
 
+### 12. Assistance co-adaptation (interaction world model)
+
+The hybrid world model above predicts what an action does to the machine. The
+co-adaptation model in `daemon/pilot/coadaptation` predicts what a way of
+helping does to the person: for each assistance variant (accept the click,
+enlarge the target, add a confirm step, wait for another try, ask which item
+was meant, suggest another input) it predicts completion, corrections,
+unintended activations, time and rated burden for this person today. Physics
+priors (Fitts-style timing, endpoint scatter) are updated per person with
+filters that forget over days and sessions, practice and switching-cost terms
+represent the person adapting to the interface, and a CUSUM alarm detects drift.
+
+A constrained policy chooses among the variants the person's explicit rules
+allow, logs exact propensities for off-policy evaluation, and never commits an
+ambiguous selection by guessing: only the person's own "always select exactly
+what I click" rule can. It runs only inside the consented selection study in
+Heliox's own window and changes presentation only. It has no path to
+`confirm`, execution, cursor commands, the gateway or the risk gate, and an
+import-boundary test keeps the core free of authority modules. The core
+(`pilot.coadaptation.core`, stdlib and numpy) is also the basis of a small SDK
+for assisted selection in host-rendered menus. See
+[COADAPTATION.md](COADAPTATION.md) for the model, consent and evidence status.
+
 ## Action execution and coverage
 
 `ActionType` declares 162 actions. Startup builds the provider index and the
@@ -542,8 +565,13 @@ checks:
 8. adapter-level allowlists or plugin capabilities;
 9. post-action environment verification and audit.
 
-Per-task scope overrides can only narrow a shipped gateway profile. No learned
-model, memory, plugin, strategy candidate, or specialist may widen authority.
+Per-task scope overrides can only narrow a shipped gateway profile, and an action
+family a profile does not list is treated as read-only. No learned model, memory,
+plugin, strategy candidate, or specialist may widen authority. An approval that is
+not answered, or whose reply never reaches the window, expires; a plan resumed
+after a restart runs only its approved actions. Assistance co-adaptation sits
+outside this order: it changes how the study presents targets and never reaches
+an adapter.
 
 ## Persistent state
 
@@ -562,6 +590,8 @@ All state is local unless the user explicitly configures an external service:
 | Permission and gateway audit stores | Independent tamper-evident decision chains |
 | Neural intent audit | HMAC-chained window, intent, preview, commit, plan, result, disarm, and marker provenance without raw EEG |
 | Consented neural recordings | Purpose-bound encrypted local `.neeg` files with expiry and optional BIDS export; absent by default |
+| Co-adaptation study store | `co_adaptation.db`: per-participant AES-256-GCM rows keyed in the OS keyring, purpose-bound consent with expiry, erased with the key on revoke; absent by default |
+| Co-adaptation rules | `co_adaptation_preferences.json`: the person's explicit assistance rules (never written by learning) |
 
 API keys live in the operating-system credential store, not in these databases.
 

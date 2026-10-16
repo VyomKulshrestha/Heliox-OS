@@ -124,6 +124,7 @@ No comparison declares a universal winner. See the [transparent cost page](https
 | Gesture and gaze       | 30+ gesture mappings, MediaPipe Tasks 3D landmarks, coarse gaze fusion, calibration, temporal rejection, and opt-in cursor control                         |
 | Background workflows   | Durable jobs with pause, resume, cancellation, restart recovery, and guarded autonomous execution                                                          |
 | Hybrid risk model      | Deterministic policy plus structured transitions, learned risk, executor-callback history, verified outcome adaptation, and optional shadow UI-JEPA; learned output can only add caution |
+| Assistance co-adaptation | Opt-in, consented selection study inside Heliox's window: a world model of the person, the interface and Heliox predicts which help (larger targets, a confirm step, a clarifying question, another input) suits this person today, within rules the person sets; it changes presentation only and never approves or runs anything |
 | Bounded learning       | Provenance-aware temporal memory, repeated-evidence promotion, replay, drift detection, and reset controls                                                 |
 | Plugin ecosystem       | Reviewed GitHub marketplace, signed local plugins, per-file hashes, capability manifests, and constrained native/WASM brokers                              |
 | Neural research        | BrainFlow synthetic, recorded EEG playback, public EEGBCI benchmarking, calibrated SSVEP selection, replay-safe Tier 0/1 goals, and explicit staged autonomous task launch |
@@ -170,8 +171,9 @@ Core guarantees:
 
 - Structured schema validation before execution.
 - Five permission tiers plus a separate irreversibility flag for effects that snapshots cannot undo.
-- Per-action approval for system-modifying, destructive, root-critical, and irreversible work.
-- Source-scoped gateway floors that a task override may narrow but cannot widen.
+- Per-action approval for system-modifying, destructive, root-critical, and irreversible work. An approval that is never answered, or whose reply never reaches the window, expires instead of running; a plan resumed after a restart runs only the actions that were ticked.
+- A gesture can approve only a dialog that has been visible for a second, and only the ticked actions.
+- Source-scoped gateway floors that a task override may narrow but cannot widen; an action family a profile does not list is read-only.
 - Snapshot requirements that fail closed when a required backend is unavailable.
 - HMAC-chained audit records for elevated permission and gateway decisions.
 - Real cancellation of in-flight commands and durable reconciliation after reconnect or restart.
@@ -179,6 +181,7 @@ Core guarantees:
 - OS credential stores for API keys; credentials are never written to `.env` or included in plans.
 - Air Handoff is off by default; a paired phone can receive only content explicitly held and dropped to it, never daemon RPC or desktop-control authority.
 - Gesture cursor control is off by default and exits on an open palm, stop control, or disabled setting.
+- Assistance co-adaptation is off by default and stores nothing without a per-purpose consent record. Its data is encrypted with a per-participant key in the OS keyring, and revoking, expiry or erasing deletes the data and the key. It never commits an ambiguous selection by guessing.
 
 | Tier | Level         | Default behavior | Examples                                             |
 | ---- | ------------- | ---------------- | ---------------------------------------------------- |
@@ -328,6 +331,12 @@ transcription_engine = "auto"
 whisper_model = "small"
 language = "auto"
 tts_engine = "kokoro_tts"
+
+[co_adaptation]
+enabled = false              # the selection study; also needs a consent record per participant
+adaptive_enabled = false     # learned choices from the second session; also needs the adaptive_assistance purpose
+learn_across_sessions = false
+ambiguity_threshold = 0.25   # may only be made stricter; never learned
 ```
 
 OpenRouter uses its OpenAI-compatible endpoint. Settings and first-run setup offer automatic routing, DeepSeek V4 Pro, the latest DeepSeek V4 Flash alias, and other current aliases; an exact OpenRouter catalog model ID can also be entered manually. Provider keys remain in the operating-system credential store.
@@ -373,6 +382,7 @@ Kokoro, Pocket TTS, gaze, gesture tracking, and the learned-risk model are CPU-c
 | Voice and TTS           | Routing, fallback, interruption, cancellation, synthetic ASR, and non-executing microphone-test coverage; human microphone accuracy and audible quality still require human checks |
 | Neural intent           | Synthetic BrainFlow and recorded EEG paths are tested. A user may stage up to eight text-authored goals and use calibrated focus/select to launch one through normal autonomous decomposition, specialist routing, permissions, approvals, and verification. No live headset accuracy, unrestricted thought reading, medical use, or physical authority is established. |
 | Cognitive HUD           | Behavioural estimates from local interaction signals, not physiological or medical measurements                                            |
+| Assistance co-adaptation | Model, policy, consent store and in-app study are built and tested; every published result comes from simulated users. No claim about people until the pre-registered human study reports. EEG is not part of it. |
 | Air Handoff             | Automated pairing, cryptography, replay, expiry, file-snapshot, and browser-receiver tests pass. A real phone, LAN/firewall, QR scan, and mobile download still require a human hardware/network check. |
 
 <a id="troubleshooting"></a>
@@ -399,6 +409,7 @@ Open a [bug report](https://github.com/VyomKulshrestha/Heliox-OS/issues/new/choo
 - [Plugin marketplace](docs/PLUGIN_MARKETPLACE.md)
 - [Neural intent research controls](docs/NEURAL_INTENT.md)
 - [Intelligence evaluation and research map](docs/INTELLIGENCE_EVALUATION.md)
+- [Assistance co-adaptation: model, consent and evidence](docs/COADAPTATION.md)
 - [Opt-in recorded workflows and local visual samples](docs/RECORDED_WORKFLOWS.md)
 - [Gnomon typed-decision model: training, gates and results](docs/GNOMON_TRAINING.md)
 - [Public decision-corpus adaptation log](docs/PUBLIC_CORPUS_ADAPTATION.md)

@@ -29,6 +29,7 @@ Important interpretation notes:
 
 - [Evidence and Limitations](https://github.com/VyomKulshrestha/Heliox-OS/blob/main/proof.md): Generated action coverage, live CI links, measured local latency, hardware claim boundaries, known limitations, and representative closed regressions.
 - [Neural Intent](https://github.com/VyomKulshrestha/Heliox-OS/blob/main/docs/NEURAL_INTENT.md): Synthetic-board, recorded-EEG, provenance, calibration, and live-hardware claim boundaries.
+- [Assistance Co-Adaptation](https://github.com/VyomKulshrestha/Heliox-OS/blob/main/docs/COADAPTATION.md): Opt-in, consented world model of how a person, the interface and Heliox adapt to each other in a selection study; presentation-only, simulated-user evidence only.
 - [Security Policy](https://github.com/VyomKulshrestha/Heliox-OS/blob/main/SECURITY.md): Supported security controls and responsible disclosure.
 - [Contributing](https://github.com/VyomKulshrestha/Heliox-OS/blob/main/CONTRIBUTING.md): Required checks, review process, and contribution expectations.
 
