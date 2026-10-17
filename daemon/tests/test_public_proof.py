@@ -46,6 +46,9 @@ def test_public_proof_exposes_evidence_boundaries(tmp_path: Path) -> None:
     assert "3/3 fixed planning cases" in text
     assert "side-effect-free planning only; no action was executed" in text
     assert "subscription-planning-codex-2026-08-16.json" in text
+    assert "simulated users only; tuning families, in-sample; no claim about people" in text
+    assert "does not beat the plain interface for every simulated family" in text
+    assert "No model was promoted by this benchmark" in text
 
 
 def test_committed_public_proof_is_current(tmp_path: Path) -> None:

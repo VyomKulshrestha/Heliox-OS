@@ -61,12 +61,13 @@ v0.14.0 adds a consented assistance co-adaptation study, accessibility-grounded 
 | Action schema        | 162 declared action types                                                                     | Availability depends on OS, dependencies, permissions, credentials, and policy                 |
 | Specialist mesh      | 21 executable specialists with providers for 162/162 declared actions                         | Provider coverage is not universal environment compatibility                                   |
 | Outcome verification | 22 actions have an independent observed post-condition verifier                               | The other 140 currently rely on the executor result                                            |
-| Guarded fast path    | 26.155 ms median, 27.354 ms p95 across 100 non-LLM CPU-usage iterations; zero model calls     | This is not provider, browser, voice, camera, TTS, neural, or full-workflow latency            |
+| Guarded fast path    | 28.727 ms median, 32.192 ms p95 across 100 non-LLM CPU-usage iterations; zero model calls (18 October 2026) | This is not provider, browser, voice, camera, TTS, neural, or full-workflow latency            |
 | Subscription planning | 3/3 fixed Codex CLI cases; 14.708 s median; zero executed or destructive actions             | One account and planning only; not action-execution, Claude, or universal provider evidence     |
 | Intent dispatch      | 59/59 curated bounded-intent and ambiguous-fall-through regression cases                     | Fixed corpus; not population-level language-understanding accuracy                            |
 | Typed decisions      | Gnomon v4.1 (Qwen3.5-2B QLoRA): 98.3% yes/no and 100% choice accuracy, 0 false allowances on a fresh 128-case authored set | Opt-in; reviews autonomous plans but can only ask for approval; authored labels; rating error 0.202 vs 0.024 for the hosted reference model |
 | Learned risk model   | 25,200 training, 5,400 calibration, and 5,400 temporal-validation samples; 5/5 direction invariants | Covers 12 coarse disk/process action transitions; deterministic policy remains authoritative |
-| Async responsiveness | 65 heartbeats during a real one-second CPU monitor; 16.651 ms maximum heartbeat interval      | Windows timer granularity and host load apply; this is not UI or hardware-input latency        |
+| Async responsiveness | 64 heartbeats during a real one-second CPU monitor; 25.061 ms maximum heartbeat interval      | Windows timer granularity and host load apply; this is not UI or hardware-input latency        |
+| Assistance co-adaptation | 3/3 policy agency audits passed on two simulated tuning families, five simulated people per family | In-sample simulation only; the adaptive engine does not beat the plain interface for every family; no human accuracy claim |
 | Plugins              | 6 manifests in the generated public catalog                                                   | Marketplace and local plugins remain capability-constrained                                    |
 | CI                   | Python, frontend, visual, Rust, marketplace, and installer gates                              | CI does not prove camera, microphone, speaker, EEG, or human accuracy                          |
 | Windows signing      | SignPath test-policy workflow signs and verifies EXE, MSI, and embedded application artifacts | The production certificate is pending; current public installers are not yet production-signed |
@@ -77,7 +78,8 @@ v0.14.0 adds a consented assistance co-adaptation study, accessibility-grounded 
 - [Human-readable evidence and limitations](https://www.helioxos.dev/proof.html)
 - [Detailed Markdown evidence](proof.md)
 - [Machine-readable capability catalog](capabilities.json)
-- [v0.14.0 release software benchmark snapshot](docs/evidence/software-benchmarks-2026-10-16.json)
+- [Latest v0.14.0 software benchmark snapshot (18 October 2026)](docs/evidence/software-benchmarks-2026-10-18.json)
+- [Original v0.14.0 release benchmark snapshot](docs/evidence/software-benchmarks-2026-10-16.json)
 - [Raw subscription-planning evidence](docs/evidence/subscription-planning-codex-2026-08-16.json)
 - [Historical guarded fast-path benchmark](docs/evidence/react-latency-2026-08-12.json)
 - [Live CI history](https://github.com/VyomKulshrestha/Heliox-OS/actions)

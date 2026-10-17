@@ -51,6 +51,37 @@ def _percent_reduction(before: float, after: float) -> float:
     return round((before - after) / before * 100, 1)
 
 
+def _coadaptation_proof(entry: dict[str, Any] | None) -> str:
+    if entry is None:
+        return ""
+    rows = []
+    for family, result in entry["metrics"]["by_family"].items():
+        for policy, metrics in result["policies"].items():
+            rows.append(
+                f"| {family} | `{policy}` | {metrics['people']} | "
+                f"{metrics['realized_utility_per_trial']['mean']:.3f} | "
+                f"{100 * metrics['ua_per_trial']:.2f}% | "
+                f"{metrics['acting_under_ambiguity']} | {metrics['constraint_violations']} |"
+            )
+    passed = sum(audit["passed"] for audit in entry["agency_audit"].values())
+    return (
+        "### Assistance co-adaptation: simulated users\n\n"
+        f"**{entry['claim_boundary']}**. Scope: {entry['scope']}. "
+        "F1 represents precise mouse users and F3 represents hand-pointer novices in the simulator.\n\n"
+        "| Family | Policy | Simulated people | Utility per trial | Unintended activations | "
+        "Acts on ambiguous input | Rule violations |\n"
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: |\n"
+        + "\n".join(rows)
+        + f"\n\nAgency audits passed **{passed}/{len(entry['agency_audit'])} policies**. "
+        "The adaptive engine does not beat the plain interface for every simulated family. "
+        "These tuning families share the model's functional forms; this run does not establish "
+        "held-out generalization or an improvement for real people. No model was promoted by this benchmark. "
+        "The feature is opt-in and changes presentation only.\n\n"
+        f"Protocol SHA-256: `{entry['protocol_sha256']}`. "
+        f"[Study, consent and reproduction details]({REPOSITORY_URL}/blob/main/docs/COADAPTATION.md).\n\n"
+    )
+
+
 def build_proof() -> str:
     capabilities = _load_json(REPO_ROOT / "capabilities.json")
     legacy_latency = _load_json(REPO_ROOT / "docs" / "evidence" / "react-latency-2026-08-12.json")
@@ -186,7 +217,7 @@ The shipped `{world_model["model_version"]}` artifact records **{world_model["tr
 
 The audit passed **{world_model["direction_checks_passed"]}/{len(world_model["direction_checks"])} direction invariants** and measured **{world_model["inference"]["median_ms"]:.3f} ms median** inference. These are coarse disk/process predictions. Deterministic safety rules remain authoritative; this is not a general physical-world or user-intent model.
 
-### Subscription-backed planning
+{_coadaptation_proof(benchmarks.get("coadaptation_simulated_users"))}### Subscription-backed planning
 
 A developer-machine run through the official **{subscription_benchmark["provider"].title()} CLI** passed **{subscription_benchmark["passed"]}/{subscription_benchmark["case_count"]} fixed planning cases** with **{subscription_benchmark["median_latency_seconds"]:.3f} s median** provider round-trip latency. The provider reported `{subscription_benchmark["provider_cli_version"]}` with model `{subscription_benchmark["model"]}`.
 

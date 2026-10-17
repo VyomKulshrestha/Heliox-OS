@@ -2,7 +2,7 @@
 
 > This page separates reproducible software evidence, live CI status, developer-run hardware observations, and claims that have not yet been established. It is an evidence index, not a promise that every feature works on every computer.
 
-Evidence snapshot date: **2026-10-16**
+Evidence snapshot date: **2026-10-18**
 
 Product version: **0.14.0**
 
@@ -42,7 +42,7 @@ cd daemon
 python ../scripts/generate_benchmark_evidence.py
 ```
 
-Bundle environment: Windows 11, Python 3.13.13. Source commit: `76e0b2b38dac`.
+Bundle environment: Windows 11, Python 3.13.13. Source commit: `481524e06c84`.
 
 ### Guarded local request latency
 
@@ -50,11 +50,11 @@ Scope: Ready-daemon guarded CPU usage request: local planning, routing, risk ass
 
 | Metric | Ready-cold | Warm steady state |
 | --- | ---: | ---: |
-| Median | — | 26.155 ms |
-| p95 | — | 27.354 ms |
-| p99 | — | 29.244 ms |
-| Minimum | — | 24.006 ms |
-| Maximum | 31.350 ms | 29.976 ms |
+| Median | — | 28.727 ms |
+| p95 | — | 32.192 ms |
+| p99 | — | 33.190 ms |
+| Minimum | — | 24.781 ms |
+| Maximum | 157.363 ms | 33.688 ms |
 
 - The harness executes local planning, routing, risk assessment, execution, post-condition verification, and response shaping.
 - All 100 measured steady-state iterations made **0 model calls**.
@@ -64,20 +64,20 @@ Scope: Ready-daemon guarded CPU usage request: local planning, routing, risk ass
 
 | Real guarded action | Iterations | Median | p95 | p99 |
 | --- | ---: | ---: | ---: | ---: |
-| CPU usage | 50 | 26.122 ms | 26.677 ms | 27.288 ms |
-| Memory usage | 50 | 3.082 ms | 3.707 ms | 4.160 ms |
-| Disk usage | 50 | 3.247 ms | 3.988 ms | 4.325 ms |
-| Comprehensive system information | 50 | 74.610 ms | 77.270 ms | 77.664 ms |
+| CPU usage | 50 | 29.918 ms | 33.366 ms | 34.267 ms |
+| Memory usage | 50 | 3.252 ms | 4.708 ms | 5.113 ms |
+| Disk usage | 50 | 4.344 ms | 7.166 ms | 7.885 ms |
+| Comprehensive system information | 50 | 80.554 ms | 91.730 ms | 92.801 ms |
 
 Each case validates the exact selected action, executes the real read-only host probe, and makes zero model calls.
 
 ### Event-loop responsiveness
 
-During a real one-second CPU monitor sample, a 10 ms asyncio heartbeat produced **65 ticks**, with **15.712 ms median**, **16.187 ms p95**, and **16.651 ms maximum** gaps. This measures scheduler availability—not monitor completion speed—and is affected by Windows timer granularity.
+During a real one-second CPU monitor sample, a 10 ms asyncio heartbeat produced **64 ticks**, with **15.625 ms median**, **16.331 ms p95**, and **25.061 ms maximum** gaps. This measures scheduler availability—not monitor completion speed—and is affected by Windows timer granularity.
 
 ### Deterministic intent dispatch
 
-The curated routing regression set passed **59/59 cases** with **0.023 ms median** dispatch latency. It covers bounded positive intents and ambiguous controls that must fall through to model planning. It is not a population-level language-understanding benchmark, and application routing does not prove an application is installed.
+The curated routing regression set passed **59/59 cases** with **0.086 ms median** dispatch latency. It covers bounded positive intents and ambiguous controls that must fall through to model planning. It is not a population-level language-understanding benchmark, and application routing does not prove an application is installed.
 
 ### Learned-risk world model
 
@@ -88,7 +88,24 @@ The shipped `risk-mlp-v4-heldout` artifact records **25,200 training** and **5,4
 | Disk-delta MAE | 0.0000000330 | 0.0000000718 | 54.0154% |
 | Process-delta MAE | 0.0000130251 | 0.0022166655 | 99.4124% |
 
-The audit passed **5/5 direction invariants** and measured **0.028 ms median** inference. These are coarse disk/process predictions. Deterministic safety rules remain authoritative; this is not a general physical-world or user-intent model.
+The audit passed **5/5 direction invariants** and measured **0.027 ms median** inference. These are coarse disk/process predictions. Deterministic safety rules remain authoritative; this is not a general physical-world or user-intent model.
+
+### Assistance co-adaptation: simulated users
+
+**simulated users only; tuning families, in-sample; no claim about people**. Scope: Simulated users of F1, F3 (5 per family, 2 sessions) against policies 1_fixed_assistance_off, 4_uniform_random, 9_engine_full. F1 represents precise mouse users and F3 represents hand-pointer novices in the simulator.
+
+| Family | Policy | Simulated people | Utility per trial | Unintended activations | Acts on ambiguous input | Rule violations |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| F1 | `1_fixed_assistance_off` | 5 | 1.109 | 2.95% | 0 | 0 |
+| F1 | `4_uniform_random` | 5 | 0.617 | 1.96% | 0 | 0 |
+| F1 | `9_engine_full` | 5 | 0.898 | 2.14% | 0 | 0 |
+| F3 | `1_fixed_assistance_off` | 5 | -0.209 | 19.55% | 0 | 0 |
+| F3 | `4_uniform_random` | 5 | 0.008 | 14.73% | 0 | 0 |
+| F3 | `9_engine_full` | 5 | 0.355 | 13.93% | 0 | 0 |
+
+Agency audits passed **3/3 policies**. The adaptive engine does not beat the plain interface for every simulated family. These tuning families share the model's functional forms; this run does not establish held-out generalization or an improvement for real people. No model was promoted by this benchmark. The feature is opt-in and changes presentation only.
+
+Protocol SHA-256: `7f39916e9c762abdcdb62553a1e8deaab175943c77a16324b4614e910d6eab27`. [Study, consent and reproduction details](https://github.com/VyomKulshrestha/Heliox-OS/blob/main/docs/COADAPTATION.md).
 
 ### Subscription-backed planning
 
@@ -119,7 +136,7 @@ A developer-machine run through the official **Codex CLI** passed **3/3 fixed pl
 - None of these software benchmarks measures model-provider, network, browser page-load, UI-rendering, microphone, TTS, camera, gaze, gesture, EEG, or human latency/accuracy.
 - Local snapshots are reproducibility evidence, not universal performance guarantees.
 
-Raw evidence: [`software-benchmarks-2026-10-16.json`](https://github.com/VyomKulshrestha/Heliox-OS/blob/main/docs/evidence/software-benchmarks-2026-10-16.json), [`subscription-planning-codex-2026-08-16.json`](https://github.com/VyomKulshrestha/Heliox-OS/blob/main/docs/evidence/subscription-planning-codex-2026-08-16.json), [`local-tts-isolation-2026-08-27.json`](https://github.com/VyomKulshrestha/Heliox-OS/blob/main/docs/evidence/local-tts-isolation-2026-08-27.json), and the [historical CPU artifact](https://github.com/VyomKulshrestha/Heliox-OS/blob/main/docs/evidence/react-latency-2026-08-12.json).
+Raw evidence: [`software-benchmarks-2026-10-18.json`](https://github.com/VyomKulshrestha/Heliox-OS/blob/main/docs/evidence/software-benchmarks-2026-10-18.json), [`subscription-planning-codex-2026-08-16.json`](https://github.com/VyomKulshrestha/Heliox-OS/blob/main/docs/evidence/subscription-planning-codex-2026-08-16.json), [`local-tts-isolation-2026-08-27.json`](https://github.com/VyomKulshrestha/Heliox-OS/blob/main/docs/evidence/local-tts-isolation-2026-08-27.json), and the [historical CPU artifact](https://github.com/VyomKulshrestha/Heliox-OS/blob/main/docs/evidence/react-latency-2026-08-12.json).
 
 ## Platform and hardware evidence
 
