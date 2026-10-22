@@ -139,6 +139,9 @@
   let dryRunSaving = $state(false);
   let dryRunToast = $state("");
   let previewSaving = $state(false);
+  let undoSaving = $state(false);
+  let undoToast = $state("");
+  let undoClearArmed = $state(false);
   let previewToast = $state("");
   let typedDecisionSaving = $state(false);
   let typedDecisionToast = $state("");
@@ -757,6 +760,40 @@
         : "Preview gate disabled."
       : notChanged("Preview");
     setTimeout(() => (previewToast = ""), 5000);
+  }
+
+  async function toggleUndo() {
+    if (undoSaving) return;
+    const turningOn = !$settings.undo?.enabled;
+    undoSaving = true;
+    const synced = await saveSetting("undo", { enabled: turningOn }, { quiet: true });
+    undoSaving = false;
+    undoToast = synced
+      ? turningOn
+        ? $_("settings.undo_on_toast")
+        : $_("settings.undo_off_toast")
+      : notChanged("Undo");
+    setTimeout(() => (undoToast = ""), 5000);
+  }
+
+  // Two clicks: the first arms the button, the second deletes every saved copy.
+  async function clearUndoHistory() {
+    if (!undoClearArmed) {
+      undoClearArmed = true;
+      setTimeout(() => (undoClearArmed = false), 5000);
+      return;
+    }
+    undoClearArmed = false;
+    undoSaving = true;
+    try {
+      const res = (await call("undo_clear", { confirmed: true })) as { status: string; message?: string };
+      undoToast = res.status === "ok" ? $_("settings.undo_cleared") : (res.message ?? $_("settings.undo_clear_failed"));
+    } catch (err) {
+      undoToast = String(err instanceof Error ? err.message : err);
+    } finally {
+      undoSaving = false;
+    }
+    setTimeout(() => (undoToast = ""), 5000);
   }
 
   async function saveTypedDecisionPaths() {
@@ -1539,6 +1576,43 @@
         disabled={previewSaving}
       >
         <span class="toggle-knob"></span>
+      </button>
+    </div>
+  </section>
+
+  <section class="settings-group" data-testid="undo-settings">
+    <h3>{$_("settings.undo")}</h3>
+    <p class="setting-section-note">{$_("settings.undo_desc")}</p>
+
+    {#if undoToast}
+      <div class="root-toast root-toast-success">{undoToast}</div>
+    {/if}
+
+    <div class="setting-row">
+      <div class="setting-info">
+        <span class="setting-label">{$_("settings.undo_enabled")}</span>
+        <span class="setting-desc"
+          >{$_("settings.undo_enabled_desc", { values: { days: $settings.undo?.retention_days ?? 7 } })}</span
+        >
+      </div>
+      <button
+        class="toggle"
+        class:active={$settings.undo?.enabled}
+        onclick={toggleUndo}
+        aria-label={$_("settings.undo_enabled")}
+        title={$_("settings.undo_enabled")}
+        disabled={undoSaving}
+      >
+        <span class="toggle-knob"></span>
+      </button>
+    </div>
+    <div class="setting-row">
+      <div class="setting-info">
+        <span class="setting-label">{$_("settings.undo_clear")}</span>
+        <span class="setting-desc">{$_("settings.undo_clear_desc")}</span>
+      </div>
+      <button class="btn-save" onclick={clearUndoHistory} disabled={undoSaving}>
+        {undoClearArmed ? $_("settings.undo_clear_confirm") : $_("settings.undo_clear_button")}
       </button>
     </div>
   </section>

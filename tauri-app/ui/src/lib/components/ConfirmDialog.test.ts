@@ -277,3 +277,31 @@ describe("ConfirmDialog keyboard and selection safety", () => {
     expect(rule("\\.confirm-checkbox input")).toContain("width: 15px;");
   });
 });
+
+describe("ConfirmDialog undo labels", () => {
+  it("labels each action by whether Heliox can undo it", () => {
+    render(ConfirmDialog, {
+      actions: [
+        {
+          ...script,
+          action_type: "file_write",
+          irreversible: false,
+          index: 0,
+          undo: { kind: "undoable", reason: "Heliox keeps what it needs to put this back." },
+        },
+        {
+          ...script,
+          action_type: "api_send_email",
+          irreversible: false,
+          index: 1,
+          undo: { kind: "not_undoable", reason: "Heliox cannot take it back." },
+        },
+      ],
+      onconfirm: vi.fn(),
+      ondeny: vi.fn(),
+    });
+
+    expect(screen.getByText("Can undo").getAttribute("title")).toBe("Heliox keeps what it needs to put this back.");
+    expect(screen.getByText("Can't undo").getAttribute("title")).toBe("Heliox cannot take it back.");
+  });
+});

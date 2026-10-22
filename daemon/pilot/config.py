@@ -410,6 +410,21 @@ class PreviewConfig:
 
 
 @dataclass
+class UndoConfig:
+    """Per-task undo (see pilot.workflows.undo_journal). Before Heliox writes, moves,
+    copies or deletes a file or replaces the clipboard, it keeps what it needs to put
+    the change back, so a finished task can be undone item by item. Copies stay on
+    this computer under DATA_DIR/undo and are deleted after ``retention_days`` or
+    when the total passes ``max_total_mb``. Changes larger than ``max_task_mb`` for
+    one task are still made, but are listed as not undoable."""
+
+    enabled: bool = True
+    retention_days: int = 7
+    max_task_mb: int = 512
+    max_total_mb: int = 2048
+
+
+@dataclass
 class SupervisionConfig:
     """User Manual Supervision (see pilot.agents.user_supervision) — watches
     the user's OWN independent screen/keyboard/mouse activity, never anything
@@ -638,6 +653,7 @@ class PilotConfig:
     self_healing: SelfHealingConfig = field(default_factory=SelfHealingConfig)
     narration: NarrationConfig = field(default_factory=NarrationConfig)
     preview: PreviewConfig = field(default_factory=PreviewConfig)
+    undo: UndoConfig = field(default_factory=UndoConfig)
     supervision: SupervisionConfig = field(default_factory=SupervisionConfig)
     co_adaptation: CoAdaptationConfig = field(default_factory=CoAdaptationConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
@@ -995,6 +1011,12 @@ def _validate_config_types(raw: dict) -> None:
             "enabled": bool,
             "confirm_timeout_seconds": (int, float),
         },
+        "undo": {
+            "enabled": bool,
+            "retention_days": int,
+            "max_task_mb": int,
+            "max_total_mb": int,
+        },
         "supervision": {
             "enabled": bool,
             "keyboard_mouse_hook_enabled": bool,
@@ -1308,6 +1330,16 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
         config.preview.enabled = bool(pv_raw.get("enabled", config.preview.enabled))
         if "confirm_timeout_seconds" in pv_raw:
             config.preview.confirm_timeout_seconds = float(pv_raw["confirm_timeout_seconds"])
+
+    if "undo" in raw and isinstance(raw["undo"], dict):
+        u_raw = raw["undo"]
+        config.undo.enabled = bool(u_raw.get("enabled", config.undo.enabled))
+        if "retention_days" in u_raw:
+            config.undo.retention_days = min(max(int(u_raw["retention_days"]), 1), 90)
+        if "max_task_mb" in u_raw:
+            config.undo.max_task_mb = min(max(int(u_raw["max_task_mb"]), 1), 10240)
+        if "max_total_mb" in u_raw:
+            config.undo.max_total_mb = min(max(int(u_raw["max_total_mb"]), 16), 102400)
 
     if "supervision" in raw and isinstance(raw["supervision"], dict):
         s_raw = raw["supervision"]

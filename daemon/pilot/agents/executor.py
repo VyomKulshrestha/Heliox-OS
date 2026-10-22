@@ -168,6 +168,7 @@ class Executor:
         self._experience_ledger: ExperienceLedger | None = None
         self._world_model_outcome_recorder: Any = None
         self._recorded_workflow_store: Any = None
+        self._undo_journal: Any = None
         self._step_checker: Any = None
         self._durable_task_store: DurableTaskStore | None = None
         self._controller_lease: ControllerLeaseManager | None = None
@@ -439,6 +440,10 @@ class Executor:
     def set_recorded_workflow_store(self, store: Any) -> None:
         """Observe only real approved actions for an opt-in local recording."""
         self._recorded_workflow_store = store
+
+    def set_undo_journal(self, journal: Any) -> None:
+        """Record how to reverse each real local change so a finished task can be undone."""
+        self._undo_journal = journal
 
     def set_step_checker(self, checker: Any) -> None:
         """Wire the deterministic pre-action state checker."""
@@ -1268,6 +1273,15 @@ class Executor:
                         )
                     except Exception:
                         logger.warning("Workflow pre-action recording failed", exc_info=True)
+                undo_token = None
+                if self._undo_journal is not None:
+                    context = get_experience_context()
+                    try:
+                        undo_token = await self._undo_journal.before(
+                            action, task_key=context.task_id or context.plan_id or plan_id
+                        )
+                    except Exception:
+                        logger.warning("Undo capture failed", exc_info=True)
                 try:
                     suppress_manual = getattr(
                         self._recorded_workflow_store, "suppress_manual_during_heliox_action", nullcontext
@@ -1293,6 +1307,11 @@ class Executor:
                         await self._recorded_workflow_store.after(recording_token, result)
                     except Exception:
                         logger.warning("Workflow post-action recording failed", exc_info=True)
+                if undo_token is not None:
+                    try:
+                        await self._undo_journal.after(undo_token, result, plan_id=plan_id)
+                    except Exception:
+                        logger.warning("Undo journal update failed", exc_info=True)
                 if claimed and self._durable_task_store is not None:
                     from pilot.workflows.durable_tasks import ActionExecutionStatus
 

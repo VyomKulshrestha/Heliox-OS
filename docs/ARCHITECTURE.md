@@ -573,6 +573,12 @@ after a restart runs only its approved actions. Assistance co-adaptation sits
 outside this order: it changes how the study presents targets and never reaches
 an adapter.
 
+Around step 8, the undo journal (`pilot/workflows/undo_journal.py`) records how
+to reverse each file write, move, copy or delete and each clipboard write. The
+compensation comes from the action type, never from a model. Undoing a task is a
+separate, confirmed RPC that restores those recorded copies newest first, skips
+anything changed since, and never reaches the planner or an adapter.
+
 ## Persistent state
 
 All state is local unless the user explicitly configures an external service:

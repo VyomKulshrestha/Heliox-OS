@@ -6,6 +6,7 @@
   import { renderMarkdown } from "./lib/utils/markdown";
   import ConfirmDialog from "./lib/components/ConfirmDialog.svelte";
   import RollbackDialog from "./lib/components/RollbackDialog.svelte";
+  import UndoDialog from "./lib/components/UndoDialog.svelte";
   import BudgetExceededDialog from "./lib/components/BudgetExceededDialog.svelte";
   import InterruptDialog from "./lib/components/InterruptDialog.svelte";
   import SupervisionAlertDialog from "./lib/components/SupervisionAlertDialog.svelte";
@@ -63,6 +64,7 @@
     selectActiveModal({
       confirmation: $session.confirmRequired,
       rollback: $session.rollbackPending,
+      undo: Boolean($session.undoPreview),
       interrupt: $narration.active,
       neural: Boolean($neural.preview),
       budget: Boolean($session.budget?.exceeded),
@@ -70,7 +72,10 @@
     }),
   );
   let blockingSafetyDecision = $derived(
-    activeModal === "confirmation" || activeModal === "rollback" || activeModal === "interrupt",
+    activeModal === "confirmation" ||
+      activeModal === "rollback" ||
+      activeModal === "undo" ||
+      activeModal === "interrupt",
   );
   let documentVisible = $state(typeof document === "undefined" || document.visibilityState === "visible");
   let previousStudyActive = false;
@@ -299,9 +304,28 @@
           {/key}
         {:else if activeModal === "rollback"}
           <RollbackDialog onconfirm={() => session.confirmRollback()} oncancel={() => session.cancelRollback()} />
+        {:else if activeModal === "undo" && $session.undoPreview}
+          <UndoDialog
+            preview={$session.undoPreview}
+            submitting={$session.undoSubmitting}
+            error={$session.undoError}
+            onconfirm={() => session.confirmUndo()}
+            oncancel={() => session.cancelUndo()}
+          />
         {/if}
 
         <HumanControlBanner />
+        {#if $session.undoOffer && !$session.undoPreview}
+          <div class="undo-banner" data-testid="undo-offer">
+            <span>{$_("undo.banner", { values: { count: $session.undoOffer.undoable } })}</span>
+            <span class="undo-banner-actions">
+              <button class="undo-btn" onclick={() => session.openUndoPreview()}>{$_("undo.banner_open")}</button>
+              <button class="undo-dismiss" aria-label={$_("undo.dismiss")} onclick={() => session.dismissUndoOffer()}
+                >&times;</button
+              >
+            </span>
+          </div>
+        {/if}
         {#if $session.rollback && !$session.rollbackPending}
           <div class="undo-banner">
             <span>{$_("rollback.banner")}</span>
@@ -670,6 +694,25 @@
     border-radius: var(--radius-sm);
     transition: background 0.15s;
     white-space: nowrap;
+  }
+
+  .undo-banner-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .undo-dismiss {
+    padding: 2px 8px;
+    font-size: 14px;
+    color: var(--text-secondary);
+    background: transparent;
+    border-radius: var(--radius-sm);
+  }
+
+  .undo-dismiss:hover {
+    color: var(--text-primary);
+    background: var(--bg-hover);
   }
 
   .undo-btn:hover {

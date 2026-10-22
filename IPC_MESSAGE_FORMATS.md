@@ -12,7 +12,7 @@ The Heliox OS UI and daemon communicate over a local WebSocket using the [JSON-R
 | Request timeout | 5 minutes |
 | Reconnect interval | 3 seconds (auto-reconnect on close) |
 
-The daemon currently registers **225 WebSocket RPC methods**. That is the API
+The daemon currently registers **229 WebSocket RPC methods**. That is the API
 surface count, not the action catalog: Heliox exposes **162 action
 types** through the guarded planner/executor system. This document names every
 registered RPC method; grouped tables are used where several methods share one
@@ -298,6 +298,96 @@ behind its own explicit confirmation; the daemon does not re-confirm.
 { "status": "ok", "message": "Rollback snapshot created from ... . Reboot to apply." }
 ```
 `{ "status": "error", "message": "..." }` if no snapshot is on record for that `plan_id`, or the rollback itself fails.
+
+#### `undo_list`
+Recent tasks with how much of each can still be undone (newest first).
+
+**Params:** `{ "limit": 20 }` (optional, 1–200)
+
+**Result:**
+```json
+{
+  "status": "ok",
+  "enabled": true,
+  "tasks": [
+    {
+      "task_key": "4f0c2a9e",
+      "plan_ids": ["a3b2c1f5"],
+      "created_at": 1792690000.1,
+      "updated_at": 1792690004.7,
+      "undone": false,
+      "undoable": 2,
+      "not_undoable": 1,
+      "targets": ["C:/Users/me/notes.txt", "C:/Users/me/inbox/report.pdf"]
+    }
+  ]
+}
+```
+
+#### `undo_preview`
+What undoing one task would do, item by item, checked against the disk now. Items are
+listed newest first. `state` is `ready` (will be undone), `conflict` (changed since
+Heliox touched it, so it is left alone) or `unavailable` (the saved copy is gone, the
+earlier clipboard text was lost on restart, or the path is inside Heliox's own
+folders). `not_undoable` lists the task's actions that cannot be reversed at all, with
+the reason.
+
+**Params:** `{ "task_key": "4f0c2a9e" }`
+
+**Result:**
+```json
+{
+  "status": "ok",
+  "preview": {
+    "task_key": "4f0c2a9e",
+    "plan_ids": ["a3b2c1f5"],
+    "undone": false,
+    "ready": 1,
+    "items": [
+      { "seq": 2, "type": "file_move", "target": "C:/Users/me/report.pdf", "state": "ready",
+        "description": "Move report.pdf back to C:/Users/me." },
+      { "seq": 1, "type": "file_write", "target": "C:/Users/me/notes.txt", "state": "conflict",
+        "description": "notes.txt changed after Heliox wrote it, so it is left as it is." }
+    ],
+    "not_undoable": [
+      { "type": "api_send_email", "target": "team@example.com",
+        "reason": "This reaches outside your computer (a message, a web page or a remote command); Heliox cannot take it back." }
+    ],
+    "preview_token": "9c1d0b7e5a3f2e6d8b4a1c0f7e9d2b3a"
+  }
+}
+```
+
+#### `undo_task`
+Undo a finished task. `confirmed` must be exactly `true` and `preview_token` must match
+the preview the person saw; if anything changed since, the daemon returns
+`{"status": "changed", "message": ..., "preview": <fresh preview>}` and undoes nothing.
+Refused while an interactive task or an autonomous job is running. Entries are reversed
+newest first and each is re-checked just before it is applied. Undo restores recorded
+state on recorded paths only; it does not plan, call a model or go through the executor.
+
+**Params:** `{ "task_key": "4f0c2a9e", "preview_token": "9c1d…", "confirmed": true }`
+
+**Result:**
+```json
+{
+  "status": "ok",
+  "task_key": "4f0c2a9e",
+  "undone": 1,
+  "skipped": 1,
+  "failed": 0,
+  "results": [
+    { "seq": 2, "target": "C:/Users/me/report.pdf", "state": "undone", "description": "Move report.pdf back to C:/Users/me." },
+    { "seq": 1, "target": "C:/Users/me/notes.txt", "state": "conflict", "description": "notes.txt changed after Heliox wrote it, so it is left as it is." }
+  ],
+  "not_undoable": []
+}
+```
+`status` is `partial` when at least one entry failed while being applied.
+
+#### `undo_clear`
+Delete all undo history and every saved copy. **Params:** `{ "confirmed": true }`.
+Refused while tasks run. **Result:** `{ "status": "ok" }`.
 
 #### `list_permission_events`
 List recent tamper-evident permission-escalation audit events.
@@ -2670,11 +2760,18 @@ Sent when one or more actions in the plan require explicit user approval (Tier 2
       "requires_confirmation": true,
       "destructive": true,
       "irreversible": true,
+      "undo": { "kind": "not_undoable", "reason": "Heliox cannot reverse this kind of change automatically." },
       "index": 0
     }
   ]
 }
 ```
+
+`undo` says whether Heliox can undo the action afterwards, decided from the action type
+alone: `undoable` (file write, move, copy or delete, and clipboard writes), `no_change`
+(read-only) or `not_undoable` (anything that leaves the computer, and system changes
+such as shell commands or package installs). It is `not_undoable` with "Undo is turned
+off in Settings." when `[undo] enabled = false`.
 
 `index` is the action's position in `plan.actions` — pass it back (as part of `approved_indices`) in the `confirm` call for per-action granular approval. `irreversible` is true when the action can't be undone via snapshot rollback even if it isn't tier-"destructive" (e.g. an email send).
 
@@ -2806,8 +2903,29 @@ Terminal, sanitized summary for an interactive task.
   "summary": "Opened Hermes and verified the requested text.",
   "duration_ms": 4310,
   "dry_run": false,
-  "plan_id": "a3b2c1f5"
+  "plan_id": "a3b2c1f5",
+  "undo": { "task_key": "4f0c2a9e", "available": true, "undoable": 2, "not_undoable": 1 }
 }
+```
+
+`undo` is present when the task recorded anything in the undo journal (never for dry
+runs). `available` is true while at least one change can still be undone; the UI then
+offers **Review undo**, which calls `undo_preview`.
+
+### `undo_offer`
+Sent when the person says "undo that" (or a similar phrase) with no task running and a
+recent task can be undone. The UI opens the undo preview for `task_key`; undoing still
+needs the preview's Undo button.
+
+```json
+{ "task_key": "4f0c2a9e" }
+```
+
+### `undo_complete`
+Broadcast to every window after `undo_task` applied a task's undo.
+
+```json
+{ "task_key": "4f0c2a9e", "status": "ok", "undone": 1, "skipped": 1, "failed": 0 }
 ```
 
 ### Companion notifications
@@ -3248,7 +3366,13 @@ UI                                          Daemon
 │◄── response: execute result ─────────────────┤
 │   {status, results, verification, explanation}│
 │                                               │
-│  ... later, if the user wants to undo ...     │
+│  ... later, if the user wants to undo the task │
+│── undo_preview {task_key} ───────────────────►│
+│◄── response: {preview: items, preview_token}  │
+│── undo_task {task_key, preview_token, confirmed: true} ►│
+│◄── notification: undo_complete {task_key, undone, skipped, failed}
+│                                               │
+│  ... or revert the whole disk snapshot ...    │
 │── rollback_plan {plan_id} ───────────────────►│
 │◄── notification: rollback_complete {plan_id, snapshot_id, message}
 ```

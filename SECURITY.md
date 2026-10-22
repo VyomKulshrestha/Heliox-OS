@@ -715,6 +715,36 @@ denied, and points to Stop, which cancels the task.
 
 ---
 
+## ↩️ Per-task undo
+
+Before Heliox writes, moves, copies or deletes a file, or replaces the clipboard, the
+undo journal (`daemon/pilot/workflows/undo_journal.py`) keeps what it needs to reverse
+that one change. A finished task can then be undone from its preview.
+
+- **Compensations come from code, never from a model.** What is recorded and how it is
+  reversed follow from the action type and its parameters. The planner's
+  `rollback_action` field is still never executed.
+- **Later edits win.** Each entry stores a hash of what Heliox left behind. Undo
+  re-checks it right before acting and leaves anything that changed since alone,
+  reporting it as a conflict. Undo never overwrites the person's own work.
+- **The person confirms what they saw.** `undo_task` needs `confirmed: true` and the
+  token of the preview shown; if the disk changed after the preview, nothing is undone
+  and a fresh preview is returned. Saying "undo that" only opens the preview. Undo is
+  refused while any task runs.
+- **Undo does not act.** It restores recorded copies to recorded paths. It does not
+  plan, call a model or pass through the executor, and it refuses any path inside
+  Heliox's configuration, runtime or undo folders.
+- **What cannot be undone is said up front.** The approval dialog marks each action
+  "Can undo" or "Can't undo". Emails, web form submissions, remote commands, MCP tool
+  calls, shell commands, package changes and other system changes are never undoable.
+- **Local and bounded.** Copies stay under `DATA_DIR/undo`, which actions may not read
+  or change. They are pruned after `retention_days` (default 7) and when the total
+  passes `max_total_mb` (default 2048 MB). A change larger than `max_task_mb` (default
+  512 MB) still runs but is listed as not undoable. Clipboard text is kept in memory
+  only and is gone after a restart. Settings → Undo turns the journal off or clears it.
+- Filesystem snapshot rollback (`rollback_plan`) is unchanged and remains the
+  "revert everything" fallback where btrfs or Timeshift snapshots exist.
+
 ## 🔐 Heliox's own configuration is off-limits to actions
 
 File actions may not read, write, copy into or move into Heliox's configuration

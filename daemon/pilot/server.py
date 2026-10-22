@@ -352,6 +352,18 @@ VOICE_STOP_PHRASES = frozenset(
         "nevermind",
     }
 )
+# Spoken undo only opens the preview: undoing still needs a click on the preview's Undo button.
+VOICE_UNDO_PHRASES = frozenset(
+    {
+        "undo",
+        "undo that",
+        "undo it",
+        "undo the last task",
+        "undo last task",
+        "take that back",
+        "revert that",
+    }
+)
 VOICE_APPROVAL_ATTEMPTS = frozenset(
     {
         "approve",
@@ -880,6 +892,7 @@ class PilotServer:
         # serialized, while an out-of-band interject request can revise or
         # stop the one active interactive task.
         self._interactive_request_active = False
+        self._undo_journal: Any = None
         self._queued_execute_requests: deque[tuple[str, str, dict[str, Any]]] = deque()
         self._queued_submission_lock = asyncio.Lock()
         self._queued_execute_worker: asyncio.Task[None] | None = None
@@ -1088,6 +1101,14 @@ class PilotServer:
                 weight_loader=self._recorded_workflows.decrypt_model_artifact_file,
             )
         self._executor.set_recorded_workflow_store(self._recorded_workflows)
+        from pilot.workflows.undo_journal import UndoJournal
+
+        self._undo_journal = UndoJournal(DATA_DIR / "undo", config=self.config.undo)
+        self._executor.set_undo_journal(self._undo_journal)
+        try:
+            await self._undo_journal.prune()
+        except Exception:
+            logger.warning("Undo history pruning failed", exc_info=True)
         # Import and warm the local system probe stack before readiness so the
         # first harmless status request does not pay lazy import/thread startup.
         from pilot.system.sysinfo import prepare_system_probes
@@ -1571,6 +1592,10 @@ class PilotServer:
             "export_session_chat": self._handle_export_session_chat,
             "confirm": self._handle_confirm,
             "rollback_plan": self._handle_rollback_plan,
+            "undo_list": self._handle_undo_list,
+            "undo_preview": self._handle_undo_preview,
+            "undo_task": self._handle_undo_task,
+            "undo_clear": self._handle_undo_clear,
             "list_permission_events": self._handle_list_permission_events,
             "verify_permission_audit": self._handle_verify_permission_audit,
             "list_gateway_events": self._handle_list_gateway_events,
@@ -2793,6 +2818,10 @@ class PilotServer:
                 if last_plan_id:
                     payload["plan_id"] = last_plan_id
                 context = get_experience_context()
+                if not dry_run and self._undo_journal is not None:
+                    undo_summary = await self._undo_journal.summary(context.task_id or last_plan_id or "")
+                    if undo_summary is not None:
+                        payload["undo"] = undo_summary
                 await self._append_experience(
                     ExperienceEventType.OUTCOME_VERIFIED,
                     plan_id=last_plan_id,
@@ -5067,6 +5096,7 @@ class PilotServer:
         def _dump_confirm_action(idx: int, a: Any) -> dict[str, Any]:
             payload = a.model_dump()
             payload["irreversible"] = a.is_irreversible
+            payload["undo"] = self._undo_badge(a)
             payload["index"] = idx
             return payload
 
@@ -5434,6 +5464,113 @@ class PilotServer:
         )
         logger.info("Rolled back plan %s to snapshot %s", plan_id, snapshot_id)
         return {"status": "ok", "message": result_message}
+
+    def _undo_badge(self, action: Any) -> dict[str, str]:
+        """What the approval dialog says about undoing ``action`` (decided by type, never by a model)."""
+        from pilot.workflows.undo_journal import undo_support
+
+        support = undo_support(action)
+        if support.kind == "undoable" and not self.config.undo.enabled:
+            return {"kind": "not_undoable", "reason": "Undo is turned off in Settings."}
+        return support.to_dict()
+
+    def _undo_busy_message(self) -> str | None:
+        from pilot.agents.autonomous import JobStatus
+
+        busy_jobs = [
+            job_id
+            for job_id in (list(self._autonomous._active_tasks) if self._autonomous is not None else [])
+            if (job := self._autonomous.get_job(job_id)) is not None
+            and job.status in {JobStatus.QUEUED, JobStatus.DECOMPOSING, JobStatus.RUNNING}
+        ]
+        if self._interactive_request_active or busy_jobs:
+            return "Wait until the running tasks finish, or stop them, before undoing."
+        return None
+
+    @staticmethod
+    def _undo_task_key(params: dict[str, Any]) -> str | None:
+        task_key = params.get("task_key")
+        if not isinstance(task_key, str) or not task_key.strip() or len(task_key) > 200:
+            return None
+        return task_key.strip()
+
+    async def _handle_undo_list(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """List recent tasks with how much of each can be undone."""
+        if self._undo_journal is None:
+            return {"status": "error", "message": "Undo is not ready yet.", "tasks": []}
+        limit = params.get("limit", 20)
+        if not isinstance(limit, int) or isinstance(limit, bool):
+            limit = 20
+        return {
+            "status": "ok",
+            "enabled": self.config.undo.enabled,
+            "tasks": await self._undo_journal.list_tasks(limit),
+        }
+
+    async def _handle_undo_preview(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """Show, item by item, what undoing a task would put back and what it cannot."""
+        task_key = self._undo_task_key(params)
+        if task_key is None:
+            return {"status": "error", "message": "task_key is required"}
+        if self._undo_journal is None:
+            return {"status": "error", "message": "Undo is not ready yet."}
+        preview = await self._undo_journal.preview(task_key)
+        if preview is None:
+            return {"status": "error", "message": "Nothing is recorded to undo for this task."}
+        return {"status": "ok", "preview": preview}
+
+    async def _handle_undo_task(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """Undo a finished task after the person confirmed the preview they saw.
+
+        Needs ``confirmed`` to be exactly true and the ``preview_token`` of that preview.
+        Undo restores only what the journal recorded, refuses anything changed since,
+        and never runs a plan, so it does not go through the planner or the executor.
+        """
+        task_key = self._undo_task_key(params)
+        if task_key is None:
+            return {"status": "error", "message": "task_key is required"}
+        if params.get("confirmed") is not True:
+            return {"status": "error", "message": "Undo needs your confirmation in the preview."}
+        preview_token = params.get("preview_token")
+        if not isinstance(preview_token, str) or not preview_token:
+            return {"status": "error", "message": "preview_token is required"}
+        if self._undo_journal is None:
+            return {"status": "error", "message": "Undo is not ready yet."}
+        busy = self._undo_busy_message()
+        if busy:
+            return {"status": "error", "message": busy}
+        result = await self._undo_journal.undo(task_key, preview_token)
+        if result.get("status") in ("ok", "partial"):
+            logger.info(
+                "Undid task %s: %s undone, %s skipped, %s failed",
+                task_key,
+                result["undone"],
+                result["skipped"],
+                result["failed"],
+            )
+            await self._broadcast_notification(
+                "undo_complete",
+                {
+                    "task_key": task_key,
+                    "status": result["status"],
+                    "undone": result["undone"],
+                    "skipped": result["skipped"],
+                    "failed": result["failed"],
+                },
+            )
+        return result
+
+    async def _handle_undo_clear(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """Delete all undo history and the copies it keeps."""
+        if params.get("confirmed") is not True:
+            return {"status": "error", "message": "Clearing undo history needs confirmation."}
+        if self._undo_journal is None:
+            return {"status": "error", "message": "Undo is not ready yet."}
+        busy = self._undo_busy_message()
+        if busy:
+            return {"status": "error", "message": busy}
+        await self._undo_journal.clear()
+        return {"status": "ok"}
 
     async def _handle_list_permission_events(self, params: dict[str, Any], ws: ServerConnection) -> dict:
         """List recent permission-escalation audit events for display.
@@ -6160,6 +6297,12 @@ class PilotServer:
                             "status": "error",
                             "message": "preview.confirm_timeout_seconds must be from 10 to 600",
                         }
+                if section == "undo" and k == "enabled" and not isinstance(v, bool):
+                    return {"status": "error", "message": "undo.enabled must be a boolean"}
+                if section == "undo" and k in {"retention_days", "max_task_mb", "max_total_mb"}:
+                    low, high = {"retention_days": (1, 90), "max_task_mb": (1, 10240), "max_total_mb": (16, 102400)}[k]
+                    if not isinstance(v, int) or isinstance(v, bool) or not low <= v <= high:
+                        return {"status": "error", "message": f"undo.{k} must be from {low} to {high}"}
                 if section == "gesture_cursor" and k == "enabled" and not isinstance(v, bool):
                     return {"status": "error", "message": "gesture_cursor.enabled must be a boolean"}
                 if section == "gesture_cursor" and k == "sensitivity":
@@ -7412,6 +7555,7 @@ class PilotServer:
                             **plan.actions[index].model_dump(mode="json"),
                             "index": index,
                             "irreversible": plan.actions[index].is_irreversible,
+                            "undo": self._undo_badge(plan.actions[index]),
                         }
                         for index in sorted(required)
                     ],
@@ -10392,6 +10536,30 @@ def handle_tool(tool_name, params):
             )
             await self._speak_voice_response(
                 message, channel=SpeechChannel.TASK_NARRATION, dedupe_key=f"voice-deny:{pending_plan_id}"
+            )
+            return
+
+        if not self._interactive_request_active and normalized_command in VOICE_UNDO_PHRASES:
+            latest = None
+            if self._undo_journal is not None:
+                latest = next(
+                    (
+                        row
+                        for row in await self._undo_journal.list_tasks(20)
+                        if row["undoable"] > 0 and not row["undone"]
+                    ),
+                    None,
+                )
+            if latest is None:
+                message = "There is nothing I can undo right now."
+            else:
+                message = "Here is what I can undo. Check it, then press Undo."
+                await self._broadcast_notification("undo_offer", {"task_key": latest["task_key"]})
+            await self._broadcast_notification(
+                "voice_result", {"command": command_text, "status": "answered", "message": message}
+            )
+            await self._speak_voice_response(
+                message, channel=SpeechChannel.TASK_NARRATION, dedupe_key=f"voice-undo:{uuid.uuid4()}"
             )
             return
 

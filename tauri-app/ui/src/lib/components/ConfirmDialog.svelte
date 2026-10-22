@@ -223,6 +223,11 @@
             {#if action.irreversible}
               <span class="irreversible-tag">{$_("tier.irreversible")}</span>
             {/if}
+            {#if action.undo?.kind === "undoable"}
+              <span class="undo-tag can-undo" title={action.undo.reason}>{$_("undo.badge_undoable")}</span>
+            {:else if action.undo?.kind === "not_undoable"}
+              <span class="undo-tag" title={action.undo.reason}>{$_("undo.badge_not_undoable")}</span>
+            {/if}
           </div>
           {#each describeAction(action) as detail (detail.label)}
             <div class="action-detail">
@@ -384,6 +389,20 @@
     border-radius: 10px;
     background: var(--danger);
     color: white;
+  }
+
+  .undo-tag {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 1px 6px;
+    border-radius: 10px;
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+  }
+
+  .undo-tag.can-undo {
+    background: rgba(52, 211, 153, 0.12);
+    color: var(--success, #34d399);
   }
 
   .confirm-checkbox {

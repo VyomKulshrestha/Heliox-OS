@@ -97,6 +97,7 @@ const baseSettings = {
   gesture_cursor: { enabled: false, sensitivity: 1, prediction_ms: 80, blend: 0.3 },
   adaptive_calibration: { gesture_enabled: true, voice_wake_word_enabled: true },
   preview: { enabled: false },
+  undo: { enabled: true, retention_days: 7 },
   typed_decision: { enabled: false, artifact_dir: "", report_path: "" },
   network: { enabled: false, port: 8786, peer_timeout_s: 30, skill_sync_enabled: false, collab_exec_enabled: false },
   calendar: { enabled: false, caldav_url: "", caldav_username: "", caldav_password_provider: "caldav", ics_files: [] },
@@ -151,6 +152,20 @@ describe("SettingsPanel saves", () => {
     );
     expect(settingsMocks.updateSectionDetailed).toHaveBeenCalledWith("model", { rate_limit_rpm: 50000 });
     expect(rpm.value).toBe("60");
+  });
+
+  it("turns undo history off and clears it only on a second click", async () => {
+    settingsMocks.updateSectionDetailed.mockResolvedValue({ ok: true, message: "", restartRequired: false });
+    await renderPanel();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Keep undo history" }));
+    await waitFor(() => expect(settingsMocks.updateSectionDetailed).toHaveBeenCalledWith("undo", { enabled: false }));
+
+    const clear = screen.getByRole("button", { name: "Clear" });
+    await fireEvent.click(clear);
+    expect(daemonMocks.call).not.toHaveBeenCalledWith("undo_clear", expect.anything());
+    await fireEvent.click(screen.getByRole("button", { name: "Click again to delete" }));
+    await waitFor(() => expect(daemonMocks.call).toHaveBeenCalledWith("undo_clear", { confirmed: true }));
   });
 
   it("says when a saved change needs a restart", async () => {

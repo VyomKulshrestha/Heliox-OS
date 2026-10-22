@@ -31,7 +31,38 @@ export interface PlanAction {
   parameters: Record<string, unknown>;
   dry_run?: boolean;
   irreversible?: boolean;
+  /** Whether Heliox can undo this action afterwards; decided by the daemon from the action type. */
+  undo?: UndoSupport;
   index?: number;
+}
+
+export interface UndoSupport {
+  kind: "undoable" | "no_change" | "not_undoable";
+  reason: string;
+}
+
+/** Offered after a task that changed files or the clipboard in ways Heliox can reverse. */
+export interface UndoOffer {
+  taskKey: string;
+  undoable: number;
+  notUndoable: number;
+}
+
+export interface UndoPreviewItem {
+  seq: number;
+  type: string;
+  target: string;
+  state: "ready" | "conflict" | "unavailable";
+  description: string;
+}
+
+export interface UndoPreview {
+  task_key: string;
+  undone: boolean;
+  ready: number;
+  items: UndoPreviewItem[];
+  not_undoable: { type: string; target: string; reason: string }[];
+  preview_token: string;
 }
 
 export interface ActionResultData {
@@ -211,6 +242,11 @@ interface SessionState {
   budget: BudgetInfo | null;
   rollback: RollbackAvailable | null;
   rollbackPending: boolean;
+  undoOffer: UndoOffer | null;
+  /** The preview shown in the undo dialog; the dialog is open while this is set. */
+  undoPreview: UndoPreview | null;
+  undoSubmitting: boolean;
+  undoError: string;
   proactiveSuggestion: ProactiveSuggestion | null;
   proactiveSuggestionPending: boolean;
   terminalStatus: string;
@@ -275,6 +311,10 @@ const initialState: SessionState = {
   budget: null,
   rollback: null,
   rollbackPending: false,
+  undoOffer: null,
+  undoPreview: null,
+  undoSubmitting: false,
+  undoError: "",
   proactiveSuggestion: null,
   proactiveSuggestionPending: false,
   terminalStatus: "",
@@ -773,8 +813,30 @@ function createSession() {
         }));
         break;
 
-      case "task_complete":
+      case "task_complete": {
         void notifyTaskComplete(p);
+        const undo = p.undo && typeof p.undo === "object" ? (p.undo as Record<string, unknown>) : null;
+        if (undo && undo.available === true && typeof undo.task_key === "string") {
+          const offer: UndoOffer = {
+            taskKey: undo.task_key,
+            undoable: Number(undo.undoable ?? 0),
+            notUndoable: Number(undo.not_undoable ?? 0),
+          };
+          update((s) => ({ ...s, undoOffer: offer }));
+        }
+        break;
+      }
+
+      case "undo_offer":
+        if (typeof p.task_key === "string") void openUndoPreview(p.task_key);
+        break;
+
+      case "undo_complete":
+        update((s) => ({
+          ...s,
+          undoOffer: s.undoOffer?.taskKey === p.task_key ? null : s.undoOffer,
+          undoPreview: s.undoPreview?.task_key === p.task_key ? null : s.undoPreview,
+        }));
         break;
 
       case "budget_update":
@@ -1496,6 +1558,86 @@ function createSession() {
     }
   }
 
+  async function openUndoPreview(taskKey?: string) {
+    const key = taskKey ?? get({ subscribe }).undoOffer?.taskKey ?? "";
+    if (!key) return;
+    try {
+      const res = (await call("undo_preview", { task_key: key })) as {
+        status: string;
+        message?: string;
+        preview?: UndoPreview;
+      };
+      if (res.status !== "ok" || !res.preview) {
+        addSystemMessage(`Undo is not available: ${res.message ?? "unknown error"}`);
+        return;
+      }
+      update((s) => ({ ...s, undoPreview: res.preview ?? null, undoSubmitting: false, undoError: "" }));
+    } catch (err) {
+      addSystemMessage(`Undo is not available: ${String(err instanceof Error ? err.message : err)}`);
+    }
+  }
+
+  function cancelUndo() {
+    update((s) => ({ ...s, undoPreview: null, undoSubmitting: false, undoError: "" }));
+  }
+
+  function dismissUndoOffer() {
+    update((s) => ({ ...s, undoOffer: null }));
+  }
+
+  async function confirmUndo() {
+    const preview = get({ subscribe }).undoPreview;
+    if (!preview || get({ subscribe }).undoSubmitting) return;
+    update((s) => ({ ...s, undoSubmitting: true, undoError: "" }));
+    try {
+      const res = (await call("undo_task", {
+        task_key: preview.task_key,
+        preview_token: preview.preview_token,
+        confirmed: true,
+      })) as {
+        status: string;
+        message?: string;
+        preview?: UndoPreview;
+        undone?: number;
+        skipped?: number;
+        failed?: number;
+      };
+      if (res.status === "changed" && res.preview) {
+        update((s) => ({
+          ...s,
+          undoPreview: res.preview ?? null,
+          undoSubmitting: false,
+          undoError: res.message ?? "",
+        }));
+        return;
+      }
+      if (res.status !== "ok" && res.status !== "partial") {
+        update((s) => ({ ...s, undoSubmitting: false, undoError: res.message ?? "Undo failed." }));
+        return;
+      }
+      update((s) => ({
+        ...s,
+        undoPreview: null,
+        undoSubmitting: false,
+        undoError: "",
+        undoOffer: s.undoOffer?.taskKey === preview.task_key ? null : s.undoOffer,
+      }));
+      const undone = res.undone ?? 0;
+      const skipped = res.skipped ?? 0;
+      const failed = res.failed ?? 0;
+      const parts = [`Undid ${undone} change${undone === 1 ? "" : "s"}.`];
+      if (skipped) parts.push(`Left ${skipped} alone because ${skipped === 1 ? "it" : "they"} changed since.`);
+      if (failed) parts.push(`${failed} could not be undone.`);
+      addSystemMessage(parts.join(" "));
+    } catch (err) {
+      update((s) => ({
+        ...s,
+        undoSubmitting: false,
+        undoError: String(err instanceof Error ? err.message : err),
+      }));
+    }
+  }
+
   async function exportChat(format: "json" | "csv" | "markdown") {
     let msgs: Message[] = [];
     const unsub = subscribe((s) => {
@@ -1694,6 +1836,10 @@ function createSession() {
     requestRollback,
     cancelRollback,
     confirmRollback,
+    openUndoPreview,
+    cancelUndo,
+    dismissUndoOffer,
+    confirmUndo,
     exportChat,
     abort,
     cancelQueuedTask,

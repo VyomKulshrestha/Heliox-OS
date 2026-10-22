@@ -56,6 +56,10 @@ export interface PilotSettings {
   preview: {
     enabled: boolean;
   };
+  undo: {
+    enabled: boolean;
+    retention_days: number;
+  };
   typed_decision: {
     enabled: boolean;
     artifact_dir: string;
@@ -166,6 +170,10 @@ const defaultSettings: PilotSettings = {
   preview: {
     enabled: false,
   },
+  undo: {
+    enabled: true,
+    retention_days: 7,
+  },
   typed_decision: {
     enabled: false,
     artifact_dir: "",
@@ -227,6 +235,7 @@ function mergeSettings(current: PilotSettings, incoming: Partial<PilotSettings>)
     gesture_cursor: { ...current.gesture_cursor, ...incoming.gesture_cursor },
     adaptive_calibration: { ...current.adaptive_calibration, ...incoming.adaptive_calibration },
     preview: { ...current.preview, ...incoming.preview },
+    undo: { ...current.undo, ...incoming.undo },
     typed_decision: { ...current.typed_decision, ...incoming.typed_decision },
     network: { ...current.network, ...incoming.network },
     calendar: { ...current.calendar, ...incoming.calendar },
