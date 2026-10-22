@@ -6,6 +6,12 @@ was explicitly dropped to them, download that encrypted content, and
 acknowledge receipt.  They cannot invoke actions, inspect plans, or reach the
 desktop JSON-RPC surface.
 
+When the person turns on phone requests, a paired phone may also send a short,
+encrypted task request.  The request only appears on the computer: it runs when
+the person presses Run there, or, if they allowed it, right away as a background
+job limited to a fixed list of read-only actions.  The phone never approves
+anything and only ever receives the job's short result.
+
 The HTTP transport is protected at the application layer:
 
 * pairing uses a high-entropy secret carried in the QR URL fragment (fragments
@@ -55,6 +61,10 @@ REQUEST_CLOCK_SKEW_SECONDS = 90
 REQUEST_NONCE_TTL_SECONDS = 5 * 60
 MAX_PAIR_ATTEMPTS = 12
 DEFAULT_MAX_TRANSFER_BYTES = 25 * 1024 * 1024
+MAX_REQUEST_CHARS = 500
+MAX_OPEN_REQUESTS_PER_DEVICE = 5
+MAX_REQUESTS_PER_MINUTE = 6
+MAX_KEPT_REQUESTS = 50
 
 
 def _b64u(data: bytes) -> str:
@@ -176,6 +186,33 @@ class HandoffTransfer:
         }
 
 
+@dataclass(slots=True)
+class PhoneRequest:
+    """A task a paired phone asked for; it runs only as the desktop settings allow."""
+
+    request_id: str
+    device_id: str
+    device_name: str
+    text: str
+    created_at: float
+    status: str = "waiting"  # waiting | running | done | failed | dismissed
+    job_id: str = ""
+    result: str = ""
+    read_only: bool = False
+
+    def public_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    def phone_dict(self) -> dict[str, Any]:
+        return {
+            "request_id": self.request_id,
+            "text": self.text,
+            "status": self.status,
+            "created_at": self.created_at,
+            "result": self.result,
+        }
+
+
 class AirHandoffError(RuntimeError):
     """A user-facing Air Handoff contract failure."""
 
@@ -205,6 +242,10 @@ class AirHandoffManager:
         self._transfers: dict[str, HandoffTransfer] = {}
         self._recent: deque[dict[str, Any]] = deque(maxlen=20)
         self._used_nonces: dict[str, dict[str, float]] = {}
+        self._requests: dict[str, PhoneRequest] = {}
+        self._request_times: dict[str, deque[float]] = {}
+        self._accepting_requests: Callable[[], bool] = lambda: False
+        self._on_request: Callable[[PhoneRequest], Awaitable[None]] | None = None
         self._lock = asyncio.Lock()
         self._purge_orphaned_payloads()
         self._load_metadata()
@@ -671,6 +712,114 @@ class AirHandoffManager:
                 }
             )
 
+    # ------------------------------------------------------------------ phone requests
+
+    def set_request_handler(
+        self,
+        *,
+        accepting: Callable[[], bool],
+        on_request: Callable[[PhoneRequest], Awaitable[None]] | None,
+    ) -> None:
+        """Decide whether phones may send requests, and who is told when one arrives."""
+        self._accepting_requests = accepting
+        self._on_request = on_request
+
+    @property
+    def accepting_requests(self) -> bool:
+        try:
+            return bool(self._accepting_requests())
+        except Exception:
+            return False
+
+    async def submit_request(self, device_id: str, envelope: Any) -> PhoneRequest:
+        """Decrypt and queue a phone's request. Raises AirHandoffError when it is refused."""
+        if not self.accepting_requests:
+            raise AirHandoffError("This computer is not accepting requests from phones")
+        if not isinstance(envelope, dict):
+            raise AirHandoffError("Malformed request")
+        secret = await self._device_secret(device_id)
+        try:
+            clear = AESGCM(secret).decrypt(
+                _unb64u(str(envelope.get("nonce", ""))), _unb64u(str(envelope.get("ciphertext", ""))), b"request-v1"
+            )
+            payload = json.loads(clear.decode("utf-8"))
+        except Exception as exc:
+            raise AirHandoffError("The request could not be decrypted") from exc
+        text = " ".join(str(payload.get("text", "")).split()) if isinstance(payload, dict) else ""
+        if not text:
+            raise AirHandoffError("The request is empty")
+        if len(text) > MAX_REQUEST_CHARS:
+            raise AirHandoffError(f"Requests are limited to {MAX_REQUEST_CHARS} characters")
+        async with self._lock:
+            now = self._now()
+            times = self._request_times.setdefault(device_id, deque(maxlen=MAX_REQUESTS_PER_MINUTE))
+            if len(times) == MAX_REQUESTS_PER_MINUTE and now - times[0] < 60:
+                raise AirHandoffError("Too many requests; wait a minute")
+            open_count = sum(
+                1 for item in self._requests.values() if item.device_id == device_id and item.status == "waiting"
+            )
+            if open_count >= MAX_OPEN_REQUESTS_PER_DEVICE:
+                raise AirHandoffError("This phone already has requests waiting on the computer")
+            times.append(now)
+            device = self._devices[device_id]
+            request = PhoneRequest(
+                request_id=secrets.token_urlsafe(9),
+                device_id=device_id,
+                device_name=device.name,
+                text=text,
+                created_at=now,
+            )
+            self._requests[request.request_id] = request
+            while len(self._requests) > MAX_KEPT_REQUESTS:
+                self._requests.pop(next(iter(self._requests)))
+            self._recent.appendleft(
+                {"event": "request", "request_id": request.request_id, "device_id": device_id, "at": now}
+            )
+        if self._on_request is not None:
+            await self._on_request(request)
+        return request
+
+    def requests_for(self, device_id: str) -> list[dict[str, Any]]:
+        mine = [item for item in self._requests.values() if item.device_id == device_id]
+        return [item.phone_dict() for item in reversed(mine[-10:])]
+
+    def list_requests(self) -> list[dict[str, Any]]:
+        return [item.public_dict() for item in reversed(list(self._requests.values()))]
+
+    def get_request(self, request_id: str) -> PhoneRequest | None:
+        return self._requests.get(request_id)
+
+    def request_for_job(self, job_id: str) -> PhoneRequest | None:
+        return next((item for item in self._requests.values() if job_id and item.job_id == job_id), None)
+
+    async def send_text(self, device_id: str, text: str, *, filename: str = "heliox-answer.txt") -> dict[str, Any]:
+        """Queue a text answer for one paired phone without touching the person's held draft."""
+        async with self._lock:
+            self._clear_expired()
+            await self._device_secret(device_id)
+            encoded = text.encode("utf-8")[: self._max_transfer_bytes]
+            self._transfer_dir.mkdir(parents=True, exist_ok=True)
+            path = self._transfer_dir / f"{secrets.token_urlsafe(10)}.txt"
+            path.write_bytes(encoded)
+            try:
+                os.chmod(path, 0o600)
+            except OSError:
+                pass
+            now = self._now()
+            transfer = HandoffTransfer(
+                transfer_id=secrets.token_urlsafe(12),
+                target_device_id=device_id,
+                kind="text",
+                filename=Path(filename).name[:180],
+                mime_type="text/plain",
+                path=str(path),
+                size=len(encoded),
+                created_at=now,
+                expires_at=now + TRANSFER_TTL_SECONDS,
+            )
+            self._transfers[transfer.transfer_id] = transfer
+            return transfer.public_dict()
+
     async def status(self) -> dict[str, Any]:
         self._clear_expired()
         return {
@@ -681,6 +830,8 @@ class AirHandoffManager:
             "recent": list(self._recent),
             "max_transfer_bytes": self._max_transfer_bytes,
             "secure_storage_available": self._vault.available,
+            "accepting_requests": self.accepting_requests,
+            "requests": self.list_requests()[:10],
         }
 
 
@@ -720,6 +871,8 @@ class AirHandoffServer:
                 web.get("/api/pending", self._pending),
                 web.get("/api/transfers/{transfer_id}", self._transfer),
                 web.post("/api/transfers/{transfer_id}/ack", self._ack),
+                web.get("/api/requests", self._requests_list),
+                web.post("/api/requests", self._request_submit),
             ]
         )
         self._runner = web.AppRunner(app, access_log=None)
@@ -852,6 +1005,39 @@ class AirHandoffServer:
             response = web.json_response({"error": str(exc)}, status=403)
         return self._security_headers(response)
 
+    async def _requests_list(self, request: Any) -> Any:
+        from aiohttp import web
+
+        try:
+            device = await self._authenticate(request)
+            payload = {
+                "accepting": self.manager.accepting_requests,
+                "requests": self.manager.requests_for(device.device_id),
+            }
+            encrypted = await self.manager.encrypt_json_for(device.device_id, payload, aad=b"requests-v1")
+            response = web.json_response(encrypted)
+        except AirHandoffError as exc:
+            response = web.json_response({"error": str(exc)}, status=403)
+        return self._security_headers(response)
+
+    async def _request_submit(self, request: Any) -> Any:
+        from aiohttp import web
+
+        body = await request.read()
+        try:
+            device = await self._authenticate(request, body)
+            try:
+                envelope = json.loads(body.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise AirHandoffError("Malformed request") from exc
+            submitted = await self.manager.submit_request(device.device_id, envelope)
+            response = web.json_response(
+                {"status": "received", "request_id": submitted.request_id, "state": submitted.status}
+            )
+        except AirHandoffError as exc:
+            response = web.json_response({"error": str(exc)}, status=403)
+        return self._security_headers(response)
+
 
 __all__ = [
     "AirHandoffError",
@@ -860,6 +1046,7 @@ __all__ = [
     "HandoffDraft",
     "HandoffTransfer",
     "PairedDevice",
+    "PhoneRequest",
     "_b64u",
     "_canonical_request",
     "_sha256",

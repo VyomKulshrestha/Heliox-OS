@@ -34,6 +34,9 @@ Heliox is split into six trust boundaries:
    only an explicitly dropped transfer addressed to its device ID. It cannot
    inspect plans, invoke actions, approve tasks, or obtain the desktop RPC
    credential. Transfer metadata and bytes remain application-layer encrypted.
+   With phone requests turned on it may also post an encrypted request, which
+   waits for Run on the computer or, if allowed, starts as a background job
+   limited to `PHONE_READ_ONLY_ACTIONS`.
 
 Raw camera frames, audio, hand or face landmarks, screen pixels, and binary
 payloads are excluded from the experience and learning stores by default.
@@ -578,6 +581,12 @@ to reverse each file write, move, copy or delete and each clipboard write. The
 compensation comes from the action type, never from a model. Undoing a task is a
 separate, confirmed RPC that restores those recorded copies newest first, skips
 anything changed since, and never reaches the planner or an adapter.
+
+When a task that ran actions ends, `pilot/workflows/task_receipts.py` writes an
+Ed25519-signed receipt chained to the previous one; it records parameters and
+outputs only as hashes. `pilot/workflows/activity_timeline.py` (opt-in) receives
+each (app, window title) observation from the screen-awareness loop and answers
+timeline questions in code before they would reach the planner.
 
 ## Persistent state
 

@@ -42,3 +42,51 @@ describe("Air Handoff daemon contracts", () => {
     expect(get(airHandoff).enabled).toBe(false);
   });
 });
+
+describe("Phone requests", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    daemonMocks.call.mockReset();
+    daemonMocks.onNotification.mockReset();
+    vi.resetModules();
+  });
+
+  const waiting = {
+    request_id: "r1",
+    device_id: "d1",
+    device_name: "Pixel",
+    text: "clean my downloads",
+    created_at: 1,
+    status: "waiting",
+    job_id: "",
+    result: "",
+    read_only: false,
+  };
+
+  it("lists a request the phone sent and runs it only when Run is pressed", async () => {
+    const { airHandoff } = await import("./airHandoff");
+    const handler = daemonMocks.onNotification.mock.calls[0][0] as (method: string, params: unknown) => void;
+
+    handler("phone_request", waiting);
+    expect(get(airHandoff).requests).toEqual([waiting]);
+    expect(daemonMocks.call).not.toHaveBeenCalled();
+
+    daemonMocks.call.mockResolvedValue({ status: "ok", request: { ...waiting, status: "running", job_id: "j1" } });
+    await airHandoff.runRequest("r1");
+
+    expect(daemonMocks.call).toHaveBeenCalledWith("phone_request_run", { request_id: "r1" });
+    expect(get(airHandoff).requests[0].status).toBe("running");
+  });
+
+  it("never asks for read-only autostart while requests are off", async () => {
+    daemonMocks.call.mockResolvedValue({ status: "ok", accept_requests: false, run_read_only_requests: false });
+    const { airHandoff } = await import("./airHandoff");
+
+    await airHandoff.configureRequests(false, true);
+
+    expect(daemonMocks.call).toHaveBeenCalledWith("air_handoff_requests_configure", {
+      accept_requests: false,
+      run_read_only_requests: false,
+    });
+  });
+});

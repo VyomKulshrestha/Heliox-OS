@@ -26,6 +26,7 @@
   import VirtualList from "./lib/components/VirtualList.svelte";
   import PluginsTab from "./lib/components/PluginsTab.svelte";
   import GitConflictResolver from "./lib/components/GitConflictResolver.svelte";
+  import { airHandoff } from "./lib/stores/airHandoff";
   import { session } from "./lib/stores/session";
   import type { Message } from "./lib/stores/session";
   import { settings } from "./lib/stores/settings";
@@ -326,6 +327,21 @@
             </span>
           </div>
         {/if}
+        {#each ($airHandoff.requests ?? [])
+          .filter((item) => item.status === "waiting")
+          .slice(0, 1) as request (request.request_id)}
+          <div class="undo-banner" data-testid="phone-request-banner">
+            <span><strong>{request.device_name}</strong> asks: {request.text}</span>
+            <span class="undo-banner-actions">
+              <button class="undo-btn" onclick={() => void airHandoff.runRequest(request.request_id)}>Run</button>
+              <button
+                class="undo-dismiss"
+                aria-label="Dismiss"
+                onclick={() => void airHandoff.dismissRequest(request.request_id)}>&times;</button
+              >
+            </span>
+          </div>
+        {/each}
         {#if $session.rollback && !$session.rollbackPending}
           <div class="undo-banner">
             <span>{$_("rollback.banner")}</span>

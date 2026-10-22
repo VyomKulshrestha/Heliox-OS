@@ -46,10 +46,10 @@ logger = logging.getLogger("pilot.security.validator")
 
 
 def heliox_private_dirs() -> tuple[Path, ...]:
-    """Folders holding Heliox's own configuration, auth tokens, MCP server list and undo copies."""
+    """Folders holding Heliox's configuration, auth tokens, MCP server list, undo copies, receipts and timeline."""
     from pilot.config import CONFIG_DIR, DATA_DIR, RUNTIME_DIR
 
-    return (CONFIG_DIR, RUNTIME_DIR, DATA_DIR / "undo")
+    return (CONFIG_DIR, RUNTIME_DIR, DATA_DIR / "undo", DATA_DIR / "receipts", DATA_DIR / "timeline")
 
 
 def inside_heliox_private_dirs(path: str) -> bool:

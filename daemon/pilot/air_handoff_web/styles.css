@@ -117,10 +117,59 @@ label {
 }
 
 input,
+textarea,
 button {
   min-height: 48px;
   border-radius: 13px;
   font: inherit;
+}
+
+textarea {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid rgba(141, 161, 226, 0.2);
+  outline: none;
+  background: rgba(4, 6, 14, 0.72);
+  color: white;
+  resize: vertical;
+}
+
+#ask-card {
+  margin-top: 18px;
+}
+
+.requests {
+  display: grid;
+  gap: 10px;
+  margin: 16px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.requests li {
+  padding: 12px 14px;
+  border: 1px solid rgba(136, 154, 218, 0.14);
+  border-radius: 14px;
+  color: #cfd5e9;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.requests li span {
+  display: block;
+  margin-top: 4px;
+  color: #8f98b5;
+  font-size: 0.75rem;
+}
+
+.answer {
+  margin: 8px 0 0;
+  color: #dfe4f5;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 input {

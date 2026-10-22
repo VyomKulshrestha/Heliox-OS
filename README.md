@@ -132,7 +132,9 @@ No comparison declares a universal winner. See the [transparent cost page](https
 | Plugin ecosystem       | Reviewed GitHub marketplace, signed local plugins, per-file hashes, capability manifests, and constrained native/WASM brokers                              |
 | Neural research        | BrainFlow synthetic, recorded EEG playback, public EEGBCI benchmarking, calibrated SSVEP selection, replay-safe Tier 0/1 goals, and explicit staged autonomous task launch |
 | MCP interfaces         | Public read-only documentation MCP plus a local, separately authenticated stdio bridge whose tasks use visible Heliox approvals                           |
-| Air Handoff            | Opt-in same-LAN phone pairing and one-target encrypted transfer of a held screenshot, text value, or immutable file snapshot; never a remote-control path |
+| Air Handoff            | Opt-in same-LAN phone pairing and one-target encrypted transfer of a held screenshot, text value, or immutable file snapshot. Optionally, a paired phone can send a request that waits for **Run** on the computer; status checks can start at once and answer back to the phone. The phone never approves anything |
+| Signed task receipts   | After each task that ran actions, an Ed25519-signed, hash-chained receipt of what ran, what you approved and what happened; contents appear only as hashes, and `python -m pilot.workflows.task_receipts verify` checks one anywhere |
+| Activity timeline      | Opt-in local record of which app and window title were in front, so "what was I working on yesterday afternoon?" gets an answer by voice or chat; never pixels or screen text, password managers and private windows skipped |
 | Secure integrations    | Settings-managed CalDAV, IMAP/SMTP, and allowlisted SSH connections with secrets kept in the operating-system credential store                            |
 
 While a task runs, choose **Ask without stopping** to ask a question, **Correct task** to interrupt the current step and replan, or **Queue next task** to submit another task for execution afterward. Spoken “quick question …”, status questions, and “next task …” use the corresponding paths. Queued interactive tasks are serialized through the normal approval and verification gates; they are not parallel desktop controllers. The passive screen monitor tracks the active window and visual changes; it does not continuously understand every pixel. “Read my screen” invokes local OCR on demand. Screen context never grants an action or bypasses approval.
@@ -183,7 +185,8 @@ Core guarantees:
 - Real cancellation of in-flight commands and durable reconciliation after reconnect or restart.
 - Learned risk, cognitive estimates, adaptation, and neural input cannot grant permission or remove deterministic warnings.
 - OS credential stores for API keys; credentials are never written to `.env` or included in plans.
-- Air Handoff is off by default; a paired phone can receive only content explicitly held and dropped to it, never daemon RPC or desktop-control authority.
+- Air Handoff is off by default; a paired phone can receive only content explicitly held and dropped to it, never daemon RPC or desktop-control authority. Phone requests are a separate opt-in: they wait for Run on the computer, and only a fixed list of status checks may start without you.
+- Every task that ran actions leaves a signed, hash-chained receipt; the activity timeline is off by default and never stores pixels or screen text.
 - Gesture cursor control is off by default and exits on an open palm, stop control, or disabled setting.
 - Assistance co-adaptation is off by default and stores nothing without a per-purpose consent record. Its data is encrypted with a per-participant key in the OS keyring, and revoking, expiry or erasing deletes the data and the key. It never commits an ambiguous selection by guessing.
 
@@ -341,6 +344,14 @@ enabled = true               # keep what is needed to undo file and clipboard ch
 retention_days = 7
 max_task_mb = 512            # larger changes still run, but are listed as not undoable
 max_total_mb = 2048
+
+[receipts]
+enabled = true
+retention_days = 90
+
+[timeline]
+enabled = false              # app and window-title history for "what was I working on?"
+retention_days = 7
 
 [co_adaptation]
 enabled = false              # the selection study; also needs a consent record per participant

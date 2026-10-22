@@ -163,6 +163,50 @@
       </div>
     {/if}
 
+    <div class="requests" data-testid="phone-requests">
+      <label class="request-option">
+        <input
+          type="checkbox"
+          checked={$airHandoff.accept_requests}
+          disabled={$airHandoff.busy}
+          onchange={(event) =>
+            void airHandoff.configureRequests(event.currentTarget.checked, $airHandoff.run_read_only_requests)}
+        />
+        <span>
+          <strong>Accept requests from paired phones</strong>
+          <small>A request waits here until you press Run, and every action still asks for approval here.</small>
+        </span>
+      </label>
+      <label class="request-option">
+        <input
+          type="checkbox"
+          checked={$airHandoff.run_read_only_requests}
+          disabled={$airHandoff.busy || !$airHandoff.accept_requests}
+          onchange={(event) => void airHandoff.configureRequests(true, event.currentTarget.checked)}
+        />
+        <span>
+          <strong>Start status checks right away</strong>
+          <small
+            >Runs a request at once, limited to status and file names: no file contents, clipboard, email, screen or
+            changes. The answer goes back to the phone.</small
+          >
+        </span>
+      </label>
+      {#each ($airHandoff.requests ?? []).filter((item) => item.status === "waiting") as request (request.request_id)}
+        <div class="request">
+          <span><strong>{request.device_name}</strong> asks: {request.text}</span>
+          <span class="request-buttons">
+            <button type="button" class="primary" onclick={() => void airHandoff.runRequest(request.request_id)}
+              >Run</button
+            >
+            <button type="button" class="revoke" onclick={() => void airHandoff.dismissRequest(request.request_id)}
+              >Dismiss</button
+            >
+          </span>
+        </div>
+      {/each}
+    </div>
+
     <div class="devices">
       <div class="devices-heading">
         <strong>Paired phones</strong>
@@ -200,6 +244,40 @@
 </section>
 
 <style>
+  .requests {
+    display: grid;
+    gap: 10px;
+    padding: 14px 20px;
+    border-top: 1px solid var(--border);
+  }
+  .request-option {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    font-size: 12px;
+  }
+  .request-option small {
+    display: block;
+    color: var(--text-secondary);
+    font-size: 11px;
+    line-height: 1.45;
+  }
+  .request {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    font-size: 12px;
+    overflow-wrap: anywhere;
+  }
+  .request-buttons {
+    display: flex;
+    flex-shrink: 0;
+    gap: 6px;
+  }
   .handoff-card {
     border: 1px solid var(--border);
     border-radius: 12px;

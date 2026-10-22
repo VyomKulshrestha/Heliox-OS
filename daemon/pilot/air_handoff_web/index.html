@@ -52,6 +52,22 @@
         <div id="transfer-list" class="transfers"></div>
         <p id="receive-error" class="error" role="alert"></p>
       </section>
+
+      <section id="ask-card" class="card hidden">
+        <p class="kicker">ASK HELIOX</p>
+        <h2>Send a request to your computer</h2>
+        <p class="muted">
+          It waits on your computer until you press Run there. If you allowed it, status checks start right
+          away. The answer comes back here.
+        </p>
+        <label>
+          Request
+          <textarea id="ask-text" maxlength="500" rows="3" placeholder="How full is my disk?"></textarea>
+        </label>
+        <button id="ask-button" type="button">Send to computer</button>
+        <p id="ask-error" class="error" role="alert"></p>
+        <ul id="request-list" class="requests"></ul>
+      </section>
     </main>
     <script type="module" src="/app.js"></script>
   </body>

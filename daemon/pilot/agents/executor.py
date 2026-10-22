@@ -169,6 +169,7 @@ class Executor:
         self._world_model_outcome_recorder: Any = None
         self._recorded_workflow_store: Any = None
         self._undo_journal: Any = None
+        self._task_receipts: Any = None
         self._step_checker: Any = None
         self._durable_task_store: DurableTaskStore | None = None
         self._controller_lease: ControllerLeaseManager | None = None
@@ -444,6 +445,10 @@ class Executor:
     def set_undo_journal(self, journal: Any) -> None:
         """Record how to reverse each real local change so a finished task can be undone."""
         self._undo_journal = journal
+
+    def set_task_receipts(self, receipts: Any) -> None:
+        """Add every action that reaches execution to its task's signed receipt."""
+        self._task_receipts = receipts
 
     def set_step_checker(self, checker: Any) -> None:
         """Wire the deterministic pre-action state checker."""
@@ -1274,12 +1279,11 @@ class Executor:
                     except Exception:
                         logger.warning("Workflow pre-action recording failed", exc_info=True)
                 undo_token = None
+                context = get_experience_context()
+                task_key = context.task_id or context.plan_id or plan_id
                 if self._undo_journal is not None:
-                    context = get_experience_context()
                     try:
-                        undo_token = await self._undo_journal.before(
-                            action, task_key=context.task_id or context.plan_id or plan_id
-                        )
+                        undo_token = await self._undo_journal.before(action, task_key=task_key)
                     except Exception:
                         logger.warning("Undo capture failed", exc_info=True)
                 try:
@@ -1312,6 +1316,18 @@ class Executor:
                         await self._undo_journal.after(undo_token, result, plan_id=plan_id)
                     except Exception:
                         logger.warning("Undo journal update failed", exc_info=True)
+                if self._task_receipts is not None:
+                    try:
+                        self._task_receipts.record_action(
+                            task_key,
+                            plan_id,
+                            action,
+                            result,
+                            user_confirmed=user_confirmed,
+                            undo_kind=undo_token.support.kind if undo_token is not None else "",
+                        )
+                    except Exception:
+                        logger.warning("Task receipt update failed", exc_info=True)
                 if claimed and self._durable_task_store is not None:
                     from pilot.workflows.durable_tasks import ActionExecutionStatus
 

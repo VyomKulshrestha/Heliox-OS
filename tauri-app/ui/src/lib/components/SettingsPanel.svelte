@@ -23,6 +23,8 @@
   import SshIntegrationPanel from "./SshIntegrationPanel.svelte";
   import McpServersPanel from "./McpServersPanel.svelte";
   import ScheduledRunsPanel from "./ScheduledRunsPanel.svelte";
+  import ReceiptsPanel from "./ReceiptsPanel.svelte";
+  import TimelinePanel from "./TimelinePanel.svelte";
   import GestureWorkflowBindings from "./GestureWorkflowBindings.svelte";
   import VoiceGestureWorkflowStatus from "./VoiceGestureWorkflowStatus.svelte";
   import RecordedWorkflowsPanel from "./RecordedWorkflowsPanel.svelte";
@@ -2691,6 +2693,8 @@
   <ScheduledRunsPanel />
   <PeerMeshPanel />
   <AirHandoffPanel />
+  <ReceiptsPanel />
+  <TimelinePanel />
 </div>
 
 <style>

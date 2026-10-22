@@ -34,6 +34,7 @@ from pilot.config import (
     CO_ADAPTATION_FLOAT_RANGES,
     CO_ADAPTATION_INT_RANGES,
     CO_ADAPTATION_PREFERENCES_FILE,
+    CONFIG_DIR,
     DATA_DIR,
     DB_FILE,
     EXPERIENCE_DB_FILE,
@@ -337,6 +338,28 @@ VOICE_DENIALS = frozenset(
         "reject",
         "reject it",
     }
+)
+# What a phone request may do when it starts without anyone at the computer: status and
+# names only. File contents, the clipboard, email, the screen, environment variables and
+# the registry stay out, and nothing that opens or changes anything is allowed.
+PHONE_READ_ONLY_ACTIONS = (
+    "battery_info",
+    "calendar_list_events",
+    "cpu_usage",
+    "directory_size",
+    "directory_summary",
+    "disk_list",
+    "disk_usage",
+    "file_list",
+    "file_search",
+    "git_log",
+    "git_status",
+    "memory_usage",
+    "network_info",
+    "process_list",
+    "service_status",
+    "system_health_review",
+    "system_info",
 )
 VOICE_STOP_PHRASES = frozenset(
     {
@@ -893,6 +916,8 @@ class PilotServer:
         # stop the one active interactive task.
         self._interactive_request_active = False
         self._undo_journal: Any = None
+        self._task_receipts: Any = None
+        self._activity_timeline: Any = None
         self._queued_execute_requests: deque[tuple[str, str, dict[str, Any]]] = deque()
         self._queued_submission_lock = asyncio.Lock()
         self._queued_execute_worker: asyncio.Task[None] | None = None
@@ -986,6 +1011,7 @@ class PilotServer:
             host="0.0.0.0",
             port=self.config.air_handoff.port,
         )
+        self._wire_air_handoff_requests()
         model_router = ModelRouter(self.config, self._vault)
         self._model_router = model_router
         await model_router.initialize()
@@ -1103,12 +1129,31 @@ class PilotServer:
         self._executor.set_recorded_workflow_store(self._recorded_workflows)
         from pilot.workflows.undo_journal import UndoJournal
 
-        self._undo_journal = UndoJournal(DATA_DIR / "undo", config=self.config.undo)
+        self._undo_journal = UndoJournal(DATA_DIR / "undo", config=lambda: self.config.undo)
         self._executor.set_undo_journal(self._undo_journal)
         try:
             await self._undo_journal.prune()
         except Exception:
             logger.warning("Undo history pruning failed", exc_info=True)
+        from pilot.workflows.task_receipts import TaskReceipts
+
+        self._task_receipts = TaskReceipts(
+            DATA_DIR / "receipts", config=lambda: self.config.receipts, vault=self._vault, key_dir=CONFIG_DIR
+        )
+        self._executor.set_task_receipts(self._task_receipts)
+        try:
+            await self._task_receipts.prune()
+        except Exception:
+            logger.warning("Receipt pruning failed", exc_info=True)
+        from pilot.workflows.activity_timeline import ActivityTimeline
+
+        self._activity_timeline = ActivityTimeline(
+            DATA_DIR / "timeline" / "timeline.db", config=lambda: self.config.timeline
+        )
+        try:
+            await asyncio.to_thread(self._activity_timeline.prune)
+        except Exception:
+            logger.warning("Activity timeline pruning failed", exc_info=True)
         # Import and warm the local system probe stack before readiness so the
         # first harmless status request does not pay lazy import/thread startup.
         from pilot.system.sysinfo import prepare_system_probes
@@ -1359,6 +1404,8 @@ class PilotServer:
                 enable_describe=False,
             )
             gate.set_ui_observation_provider(self._screen_vision.get_world_observation)
+            if self._activity_timeline is not None:
+                self._screen_vision.set_state_observer(self._activity_timeline.observe)
             logger.info("ScreenVisionAgent auto-started (every %.1fs, JARVIS mode)", sv_config.capture_interval_seconds)
         except Exception:
             logger.warning("ScreenVisionAgent init failed (non-critical)", exc_info=True)
@@ -1432,7 +1479,7 @@ class PilotServer:
                 job_is_active=self._autonomous_job_is_active,
             )
             self._scheduled_runs.start()
-            self._autonomous.set_broadcast(self._broadcast_notification)
+            self._autonomous.set_broadcast(self._autonomous_broadcast)
             self._autonomous.set_speech(self._speak_companion_text)
             self._autonomous.set_approval_handler(self._wait_for_autonomous_confirmation)
             if self._neural_controller is not None:
@@ -1596,6 +1643,19 @@ class PilotServer:
             "undo_preview": self._handle_undo_preview,
             "undo_task": self._handle_undo_task,
             "undo_clear": self._handle_undo_clear,
+            "receipts_list": self._handle_receipts_list,
+            "receipt_get": self._handle_receipt_get,
+            "receipt_verify": self._handle_receipt_verify,
+            "receipts_verify_chain": self._handle_receipts_verify_chain,
+            "timeline_status": self._handle_timeline_status,
+            "timeline_search": self._handle_timeline_search,
+            "timeline_summary": self._handle_timeline_summary,
+            "timeline_pause": self._handle_timeline_pause,
+            "timeline_clear": self._handle_timeline_clear,
+            "phone_request_list": self._handle_phone_request_list,
+            "phone_request_run": self._handle_phone_request_run,
+            "phone_request_dismiss": self._handle_phone_request_dismiss,
+            "air_handoff_requests_configure": self._handle_air_handoff_requests_configure,
             "list_permission_events": self._handle_list_permission_events,
             "verify_permission_audit": self._handle_verify_permission_audit,
             "list_gateway_events": self._handle_list_gateway_events,
@@ -2822,6 +2882,17 @@ class PilotServer:
                     undo_summary = await self._undo_journal.summary(context.task_id or last_plan_id or "")
                     if undo_summary is not None:
                         payload["undo"] = undo_summary
+                if self._task_receipts is not None:
+                    receipt = await self._task_receipts.finalize(
+                        context.task_id or last_plan_id or "",
+                        request=str(params.get("input", "")),
+                        status=status,
+                        summary=payload["summary"],
+                        source=str(params.get("source") or "text"),
+                        undo=payload.get("undo"),
+                    )
+                    if receipt is not None:
+                        payload["receipt_id"] = receipt["receipt_id"]
                 await self._append_experience(
                     ExperienceEventType.OUTCOME_VERIFIED,
                     plan_id=last_plan_id,
@@ -2834,6 +2905,21 @@ class PilotServer:
                 await self._broadcast_notification("task_complete", payload)
             except Exception:
                 pass
+
+        # Timeline questions ("what was I working on this morning?") are answered from the local
+        # timeline in code; they never reach the planner or a model.
+        if self._activity_timeline is not None and not attachments:
+            timeline_answer = await self._activity_timeline.answer_async(str(user_input))
+            if timeline_answer is not None:
+                await ws.send(_notification("conversation_response", {"explanation": timeline_answer}))
+                await _emit_task_complete("success", timeline_answer)
+                return {
+                    "status": "success",
+                    "conversational": True,
+                    "dry_run": False,
+                    "results": [],
+                    "explanation": timeline_answer,
+                }
 
         async def _prepare_durable_replan(reason: str) -> None:
             if self._durable_tasks is None or not self._active_task_id:
@@ -5572,6 +5658,260 @@ class PilotServer:
         await self._undo_journal.clear()
         return {"status": "ok"}
 
+    async def _autonomous_broadcast(self, method: str, params: dict[str, Any]) -> None:
+        """Forward background-job notifications, adding undo and a receipt when a job ends."""
+        if method == "autonomous_complete" and isinstance(params, dict):
+            params = dict(params)
+            job_id = str(params.get("job_id") or "")
+            try:
+                if self._undo_journal is not None and job_id and not params.get("dry_run"):
+                    undo_summary = await self._undo_journal.summary(job_id)
+                    if undo_summary is not None:
+                        params["undo"] = undo_summary
+                if self._task_receipts is not None and job_id:
+                    receipt = await self._task_receipts.finalize(
+                        job_id,
+                        request=str(params.get("goal") or ""),
+                        status=str(params.get("status") or ""),
+                        summary=str(params.get("result_summary") or ""),
+                        source=f"autonomous:{params.get('source') or 'text'}",
+                        undo=params.get("undo"),
+                    )
+                    if receipt is not None:
+                        params["receipt_id"] = receipt["receipt_id"]
+            except Exception:
+                logger.warning("Finishing a background job's undo and receipt failed", exc_info=True)
+        await self._broadcast_notification(method, params)
+        if method in {"autonomous_complete", "autonomous_cancelled"} and isinstance(params, dict):
+            await self._finish_phone_request(params)
+
+    def _wire_air_handoff_requests(self) -> None:
+        set_handler = getattr(self._air_handoff_manager, "set_request_handler", None)
+        if set_handler is None:
+            return
+        set_handler(
+            accepting=lambda: bool(
+                self.config.air_handoff.enabled and getattr(self.config.air_handoff, "accept_requests", False)
+            ),
+            on_request=self._on_phone_request,
+        )
+
+    async def _on_phone_request(self, request: Any) -> None:
+        """A paired phone asked for something: show it, and start it only if allowed."""
+        logger.info("Phone request %s from %s", request.request_id, request.device_name)
+        await self._broadcast_notification("phone_request", request.public_dict())
+        if self.config.air_handoff.run_read_only_requests:
+            await self._start_phone_request(request, read_only=True)
+
+    async def _start_phone_request(self, request: Any, *, read_only: bool) -> dict[str, Any]:
+        if self._autonomous is None:
+            return {"status": "error", "message": "Background jobs are not available."}
+        try:
+            job = await self._autonomous.submit(
+                request.text,
+                source="phone",
+                session_id="phone",
+                allowed_actions=list(PHONE_READ_ONLY_ACTIONS) if read_only else None,
+            )
+        except Exception as exc:
+            request.status = "failed"
+            request.result = f"Could not start: {exc}"
+            await self._broadcast_notification("phone_request", request.public_dict())
+            return {"status": "error", "message": request.result}
+        request.status = "running"
+        request.job_id = job.job_id
+        request.read_only = read_only
+        await self._broadcast_notification("phone_request", request.public_dict())
+        return {"status": "ok", "request": request.public_dict(), "job_id": job.job_id}
+
+    async def _finish_phone_request(self, job: dict[str, Any]) -> None:
+        """Send a finished request's short result back to the phone that asked."""
+        manager = self._air_handoff_manager
+        request = manager.request_for_job(str(job.get("job_id") or "")) if manager is not None else None
+        if request is None:
+            return
+        job_status = str(job.get("status") or "")
+        request.status = "done" if job_status in {"success", "partial"} else "failed"
+        request.result = str(job.get("result_summary") or job_status)[:1000]
+        await self._broadcast_notification("phone_request", request.public_dict())
+        try:
+            await manager.send_text(request.device_id, f'Heliox: "{request.text}"\n\n{job_status}: {request.result}')
+        except Exception:
+            logger.warning("Could not send a phone request's result back", exc_info=True)
+
+    @staticmethod
+    def _phone_request_id(params: dict[str, Any]) -> str | None:
+        request_id = params.get("request_id")
+        return request_id if isinstance(request_id, str) and 0 < len(request_id) <= 64 else None
+
+    async def _handle_phone_request_list(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """Requests paired phones sent, newest first."""
+        if self._air_handoff_manager is None:
+            return {"status": "error", "message": "Air Handoff is not initialized", "requests": []}
+        return {
+            "status": "ok",
+            "accept_requests": bool(self.config.air_handoff.accept_requests),
+            "run_read_only_requests": bool(self.config.air_handoff.run_read_only_requests),
+            "requests": self._air_handoff_manager.list_requests(),
+        }
+
+    async def _handle_phone_request_run(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """Start a waiting phone request from the computer, with the normal approvals."""
+        request_id = self._phone_request_id(params)
+        request = (
+            self._air_handoff_manager.get_request(request_id) if request_id and self._air_handoff_manager else None
+        )
+        if request is None:
+            return {"status": "error", "message": "No such phone request."}
+        if request.status != "waiting":
+            return {"status": "error", "message": f"This request is already {request.status}."}
+        return await self._start_phone_request(request, read_only=False)
+
+    async def _handle_phone_request_dismiss(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """Drop a waiting phone request without running it."""
+        request_id = self._phone_request_id(params)
+        request = (
+            self._air_handoff_manager.get_request(request_id) if request_id and self._air_handoff_manager else None
+        )
+        if request is None:
+            return {"status": "error", "message": "No such phone request."}
+        if request.status != "waiting":
+            return {"status": "error", "message": f"This request is already {request.status}."}
+        request.status = "dismissed"
+        await self._broadcast_notification("phone_request", request.public_dict())
+        return {"status": "ok", "request": request.public_dict()}
+
+    async def _handle_air_handoff_requests_configure(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """Turn phone requests on or off, and whether read-only ones may start without you."""
+        accept = params.get("accept_requests")
+        run_read_only = params.get("run_read_only_requests")
+        if not isinstance(accept, bool) or not isinstance(run_read_only, bool):
+            return {"status": "error", "message": "accept_requests and run_read_only_requests must be booleans"}
+        if run_read_only and not accept:
+            return {"status": "error", "message": "Read-only requests can only start at once when requests are on"}
+        previous = (self.config.air_handoff.accept_requests, self.config.air_handoff.run_read_only_requests)
+        self.config.air_handoff.accept_requests = accept
+        self.config.air_handoff.run_read_only_requests = run_read_only
+        try:
+            self.config.save()
+        except Exception as exc:
+            self.config.air_handoff.accept_requests, self.config.air_handoff.run_read_only_requests = previous
+            return {"status": "error", "message": f"Config update was not saved: {exc}"}
+        state = await self._publish_air_handoff_state()
+        return {"status": "ok", **state}
+
+    async def _handle_timeline_status(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """Whether the activity timeline is recording, and how much it holds."""
+        if self._activity_timeline is None:
+            return {"status": "error", "message": "The activity timeline is not ready yet."}
+        return {"status": "ok", **await asyncio.to_thread(self._activity_timeline.status)}
+
+    async def _handle_timeline_search(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """Spans whose app or window title contains ``query`` (newest first)."""
+        query = params.get("query")
+        if not isinstance(query, str) or not query.strip() or len(query) > 200:
+            return {"status": "error", "message": "query must be 1 to 200 characters"}
+        if self._activity_timeline is None:
+            return {"status": "error", "message": "The activity timeline is not ready yet."}
+        limit = params.get("limit", 50)
+        if not isinstance(limit, int) or isinstance(limit, bool):
+            limit = 50
+        spans = await asyncio.to_thread(self._activity_timeline.search, query, limit=limit)
+        return {"status": "ok", "spans": spans}
+
+    async def _handle_timeline_summary(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """Time per app for a window given as text ("this morning") or as start/end epoch seconds."""
+        if self._activity_timeline is None:
+            return {"status": "error", "message": "The activity timeline is not ready yet."}
+        from datetime import datetime
+
+        from pilot.workflows.activity_timeline import parse_when
+
+        start, end = params.get("start"), params.get("end")
+        if isinstance(start, (int, float)) and isinstance(end, (int, float)) and start < end:
+            label = ""
+        else:
+            when = params.get("when", "today")
+            if not isinstance(when, str) or len(when) > 100:
+                return {"status": "error", "message": "when must be a short phrase such as 'this morning'"}
+            start, end, label = parse_when(when, datetime.now())
+        summary = await asyncio.to_thread(self._activity_timeline.summarize, float(start), float(end))
+        spans = await asyncio.to_thread(self._activity_timeline.spans, float(start), float(end), 200)
+        return {"status": "ok", "label": label, "summary": summary, "spans": spans}
+
+    async def _handle_timeline_pause(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """Pause recording for ``minutes`` (0 resumes)."""
+        minutes = params.get("minutes", 60)
+        if not isinstance(minutes, (int, float)) or isinstance(minutes, bool) or not 0 <= minutes <= 1440:
+            return {"status": "error", "message": "minutes must be from 0 to 1440"}
+        if self._activity_timeline is None:
+            return {"status": "error", "message": "The activity timeline is not ready yet."}
+        paused_until = await asyncio.to_thread(self._activity_timeline.pause, minutes)
+        return {"status": "ok", "paused_until": paused_until or None}
+
+    async def _handle_timeline_clear(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """Delete everything the timeline has recorded."""
+        if params.get("confirmed") is not True:
+            return {"status": "error", "message": "Clearing the timeline needs confirmation."}
+        if self._activity_timeline is None:
+            return {"status": "error", "message": "The activity timeline is not ready yet."}
+        await asyncio.to_thread(self._activity_timeline.clear)
+        return {"status": "ok"}
+
+    async def _handle_receipts_list(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """Recent signed task receipts and this computer's signing key fingerprint."""
+        if self._task_receipts is None:
+            return {"status": "error", "message": "Receipts are not ready yet.", "receipts": []}
+        limit = params.get("limit", 50)
+        if not isinstance(limit, int) or isinstance(limit, bool):
+            limit = 50
+        return {
+            "status": "ok",
+            "enabled": self.config.receipts.enabled,
+            "key": await self._task_receipts.key_info(),
+            "receipts": await self._task_receipts.list(limit),
+        }
+
+    async def _handle_receipt_get(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """The full signed receipt, for viewing or exporting."""
+        receipt_id = params.get("receipt_id")
+        if not isinstance(receipt_id, str) or self._task_receipts is None:
+            return {"status": "error", "message": "receipt_id is required"}
+        envelope = await self._task_receipts.get(receipt_id)
+        if envelope is None:
+            return {"status": "error", "message": "No receipt with that id."}
+        if params.get("export") is True:
+            downloads_dir = Path.home() / "Downloads"
+            export_dir = downloads_dir if downloads_dir.exists() else (DATA_DIR / "exports")
+            out_path = export_dir / f"heliox-receipt-{receipt_id[:12]}.json"
+            try:
+                export_dir.mkdir(parents=True, exist_ok=True)
+                out_path.write_text(json.dumps(envelope, ensure_ascii=False, indent=2), encoding="utf-8")
+            except OSError as exc:
+                return {"status": "error", "message": f"Export failed: {exc}"}
+            return {"status": "ok", "envelope": envelope, "path": str(out_path)}
+        return {"status": "ok", "envelope": envelope}
+
+    async def _handle_receipt_verify(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """Check a stored receipt (by id) or a pasted receipt envelope."""
+        if self._task_receipts is None:
+            return {"status": "error", "message": "Receipts are not ready yet."}
+        envelope = params.get("envelope")
+        receipt_id = params.get("receipt_id")
+        if envelope is None and isinstance(receipt_id, str):
+            envelope = await self._task_receipts.get(receipt_id)
+            if envelope is None:
+                return {"status": "error", "message": "No receipt with that id."}
+        if envelope is None:
+            return {"status": "error", "message": "receipt_id or envelope is required"}
+        return {"status": "ok", "result": await self._task_receipts.verify(envelope)}
+
+    async def _handle_receipts_verify_chain(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """Check every stored receipt and the hash chain between them."""
+        if self._task_receipts is None:
+            return {"status": "error", "message": "Receipts are not ready yet."}
+        return {"status": "ok", "result": await self._task_receipts.verify_chain()}
+
     async def _handle_list_permission_events(self, params: dict[str, Any], ws: ServerConnection) -> dict:
         """List recent permission-escalation audit events for display.
 
@@ -6297,6 +6637,26 @@ class PilotServer:
                             "status": "error",
                             "message": "preview.confirm_timeout_seconds must be from 10 to 600",
                         }
+                if section == "timeline" and k == "enabled" and not isinstance(v, bool):
+                    return {"status": "error", "message": "timeline.enabled must be a boolean"}
+                if section == "timeline" and k == "retention_days":
+                    if not isinstance(v, int) or isinstance(v, bool) or not 1 <= v <= 90:
+                        return {"status": "error", "message": "timeline.retention_days must be from 1 to 90"}
+                if section == "timeline" and k == "excluded_apps":
+                    if (
+                        not isinstance(v, list)
+                        or len(v) > 50
+                        or not all(isinstance(item, str) and 0 < len(item.strip()) <= 80 for item in v)
+                    ):
+                        return {
+                            "status": "error",
+                            "message": "timeline.excluded_apps must be up to 50 names of 1 to 80 characters",
+                        }
+                if section == "receipts" and k == "enabled" and not isinstance(v, bool):
+                    return {"status": "error", "message": "receipts.enabled must be a boolean"}
+                if section == "receipts" and k == "retention_days":
+                    if not isinstance(v, int) or isinstance(v, bool) or not 1 <= v <= 3650:
+                        return {"status": "error", "message": "receipts.retention_days must be from 1 to 3650"}
                 if section == "undo" and k == "enabled" and not isinstance(v, bool):
                     return {"status": "error", "message": "undo.enabled must be a boolean"}
                 if section == "undo" and k in {"retention_days", "max_task_mb", "max_total_mb"}:
@@ -6796,6 +7156,7 @@ class PilotServer:
             host="0.0.0.0",
             port=self.config.air_handoff.port,
         )
+        self._wire_air_handoff_requests()
         self.config.first_run_complete = previous_first_run
         self.config.clear_load_errors()  # the person chose to start over; saving is allowed again
         try:
@@ -9848,6 +10209,8 @@ def handle_tool(tool_name, params):
                 "running": bool(self._air_handoff_server.running),
                 "receiver_url": (self._air_handoff_server.base_url if self._air_handoff_server.running else None),
                 "port": self.config.air_handoff.port,
+                "accept_requests": bool(getattr(self.config.air_handoff, "accept_requests", False)),
+                "run_read_only_requests": bool(getattr(self.config.air_handoff, "run_read_only_requests", False)),
             }
         )
         return state
@@ -10538,6 +10901,17 @@ def handle_tool(tool_name, params):
                 message, channel=SpeechChannel.TASK_NARRATION, dedupe_key=f"voice-deny:{pending_plan_id}"
             )
             return
+
+        if not self._interactive_request_active and self._activity_timeline is not None:
+            timeline_answer = await self._activity_timeline.answer_async(command_text)
+            if timeline_answer is not None:
+                await self._broadcast_notification(
+                    "voice_result", {"command": command_text, "status": "answered", "message": timeline_answer}
+                )
+                await self._speak_voice_response(
+                    timeline_answer, channel=SpeechChannel.TASK_NARRATION, dedupe_key=f"voice-timeline:{uuid.uuid4()}"
+                )
+                return
 
         if not self._interactive_request_active and normalized_command in VOICE_UNDO_PHRASES:
             latest = None

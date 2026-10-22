@@ -167,6 +167,7 @@ class ScreenVisionAgent:
         self._capture_lock = asyncio.Lock()
         self._running = False
         self._interval_seconds: float = 3.0
+        self._state_observer: Any = None
         self._last_hash: str = ""
         self._screenshot_dir = SCREENSHOTS_DIR
         self._enable_llm_describe = False
@@ -182,6 +183,10 @@ class ScreenVisionAgent:
         self._last_frame_array = None
         self._current_world_embedding: list[float] = []
         self._current_screen_bounds: tuple[int, int, int, int] | None = None
+
+    def set_state_observer(self, observer: Any) -> None:
+        """Hand each observed (app, window title) to ``observer``, e.g. the activity timeline."""
+        self._state_observer = observer
 
     def set_interval(self, interval_seconds: float) -> None:
         """Update the capture cadence while keeping it inside safe bounds."""
@@ -247,6 +252,11 @@ class ScreenVisionAgent:
                     timeout=self._capture_timeout,
                 )
                 self._context.add(state)
+                if self._state_observer is not None:
+                    try:
+                        await asyncio.to_thread(self._state_observer, state.active_app, state.active_window_title)
+                    except Exception:
+                        logger.debug("Screen state observer failed", exc_info=True)
                 self._consecutive_timeouts = 0
                 self._last_active_timestamp = time.time()
                 if self._paused:

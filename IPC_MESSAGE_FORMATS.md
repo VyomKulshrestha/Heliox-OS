@@ -12,7 +12,7 @@ The Heliox OS UI and daemon communicate over a local WebSocket using the [JSON-R
 | Request timeout | 5 minutes |
 | Reconnect interval | 3 seconds (auto-reconnect on close) |
 
-The daemon currently registers **229 WebSocket RPC methods**. That is the API
+The daemon currently registers **242 WebSocket RPC methods**. That is the API
 surface count, not the action catalog: Heliox exposes **162 action
 types** through the guarded planner/executor system. This document names every
 registered RPC method; grouped tables are used where several methods share one
@@ -388,6 +388,83 @@ state on recorded paths only; it does not plan, call a model or go through the e
 #### `undo_clear`
 Delete all undo history and every saved copy. **Params:** `{ "confirmed": true }`.
 Refused while tasks run. **Result:** `{ "status": "ok" }`.
+
+#### `receipts_list`
+Recent signed task receipts (newest first) and this computer's signing key.
+
+**Params:** `{ "limit": 50 }` (optional)
+
+**Result:**
+```json
+{
+  "status": "ok",
+  "enabled": true,
+  "key": { "available": true, "fingerprint": "3f9a:0c21:77de:a410:9b2e:5c13:e8f0:41aa", "public_key": "base64..." },
+  "receipts": [
+    { "receipt_id": "c0ffee...", "task_key": "4f0c2a9e", "finished_at": "2026-10-23T09:14:02+00:00",
+      "status": "success", "summary": "Moved 3 files.", "request": "tidy my downloads",
+      "source": "voice", "action_count": 3, "signed": true }
+  ]
+}
+```
+
+#### `receipt_get`
+The full receipt envelope: `{"receipt": {...}, "signature": "...", "public_key": "...", "algorithm": "ed25519"}`.
+The receipt lists each action with `action_type`, `target`, `parameters_sha256`,
+`output_sha256`, `user_confirmed`, `executed`, `success`, `error` and `undo`, plus the
+request, status, summary, `heliox_version`, `key_fingerprint` and
+`previous_receipt_sha256` (the hash of the previous receipt envelope). Parameters and
+outputs appear only as hashes. With `"export": true` the envelope is also written to
+the Downloads folder and the result includes `path`.
+
+**Params:** `{ "receipt_id": "c0ffee...", "export": false }`
+
+#### `receipt_verify`
+Check a stored receipt (`receipt_id`) or a pasted envelope (`envelope`).
+**Result:** `{"status": "ok", "result": {"valid": true, "signed": true, "fingerprint": "...", "this_computer": true, "reasons": []}}`.
+Anyone can check an exported receipt offline with
+`python -m pilot.workflows.task_receipts verify receipt.json`.
+
+#### `receipts_verify_chain`
+Check every stored receipt's signature and its link to the previous one.
+**Result:** `{"status": "ok", "result": {"valid": false, "count": 41, "problems": [{"file": "...", "reason": "The receipt before this one was changed or removed."}]}}`.
+
+#### `timeline_status`
+**Result:** `{"status": "ok", "enabled": true, "paused_until": null, "span_count": 812, "retention_days": 7}`.
+
+#### `timeline_search`
+Spans whose app or window title contains `query`, newest first.
+**Params:** `{ "query": "quarterly report", "limit": 50 }`
+**Result:** `{"status": "ok", "spans": [{"start": 1792690000.0, "end": 1792690420.0, "app": "chrome", "title": "Quarterly report - Google Docs"}]}`.
+
+#### `timeline_summary`
+Time per app for a window given as a phrase (`when`: "this morning", "yesterday afternoon",
+"at 3 pm", "an hour ago") or as `start`/`end` epoch seconds.
+**Result:** `{"status": "ok", "label": "this morning", "summary": {"total_seconds": 9120, "apps": [{"app": "Code", "seconds": 4320, "top_titles": ["server.py - Heliox"]}]}, "spans": [...]}`.
+
+#### `timeline_pause`
+Stop recording for `minutes` (0 to 1440; 0 resumes). **Result:** `{"status": "ok", "paused_until": 1792693600.0}`.
+
+#### `timeline_clear`
+Delete everything the timeline recorded. **Params:** `{ "confirmed": true }`.
+
+#### `phone_request_list`
+Requests paired phones sent. **Result:** `{"status": "ok", "accept_requests": true, "run_read_only_requests": false, "requests": [<PhoneRequest>]}`
+where a PhoneRequest is `{"request_id", "device_id", "device_name", "text", "created_at", "status", "job_id", "result", "read_only"}`
+and `status` is `waiting`, `running`, `done`, `failed` or `dismissed`.
+
+#### `phone_request_run`
+Start a `waiting` request as a background job with the normal gateway floor and approvals.
+**Params:** `{ "request_id": "..." }` **Result:** `{"status": "ok", "request": <PhoneRequest>, "job_id": "..."}`.
+
+#### `phone_request_dismiss`
+Drop a `waiting` request without running it. **Params:** `{ "request_id": "..." }`.
+
+#### `air_handoff_requests_configure`
+**Params:** `{ "accept_requests": true, "run_read_only_requests": false }` (both booleans;
+`run_read_only_requests` needs `accept_requests`). Persists the choice and broadcasts
+`air_handoff_state`, which now also carries `accept_requests`, `run_read_only_requests`,
+`accepting_requests` and the ten newest `requests`.
 
 #### `list_permission_events`
 List recent tamper-evident permission-escalation audit events.
@@ -788,7 +865,10 @@ after a connection test succeeds.
 
 Air Handoff is an opt-in, same-LAN, one-target transfer surface. Pairing uses an
 ephemeral QR payload; content is encrypted per paired device, and the receiver
-exposes no computer-control tools.
+exposes no computer-control tools. With `accept_requests` on, a paired phone may also
+`POST /api/requests` an AES-GCM-encrypted (`request-v1`), HMAC-signed request of up to
+500 characters and read its requests' status from `GET /api/requests` (`requests-v1`).
+A request never runs on the phone's say-so: see `phone_request_run`.
 
 | Method | Contract |
 |---|---|
@@ -2927,6 +3007,13 @@ Broadcast to every window after `undo_task` applied a task's undo.
 ```json
 { "task_key": "4f0c2a9e", "status": "ok", "undone": 1, "skipped": 1, "failed": 0 }
 ```
+
+`task_complete` and `autonomous_complete` also carry `receipt_id` when the task ran at
+least one action and a receipt was written.
+
+### `phone_request`
+Broadcast when a paired phone sends a request and whenever its status changes. The
+payload is a PhoneRequest (see `phone_request_list`).
 
 ### Companion notifications
 

@@ -27,8 +27,24 @@ export interface AirHandoffPairing {
   pairing_url: string;
 }
 
+/** A task a paired phone asked for. It runs only when Run is pressed here, or at once if read-only requests may. */
+export interface PhoneRequest {
+  request_id: string;
+  device_id: string;
+  device_name: string;
+  text: string;
+  created_at: number;
+  status: "waiting" | "running" | "done" | "failed" | "dismissed";
+  job_id: string;
+  result: string;
+  read_only: boolean;
+}
+
 export interface AirHandoffState {
   enabled: boolean;
+  accept_requests: boolean;
+  run_read_only_requests: boolean;
+  requests: PhoneRequest[];
   running: boolean;
   receiver_url: string | null;
   paired_devices: AirHandoffDevice[];
@@ -50,6 +66,9 @@ const selectedKey = "heliox_air_handoff_target";
 
 const initialState: AirHandoffState = {
   enabled: false,
+  accept_requests: false,
+  run_read_only_requests: false,
+  requests: [],
   running: false,
   receiver_url: null,
   paired_devices: [],
@@ -157,6 +176,31 @@ function createAirHandoffStore() {
     mergeRemote(result);
   }
 
+  async function configureRequests(accept: boolean, runReadOnly: boolean): Promise<void> {
+    const result = await invoke<AirHandoffState>("air_handoff_requests_configure", {
+      accept_requests: accept,
+      run_read_only_requests: accept && runReadOnly,
+    });
+    mergeRemote(result);
+  }
+
+  function upsertRequest(request: PhoneRequest): void {
+    update((state) => {
+      const others = state.requests.filter((item) => item.request_id !== request.request_id);
+      return { ...state, requests: [request, ...others].slice(0, 20) };
+    });
+  }
+
+  async function runRequest(requestId: string): Promise<void> {
+    const result = await invoke<{ request: PhoneRequest }>("phone_request_run", { request_id: requestId });
+    if (result.request) upsertRequest(result.request);
+  }
+
+  async function dismissRequest(requestId: string): Promise<void> {
+    const result = await invoke<{ request: PhoneRequest }>("phone_request_dismiss", { request_id: requestId });
+    if (result.request) upsertRequest(result.request);
+  }
+
   async function startPairing(): Promise<AirHandoffPairing> {
     const result = await invoke<AirHandoffPairing>("air_handoff_start_pairing");
     if (
@@ -256,6 +300,11 @@ function createAirHandoffStore() {
   }
 
   onNotification((method, params) => {
+    if (method === "phone_request" && params && typeof params === "object") {
+      const request = params as PhoneRequest;
+      if (typeof request.request_id === "string" && typeof request.text === "string") upsertRequest(request);
+      return;
+    }
     if (method === "air_handoff_state" && params && typeof params === "object") {
       try {
         const remote = requireOkResult(params as DaemonStatusResult, "Air Handoff status update was not acknowledged.");
@@ -275,6 +324,9 @@ function createAirHandoffStore() {
     subscribe,
     refresh,
     setEnabled,
+    configureRequests,
+    runRequest,
+    dismissRequest,
     startPairing,
     cancelPairing,
     revokeDevice,

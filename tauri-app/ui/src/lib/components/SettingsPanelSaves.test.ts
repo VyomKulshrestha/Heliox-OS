@@ -98,6 +98,7 @@ const baseSettings = {
   adaptive_calibration: { gesture_enabled: true, voice_wake_word_enabled: true },
   preview: { enabled: false },
   undo: { enabled: true, retention_days: 7 },
+  timeline: { enabled: false, retention_days: 7, excluded_apps: [] },
   typed_decision: { enabled: false, artifact_dir: "", report_path: "" },
   network: { enabled: false, port: 8786, peer_timeout_s: 30, skill_sync_enabled: false, collab_exec_enabled: false },
   calendar: { enabled: false, caldav_url: "", caldav_username: "", caldav_password_provider: "caldav", ics_files: [] },

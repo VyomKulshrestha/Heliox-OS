@@ -60,6 +60,11 @@ export interface PilotSettings {
     enabled: boolean;
     retention_days: number;
   };
+  timeline: {
+    enabled: boolean;
+    retention_days: number;
+    excluded_apps: string[];
+  };
   typed_decision: {
     enabled: boolean;
     artifact_dir: string;
@@ -174,6 +179,11 @@ const defaultSettings: PilotSettings = {
     enabled: true,
     retention_days: 7,
   },
+  timeline: {
+    enabled: false,
+    retention_days: 7,
+    excluded_apps: ["1password", "bitwarden", "keepass", "lastpass", "dashlane", "keychain access"],
+  },
   typed_decision: {
     enabled: false,
     artifact_dir: "",
@@ -236,6 +246,7 @@ function mergeSettings(current: PilotSettings, incoming: Partial<PilotSettings>)
     adaptive_calibration: { ...current.adaptive_calibration, ...incoming.adaptive_calibration },
     preview: { ...current.preview, ...incoming.preview },
     undo: { ...current.undo, ...incoming.undo },
+    timeline: { ...current.timeline, ...incoming.timeline },
     typed_decision: { ...current.typed_decision, ...incoming.typed_decision },
     network: { ...current.network, ...incoming.network },
     calendar: { ...current.calendar, ...incoming.calendar },

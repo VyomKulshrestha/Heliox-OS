@@ -14,6 +14,16 @@ type Transfer = {
   mime_type: string;
   size: number;
 };
+type PhoneRequest = { request_id: string; text: string; status: string; created_at: number; result: string };
+type RequestState = { accepting: boolean; requests: PhoneRequest[] };
+
+const STATUS_WORDS: Record<string, string> = {
+  waiting: "Waiting on your computer",
+  running: "Running",
+  done: "Done",
+  failed: "Did not finish",
+  dismissed: "Dismissed on the computer",
+};
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -34,6 +44,11 @@ const receiveError = element<HTMLElement>("#receive-error");
 const connectionState = element<HTMLElement>("#connection-state");
 const emptyState = element<HTMLElement>("#empty-state");
 const transferList = element<HTMLElement>("#transfer-list");
+const askCard = element<HTMLElement>("#ask-card");
+const askText = element<HTMLTextAreaElement>("#ask-text");
+const askButton = element<HTMLButtonElement>("#ask-button");
+const askError = element<HTMLElement>("#ask-error");
+const requestList = element<HTMLElement>("#request-list");
 
 let credential: DeviceCredential | null = loadCredential();
 let pollTimer = 0;
@@ -166,12 +181,73 @@ async function signedFetch(path: string, options: RequestInit = {}): Promise<Res
   });
 }
 
-function decryptJson(envelope: { nonce: string; ciphertext: string }, aad: string): Transfer[] {
+function decryptJson<T>(envelope: { nonce: string; ciphertext: string }, aad: string): T {
   if (!credential) throw new Error("This phone is not paired");
   const clear = gcm(unb64u(credential.device_secret), unb64u(envelope.nonce), encoder.encode(aad)).decrypt(
     unb64u(envelope.ciphertext),
   );
-  return JSON.parse(decoder.decode(clear)) as Transfer[];
+  return JSON.parse(decoder.decode(clear)) as T;
+}
+
+function encryptJson(payload: unknown, aad: string): { nonce: string; ciphertext: string } {
+  if (!credential) throw new Error("This phone is not paired");
+  const nonce = randomBytes(12);
+  const sealed = gcm(unb64u(credential.device_secret), nonce, encoder.encode(aad)).encrypt(
+    encoder.encode(JSON.stringify(payload)),
+  );
+  return { nonce: b64u(nonce), ciphertext: b64u(sealed) };
+}
+
+async function refreshRequests(): Promise<void> {
+  const response = await signedFetch("/api/requests");
+  const payload = (await response.json()) as { nonce: string; ciphertext: string; error?: string };
+  if (!response.ok) throw new Error(payload.error || "Could not read your requests");
+  const state = decryptJson<RequestState>(payload, "requests-v1");
+  askCard.classList.toggle("hidden", !state.accepting && state.requests.length === 0);
+  askButton.disabled = !state.accepting;
+  askText.disabled = !state.accepting;
+  if (!state.accepting) askError.textContent = "Requests are turned off on your computer.";
+  else if (askError.textContent === "Requests are turned off on your computer.") askError.textContent = "";
+  const items = state.requests.map((request) => {
+    const item = document.createElement("li");
+    item.textContent = request.text;
+    const status = document.createElement("span");
+    status.textContent = STATUS_WORDS[request.status] ?? request.status;
+    item.append(status);
+    if (request.result) {
+      const answer = document.createElement("p");
+      answer.className = "answer";
+      answer.textContent = request.result;
+      item.append(answer);
+    }
+    return item;
+  });
+  requestList.replaceChildren(...items);
+}
+
+async function sendRequest(): Promise<void> {
+  const text = askText.value.trim();
+  askError.textContent = "";
+  if (!text) {
+    askError.textContent = "Type what you want Heliox to do.";
+    return;
+  }
+  askButton.disabled = true;
+  try {
+    const response = await signedFetch("/api/requests", {
+      method: "POST",
+      body: JSON.stringify(encryptJson({ text }, "request-v1")),
+      headers: { "Content-Type": "application/json" },
+    });
+    const payload = (await response.json()) as { error?: string };
+    if (!response.ok) throw new Error(payload.error || "The computer refused the request");
+    askText.value = "";
+    await refreshRequests();
+  } catch (error) {
+    askError.textContent = error instanceof Error ? error.message : "Could not send the request";
+  } finally {
+    askButton.disabled = false;
+  }
 }
 
 async function poll(): Promise<void> {
@@ -180,12 +256,13 @@ async function poll(): Promise<void> {
     const response = await signedFetch("/api/pending");
     const payload = (await response.json()) as { nonce: string; ciphertext: string; error?: string };
     if (!response.ok) throw new Error(payload.error || "Receiver authentication failed");
-    const pending = decryptJson(payload, "pending-v1");
+    const pending = decryptJson<Transfer[]>(payload, "pending-v1");
     receiveError.textContent = "";
     for (const transfer of pending) {
       if (!renderedTransfers.has(transfer.transfer_id)) await receiveTransfer(transfer);
     }
     emptyState.classList.toggle("hidden", renderedTransfers.size > 0);
+    await refreshRequests();
   } catch (error) {
     receiveError.textContent = error instanceof Error ? error.message : "Could not reach Heliox";
   } finally {
@@ -211,11 +288,12 @@ async function receiveTransfer(transfer: Transfer): Promise<void> {
   ).decrypt(encrypted.slice(12));
   const blob = new Blob([new Uint8Array(clear)], { type: transfer.mime_type });
   const url = URL.createObjectURL(blob);
-  renderTransfer(transfer, url);
+  const text = transfer.mime_type === "text/plain" && clear.length <= 20000 ? decoder.decode(clear) : "";
+  renderTransfer(transfer, url, text);
   renderedTransfers.add(transfer.transfer_id);
 }
 
-function renderTransfer(transfer: Transfer, url: string): void {
+function renderTransfer(transfer: Transfer, url: string, text = ""): void {
   const article = document.createElement("article");
   article.className = "transfer";
   if (transfer.mime_type.startsWith("image/")) {
@@ -230,6 +308,12 @@ function renderTransfer(transfer: Transfer, url: string): void {
   title.textContent = transfer.filename;
   const details = document.createElement("span");
   details.textContent = `${transfer.kind} · ${formatBytes(transfer.size)}`;
+  if (text) {
+    const preview = document.createElement("p");
+    preview.className = "answer";
+    preview.textContent = text;
+    info.append(preview);
+  }
   const actions = document.createElement("div");
   actions.className = "transfer-actions";
   const download = document.createElement("a");
@@ -268,6 +352,7 @@ function showMode(): void {
   const paired = Boolean(credential);
   pairCard.classList.toggle("hidden", paired);
   receiveCard.classList.toggle("hidden", !paired);
+  if (!paired) askCard.classList.add("hidden");
   connectionState.classList.toggle("online", paired);
   connectionState.textContent = paired ? "Paired · encrypted" : "Not paired";
   clearTimeout(pollTimer);
@@ -275,5 +360,6 @@ function showMode(): void {
 }
 
 pairButton.addEventListener("click", () => void pairPhone());
+askButton.addEventListener("click", () => void sendRequest());
 forgetButton.addEventListener("click", forgetCredential);
 showMode();

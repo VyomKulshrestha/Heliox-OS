@@ -425,6 +425,35 @@ class UndoConfig:
 
 
 @dataclass
+class ReceiptsConfig:
+    """Signed task receipts (see pilot.workflows.task_receipts). After a task that ran
+    actions, Heliox writes a receipt listing each action, its approval and its result,
+    signed with this computer's key and chained to the previous receipt. Parameters
+    and outputs are stored only as hashes. Receipts older than ``retention_days`` are
+    deleted, except the newest."""
+
+    enabled: bool = True
+    retention_days: int = 90
+
+
+def _default_timeline_excluded_apps() -> list[str]:
+    return ["1password", "bitwarden", "keepass", "lastpass", "dashlane", "keychain access"]
+
+
+@dataclass
+class TimelineConfig:
+    """Activity timeline (see pilot.workflows.activity_timeline). Off by default. When on,
+    Heliox records which app and window title were in front, and when, so you can ask
+    "what was I working on yesterday afternoon?". Never pixels or screen text. Windows
+    whose app or title contains an ``excluded_apps`` entry, and private browsing
+    windows, are never recorded."""
+
+    enabled: bool = False
+    retention_days: int = 7
+    excluded_apps: list[str] = field(default_factory=_default_timeline_excluded_apps)
+
+
+@dataclass
 class SupervisionConfig:
     """User Manual Supervision (see pilot.agents.user_supervision) — watches
     the user's OWN independent screen/keyboard/mouse activity, never anything
@@ -606,6 +635,10 @@ class AirHandoffConfig:
     enabled: bool = False
     port: int = 8787
     max_transfer_mb: int = 25
+    # A paired phone may send a task request; it waits on this computer until you press Run.
+    accept_requests: bool = False
+    # Also start requests at once as background jobs limited to PHONE_READ_ONLY_ACTIONS.
+    run_read_only_requests: bool = False
 
 
 @dataclass
@@ -654,6 +687,8 @@ class PilotConfig:
     narration: NarrationConfig = field(default_factory=NarrationConfig)
     preview: PreviewConfig = field(default_factory=PreviewConfig)
     undo: UndoConfig = field(default_factory=UndoConfig)
+    receipts: ReceiptsConfig = field(default_factory=ReceiptsConfig)
+    timeline: TimelineConfig = field(default_factory=TimelineConfig)
     supervision: SupervisionConfig = field(default_factory=SupervisionConfig)
     co_adaptation: CoAdaptationConfig = field(default_factory=CoAdaptationConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
@@ -1017,6 +1052,15 @@ def _validate_config_types(raw: dict) -> None:
             "max_task_mb": int,
             "max_total_mb": int,
         },
+        "receipts": {
+            "enabled": bool,
+            "retention_days": int,
+        },
+        "timeline": {
+            "enabled": bool,
+            "retention_days": int,
+            "excluded_apps": list,
+        },
         "supervision": {
             "enabled": bool,
             "keyboard_mouse_hook_enabled": bool,
@@ -1096,6 +1140,8 @@ def _validate_config_types(raw: dict) -> None:
             "enabled": bool,
             "port": int,
             "max_transfer_mb": int,
+            "accept_requests": bool,
+            "run_read_only_requests": bool,
         },
         "ssh": {
             "enabled": bool,
@@ -1340,6 +1386,20 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
             config.undo.max_task_mb = min(max(int(u_raw["max_task_mb"]), 1), 10240)
         if "max_total_mb" in u_raw:
             config.undo.max_total_mb = min(max(int(u_raw["max_total_mb"]), 16), 102400)
+
+    if "receipts" in raw and isinstance(raw["receipts"], dict):
+        r_raw = raw["receipts"]
+        config.receipts.enabled = bool(r_raw.get("enabled", config.receipts.enabled))
+        if "retention_days" in r_raw:
+            config.receipts.retention_days = min(max(int(r_raw["retention_days"]), 1), 3650)
+
+    if "timeline" in raw and isinstance(raw["timeline"], dict):
+        t_raw = raw["timeline"]
+        config.timeline.enabled = bool(t_raw.get("enabled", config.timeline.enabled))
+        if "retention_days" in t_raw:
+            config.timeline.retention_days = min(max(int(t_raw["retention_days"]), 1), 90)
+        if isinstance(t_raw.get("excluded_apps"), list):
+            config.timeline.excluded_apps = [str(name)[:80] for name in t_raw["excluded_apps"][:50]]
 
     if "supervision" in raw and isinstance(raw["supervision"], dict):
         s_raw = raw["supervision"]

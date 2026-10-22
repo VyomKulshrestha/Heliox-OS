@@ -400,8 +400,9 @@ requested action.
 
 Air Handoff does not expose remote computer control. Its receiver binds on a
 separate port and implements only pairing, device-authenticated polling,
-encrypted download, and acknowledgement. It never accepts daemon RPC, action,
-approval, configuration, or credential methods. Pairing secrets remain in a QR
+encrypted download, acknowledgement and, when you turn it on, encrypted task
+requests that wait for you on the computer (see "Requests from a paired phone").
+It never accepts daemon RPC, action, approval, configuration, or credential methods. Pairing secrets remain in a QR
 URL fragment; authenticated X25519/HKDF pairing wraps an independently generated
 device secret, and paired requests use timestamped nonce-bound HMAC signatures.
 Metadata and payload bytes are AES-GCM encrypted for exactly one selected
@@ -744,6 +745,56 @@ that one change. A finished task can then be undone from its preview.
   only and is gone after a restart. Settings → Undo turns the journal off or clears it.
 - Filesystem snapshot rollback (`rollback_plan`) is unchanged and remains the
   "revert everything" fallback where btrfs or Timeshift snapshots exist.
+
+## 🧾 Signed task receipts
+
+After a task that ran at least one action, Heliox writes a receipt
+(`daemon/pilot/workflows/task_receipts.py`): the request, each action with its target,
+whether you approved it, whether it ran and succeeded, and the task's outcome.
+
+- Parameters and outputs are recorded only as SHA-256 hashes, so a receipt can be
+  shared without exposing file contents or messages.
+- Receipts are signed with an Ed25519 key that belongs to this computer. The key is
+  kept in the OS credential store, or, where none exists, in Heliox's private
+  configuration folder. Settings → Task receipts shows its fingerprint.
+- Each receipt carries the hash of the previous one, so removing or editing a receipt
+  breaks the chain; **Check all** reports where. Receipts live under
+  `DATA_DIR/receipts`, which actions may not read or change.
+- `python -m pilot.workflows.task_receipts verify receipt.json` checks an exported
+  receipt anywhere. A receipt describes what happened; it never grants, approves or
+  runs anything. When no key can be stored, receipts are written unsigned and say so.
+
+## 🕰️ Activity timeline (opt-in)
+
+The activity timeline (`daemon/pilot/workflows/activity_timeline.py`) is off by
+default. When on, it records which app and window title were in front, and when, so
+you can ask "what was I working on yesterday afternoon?" or "when did I last open the
+quarterly report?".
+
+- It keeps names and titles only: never pixels, never screen text. Password managers
+  (configurable) and private or incognito windows are never recorded.
+- Recording can be paused; data is deleted after `retention_days` (default 7) and can
+  be cleared at once. It stays under `DATA_DIR/timeline`, which actions may not read
+  or change, so only your own questions reach it.
+- Answers are composed in code from the stored spans. Timeline questions typed in chat
+  or spoken are answered without the planner or any model.
+
+## 📱 Requests from a paired phone (opt-in)
+
+With **Accept requests from paired phones** on (Air Handoff → off by default), a paired
+phone may send a short task request. The request is encrypted and HMAC-signed like
+every other Air Handoff call, limited to 500 characters, rate-limited, and capped at
+five waiting requests per phone.
+
+- A request waits on the computer until you press **Run** there. It then runs as a
+  background job with the normal gateway floor, and every action that needs approval
+  asks on the computer. The phone can never approve or deny anything.
+- Only if you also turn on **Start status checks right away** does a request start
+  without you, and then only with a fixed list of actions (`PHONE_READ_ONLY_ACTIONS`
+  in `server.py`): system status, file names and sizes, calendar events and git
+  status. File contents, the clipboard, email, the screen, environment variables, the
+  registry, and anything that opens or changes something are refused.
+- The phone receives only the job's short result, as an encrypted text handoff.
 
 ## 🔐 Heliox's own configuration is off-limits to actions
 

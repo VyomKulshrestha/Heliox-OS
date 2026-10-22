@@ -174,7 +174,8 @@ class UndoJournal:
 
     def __init__(self, root: Path, *, config: Any = None) -> None:
         self._root = Path(root)
-        self._config = config  # an UndoConfig, read on every call so Settings changes apply at once
+        # An UndoConfig, or a function returning the current one, read on every call so Settings changes apply.
+        self._config = config
         self._lock = asyncio.Lock()
         # Clipboard text may be private, so it is kept in memory only and never written to disk.
         self._clipboard_previous: dict[tuple[str, int], str] = {}
@@ -182,7 +183,8 @@ class UndoJournal:
     # ------------------------------------------------------------------ settings
 
     def _setting(self, name: str, default: Any) -> Any:
-        return getattr(self._config, name, default) if self._config is not None else default
+        config = self._config() if callable(self._config) else self._config
+        return getattr(config, name, default) if config is not None else default
 
     @property
     def enabled(self) -> bool:
