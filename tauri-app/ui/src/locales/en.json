@@ -5,6 +5,7 @@
     "connecting": "Connecting...",
     "tab_command": "Command",
     "tab_activity": "Activity",
+    "tab_today": "Today",
     "tab_plugins": "Plugins",
     "tab_settings": "Settings",
     "export_json": "Export JSON",
@@ -181,7 +182,8 @@
     "banner_open": "Review undo",
     "dismiss": "Dismiss",
     "badge_undoable": "Can undo",
-    "badge_not_undoable": "Can't undo"
+    "badge_not_undoable": "Can't undo",
+    "remaining": "{count, plural, one {# more task comes} other {# more tasks come}} after this one; Cancel stops them all."
   },
   "task_footer": {
     "undo": "Undo {count, plural, one {# change} other {# changes}}",

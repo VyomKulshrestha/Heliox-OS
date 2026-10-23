@@ -12,7 +12,7 @@ The Heliox OS UI and daemon communicate over a local WebSocket using the [JSON-R
 | Request timeout | 5 minutes |
 | Reconnect interval | 3 seconds (auto-reconnect on close) |
 
-The daemon currently registers **242 WebSocket RPC methods**. That is the API
+The daemon currently registers **244 WebSocket RPC methods**. That is the API
 surface count, not the action catalog: Heliox exposes **162 action
 types** through the guarded planner/executor system. This document names every
 registered RPC method; grouped tables are used where several methods share one
@@ -447,6 +447,16 @@ Stop recording for `minutes` (0 to 1440; 0 resumes). **Result:** `{"status": "ok
 
 #### `timeline_clear`
 Delete everything the timeline recorded. **Params:** `{ "confirmed": true }`.
+
+#### `today_overview`
+One day at a glance, composed in code from local records.
+**Params:** `{ "day": "today" }` (`today` or `yesterday`)
+**Result:** `{"status": "ok", "day": "2026-10-23", "label": "today", "tasks": [<receipt short form>], "timeline_enabled": true, "usage": {"total_seconds": 9120, "apps": [...]}, "undoable": [<undo_list row>], "brief": "Today Heliox ran 3 tasks; ..."}`.
+`usage` is null while the activity timeline is off.
+
+#### `daily_brief_now`
+Send today's brief now as a `daily_brief` notification (it does not replace the scheduled
+one). **Result:** `{"status": "ok", "text": "..."}`.
 
 #### `phone_request_list`
 Requests paired phones sent. **Result:** `{"status": "ok", "accept_requests": true, "run_read_only_requests": false, "requests": [<PhoneRequest>]}`
@@ -3001,12 +3011,24 @@ voice): "what was I working on …" and "when did I last open …" from the acti
 timeline, and "what did you do today / yesterday / this morning" from task receipts.
 
 ### `undo_offer`
-Sent when the person says "undo that" (or a similar phrase) with no task running and a
-recent task can be undone. The UI opens the undo preview for `task_key`; undoing still
-needs the preview's Undo button.
+Sent when the person says or types "undo that", "undo the last task" or "undo the last
+two tasks" (up to five) with no task running. `task_keys` lists the tasks that can still
+be undone, newest first; tasks that changed nothing undoable are skipped and the reply
+says so. The UI opens the preview for each in turn; every task still needs its own Undo
+press, and Cancel stops the rest.
 
 ```json
-{ "task_key": "4f0c2a9e" }
+{ "task_key": "4f0c2a9e", "task_keys": ["4f0c2a9e", "91b7d2c0"] }
+```
+
+### `daily_brief`
+Sent once a day at `[brief] time` when the brief is on (or right away after
+`daily_brief_now`). `text` is the brief; `overview` is the same object `today_overview`
+returns. The UI shows it in chat and as a desktop notification; with `[brief] speak`
+the daemon also reads it aloud.
+
+```json
+{ "day": "2026-10-23", "text": "Today Heliox ran 3 tasks; the latest was \"tidy downloads\". ...", "overview": {} }
 ```
 
 ### `undo_complete`

@@ -375,18 +375,14 @@ VOICE_STOP_PHRASES = frozenset(
         "nevermind",
     }
 )
-# Spoken undo only opens the preview: undoing still needs a click on the preview's Undo button.
-VOICE_UNDO_PHRASES = frozenset(
-    {
-        "undo",
-        "undo that",
-        "undo it",
-        "undo the last task",
-        "undo last task",
-        "take that back",
-        "revert that",
-    }
+# Spoken or typed undo only opens the preview: undoing still needs a click on its Undo button.
+UNDO_ONE_REQUEST = re.compile(
+    r"^(?:please )?(?:undo|take back|revert)(?: (?:that|it|the last task|my last task|last task))?$"
+    r"|^(?:please )?take that back$"
 )
+UNDO_MANY_REQUEST = re.compile(r"^(?:please )?(?:undo|take back|revert) (?:the|my) last (?P<count>\w+) tasks$")
+UNDO_COUNT_WORDS = {"two": 2, "three": 3, "four": 4, "five": 5}
+MAX_UNDO_REQUEST = 5
 VOICE_APPROVAL_ATTEMPTS = frozenset(
     {
         "approve",
@@ -919,6 +915,7 @@ class PilotServer:
         self._task_receipts: Any = None
         self._activity_timeline: Any = None
         self._task_footers: dict[str, dict[str, Any]] = {}
+        self._daily_brief: Any = None
         self._queued_execute_requests: deque[tuple[str, str, dict[str, Any]]] = deque()
         self._queued_submission_lock = asyncio.Lock()
         self._queued_execute_worker: asyncio.Task[None] | None = None
@@ -1155,6 +1152,15 @@ class PilotServer:
             await asyncio.to_thread(self._activity_timeline.prune)
         except Exception:
             logger.warning("Activity timeline pruning failed", exc_info=True)
+        from pilot.workflows.daily_brief import DailyBriefScheduler
+
+        self._daily_brief = DailyBriefScheduler(
+            config=lambda: self.config.brief,
+            build=self._today_overview,
+            deliver=self._deliver_daily_brief,
+            state_file=DATA_DIR / "daily_brief.json",
+        )
+        self._daily_brief.start()
         # Import and warm the local system probe stack before readiness so the
         # first harmless status request does not pay lazy import/thread startup.
         from pilot.system.sysinfo import prepare_system_probes
@@ -1654,6 +1660,8 @@ class PilotServer:
             "timeline_pause": self._handle_timeline_pause,
             "timeline_clear": self._handle_timeline_clear,
             "phone_request_list": self._handle_phone_request_list,
+            "today_overview": self._handle_today_overview,
+            "daily_brief_now": self._handle_daily_brief_now,
             "phone_request_run": self._handle_phone_request_run,
             "phone_request_dismiss": self._handle_phone_request_dismiss,
             "air_handoff_requests_configure": self._handle_air_handoff_requests_configure,
@@ -2920,7 +2928,7 @@ class PilotServer:
         # Timeline questions ("what was I working on this morning?") are answered from the local
         # timeline in code; they never reach the planner or a model.
         if not attachments:
-            timeline_answer = await self._local_answer(str(user_input))
+            timeline_answer = await self._local_answer(str(user_input)) or await self._undo_request(str(user_input))
             if timeline_answer is not None:
                 await ws.send(_notification("conversation_response", {"explanation": timeline_answer}))
                 await _emit_task_complete("success", timeline_answer)
@@ -5811,6 +5819,64 @@ class PilotServer:
         state = await self._publish_air_handoff_state()
         return {"status": "ok", **state}
 
+    async def _today_overview(self, day: str = "today") -> dict[str, Any]:
+        from pilot.workflows.daily_brief import today_overview
+
+        return await today_overview(
+            receipts=self._task_receipts, timeline=self._activity_timeline, undo_journal=self._undo_journal, day=day
+        )
+
+    async def _deliver_daily_brief(self, overview: dict[str, Any]) -> None:
+        await self._broadcast_notification(
+            "daily_brief", {"day": overview["day"], "text": overview["brief"], "overview": overview}
+        )
+        if self.config.brief.speak:
+            await self._speak_companion_text(
+                overview["brief"], channel=SpeechChannel.BACKGROUND_INSIGHT, dedupe_key=f"brief:{overview['day']}"
+            )
+
+    async def _handle_today_overview(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """One day at a glance: tasks Heliox ran, app time from the timeline, and what can still be undone."""
+        day = params.get("day", "today")
+        if day not in ("today", "yesterday"):
+            return {"status": "error", "message": "day must be today or yesterday"}
+        return {"status": "ok", **await self._today_overview(day)}
+
+    async def _handle_daily_brief_now(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """Send today's brief right away (it does not count as the scheduled one)."""
+        overview = await self._today_overview("today")
+        await self._deliver_daily_brief(overview)
+        return {"status": "ok", "text": overview["brief"]}
+
+    async def _undo_request(self, text: str) -> str | None:
+        """ "undo that" / "undo the last two tasks": open the undo preview for those tasks, newest first.
+
+        Undoing still needs the preview's Undo button for each task. Returns what to say, or
+        None when ``text`` is not an undo request.
+        """
+        normalized = _normalize_spoken_phrase(text)
+        single = UNDO_ONE_REQUEST.match(normalized)
+        several = UNDO_MANY_REQUEST.match(normalized)
+        if not single and not several:
+            return None
+        wanted = 1
+        if several:
+            word = several.group("count")
+            wanted = int(word) if word.isdigit() else UNDO_COUNT_WORDS.get(word, 0)
+            if not 1 <= wanted <= MAX_UNDO_REQUEST:
+                return f"I can open undo for up to {MAX_UNDO_REQUEST} tasks at a time."
+        rows = await self._undo_journal.list_tasks(20) if self._undo_journal is not None else []
+        recent = [row for row in rows if not row["undone"]][:wanted]
+        keys = [row["task_key"] for row in recent if row["undoable"] > 0]
+        if not keys:
+            return "There is nothing I can undo right now."
+        await self._broadcast_notification("undo_offer", {"task_key": keys[0], "task_keys": keys})
+        if wanted == 1:
+            return "Here is what I can undo. Check it, then press Undo."
+        if len(keys) < wanted:
+            return f"I can undo {len(keys)} of your last {wanted} tasks. Check each one, newest first, then press Undo."
+        return f"Here are your last {wanted} tasks, newest first. Check each one, then press Undo."
+
     async def _local_answer(self, text: str) -> str | None:
         """Answer questions about the person's own history (timeline, receipts) in code, without a model."""
         for source in (self._activity_timeline, self._task_receipts):
@@ -6662,6 +6728,11 @@ class PilotServer:
                             "status": "error",
                             "message": "preview.confirm_timeout_seconds must be from 10 to 600",
                         }
+                if section == "brief" and k in {"enabled", "speak"} and not isinstance(v, bool):
+                    return {"status": "error", "message": f"brief.{k} must be a boolean"}
+                if section == "brief" and k == "time":
+                    if not isinstance(v, str) or not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", v):
+                        return {"status": "error", "message": "brief.time must be a 24-hour time such as 18:00"}
                 if section == "timeline" and k == "enabled" and not isinstance(v, bool):
                     return {"status": "error", "message": "timeline.enabled must be a boolean"}
                 if section == "timeline" and k == "retention_days":
@@ -10077,6 +10148,8 @@ def handle_tool(tool_name, params):
             supervision_hook.stop()
         if self._scheduled_runs is not None:
             await self._scheduled_runs.stop()
+        if self._daily_brief is not None:
+            await self._daily_brief.stop()
         if self._gnomon_reviewer is not None:
             await self._gnomon_reviewer.close()
         if self._autonomous is not None:
@@ -10938,22 +11011,9 @@ def handle_tool(tool_name, params):
                 )
                 return
 
-        if not self._interactive_request_active and normalized_command in VOICE_UNDO_PHRASES:
-            latest = None
-            if self._undo_journal is not None:
-                latest = next(
-                    (
-                        row
-                        for row in await self._undo_journal.list_tasks(20)
-                        if row["undoable"] > 0 and not row["undone"]
-                    ),
-                    None,
-                )
-            if latest is None:
-                message = "There is nothing I can undo right now."
-            else:
-                message = "Here is what I can undo. Check it, then press Undo."
-                await self._broadcast_notification("undo_offer", {"task_key": latest["task_key"]})
+        undo_message = await self._undo_request(command_text) if not self._interactive_request_active else None
+        if undo_message is not None:
+            message = undo_message
             await self._broadcast_notification(
                 "voice_result", {"command": command_text, "status": "answered", "message": message}
             )

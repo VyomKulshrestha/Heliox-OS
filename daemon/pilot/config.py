@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import math
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -436,6 +437,18 @@ class ReceiptsConfig:
     retention_days: int = 90
 
 
+@dataclass
+class BriefConfig:
+    """Daily brief (see pilot.workflows.daily_brief). Off by default. At ``time`` (24-hour
+    HH:MM, local) Heliox sends one short summary of the day: what it ran, where your
+    time went if the activity timeline is on, and what can still be undone. With
+    ``speak`` it is also read aloud."""
+
+    enabled: bool = False
+    time: str = "18:00"
+    speak: bool = False
+
+
 def _default_timeline_excluded_apps() -> list[str]:
     return ["1password", "bitwarden", "keepass", "lastpass", "dashlane", "keychain access"]
 
@@ -689,6 +702,7 @@ class PilotConfig:
     undo: UndoConfig = field(default_factory=UndoConfig)
     receipts: ReceiptsConfig = field(default_factory=ReceiptsConfig)
     timeline: TimelineConfig = field(default_factory=TimelineConfig)
+    brief: BriefConfig = field(default_factory=BriefConfig)
     supervision: SupervisionConfig = field(default_factory=SupervisionConfig)
     co_adaptation: CoAdaptationConfig = field(default_factory=CoAdaptationConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
@@ -1061,6 +1075,11 @@ def _validate_config_types(raw: dict) -> None:
             "retention_days": int,
             "excluded_apps": list,
         },
+        "brief": {
+            "enabled": bool,
+            "time": str,
+            "speak": bool,
+        },
         "supervision": {
             "enabled": bool,
             "keyboard_mouse_hook_enabled": bool,
@@ -1400,6 +1419,13 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
             config.timeline.retention_days = min(max(int(t_raw["retention_days"]), 1), 90)
         if isinstance(t_raw.get("excluded_apps"), list):
             config.timeline.excluded_apps = [str(name)[:80] for name in t_raw["excluded_apps"][:50]]
+
+    if "brief" in raw and isinstance(raw["brief"], dict):
+        b_raw = raw["brief"]
+        config.brief.enabled = bool(b_raw.get("enabled", config.brief.enabled))
+        config.brief.speak = bool(b_raw.get("speak", config.brief.speak))
+        if re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", str(b_raw.get("time", ""))):
+            config.brief.time = str(b_raw["time"])
 
     if "supervision" in raw and isinstance(raw["supervision"], dict):
         s_raw = raw["supervision"]

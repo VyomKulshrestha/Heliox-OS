@@ -785,6 +785,19 @@ quarterly report?".
   or spoken are answered without the planner or any model, and so is "what did you do
   today?", which is answered from task receipts.
 
+## 🗓️ Today view and daily brief (opt-in brief)
+
+The Today tab and the daily brief (`daemon/pilot/workflows/daily_brief.py`) combine
+three local records for one day: task receipts, the activity timeline when it is on, and
+the undo journal. The text is composed in code; no model sees these records and nothing
+leaves the computer. The brief is off by default; when on, it is sent once a day at the
+chosen time (or when the computer is next awake that day), never for a past day, and is
+read aloud only if **Read it aloud** is on.
+
+Saying or typing "undo the last two tasks" (up to five) opens each task's undo preview
+in turn, newest first. Each task still needs its own Undo press, and Cancel stops the
+rest; nothing is undone from the spoken or typed request itself.
+
 ## 📱 Requests from a paired phone (opt-in)
 
 With **Accept requests from paired phones** on (Air Handoff → off by default), a paired

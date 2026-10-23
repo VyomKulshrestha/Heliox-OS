@@ -5,6 +5,7 @@
     "connecting": "जोड़ा जा रहा है...",
     "tab_command": "कमांड",
     "tab_activity": "गतिविधि",
+    "tab_today": "आज",
     "tab_plugins": "प्लगइन्स",
     "tab_settings": "सेटिंग्स",
     "export_json": "JSON निर्यात करें",
@@ -175,7 +176,8 @@
     "banner_open": "पूर्ववत देखें",
     "dismiss": "हटाएं",
     "badge_undoable": "पूर्ववत हो सकता है",
-    "badge_not_undoable": "पूर्ववत नहीं हो सकता"
+    "badge_not_undoable": "पूर्ववत नहीं हो सकता",
+    "remaining": "इसके बाद {count} और कार्य आएंगे; रद्द करें सबको रोक देता है।"
   },
   "task_footer": {
     "undo": "{count} बदलाव पूर्ववत करें",

@@ -172,3 +172,40 @@ describe("task footer in chat", () => {
     expect(get(session).messages.at(-1)?.task?.undo).toMatchObject({ available: false, undone: true });
   });
 });
+
+describe("undo for several tasks", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    notificationHandler = null;
+    daemonMocks.call.mockReset();
+    vi.resetModules();
+  });
+
+  it("previews each task in turn, newest first, and Cancel stops the rest", async () => {
+    daemonMocks.call.mockImplementation(async (method: string, params: { task_key?: string }) => {
+      if (method === "undo_preview") return { status: "ok", preview: { ...preview, task_key: params.task_key } };
+      if (method === "undo_task") return { status: "ok", undone: 1, skipped: 0, failed: 0 };
+      return { status: "ok" };
+    });
+    const { session } = await import("./session");
+
+    notificationHandler!("undo_offer", { task_key: "new", task_keys: ["new", "old", "older"] });
+    await vi.waitFor(() => expect(get(session).undoPreview?.task_key).toBe("new"));
+    expect(get(session).undoQueue).toEqual(["old", "older"]);
+
+    await session.confirmUndo();
+    await vi.waitFor(() => expect(get(session).undoPreview?.task_key).toBe("old"));
+
+    session.cancelUndo();
+    expect(get(session).undoPreview).toBeNull();
+    expect(get(session).undoQueue).toEqual([]);
+  });
+
+  it("shows a daily brief in chat", async () => {
+    const { session } = await import("./session");
+
+    notificationHandler!("daily_brief", { day: "2026-10-23", text: "Today Heliox ran no tasks." });
+
+    expect(get(session).messages.at(-1)?.text).toBe("Daily brief: Today Heliox ran no tasks.");
+  });
+});

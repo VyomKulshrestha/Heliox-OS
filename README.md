@@ -134,6 +134,7 @@ No comparison declares a universal winner. See the [transparent cost page](https
 | MCP interfaces         | Public read-only documentation MCP plus a local, separately authenticated stdio bridge whose tasks use visible Heliox approvals                           |
 | Air Handoff            | Opt-in same-LAN phone pairing and one-target encrypted transfer of a held screenshot, text value, or immutable file snapshot. Optionally, a paired phone can send a request that waits for **Run** on the computer; status checks can start at once and answer back to the phone. The phone never approves anything |
 | Signed task receipts   | After each task that ran actions, an Ed25519-signed, hash-chained receipt of what ran, what you approved and what happened; contents appear only as hashes, and `python -m pilot.workflows.task_receipts verify` checks one anywhere |
+| Today view and brief   | A Today tab shows what Heliox ran, where your time went and what can still be undone, with Undo on each task; an opt-in daily brief arrives at the time you choose, as a notification and in chat, optionally read aloud. "Undo the last two tasks" opens each task's undo preview in turn |
 | Activity timeline      | Opt-in local record of which app and window title were in front, so "what was I working on yesterday afternoon?" gets an answer by voice or chat (and "what did you do today?" is answered from receipts); never pixels or screen text, password managers and private windows skipped |
 | Secure integrations    | Settings-managed CalDAV, IMAP/SMTP, and allowlisted SSH connections with secrets kept in the operating-system credential store                            |
 
@@ -352,6 +353,11 @@ retention_days = 90
 [timeline]
 enabled = false              # app and window-title history for "what was I working on?"
 retention_days = 7
+
+[brief]
+enabled = false              # one summary of the day at `time`
+time = "18:00"
+speak = false
 
 [co_adaptation]
 enabled = false              # the selection study; also needs a consent record per participant

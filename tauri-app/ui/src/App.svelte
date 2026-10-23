@@ -12,6 +12,7 @@
   import SupervisionAlertDialog from "./lib/components/SupervisionAlertDialog.svelte";
   import HumanControlBanner from "./lib/components/HumanControlBanner.svelte";
   import ActivityLog from "./lib/components/ActivityLog.svelte";
+  import TodayPanel from "./lib/components/TodayPanel.svelte";
   import SettingsPanel from "./lib/components/SettingsPanel.svelte";
   import SetupWizard from "./lib/components/SetupWizard.svelte";
   import VoiceControl from "./lib/components/VoiceControl.svelte";
@@ -49,7 +50,7 @@
   import { _, isLoading } from "svelte-i18n";
 
   let isDragging = $state(false);
-  let activeTab: "chat" | "log" | "dashboard" | "settings" | "plugins" | "study" = $state("chat");
+  let activeTab: "chat" | "today" | "log" | "dashboard" | "settings" | "plugins" | "study" = $state("chat");
   let showWizard = $derived(
     !$settings.first_run_complete && localStorage.getItem("heliox_first_run_complete") !== "true",
   );
@@ -249,6 +250,12 @@
       >
       <button
         class="tab"
+        class:active={activeTab === "today"}
+        title="What Heliox did today and where your time went"
+        onclick={() => (activeTab = "today")}>{$_("app.tab_today")}</button
+      >
+      <button
+        class="tab"
         class:active={activeTab === "dashboard"}
         title="Open Dashboard"
         onclick={() => (activeTab = "dashboard")}>Dashboard</button
@@ -307,6 +314,7 @@
           <RollbackDialog onconfirm={() => session.confirmRollback()} oncancel={() => session.cancelRollback()} />
         {:else if activeModal === "undo" && $session.undoPreview}
           <UndoDialog
+            remaining={$session.undoQueue.length}
             preview={$session.undoPreview}
             submitting={$session.undoSubmitting}
             error={$session.undoError}
@@ -512,6 +520,8 @@
       {#key daemonConnectionEpoch}
         {#if activeTab === "log"}
           <ActivityLog />
+        {:else if activeTab === "today"}
+          <TodayPanel />
         {:else if activeTab === "dashboard"}
           <Dashboard />
         {:else if activeTab === "plugins"}

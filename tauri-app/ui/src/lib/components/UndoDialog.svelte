@@ -4,13 +4,15 @@
 
   interface Props {
     preview: UndoPreview;
+    /** Further tasks waiting to be previewed after this one. */
+    remaining?: number;
     submitting?: boolean;
     error?: string;
     onconfirm: () => void;
     oncancel: () => void;
   }
 
-  let { preview, submitting = false, error = "", onconfirm, oncancel }: Props = $props();
+  let { preview, remaining = 0, submitting = false, error = "", onconfirm, oncancel }: Props = $props();
 
   let ready = $derived(preview.items.filter((item) => item.state === "ready"));
   let leftAlone = $derived(preview.items.filter((item) => item.state !== "ready"));
@@ -24,6 +26,9 @@
     </div>
 
     <p class="confirm-body">{$_("undo.intro")}</p>
+    {#if remaining > 0}
+      <p class="confirm-body" data-testid="undo-remaining">{$_("undo.remaining", { values: { count: remaining } })}</p>
+    {/if}
 
     {#if ready.length}
       <h4>{$_("undo.will_undo")}</h4>

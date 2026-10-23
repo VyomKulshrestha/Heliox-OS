@@ -270,6 +270,8 @@ interface SessionState {
   undoPreview: UndoPreview | null;
   undoSubmitting: boolean;
   undoError: string;
+  /** Further tasks to preview after the current one ("undo the last two tasks"), newest first. */
+  undoQueue: string[];
   proactiveSuggestion: ProactiveSuggestion | null;
   proactiveSuggestionPending: boolean;
   terminalStatus: string;
@@ -338,6 +340,7 @@ const initialState: SessionState = {
   undoPreview: null,
   undoSubmitting: false,
   undoError: "",
+  undoQueue: [],
   proactiveSuggestion: null,
   proactiveSuggestionPending: false,
   terminalStatus: "",
@@ -360,6 +363,17 @@ function isTauriRuntime(): boolean {
   // Tauri v2: __TAURI_INTERNALS__ is always injected into the webview.
   // __TAURI__ only exists if withGlobalTauri:true is set — do NOT use it.
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
+async function notifyDailyBrief(text: string) {
+  if (!isTauriRuntime()) return;
+  try {
+    let granted = await isPermissionGranted();
+    if (!granted) granted = (await requestPermission()) === "granted";
+    sendNotification({ title: "Heliox daily brief", body: text });
+  } catch (err) {
+    console.error("[Heliox] notification error:", err);
+  }
 }
 
 async function notifyTaskComplete(payload: Record<string, unknown>) {
@@ -850,9 +864,27 @@ function createSession() {
         break;
       }
 
-      case "undo_offer":
-        if (typeof p.task_key === "string") void openUndoPreview(p.task_key);
+      case "undo_offer": {
+        const keys = Array.isArray(p.task_keys)
+          ? p.task_keys.filter((key): key is string => typeof key === "string")
+          : typeof p.task_key === "string"
+            ? [p.task_key]
+            : [];
+        if (keys.length) {
+          update((s) => ({ ...s, undoQueue: keys.slice(1) }));
+          void openUndoPreview(keys[0]);
+        }
         break;
+      }
+
+      case "daily_brief": {
+        const text = String(p.text ?? "").trim();
+        if (text) {
+          addSystemMessage(`Daily brief: ${text}`);
+          void notifyDailyBrief(text);
+        }
+        break;
+      }
 
       case "undo_complete":
         update((s) => ({
@@ -1629,7 +1661,14 @@ function createSession() {
   }
 
   function cancelUndo() {
-    update((s) => ({ ...s, undoPreview: null, undoSubmitting: false, undoError: "" }));
+    update((s) => ({ ...s, undoPreview: null, undoSubmitting: false, undoError: "", undoQueue: [] }));
+  }
+
+  function openNextQueuedUndo() {
+    const next = get({ subscribe }).undoQueue[0];
+    if (!next) return;
+    update((s) => ({ ...s, undoQueue: s.undoQueue.slice(1) }));
+    void openUndoPreview(next);
   }
 
   function dismissUndoOffer() {
@@ -1680,6 +1719,7 @@ function createSession() {
       if (skipped) parts.push(`Left ${skipped} alone because ${skipped === 1 ? "it" : "they"} changed since.`);
       if (failed) parts.push(`${failed} could not be undone.`);
       addSystemMessage(parts.join(" "));
+      openNextQueuedUndo();
     } catch (err) {
       update((s) => ({
         ...s,
