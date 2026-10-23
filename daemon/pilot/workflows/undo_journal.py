@@ -2,7 +2,8 @@
 
 Before a supported action runs, the journal records what is needed to reverse it: a
 copy of a file that will be overwritten or deleted, where a moved or copied item will
-land, the clipboard text that will be replaced. After the action succeeds it records
+land, the clipboard text, environment variable, volume or brightness that will be
+replaced. After the action succeeds it records
 what Heliox left behind. Undoing a task reverses its entries newest first, and only
 when each item is still exactly as Heliox left it. Anything the person changed since
 is reported as a conflict and left alone, never overwritten.
@@ -25,6 +26,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import shutil
 import time
 import uuid
@@ -33,6 +35,7 @@ from pathlib import Path
 from typing import Any
 
 from pilot.actions import Action, ActionResult, ActionType, PermissionTier
+from pilot.system.platform_detect import CURRENT_PLATFORM, Platform
 
 logger = logging.getLogger("pilot.workflows.undo_journal")
 
@@ -48,8 +51,17 @@ UNDOABLE_TYPES = frozenset(
         ActionType.FILE_MOVE,
         ActionType.FILE_COPY,
         ActionType.CLIPBOARD_WRITE,
+        ActionType.ENV_SET,
+        ActionType.VOLUME_SET,
+        ActionType.BRIGHTNESS_SET,
     }
 )
+
+# Levels Heliox can read back and set again, keyed by action type.
+SETTING_TYPES = {ActionType.VOLUME_SET.value: "volume", ActionType.BRIGHTNESS_SET.value: "brightness"}
+# Volume steps on Windows are approximate, so a level within this many points still counts as unchanged.
+LEVEL_TOLERANCE = 4
+_PERCENT = re.compile(r"(\d{1,3})\s*%")
 
 # Effects that leave the computer: once sent, nothing local can take them back.
 EXTERNAL_TYPES = frozenset(
@@ -116,6 +128,7 @@ class UndoToken:
     support: UndoSupport
     entry: dict[str, Any] | None = None  # None when nothing was captured
     clipboard_previous: str | None = None
+    level_previous: int | None = None
 
 
 def _abs(path: str) -> Path:
@@ -169,6 +182,78 @@ def _hash_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def _hash_optional(text: str | None) -> str | None:
+    return None if text is None else _hash_text(text)
+
+
+async def _read_level(kind: str) -> int | None:
+    """The current volume or brightness in percent, or None when it cannot be read."""
+    try:
+        if kind == "volume":
+            from pilot.system.volume import volume_get
+
+            text = await volume_get()
+        else:
+            from pilot.system.screen import brightness_get
+
+            text = await brightness_get()
+    except Exception:
+        return None
+    match = _PERCENT.search(text)
+    return min(100, int(match.group(1))) if match else None
+
+
+async def _write_level(kind: str, level: int) -> None:
+    if kind == "volume":
+        from pilot.system.volume import volume_set
+
+        await volume_set(level)
+    else:
+        from pilot.system.screen import brightness_set
+
+        await brightness_set(level)
+
+
+def _uses_registry() -> bool:
+    """Persistent environment variables live in the registry on Windows and in a shell profile elsewhere."""
+    return CURRENT_PLATFORM == Platform.WINDOWS
+
+
+def _profile_path() -> Path:
+    # The same file pilot.system.environment.env_set writes for a persistent variable.
+    return Path(os.path.expanduser("~/.zshrc" if CURRENT_PLATFORM == Platform.MACOS else "~/.bashrc"))
+
+
+def _registry_env_get(name: str) -> tuple[str, int] | None:
+    import winreg
+
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as key:
+            value, kind = winreg.QueryValueEx(key, name)
+    except FileNotFoundError:
+        return None
+    return str(value), int(kind)
+
+
+def _registry_env_set(name: str, value: tuple[str, int] | None) -> None:
+    import winreg
+
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment", 0, winreg.KEY_SET_VALUE) as key:
+        if value is None:
+            try:
+                winreg.DeleteValue(key, name)
+            except FileNotFoundError:
+                pass
+        else:
+            winreg.SetValueEx(key, name, 0, value[1], value[0])
+    try:  # tell running programs, as setx does, so new windows see the restored value
+        import ctypes
+
+        ctypes.windll.user32.SendMessageTimeoutW(0xFFFF, 0x001A, 0, "Environment", 0x0002, 2000, None)
+    except Exception:
+        pass
+
+
 class UndoJournal:
     """Stores per-task compensations and applies them on request."""
 
@@ -177,8 +262,9 @@ class UndoJournal:
         # An UndoConfig, or a function returning the current one, read on every call so Settings changes apply.
         self._config = config
         self._lock = asyncio.Lock()
-        # Clipboard text may be private, so it is kept in memory only and never written to disk.
+        # Clipboard text and environment values may be private, so they are kept in memory only.
         self._clipboard_previous: dict[tuple[str, int], str] = {}
+        self._env_previous: dict[tuple[str, int], dict[str, Any]] = {}
 
     # ------------------------------------------------------------------ settings
 
@@ -279,8 +365,13 @@ class UndoJournal:
                     token.clipboard_previous = None
                 token.entry = {"type": action.action_type.value}
                 return token
+            if action.action_type.value in SETTING_TYPES:
+                token.level_previous = await _read_level(SETTING_TYPES[action.action_type.value])
+                token.entry = {"type": action.action_type.value}
+                return token
             async with self._lock:
-                token.entry = await asyncio.to_thread(self._capture_file, action, task_key)
+                capture = self._capture_env if action.action_type == ActionType.ENV_SET else self._capture_file
+                token.entry = await asyncio.to_thread(capture, action, task_key)
         except Exception as exc:  # a failed capture must never stop the action itself
             logger.warning("Undo capture failed for %s: %s", action.action_type.value, exc)
             token.entry = None
@@ -296,19 +387,7 @@ class UndoJournal:
         entry: dict[str, Any] = {"seq": seq, "type": action.action_type.value, "copy_bytes": 0}
 
         def keep_copy(source: Path) -> None:
-            if _private(source):
-                raise ValueError("it is inside Heliox's own folders")
-            size = _tree_bytes(source)
-            if journal["bytes"] + size > self._max_task_bytes():
-                raise ValueError("it is larger than the undo limit for one task")
-            blob = self._blob(task_key, seq)
-            blob.parent.mkdir(parents=True, exist_ok=True)
-            if source.is_dir():
-                shutil.copytree(source, blob)
-            else:
-                shutil.copy2(source, blob)
-            journal["bytes"] += size
-            entry["copy_bytes"] = size
+            self._keep_copy(journal, task_key, entry, source)
 
         if action.action_type == ActionType.FILE_WRITE:
             entry["path"] = str(path)
@@ -337,6 +416,41 @@ class UndoJournal:
         self._write_journal(task_key, journal)
         return entry
 
+    def _keep_copy(self, journal: dict[str, Any], task_key: str, entry: dict[str, Any], source: Path) -> None:
+        if _private(source):
+            raise ValueError("it is inside Heliox's own folders")
+        size = _tree_bytes(source)
+        if journal["bytes"] + size > self._max_task_bytes():
+            raise ValueError("it is larger than the undo limit for one task")
+        blob = self._blob(task_key, entry["seq"])
+        blob.parent.mkdir(parents=True, exist_ok=True)
+        if source.is_dir():
+            shutil.copytree(source, blob)
+        else:
+            shutil.copy2(source, blob)
+        journal["bytes"] += size
+        entry["copy_bytes"] = size
+
+    def _capture_env(self, action: Action, task_key: str) -> dict[str, Any]:
+        name = str(getattr(action.parameters, "name", "") or "")
+        persistent = bool(getattr(action.parameters, "persistent", False))
+        journal = self._load(task_key)
+        seq = self._take_seq(journal)
+        entry: dict[str, Any] = {"seq": seq, "type": action.action_type.value, "name": name, "copy_bytes": 0}
+        previous: dict[str, Any] = {"process": os.environ.get(name)}
+        if persistent and _uses_registry():
+            entry["registry"] = True
+            previous["registry"] = _registry_env_get(name)
+        elif persistent:
+            profile = _profile_path()
+            entry["profile"] = str(profile)
+            entry["profile_pre"] = _signature(profile)
+            if profile.is_file():
+                self._keep_copy(journal, task_key, entry, profile)
+        self._env_previous[(task_key, seq)] = previous
+        self._write_journal(task_key, journal)
+        return entry
+
     async def after(self, token: UndoToken | None, result: ActionResult, *, plan_id: str = "") -> None:
         """Record the outcome of the action that ``before`` captured."""
         if token is None:
@@ -351,6 +465,8 @@ class UndoJournal:
                     post_clipboard = await clipboard_read()
                 except Exception:
                     post_clipboard = None
+            if succeeded and token.entry is not None and token.action.action_type.value in SETTING_TYPES:
+                token.entry["post_level"] = await _read_level(SETTING_TYPES[token.action.action_type.value])
             async with self._lock:
                 await asyncio.to_thread(self._record_after, token, succeeded, plan_id, post_clipboard)
         except Exception:
@@ -360,6 +476,7 @@ class UndoJournal:
         task_key, action, entry = token.task_key, token.action, token.entry
         if not succeeded:
             if entry and "seq" in entry:
+                self._env_previous.pop((task_key, entry["seq"]), None)
                 self._drop_blob(task_key, entry["seq"])
                 journal = self._read_journal(task_key)
                 if journal is not None and entry.get("copy_bytes"):
@@ -387,6 +504,24 @@ class UndoJournal:
             else:
                 entry["post"] = _hash_text(post_clipboard)
                 self._clipboard_previous[(task_key, entry["seq"])] = token.clipboard_previous
+        elif action.action_type.value in SETTING_TYPES:
+            entry["seq"] = self._take_seq(journal)
+            entry["previous"] = token.level_previous
+            entry["post"] = entry.pop("post_level", None)
+            if entry["previous"] is None or entry["post"] is None:
+                entry["status"] = "unavailable"
+                entry["reason"] = (
+                    f"Heliox could not read the {SETTING_TYPES[action.action_type.value]} around this change."
+                )
+        elif action.action_type == ActionType.ENV_SET:
+            name = entry["name"]
+            entry["target"] = name
+            entry["post_process"] = _hash_optional(os.environ.get(name))
+            if entry.get("registry"):
+                current = _registry_env_get(name)
+                entry["post_registry"] = _hash_optional(current[0] if current else None)
+            if entry.get("profile"):
+                entry["profile_post"] = _signature(Path(entry["profile"]))
         elif action.action_type in (ActionType.FILE_WRITE, ActionType.FILE_DELETE):
             entry["post"] = _signature(Path(entry["path"]))
         else:
@@ -397,13 +532,17 @@ class UndoJournal:
     # ------------------------------------------------------------------ preview
 
     def _check(
-        self, task_key: str, entry: dict[str, Any], virtual: dict[str, str | None]
-    ) -> tuple[str, str, dict[str, str | None]]:
-        """Decide one entry against the disk as it will be once the newer entries are undone.
+        self,
+        task_key: str,
+        entry: dict[str, Any],
+        virtual: dict[str, Any],
+        live: dict[str, int | None] | None = None,
+    ) -> tuple[str, str, dict[str, Any]]:
+        """Decide one entry against the computer as it will be once the newer entries are undone.
 
         Returns (state, description, effects): state is "ready", "conflict", "unavailable"
-        or "done", and effects maps each path to the signature it will have after this
-        entry is undone.
+        or "done", and effects maps each path (or setting) to what it will be after this
+        entry is undone. ``live`` holds the volume and brightness read just before.
         """
 
         def current(path: str) -> str | None:
@@ -419,6 +558,17 @@ class UndoJournal:
             if (task_key, entry["seq"]) not in self._clipboard_previous:
                 return "unavailable", "The earlier clipboard text is only kept until Heliox restarts.", {}
             return "ready", "Put back the clipboard text you had before.", {}
+        if kind in SETTING_TYPES:
+            setting = SETTING_TYPES[kind]
+            key = f"setting:{setting}"
+            level = virtual[key] if key in virtual else (live or {}).get(setting)
+            if level is None:
+                return "unavailable", f"Heliox cannot read the {setting} right now.", {}
+            if abs(int(level) - int(entry["post"])) > LEVEL_TOLERANCE:
+                return "conflict", f"The {setting} changed after Heliox set it, so it is left as it is.", {}
+            return "ready", f"Set the {setting} back to {entry['previous']}%.", {key: entry["previous"]}
+        if kind == ActionType.ENV_SET.value:
+            return self._check_env(task_key, entry, virtual, current)
         paths = [p for p in (entry.get("path"), entry.get("source"), entry.get("final")) if p]
         if any(_private(p) for p in paths):
             return "unavailable", "This is inside Heliox's own folders.", {}
@@ -461,11 +611,51 @@ class UndoJournal:
             description += " The file it replaced comes back."
         return "ready", description, effects
 
-    def _plan(self, task_key: str, journal: dict[str, Any]) -> dict[str, Any]:
-        virtual: dict[str, str | None] = {}
+    def _check_env(
+        self, task_key: str, entry: dict[str, Any], virtual: dict[str, Any], current: Any
+    ) -> tuple[str, str, dict[str, Any]]:
+        name = entry["name"]
+        previous = self._env_previous.get((task_key, entry["seq"]))
+        if previous is None:
+            return "unavailable", f"The earlier value of {name} is only kept until Heliox restarts.", {}
+        process_key, registry_key = f"env:{name}", f"envreg:{name}"
+        process_now = virtual[process_key] if process_key in virtual else _hash_optional(os.environ.get(name))
+        if process_now != entry.get("post_process"):
+            return "conflict", f"{name} changed after Heliox set it, so it is left as it is.", {}
+        effects: dict[str, Any] = {process_key: _hash_optional(previous["process"])}
+        if entry.get("registry"):
+            if registry_key in virtual:
+                registry_now = virtual[registry_key]
+            else:
+                stored = _registry_env_get(name)
+                registry_now = _hash_optional(stored[0] if stored else None)
+            if registry_now != entry.get("post_registry"):
+                return "conflict", f"The saved value of {name} changed after Heliox set it.", {}
+            earlier = previous.get("registry")
+            effects[registry_key] = _hash_optional(earlier[0] if earlier else None)
+        if entry.get("profile"):
+            profile = entry["profile"]
+            if current(profile) != entry.get("profile_post"):
+                return "conflict", f"{Path(profile).name} changed after Heliox wrote {name} into it.", {}
+            if entry.get("profile_pre") is not None and not self._blob(task_key, entry["seq"]).exists():
+                return "unavailable", f"The saved copy of {Path(profile).name} is missing.", {}
+            effects[profile] = entry.get("profile_pre")
+        if previous["process"] is None:
+            return "ready", f"Remove {name}, which Heliox set.", effects
+        return "ready", f"Put back {name} as it was.", effects
+
+    async def _live_levels(self, entries: list[dict[str, Any]]) -> dict[str, int | None]:
+        kinds = sorted({SETTING_TYPES[e["type"]] for e in entries if e.get("type") in SETTING_TYPES})
+        values = await asyncio.gather(*(_read_level(kind) for kind in kinds))
+        return dict(zip(kinds, values, strict=True))
+
+    def _plan(
+        self, task_key: str, journal: dict[str, Any], live: dict[str, int | None] | None = None
+    ) -> dict[str, Any]:
+        virtual: dict[str, Any] = {}
         items = []
         for entry in sorted(journal["entries"], key=lambda e: e["seq"], reverse=True):
-            state, description, effects = self._check(task_key, entry, virtual)
+            state, description, effects = self._check(task_key, entry, virtual, live)
             if state == "done":
                 continue
             if state == "ready":
@@ -497,7 +687,8 @@ class UndoJournal:
             journal = await asyncio.to_thread(self._read_journal, task_key)
             if journal is None:
                 return None
-            return await asyncio.to_thread(self._plan, task_key, journal)
+            live = await self._live_levels(journal["entries"])
+            return await asyncio.to_thread(self._plan, task_key, journal, live)
 
     async def summary(self, task_key: str) -> dict[str, Any] | None:
         """A small summary for ``task_complete``: how much of this task can be undone."""
@@ -519,7 +710,8 @@ class UndoJournal:
             journal = await asyncio.to_thread(self._read_journal, task_key)
             if journal is None:
                 return {"status": "error", "message": "Nothing is recorded to undo for this task."}
-            plan = await asyncio.to_thread(self._plan, task_key, journal)
+            live = await self._live_levels(journal["entries"])
+            plan = await asyncio.to_thread(self._plan, task_key, journal, live)
             if plan["preview_token"] != preview_token:
                 return {
                     "status": "changed",
@@ -528,8 +720,9 @@ class UndoJournal:
                 }
             results = []
             for entry in sorted(journal["entries"], key=lambda e: e["seq"], reverse=True):
-                # Re-check against the real disk: the newer entries are already undone by now.
-                state, description, _effects = await asyncio.to_thread(self._check, task_key, entry, {})
+                # Re-check against the real computer: the newer entries are already undone by now.
+                live = await self._live_levels([entry])
+                state, description, _effects = await asyncio.to_thread(self._check, task_key, entry, {}, live)
                 if state == "done":
                     continue
                 if state == "ready":
@@ -565,7 +758,30 @@ class UndoJournal:
             previous = self._clipboard_previous.pop((task_key, entry["seq"]))
             await clipboard_write("" if previous == EMPTY_CLIPBOARD else previous)
             return
+        if entry["type"] in SETTING_TYPES:
+            await _write_level(SETTING_TYPES[entry["type"]], int(entry["previous"]))
+            return
+        if entry["type"] == ActionType.ENV_SET.value:
+            await asyncio.to_thread(self._apply_env, task_key, entry)
+            return
         await asyncio.to_thread(self._apply_file, task_key, entry)
+
+    def _apply_env(self, task_key: str, entry: dict[str, Any]) -> None:
+        name = entry["name"]
+        previous = self._env_previous[(task_key, entry["seq"])]
+        if entry.get("registry"):
+            _registry_env_set(name, previous.get("registry"))
+        if entry.get("profile"):
+            profile = Path(entry["profile"])
+            if entry.get("profile_pre") is None:
+                profile.unlink(missing_ok=True)
+            else:
+                self._restore(self._blob(task_key, entry["seq"]), profile)
+        if previous["process"] is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = previous["process"]
+        self._env_previous.pop((task_key, entry["seq"]), None)
 
     @staticmethod
     def _restore(blob: Path, target: Path) -> None:
@@ -602,20 +818,30 @@ class UndoJournal:
 
     async def list_tasks(self, limit: int = 20) -> list[dict[str, Any]]:
         async with self._lock:
-            return await asyncio.to_thread(self._list_tasks, limit)
+            journals = await asyncio.to_thread(self._journals)
+            live = await self._live_levels([entry for journal in journals for entry in journal["entries"]])
+            return await asyncio.to_thread(self._list_tasks, journals, limit, live)
 
-    def _list_tasks(self, limit: int) -> list[dict[str, Any]]:
+    def _journals(self) -> list[dict[str, Any]]:
         if not self._root.is_dir():
             return []
-        rows = []
+        found = []
         for child in self._root.iterdir():
             journal = self._read_journal(child.name) if child.is_dir() else None
-            if journal is None or not (journal["entries"] or journal["not_undoable"]):
-                continue
-            plan = self._plan(child.name, journal)
+            if journal is not None and (journal["entries"] or journal["not_undoable"]):
+                found.append(dict(journal, task_key=child.name))
+        return found
+
+    def _list_tasks(
+        self, journals: list[dict[str, Any]], limit: int, live: dict[str, int | None]
+    ) -> list[dict[str, Any]]:
+        rows = []
+        for journal in journals:
+            child_name = journal["task_key"]
+            plan = self._plan(child_name, journal, live)
             rows.append(
                 {
-                    "task_key": child.name,
+                    "task_key": child_name,
                     "plan_ids": plan["plan_ids"],
                     "created_at": journal.get("created_at"),
                     "updated_at": journal.get("updated_at"),
@@ -656,8 +882,9 @@ class UndoJournal:
             shutil.rmtree(child, ignore_errors=True)
             total -= size
             removed += 1
-        for key in [k for k in self._clipboard_previous if not self._task_dir(k[0]).exists()]:
-            self._clipboard_previous.pop(key, None)
+        for memory in (self._clipboard_previous, self._env_previous):
+            for key in [k for k in memory if not self._task_dir(k[0]).exists()]:
+                memory.pop(key, None)
         return removed
 
     async def clear(self) -> None:
@@ -665,3 +892,4 @@ class UndoJournal:
         async with self._lock:
             await asyncio.to_thread(shutil.rmtree, self._root, True)
             self._clipboard_previous.clear()
+            self._env_previous.clear()

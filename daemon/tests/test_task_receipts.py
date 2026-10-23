@@ -255,3 +255,41 @@ def test_receipts_settings_are_validated():
         server._handle_update_config({"section": "receipts", "values": {"retention_days": 30}}, MagicMock())
     )
     assert good["status"] == "ok" and config.receipts.retention_days == 30
+
+
+@pytest.mark.asyncio
+async def test_what_did_you_do_today_is_answered_from_receipts(receipts):
+    _record(receipts, "a")
+    await receipts.finalize("a", request="tidy my downloads", status="success", summary="ok", source="voice")
+    _record(receipts, "b")
+    await receipts.finalize("b", request="email the report", status="error", summary="smtp down", source="text")
+
+    answer = receipts.answer("What did you do today?")
+
+    assert answer.startswith("Today I ran 2 tasks.")
+    assert '"tidy my downloads" (1 action)' in answer and '"email the report" (1 action)' in answer
+    assert "1 did not finish cleanly" in answer
+    assert receipts.answer("what is the weather") is None
+
+
+def test_nothing_ran_is_said_plainly(tmp_path):
+    from datetime import datetime
+
+    receipts = TaskReceipts(tmp_path / "r", vault=FakeVault())
+
+    assert receipts.answer("what did you do yesterday", now=datetime(2026, 10, 23, 12)) == (
+        "I didn't run any actions yesterday."
+    )
+
+
+@pytest.mark.asyncio
+async def test_local_answers_try_the_timeline_then_receipts(tmp_path):
+    from pilot.server import PilotServer
+
+    server = PilotServer(PilotConfig())
+    server._task_receipts = TaskReceipts(tmp_path / "r", vault=FakeVault())
+    _record(server._task_receipts, "a")
+    await server._task_receipts.finalize("a", request="tidy", status="success", summary="ok", source="voice")
+
+    assert (await server._local_answer("what did you do today")).startswith("Today I ran 1 task.")
+    assert await server._local_answer("open the report") is None

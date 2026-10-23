@@ -918,6 +918,7 @@ class PilotServer:
         self._undo_journal: Any = None
         self._task_receipts: Any = None
         self._activity_timeline: Any = None
+        self._task_footers: dict[str, dict[str, Any]] = {}
         self._queued_execute_requests: deque[tuple[str, str, dict[str, Any]]] = deque()
         self._queued_submission_lock = asyncio.Lock()
         self._queued_execute_worker: asyncio.Task[None] | None = None
@@ -2694,6 +2695,9 @@ class PilotServer:
                             )
                         )
                     response = await self._handle_execute_inner(params, ws)
+                    footer = self._task_footers.pop(context.task_id, None)
+                    if footer:
+                        response = {**response, **footer}
                     await self._finalize_durable_task(context.task_id, response)
                     if self._durable_tasks is not None:
                         response = {**response, "task_id": context.task_id}
@@ -2903,13 +2907,20 @@ class PilotServer:
                     privacy_class=PrivacyClass.SENSITIVE,
                 )
                 await self._broadcast_notification("task_complete", payload)
+                # The execute reply carries these too, so the window that ran the task can show
+                # Undo and the receipt on the task's own message.
+                footer = {key: payload[key] for key in ("undo", "receipt_id") if key in payload}
+                if footer and context.task_id:
+                    self._task_footers[context.task_id] = footer
+                    while len(self._task_footers) > 20:
+                        self._task_footers.pop(next(iter(self._task_footers)))
             except Exception:
                 pass
 
         # Timeline questions ("what was I working on this morning?") are answered from the local
         # timeline in code; they never reach the planner or a model.
-        if self._activity_timeline is not None and not attachments:
-            timeline_answer = await self._activity_timeline.answer_async(str(user_input))
+        if not attachments:
+            timeline_answer = await self._local_answer(str(user_input))
             if timeline_answer is not None:
                 await ws.send(_notification("conversation_response", {"explanation": timeline_answer}))
                 await _emit_task_complete("success", timeline_answer)
@@ -5799,6 +5810,20 @@ class PilotServer:
             return {"status": "error", "message": f"Config update was not saved: {exc}"}
         state = await self._publish_air_handoff_state()
         return {"status": "ok", **state}
+
+    async def _local_answer(self, text: str) -> str | None:
+        """Answer questions about the person's own history (timeline, receipts) in code, without a model."""
+        for source in (self._activity_timeline, self._task_receipts):
+            if source is None:
+                continue
+            try:
+                answer = await source.answer_async(text)
+            except Exception:
+                logger.warning("Local history answer failed", exc_info=True)
+                continue
+            if answer is not None:
+                return answer
+        return None
 
     async def _handle_timeline_status(self, params: dict[str, Any], ws: ServerConnection) -> dict:
         """Whether the activity timeline is recording, and how much it holds."""
@@ -10902,8 +10927,8 @@ def handle_tool(tool_name, params):
             )
             return
 
-        if not self._interactive_request_active and self._activity_timeline is not None:
-            timeline_answer = await self._activity_timeline.answer_async(command_text)
+        if not self._interactive_request_active:
+            timeline_answer = await self._local_answer(command_text)
             if timeline_answer is not None:
                 await self._broadcast_notification(
                     "voice_result", {"command": command_text, "status": "answered", "message": timeline_answer}

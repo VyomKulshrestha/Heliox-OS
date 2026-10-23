@@ -718,8 +718,8 @@ denied, and points to Stop, which cancels the task.
 
 ## ↩️ Per-task undo
 
-Before Heliox writes, moves, copies or deletes a file, or replaces the clipboard, the
-undo journal (`daemon/pilot/workflows/undo_journal.py`) keeps what it needs to reverse
+Before Heliox writes, moves, copies or deletes a file, replaces the clipboard, sets an
+environment variable, or changes the volume or screen brightness, the undo journal (`daemon/pilot/workflows/undo_journal.py`) keeps what it needs to reverse
 that one change. A finished task can then be undone from its preview.
 
 - **Compensations come from code, never from a model.** What is recorded and how it is
@@ -741,8 +741,13 @@ that one change. A finished task can then be undone from its preview.
 - **Local and bounded.** Copies stay under `DATA_DIR/undo`, which actions may not read
   or change. They are pruned after `retention_days` (default 7) and when the total
   passes `max_total_mb` (default 2048 MB). A change larger than `max_task_mb` (default
-  512 MB) still runs but is listed as not undoable. Clipboard text is kept in memory
-  only and is gone after a restart. Settings → Undo turns the journal off or clears it.
+  512 MB) still runs but is listed as not undoable. Clipboard text and earlier
+  environment variable values are kept in memory only and are gone after a restart. A
+  persistent variable is restored in the user registry key on Windows (keeping its
+  value type) or in the shell profile elsewhere. Volume and brightness go back only if
+  the current level still matches what Heliox set; when the level cannot be read, the
+  change is listed as unavailable instead of guessed. Settings → Undo turns the journal
+  off or clears it.
 - Filesystem snapshot rollback (`rollback_plan`) is unchanged and remains the
   "revert everything" fallback where btrfs or Timeshift snapshots exist.
 
@@ -777,7 +782,8 @@ quarterly report?".
   be cleared at once. It stays under `DATA_DIR/timeline`, which actions may not read
   or change, so only your own questions reach it.
 - Answers are composed in code from the stored spans. Timeline questions typed in chat
-  or spoken are answered without the planner or any model.
+  or spoken are answered without the planner or any model, and so is "what did you do
+  today?", which is answered from task receipts.
 
 ## 📱 Requests from a paired phone (opt-in)
 

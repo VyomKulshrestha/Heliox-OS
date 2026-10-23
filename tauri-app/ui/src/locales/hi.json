@@ -177,6 +177,11 @@
     "badge_undoable": "पूर्ववत हो सकता है",
     "badge_not_undoable": "पूर्ववत नहीं हो सकता"
   },
+  "task_footer": {
+    "undo": "{count} बदलाव पूर्ववत करें",
+    "undone": "पूर्ववत हो गया",
+    "receipt": "रसीद जांचें"
+  },
   "settings": {
     "title": "सेटिंग्स",
     "appearance": "दिखावट",

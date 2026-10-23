@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 from unittest.mock import MagicMock
 
@@ -472,3 +473,147 @@ def test_update_config_validates_undo_values():
     good = asyncio.run(server._handle_update_config({"section": "undo", "values": {"retention_days": 14}}, MagicMock()))
     assert good["status"] == "ok"
     assert config.undo.retention_days == 14
+
+
+def _level_action(action_type: ActionType, level: int) -> Action:
+    from pilot.actions import BrightnessParams, VolumeParams
+
+    params = VolumeParams(level=level) if action_type == ActionType.VOLUME_SET else BrightnessParams(level=level)
+    return Action(action_type=action_type, target=f"{level}%", parameters=params)
+
+
+@pytest.fixture
+def levels(monkeypatch):
+    state = {"volume": 30, "brightness": 70}
+
+    async def read(kind):
+        return state[kind]
+
+    async def write(kind, level):
+        state[kind] = level
+
+    monkeypatch.setattr("pilot.workflows.undo_journal._read_level", read)
+    monkeypatch.setattr("pilot.workflows.undo_journal._write_level", write)
+    return state
+
+
+@pytest.mark.asyncio
+async def test_volume_and_brightness_go_back_to_their_earlier_levels(journal, levels):
+    await _run(journal, _level_action(ActionType.VOLUME_SET, 80), lambda: levels.update(volume=80))
+    await _run(journal, _level_action(ActionType.VOLUME_SET, 50), lambda: levels.update(volume=50))
+    await _run(journal, _level_action(ActionType.BRIGHTNESS_SET, 20), lambda: levels.update(brightness=20))
+
+    preview = await journal.preview("task-1")
+    assert [item["state"] for item in preview["items"]] == ["ready", "ready", "ready"]
+    assert preview["items"][0]["description"] == "Set the brightness back to 70%."
+    result = await journal.undo("task-1", preview["preview_token"])
+
+    assert result["undone"] == 3
+    assert levels == {"volume": 30, "brightness": 70}
+
+
+@pytest.mark.asyncio
+async def test_a_level_changed_since_is_left_alone(journal, levels):
+    await _run(journal, _level_action(ActionType.VOLUME_SET, 80), lambda: levels.update(volume=80))
+    levels["volume"] = 20
+
+    preview = await journal.preview("task-1")
+
+    assert preview["items"][0]["state"] == "conflict"
+    await journal.undo("task-1", preview["preview_token"])
+    assert levels["volume"] == 20
+
+
+@pytest.mark.asyncio
+async def test_an_unreadable_level_is_reported_not_guessed(journal, monkeypatch):
+    async def unreadable(kind):
+        return None
+
+    monkeypatch.setattr("pilot.workflows.undo_journal._read_level", unreadable)
+    await _run(journal, _level_action(ActionType.VOLUME_SET, 80), lambda: None)
+
+    preview = await journal.preview("task-1")
+
+    assert preview["items"][0]["state"] == "unavailable"
+    assert "could not read the volume" in preview["items"][0]["description"]
+
+
+def _env_action(name: str, value: str, persistent: bool = False) -> Action:
+    from pilot.actions import EnvParams
+
+    return Action(
+        action_type=ActionType.ENV_SET, target=name, parameters=EnvParams(name=name, value=value, persistent=persistent)
+    )
+
+
+@pytest.mark.asyncio
+async def test_session_environment_variable_is_put_back_or_removed(journal, monkeypatch):
+    monkeypatch.setenv("HELIOX_UNDO_A", "before")
+    monkeypatch.delenv("HELIOX_UNDO_B", raising=False)
+
+    await _run(journal, _env_action("HELIOX_UNDO_A", "after"), lambda: os.environ.__setitem__("HELIOX_UNDO_A", "after"))
+    await _run(journal, _env_action("HELIOX_UNDO_B", "new"), lambda: os.environ.__setitem__("HELIOX_UNDO_B", "new"))
+
+    result = await _undo(journal)
+
+    assert result["undone"] == 2
+    assert os.environ["HELIOX_UNDO_A"] == "before"
+    assert "HELIOX_UNDO_B" not in os.environ
+    stored = next((journal._root).rglob("journal.json")).read_text(encoding="utf-8")
+    assert "before" not in stored  # earlier values stay in memory only
+
+
+@pytest.mark.asyncio
+async def test_persistent_variable_restores_the_registry_value_and_its_type(journal, monkeypatch):
+    registry = {"HELIOX_UNDO_R": ("C:/old", 2)}
+    monkeypatch.setattr("pilot.workflows.undo_journal._uses_registry", lambda: True)
+    monkeypatch.setattr("pilot.workflows.undo_journal._registry_env_get", lambda name: registry.get(name))
+    monkeypatch.setattr(
+        "pilot.workflows.undo_journal._registry_env_set",
+        lambda name, value: registry.pop(name, None) if value is None else registry.__setitem__(name, value),
+    )
+    monkeypatch.delenv("HELIOX_UNDO_R", raising=False)
+
+    def set_both():
+        os.environ["HELIOX_UNDO_R"] = "C:\new"
+        registry["HELIOX_UNDO_R"] = ("C:\new", 1)
+
+    await _run(journal, _env_action("HELIOX_UNDO_R", "C:\new", persistent=True), set_both)
+    result = await _undo(journal)
+
+    assert result["undone"] == 1
+    assert registry["HELIOX_UNDO_R"] == ("C:/old", 2)
+    assert "HELIOX_UNDO_R" not in os.environ
+
+
+@pytest.mark.asyncio
+async def test_persistent_variable_restores_the_shell_profile(journal, monkeypatch, tmp_path):
+    profile = tmp_path / ".bashrc"
+    profile.write_text("alias ll='ls -l'\n", encoding="utf-8")
+    monkeypatch.setattr("pilot.workflows.undo_journal._uses_registry", lambda: False)
+    monkeypatch.setattr("pilot.workflows.undo_journal._profile_path", lambda: profile)
+    monkeypatch.delenv("HELIOX_UNDO_P", raising=False)
+
+    def set_both():
+        os.environ["HELIOX_UNDO_P"] = "1"
+        profile.write_text(profile.read_text(encoding="utf-8") + "export HELIOX_UNDO_P=1\n", encoding="utf-8")
+
+    await _run(journal, _env_action("HELIOX_UNDO_P", "1", persistent=True), set_both)
+    await _undo(journal)
+
+    assert profile.read_text(encoding="utf-8") == "alias ll='ls -l'\n"
+    assert "HELIOX_UNDO_P" not in os.environ
+
+
+@pytest.mark.asyncio
+async def test_environment_undo_is_unavailable_after_a_restart(tmp_path, monkeypatch):
+    monkeypatch.delenv("HELIOX_UNDO_C", raising=False)
+    first = UndoJournal(tmp_path / "undo-store", config=UndoConfig())
+    await _run(first, _env_action("HELIOX_UNDO_C", "x"), lambda: os.environ.__setitem__("HELIOX_UNDO_C", "x"))
+    monkeypatch.delenv("HELIOX_UNDO_C", raising=False)
+
+    restarted = UndoJournal(tmp_path / "undo-store", config=UndoConfig())
+    preview = await restarted.preview("task-1")
+
+    assert preview["items"][0]["state"] == "unavailable"
+    assert "until Heliox restarts" in preview["items"][0]["description"]

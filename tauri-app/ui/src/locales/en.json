@@ -183,6 +183,11 @@
     "badge_undoable": "Can undo",
     "badge_not_undoable": "Can't undo"
   },
+  "task_footer": {
+    "undo": "Undo {count, plural, one {# change} other {# changes}}",
+    "undone": "Undone",
+    "receipt": "Verify receipt"
+  },
   "settings": {
     "title": "Settings",
     "appearance": "Appearance",

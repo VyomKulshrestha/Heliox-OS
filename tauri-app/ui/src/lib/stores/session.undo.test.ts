@@ -132,3 +132,43 @@ describe("per-task undo", () => {
     expect(get(session).undoOffer).toBeNull();
   });
 });
+
+describe("task footer in chat", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    notificationHandler = null;
+    daemonMocks.call.mockReset();
+    vi.resetModules();
+  });
+
+  const executeReply = {
+    status: "success",
+    explanation: "Wrote notes.",
+    results: [{ action: { action_type: "file_write", target: "notes.txt" }, success: true, output: "ok" }],
+    receipt_id: "abc123",
+    undo: { task_key: "task-7", available: true, undoable: 1, not_undoable: 0 },
+  };
+
+  it("puts Undo and the receipt on the task's own message", async () => {
+    daemonMocks.call.mockImplementation(async (method: string) => {
+      if (method === "execute") return executeReply;
+      if (method === "receipt_verify")
+        return { status: "ok", result: { valid: true, this_computer: true, reasons: [] } };
+      return { status: "ok" };
+    });
+    const { session } = await import("./session");
+
+    await session.sendCommand("write my notes");
+    const message = get(session).messages.at(-1);
+    expect(message?.task).toEqual({
+      receiptId: "abc123",
+      undo: { taskKey: "task-7", available: true, undoable: 1, notUndoable: 0 },
+    });
+
+    await session.verifyReceipt("abc123");
+    expect(get(session).messages.at(-1)?.task?.receiptCheck).toBe("Signed by this computer, unchanged");
+
+    notificationHandler!("undo_complete", { task_key: "task-7", status: "ok", undone: 1 });
+    expect(get(session).messages.at(-1)?.task?.undo).toMatchObject({ available: false, undone: true });
+  });
+});

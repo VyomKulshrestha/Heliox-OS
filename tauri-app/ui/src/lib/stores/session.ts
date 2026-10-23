@@ -107,6 +107,29 @@ export interface Message {
   verification?: VerificationData;
   gitConflict?: GitConflictPayload;
   agentRun?: AgentRun;
+  /** What the finished task left behind: its signed receipt and whether it can still be undone. */
+  task?: TaskFooter;
+}
+
+export interface TaskFooter {
+  receiptId?: string;
+  undo?: { taskKey: string; available: boolean; undoable: number; notUndoable: number; undone?: boolean };
+  receiptCheck?: string;
+}
+
+function taskFooterFrom(result: Record<string, unknown>): TaskFooter | undefined {
+  const footer: TaskFooter = {};
+  if (typeof result.receipt_id === "string" && result.receipt_id) footer.receiptId = result.receipt_id;
+  const undo = result.undo && typeof result.undo === "object" ? (result.undo as Record<string, unknown>) : null;
+  if (undo && typeof undo.task_key === "string") {
+    footer.undo = {
+      taskKey: undo.task_key,
+      available: undo.available === true,
+      undoable: Number(undo.undoable ?? 0),
+      notUndoable: Number(undo.not_undoable ?? 0),
+    };
+  }
+  return footer.receiptId || footer.undo ? footer : undefined;
 }
 
 export interface LiveActionState {
@@ -836,6 +859,11 @@ function createSession() {
           ...s,
           undoOffer: s.undoOffer?.taskKey === p.task_key ? null : s.undoOffer,
           undoPreview: s.undoPreview?.task_key === p.task_key ? null : s.undoPreview,
+          messages: s.messages.map((message): Message => {
+            const undo = message.task?.undo;
+            if (!message.task || !undo || undo.taskKey !== p.task_key) return message;
+            return { ...message, task: { ...message.task, undo: { ...undo, available: false, undone: true } } };
+          }),
         }));
         break;
 
@@ -1150,6 +1178,7 @@ function createSession() {
           timestamp: Date.now(),
           actionResults,
           verification,
+          task: taskFooterFrom(result),
         },
       ],
     }));
@@ -1577,6 +1606,28 @@ function createSession() {
     }
   }
 
+  async function verifyReceipt(receiptId: string) {
+    let note: string;
+    try {
+      const res = (await call("receipt_verify", { receipt_id: receiptId })) as {
+        status: string;
+        message?: string;
+        result?: { valid: boolean; this_computer?: boolean; reasons: string[] };
+      };
+      if (res.status !== "ok" || !res.result) note = res.message ?? "The receipt could not be checked.";
+      else if (!res.result.valid) note = `Receipt not valid: ${res.result.reasons.join(" ")}`;
+      else note = res.result.this_computer ? "Signed by this computer, unchanged" : "Valid, signed by another key";
+    } catch (err) {
+      note = String(err instanceof Error ? err.message : err);
+    }
+    update((s) => ({
+      ...s,
+      messages: s.messages.map((message) =>
+        message.task?.receiptId === receiptId ? { ...message, task: { ...message.task, receiptCheck: note } } : message,
+      ),
+    }));
+  }
+
   function cancelUndo() {
     update((s) => ({ ...s, undoPreview: null, undoSubmitting: false, undoError: "" }));
   }
@@ -1837,6 +1888,7 @@ function createSession() {
     cancelRollback,
     confirmRollback,
     openUndoPreview,
+    verifyReceipt,
     cancelUndo,
     dismissUndoOffer,
     confirmUndo,

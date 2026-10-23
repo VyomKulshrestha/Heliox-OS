@@ -632,6 +632,29 @@
           {/each}
         </div>
       {/if}
+      {#if msg.task}
+        <div class="task-footer" data-testid="task-footer">
+          {#if msg.task.undo?.available}
+            <button class="task-chip" type="button" onclick={() => session.openUndoPreview(msg.task?.undo?.taskKey)}>
+              {$_("task_footer.undo", { values: { count: msg.task.undo.undoable } })}
+            </button>
+          {:else if msg.task.undo?.undone}
+            <span class="task-note">{$_("task_footer.undone")}</span>
+          {/if}
+          {#if msg.task.receiptId}
+            <button
+              class="task-chip"
+              type="button"
+              onclick={() => msg.task?.receiptId && session.verifyReceipt(msg.task.receiptId)}
+            >
+              {$_("task_footer.receipt")}
+            </button>
+          {/if}
+          {#if msg.task.receiptCheck}
+            <span class="task-note" role="status">{msg.task.receiptCheck}</span>
+          {/if}
+        </div>
+      {/if}
       <button class="copy-button" type="button" aria-label="Copy message" title="Copy" onclick={() => copyMessage(msg)}>
         <Copy size={14} />
       </button>
@@ -1507,6 +1530,34 @@
   }
   .verification-detail.v-fail {
     color: var(--danger);
+  }
+
+  .task-footer {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+  }
+
+  .task-chip {
+    padding: 3px 10px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    font-size: 11px;
+    cursor: pointer;
+  }
+
+  .task-chip:hover {
+    color: var(--text-primary);
+    background: var(--bg-hover);
+  }
+
+  .task-note {
+    color: var(--text-secondary);
+    font-size: 11px;
   }
 
   .loading-dots::after {

@@ -25,6 +25,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import sys
 import time
 import uuid
@@ -43,6 +44,9 @@ SIGNING_KEY_NAME = "heliox_task_receipt_signing_key"
 KEY_FILE_NAME = "task_receipt_signing_key"
 MAX_PENDING_TASKS = 50
 MAX_ACTIONS_PER_RECEIPT = 500
+RECAP_QUESTION = re.compile(
+    r"^(?:hey heliox |heliox )?what (?:did you do|have you done|did heliox do)(?: for me)?(?P<when>.*)$"
+)
 
 
 def canonical_json(value: Any) -> bytes:
@@ -400,6 +404,55 @@ class TaskReceipts:
             return {"valid": not problems, "count": len(files), "problems": problems}
 
         return await asyncio.to_thread(run)
+
+    def recap(self, start: float, end: float) -> list[dict[str, Any]]:
+        """Short forms of the receipts that finished between ``start`` and ``end``, oldest first."""
+        rows = []
+        for path in self._files():
+            envelope = self._read(path)
+            receipt = envelope.get("receipt") if envelope else None
+            if not isinstance(receipt, dict):
+                continue
+            try:
+                finished = datetime.fromisoformat(str(receipt["finished_at"])).timestamp()
+            except (KeyError, ValueError):
+                continue
+            if start <= finished <= end:
+                rows.append(self._short(envelope))
+        return rows
+
+    def answer(self, question: str, *, now: datetime | None = None) -> str | None:
+        """Answer "what did you do today?" from the receipts, or None for any other question."""
+        normalized = re.sub(r"\s+", " ", question.lower().strip(" ?.!"))
+        asked = RECAP_QUESTION.match(normalized)
+        if not asked:
+            return None
+        from pilot.workflows.activity_timeline import parse_when
+
+        now = now or datetime.now()
+        when = asked.group("when").strip() or "today"
+        start, end, label = parse_when(when, now)
+        if label == "in the last two hours" and "today" not in when:
+            start, end, label = parse_when("today", now)
+        if not self.enabled:
+            return "Task receipts are off, so I have no record to go on."
+        rows = self.recap(start, end)
+        if not rows:
+            return f"I didn't run any actions {label}."
+        failed = sum(1 for row in rows if row["status"] not in ("success", "completed"))
+        listed = [
+            f'"{row["request"] or row["summary"]}" ({row["action_count"]} action{"" if row["action_count"] == 1 else "s"})'
+            for row in rows[-3:]
+        ]
+        opening = label[0].upper() + label[1:]
+        tasks = f"{len(rows)} task{'' if len(rows) == 1 else 's'}"
+        text = f"{opening} I ran {tasks}. The latest: " + "; ".join(listed) + "."
+        if failed:
+            text += f" {failed} did not finish cleanly."
+        return text
+
+    async def answer_async(self, question: str) -> str | None:
+        return await asyncio.to_thread(self.answer, question)
 
     async def prune(self, *, now: float | None = None) -> int:
         horizon = (time.time() if now is None else now) - self._retention_seconds()

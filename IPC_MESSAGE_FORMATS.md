@@ -2848,7 +2848,8 @@ Sent when one or more actions in the plan require explicit user approval (Tier 2
 ```
 
 `undo` says whether Heliox can undo the action afterwards, decided from the action type
-alone: `undoable` (file write, move, copy or delete, and clipboard writes), `no_change`
+alone: `undoable` (file write, move, copy or delete, clipboard writes, environment
+variables, volume and brightness), `no_change`
 (read-only) or `not_undoable` (anything that leaves the computer, and system changes
 such as shell commands or package installs). It is `not_undoable` with "Undo is turned
 off in Settings." when `[undo] enabled = false`.
@@ -2990,7 +2991,14 @@ Terminal, sanitized summary for an interactive task.
 
 `undo` is present when the task recorded anything in the undo journal (never for dry
 runs). `available` is true while at least one change can still be undone; the UI then
-offers **Review undo**, which calls `undo_preview`.
+offers **Review undo**, which calls `undo_preview`. The `execute` reply of the window
+that ran the task carries the same `undo` and `receipt_id`, so the UI can show Undo and
+**Verify receipt** on that task's own message.
+
+Questions about the person's own history are answered in code, never by the planner or
+a model, and return a normal conversational `execute` reply (and `voice_result` for
+voice): "what was I working on …" and "when did I last open …" from the activity
+timeline, and "what did you do today / yesterday / this morning" from task receipts.
 
 ### `undo_offer`
 Sent when the person says "undo that" (or a similar phrase) with no task running and a
