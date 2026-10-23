@@ -25,7 +25,8 @@
     undoable: UndoRow[];
   };
 
-  let day = $state<"today" | "yesterday">("today");
+  let day = $state<"today" | "yesterday" | "week">("today");
+  let focusMinutes = $state(25);
   let overview = $state<Overview | null>(null);
   let error = $state("");
   let notice = $state("");
@@ -61,7 +62,27 @@
     }
   }
 
-  function show(next: "today" | "yesterday") {
+  async function startFocus() {
+    try {
+      const result = await call<{ status: string; message?: string }>("focus_start", {
+        minutes: Number(focusMinutes),
+      });
+      notice = result.status === "ok" ? "Focus started. Reminders and the brief will wait." : result.message || "";
+    } catch (err) {
+      notice = err instanceof Error ? err.message : "Focus did not start.";
+    }
+  }
+
+  async function exportReport() {
+    try {
+      const result = await call<{ status: string; message?: string; path?: string }>("report_export", { day });
+      notice = result.status === "ok" ? `Report saved to ${result.path}` : result.message || "Not saved.";
+    } catch (err) {
+      notice = err instanceof Error ? err.message : "Not saved.";
+    }
+  }
+
+  function show(next: "today" | "yesterday" | "week") {
     day = next;
     void load();
   }
@@ -124,8 +145,12 @@
     <div class="switch" role="group" aria-label="Day">
       <button type="button" class:active={day === "today"} onclick={() => show("today")}>Today</button>
       <button type="button" class:active={day === "yesterday"} onclick={() => show("yesterday")}>Yesterday</button>
+      <button type="button" class:active={day === "week"} onclick={() => show("week")}>This week</button>
     </div>
-    <button type="button" class="quiet" onclick={load}>Refresh</button>
+    <span class="header-actions">
+      <button type="button" class="quiet" onclick={exportReport}>Export report</button>
+      <button type="button" class="quiet" onclick={load}>Refresh</button>
+    </span>
   </header>
 
   <div class="today-body">
@@ -193,6 +218,27 @@
         {/if}
       </section>
     {/if}
+
+    <section aria-labelledby="today-focus">
+      <h3 id="today-focus">Focus</h3>
+      <p class="empty">
+        Holds reminders and the daily brief and keeps Heliox quiet; approvals and answers still come through. You can
+        also say "focus for 45 minutes".
+      </p>
+      <div class="brief-controls">
+        <label
+          >Focus for <input
+            class="minutes"
+            type="number"
+            min="1"
+            max="480"
+            bind:value={focusMinutes}
+            aria-label="Focus minutes"
+          /> min</label
+        >
+        <button type="button" onclick={startFocus}>Start focus</button>
+      </div>
+    </section>
 
     <section aria-labelledby="today-reminders">
       <h3 id="today-reminders">Reminders</h3>
@@ -290,7 +336,8 @@
     flex-direction: column;
     gap: 18px;
   }
-  .switch {
+  .switch,
+  .header-actions {
     display: flex;
     gap: 4px;
   }

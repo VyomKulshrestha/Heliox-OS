@@ -90,4 +90,23 @@ describe("TodayPanel", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Cancel stretch" }));
     await waitFor(() => expect(screen.queryByText("stretch")).toBeNull());
   });
+
+  it("shows this week, exports a report and starts focus", async () => {
+    daemonMocks.call.mockImplementation(async (method: string) => {
+      if (method === "today_overview") return overview;
+      if (method === "report_export") return { status: "ok", path: "C:/Users/me/Downloads/heliox-report.md" };
+      return { status: "ok" };
+    });
+    render(TodayPanel);
+    await waitFor(() => expect(screen.getByText(overview.brief)).toBeTruthy());
+
+    await fireEvent.click(screen.getByRole("button", { name: "This week" }));
+    expect(daemonMocks.call).toHaveBeenCalledWith("today_overview", { day: "week" });
+    await fireEvent.click(screen.getByRole("button", { name: "Export report" }));
+    await waitFor(() => expect(screen.getByRole("status").textContent).toContain("heliox-report.md"));
+    expect(daemonMocks.call).toHaveBeenCalledWith("report_export", { day: "week" });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Start focus" }));
+    expect(daemonMocks.call).toHaveBeenCalledWith("focus_start", { minutes: 25 });
+  });
 });

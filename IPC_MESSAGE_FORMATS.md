@@ -12,7 +12,7 @@ The Heliox OS UI and daemon communicate over a local WebSocket using the [JSON-R
 | Request timeout | 5 minutes |
 | Reconnect interval | 3 seconds (auto-reconnect on close) |
 
-The daemon currently registers **252 WebSocket RPC methods**. That is the API
+The daemon currently registers **256 WebSocket RPC methods**. That is the API
 surface count, not the action catalog: Heliox exposes **162 action
 types** through the guarded planner/executor system. This document names every
 registered RPC method; grouped tables are used where several methods share one
@@ -453,6 +453,21 @@ One day at a glance, composed in code from local records.
 **Params:** `{ "day": "today" }` (`today` or `yesterday`)
 **Result:** `{"status": "ok", "day": "2026-10-23", "label": "today", "tasks": [<receipt short form>], "timeline_enabled": true, "usage": {"total_seconds": 9120, "apps": [...]}, "undoable": [<undo_list row>], "brief": "Today Heliox ran 3 tasks; ..."}`.
 `usage` is null while the activity timeline is off.
+
+#### `focus_start` / `focus_stop` / `focus_status`
+Focus sessions. `focus_start` takes `minutes` (1 to 480) and returns
+`{"active": true, "started_at", "until", "remaining_seconds", "held"}`; starting again
+while a session runs moves its end. While a session runs, reminders and the scheduled
+daily brief are held and proactive/background speech is suppressed; approvals, task
+results and answers are not affected. `focus_stop` ends the session early and returns
+its `summary`. "Focus for 45 minutes", "do not disturb for an hour" and "stop focusing"
+work by voice and in chat. Every change broadcasts `focus_status`.
+
+#### `report_export`
+Write a Markdown report (brief, every task with its receipt id, app time, what can still
+be undone) for `day` = `today`, `yesterday` or `week` to the Downloads folder.
+**Result:** `{"status": "ok", "path": "C:/Users/me/Downloads/heliox-report-2026-10-17-week.md"}`.
+`today_overview` also accepts `day: "week"` (the last seven days).
 
 #### `undo_diff`
 Line-by-line changes for each text file a task wrote, from the saved copy to the file as
@@ -3050,6 +3065,12 @@ press, and Cancel stops the rest.
 ```json
 { "task_key": "4f0c2a9e", "task_keys": ["4f0c2a9e", "91b7d2c0"] }
 ```
+
+### `focus_ended`
+Broadcast when a focus session ends (on time or when stopped):
+`{"text": "Focus session done: 45 minutes. You spent most of it in Code. While you focused: 1 reminder (stretch).", "duration": "45 minutes", "held": 1}`.
+The held reminders follow as `reminder` notifications with `"held": true`, and a held
+daily brief as `daily_brief`.
 
 ### `reminder`
 Broadcast when a reminder falls due: `{"id": "a1b2c3", "due": 1792760400.0, "text": "stretch", "late": false}`.

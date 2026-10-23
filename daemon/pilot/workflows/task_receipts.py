@@ -44,6 +44,7 @@ SIGNING_KEY_NAME = "heliox_task_receipt_signing_key"
 KEY_FILE_NAME = "task_receipt_signing_key"
 MAX_PENDING_TASKS = 50
 MAX_ACTIONS_PER_RECEIPT = 500
+CLOCK_SLACK_SECONDS = 1.0
 RECAP_QUESTION = re.compile(
     r"^(?:hey heliox |heliox )?what (?:did you do|have you done|did heliox do)(?: for me)?(?P<when>.*)$"
 )
@@ -436,7 +437,8 @@ class TaskReceipts:
             start, end, label = parse_when("today", now)
         if not self.enabled:
             return "Task receipts are off, so I have no record to go on."
-        rows = self.recap(start, end)
+        # datetime.now() can trail time.time() by a clock tick on Windows; keep a just-finished task in.
+        rows = self.recap(start, end + CLOCK_SLACK_SECONDS)
         if not rows:
             return f"I didn't run any actions {label}."
         failed = sum(1 for row in rows if row["status"] not in ("success", "completed"))

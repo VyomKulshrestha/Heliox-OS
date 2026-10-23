@@ -906,8 +906,23 @@ function createSession() {
       case "reminder": {
         const text = String(p.text ?? "").trim();
         if (text) {
-          addSystemMessage(p.late ? `Reminder (late): ${text}` : `Reminder: ${text}`);
+          addSystemMessage(
+            p.late
+              ? `Reminder (late): ${text}`
+              : p.held
+                ? `Reminder (held while you focused): ${text}`
+                : `Reminder: ${text}`,
+          );
           void notifyDesktop("Heliox reminder", text);
+        }
+        break;
+      }
+
+      case "focus_ended": {
+        const text = String(p.text ?? "").trim();
+        if (text) {
+          addSystemMessage(text);
+          void notifyDesktop("Heliox focus session", text);
         }
         break;
       }

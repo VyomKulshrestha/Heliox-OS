@@ -288,3 +288,20 @@ describe("reminders in chat", () => {
     expect(get(session).messages.at(-1)?.text).toBe("Reminder (late): call mom");
   });
 });
+
+describe("focus in chat", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    notificationHandler = null;
+    vi.resetModules();
+  });
+
+  it("shows the focus summary and the reminders it held", async () => {
+    const { session } = await import("./session");
+
+    notificationHandler!("focus_ended", { text: "Focus session done: 25 minutes.", held: 1 });
+    expect(get(session).messages.at(-1)?.text).toBe("Focus session done: 25 minutes.");
+    notificationHandler!("reminder", { id: "a", text: "stretch", held: true });
+    expect(get(session).messages.at(-1)?.text).toBe("Reminder (held while you focused): stretch");
+  });
+});

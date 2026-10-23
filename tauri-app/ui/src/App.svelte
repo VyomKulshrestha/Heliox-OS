@@ -13,6 +13,7 @@
   import HumanControlBanner from "./lib/components/HumanControlBanner.svelte";
   import ActivityLog from "./lib/components/ActivityLog.svelte";
   import TodayPanel from "./lib/components/TodayPanel.svelte";
+  import FocusBanner from "./lib/components/FocusBanner.svelte";
   import SettingsPanel from "./lib/components/SettingsPanel.svelte";
   import SetupWizard from "./lib/components/SetupWizard.svelte";
   import VoiceControl from "./lib/components/VoiceControl.svelte";
@@ -324,6 +325,7 @@
         {/if}
 
         <HumanControlBanner />
+        <FocusBanner />
         {#if $session.undoOffer && !$session.undoPreview}
           <div class="undo-banner" data-testid="undo-offer">
             <span>{$_("undo.banner", { values: { count: $session.undoOffer.undoable } })}</span>

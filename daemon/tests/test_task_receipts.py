@@ -293,3 +293,14 @@ async def test_local_answers_try_the_timeline_then_receipts(tmp_path):
 
     assert (await server._local_answer("what did you do today")).startswith("Today I ran 1 task.")
     assert await server._local_answer("open the report") is None
+
+
+@pytest.mark.asyncio
+async def test_a_task_that_just_finished_counts_even_if_the_clock_lags(receipts):
+    from datetime import datetime
+
+    _record(receipts, "a")
+    await receipts.finalize("a", request="tidy my downloads", status="success", summary="ok", source="voice")
+    lagging_now = datetime.fromtimestamp(time.time() - 0.5)  # Windows can read now() a tick behind time()
+
+    assert receipts.answer("what did you do today", now=lagging_now).startswith("Today I ran 1 task.")

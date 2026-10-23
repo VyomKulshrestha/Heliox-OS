@@ -798,6 +798,14 @@ Saying or typing "undo the last two tasks" (up to five) opens each task's undo p
 in turn, newest first. Each task still needs its own Undo press, and Cancel stops the
 rest; nothing is undone from the spoken or typed request itself.
 
+## 🎧 Focus sessions
+
+"Focus for 45 minutes" (or the Today tab) holds reminders and the scheduled daily brief
+and suppresses proactive and background speech until the session ends. It never holds
+approvals, task results, errors or answers to what you ask, so a focus session cannot
+hide a decision Heliox needs from you. The end time is kept in `DATA_DIR/focus.json` so
+a restart does not end the session early.
+
 ## ⏰ Reminders, change diffs and "where did you put it?"
 
 - Reminders are stored in `DATA_DIR/reminders.json`, delivered as a notification, a

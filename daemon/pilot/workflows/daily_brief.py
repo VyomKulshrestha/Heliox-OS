@@ -36,8 +36,11 @@ def _duration(seconds: float) -> str:
 
 
 def day_window(day: str, now: datetime) -> tuple[float, float, str, str]:
-    """(start, end, label, ISO date) for "today" or "yesterday"; today ends now."""
+    """(start, end, label, ISO date) for "today", "yesterday" or "week" (the last 7 days); both end now."""
     midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    if day == "week":
+        start = midnight - timedelta(days=6)
+        return start.timestamp(), now.timestamp(), "this week", start.date().isoformat()
     if day == "yesterday":
         start = midnight - timedelta(days=1)
         return start.timestamp(), midnight.timestamp(), "yesterday", start.date().isoformat()
@@ -50,14 +53,16 @@ async def today_overview(
     """Everything the Today view and the brief show for one day."""
     now = now or datetime.now()
     start, end, label, iso_day = day_window(day, now)
-    tasks = await asyncio.to_thread(receipts.recap, start, end) if receipts is not None else []
+    # Windows can report datetime.now() a clock tick behind time.time(); keep just-finished work in.
+    until = end + 1.0
+    tasks = await asyncio.to_thread(receipts.recap, start, until) if receipts is not None else []
     timeline_enabled = bool(timeline is not None and timeline.enabled)
     usage = await asyncio.to_thread(timeline.summarize, start, end) if timeline_enabled else None
     undoable = []
     if undo_journal is not None:
         for row in await undo_journal.list_tasks(50):
             created = float(row.get("created_at") or 0)
-            if start <= created <= end and row["undoable"] > 0 and not row["undone"]:
+            if start <= created <= until and row["undoable"] > 0 and not row["undone"]:
                 undoable.append(row)
     overview = {
         "day": iso_day,
@@ -96,6 +101,40 @@ def compose_brief(overview: dict[str, Any]) -> str:
     if undoable:
         sentences.append(f"{len(undoable)} task{' can' if len(undoable) == 1 else 's can'} still be undone.")
     return " ".join(sentences)
+
+
+def compose_report(overview: dict[str, Any]) -> str:
+    """A Markdown report of one day or week: the brief, every task, app time and what can be undone."""
+    label = overview["label"]
+    lines = [f"# Heliox report: {label} (from {overview['day']})", "", overview["brief"], ""]
+    lines += ["## Tasks", ""]
+    if overview["tasks"]:
+        lines += ["| Finished | Request | Status | Actions | Receipt |", "|---|---|---|---|---|"]
+        for task in overview["tasks"]:
+            finished = datetime.fromisoformat(task["finished_at"]).astimezone().strftime("%a %d %b %H:%M")
+            request = (task["request"] or task["summary"] or "").replace("|", "\\|")
+            lines.append(
+                f"| {finished} | {request} | {task['status']} | {task['action_count']} | `{task['receipt_id'][:12]}` |"
+            )
+    else:
+        lines.append("No tasks ran actions.")
+    lines += ["", "## Where the time went", ""]
+    usage = overview.get("usage")
+    if not overview.get("timeline_enabled"):
+        lines.append("The activity timeline is off.")
+    elif usage and usage["apps"]:
+        lines += [f"- {entry['app']}: {_duration(entry['seconds'])}" for entry in usage["apps"]]
+    else:
+        lines.append("Nothing recorded.")
+    lines += ["", "## Can still be undone", ""]
+    if overview["undoable"]:
+        for row in overview["undoable"]:
+            targets = ", ".join(row.get("targets") or []) or row["task_key"]
+            lines.append(f"- {targets} ({row['undoable']} change{'' if row['undoable'] == 1 else 's'})")
+    else:
+        lines.append("Nothing.")
+    lines += ["", "Each receipt can be checked with `python -m pilot.workflows.task_receipts verify`.", ""]
+    return "\n".join(lines)
 
 
 class DailyBriefScheduler:

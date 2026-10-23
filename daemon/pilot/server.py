@@ -918,6 +918,7 @@ class PilotServer:
         self._daily_brief: Any = None
         self._shortcuts: Any = None
         self._reminders: Any = None
+        self._focus: Any = None
         self._queued_execute_requests: deque[tuple[str, str, dict[str, Any]]] = deque()
         self._queued_submission_lock = asyncio.Lock()
         self._queued_execute_worker: asyncio.Task[None] | None = None
@@ -1157,6 +1158,10 @@ class PilotServer:
         from pilot.workflows.routines import ShortcutStore
 
         self._shortcuts = ShortcutStore(DATA_DIR / "voice_shortcuts.json", reserved=self._phrase_reserved)
+        from pilot.workflows.focus import FocusSession
+
+        self._focus = FocusSession(DATA_DIR / "focus.json", on_end=self._on_focus_end)
+        self._focus.resume_timer()
         from pilot.workflows.reminders import ReminderStore
 
         self._reminders = ReminderStore(DATA_DIR / "reminders.json", deliver=self._deliver_reminder)
@@ -1166,7 +1171,7 @@ class PilotServer:
         self._daily_brief = DailyBriefScheduler(
             config=lambda: self.config.brief,
             build=self._today_overview,
-            deliver=self._deliver_daily_brief,
+            deliver=self._deliver_scheduled_brief,
             state_file=DATA_DIR / "daily_brief.json",
         )
         self._daily_brief.start()
@@ -1672,6 +1677,10 @@ class PilotServer:
             "today_overview": self._handle_today_overview,
             "routine_suggest": self._handle_routine_suggest,
             "reminder_list": self._handle_reminder_list,
+            "focus_start": self._handle_focus_start,
+            "focus_stop": self._handle_focus_stop,
+            "focus_status": self._handle_focus_status,
+            "report_export": self._handle_report_export,
             "reminder_add": self._handle_reminder_add,
             "reminder_cancel": self._handle_reminder_cancel,
             "undo_diff": self._handle_undo_diff,
@@ -5860,8 +5869,8 @@ class PilotServer:
     async def _handle_today_overview(self, params: dict[str, Any], ws: ServerConnection) -> dict:
         """One day at a glance: tasks Heliox ran, app time from the timeline, and what can still be undone."""
         day = params.get("day", "today")
-        if day not in ("today", "yesterday"):
-            return {"status": "error", "message": "day must be today or yesterday"}
+        if day not in ("today", "yesterday", "week"):
+            return {"status": "error", "message": "day must be today, yesterday or week"}
         return {"status": "ok", **await self._today_overview(day)}
 
     async def _handle_daily_brief_now(self, params: dict[str, Any], ws: ServerConnection) -> dict:
@@ -5902,6 +5911,7 @@ class PilotServer:
     def _phrase_reserved(self, phrase: str) -> bool:
         """True for phrases that already mean something to Heliox and so cannot be shortcuts."""
         from pilot.workflows.activity_timeline import LAST_SEEN_QUESTION, TIMELINE_QUESTION
+        from pilot.workflows.focus import START_REQUEST, STOP_REQUEST
         from pilot.workflows.reminders import CANCEL_REQUEST, LIST_REQUEST, SET_REQUEST
         from pilot.workflows.routines import REPEAT_REQUEST, ROUTINE_REQUEST
         from pilot.workflows.task_receipts import RECAP_QUESTION
@@ -5918,6 +5928,8 @@ class PilotServer:
             SET_REQUEST,
             LIST_REQUEST,
             CANCEL_REQUEST,
+            START_REQUEST,
+            STOP_REQUEST,
         )
         return (
             phrase.startswith("when i say")
@@ -5991,7 +6003,14 @@ class PilotServer:
         """Requests Heliox answers in code without planning: history questions, undo, routines, shortcuts."""
         from pilot.workflows.routines import REPEAT_REQUEST, normalize_phrase
 
-        for handler in (self._local_answer, self._undo_request, self._routine_request, self._shortcut_request):
+        handlers = (
+            self._local_answer,
+            self._focus_request,
+            self._undo_request,
+            self._routine_request,
+            self._shortcut_request,
+        )
+        for handler in handlers:
             reply = await handler(text)
             if reply is not None:
                 return reply
@@ -5999,7 +6018,101 @@ class PilotServer:
             return "There is no earlier task for me to repeat yet."
         return None
 
+    async def _deliver_scheduled_brief(self, overview: dict[str, Any]) -> None:
+        if self._focus is not None and self._focus.hold("daily_brief", overview):
+            return
+        await self._deliver_daily_brief(overview)
+
+    async def _on_focus_end(self, summary: dict[str, Any]) -> None:
+        """Deliver what a focus session held, with one summary."""
+        from pilot.workflows.focus import compose_focus_summary
+
+        usage = None
+        if self._activity_timeline is not None and self._activity_timeline.enabled:
+            usage = await asyncio.to_thread(
+                self._activity_timeline.summarize, summary["started_at"], summary["ended_at"]
+            )
+        summary["text"] = compose_focus_summary(summary, usage)
+        await self._broadcast_notification(
+            "focus_ended", {"text": summary["text"], "duration": summary["duration"], "held": len(summary["held"])}
+        )
+        if summary["reason"] == "time":  # when the person said "stop focusing", the reply speaks it
+            await self._speak_companion_text(summary["text"], channel=SpeechChannel.TASK_NARRATION)
+        for item in summary["held"]:
+            if item["kind"] == "reminder":
+                await self._broadcast_notification("reminder", {**item["payload"], "held": True})
+            elif item["kind"] == "daily_brief":
+                await self._deliver_daily_brief(item["payload"])
+
+    async def _focus_request(self, text: str) -> str | None:
+        """ "Focus for 45 minutes" / "stop focusing"."""
+        from datetime import datetime
+
+        from pilot.workflows.focus import STOP_REQUEST, parse_focus_minutes
+
+        if self._focus is None:
+            return None
+        minutes = parse_focus_minutes(text)
+        if minutes == 0:
+            return "A focus session can last up to 8 hours."
+        if minutes is not None:
+            status = self._focus.start(minutes)
+            await self._broadcast_notification("focus_status", status)
+            until = datetime.fromtimestamp(status["until"]).strftime("%I:%M %p").lstrip("0")
+            return (
+                f"Focusing until {until}. I'll hold reminders and the daily brief and keep quiet; "
+                "approvals and anything you ask still come through."
+            )
+        if STOP_REQUEST.match(" ".join(re.sub(r"[^\w\s]", " ", text.casefold()).split())):
+            summary = await self._focus.stop(reason="asked")
+            await self._broadcast_notification("focus_status", self._focus.status())
+            return summary["text"] if summary else "No focus session is running."
+        return None
+
+    async def _handle_focus_start(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        minutes = params.get("minutes")
+        if not isinstance(minutes, int) or isinstance(minutes, bool) or self._focus is None:
+            return {"status": "error", "message": "minutes must be a whole number"}
+        try:
+            status = self._focus.start(minutes)
+        except ValueError as exc:
+            return {"status": "error", "message": str(exc)}
+        await self._broadcast_notification("focus_status", status)
+        return {"status": "ok", **status}
+
+    async def _handle_focus_stop(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        if self._focus is None:
+            return {"status": "error", "message": "Focus is not ready yet."}
+        summary = await self._focus.stop(reason="asked")
+        await self._broadcast_notification("focus_status", self._focus.status())
+        return {"status": "ok", "summary": summary["text"] if summary else None}
+
+    async def _handle_focus_status(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        if self._focus is None:
+            return {"status": "error", "message": "Focus is not ready yet."}
+        return {"status": "ok", **self._focus.status()}
+
+    async def _handle_report_export(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """Write a Markdown report of today, yesterday or this week to the Downloads folder."""
+        from pilot.workflows.daily_brief import compose_report
+
+        day = params.get("day", "today")
+        if day not in ("today", "yesterday", "week"):
+            return {"status": "error", "message": "day must be today, yesterday or week"}
+        overview = await self._today_overview(day)
+        downloads_dir = Path.home() / "Downloads"
+        export_dir = downloads_dir if downloads_dir.exists() else (DATA_DIR / "exports")
+        out_path = export_dir / f"heliox-report-{overview['day']}-{day}.md"
+        try:
+            export_dir.mkdir(parents=True, exist_ok=True)
+            out_path.write_text(compose_report(overview), encoding="utf-8")
+        except OSError as exc:
+            return {"status": "error", "message": f"Export failed: {exc}"}
+        return {"status": "ok", "path": str(out_path)}
+
     async def _deliver_reminder(self, reminder: dict[str, Any]) -> None:
+        if self._focus is not None and self._focus.hold("reminder", reminder):
+            return
         await self._broadcast_notification("reminder", reminder)
         spoken = (
             f"Reminder: {reminder['text']}"
@@ -10374,6 +10487,8 @@ def handle_tool(tool_name, params):
             await self._daily_brief.stop()
         if self._reminders is not None:
             await self._reminders.stop()
+        if self._focus is not None:
+            await self._focus.close()
         if self._gnomon_reviewer is not None:
             await self._gnomon_reviewer.close()
         if self._autonomous is not None:
@@ -11063,6 +11178,12 @@ def handle_tool(tool_name, params):
         dedupe_key: str = "",
     ) -> SpeechOutcome:
         """Route daemon speech through the single companion audio authority."""
+        if (
+            self._focus is not None
+            and self._focus.active
+            and str(channel) in {SpeechChannel.PROACTIVE_SUGGESTION.value, SpeechChannel.BACKGROUND_INSIGHT.value}
+        ):
+            return SpeechOutcome("suppressed", SpeechChannel(str(channel)), "Held during a focus session")
         # The continuous listener is the sole microphone consumer. It keeps
         # capturing wake-word commands while work and speech continue, then
         # _voice_command_dispatch stops current playback before applying the

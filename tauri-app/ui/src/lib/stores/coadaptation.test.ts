@@ -271,8 +271,8 @@ describe("cancel while a session starts", () => {
     coadaptation.openStudy();
     const gate = holdBegin();
     const pending = coadaptation.beginSession({ participantKey: PK, device: DEVICE, gazeCheck: null });
-    await flush();
-    expect(methodCalls("co_adaptation_session_begin")).toHaveLength(1);
+    // Wait for the call itself: a fixed number of event-loop turns is too few on a busy CI runner.
+    await vi.waitFor(() => expect(methodCalls("co_adaptation_session_begin")).toHaveLength(1));
 
     await coadaptation.exitStudy();
     expect(get(studyActive)).toBe(false);
