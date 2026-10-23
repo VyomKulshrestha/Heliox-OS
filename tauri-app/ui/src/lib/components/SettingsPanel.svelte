@@ -25,6 +25,7 @@
   import ScheduledRunsPanel from "./ScheduledRunsPanel.svelte";
   import ReceiptsPanel from "./ReceiptsPanel.svelte";
   import TimelinePanel from "./TimelinePanel.svelte";
+  import VoiceShortcutsPanel from "./VoiceShortcutsPanel.svelte";
   import GestureWorkflowBindings from "./GestureWorkflowBindings.svelte";
   import VoiceGestureWorkflowStatus from "./VoiceGestureWorkflowStatus.svelte";
   import RecordedWorkflowsPanel from "./RecordedWorkflowsPanel.svelte";
@@ -2695,6 +2696,7 @@
   <AirHandoffPanel />
   <ReceiptsPanel />
   <TimelinePanel />
+  <VoiceShortcutsPanel />
 </div>
 
 <style>

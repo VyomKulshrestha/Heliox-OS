@@ -70,4 +70,24 @@ describe("TodayPanel", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Send now" }));
     await waitFor(() => expect(screen.getByRole("status").textContent).toContain("Sent."));
   });
+
+  it("lists reminders, adds one and cancels it", async () => {
+    let reminders = [{ id: "a1", due: 1792760400, text: "stretch" }];
+    daemonMocks.call.mockImplementation(async (method: string, params: { text?: string }) => {
+      if (method === "today_overview") return overview;
+      if (method === "reminder_add") reminders = [...reminders, { id: "b2", due: 1792764000, text: params.text ?? "" }];
+      if (method === "reminder_cancel") reminders = reminders.filter((item) => item.id !== "a1");
+      return { status: "ok", reminders };
+    });
+    render(TodayPanel);
+
+    await waitFor(() => expect(screen.getByText("stretch")).toBeTruthy());
+    await fireEvent.input(screen.getByLabelText("Reminder"), { target: { value: "call mom" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    await waitFor(() => expect(screen.getByText("call mom")).toBeTruthy());
+    expect(daemonMocks.call).toHaveBeenCalledWith("reminder_add", { text: "call mom", in_minutes: 20 });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Cancel stretch" }));
+    await waitFor(() => expect(screen.queryByText("stretch")).toBeNull());
+  });
 });

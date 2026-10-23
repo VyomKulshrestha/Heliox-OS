@@ -1,6 +1,9 @@
 <script lang="ts">
   import { _ } from "svelte-i18n";
+  import { call } from "../api/daemon";
   import type { UndoPreview } from "../stores/session";
+
+  type FileChange = { seq: number; path: string; created: boolean; diff: string | null; note?: string };
 
   interface Props {
     preview: UndoPreview;
@@ -16,6 +19,29 @@
 
   let ready = $derived(preview.items.filter((item) => item.state === "ready"));
   let leftAlone = $derived(preview.items.filter((item) => item.state !== "ready"));
+  let changes = $state<FileChange[] | null>(null);
+  let changesError = $state("");
+
+  async function showChanges() {
+    changesError = "";
+    try {
+      const result = await call<{ status: string; message?: string; changes?: FileChange[] }>("undo_diff", {
+        task_key: preview.task_key,
+      });
+      if (result.status !== "ok") throw new Error(result.message || "Changes are not available.");
+      changes = result.changes ?? [];
+    } catch (err) {
+      changesError = err instanceof Error ? err.message : "Changes are not available.";
+    }
+  }
+
+  function lineClass(line: string): string {
+    if (line.startsWith("+++") || line.startsWith("---")) return "meta";
+    if (line.startsWith("+")) return "added";
+    if (line.startsWith("-")) return "removed";
+    if (line.startsWith("@@")) return "meta";
+    return "";
+  }
 </script>
 
 <div class="confirm-overlay">
@@ -55,6 +81,27 @@
         {/each}
       </ul>
     {/if}
+
+    {#if changes === null}
+      <button class="btn-link" type="button" onclick={showChanges}>{$_("undo.show_changes")}</button>
+    {:else if changes.length === 0}
+      <p class="confirm-body">{$_("undo.no_file_changes")}</p>
+    {:else}
+      <div class="changes" data-testid="undo-changes">
+        {#each changes as change (change.seq)}
+          <div class="change">
+            <code>{change.path}</code>
+            {#if change.diff}
+              <pre>{#each change.diff.split("\n") as line, index (index)}<span class={lineClass(line)}>{line}</span
+                  >{"\n"}{/each}</pre>
+            {:else}
+              <small>{change.note}</small>
+            {/if}
+          </div>
+        {/each}
+      </div>
+    {/if}
+    {#if changesError}<p class="confirm-error">{changesError}</p>{/if}
 
     {#if preview.not_undoable.length}
       <h4>{$_("undo.cannot_undo")}</h4>
@@ -160,6 +207,45 @@
     font-size: 11px;
     color: var(--text-muted, var(--text-secondary));
     overflow-wrap: anywhere;
+  }
+
+  .btn-link {
+    margin: 0 0 12px;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--accent);
+    font-size: 12px;
+    cursor: pointer;
+  }
+
+  .changes {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+
+  .change pre {
+    max-height: 220px;
+    margin: 4px 0 0;
+    padding: 8px;
+    overflow: auto;
+    border-radius: var(--radius-sm);
+    background: var(--bg-primary);
+    font: 11px/1.45 var(--font-mono);
+  }
+
+  .change .added {
+    color: var(--success, #34d399);
+  }
+
+  .change .removed {
+    color: var(--danger);
+  }
+
+  .change .meta {
+    color: var(--text-secondary);
   }
 
   .confirm-error {

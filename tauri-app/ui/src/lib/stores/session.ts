@@ -48,6 +48,18 @@ export interface UndoOffer {
   notUndoable: number;
 }
 
+/** A routine proposed from a finished task: it may use only the actions that task used. */
+export interface RoutineOffer {
+  receipt_id?: string;
+  name: string;
+  goal: string;
+  allowed_actions: string[];
+  daily_at?: string;
+  weekdays?: number[];
+  every_minutes?: number;
+  label?: string;
+}
+
 export interface UndoPreviewItem {
   seq: number;
   type: string;
@@ -272,6 +284,8 @@ interface SessionState {
   undoError: string;
   /** Further tasks to preview after the current one ("undo the last two tasks"), newest first. */
   undoQueue: string[];
+  routineOffer: RoutineOffer | null;
+  routineSaving: boolean;
   proactiveSuggestion: ProactiveSuggestion | null;
   proactiveSuggestionPending: boolean;
   terminalStatus: string;
@@ -341,6 +355,8 @@ const initialState: SessionState = {
   undoSubmitting: false,
   undoError: "",
   undoQueue: [],
+  routineOffer: null,
+  routineSaving: false,
   proactiveSuggestion: null,
   proactiveSuggestionPending: false,
   terminalStatus: "",
@@ -365,15 +381,19 @@ function isTauriRuntime(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
-async function notifyDailyBrief(text: string) {
+async function notifyDesktop(title: string, body: string) {
   if (!isTauriRuntime()) return;
   try {
     let granted = await isPermissionGranted();
     if (!granted) granted = (await requestPermission()) === "granted";
-    sendNotification({ title: "Heliox daily brief", body: text });
+    sendNotification({ title, body });
   } catch (err) {
     console.error("[Heliox] notification error:", err);
   }
+}
+
+function notifyDailyBrief(text: string) {
+  return notifyDesktop("Heliox daily brief", text);
 }
 
 async function notifyTaskComplete(payload: Record<string, unknown>) {
@@ -876,6 +896,25 @@ function createSession() {
         }
         break;
       }
+
+      case "routine_offer":
+        if (typeof p.goal === "string" && Array.isArray(p.allowed_actions)) {
+          update((s) => ({ ...s, routineOffer: p as unknown as RoutineOffer }));
+        }
+        break;
+
+      case "reminder": {
+        const text = String(p.text ?? "").trim();
+        if (text) {
+          addSystemMessage(p.late ? `Reminder (late): ${text}` : `Reminder: ${text}`);
+          void notifyDesktop("Heliox reminder", text);
+        }
+        break;
+      }
+
+      case "request_expanded":
+        if (typeof p.note === "string" && p.note) addSystemMessage(p.note);
+        break;
 
       case "daily_brief": {
         const text = String(p.text ?? "").trim();
@@ -1638,6 +1677,60 @@ function createSession() {
     }
   }
 
+  async function suggestRoutine(receiptId: string) {
+    try {
+      const res = (await call("routine_suggest", { receipt_id: receiptId })) as {
+        status: string;
+        message?: string;
+        routine?: RoutineOffer;
+      };
+      if (res.status !== "ok" || !res.routine) {
+        addSystemMessage(res.message ?? "A routine cannot be made from this task.");
+        return;
+      }
+      update((s) => ({ ...s, routineOffer: res.routine ?? null }));
+    } catch (err) {
+      addSystemMessage(String(err instanceof Error ? err.message : err));
+    }
+  }
+
+  function setRoutineTime(dailyAt: string) {
+    update((s) => (s.routineOffer ? { ...s, routineOffer: { ...s.routineOffer, daily_at: dailyAt } } : s));
+  }
+
+  function dismissRoutine() {
+    update((s) => ({ ...s, routineOffer: null, routineSaving: false }));
+  }
+
+  async function createRoutine() {
+    const offer = get({ subscribe }).routineOffer;
+    if (!offer || get({ subscribe }).routineSaving) return;
+    update((s) => ({ ...s, routineSaving: true }));
+    const timing = offer.every_minutes
+      ? { every_minutes: offer.every_minutes }
+      : { daily_at: offer.daily_at ?? "09:00", weekdays: offer.weekdays ?? [] };
+    try {
+      const res = (await call("scheduled_run_create", {
+        name: offer.name,
+        goal: offer.goal,
+        allowed_actions: offer.allowed_actions,
+        ...timing,
+      })) as { status: string; message?: string };
+      if (res.status !== "ok") {
+        update((s) => ({ ...s, routineSaving: false }));
+        addSystemMessage(`Routine not created: ${res.message ?? "unknown error"}`);
+        return;
+      }
+      update((s) => ({ ...s, routineOffer: null, routineSaving: false }));
+      addSystemMessage(
+        `Routine created: "${offer.name}". It may use only ${offer.allowed_actions.join(", ")}. Manage it in Settings → Scheduled runs.`,
+      );
+    } catch (err) {
+      update((s) => ({ ...s, routineSaving: false }));
+      addSystemMessage(`Routine not created: ${String(err instanceof Error ? err.message : err)}`);
+    }
+  }
+
   async function verifyReceipt(receiptId: string) {
     let note: string;
     try {
@@ -1929,6 +2022,10 @@ function createSession() {
     confirmRollback,
     openUndoPreview,
     verifyReceipt,
+    suggestRoutine,
+    setRoutineTime,
+    dismissRoutine,
+    createRoutine,
     cancelUndo,
     dismissUndoOffer,
     confirmUndo,

@@ -183,12 +183,24 @@
     "dismiss": "Dismiss",
     "badge_undoable": "Can undo",
     "badge_not_undoable": "Can't undo",
-    "remaining": "{count, plural, one {# more task comes} other {# more tasks come}} after this one; Cancel stops them all."
+    "remaining": "{count, plural, one {# more task comes} other {# more tasks come}} after this one; Cancel stops them all.",
+    "show_changes": "Show what changed in each file",
+    "no_file_changes": "No file contents changed in this task."
   },
   "task_footer": {
     "undo": "Undo {count, plural, one {# change} other {# changes}}",
     "undone": "Undone",
-    "receipt": "Verify receipt"
+    "receipt": "Verify receipt",
+    "routine": "Make routine"
+  },
+  "routine": {
+    "offer": "Run \"{name}\" at",
+    "time": "Routine time",
+    "every_day": "every day",
+    "on_some_days": "on the days you said",
+    "allowed": "It may use only: {actions}",
+    "create": "Create routine",
+    "dismiss": "Dismiss"
   },
   "settings": {
     "title": "Settings",

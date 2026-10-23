@@ -798,6 +798,31 @@ Saying or typing "undo the last two tasks" (up to five) opens each task's undo p
 in turn, newest first. Each task still needs its own Undo press, and Cancel stops the
 rest; nothing is undone from the spoken or typed request itself.
 
+## ⏰ Reminders, change diffs and "where did you put it?"
+
+- Reminders are stored in `DATA_DIR/reminders.json`, delivered as a notification, a
+  chat message and speech, and never plan or run an action. Setting, listing and
+  cancelling them by voice or chat is handled in code.
+- **Show what changed** in the undo preview compares each file Heliox wrote with the
+  copy the undo journal kept, on this computer only.
+- "Where did you put my report?" is answered from the moves, copies and saves the undo
+  journal recorded; nothing is searched on disk and no model is involved.
+
+## 🔁 Routines, voice shortcuts and "do that again"
+
+- **Routines are least privilege by construction.** "Do that every day at 9" (or **Make
+  routine** on a task) proposes a scheduled run whose approved list is exactly the
+  action types that task ran successfully, so the routine can never do more than the
+  task it came from. Saying it only proposes; the routine is created when you press
+  Create, and it then runs under the usual scheduled-run rules.
+- **Shortcuts only rename a request.** "When I say start work, open VS Code and Slack"
+  saves a phrase; saying it later submits the command as an ordinary request with the
+  normal planning, gateway floor and approvals. Phrases that already mean something to
+  Heliox (stop, cancel, approve, no, undo, history questions) cannot be shortcuts, and
+  a shortcut cannot point at another shortcut. Settings → Voice shortcuts lists them.
+- **"Do that again"** resubmits the last task's request as a new request; nothing from
+  the earlier approval carries over.
+
 ## 📱 Requests from a paired phone (opt-in)
 
 With **Accept requests from paired phones** on (Air Handoff → off by default), a paired

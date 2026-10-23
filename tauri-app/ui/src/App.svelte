@@ -350,6 +350,38 @@
             </span>
           </div>
         {/each}
+        {#if $session.routineOffer}
+          <div class="undo-banner routine-banner" data-testid="routine-offer">
+            <span>
+              {$_("routine.offer", { values: { name: $session.routineOffer.name } })}
+              {#if $session.routineOffer.every_minutes}
+                {$session.routineOffer.label}
+              {:else}
+                <input
+                  class="routine-time"
+                  type="time"
+                  aria-label={$_("routine.time")}
+                  value={$session.routineOffer.daily_at}
+                  onchange={(event) => session.setRoutineTime(event.currentTarget.value)}
+                />
+                {$session.routineOffer.weekdays?.length ? $_("routine.on_some_days") : $_("routine.every_day")}
+              {/if}
+              <small class="routine-actions"
+                >{$_("routine.allowed", {
+                  values: { actions: $session.routineOffer.allowed_actions.join(", ") },
+                })}</small
+              >
+            </span>
+            <span class="undo-banner-actions">
+              <button class="undo-btn" disabled={$session.routineSaving} onclick={() => session.createRoutine()}
+                >{$_("routine.create")}</button
+              >
+              <button class="undo-dismiss" aria-label={$_("routine.dismiss")} onclick={() => session.dismissRoutine()}
+                >&times;</button
+              >
+            </span>
+          </div>
+        {/if}
         {#if $session.rollback && !$session.rollbackPending}
           <div class="undo-banner">
             <span>{$_("rollback.banner")}</span>
@@ -652,6 +684,13 @@
             <span class="task-note">{$_("task_footer.undone")}</span>
           {/if}
           {#if msg.task.receiptId}
+            <button
+              class="task-chip"
+              type="button"
+              onclick={() => msg.task?.receiptId && session.suggestRoutine(msg.task.receiptId)}
+            >
+              {$_("task_footer.routine")}
+            </button>
             <button
               class="task-chip"
               type="button"
@@ -1540,6 +1579,23 @@
   }
   .verification-detail.v-fail {
     color: var(--danger);
+  }
+
+  .routine-time {
+    margin: 0 4px;
+    padding: 2px 6px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font: inherit;
+  }
+
+  .routine-actions {
+    display: block;
+    margin-top: 2px;
+    color: var(--text-secondary);
+    font-size: 11px;
   }
 
   .task-footer {

@@ -1,5 +1,12 @@
-import { fireEvent, render, screen } from "@testing-library/svelte";
+import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import { describe, expect, it, vi } from "vitest";
+
+const daemonMocks = vi.hoisted(() => ({ call: vi.fn() }));
+
+vi.mock("../api/daemon", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../api/daemon")>();
+  return { ...actual, call: daemonMocks.call };
+});
 import "../../i18n";
 import UndoDialog from "./UndoDialog.svelte";
 import type { UndoPreview } from "../stores/session";
@@ -46,5 +53,21 @@ describe("UndoDialog", () => {
     });
     expect((screen.getByRole("button", { name: "Undo" }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByText("Nothing from this task can be undone now.")).toBeTruthy();
+  });
+});
+
+describe("UndoDialog changes", () => {
+  it("shows each file's line changes on request", async () => {
+    daemonMocks.call.mockResolvedValue({
+      status: "ok",
+      changes: [{ seq: 2, path: "C:/notes.txt", created: false, diff: "--- before\n+++ now\n-eggs\n+bread" }],
+    });
+    render(UndoDialog, { preview, onconfirm: vi.fn(), oncancel: vi.fn() });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Show what changed in each file" }));
+
+    await waitFor(() => expect(screen.getByTestId("undo-changes").textContent).toContain("+bread"));
+    expect(daemonMocks.call).toHaveBeenCalledWith("undo_diff", { task_key: "task-7" });
+    expect(screen.getByText("-eggs").className).toContain("removed");
   });
 });

@@ -12,7 +12,7 @@ The Heliox OS UI and daemon communicate over a local WebSocket using the [JSON-R
 | Request timeout | 5 minutes |
 | Reconnect interval | 3 seconds (auto-reconnect on close) |
 
-The daemon currently registers **244 WebSocket RPC methods**. That is the API
+The daemon currently registers **252 WebSocket RPC methods**. That is the API
 surface count, not the action catalog: Heliox exposes **162 action
 types** through the guarded planner/executor system. This document names every
 registered RPC method; grouped tables are used where several methods share one
@@ -453,6 +453,36 @@ One day at a glance, composed in code from local records.
 **Params:** `{ "day": "today" }` (`today` or `yesterday`)
 **Result:** `{"status": "ok", "day": "2026-10-23", "label": "today", "tasks": [<receipt short form>], "timeline_enabled": true, "usage": {"total_seconds": 9120, "apps": [...]}, "undoable": [<undo_list row>], "brief": "Today Heliox ran 3 tasks; ..."}`.
 `usage` is null while the activity timeline is off.
+
+#### `undo_diff`
+Line-by-line changes for each text file a task wrote, from the saved copy to the file as
+it is now (unified diff, at most 400 lines per file; files that are not UTF-8 text or are
+over 512 KB are listed with a `note` instead). **Params:** `{ "task_key": "..." }`
+**Result:** `{"status": "ok", "changes": [{"seq": 2, "path": "C:/Users/me/notes.txt", "created": false, "diff": "--- before
++++ now
+-eggs
++bread", "truncated": false}]}`.
+
+#### `reminder_list` / `reminder_add` / `reminder_cancel`
+Local reminders. `reminder_add` takes `text` (1 to 300 characters) and `in_minutes`
+(1 to 10080) or `at` (epoch seconds); `reminder_cancel` takes the reminder `id`. Each
+returns the current `reminders` list (`{"id", "due", "text", "created_at"}`, soonest
+first). "Remind me in 20 minutes to stretch", "remind me tomorrow at 9 to send the
+report", "what are my reminders" and "cancel the reminder about rent" work by voice and
+in chat without the planner.
+
+#### `routine_suggest`
+A routine made from a finished task's receipt: `name`, `goal` (the task's request) and
+`allowed_actions`, the action types that task ran successfully, plus a default
+`daily_at` (the next full hour). Create it with `scheduled_run_create`; the run refuses
+any other action. **Params:** `{ "receipt_id": "..." }`
+
+#### `shortcut_list` / `shortcut_add` / `shortcut_remove`
+Voice shortcuts: `{ "phrase": "start work", "command": "open VS Code and Slack" }`. A
+phrase is 2 to 60 characters and up to six words; phrases that already mean something
+(stop, cancel, approve, no, undo, history questions, "when I say …") are refused. Saying
+or typing the phrase later submits `command` as an ordinary `execute` request. Each call
+returns the current `shortcuts` list and broadcasts `shortcuts_changed`.
 
 #### `daily_brief_now`
 Send today's brief now as a `daily_brief` notification (it does not replace the scheduled
@@ -3020,6 +3050,22 @@ press, and Cancel stops the rest.
 ```json
 { "task_key": "4f0c2a9e", "task_keys": ["4f0c2a9e", "91b7d2c0"] }
 ```
+
+### `reminder`
+Broadcast when a reminder falls due: `{"id": "a1b2c3", "due": 1792760400.0, "text": "stretch", "late": false}`.
+`late` is true when it fell due while Heliox was not running (reminders more than a day
+late are dropped). The daemon also speaks it.
+
+### `routine_offer`
+Sent when the person says or types "do that every day at 9" (also "every weekday at
+8:30 am", "every Monday at 6 pm", "every 2 hours"). The payload is a `routine_suggest`
+routine plus `daily_at`/`weekdays` or `every_minutes` and a readable `label`. Nothing
+is scheduled until the UI calls `scheduled_run_create` after the person presses Create.
+
+### `request_expanded`
+Sent to the requesting window when a voice shortcut or "do that again" turned the input
+into another request: `{"input": "open VS Code and Slack", "note": "Shortcut \"start work\": open VS Code and Slack"}`.
+The expanded request then runs through the normal planning, gateway and approvals.
 
 ### `daily_brief`
 Sent once a day at `[brief] time` when the brief is on (or right away after

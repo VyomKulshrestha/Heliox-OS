@@ -22,6 +22,7 @@ executor, and refuses paths inside Heliox's own folders. Copies live under
 from __future__ import annotations
 
 import asyncio
+import difflib
 import hashlib
 import json
 import logging
@@ -31,6 +32,7 @@ import shutil
 import time
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -62,6 +64,12 @@ SETTING_TYPES = {ActionType.VOLUME_SET.value: "volume", ActionType.BRIGHTNESS_SE
 # Volume steps on Windows are approximate, so a level within this many points still counts as unchanged.
 LEVEL_TOLERANCE = 4
 _PERCENT = re.compile(r"(\d{1,3})\s*%")
+MAX_DIFF_BYTES = 512 * 1024
+MAX_DIFF_LINES = 400
+WHERE_QUESTION = re.compile(
+    r"^(?:hey heliox |heliox )?where (?:did you|have you) (?:put|move|moved|save|saved|copy|copied) "
+    r"(?:my |the |that )?(?P<what>.+?)(?: to)?$"
+)
 
 # Effects that leave the computer: once sent, nothing local can take them back.
 EXTERNAL_TYPES = frozenset(
@@ -495,7 +503,7 @@ class UndoJournal:
             )
             self._write_journal(task_key, journal)
             return
-        entry = dict(entry, target=target, status="recorded")
+        entry = dict(entry, target=target, status="recorded", at=time.time())
         if action.action_type == ActionType.CLIPBOARD_WRITE:
             entry["seq"] = self._take_seq(journal)
             if token.clipboard_previous is None or post_clipboard is None:
@@ -813,6 +821,105 @@ class UndoJournal:
             final.unlink()
         if entry.get("pre_final") is not None:
             self._restore(blob, final)
+
+    # ------------------------------------------------------------------ changes and whereabouts
+
+    async def diff(self, task_key: str) -> list[dict[str, Any]]:
+        """Line-by-line changes for each text file the task wrote, from the saved copy to the file now."""
+        async with self._lock:
+            return await asyncio.to_thread(self._diff, task_key)
+
+    def _diff(self, task_key: str) -> list[dict[str, Any]]:
+        journal = self._read_journal(task_key)
+        if journal is None:
+            return []
+
+        def text_of(path: Path) -> str | None:
+            if not path.is_file() or path.stat().st_size > MAX_DIFF_BYTES:
+                return None
+            try:
+                return path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                return None
+
+        changes = []
+        for entry in sorted(journal["entries"], key=lambda e: e["seq"], reverse=True):
+            if entry.get("type") != ActionType.FILE_WRITE.value or _private(entry["path"]):
+                continue
+            path = Path(entry["path"])
+            before = "" if entry.get("pre") is None else text_of(self._blob(task_key, entry["seq"]))
+            after = text_of(path) if path.exists() else ""
+            item: dict[str, Any] = {"seq": entry["seq"], "path": str(path), "created": entry.get("pre") is None}
+            if before is None or after is None:
+                item["diff"] = None
+                item["note"] = "Not shown: the file is not text or is larger than 512 KB."
+            else:
+                lines = list(
+                    difflib.unified_diff(before.splitlines(), after.splitlines(), "before", "now", lineterm="", n=2)
+                )
+                item["truncated"] = len(lines) > MAX_DIFF_LINES
+                item["diff"] = "\n".join(lines[:MAX_DIFF_LINES])
+                if not lines:
+                    item["note"] = "No difference: the file is the same as before."
+            changes.append(item)
+        return changes
+
+    async def where(self, query: str, limit: int = 5) -> list[dict[str, Any]]:
+        """Recent moves, copies and writes whose file name contains ``query``, newest first."""
+        needle = query.casefold().strip()
+        if not needle:
+            return []
+        async with self._lock:
+            journals = await asyncio.to_thread(self._journals)
+        found = []
+        for journal in journals:
+            for entry in journal["entries"]:
+                kind = entry.get("type")
+                if kind in (ActionType.FILE_MOVE.value, ActionType.FILE_COPY.value):
+                    name, place = Path(entry["final"]).name, str(Path(entry["final"]).parent)
+                    origin = str(Path(entry["source"]).parent)
+                elif kind == ActionType.FILE_WRITE.value:
+                    name, place, origin = Path(entry["path"]).name, str(Path(entry["path"]).parent), ""
+                else:
+                    continue
+                if needle not in name.casefold() and needle not in Path(entry.get("source", "")).name.casefold():
+                    continue
+                found.append(
+                    {
+                        "type": kind,
+                        "name": name,
+                        "folder": place,
+                        "from": origin,
+                        "at": float(entry.get("at") or journal.get("updated_at") or 0),
+                        "undone": entry.get("status") == "undone",
+                    }
+                )
+        found.sort(key=lambda item: item["at"], reverse=True)
+        return found[:limit]
+
+    async def answer_async(self, text: str) -> str | None:
+        """ "Where did you put my report?" from the moves, copies and writes Heliox recorded."""
+        normalized = " ".join(re.sub(r"[^\w\s.]", " ", text.casefold()).split())
+        asked = WHERE_QUESTION.match(normalized)
+        if not asked:
+            return None
+        what = asked.group("what").strip(" .")
+        hits = await self.where(what, limit=1)
+        if not hits:
+            return f"I have no record of moving, copying or saving {what}."
+        hit = hits[0]
+        when = datetime.fromtimestamp(hit["at"]).strftime("%I:%M %p on %a %d %b").lstrip("0") if hit["at"] else ""
+        verb = {
+            ActionType.FILE_MOVE.value: "moved",
+            ActionType.FILE_COPY.value: "copied",
+            ActionType.FILE_WRITE.value: "saved",
+        }[hit["type"]]
+        where = f"to {hit['folder']}" if hit["type"] != ActionType.FILE_WRITE.value else f"in {hit['folder']}"
+        reply = f"I {verb} {hit['name']} {where}"
+        reply += f" at {when}." if when else "."
+        if hit["undone"]:
+            reply += " That change was undone since."
+        return reply
 
     # ------------------------------------------------------------------ listing and retention
 

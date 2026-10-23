@@ -916,6 +916,8 @@ class PilotServer:
         self._activity_timeline: Any = None
         self._task_footers: dict[str, dict[str, Any]] = {}
         self._daily_brief: Any = None
+        self._shortcuts: Any = None
+        self._reminders: Any = None
         self._queued_execute_requests: deque[tuple[str, str, dict[str, Any]]] = deque()
         self._queued_submission_lock = asyncio.Lock()
         self._queued_execute_worker: asyncio.Task[None] | None = None
@@ -1152,6 +1154,13 @@ class PilotServer:
             await asyncio.to_thread(self._activity_timeline.prune)
         except Exception:
             logger.warning("Activity timeline pruning failed", exc_info=True)
+        from pilot.workflows.routines import ShortcutStore
+
+        self._shortcuts = ShortcutStore(DATA_DIR / "voice_shortcuts.json", reserved=self._phrase_reserved)
+        from pilot.workflows.reminders import ReminderStore
+
+        self._reminders = ReminderStore(DATA_DIR / "reminders.json", deliver=self._deliver_reminder)
+        self._reminders.start()
         from pilot.workflows.daily_brief import DailyBriefScheduler
 
         self._daily_brief = DailyBriefScheduler(
@@ -1661,6 +1670,14 @@ class PilotServer:
             "timeline_clear": self._handle_timeline_clear,
             "phone_request_list": self._handle_phone_request_list,
             "today_overview": self._handle_today_overview,
+            "routine_suggest": self._handle_routine_suggest,
+            "reminder_list": self._handle_reminder_list,
+            "reminder_add": self._handle_reminder_add,
+            "reminder_cancel": self._handle_reminder_cancel,
+            "undo_diff": self._handle_undo_diff,
+            "shortcut_list": self._handle_shortcut_list,
+            "shortcut_add": self._handle_shortcut_add,
+            "shortcut_remove": self._handle_shortcut_remove,
             "daily_brief_now": self._handle_daily_brief_now,
             "phone_request_run": self._handle_phone_request_run,
             "phone_request_dismiss": self._handle_phone_request_dismiss,
@@ -2773,6 +2790,11 @@ class PilotServer:
         up to MAX_RETRIES times. Confirmation gates pause for user approval on
         Tier 2+ actions.
         """
+        # A voice shortcut or "do that again" becomes an ordinary request with the normal approvals.
+        expansion = await self._expand_request(str(params.get("input") or ""))
+        if expansion is not None:
+            params = {**params, "input": expansion[0]}
+            await ws.send(_notification("request_expanded", {"input": expansion[0], "note": expansion[1]}))
         user_input = params.get("input", "")
         attachments = params.get("attachments", [])
         chat_session_id = str(params.get("session_id") or "default")
@@ -2928,7 +2950,7 @@ class PilotServer:
         # Timeline questions ("what was I working on this morning?") are answered from the local
         # timeline in code; they never reach the planner or a model.
         if not attachments:
-            timeline_answer = await self._local_answer(str(user_input)) or await self._undo_request(str(user_input))
+            timeline_answer = await self._control_reply(str(user_input))
             if timeline_answer is not None:
                 await ws.send(_notification("conversation_response", {"explanation": timeline_answer}))
                 await _emit_task_complete("success", timeline_answer)
@@ -5877,9 +5899,209 @@ class PilotServer:
             return f"I can undo {len(keys)} of your last {wanted} tasks. Check each one, newest first, then press Undo."
         return f"Here are your last {wanted} tasks, newest first. Check each one, then press Undo."
 
+    def _phrase_reserved(self, phrase: str) -> bool:
+        """True for phrases that already mean something to Heliox and so cannot be shortcuts."""
+        from pilot.workflows.activity_timeline import LAST_SEEN_QUESTION, TIMELINE_QUESTION
+        from pilot.workflows.reminders import CANCEL_REQUEST, LIST_REQUEST, SET_REQUEST
+        from pilot.workflows.routines import REPEAT_REQUEST, ROUTINE_REQUEST
+        from pilot.workflows.task_receipts import RECAP_QUESTION
+        from pilot.workflows.undo_journal import WHERE_QUESTION
+
+        if phrase in VOICE_STOP_PHRASES or phrase in VOICE_DENIALS or phrase in VOICE_APPROVAL_ATTEMPTS:
+            return True
+        patterns = (UNDO_ONE_REQUEST, UNDO_MANY_REQUEST, REPEAT_REQUEST, ROUTINE_REQUEST)
+        questions = (
+            TIMELINE_QUESTION,
+            LAST_SEEN_QUESTION,
+            RECAP_QUESTION,
+            WHERE_QUESTION,
+            SET_REQUEST,
+            LIST_REQUEST,
+            CANCEL_REQUEST,
+        )
+        return (
+            phrase.startswith("when i say")
+            or any(pattern.match(phrase) for pattern in patterns)
+            or any(pattern.match(phrase) for pattern in questions)
+        )
+
+    async def _latest_receipt(self, *, with_actions: bool = False) -> dict[str, Any] | None:
+        if self._task_receipts is None:
+            return None
+        for row in await self._task_receipts.list(20):
+            if with_actions and not row["action_count"]:
+                continue
+            envelope = await self._task_receipts.get(row["receipt_id"])
+            if envelope and str(envelope["receipt"].get("request") or "").strip():
+                return envelope
+        return None
+
+    async def _expand_request(self, text: str) -> tuple[str, str] | None:
+        """A voice shortcut or "do that again" turned into the request to run, with a note for the chat."""
+        from pilot.workflows.routines import REPEAT_REQUEST, normalize_phrase
+
+        if self._shortcuts is not None:
+            shortcut = await asyncio.to_thread(self._shortcuts.match, text)
+            if shortcut is not None:
+                return shortcut["command"], f'Shortcut "{shortcut["phrase"]}": {shortcut["command"]}'
+        if REPEAT_REQUEST.match(normalize_phrase(text)):
+            envelope = await self._latest_receipt()
+            if envelope is not None:
+                request = str(envelope["receipt"]["request"])
+                return request, f'Again: "{request}"'
+        return None
+
+    async def _routine_request(self, text: str) -> str | None:
+        """ "Do that every day at 9": propose a routine made from the last task. Creating it needs a click."""
+        from pilot.workflows.routines import ROUTINE_REQUEST, normalize_phrase, parse_schedule, routine_from_receipt
+
+        asked = ROUTINE_REQUEST.match(normalize_phrase(text))
+        if not asked:
+            return None
+        schedule = parse_schedule(asked.group("schedule"))
+        if schedule is None:
+            return 'Tell me when, for example "do that every day at 9" or "do that every weekday at 8:30 am".'
+        envelope = await self._latest_receipt(with_actions=True)
+        routine = routine_from_receipt(envelope) if envelope is not None else None
+        if routine is None:
+            return "Your last task has no completed actions a routine could repeat."
+        offer = {**routine, **schedule}
+        await self._broadcast_notification("routine_offer", offer)
+        kinds = len(routine["allowed_actions"])
+        return (
+            f'I can run "{routine["name"]}" {schedule["label"]}, using only the {kinds} kind'
+            f"{'' if kinds == 1 else 's'} of action it used. Check it on screen, then press Create."
+        )
+
+    async def _shortcut_request(self, text: str) -> str | None:
+        """ "When I say start work, open VS Code": save a voice shortcut."""
+        from pilot.workflows.routines import parse_shortcut_definition
+
+        definition = parse_shortcut_definition(text)
+        if definition is None or self._shortcuts is None:
+            return None
+        try:
+            entry = await asyncio.to_thread(self._shortcuts.add, *definition)
+        except ValueError as exc:
+            return str(exc)
+        await self._broadcast_notification("shortcuts_changed", {"shortcuts": self._shortcuts.list()})
+        return f'Okay. When you say "{entry["phrase"]}", I\'ll run: {entry["command"]}'
+
+    async def _control_reply(self, text: str) -> str | None:
+        """Requests Heliox answers in code without planning: history questions, undo, routines, shortcuts."""
+        from pilot.workflows.routines import REPEAT_REQUEST, normalize_phrase
+
+        for handler in (self._local_answer, self._undo_request, self._routine_request, self._shortcut_request):
+            reply = await handler(text)
+            if reply is not None:
+                return reply
+        if REPEAT_REQUEST.match(normalize_phrase(text)):
+            return "There is no earlier task for me to repeat yet."
+        return None
+
+    async def _deliver_reminder(self, reminder: dict[str, Any]) -> None:
+        await self._broadcast_notification("reminder", reminder)
+        spoken = (
+            f"Reminder: {reminder['text']}"
+            if not reminder.get("late")
+            else f"A reminder you missed: {reminder['text']}"
+        )
+        await self._speak_companion_text(
+            spoken, channel=SpeechChannel.PROACTIVE_SUGGESTION, dedupe_key=f"reminder:{reminder['id']}"
+        )
+
+    async def _handle_reminder_list(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        if self._reminders is None:
+            return {"status": "error", "message": "Reminders are not ready yet.", "reminders": []}
+        return {"status": "ok", "reminders": await asyncio.to_thread(self._reminders.list)}
+
+    async def _handle_reminder_add(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """Add a reminder: ``text`` plus ``in_minutes`` (1 to 10080) or ``at`` (epoch seconds)."""
+        if self._reminders is None:
+            return {"status": "error", "message": "Reminders are not ready yet."}
+        text, minutes, at = params.get("text"), params.get("in_minutes"), params.get("at")
+        if not isinstance(text, str):
+            return {"status": "error", "message": "text is required"}
+        if isinstance(minutes, (int, float)) and not isinstance(minutes, bool):
+            if not 1 <= minutes <= 7 * 24 * 60:
+                return {"status": "error", "message": "in_minutes must be from 1 to 10080"}
+            due = time.time() + float(minutes) * 60
+        elif isinstance(at, (int, float)) and not isinstance(at, bool):
+            due = float(at)
+        else:
+            return {"status": "error", "message": "Give in_minutes or at"}
+        try:
+            entry = await asyncio.to_thread(self._reminders.add, due, text)
+        except ValueError as exc:
+            return {"status": "error", "message": str(exc)}
+        return {"status": "ok", "reminder": entry, "reminders": await asyncio.to_thread(self._reminders.list)}
+
+    async def _handle_reminder_cancel(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        reminder_id = params.get("id")
+        if not isinstance(reminder_id, str) or not reminder_id or self._reminders is None:
+            return {"status": "error", "message": "id is required"}
+        removed = await asyncio.to_thread(self._reminders.cancel, reminder_id)
+        if not removed:
+            return {"status": "error", "message": "No such reminder."}
+        return {"status": "ok", "reminders": await asyncio.to_thread(self._reminders.list)}
+
+    async def _handle_undo_diff(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """What changed, line by line, in each text file a task wrote."""
+        task_key = self._undo_task_key(params)
+        if task_key is None:
+            return {"status": "error", "message": "task_key is required"}
+        if self._undo_journal is None:
+            return {"status": "error", "message": "Undo is not ready yet."}
+        return {"status": "ok", "changes": await self._undo_journal.diff(task_key)}
+
+    async def _handle_routine_suggest(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """A routine made from a finished task, with a default schedule of every day at the next full hour."""
+        from datetime import datetime, timedelta
+
+        from pilot.workflows.routines import routine_from_receipt
+
+        receipt_id = params.get("receipt_id")
+        if not isinstance(receipt_id, str) or self._task_receipts is None:
+            return {"status": "error", "message": "receipt_id is required"}
+        envelope = await self._task_receipts.get(receipt_id)
+        routine = routine_from_receipt(envelope) if envelope is not None else None
+        if routine is None:
+            return {"status": "error", "message": "This task has no completed actions a routine could repeat."}
+        next_hour = (datetime.now() + timedelta(hours=1)).replace(minute=0)
+        return {"status": "ok", "routine": {**routine, "daily_at": next_hour.strftime("%H:%M"), "weekdays": []}}
+
+    async def _handle_shortcut_list(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        if self._shortcuts is None:
+            return {"status": "error", "message": "Shortcuts are not ready yet.", "shortcuts": []}
+        return {"status": "ok", "shortcuts": await asyncio.to_thread(self._shortcuts.list)}
+
+    async def _handle_shortcut_add(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        phrase, command = params.get("phrase"), params.get("command")
+        if not isinstance(phrase, str) or not isinstance(command, str):
+            return {"status": "error", "message": "phrase and command must be text"}
+        if self._shortcuts is None:
+            return {"status": "error", "message": "Shortcuts are not ready yet."}
+        try:
+            entry = await asyncio.to_thread(self._shortcuts.add, phrase, command)
+        except ValueError as exc:
+            return {"status": "error", "message": str(exc)}
+        shortcuts = await asyncio.to_thread(self._shortcuts.list)
+        await self._broadcast_notification("shortcuts_changed", {"shortcuts": shortcuts})
+        return {"status": "ok", "shortcut": entry, "shortcuts": shortcuts}
+
+    async def _handle_shortcut_remove(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        phrase = params.get("phrase")
+        if not isinstance(phrase, str) or self._shortcuts is None:
+            return {"status": "error", "message": "phrase is required"}
+        if not await asyncio.to_thread(self._shortcuts.remove, phrase):
+            return {"status": "error", "message": "No such shortcut."}
+        shortcuts = await asyncio.to_thread(self._shortcuts.list)
+        await self._broadcast_notification("shortcuts_changed", {"shortcuts": shortcuts})
+        return {"status": "ok", "shortcuts": shortcuts}
+
     async def _local_answer(self, text: str) -> str | None:
         """Answer questions about the person's own history (timeline, receipts) in code, without a model."""
-        for source in (self._activity_timeline, self._task_receipts):
+        for source in (self._activity_timeline, self._task_receipts, self._undo_journal, self._reminders):
             if source is None:
                 continue
             try:
@@ -10150,6 +10372,8 @@ def handle_tool(tool_name, params):
             await self._scheduled_runs.stop()
         if self._daily_brief is not None:
             await self._daily_brief.stop()
+        if self._reminders is not None:
+            await self._reminders.stop()
         if self._gnomon_reviewer is not None:
             await self._gnomon_reviewer.close()
         if self._autonomous is not None:
@@ -11001,7 +11225,7 @@ def handle_tool(tool_name, params):
             return
 
         if not self._interactive_request_active:
-            timeline_answer = await self._local_answer(command_text)
+            timeline_answer = await self._control_reply(command_text)
             if timeline_answer is not None:
                 await self._broadcast_notification(
                     "voice_result", {"command": command_text, "status": "answered", "message": timeline_answer}

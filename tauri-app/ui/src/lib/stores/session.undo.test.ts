@@ -209,3 +209,82 @@ describe("undo for several tasks", () => {
     expect(get(session).messages.at(-1)?.text).toBe("Daily brief: Today Heliox ran no tasks.");
   });
 });
+
+describe("routines and shortcuts in chat", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    notificationHandler = null;
+    daemonMocks.call.mockReset();
+    vi.resetModules();
+  });
+
+  const offer = {
+    receipt_id: "r1",
+    name: "tidy my downloads",
+    goal: "tidy my downloads",
+    allowed_actions: ["file_list", "file_move"],
+    daily_at: "09:00",
+    weekdays: [],
+    label: "every day at 9:00 AM",
+  };
+
+  it("creates a routine only when Create is pressed, with the task's own action list", async () => {
+    daemonMocks.call.mockResolvedValue({ status: "ok" });
+    const { session } = await import("./session");
+
+    notificationHandler!("routine_offer", offer);
+    expect(get(session).routineOffer?.name).toBe("tidy my downloads");
+    expect(daemonMocks.call).not.toHaveBeenCalled();
+
+    session.setRoutineTime("07:30");
+    await session.createRoutine();
+
+    expect(daemonMocks.call).toHaveBeenCalledWith("scheduled_run_create", {
+      name: "tidy my downloads",
+      goal: "tidy my downloads",
+      allowed_actions: ["file_list", "file_move"],
+      daily_at: "07:30",
+      weekdays: [],
+    });
+    expect(get(session).routineOffer).toBeNull();
+    expect(get(session).messages.at(-1)?.text).toContain("may use only file_list, file_move");
+  });
+
+  it("asks the daemon for a routine from a task's receipt", async () => {
+    daemonMocks.call.mockResolvedValue({ status: "ok", routine: offer });
+    const { session } = await import("./session");
+
+    await session.suggestRoutine("r1");
+
+    expect(daemonMocks.call).toHaveBeenCalledWith("routine_suggest", { receipt_id: "r1" });
+    expect(get(session).routineOffer?.allowed_actions).toEqual(["file_list", "file_move"]);
+  });
+
+  it("notes in chat what a shortcut or 'do that again' expanded to", async () => {
+    const { session } = await import("./session");
+
+    notificationHandler!("request_expanded", {
+      input: "open VS Code",
+      note: 'Shortcut "start work": open VS Code',
+    });
+
+    expect(get(session).messages.at(-1)?.text).toBe('Shortcut "start work": open VS Code');
+  });
+});
+
+describe("reminders in chat", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    notificationHandler = null;
+    vi.resetModules();
+  });
+
+  it("shows a due reminder, and marks a late one", async () => {
+    const { session } = await import("./session");
+
+    notificationHandler!("reminder", { id: "a1", text: "stretch", late: false });
+    expect(get(session).messages.at(-1)?.text).toBe("Reminder: stretch");
+    notificationHandler!("reminder", { id: "b2", text: "call mom", late: true });
+    expect(get(session).messages.at(-1)?.text).toBe("Reminder (late): call mom");
+  });
+});

@@ -31,6 +31,11 @@
   let notice = $state("");
   let saving = $state(false);
 
+  type Reminder = { id: string; due: number; text: string };
+  let reminders = $state<Reminder[]>([]);
+  let reminderText = $state("");
+  let reminderMinutes = $state(20);
+
   let briefOn = $derived(Boolean($settings.brief?.enabled));
   let topSeconds = $derived(Math.max(1, ...(overview?.usage?.apps ?? []).map((entry) => entry.seconds)));
 
@@ -77,7 +82,41 @@
     }
   }
 
-  onMount(load);
+  async function loadReminders() {
+    try {
+      const result = await call<{ status: string; reminders?: Reminder[] }>("reminder_list");
+      reminders = result.reminders ?? [];
+    } catch {
+      reminders = [];
+    }
+  }
+
+  async function addReminder(event: SubmitEvent) {
+    event.preventDefault();
+    const result = await call<{ status: string; message?: string; reminders?: Reminder[] }>("reminder_add", {
+      text: reminderText,
+      in_minutes: Number(reminderMinutes),
+    });
+    if (result.status !== "ok") error = result.message || "The reminder was not saved.";
+    else {
+      reminderText = "";
+      reminders = result.reminders ?? reminders;
+    }
+  }
+
+  async function cancelReminder(id: string) {
+    const result = await call<{ status: string; reminders?: Reminder[] }>("reminder_cancel", { id });
+    reminders = result.reminders ?? reminders.filter((item) => item.id !== id);
+  }
+
+  function dueText(epoch: number): string {
+    return new Date(epoch * 1000).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
+  }
+
+  onMount(() => {
+    void load();
+    void loadReminders();
+  });
 </script>
 
 <div class="today" data-testid="today-panel">
@@ -154,6 +193,46 @@
         {/if}
       </section>
     {/if}
+
+    <section aria-labelledby="today-reminders">
+      <h3 id="today-reminders">Reminders</h3>
+      {#if reminders.length === 0}
+        <p class="empty">No reminders. Say "remind me in 20 minutes to stretch", or add one here.</p>
+      {:else}
+        <ul class="rows">
+          {#each reminders as reminder (reminder.id)}
+            <li>
+              <span class="time">{dueText(reminder.due)}</span>
+              <span class="row-text"><strong>{reminder.text}</strong></span>
+              <button type="button" aria-label={`Cancel ${reminder.text}`} onclick={() => cancelReminder(reminder.id)}
+                >Cancel</button
+              >
+            </li>
+          {/each}
+        </ul>
+      {/if}
+      <form class="brief-controls" onsubmit={addReminder}>
+        <label
+          >Remind me in <input
+            class="minutes"
+            type="number"
+            min="1"
+            max="10080"
+            bind:value={reminderMinutes}
+            aria-label="Minutes"
+          /> min to</label
+        >
+        <input
+          class="reminder-text"
+          bind:value={reminderText}
+          maxlength="300"
+          placeholder="stretch"
+          aria-label="Reminder"
+          required
+        />
+        <button type="submit">Add</button>
+      </form>
+    </section>
 
     <section aria-labelledby="today-brief">
       <h3 id="today-brief">Daily brief</h3>
@@ -326,6 +405,15 @@
     align-items: center;
     gap: 6px;
   }
+  .brief-controls .minutes {
+    width: 64px;
+  }
+  .brief-controls .reminder-text {
+    flex: 1;
+    min-width: 140px;
+  }
+  .brief-controls input[type="number"],
+  .brief-controls .reminder-text,
   .brief-controls input[type="time"] {
     padding: 5px 8px;
     border: 1px solid var(--border);
