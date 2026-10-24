@@ -33,6 +33,11 @@
   let saving = $state(false);
 
   type Reminder = { id: string; due: number; text: string };
+  type Workspace = { name: string; apps: string[] };
+  let workspaces = $state<Workspace[]>([]);
+  let workspaceName = $state("");
+  let historyQuery = $state("");
+  let history = $state<TaskRow[] | null>(null);
   let reminders = $state<Reminder[]>([]);
   let reminderText = $state("");
   let reminderMinutes = $state(20);
@@ -134,9 +139,45 @@
     return new Date(epoch * 1000).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
   }
 
+  async function loadWorkspaces() {
+    try {
+      const result = await call<{ status: string; workspaces?: Workspace[] }>("workspace_list");
+      workspaces = result.workspaces ?? [];
+    } catch {
+      workspaces = [];
+    }
+  }
+
+  async function saveWorkspace(event: SubmitEvent) {
+    event.preventDefault();
+    const result = await call<{ status: string; message?: string; workspaces?: Workspace[] }>("workspace_save", {
+      name: workspaceName,
+    });
+    if (result.status !== "ok") error = result.message || "The setup was not saved.";
+    else {
+      workspaceName = "";
+      workspaces = result.workspaces ?? workspaces;
+    }
+  }
+
+  async function deleteWorkspace(name: string) {
+    const result = await call<{ status: string; workspaces?: Workspace[] }>("workspace_delete", { name });
+    workspaces = result.workspaces ?? workspaces.filter((item) => item.name !== name);
+  }
+
+  async function searchHistory(event: SubmitEvent) {
+    event.preventDefault();
+    if (!historyQuery.trim()) return;
+    const result = await call<{ status: string; message?: string; receipts?: TaskRow[] }>("receipts_search", {
+      query: historyQuery.trim(),
+    });
+    history = result.receipts ?? [];
+  }
+
   onMount(() => {
     void load();
     void loadReminders();
+    void loadWorkspaces();
   });
 </script>
 
@@ -218,6 +259,76 @@
         {/if}
       </section>
     {/if}
+
+    <section aria-labelledby="today-setups">
+      <h3 id="today-setups">Setups</h3>
+      <p class="empty">
+        Save the apps you have open, then say "open my coding setup" to bring them back. Opening goes through the normal
+        approvals.
+      </p>
+      {#if workspaces.length}
+        <ul class="rows">
+          {#each workspaces as workspace (workspace.name)}
+            <li>
+              <span class="row-text">
+                <strong>{workspace.name}</strong>
+                <small>{workspace.apps.join(", ")}</small>
+              </span>
+              <button type="button" onclick={() => session.sendCommand(`open my ${workspace.name} setup`)}>Open</button>
+              <button
+                type="button"
+                aria-label={`Delete ${workspace.name}`}
+                onclick={() => deleteWorkspace(workspace.name)}>Delete</button
+              >
+            </li>
+          {/each}
+        </ul>
+      {/if}
+      <form class="brief-controls" onsubmit={saveWorkspace}>
+        <input
+          class="reminder-text"
+          bind:value={workspaceName}
+          maxlength="40"
+          placeholder="coding"
+          aria-label="Setup name"
+          required
+        />
+        <button type="submit">Save open apps</button>
+      </form>
+    </section>
+
+    <section aria-labelledby="today-history">
+      <h3 id="today-history">Search what you asked</h3>
+      <form class="brief-controls" onsubmit={searchHistory}>
+        <input
+          class="reminder-text"
+          bind:value={historyQuery}
+          maxlength="200"
+          placeholder="invoice"
+          aria-label="Search tasks"
+        />
+        <button type="submit">Search</button>
+      </form>
+      {#if history}
+        {#if history.length === 0}
+          <p class="empty">No task matches.</p>
+        {:else}
+          <ul class="rows">
+            {#each history as task (task.receipt_id)}
+              <li>
+                <span class="time"
+                  >{new Date(task.finished_at).toLocaleDateString([], { month: "short", day: "numeric" })}</span
+                >
+                <span class="row-text">
+                  <strong>{task.request || task.summary}</strong>
+                  <small>{task.status} · {task.action_count} action{task.action_count === 1 ? "" : "s"}</small>
+                </span>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+      {/if}
+    </section>
 
     <section aria-labelledby="today-focus">
       <h3 id="today-focus">Focus</h3>

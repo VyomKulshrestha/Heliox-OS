@@ -45,6 +45,9 @@ KEY_FILE_NAME = "task_receipt_signing_key"
 MAX_PENDING_TASKS = 50
 MAX_ACTIONS_PER_RECEIPT = 500
 CLOCK_SLACK_SECONDS = 1.0
+ASKED_QUESTION = re.compile(
+    r"^(?:hey heliox |heliox )?when did i (?:last )?(?:ask|tell) you (?P<prep>to|about) (?P<what>.+)$"
+)
 RECAP_QUESTION = re.compile(
     r"^(?:hey heliox |heliox )?what (?:did you do|have you done|did heliox do)(?: for me)?(?P<when>.*)$"
 )
@@ -422,9 +425,37 @@ class TaskReceipts:
                 rows.append(self._short(envelope))
         return rows
 
+    def search(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
+        """Short forms of receipts whose request or summary contains every word of ``query``, newest first."""
+        words = [word for word in re.sub(r"[^\w\s]", " ", query.casefold()).split() if len(word) > 1]
+        if not words:
+            return []
+        found = []
+        for path in reversed(self._files()):
+            envelope = self._read(path)
+            receipt = envelope.get("receipt") if envelope else None
+            if not isinstance(receipt, dict):
+                continue
+            text = f"{receipt.get('request', '')} {receipt.get('summary', '')}".casefold()
+            if all(word in text for word in words):
+                found.append(self._short(envelope))
+                if len(found) >= max(1, min(int(limit), 200)):
+                    break
+        return found
+
     def answer(self, question: str, *, now: datetime | None = None) -> str | None:
-        """Answer "what did you do today?" from the receipts, or None for any other question."""
+        """Answer "what did you do today?" or "when did I ask you to …?" from the receipts; None otherwise."""
         normalized = re.sub(r"\s+", " ", question.lower().strip(" ?.!"))
+        when_asked = ASKED_QUESTION.match(normalized)
+        if when_asked:
+            what = when_asked.group("what")
+            hits = self.search(what, limit=1)
+            if not hits:
+                return f"I have no task where you asked me {when_asked.group('prep')} {what}."
+            hit = hits[0]
+            moment = datetime.fromisoformat(hit["finished_at"]).astimezone()
+            actions = f"{hit['action_count']} action{'' if hit['action_count'] == 1 else 's'}"
+            return f'On {moment.strftime("%a %d %b at %I:%M %p")} you asked: "{hit["request"]}" ({actions}, {hit["status"]}).'
         asked = RECAP_QUESTION.match(normalized)
         if not asked:
             return None

@@ -12,7 +12,7 @@ The Heliox OS UI and daemon communicate over a local WebSocket using the [JSON-R
 | Request timeout | 5 minutes |
 | Reconnect interval | 3 seconds (auto-reconnect on close) |
 
-The daemon currently registers **256 WebSocket RPC methods**. That is the API
+The daemon currently registers **260 WebSocket RPC methods**. That is the API
 surface count, not the action catalog: Heliox exposes **162 action
 types** through the guarded planner/executor system. This document names every
 registered RPC method; grouped tables are used where several methods share one
@@ -454,6 +454,19 @@ One day at a glance, composed in code from local records.
 **Result:** `{"status": "ok", "day": "2026-10-23", "label": "today", "tasks": [<receipt short form>], "timeline_enabled": true, "usage": {"total_seconds": 9120, "apps": [...]}, "undoable": [<undo_list row>], "brief": "Today Heliox ran 3 tasks; ..."}`.
 `usage` is null while the activity timeline is off.
 
+#### `workspace_list` / `workspace_save` / `workspace_delete`
+Named sets of apps. `workspace_save` records the apps that have windows open now
+(friendly names only; Heliox itself and desktop components such as Explorer are left
+out) under `name`. Saying "open my coding setup" becomes an ordinary request ("open
+Visual Studio Code, Slack and Google Chrome") with the normal approvals and a
+`request_expanded` note. "Save this as my coding setup", "what setups do I have" and
+"delete my coding setup" work by voice and in chat.
+
+#### `receipts_search`
+Receipts whose request or summary contains every word of `query` (1 to 200 characters),
+newest first, in the short form `receipts_list` uses. "When did I ask you to email the
+invoice?" is answered from the same search by voice and in chat.
+
 #### `focus_start` / `focus_stop` / `focus_status`
 Focus sessions. `focus_start` takes `minutes` (1 to 480) and returns
 `{"active": true, "started_at", "until", "remaining_seconds", "held"}`; starting again
@@ -484,7 +497,8 @@ Local reminders. `reminder_add` takes `text` (1 to 300 characters) and `in_minut
 returns the current `reminders` list (`{"id", "due", "text", "created_at"}`, soonest
 first). "Remind me in 20 minutes to stretch", "remind me tomorrow at 9 to send the
 report", "what are my reminders" and "cancel the reminder about rent" work by voice and
-in chat without the planner.
+in chat without the planner. "Set a timer for 10 minutes" (10 seconds to 24 hours) is a
+reminder whose text says the timer is done.
 
 #### `routine_suggest`
 A routine made from a finished task's receipt: `name`, `goal` (the task's request) and

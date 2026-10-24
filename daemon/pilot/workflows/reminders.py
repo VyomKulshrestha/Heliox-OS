@@ -34,6 +34,10 @@ LIST_REQUEST = re.compile(
 CANCEL_REQUEST = re.compile(
     r"^(?:please )?(?:cancel|delete|remove|clear) (?:all )?(?:my |the )?reminders?(?: (?:to|about) (?P<what>.+))?$"
 )
+TIMER_REQUEST = re.compile(
+    r"^(?:please )?(?:set|start) (?:a |an )?(?:timer for (?P<a1>\w+) (?P<u1>seconds?|secs?|minutes?|mins?|hours?)"
+    r"|(?P<a2>\w+) (?P<u2>second|sec|minute|min|hour) timer)$"
+)
 NUMBER_WORDS = {"a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "ten": 10, "fifteen": 15}
 
 
@@ -218,6 +222,21 @@ class ReminderStore:
             listed = "; ".join(f"{describe_time(item['due'], now)}: {item['text']}" for item in items[:5])
             more = f" And {len(items) - 5} more." if len(items) > 5 else ""
             return f"You have {len(items)} reminder{'' if len(items) == 1 else 's'}. {listed}.{more}"
+        timer = TIMER_REQUEST.match(normalized)
+        if timer:
+            amount_text = timer.group("a1") or timer.group("a2")
+            unit = timer.group("u1") or timer.group("u2")
+            amount = int(amount_text) if amount_text.isdigit() else NUMBER_WORDS.get(amount_text, 0)
+            seconds = amount * (3600 if unit.startswith("h") else 60 if unit.startswith("m") else 1)
+            if not 10 <= seconds <= 24 * 3600:
+                return "A timer can run from 10 seconds to 24 hours."
+            label = f"{amount} {unit.rstrip('s') if amount == 1 else unit if unit.endswith('s') else unit + 's'}"
+            label = label.replace("min ", "minute ").replace("mins", "minutes").replace("secs", "seconds")
+            try:
+                self.add(now.timestamp() + seconds, f"Your {label} timer is done")
+            except ValueError as exc:
+                return str(exc)
+            return f"Timer set for {label}."
         cancel = CANCEL_REQUEST.match(normalized)
         if cancel:
             removed = self.cancel(about=cancel.group("what"))

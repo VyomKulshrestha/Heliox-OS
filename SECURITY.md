@@ -798,6 +798,14 @@ Saying or typing "undo the last two tasks" (up to five) opens each task's undo p
 in turn, newest first. Each task still needs its own Undo press, and Cancel stops the
 rest; nothing is undone from the spoken or typed request itself.
 
+## 🗂️ Workspaces and task history
+
+- A saved workspace is a list of app names, taken from the apps with open windows when
+  you save it; window titles and file names are not stored. Opening one becomes an
+  ordinary request with the normal planning, gateway and approvals.
+- "When did I ask you to …?" and the Today tab's search look only at your task
+  receipts on this computer.
+
 ## 🎧 Focus sessions
 
 "Focus for 45 minutes" (or the Today tab) holds reminders and the scheduled daily brief

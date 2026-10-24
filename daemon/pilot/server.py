@@ -919,6 +919,7 @@ class PilotServer:
         self._shortcuts: Any = None
         self._reminders: Any = None
         self._focus: Any = None
+        self._workspaces: Any = None
         self._queued_execute_requests: deque[tuple[str, str, dict[str, Any]]] = deque()
         self._queued_submission_lock = asyncio.Lock()
         self._queued_execute_worker: asyncio.Task[None] | None = None
@@ -1158,6 +1159,9 @@ class PilotServer:
         from pilot.workflows.routines import ShortcutStore
 
         self._shortcuts = ShortcutStore(DATA_DIR / "voice_shortcuts.json", reserved=self._phrase_reserved)
+        from pilot.workflows.workspaces import WorkspaceStore
+
+        self._workspaces = WorkspaceStore(DATA_DIR / "workspaces.json")
         from pilot.workflows.focus import FocusSession
 
         self._focus = FocusSession(DATA_DIR / "focus.json", on_end=self._on_focus_end)
@@ -1678,6 +1682,10 @@ class PilotServer:
             "routine_suggest": self._handle_routine_suggest,
             "reminder_list": self._handle_reminder_list,
             "focus_start": self._handle_focus_start,
+            "workspace_list": self._handle_workspace_list,
+            "workspace_save": self._handle_workspace_save,
+            "workspace_delete": self._handle_workspace_delete,
+            "receipts_search": self._handle_receipts_search,
             "focus_stop": self._handle_focus_stop,
             "focus_status": self._handle_focus_status,
             "report_export": self._handle_report_export,
@@ -5910,11 +5918,12 @@ class PilotServer:
 
     def _phrase_reserved(self, phrase: str) -> bool:
         """True for phrases that already mean something to Heliox and so cannot be shortcuts."""
+        from pilot.workflows import workspaces
         from pilot.workflows.activity_timeline import LAST_SEEN_QUESTION, TIMELINE_QUESTION
         from pilot.workflows.focus import START_REQUEST, STOP_REQUEST
-        from pilot.workflows.reminders import CANCEL_REQUEST, LIST_REQUEST, SET_REQUEST
+        from pilot.workflows.reminders import CANCEL_REQUEST, LIST_REQUEST, SET_REQUEST, TIMER_REQUEST
         from pilot.workflows.routines import REPEAT_REQUEST, ROUTINE_REQUEST
-        from pilot.workflows.task_receipts import RECAP_QUESTION
+        from pilot.workflows.task_receipts import ASKED_QUESTION, RECAP_QUESTION
         from pilot.workflows.undo_journal import WHERE_QUESTION
 
         if phrase in VOICE_STOP_PHRASES or phrase in VOICE_DENIALS or phrase in VOICE_APPROVAL_ATTEMPTS:
@@ -5930,6 +5939,12 @@ class PilotServer:
             CANCEL_REQUEST,
             START_REQUEST,
             STOP_REQUEST,
+            TIMER_REQUEST,
+            ASKED_QUESTION,
+            workspaces.SAVE_REQUEST,
+            workspaces.OPEN_REQUEST,
+            workspaces.LIST_REQUEST,
+            workspaces.DELETE_REQUEST,
         )
         return (
             phrase.startswith("when i say")
@@ -5956,6 +5971,10 @@ class PilotServer:
             shortcut = await asyncio.to_thread(self._shortcuts.match, text)
             if shortcut is not None:
                 return shortcut["command"], f'Shortcut "{shortcut["phrase"]}": {shortcut["command"]}'
+        if self._workspaces is not None:
+            workspace = await asyncio.to_thread(self._workspaces.open_request, text)
+            if workspace is not None:
+                return workspace
         if REPEAT_REQUEST.match(normalize_phrase(text)):
             envelope = await self._latest_receipt()
             if envelope is not None:
@@ -6006,6 +6025,7 @@ class PilotServer:
         handlers = (
             self._local_answer,
             self._focus_request,
+            self._workspace_request,
             self._undo_request,
             self._routine_request,
             self._shortcut_request,
@@ -6043,6 +6063,69 @@ class PilotServer:
                 await self._broadcast_notification("reminder", {**item["payload"], "held": True})
             elif item["kind"] == "daily_brief":
                 await self._deliver_daily_brief(item["payload"])
+
+    async def _workspace_request(self, text: str) -> str | None:
+        """ "Save this as my coding setup", "what setups do I have", "delete my coding setup"."""
+        from pilot.workflows.workspaces import DELETE_REQUEST, LIST_REQUEST, SAVE_REQUEST, normalize, open_apps
+
+        if self._workspaces is None:
+            return None
+        normalized = normalize(text)
+        save = SAVE_REQUEST.match(normalized)
+        if save:
+            try:
+                apps = await open_apps()
+                entry = await asyncio.to_thread(self._workspaces.save, save.group("name"), apps)
+            except (ValueError, OSError) as exc:
+                return str(exc)
+            return (
+                f"Saved your {self._workspaces.describe(entry)} setup. "
+                f'Say "open my {entry["name"]} setup" to bring it back.'
+            )
+        if LIST_REQUEST.match(normalized):
+            items = await asyncio.to_thread(self._workspaces.list)
+            if not items:
+                return 'You have no saved setups. Say "save this as my coding setup" to make one.'
+            return "Your setups: " + "; ".join(self._workspaces.describe(item) for item in items) + "."
+        delete = DELETE_REQUEST.match(normalized)
+        if delete and await asyncio.to_thread(self._workspaces.delete, delete.group("name")):
+            return f'Deleted your "{normalize(delete.group("name"))}" setup.'
+        return None
+
+    async def _handle_workspace_list(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        if self._workspaces is None:
+            return {"status": "error", "message": "Workspaces are not ready yet.", "workspaces": []}
+        return {"status": "ok", "workspaces": await asyncio.to_thread(self._workspaces.list)}
+
+    async def _handle_workspace_save(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """Save the apps that have windows open now under ``name``."""
+        from pilot.workflows.workspaces import open_apps
+
+        name = params.get("name")
+        if not isinstance(name, str) or self._workspaces is None:
+            return {"status": "error", "message": "name is required"}
+        try:
+            entry = await asyncio.to_thread(self._workspaces.save, name, await open_apps())
+        except (ValueError, OSError) as exc:
+            return {"status": "error", "message": str(exc)}
+        return {"status": "ok", "workspace": entry, "workspaces": await asyncio.to_thread(self._workspaces.list)}
+
+    async def _handle_workspace_delete(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        name = params.get("name")
+        if not isinstance(name, str) or self._workspaces is None:
+            return {"status": "error", "message": "name is required"}
+        if not await asyncio.to_thread(self._workspaces.delete, name):
+            return {"status": "error", "message": "No such workspace."}
+        return {"status": "ok", "workspaces": await asyncio.to_thread(self._workspaces.list)}
+
+    async def _handle_receipts_search(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """Receipts whose request or summary contains every word of ``query``, newest first."""
+        query = params.get("query")
+        if not isinstance(query, str) or not query.strip() or len(query) > 200:
+            return {"status": "error", "message": "query must be 1 to 200 characters"}
+        if self._task_receipts is None:
+            return {"status": "error", "message": "Receipts are not ready yet."}
+        return {"status": "ok", "receipts": await asyncio.to_thread(self._task_receipts.search, query, 30)}
 
     async def _focus_request(self, text: str) -> str | None:
         """ "Focus for 45 minutes" / "stop focusing"."""

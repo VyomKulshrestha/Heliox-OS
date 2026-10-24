@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const daemonMocks = vi.hoisted(() => ({ call: vi.fn() }));
 const settingsMocks = vi.hoisted(() => ({ updateSectionDetailed: vi.fn() }));
-const sessionMocks = vi.hoisted(() => ({ openUndoPreview: vi.fn() }));
+const sessionMocks = vi.hoisted(() => ({ openUndoPreview: vi.fn(), sendCommand: vi.fn() }));
 
 vi.mock("../api/daemon", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/daemon")>();
@@ -14,7 +14,9 @@ vi.mock("../stores/settings", () => {
   const store = writable({ brief: { enabled: false, time: "18:00", speak: false } });
   return { settings: { subscribe: store.subscribe, updateSectionDetailed: settingsMocks.updateSectionDetailed } };
 });
-vi.mock("../stores/session", () => ({ session: { openUndoPreview: sessionMocks.openUndoPreview } }));
+vi.mock("../stores/session", () => ({
+  session: { openUndoPreview: sessionMocks.openUndoPreview, sendCommand: sessionMocks.sendCommand },
+}));
 
 import TodayPanel from "./TodayPanel.svelte";
 
@@ -108,5 +110,28 @@ describe("TodayPanel", () => {
 
     await fireEvent.click(screen.getByRole("button", { name: "Start focus" }));
     expect(daemonMocks.call).toHaveBeenCalledWith("focus_start", { minutes: 25 });
+  });
+
+  it("saves and opens a setup and searches past tasks", async () => {
+    let workspaces = [{ name: "coding", apps: ["Visual Studio Code", "Slack"] }];
+    daemonMocks.call.mockImplementation(async (method: string) => {
+      if (method === "today_overview") return overview;
+      if (method === "workspace_save") workspaces = [...workspaces, { name: "writing", apps: ["Word"] }];
+      if (method === "receipts_search") return { status: "ok", receipts: overview.tasks };
+      return { status: "ok", workspaces };
+    });
+    render(TodayPanel);
+
+    await waitFor(() => expect(screen.getByText("Visual Studio Code, Slack")).toBeTruthy());
+    await fireEvent.click(screen.getByRole("button", { name: "Open" }));
+    expect(sessionMocks.sendCommand).toHaveBeenCalledWith("open my coding setup");
+
+    await fireEvent.input(screen.getByLabelText("Setup name"), { target: { value: "writing" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Save open apps" }));
+    await waitFor(() => expect(screen.getByText("Word")).toBeTruthy());
+
+    await fireEvent.input(screen.getByLabelText("Search tasks"), { target: { value: "tidy" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    await waitFor(() => expect(daemonMocks.call).toHaveBeenCalledWith("receipts_search", { query: "tidy" }));
   });
 });
