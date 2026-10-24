@@ -80,6 +80,11 @@ GUIDE: list[dict[str, Any]] = [
         "examples": ["tell me if I spend more than an hour on YouTube today", "what nudges do I have"],
     },
     {
+        "group": "Privacy",
+        "about": "Remove a stretch of the activity timeline; Settings → Your data shows everything Heliox keeps.",
+        "examples": ["forget my activity from the last hour"],
+    },
+    {
         "group": "Voice",
         "about": "Hear the last answer again, or see everything you can say.",
         "examples": ["say that again", "what can I say"],

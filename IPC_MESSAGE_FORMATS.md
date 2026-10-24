@@ -12,7 +12,7 @@ The Heliox OS UI and daemon communicate over a local WebSocket using the [JSON-R
 | Request timeout | 5 minutes |
 | Reconnect interval | 3 seconds (auto-reconnect on close) |
 
-The daemon currently registers **270 WebSocket RPC methods**. That is the API
+The daemon currently registers **276 WebSocket RPC methods**. That is the API
 surface count, not the action catalog: Heliox exposes **162 action
 types** through the guarded planner/executor system. This document names every
 registered RPC method; grouped tables are used where several methods share one
@@ -453,6 +453,22 @@ One day at a glance, composed in code from local records.
 **Params:** `{ "day": "today" }` (`today` or `yesterday`)
 **Result:** `{"status": "ok", "day": "2026-10-23", "label": "today", "tasks": [<receipt short form>], "timeline_enabled": true, "usage": {"total_seconds": 9120, "apps": [...]}, "undoable": [<undo_list row>], "brief": "Today Heliox ran 3 tasks; ..."}`.
 `usage` is null while the activity timeline is off.
+
+#### `privacy_inventory` / `privacy_clear` / `timeline_forget`
+`privacy_inventory` lists each personal store under `DATA_DIR` (activity timeline, task
+receipts, undo copies, notes, reminders, voice shortcuts, setups, usage nudges, quiet
+hours) as `{"key", "label", "about", "bytes", "size", "items"}`. `privacy_clear` takes
+`key` and `confirmed: true` and returns the new inventory. `timeline_forget` removes the
+last `minutes` (1 to 1440) of the timeline; "forget my activity from the last hour" (or
+"from this morning") does the same by voice and in chat.
+
+#### `backup_create` / `backup_list` / `backup_restore`
+`backup_create` zips notes, reminders, shortcuts, setups, nudges, quiet hours and task
+receipts (plus the timeline when `include_timeline` is true) into the Downloads folder
+as `heliox-backup-YYYYMMDD-HHMMSS.zip`. It never contains configuration, the daemon token,
+API keys or signing keys, and undo copies are left out. `backup_list` lists those files;
+`backup_restore` takes a listed `name` and `confirmed: true`, restores only the known
+store files, and never overwrites a receipt already on this computer.
 
 #### `command_guide`
 Everything Heliox answers or does right away, without planning, grouped with examples:

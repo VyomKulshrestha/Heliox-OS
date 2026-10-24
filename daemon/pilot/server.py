@@ -16,6 +16,7 @@ import signal
 import sys
 import time
 import uuid
+import zipfile
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -1730,6 +1731,12 @@ class PilotServer:
             "reminder_list": self._handle_reminder_list,
             "focus_start": self._handle_focus_start,
             "focus_schedule_list": self._handle_focus_schedule_list,
+            "privacy_inventory": self._handle_privacy_inventory,
+            "privacy_clear": self._handle_privacy_clear,
+            "timeline_forget": self._handle_timeline_forget,
+            "backup_create": self._handle_backup_create,
+            "backup_list": self._handle_backup_list,
+            "backup_restore": self._handle_backup_restore,
             "focus_schedule_add": self._handle_focus_schedule_add,
             "focus_schedule_delete": self._handle_focus_schedule_delete,
             "workspace_list": self._handle_workspace_list,
@@ -5986,6 +5993,7 @@ class PilotServer:
             START_REQUEST,
             STOP_REQUEST,
         )
+        from pilot.workflows.privacy import FORGET_REQUEST
         from pilot.workflows.reminders import CANCEL_REQUEST, LIST_REQUEST, SET_REQUEST, TIMER_REQUEST
         from pilot.workflows.routines import REPEAT_REQUEST, ROUTINE_REQUEST
         from pilot.workflows.task_receipts import ASKED_QUESTION, RECAP_QUESTION
@@ -6024,6 +6032,7 @@ class PilotServer:
             VOICE_BRIEF_QUIET_SETTING,
             HELP_REQUEST,
             SAY_AGAIN_REQUEST,
+            FORGET_REQUEST,
             POMODORO_REQUEST,
             SCHEDULE_REQUEST,
             SCHEDULE_LIST_REQUEST,
@@ -6108,6 +6117,7 @@ class PilotServer:
         handlers = (
             self._help_request,
             self._say_again_request,
+            self._forget_request,
             self._local_answer,
             self._focus_request,
             self._settings_request,
@@ -6318,6 +6328,119 @@ class PilotServer:
         if not await asyncio.to_thread(self._nudges.delete, nudge_id):
             return {"status": "error", "message": "No such nudge."}
         return {"status": "ok", "nudges": await asyncio.to_thread(self._nudges.list)}
+
+    @staticmethod
+    def _export_dir() -> Path:
+        downloads_dir = Path.home() / "Downloads"
+        return downloads_dir if downloads_dir.exists() else (DATA_DIR / "exports")
+
+    async def _forget_request(self, text: str) -> str | None:
+        """ "Forget my activity from the last hour": remove that stretch of the activity timeline."""
+        from datetime import datetime
+
+        from pilot.workflows.privacy import forget_window
+
+        window = forget_window(text, datetime.now())
+        if window is None:
+            return None
+        if self._activity_timeline is None:
+            return "The activity timeline is not ready yet."
+        start, end, label = window
+        removed = await asyncio.to_thread(self._activity_timeline.forget, start, end)
+        return f"Done. I removed {removed} timeline entr{'y' if removed == 1 else 'ies'} from {label}."
+
+    async def _privacy_counts(self) -> dict[str, int | None]:
+        counts: dict[str, int | None] = {}
+        if self._activity_timeline is not None:
+            counts["timeline"] = (await asyncio.to_thread(self._activity_timeline.status))["span_count"]
+        receipts_dir = DATA_DIR / "receipts"
+        counts["receipts"] = len(list(receipts_dir.glob("*.json"))) if receipts_dir.is_dir() else 0
+        if self._undo_journal is not None:
+            counts["undo"] = len(await self._undo_journal.list_tasks(200))
+        for key, store in (
+            ("notes", self._notes),
+            ("reminders", self._reminders),
+            ("shortcuts", self._shortcuts),
+            ("workspaces", self._workspaces),
+            ("nudges", self._nudges),
+            ("quiet_hours", self._quiet_hours),
+        ):
+            if store is not None:
+                counts[key] = len(await asyncio.to_thread(store.list))
+        return counts
+
+    async def _handle_privacy_inventory(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """Each personal store Heliox keeps on this computer, with its size and item count."""
+        from pilot.workflows.privacy import inventory
+
+        counts = await self._privacy_counts()
+        return {"status": "ok", "stores": await asyncio.to_thread(inventory, DATA_DIR, counts)}
+
+    async def _handle_privacy_clear(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """Delete everything in one personal store. Needs ``confirmed`` to be exactly true."""
+        from pilot.workflows.privacy import STORES, clear_store
+
+        key = params.get("key")
+        if key not in STORES:
+            return {"status": "error", "message": "Unknown store"}
+        if params.get("confirmed") is not True:
+            return {"status": "error", "message": "Clearing needs confirmation."}
+        if key == "timeline" and self._activity_timeline is not None:
+            await asyncio.to_thread(self._activity_timeline.clear)
+        elif key == "undo" and self._undo_journal is not None:
+            busy = self._undo_busy_message()
+            if busy:
+                return {"status": "error", "message": busy}
+            await self._undo_journal.clear()
+        else:
+            await asyncio.to_thread(clear_store, DATA_DIR, key)
+        return await self._handle_privacy_inventory({}, ws)
+
+    async def _handle_timeline_forget(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """Remove the last ``minutes`` (1 to 1440) of the activity timeline."""
+        minutes = params.get("minutes")
+        if not isinstance(minutes, int) or isinstance(minutes, bool) or not 1 <= minutes <= 1440:
+            return {"status": "error", "message": "minutes must be from 1 to 1440"}
+        if self._activity_timeline is None:
+            return {"status": "error", "message": "The activity timeline is not ready yet."}
+        now = time.time()
+        removed = await asyncio.to_thread(self._activity_timeline.forget, now - minutes * 60, now)
+        return {"status": "ok", "removed": removed}
+
+    async def _handle_backup_create(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """Zip your notes, reminders, shortcuts, setups, nudges, quiet hours and receipts into Downloads."""
+        from pilot.workflows.privacy import create_backup
+
+        include_timeline = params.get("include_timeline", False)
+        if not isinstance(include_timeline, bool):
+            return {"status": "error", "message": "include_timeline must be a boolean"}
+        try:
+            path = await asyncio.to_thread(
+                create_backup, DATA_DIR, self._export_dir(), include_timeline=include_timeline
+            )
+        except OSError as exc:
+            return {"status": "error", "message": f"Backup failed: {exc}"}
+        return {"status": "ok", "name": path.name, "path": str(path)}
+
+    async def _handle_backup_list(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        from pilot.workflows.privacy import list_backups
+
+        return {"status": "ok", "backups": await asyncio.to_thread(list_backups, self._export_dir())}
+
+    async def _handle_backup_restore(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """Restore a Heliox backup from the Downloads folder. Needs ``confirmed`` to be exactly true."""
+        from pilot.workflows.privacy import restore_backup
+
+        name = params.get("name")
+        if not isinstance(name, str):
+            return {"status": "error", "message": "name is required"}
+        if params.get("confirmed") is not True:
+            return {"status": "error", "message": "Restoring needs confirmation."}
+        try:
+            restored = await asyncio.to_thread(restore_backup, DATA_DIR, self._export_dir(), name)
+        except (ValueError, OSError, zipfile.BadZipFile) as exc:
+            return {"status": "error", "message": str(exc)}
+        return {"status": "ok", "restored": restored}
 
     async def _say_again_request(self, text: str) -> str | None:
         """ "Say that again": repeat the last thing Heliox said out loud."""

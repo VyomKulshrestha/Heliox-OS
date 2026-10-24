@@ -798,6 +798,18 @@ Saying or typing "undo the last two tasks" (up to five) opens each task's undo p
 in turn, newest first. Each task still needs its own Undo press, and Cancel stops the
 rest; nothing is undone from the spoken or typed request itself.
 
+## 🔒 Your data: inventory, forgetting, backup
+
+Settings → Your data shows each personal store Heliox keeps on this computer with its
+size and item count, and clears any of them after a second click. "Forget my activity
+from the last hour" removes that stretch of the activity timeline.
+
+Backups go to the Downloads folder and contain only the personal stores listed above
+(the timeline only when you tick it). Configuration, the daemon token, API keys, the
+receipt signing key and undo copies are never included. Restoring reads only those
+known file names from a `heliox-backup-*.zip` in the Downloads folder, so a crafted zip
+cannot write anywhere else, and it never overwrites a receipt already on this computer.
+
 ## 📝 Notes, usage nudges and settings by voice
 
 - Notes stay in `DATA_DIR/notes.json`; taking, reading and searching them is handled in

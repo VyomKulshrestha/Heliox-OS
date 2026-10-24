@@ -142,7 +142,7 @@ def test_all_sixteen_handlers_are_registered_as_one_line_entries():
         assert callable(getattr(PilotServer, f"_handle_{method}"))
 
 
-def test_registered_total_is_270():
+def test_registered_total_is_276():
     tree = ast.parse(SERVER_SOURCE.read_text(encoding="utf-8"))
     counts = [
         len(node.value.keys)
@@ -151,7 +151,7 @@ def test_registered_total_is_270():
         and isinstance(node.value, ast.Dict)
         and any(isinstance(target, ast.Attribute) and target.attr == "_handlers" for target in node.targets)
     ]
-    assert counts == [270]
+    assert counts == [276]
 
 
 def test_no_approval_rpc_exists_for_co_adaptation():

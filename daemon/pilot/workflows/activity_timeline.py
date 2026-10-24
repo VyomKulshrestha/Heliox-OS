@@ -322,6 +322,17 @@ class ActivityTimeline:
             self._db().commit()
             return int(cursor.rowcount or 0)
 
+    def forget(self, start: float, end: float) -> int:
+        """Delete every span that overlaps ``start``..``end``. Returns how many went."""
+        with self._lock:
+            if self._open is not None and self._open.end >= start and self._open.start <= end:
+                self._open = None
+            if not self._db_path.exists():
+                return 0
+            cursor = self._db().execute("DELETE FROM spans WHERE end >= ? AND start <= ?", (start, end))
+            self._db().commit()
+            return int(cursor.rowcount or 0)
+
     def clear(self) -> None:
         with self._lock:
             self._open = None

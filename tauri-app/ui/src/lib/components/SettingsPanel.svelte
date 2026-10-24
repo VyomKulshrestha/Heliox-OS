@@ -26,6 +26,7 @@
   import ReceiptsPanel from "./ReceiptsPanel.svelte";
   import TimelinePanel from "./TimelinePanel.svelte";
   import VoiceShortcutsPanel from "./VoiceShortcutsPanel.svelte";
+  import YourDataPanel from "./YourDataPanel.svelte";
   import GestureWorkflowBindings from "./GestureWorkflowBindings.svelte";
   import VoiceGestureWorkflowStatus from "./VoiceGestureWorkflowStatus.svelte";
   import RecordedWorkflowsPanel from "./RecordedWorkflowsPanel.svelte";
@@ -2697,6 +2698,7 @@
   <ReceiptsPanel />
   <TimelinePanel />
   <VoiceShortcutsPanel />
+  <YourDataPanel />
 </div>
 
 <style>
