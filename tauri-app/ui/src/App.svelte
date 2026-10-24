@@ -14,6 +14,8 @@
   import ActivityLog from "./lib/components/ActivityLog.svelte";
   import TodayPanel from "./lib/components/TodayPanel.svelte";
   import FocusBanner from "./lib/components/FocusBanner.svelte";
+  import CommandPalette from "./lib/components/CommandPalette.svelte";
+  import { onNotification, offNotification } from "./lib/api/daemon";
   import SettingsPanel from "./lib/components/SettingsPanel.svelte";
   import SetupWizard from "./lib/components/SetupWizard.svelte";
   import VoiceControl from "./lib/components/VoiceControl.svelte";
@@ -58,6 +60,7 @@
   let showScrollFAB = $state(false);
   let isAtBottom = $state(true);
   let prefillText = $state("");
+  let paletteOpen = $state(false);
   let cameraControlsActive = $state(false);
   let virtualListEl: VirtualList<Message> | undefined = $state();
   let particleBurst: ParticleBurst | undefined = $state();
@@ -94,6 +97,35 @@
   onMount(() => {
     void coadaptation.load();
   });
+  // Ctrl+K (Cmd+K on a Mac) and "what can I say?" open the command palette, except over an approval.
+  function openPalette() {
+    if ($session.confirmRequired) return;
+    activeTab = "chat"; // the palette sits over the Command tab, where its choice lands
+    paletteOpen = true;
+  }
+  function onPaletteKey(event: KeyboardEvent) {
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+      event.preventDefault();
+      if (paletteOpen) paletteOpen = false;
+      else openPalette();
+    }
+  }
+  function onPaletteNotification(method: string) {
+    if (method === "open_command_palette") openPalette();
+  }
+  onMount(() => {
+    window.addEventListener("keydown", onPaletteKey);
+    onNotification(onPaletteNotification);
+    return () => {
+      window.removeEventListener("keydown", onPaletteKey);
+      offNotification(onPaletteNotification);
+    };
+  });
+  async function pickFromPalette(text: string) {
+    paletteOpen = false;
+    activeTab = "chat";
+    await handleReplay(text);
+  }
   // The study tab exists only while a study session is open: open it when the session starts, and leave it for
   // Settings (where the study is started) when the session ends.
   $effect(() => {
@@ -326,6 +358,9 @@
 
         <HumanControlBanner />
         <FocusBanner />
+        {#if paletteOpen}
+          <CommandPalette onpick={pickFromPalette} onclose={() => (paletteOpen = false)} />
+        {/if}
         {#if $session.undoOffer && !$session.undoPreview}
           <div class="undo-banner" data-testid="undo-offer">
             <span>{$_("undo.banner", { values: { count: $session.undoOffer.undoable } })}</span>

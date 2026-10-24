@@ -12,7 +12,7 @@ The Heliox OS UI and daemon communicate over a local WebSocket using the [JSON-R
 | Request timeout | 5 minutes |
 | Reconnect interval | 3 seconds (auto-reconnect on close) |
 
-The daemon currently registers **266 WebSocket RPC methods**. That is the API
+The daemon currently registers **267 WebSocket RPC methods**. That is the API
 surface count, not the action catalog: Heliox exposes **162 action
 types** through the guarded planner/executor system. This document names every
 registered RPC method; grouped tables are used where several methods share one
@@ -453,6 +453,13 @@ One day at a glance, composed in code from local records.
 **Params:** `{ "day": "today" }` (`today` or `yesterday`)
 **Result:** `{"status": "ok", "day": "2026-10-23", "label": "today", "tasks": [<receipt short form>], "timeline_enabled": true, "usage": {"total_seconds": 9120, "apps": [...]}, "undoable": [<undo_list row>], "brief": "Today Heliox ran 3 tasks; ..."}`.
 `usage` is null while the activity timeline is off.
+
+#### `command_guide`
+Everything Heliox answers or does right away, without planning, grouped with examples:
+`{"status": "ok", "groups": [{"group": "Reminders and timers", "about": "...", "examples": ["remind me in 20 minutes to stretch", ...]}]}`.
+Every example works as written (`tests/test_command_guide.py` runs each one) and none can
+be used as a voice shortcut. "What can I say?" speaks a short summary and broadcasts
+`open_command_palette`.
 
 #### `notes_list` / `note_add` / `note_delete`
 Quick notes (`{"id", "text", "created_at"}`, newest first; text 1 to 500 characters).
@@ -3098,6 +3105,11 @@ press, and Cancel stops the rest.
 ```json
 { "task_key": "4f0c2a9e", "task_keys": ["4f0c2a9e", "91b7d2c0"] }
 ```
+
+### `open_command_palette`
+`{}`: sent after "what can I say?". The UI opens the command palette (also Ctrl+K / Cmd+K),
+which lists recent requests and the `command_guide` examples. Choosing one only fills
+the command box; nothing runs until the person sends it.
 
 ### `nudge`
 `{"id": "u1", "match": "youtube", "minutes": 60, "text": "You have spent 1 h 5 min on youtube today."}`.

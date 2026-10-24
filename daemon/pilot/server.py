@@ -1709,6 +1709,7 @@ class PilotServer:
             "reminder_list": self._handle_reminder_list,
             "focus_start": self._handle_focus_start,
             "workspace_list": self._handle_workspace_list,
+            "command_guide": self._handle_command_guide,
             "notes_list": self._handle_notes_list,
             "note_add": self._handle_note_add,
             "note_delete": self._handle_note_delete,
@@ -5950,8 +5951,9 @@ class PilotServer:
 
     def _phrase_reserved(self, phrase: str) -> bool:
         """True for phrases that already mean something to Heliox and so cannot be shortcuts."""
-        from pilot.workflows import workspaces
+        from pilot.workflows import notes, nudges, workspaces
         from pilot.workflows.activity_timeline import LAST_SEEN_QUESTION, TIMELINE_QUESTION
+        from pilot.workflows.command_guide import HELP_REQUEST
         from pilot.workflows.focus import START_REQUEST, STOP_REQUEST
         from pilot.workflows.reminders import CANCEL_REQUEST, LIST_REQUEST, SET_REQUEST, TIMER_REQUEST
         from pilot.workflows.routines import REPEAT_REQUEST, ROUTINE_REQUEST
@@ -5977,6 +5979,19 @@ class PilotServer:
             workspaces.OPEN_REQUEST,
             workspaces.LIST_REQUEST,
             workspaces.DELETE_REQUEST,
+            notes.TAKE_REQUEST,
+            notes.READ_REQUEST,
+            notes.SEARCH_REQUEST,
+            notes.DELETE_LAST_REQUEST,
+            nudges.ADD_REQUEST,
+            nudges.LIST_REQUEST,
+            nudges.DELETE_REQUEST,
+            VOICE_TIMELINE_SETTING,
+            VOICE_BRIEF_SETTING,
+            VOICE_BRIEF_TIME_SETTING,
+            VOICE_BRIEF_ALOUD_SETTING,
+            VOICE_BRIEF_QUIET_SETTING,
+            HELP_REQUEST,
         )
         return (
             phrase.startswith("when i say")
@@ -6055,6 +6070,7 @@ class PilotServer:
         from pilot.workflows.routines import REPEAT_REQUEST, normalize_phrase
 
         handlers = (
+            self._help_request,
             self._local_answer,
             self._focus_request,
             self._settings_request,
@@ -6254,6 +6270,21 @@ class PilotServer:
         if not await asyncio.to_thread(self._nudges.delete, nudge_id):
             return {"status": "error", "message": "No such nudge."}
         return {"status": "ok", "nudges": await asyncio.to_thread(self._nudges.list)}
+
+    async def _help_request(self, text: str) -> str | None:
+        """ "What can I say?": open the command palette and say what Heliox handles right away."""
+        from pilot.workflows.command_guide import HELP_REQUEST, SPOKEN_HELP
+
+        if not HELP_REQUEST.match(_normalize_spoken_phrase(text)):
+            return None
+        await self._broadcast_notification("open_command_palette", {})
+        return SPOKEN_HELP
+
+    async def _handle_command_guide(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """Everything Heliox answers or does right away, with examples that work as written."""
+        from pilot.workflows.command_guide import guide
+
+        return {"status": "ok", "groups": guide()}
 
     async def _focus_request(self, text: str) -> str | None:
         """ "Focus for 45 minutes" / "stop focusing"."""
