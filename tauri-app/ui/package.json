@@ -40,7 +40,7 @@
     "@noble/ciphers": "2.3.0",
     "@noble/curves": "2.3.0",
     "@noble/hashes": "2.3.0",
-    "@tauri-apps/api": "^2.11.0",
+    "@tauri-apps/api": "^2.12.4",
     "@tauri-apps/plugin-clipboard-manager": "^2.0.0",
     "@tauri-apps/plugin-notification": "^2.0.0",
     "chart.js": "^4.5.1",
