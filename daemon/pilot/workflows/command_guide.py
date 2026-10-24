@@ -52,7 +52,13 @@ GUIDE: list[dict[str, Any]] = [
     {
         "group": "Focus",
         "about": "Holds reminders and the brief; approvals still come through.",
-        "examples": ["focus for 45 minutes", "stop focusing"],
+        "examples": [
+            "focus for 45 minutes",
+            "start a pomodoro",
+            "focus every weekday from 9 to 12",
+            "what is my focus schedule",
+            "stop focusing",
+        ],
     },
     {
         "group": "Setups",
@@ -72,6 +78,11 @@ GUIDE: list[dict[str, Any]] = [
         "group": "Usage nudges",
         "about": "A once-a-day heads-up from the activity timeline; nothing is blocked.",
         "examples": ["tell me if I spend more than an hour on YouTube today", "what nudges do I have"],
+    },
+    {
+        "group": "Voice",
+        "about": "Hear the last answer again, or see everything you can say.",
+        "examples": ["say that again", "what can I say"],
     },
     {
         "group": "Settings",

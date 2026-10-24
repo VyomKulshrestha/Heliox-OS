@@ -394,6 +394,19 @@ VOICE_BRIEF_ALOUD_SETTING = re.compile(r"^(?:please )?(?:read|say) (?:the |my )?
 VOICE_BRIEF_QUIET_SETTING = re.compile(
     r"^(?:please )?(?:don t|do not|stop) (?:reading|read|saying|say) (?:the |my )?(?:daily )?brief (?:out loud|aloud)$"
 )
+SAY_AGAIN_REQUEST = re.compile(
+    r"^(?:please )?(?:say that again|say it again|what did you say|what was that|come again|pardon|sorry what)$"
+)
+# Channels whose words the person may want repeated with "say that again".
+REPEATABLE_SPEECH = frozenset(
+    {
+        SpeechChannel.FINAL_ANSWER.value,
+        SpeechChannel.TASK_NARRATION.value,
+        SpeechChannel.APPROVAL_RISK.value,
+        SpeechChannel.TASK_FAILURE.value,
+        SpeechChannel.PROACTIVE_SUGGESTION.value,
+    }
+)
 UNDO_COUNT_WORDS = {"two": 2, "three": 3, "four": 4, "five": 5}
 MAX_UNDO_REQUEST = 5
 VOICE_APPROVAL_ATTEMPTS = frozenset(
@@ -932,6 +945,8 @@ class PilotServer:
         self._shortcuts: Any = None
         self._reminders: Any = None
         self._focus: Any = None
+        self._quiet_hours: Any = None
+        self._last_spoken = ""
         self._workspaces: Any = None
         self._notes: Any = None
         self._nudges: Any = None
@@ -1192,6 +1207,12 @@ class PilotServer:
 
         self._focus = FocusSession(DATA_DIR / "focus.json", on_end=self._on_focus_end)
         self._focus.resume_timer()
+        from pilot.workflows.focus import QuietHours
+
+        self._quiet_hours = QuietHours(
+            DATA_DIR / "quiet_hours.json", focus=self._focus, on_start=self._on_quiet_hours_start
+        )
+        self._quiet_hours.start()
         from pilot.workflows.reminders import ReminderStore
 
         self._reminders = ReminderStore(DATA_DIR / "reminders.json", deliver=self._deliver_reminder)
@@ -1708,6 +1729,9 @@ class PilotServer:
             "routine_suggest": self._handle_routine_suggest,
             "reminder_list": self._handle_reminder_list,
             "focus_start": self._handle_focus_start,
+            "focus_schedule_list": self._handle_focus_schedule_list,
+            "focus_schedule_add": self._handle_focus_schedule_add,
+            "focus_schedule_delete": self._handle_focus_schedule_delete,
             "workspace_list": self._handle_workspace_list,
             "command_guide": self._handle_command_guide,
             "notes_list": self._handle_notes_list,
@@ -5954,7 +5978,14 @@ class PilotServer:
         from pilot.workflows import notes, nudges, workspaces
         from pilot.workflows.activity_timeline import LAST_SEEN_QUESTION, TIMELINE_QUESTION
         from pilot.workflows.command_guide import HELP_REQUEST
-        from pilot.workflows.focus import START_REQUEST, STOP_REQUEST
+        from pilot.workflows.focus import (
+            POMODORO_REQUEST,
+            SCHEDULE_CLEAR_REQUEST,
+            SCHEDULE_LIST_REQUEST,
+            SCHEDULE_REQUEST,
+            START_REQUEST,
+            STOP_REQUEST,
+        )
         from pilot.workflows.reminders import CANCEL_REQUEST, LIST_REQUEST, SET_REQUEST, TIMER_REQUEST
         from pilot.workflows.routines import REPEAT_REQUEST, ROUTINE_REQUEST
         from pilot.workflows.task_receipts import ASKED_QUESTION, RECAP_QUESTION
@@ -5992,6 +6023,11 @@ class PilotServer:
             VOICE_BRIEF_ALOUD_SETTING,
             VOICE_BRIEF_QUIET_SETTING,
             HELP_REQUEST,
+            SAY_AGAIN_REQUEST,
+            POMODORO_REQUEST,
+            SCHEDULE_REQUEST,
+            SCHEDULE_LIST_REQUEST,
+            SCHEDULE_CLEAR_REQUEST,
         )
         return (
             phrase.startswith("when i say")
@@ -6071,6 +6107,7 @@ class PilotServer:
 
         handlers = (
             self._help_request,
+            self._say_again_request,
             self._local_answer,
             self._focus_request,
             self._settings_request,
@@ -6102,6 +6139,17 @@ class PilotServer:
                 self._activity_timeline.summarize, summary["started_at"], summary["ended_at"]
             )
         summary["text"] = compose_focus_summary(summary, usage)
+        if summary.get("break_minutes") and summary["reason"] == "time" and self._reminders is not None:
+            minutes = int(summary["break_minutes"])
+            try:
+                await asyncio.to_thread(
+                    self._reminders.add,
+                    time.time() + minutes * 60,
+                    'Break is over. Say "start a pomodoro" for another round.',
+                )
+                summary["text"] += f" Take a {minutes}-minute break; I'll tell you when it's over."
+            except ValueError:
+                logger.warning("Could not set the pomodoro break reminder", exc_info=True)
         await self._broadcast_notification(
             "focus_ended", {"text": summary["text"], "duration": summary["duration"], "held": len(summary["held"])}
         )
@@ -6271,6 +6319,43 @@ class PilotServer:
             return {"status": "error", "message": "No such nudge."}
         return {"status": "ok", "nudges": await asyncio.to_thread(self._nudges.list)}
 
+    async def _say_again_request(self, text: str) -> str | None:
+        """ "Say that again": repeat the last thing Heliox said out loud."""
+        if not SAY_AGAIN_REQUEST.match(_normalize_spoken_phrase(text)):
+            return None
+        return self._last_spoken or "I haven't said anything yet."
+
+    async def _on_quiet_hours_start(self, status: dict[str, Any]) -> None:
+        await self._broadcast_notification("focus_status", status)
+
+    async def _handle_focus_schedule_list(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        if self._quiet_hours is None:
+            return {"status": "error", "message": "Quiet hours are not ready yet.", "windows": []}
+        return {"status": "ok", "windows": await asyncio.to_thread(self._quiet_hours.list)}
+
+    async def _handle_focus_schedule_add(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """Add a quiet-hours window: ``days`` (0 = Monday), ``start`` and ``end`` in minutes after midnight."""
+        if self._quiet_hours is None:
+            return {"status": "error", "message": "Quiet hours are not ready yet."}
+        days, start, end = params.get("days"), params.get("start"), params.get("end")
+        if not isinstance(days, list) or not all(isinstance(d, int) and not isinstance(d, bool) for d in days):
+            return {"status": "error", "message": "days must be a list of numbers"}
+        if not all(isinstance(v, int) and not isinstance(v, bool) for v in (start, end)):
+            return {"status": "error", "message": "start and end must be minutes after midnight"}
+        try:
+            await asyncio.to_thread(self._quiet_hours.add, {"days": days, "start": start, "end": end})
+        except ValueError as exc:
+            return {"status": "error", "message": str(exc)}
+        return {"status": "ok", "windows": await asyncio.to_thread(self._quiet_hours.list)}
+
+    async def _handle_focus_schedule_delete(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        window_id = params.get("id")
+        if not isinstance(window_id, str) or not window_id or self._quiet_hours is None:
+            return {"status": "error", "message": "id is required"}
+        if not await asyncio.to_thread(self._quiet_hours.delete, window_id):
+            return {"status": "error", "message": "No such window."}
+        return {"status": "ok", "windows": await asyncio.to_thread(self._quiet_hours.list)}
+
     async def _help_request(self, text: str) -> str | None:
         """ "What can I say?": open the command palette and say what Heliox handles right away."""
         from pilot.workflows.command_guide import HELP_REQUEST, SPOKEN_HELP
@@ -6290,10 +6375,49 @@ class PilotServer:
         """ "Focus for 45 minutes" / "stop focusing"."""
         from datetime import datetime
 
-        from pilot.workflows.focus import STOP_REQUEST, parse_focus_minutes
+        from pilot.workflows.focus import (
+            POMODORO_BREAK_MINUTES,
+            POMODORO_MINUTES,
+            POMODORO_REQUEST,
+            SCHEDULE_CLEAR_REQUEST,
+            SCHEDULE_LIST_REQUEST,
+            STOP_REQUEST,
+            describe_quiet_hours,
+            parse_focus_minutes,
+            parse_quiet_hours,
+        )
 
         if self._focus is None:
             return None
+        normalized = " ".join(re.sub(r"[^\w\s]", " ", text.casefold()).split())
+        pomodoro = POMODORO_REQUEST.match(normalized)
+        if pomodoro:
+            length = int(pomodoro.group("minutes") or POMODORO_MINUTES)
+            try:
+                status = self._focus.start(length, break_minutes=POMODORO_BREAK_MINUTES)
+            except ValueError as exc:
+                return str(exc)
+            await self._broadcast_notification("focus_status", status)
+            return (
+                f"Pomodoro started: {length} minutes of focus, then a {POMODORO_BREAK_MINUTES}-minute break. "
+                "I'll hold reminders until then."
+            )
+        if self._quiet_hours is not None:
+            window = parse_quiet_hours(text)
+            if window is not None:
+                try:
+                    await asyncio.to_thread(self._quiet_hours.add, window)
+                except ValueError as exc:
+                    return str(exc)
+                return f"Quiet hours set: {describe_quiet_hours(window)}. I'll start focusing then."
+            if SCHEDULE_LIST_REQUEST.match(normalized):
+                windows = await asyncio.to_thread(self._quiet_hours.list)
+                if not windows:
+                    return "You have no quiet hours."
+                return "Your quiet hours: " + "; ".join(describe_quiet_hours(w) for w in windows) + "."
+            if SCHEDULE_CLEAR_REQUEST.match(normalized):
+                removed = await asyncio.to_thread(self._quiet_hours.delete, None)
+                return f"Cleared {removed} quiet-hour window{'' if removed == 1 else 's'}."
         minutes = parse_focus_minutes(text)
         if minutes == 0:
             return "A focus session can last up to 8 hours."
@@ -6305,18 +6429,22 @@ class PilotServer:
                 f"Focusing until {until}. I'll hold reminders and the daily brief and keep quiet; "
                 "approvals and anything you ask still come through."
             )
-        if STOP_REQUEST.match(" ".join(re.sub(r"[^\w\s]", " ", text.casefold()).split())):
+        if STOP_REQUEST.match(normalized):
+            if self._quiet_hours is not None:
+                self._quiet_hours.note_stopped()
             summary = await self._focus.stop(reason="asked")
             await self._broadcast_notification("focus_status", self._focus.status())
             return summary["text"] if summary else "No focus session is running."
         return None
 
     async def _handle_focus_start(self, params: dict[str, Any], ws: ServerConnection) -> dict:
-        minutes = params.get("minutes")
+        minutes, break_minutes = params.get("minutes"), params.get("break_minutes", 0)
         if not isinstance(minutes, int) or isinstance(minutes, bool) or self._focus is None:
             return {"status": "error", "message": "minutes must be a whole number"}
+        if not isinstance(break_minutes, int) or isinstance(break_minutes, bool) or not 0 <= break_minutes <= 60:
+            return {"status": "error", "message": "break_minutes must be from 0 to 60"}
         try:
-            status = self._focus.start(minutes)
+            status = self._focus.start(minutes, break_minutes=break_minutes)
         except ValueError as exc:
             return {"status": "error", "message": str(exc)}
         await self._broadcast_notification("focus_status", status)
@@ -6325,6 +6453,8 @@ class PilotServer:
     async def _handle_focus_stop(self, params: dict[str, Any], ws: ServerConnection) -> dict:
         if self._focus is None:
             return {"status": "error", "message": "Focus is not ready yet."}
+        if self._quiet_hours is not None:
+            self._quiet_hours.note_stopped()
         summary = await self._focus.stop(reason="asked")
         await self._broadcast_notification("focus_status", self._focus.status())
         return {"status": "ok", "summary": summary["text"] if summary else None}
@@ -10739,6 +10869,8 @@ def handle_tool(tool_name, params):
             await self._reminders.stop()
         if self._focus is not None:
             await self._focus.close()
+        if self._quiet_hours is not None:
+            await self._quiet_hours.stop()
         if self._nudges is not None:
             await self._nudges.stop()
         if self._gnomon_reviewer is not None:
@@ -11436,6 +11568,8 @@ def handle_tool(tool_name, params):
             and str(channel) in {SpeechChannel.PROACTIVE_SUGGESTION.value, SpeechChannel.BACKGROUND_INSIGHT.value}
         ):
             return SpeechOutcome("suppressed", SpeechChannel(str(channel)), "Held during a focus session")
+        if str(channel) in REPEATABLE_SPEECH and text.strip():
+            self._last_spoken = text.strip()
         # The continuous listener is the sole microphone consumer. It keeps
         # capturing wake-word commands while work and speech continue, then
         # _voice_command_dispatch stops current playback before applying the

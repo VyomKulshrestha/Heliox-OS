@@ -160,4 +160,30 @@ describe("TodayPanel", () => {
     await waitFor(() => expect(screen.getByText("after 60 min a day")).toBeTruthy());
     expect(daemonMocks.call).toHaveBeenCalledWith("nudge_add", { match: "YouTube", minutes: 60 });
   });
+
+  it("starts a pomodoro and manages quiet hours", async () => {
+    let windows: { id: string; days: number[]; start: number; end: number }[] = [];
+    daemonMocks.call.mockImplementation(async (method: string, params: Record<string, unknown>) => {
+      if (method === "today_overview") return overview;
+      if (method === "focus_schedule_add")
+        windows = [{ id: "w1", days: params.days as number[], start: Number(params.start), end: Number(params.end) }];
+      if (method === "focus_schedule_delete") windows = [];
+      return { status: "ok", windows };
+    });
+    render(TodayPanel);
+    await waitFor(() => expect(screen.getByText(overview.brief)).toBeTruthy());
+
+    await fireEvent.click(screen.getByRole("button", { name: "Start pomodoro" }));
+    expect(daemonMocks.call).toHaveBeenCalledWith("focus_start", { minutes: 25, break_minutes: 5 });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Add quiet hours" }));
+    await waitFor(() => expect(screen.getByText("09:00 to 12:00")).toBeTruthy());
+    expect(daemonMocks.call).toHaveBeenCalledWith("focus_schedule_add", {
+      days: [0, 1, 2, 3, 4],
+      start: 540,
+      end: 720,
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Remove quiet hours 09:00" }));
+    await waitFor(() => expect(screen.queryByText("09:00 to 12:00")).toBeNull());
+  });
 });

@@ -27,6 +27,16 @@
 
   let day = $state<"today" | "yesterday" | "week">("today");
   let focusMinutes = $state(25);
+  type QuietWindow = { id: string; days: number[]; start: number; end: number };
+  let quietWindows = $state<QuietWindow[]>([]);
+  let quietDays = $state("weekdays");
+  let quietFrom = $state("09:00");
+  let quietTo = $state("12:00");
+  const DAY_SETS: Record<string, number[]> = {
+    everyday: [0, 1, 2, 3, 4, 5, 6],
+    weekdays: [0, 1, 2, 3, 4],
+    weekends: [5, 6],
+  };
   let overview = $state<Overview | null>(null);
   let error = $state("");
   let notice = $state("");
@@ -83,6 +93,49 @@
     } catch (err) {
       notice = err instanceof Error ? err.message : "Focus did not start.";
     }
+  }
+
+  async function startPomodoro() {
+    try {
+      const result = await call<{ status: string; message?: string }>("focus_start", {
+        minutes: 25,
+        break_minutes: 5,
+      });
+      notice = result.status === "ok" ? "Pomodoro started: 25 minutes, then a 5-minute break." : result.message || "";
+    } catch (err) {
+      notice = err instanceof Error ? err.message : "The pomodoro did not start.";
+    }
+  }
+
+  function minutesOf(clock: string): number {
+    const [hours, minutes] = clock.split(":").map(Number);
+    return hours * 60 + minutes;
+  }
+
+  function clockOf(minutes: number): string {
+    return `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+  }
+
+  function daysLabel(days: number[]): string {
+    const key = days.join(",");
+    if (key === "0,1,2,3,4,5,6") return "Every day";
+    if (key === "0,1,2,3,4") return "Weekdays";
+    if (key === "5,6") return "Weekends";
+    return days.map((day) => ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][day]).join(", ");
+  }
+
+  async function addQuietHours(event: SubmitEvent) {
+    event.preventDefault();
+    const next = await listCall<QuietWindow>("focus_schedule_add", "windows", {
+      days: DAY_SETS[quietDays],
+      start: minutesOf(quietFrom),
+      end: minutesOf(quietTo),
+    });
+    if (next) quietWindows = next;
+  }
+
+  async function removeQuietHours(id: string) {
+    quietWindows = (await listCall<QuietWindow>("focus_schedule_delete", "windows", { id })) ?? quietWindows;
   }
 
   async function exportReport() {
@@ -227,6 +280,7 @@
     void loadWorkspaces();
     void listCall<Note>("notes_list", "notes").then((items) => (notes = items ?? []));
     void listCall<Nudge>("nudge_list", "nudges").then((items) => (nudges = items ?? []));
+    void listCall<QuietWindow>("focus_schedule_list", "windows").then((items) => (quietWindows = items ?? []));
   });
 </script>
 
@@ -461,7 +515,37 @@
           /> min</label
         >
         <button type="button" onclick={startFocus}>Start focus</button>
+        <button type="button" onclick={startPomodoro}>Start pomodoro</button>
       </div>
+      {#if quietWindows.length}
+        <ul class="rows">
+          {#each quietWindows as window (window.id)}
+            <li>
+              <span class="row-text"
+                ><strong>{daysLabel(window.days)}</strong>
+                <small>{clockOf(window.start)} to {clockOf(window.end)}</small></span
+              >
+              <button
+                type="button"
+                aria-label={`Remove quiet hours ${clockOf(window.start)}`}
+                onclick={() => removeQuietHours(window.id)}>Remove</button
+              >
+            </li>
+          {/each}
+        </ul>
+      {/if}
+      <form class="brief-controls" onsubmit={addQuietHours}>
+        <label
+          >Quiet hours <select bind:value={quietDays} aria-label="Quiet days">
+            <option value="weekdays">Weekdays</option>
+            <option value="everyday">Every day</option>
+            <option value="weekends">Weekends</option>
+          </select></label
+        >
+        <input type="time" bind:value={quietFrom} aria-label="Quiet from" />
+        <input type="time" bind:value={quietTo} aria-label="Quiet until" />
+        <button type="submit">Add quiet hours</button>
+      </form>
     </section>
 
     <section aria-labelledby="today-reminders">

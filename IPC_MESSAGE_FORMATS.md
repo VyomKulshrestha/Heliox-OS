@@ -12,7 +12,7 @@ The Heliox OS UI and daemon communicate over a local WebSocket using the [JSON-R
 | Request timeout | 5 minutes |
 | Reconnect interval | 3 seconds (auto-reconnect on close) |
 
-The daemon currently registers **267 WebSocket RPC methods**. That is the API
+The daemon currently registers **270 WebSocket RPC methods**. That is the API
 surface count, not the action catalog: Heliox exposes **162 action
 types** through the guarded planner/executor system. This document names every
 registered RPC method; grouped tables are used where several methods share one
@@ -501,6 +501,16 @@ daily brief are held and proactive/background speech is suppressed; approvals, t
 results and answers are not affected. `focus_stop` ends the session early and returns
 its `summary`. "Focus for 45 minutes", "do not disturb for an hour" and "stop focusing"
 work by voice and in chat. Every change broadcasts `focus_status`.
+
+`focus_start` also takes `break_minutes` (0 to 60): when the session runs to its end,
+a reminder fires after the break ("start a pomodoro" uses 25 + 5 minutes).
+
+#### `focus_schedule_list` / `focus_schedule_add` / `focus_schedule_delete`
+Quiet hours: `{"id", "days": [0, 1, 2, 3, 4], "start": 540, "end": 720}` (0 = Monday;
+minutes after midnight). Inside a window Heliox starts a focus session that ends with
+the window; stopping it early keeps that window off until it ends. "Focus every weekday
+from 9 to 12", "what is my focus schedule" and "clear my quiet hours" work by voice and
+in chat. "Say that again" repeats the last thing Heliox said aloud.
 
 #### `report_export`
 Write a Markdown report (brief, every task with its receipt id, app time, what can still

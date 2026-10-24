@@ -823,7 +823,8 @@ rest; nothing is undone from the spoken or typed request itself.
 and suppresses proactive and background speech until the session ends. It never holds
 approvals, task results, errors or answers to what you ask, so a focus session cannot
 hide a decision Heliox needs from you. The end time is kept in `DATA_DIR/focus.json` so
-a restart does not end the session early.
+a restart does not end the session early. Pomodoros and quiet hours ("focus every
+weekday from 9 to 12") are focus sessions with the same rules.
 
 ## ⏰ Reminders, change diffs and "where did you put it?"
 
