@@ -305,3 +305,18 @@ describe("focus in chat", () => {
     expect(get(session).messages.at(-1)?.text).toBe("Reminder (held while you focused): stretch");
   });
 });
+
+describe("nudges in chat", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    notificationHandler = null;
+    vi.resetModules();
+  });
+
+  it("shows a nudge", async () => {
+    const { session } = await import("./session");
+
+    notificationHandler!("nudge", { id: "u1", text: "You have spent 1 h on YouTube today." });
+    expect(get(session).messages.at(-1)?.text).toBe("Nudge: You have spent 1 h on YouTube today.");
+  });
+});

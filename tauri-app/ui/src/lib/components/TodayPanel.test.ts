@@ -134,4 +134,30 @@ describe("TodayPanel", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Search" }));
     await waitFor(() => expect(daemonMocks.call).toHaveBeenCalledWith("receipts_search", { query: "tidy" }));
   });
+
+  it("adds and deletes notes and nudges", async () => {
+    let notes: { id: string; text: string; created_at: number }[] = [];
+    let nudges: { id: string; match: string; minutes: number }[] = [];
+    daemonMocks.call.mockImplementation(async (method: string, params: Record<string, unknown>) => {
+      if (method === "today_overview") return overview;
+      if (method === "note_add") notes = [{ id: "n1", text: String(params.text), created_at: 1 }];
+      if (method === "note_delete") notes = [];
+      if (method === "nudge_add") nudges = [{ id: "u1", match: String(params.match), minutes: Number(params.minutes) }];
+      if (method === "nudge_delete") nudges = [];
+      return { status: "ok", notes, nudges };
+    });
+    render(TodayPanel);
+    await waitFor(() => expect(screen.getByText(overview.brief)).toBeTruthy());
+
+    await fireEvent.input(screen.getByLabelText("Note"), { target: { value: "buy milk" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Add note" }));
+    await waitFor(() => expect(screen.getByText("buy milk")).toBeTruthy());
+    await fireEvent.click(screen.getByRole("button", { name: "Delete note buy milk" }));
+    await waitFor(() => expect(screen.queryByText("buy milk")).toBeNull());
+
+    await fireEvent.input(screen.getByLabelText("App or site"), { target: { value: "YouTube" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Add nudge" }));
+    await waitFor(() => expect(screen.getByText("after 60 min a day")).toBeTruthy());
+    expect(daemonMocks.call).toHaveBeenCalledWith("nudge_add", { match: "YouTube", minutes: 60 });
+  });
 });

@@ -236,6 +236,17 @@ class ActivityTimeline:
             (start, 1e18 if end is None else end, pattern, pattern, max(1, min(int(limit), 500))),
         )
 
+    def time_matching(self, needle: str, start: float, end: float) -> float:
+        """Seconds between ``start`` and ``end`` whose app or window title contains ``needle``."""
+        needle = needle.casefold().strip()
+        if not needle:
+            return 0.0
+        total = 0.0
+        for span in self.spans(start, end, limit=5000):
+            if needle in span["app"].casefold() or needle in span["title"].casefold():
+                total += max(0.0, min(span["end"], end) - max(span["start"], start))
+        return total
+
     def summarize(self, start: float, end: float) -> dict[str, Any]:
         apps: dict[str, dict[str, Any]] = {}
         total = 0.0

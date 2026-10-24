@@ -12,7 +12,7 @@ The Heliox OS UI and daemon communicate over a local WebSocket using the [JSON-R
 | Request timeout | 5 minutes |
 | Reconnect interval | 3 seconds (auto-reconnect on close) |
 
-The daemon currently registers **260 WebSocket RPC methods**. That is the API
+The daemon currently registers **266 WebSocket RPC methods**. That is the API
 surface count, not the action catalog: Heliox exposes **162 action
 types** through the guarded planner/executor system. This document names every
 registered RPC method; grouped tables are used where several methods share one
@@ -453,6 +453,25 @@ One day at a glance, composed in code from local records.
 **Params:** `{ "day": "today" }` (`today` or `yesterday`)
 **Result:** `{"status": "ok", "day": "2026-10-23", "label": "today", "tasks": [<receipt short form>], "timeline_enabled": true, "usage": {"total_seconds": 9120, "apps": [...]}, "undoable": [<undo_list row>], "brief": "Today Heliox ran 3 tasks; ..."}`.
 `usage` is null while the activity timeline is off.
+
+#### `notes_list` / `note_add` / `note_delete`
+Quick notes (`{"id", "text", "created_at"}`, newest first; text 1 to 500 characters).
+"Note that the plumber comes Tuesday", "read my notes", "what did I note about the
+bank" and "delete my last note" work by voice and in chat without the planner.
+
+#### `nudge_list` / `nudge_add` / `nudge_delete`
+Usage nudges (`{"id", "match", "minutes", "last_fired_day"}`): once a day, when today's
+time in apps or window titles containing `match` passes `minutes` (1 to 1440), Heliox
+sends a `nudge` notification and says it. They need the activity timeline on and never
+block anything. "Tell me if I spend more than an hour on YouTube today", "warn me after
+30 minutes of Twitter", "what nudges do I have" and "stop the nudge for twitter" work by
+voice and in chat.
+
+Everyday settings can also change by voice: "turn on/off the activity timeline", "start
+/ stop recording my activity", "turn on/off the daily brief", "send me a daily brief at
+7 pm", "read the brief aloud" / "don't read the brief aloud". They go through
+`update_config` validation and broadcast `config_updated`. Security, gateway, approval
+and model settings never change by voice.
 
 #### `workspace_list` / `workspace_save` / `workspace_delete`
 Named sets of apps. `workspace_save` records the apps that have windows open now
@@ -3079,6 +3098,10 @@ press, and Cancel stops the rest.
 ```json
 { "task_key": "4f0c2a9e", "task_keys": ["4f0c2a9e", "91b7d2c0"] }
 ```
+
+### `nudge`
+`{"id": "u1", "match": "youtube", "minutes": 60, "text": "You have spent 1 h 5 min on youtube today."}`.
+Held during a focus session (then sent with `"held": true`).
 
 ### `focus_ended`
 Broadcast when a focus session ends (on time or when stopped):

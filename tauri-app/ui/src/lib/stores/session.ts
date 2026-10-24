@@ -918,6 +918,15 @@ function createSession() {
         break;
       }
 
+      case "nudge": {
+        const text = String(p.text ?? "").trim();
+        if (text) {
+          addSystemMessage(p.held ? `Nudge (held while you focused): ${text}` : `Nudge: ${text}`);
+          void notifyDesktop("Heliox nudge", text);
+        }
+        break;
+      }
+
       case "focus_ended": {
         const text = String(p.text ?? "").trim();
         if (text) {

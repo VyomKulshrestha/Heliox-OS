@@ -798,6 +798,17 @@ Saying or typing "undo the last two tasks" (up to five) opens each task's undo p
 in turn, newest first. Each task still needs its own Undo press, and Cancel stops the
 rest; nothing is undone from the spoken or typed request itself.
 
+## 📝 Notes, usage nudges and settings by voice
+
+- Notes stay in `DATA_DIR/notes.json`; taking, reading and searching them is handled in
+  code.
+- Usage nudges read today's totals from the activity timeline (so they need it on),
+  speak up at most once a day per nudge, and never block, close or change anything.
+- Only everyday settings change by voice: the activity timeline and the daily brief (on,
+  off, time, read aloud). Each change goes through the same validation as the Settings
+  panel. Security, gateway, approval, model and integration settings cannot be changed
+  by voice.
+
 ## 🗂️ Workspaces and task history
 
 - A saved workspace is a list of app names, taken from the apps with open windows when

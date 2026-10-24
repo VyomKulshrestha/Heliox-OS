@@ -34,6 +34,13 @@
 
   type Reminder = { id: string; due: number; text: string };
   type Workspace = { name: string; apps: string[] };
+  type Note = { id: string; text: string; created_at: number };
+  type Nudge = { id: string; match: string; minutes: number };
+  let notes = $state<Note[]>([]);
+  let noteText = $state("");
+  let nudges = $state<Nudge[]>([]);
+  let nudgeMatch = $state("");
+  let nudgeMinutes = $state(60);
   let workspaces = $state<Workspace[]>([]);
   let workspaceName = $state("");
   let historyQuery = $state("");
@@ -174,10 +181,52 @@
     history = result.receipts ?? [];
   }
 
+  async function listCall<T>(method: string, key: string, params: Record<string, unknown> = {}): Promise<T[] | null> {
+    try {
+      const result = await call<Record<string, unknown>>(method, params);
+      if (result.status !== "ok") {
+        error = String(result.message || "The request failed.");
+        return null;
+      }
+      return (result[key] as T[] | undefined) ?? [];
+    } catch (err) {
+      error = err instanceof Error ? err.message : "The request failed.";
+      return null;
+    }
+  }
+
+  async function addNote(event: SubmitEvent) {
+    event.preventDefault();
+    const next = await listCall<Note>("note_add", "notes", { text: noteText });
+    if (next) {
+      notes = next;
+      noteText = "";
+    }
+  }
+
+  async function deleteNote(id: string) {
+    notes = (await listCall<Note>("note_delete", "notes", { id })) ?? notes;
+  }
+
+  async function addNudge(event: SubmitEvent) {
+    event.preventDefault();
+    const next = await listCall<Nudge>("nudge_add", "nudges", { match: nudgeMatch, minutes: Number(nudgeMinutes) });
+    if (next) {
+      nudges = next;
+      nudgeMatch = "";
+    }
+  }
+
+  async function deleteNudge(id: string) {
+    nudges = (await listCall<Nudge>("nudge_delete", "nudges", { id })) ?? nudges;
+  }
+
   onMount(() => {
     void load();
     void loadReminders();
     void loadWorkspaces();
+    void listCall<Note>("notes_list", "notes").then((items) => (notes = items ?? []));
+    void listCall<Nudge>("nudge_list", "nudges").then((items) => (nudges = items ?? []));
   });
 </script>
 
@@ -259,6 +308,70 @@
         {/if}
       </section>
     {/if}
+
+    <section aria-labelledby="today-notes">
+      <h3 id="today-notes">Notes</h3>
+      {#if notes.length === 0}
+        <p class="empty">No notes. Say "note that the plumber comes Tuesday", or add one here.</p>
+      {:else}
+        <ul class="rows">
+          {#each notes.slice(0, 8) as note (note.id)}
+            <li>
+              <span class="row-text"><strong>{note.text}</strong></span>
+              <button type="button" aria-label={`Delete note ${note.text}`} onclick={() => deleteNote(note.id)}
+                >Delete</button
+              >
+            </li>
+          {/each}
+        </ul>
+      {/if}
+      <form class="brief-controls" onsubmit={addNote}>
+        <input class="reminder-text" bind:value={noteText} maxlength="500" aria-label="Note" required />
+        <button type="submit">Add note</button>
+      </form>
+    </section>
+
+    <section aria-labelledby="today-nudges">
+      <h3 id="today-nudges">Usage nudges</h3>
+      <p class="empty">
+        Heliox tells you once a day when an app or site passes your limit. Uses the activity timeline; nothing is
+        blocked.
+      </p>
+      {#if nudges.length}
+        <ul class="rows">
+          {#each nudges as nudge (nudge.id)}
+            <li>
+              <span class="row-text"><strong>{nudge.match}</strong> <small>after {nudge.minutes} min a day</small></span
+              >
+              <button type="button" aria-label={`Remove nudge ${nudge.match}`} onclick={() => deleteNudge(nudge.id)}
+                >Remove</button
+              >
+            </li>
+          {/each}
+        </ul>
+      {/if}
+      <form class="brief-controls" onsubmit={addNudge}>
+        <label
+          >Tell me after <input
+            class="minutes"
+            type="number"
+            min="1"
+            max="1440"
+            bind:value={nudgeMinutes}
+            aria-label="Nudge minutes"
+          /> min on</label
+        >
+        <input
+          class="reminder-text"
+          bind:value={nudgeMatch}
+          maxlength="60"
+          placeholder="YouTube"
+          aria-label="App or site"
+          required
+        />
+        <button type="submit">Add nudge</button>
+      </form>
+    </section>
 
     <section aria-labelledby="today-setups">
       <h3 id="today-setups">Setups</h3>

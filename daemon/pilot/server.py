@@ -381,6 +381,19 @@ UNDO_ONE_REQUEST = re.compile(
     r"|^(?:please )?take that back$"
 )
 UNDO_MANY_REQUEST = re.compile(r"^(?:please )?(?:undo|take back|revert) (?:the|my) last (?P<count>\w+) tasks$")
+# Everyday settings that may change by voice; security and approval settings never do.
+VOICE_TIMELINE_SETTING = re.compile(
+    r"^(?:please )?(?:turn (?P<state>on|off) (?:the |my )?activity timeline|(?P<verb>start|stop) recording my activity)$"
+)
+VOICE_BRIEF_SETTING = re.compile(r"^(?:please )?turn (?P<state>on|off) (?:the |my )?daily brief$")
+VOICE_BRIEF_TIME_SETTING = re.compile(
+    r"^(?:please )?send (?:me )?(?:a |the |my )?daily brief (?:every day )?at (?P<hour>\d{1,2})(?: (?P<minute>\d{2}))?"
+    r"(?: (?P<meridiem>am|pm))?$"
+)
+VOICE_BRIEF_ALOUD_SETTING = re.compile(r"^(?:please )?(?:read|say) (?:the |my )?(?:daily )?brief (?:out loud|aloud)$")
+VOICE_BRIEF_QUIET_SETTING = re.compile(
+    r"^(?:please )?(?:don t|do not|stop) (?:reading|read|saying|say) (?:the |my )?(?:daily )?brief (?:out loud|aloud)$"
+)
 UNDO_COUNT_WORDS = {"two": 2, "three": 3, "four": 4, "five": 5}
 MAX_UNDO_REQUEST = 5
 VOICE_APPROVAL_ATTEMPTS = frozenset(
@@ -920,6 +933,8 @@ class PilotServer:
         self._reminders: Any = None
         self._focus: Any = None
         self._workspaces: Any = None
+        self._notes: Any = None
+        self._nudges: Any = None
         self._queued_execute_requests: deque[tuple[str, str, dict[str, Any]]] = deque()
         self._queued_submission_lock = asyncio.Lock()
         self._queued_execute_worker: asyncio.Task[None] | None = None
@@ -1159,6 +1174,17 @@ class PilotServer:
         from pilot.workflows.routines import ShortcutStore
 
         self._shortcuts = ShortcutStore(DATA_DIR / "voice_shortcuts.json", reserved=self._phrase_reserved)
+        from pilot.workflows.notes import NoteStore
+        from pilot.workflows.nudges import NudgeStore
+
+        self._notes = NoteStore(DATA_DIR / "notes.json")
+        self._nudges = NudgeStore(
+            DATA_DIR / "nudges.json",
+            usage=self._activity_timeline.time_matching,
+            timeline_on=lambda: bool(self._activity_timeline is not None and self._activity_timeline.enabled),
+            deliver=self._deliver_nudge,
+        )
+        self._nudges.start()
         from pilot.workflows.workspaces import WorkspaceStore
 
         self._workspaces = WorkspaceStore(DATA_DIR / "workspaces.json")
@@ -1683,6 +1709,12 @@ class PilotServer:
             "reminder_list": self._handle_reminder_list,
             "focus_start": self._handle_focus_start,
             "workspace_list": self._handle_workspace_list,
+            "notes_list": self._handle_notes_list,
+            "note_add": self._handle_note_add,
+            "note_delete": self._handle_note_delete,
+            "nudge_list": self._handle_nudge_list,
+            "nudge_add": self._handle_nudge_add,
+            "nudge_delete": self._handle_nudge_delete,
             "workspace_save": self._handle_workspace_save,
             "workspace_delete": self._handle_workspace_delete,
             "receipts_search": self._handle_receipts_search,
@@ -6025,6 +6057,7 @@ class PilotServer:
         handlers = (
             self._local_answer,
             self._focus_request,
+            self._settings_request,
             self._workspace_request,
             self._undo_request,
             self._routine_request,
@@ -6063,6 +6096,8 @@ class PilotServer:
                 await self._broadcast_notification("reminder", {**item["payload"], "held": True})
             elif item["kind"] == "daily_brief":
                 await self._deliver_daily_brief(item["payload"])
+            elif item["kind"] == "nudge":
+                await self._broadcast_notification("nudge", {**item["payload"], "held": True})
 
     async def _workspace_request(self, text: str) -> str | None:
         """ "Save this as my coding setup", "what setups do I have", "delete my coding setup"."""
@@ -6126,6 +6161,99 @@ class PilotServer:
         if self._task_receipts is None:
             return {"status": "error", "message": "Receipts are not ready yet."}
         return {"status": "ok", "receipts": await asyncio.to_thread(self._task_receipts.search, query, 30)}
+
+    async def _deliver_nudge(self, nudge: dict[str, Any]) -> None:
+        if self._focus is not None and self._focus.hold("nudge", nudge):
+            return
+        await self._broadcast_notification("nudge", nudge)
+        await self._speak_companion_text(
+            nudge["text"], channel=SpeechChannel.PROACTIVE_SUGGESTION, dedupe_key=f"nudge:{nudge['id']}"
+        )
+
+    async def _settings_request(self, text: str) -> str | None:
+        """Change a few everyday settings by voice. Security and approval settings are never changed this way."""
+        normalized = _normalize_spoken_phrase(text)
+        change: tuple[str, dict[str, Any], str] | None = None
+        timeline = VOICE_TIMELINE_SETTING.match(normalized)
+        brief = VOICE_BRIEF_SETTING.match(normalized)
+        brief_time = VOICE_BRIEF_TIME_SETTING.match(normalized)
+        if timeline:
+            on = timeline.group("state") == "on" or timeline.group("verb") == "start"
+            change = ("timeline", {"enabled": on}, f"The activity timeline is {'on' if on else 'off'}.")
+        elif brief:
+            on = brief.group("state") == "on"
+            change = ("brief", {"enabled": on}, f"The daily brief is {'on' if on else 'off'}.")
+        elif brief_time:
+            hour, minute = int(brief_time.group("hour")), int(brief_time.group("minute") or 0)
+            meridiem = brief_time.group("meridiem")
+            if meridiem == "pm" and hour < 12:
+                hour += 12
+            elif meridiem == "am" and hour == 12:
+                hour = 0
+            if not (0 <= hour <= 23 and 0 <= minute <= 59):
+                return "That is not a time I understand."
+            clock = f"{hour:02d}:{minute:02d}"
+            change = ("brief", {"enabled": True, "time": clock}, f"I'll send your daily brief every day at {clock}.")
+        elif VOICE_BRIEF_ALOUD_SETTING.match(normalized):
+            change = ("brief", {"speak": True}, "I'll read the daily brief aloud.")
+        elif VOICE_BRIEF_QUIET_SETTING.match(normalized):
+            change = ("brief", {"speak": False}, "I'll send the daily brief without reading it aloud.")
+        if change is None:
+            return None
+        section, values, reply = change
+        result = await self._handle_update_config({"section": section, "values": values}, None)
+        if result.get("status") != "ok":
+            return f"That setting was not changed: {result.get('message', 'unknown error')}"
+        await self._broadcast_notification("config_updated", {"method": "voice", "section": section})
+        return reply
+
+    async def _handle_notes_list(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        if self._notes is None:
+            return {"status": "error", "message": "Notes are not ready yet.", "notes": []}
+        return {"status": "ok", "notes": list(reversed(await asyncio.to_thread(self._notes.list)))}
+
+    async def _handle_note_add(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        text = params.get("text")
+        if not isinstance(text, str) or self._notes is None:
+            return {"status": "error", "message": "text is required"}
+        try:
+            await asyncio.to_thread(self._notes.add, text)
+        except ValueError as exc:
+            return {"status": "error", "message": str(exc)}
+        return {"status": "ok", "notes": list(reversed(await asyncio.to_thread(self._notes.list)))}
+
+    async def _handle_note_delete(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        note_id = params.get("id")
+        if not isinstance(note_id, str) or self._notes is None:
+            return {"status": "error", "message": "id is required"}
+        if not await asyncio.to_thread(self._notes.delete, note_id):
+            return {"status": "error", "message": "No such note."}
+        return {"status": "ok", "notes": list(reversed(await asyncio.to_thread(self._notes.list)))}
+
+    async def _handle_nudge_list(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        if self._nudges is None:
+            return {"status": "error", "message": "Nudges are not ready yet.", "nudges": []}
+        return {"status": "ok", "nudges": await asyncio.to_thread(self._nudges.list)}
+
+    async def _handle_nudge_add(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        match, minutes = params.get("match"), params.get("minutes")
+        if not isinstance(match, str) or not isinstance(minutes, int) or isinstance(minutes, bool):
+            return {"status": "error", "message": "match (text) and minutes (whole number) are required"}
+        if self._nudges is None:
+            return {"status": "error", "message": "Nudges are not ready yet."}
+        try:
+            await asyncio.to_thread(self._nudges.add, match, minutes)
+        except ValueError as exc:
+            return {"status": "error", "message": str(exc)}
+        return {"status": "ok", "nudges": await asyncio.to_thread(self._nudges.list)}
+
+    async def _handle_nudge_delete(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        nudge_id = params.get("id")
+        if not isinstance(nudge_id, str) or self._nudges is None:
+            return {"status": "error", "message": "id is required"}
+        if not await asyncio.to_thread(self._nudges.delete, nudge_id):
+            return {"status": "error", "message": "No such nudge."}
+        return {"status": "ok", "nudges": await asyncio.to_thread(self._nudges.list)}
 
     async def _focus_request(self, text: str) -> str | None:
         """ "Focus for 45 minutes" / "stop focusing"."""
@@ -6297,7 +6425,15 @@ class PilotServer:
 
     async def _local_answer(self, text: str) -> str | None:
         """Answer questions about the person's own history (timeline, receipts) in code, without a model."""
-        for source in (self._activity_timeline, self._task_receipts, self._undo_journal, self._reminders):
+        sources = (
+            self._activity_timeline,
+            self._task_receipts,
+            self._undo_journal,
+            self._reminders,
+            self._notes,
+            self._nudges,
+        )
+        for source in sources:
             if source is None:
                 continue
             try:
@@ -10572,6 +10708,8 @@ def handle_tool(tool_name, params):
             await self._reminders.stop()
         if self._focus is not None:
             await self._focus.close()
+        if self._nudges is not None:
+            await self._nudges.stop()
         if self._gnomon_reviewer is not None:
             await self._gnomon_reviewer.close()
         if self._autonomous is not None:

@@ -195,11 +195,14 @@ def compose_focus_summary(summary: dict[str, Any], usage: dict[str, Any] | None)
     held = summary["held"]
     reminders = [item["payload"]["text"] for item in held if item["kind"] == "reminder"]
     briefs = [item for item in held if item["kind"] == "daily_brief"]
+    nudges = [item["payload"]["text"] for item in held if item["kind"] == "nudge"]
     if reminders:
         listed = "; ".join(reminders[:3])
         parts.append(f"While you focused: {len(reminders)} reminder{'' if len(reminders) == 1 else 's'} ({listed}).")
+    if nudges:
+        parts.append(" ".join(nudges))
     if briefs:
         parts.append("Your daily brief is below.")
-    if not reminders and not briefs:
+    if not reminders and not briefs and not nudges:
         parts.append("Nothing needed you while you focused.")
     return " ".join(parts)
