@@ -3394,7 +3394,7 @@ the reply to the request that caused it, and never for a refused write.
 Emitted once on startup when a new daemon version introduces new capabilities.
 
 ```json
-{ "message": "New Heliox capabilities are now available.", "version": "0.14.0" }
+{ "message": "New Heliox capabilities are now available.", "version": "0.15.0" }
 ```
 
 The exact message is assembled from the daemon changelog; clients must treat

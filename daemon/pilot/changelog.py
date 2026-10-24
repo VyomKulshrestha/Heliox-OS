@@ -10,11 +10,91 @@ from typing import Any
 
 logger = logging.getLogger("pilot.changelog")
 
-VERSION = "0.14.0"
-PUBLIC_RELEASE_VERSION = "0.14.0"
-PUBLISHED_RELEASE_VERSIONS = ("0.14.0", "0.13.0", "0.12.0", "0.11.1", "0.9.0")
+VERSION = "0.15.0"
+PUBLIC_RELEASE_VERSION = "0.15.0"
+PUBLISHED_RELEASE_VERSIONS = ("0.15.0", "0.14.0", "0.13.0", "0.12.0", "0.11.1", "0.9.0")
 
 CHANGELOG = {
+    "0.15.0": {
+        "title": "Undoable Tasks, Signed Receipts and Your Day",
+        "date": "2026-10-24",
+        "features": [
+            {
+                "name": "Per-Task Undo",
+                "description": (
+                    "Before Heliox writes, moves, copies or deletes a file, replaces the clipboard, sets an "
+                    "environment variable or changes the volume or brightness, it keeps what it needs to reverse "
+                    "that change. Each finished task shows Undo; the preview lists what will be put back, what "
+                    "changed since (left alone) and what can never be undone, and shows a line-by-line diff of "
+                    'each file. "Undo the last two tasks" opens each preview in turn. Undo is computed in code, '
+                    "never by a model, and every undo needs a click."
+                ),
+                "jarvis_announce": "You can now undo a task: I keep what I need to put your files back.",
+            },
+            {
+                "name": "Signed Task Receipts",
+                "description": (
+                    "Every task that ran actions leaves an Ed25519-signed, hash-chained receipt of what ran, what "
+                    "you approved and what happened, with contents only as hashes. Verify one in chat or check the "
+                    'whole chain in Settings; "what did you do today" and "when did I ask you to" are answered '
+                    "from them, and the Today tab exports a Markdown report."
+                ),
+                "jarvis_announce": "Every task now leaves a signed receipt you can verify.",
+            },
+            {
+                "name": "Your Day: Timeline, Today Tab and Daily Brief",
+                "description": (
+                    "An opt-in activity timeline records which app and window title were in front (never pixels "
+                    'or screen text) so "what was I working on yesterday afternoon" gets an answer. The Today '
+                    "tab shows what Heliox ran, where your time went and what can still be undone; an opt-in daily "
+                    "brief and usage nudges build on it."
+                ),
+                "jarvis_announce": "Ask me what you worked on, or open the Today tab for your day at a glance.",
+            },
+            {
+                "name": "Focus, Reminders, Notes and Timers",
+                "description": (
+                    "Focus sessions, pomodoros and quiet hours hold reminders and the brief while approvals still "
+                    "come through. Reminders, timers and quick notes are set and read by voice, kept across "
+                    "restarts and answered in code without the planner."
+                ),
+                "jarvis_announce": "Say focus for 45 minutes, set a timer, or note something, and I'll handle it.",
+            },
+            {
+                "name": "Routines, Voice Shortcuts and Setups",
+                "description": (
+                    '"Do that every day at 9" turns a finished task into a routine that may use only the actions '
+                    'it used; "when I say start work" creates a voice shortcut; "save this as my coding setup" '
+                    'remembers your open apps; "do that again" repeats the last task with fresh approvals.'
+                ),
+                "jarvis_announce": "I can now repeat tasks on a schedule, learn your voice shortcuts and restore your setups.",
+            },
+            {
+                "name": "Phone Task Requests",
+                "description": (
+                    "A paired Air Handoff phone can send an encrypted, signed request. It waits for Run on the "
+                    "computer, or, if allowed, status checks start at once with a fixed read-only list; the answer "
+                    "goes back to the phone, which can never approve anything."
+                ),
+                "jarvis_announce": "You can now send me requests from your paired phone.",
+            },
+            {
+                "name": "Command Palette and Your Data",
+                "description": (
+                    'Ctrl+K or "what can I say?" lists every built-in command with working examples. Settings -> '
+                    "Your data shows everything Heliox keeps on this computer with a Clear button for each, "
+                    '"forget my activity from the last hour" removes that stretch, and backups never include '
+                    "settings, tokens or keys."
+                ),
+                "jarvis_announce": "Press Control K to see what you can say, and Settings shows every piece of data I keep.",
+            },
+        ],
+        "summary": (
+            "Per-task undo, signed task receipts, an activity timeline with a Today tab and daily brief, focus "
+            "sessions, reminders, notes, routines, voice shortcuts, setups, phone task requests, a command "
+            "palette and a Your data panel"
+        ),
+    },
     "0.14.0": {
         "title": "Co-Adaptive Assistance and Governed Desktop Agency",
         "date": "2026-10-16",

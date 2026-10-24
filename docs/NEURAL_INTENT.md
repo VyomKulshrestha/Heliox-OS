@@ -1,6 +1,6 @@
 # Neural Intent Research Controls
 
-The current Heliox `main` source (package version 0.14.0) contains a
+The current Heliox `main` source (package version 0.15.0) contains a
 research-grade software path for treating a small, deliberately elicited
 neural choice as one input modality. It does **not** read
 unrestricted thoughts, diagnose a person, certify a brain-computer interface,

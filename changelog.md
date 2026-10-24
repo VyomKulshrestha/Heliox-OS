@@ -1,12 +1,30 @@
 ---
 title: Heliox OS changelog
 canonical_url: https://www.helioxos.dev/changelog.md
-last_updated: 2026-10-16
+last_updated: 2026-10-24
 ---
 
 # Heliox OS changelog
 
 This page is generated from the changelog shipped by the Heliox daemon. It distinguishes published installers from draft and source-only milestones; current limitations remain in the proof center.
+
+## 0.15.0 — Undoable Tasks, Signed Receipts and Your Day
+
+Status: **Published**
+
+Released: **2026-10-24**
+
+Per-task undo, signed task receipts, an activity timeline with a Today tab and daily brief, focus sessions, reminders, notes, routines, voice shortcuts, setups, phone task requests, a command palette and a Your data panel
+
+- **Per-Task Undo** — Before Heliox writes, moves, copies or deletes a file, replaces the clipboard, sets an environment variable or changes the volume or brightness, it keeps what it needs to reverse that change. Each finished task shows Undo; the preview lists what will be put back, what changed since (left alone) and what can never be undone, and shows a line-by-line diff of each file. "Undo the last two tasks" opens each preview in turn. Undo is computed in code, never by a model, and every undo needs a click.
+- **Signed Task Receipts** — Every task that ran actions leaves an Ed25519-signed, hash-chained receipt of what ran, what you approved and what happened, with contents only as hashes. Verify one in chat or check the whole chain in Settings; "what did you do today" and "when did I ask you to" are answered from them, and the Today tab exports a Markdown report.
+- **Your Day: Timeline, Today Tab and Daily Brief** — An opt-in activity timeline records which app and window title were in front (never pixels or screen text) so "what was I working on yesterday afternoon" gets an answer. The Today tab shows what Heliox ran, where your time went and what can still be undone; an opt-in daily brief and usage nudges build on it.
+- **Focus, Reminders, Notes and Timers** — Focus sessions, pomodoros and quiet hours hold reminders and the brief while approvals still come through. Reminders, timers and quick notes are set and read by voice, kept across restarts and answered in code without the planner.
+- **Routines, Voice Shortcuts and Setups** — "Do that every day at 9" turns a finished task into a routine that may use only the actions it used; "when I say start work" creates a voice shortcut; "save this as my coding setup" remembers your open apps; "do that again" repeats the last task with fresh approvals.
+- **Phone Task Requests** — A paired Air Handoff phone can send an encrypted, signed request. It waits for Run on the computer, or, if allowed, status checks start at once with a fixed read-only list; the answer goes back to the phone, which can never approve anything.
+- **Command Palette and Your Data** — Ctrl+K or "what can I say?" lists every built-in command with working examples. Settings -> Your data shows everything Heliox keeps on this computer with a Clear button for each, "forget my activity from the last hour" removes that stretch, and backups never include settings, tokens or keys.
+
+[Release artifacts](https://github.com/VyomKulshrestha/Heliox-OS/releases/tag/v0.15.0)
 
 ## 0.14.0 — Co-Adaptive Assistance and Governed Desktop Agency
 

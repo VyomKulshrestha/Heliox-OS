@@ -5,7 +5,7 @@
 Important interpretation notes:
 
 - Heliox OS is a desktop application, not an operating-system kernel or a replacement for Windows, macOS, or Linux.
-- The published v0.14.0 installers declare 162 action types across 21 executable specialists. Provider coverage does not establish universal host availability or independent outcome verification.
+- The published v0.15.0 installers declare 162 action types across 21 executable specialists. Provider coverage does not establish universal host availability or independent outcome verification.
 - Commands run through typed permissions, confirmation gates, verification, and recovery controls; documentation must not imply unrestricted autonomy.
 - Neural-intent support is research infrastructure. Synthetic and recorded-EEG tests do not establish live brain control, human accuracy, medical use, or clinical efficacy.
 - Local-first features can still call explicitly configured model or integration providers. Current `main` supports local Ollama plus Gemini, OpenAI, OpenRouter, Claude, and Meta adapters. OpenRouter accepts exact catalog model IDs, including current DeepSeek IDs; this is not a claim that every catalog model is a separately integrated backend. Consult the privacy and security documents before making data-handling claims.
@@ -28,7 +28,8 @@ Important interpretation notes:
 ## Safety and Evidence Boundaries
 
 - [Evidence and Limitations](https://github.com/VyomKulshrestha/Heliox-OS/blob/main/proof.md): Generated action coverage, live CI links, measured local latency, hardware claim boundaries, known limitations, and representative closed regressions.
-- [Current software benchmark bundle](https://github.com/VyomKulshrestha/Heliox-OS/blob/main/docs/evidence/software-benchmarks-2026-10-18.json): v0.14.0 measurements from 18 October 2026, with the measured source commit, host environment, sample counts and exclusions.
+- [Current software benchmark bundle](https://github.com/VyomKulshrestha/Heliox-OS/blob/main/docs/evidence/software-benchmarks-2026-10-24.json): v0.15.0 measurements from 24 October 2026, with the measured source commit, host environment, sample counts and exclusions.
+- [Security: undo, receipts, timeline and your data](https://github.com/VyomKulshrestha/Heliox-OS/blob/main/SECURITY.md): Per-task undo computed in code (never by a model), Ed25519-signed hash-chained task receipts, the opt-in activity timeline (names and titles only, never pixels or screen text), focus sessions that never hold approvals, phone requests the phone can never approve, and backups that never include settings, tokens or keys.
 - [Assistance co-adaptation](https://github.com/VyomKulshrestha/Heliox-OS/blob/main/docs/COADAPTATION.md): Opt-in selection study, purpose-specific consent, presentation-only authority and simulated-user evidence. Tuning-family results do not establish an improvement for real people.
 - [Neural Intent](https://github.com/VyomKulshrestha/Heliox-OS/blob/main/docs/NEURAL_INTENT.md): Synthetic-board, recorded-EEG, provenance, calibration, and live-hardware claim boundaries.
 - [Security Policy](https://github.com/VyomKulshrestha/Heliox-OS/blob/main/SECURITY.md): Supported security controls and responsible disclosure.
@@ -37,7 +38,8 @@ Important interpretation notes:
 ## Releases and Support
 
 - [Releases](https://github.com/VyomKulshrestha/Heliox-OS/releases): Published desktop installers and release notes.
-- [v0.14.0 release notes](https://github.com/VyomKulshrestha/Heliox-OS/blob/main/docs/releases/v0.14.0.md): Current features, verification snapshot, upgrade guidance, and evidence boundaries.
+- [v0.15.0 release notes](https://github.com/VyomKulshrestha/Heliox-OS/blob/main/docs/releases/v0.15.0.md): Current features, verification snapshot, upgrade guidance, and evidence boundaries.
+- [v0.14.0 release notes](https://github.com/VyomKulshrestha/Heliox-OS/blob/main/docs/releases/v0.14.0.md): Previous release.
 - [Generated Changelog](https://github.com/VyomKulshrestha/Heliox-OS/blob/main/changelog.md): Release milestones generated from the changelog shipped by the daemon.
 - [Machine-readable Releases](https://github.com/VyomKulshrestha/Heliox-OS/blob/main/releases.json): Current version and structured release features.
 - [JSON Feed](https://github.com/VyomKulshrestha/Heliox-OS/blob/main/releases.feed.json): JSON Feed 1.1 release updates.

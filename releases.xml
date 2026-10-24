@@ -6,6 +6,13 @@
     <description>Verified release milestones generated from the Heliox daemon changelog.</description>
     <language>en</language>
     <item>
+      <title>Heliox OS 0.15.0 — Undoable Tasks, Signed Receipts and Your Day</title>
+      <link>https://github.com/VyomKulshrestha/Heliox-OS/releases/tag/v0.15.0</link>
+      <guid isPermaLink="false">heliox-0.15.0</guid>
+      <pubDate>Sat, 24 Oct 2026 00:00:00 +0000</pubDate>
+      <description>Per-task undo, signed task receipts, an activity timeline with a Today tab and daily brief, focus sessions, reminders, notes, routines, voice shortcuts, setups, phone task requests, a command palette and a Your data panel</description>
+    </item>
+    <item>
       <title>Heliox OS 0.14.0 — Co-Adaptive Assistance and Governed Desktop Agency</title>
       <link>https://github.com/VyomKulshrestha/Heliox-OS/releases/tag/v0.14.0</link>
       <guid isPermaLink="false">heliox-0.14.0</guid>
