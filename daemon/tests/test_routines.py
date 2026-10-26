@@ -174,13 +174,31 @@ async def test_nothing_to_repeat_is_said_plainly(tmp_path):
 async def test_shortcut_rpcs_and_routine_suggest(tmp_path):
     server = await _server(tmp_path)
 
-    added = await server._handle_shortcut_add({"phrase": "good night", "command": "lock the computer"}, MagicMock())
-    assert added["status"] == "ok" and added["shortcuts"][0]["phrase"] == "good night"
+    added = await server._handle_shortcut_add({"phrase": "lights out", "command": "lock the computer"}, MagicMock())
+    assert added["status"] == "ok" and added["shortcuts"][0]["phrase"] == "lights out"
     assert (await server._handle_shortcut_add({"phrase": "no", "command": "x"}, MagicMock()))["status"] == "error"
-    assert (await server._handle_shortcut_remove({"phrase": "good night"}, MagicMock()))["shortcuts"] == []
+    # "Good night" is a built-in now, so it cannot become a new shortcut.
+    assert (await server._handle_shortcut_add({"phrase": "good night", "command": "x"}, MagicMock()))[
+        "status"
+    ] == "error"
+    assert (await server._handle_shortcut_remove({"phrase": "lights out"}, MagicMock()))["shortcuts"] == []
 
     receipt_id = (await server._task_receipts.list(1))[0]["receipt_id"]
     suggested = await server._handle_routine_suggest({"receipt_id": receipt_id}, MagicMock())
     assert suggested["status"] == "ok"
     assert suggested["routine"]["allowed_actions"] == ["file_list"]
     assert len(suggested["routine"]["daily_at"]) == 5
+
+
+@pytest.mark.asyncio
+async def test_existing_shortcut_beats_a_later_built_in_phrase(tmp_path):
+    """Someone who made a "good night" shortcut before it became a built-in keeps their shortcut, by voice too."""
+    import json
+
+    server = await _server(tmp_path)
+    path = tmp_path / "old_shortcuts.json"
+    path.write_text(json.dumps([{"phrase": "good night", "command": "lock the computer"}]), encoding="utf-8")
+    server._shortcuts = ShortcutStore(path, reserved=server._phrase_reserved)
+
+    assert await server._control_reply("Good night") is None
+    assert (await server._expand_request("Good night"))[0] == "lock the computer"

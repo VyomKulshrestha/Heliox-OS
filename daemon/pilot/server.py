@@ -6284,6 +6284,11 @@ class PilotServer:
         """Requests Heliox answers in code without planning: history questions, undo, routines, shortcuts."""
         from pilot.workflows.routines import REPEAT_REQUEST, normalize_phrase
 
+        # The person's own voice shortcut wins over a built-in phrase added later (say, an old "good night"
+        # shortcut): leave it to _expand_request, which runs before planning on every path.
+        if self._shortcuts is not None and await asyncio.to_thread(self._shortcuts.match, text) is not None:
+            return None
+
         handlers = (
             self._help_request,
             self._say_again_request,
