@@ -624,7 +624,7 @@ model itself.
 
 **Ships by default, not a manual opt-in.** `kokoro`, `pocket-tts`, `soundfile`, and `sounddevice` (plus `openai-whisper` for the speech-to-text side of voice) live in `pyproject.toml`'s `voice` extras group, which is part of `all`. The real end-user install paths — `tauri-app/src-tauri/src/main.rs`'s `setup_venv_in_background()` (first-run background setup for the desktop app) and `packaging/debian/postinst` (the `.deb`) — both request `pilot-daemon[all]`, so a normal install gets both local voice engines out of the box, not Settings options that silently no-op without a separate manual pip install. `config.voice.tts_engine` lets the user choose Kokoro, Pocket TTS, or the OS voice. Both neural branches catch import, model-load, synthesis, and playback failures and fall through to OS-native dispatch, so a dev/CI environment without the `voice` extra behaves like the earlier native-voice daemon.
 
-**Known scope limits, stated plainly.** Uses Pocket TTS's one-shot `generate_audio()` API, not its chunked/streaming mode — simpler and consistent with `speak()`'s existing "one atomic, cancellable operation" model, at the cost of the ~200ms first-chunk-latency improvement streaming would give. Only the default English model/voice set is wired up (`tts_voice`, a handful of built-in presets) — the additional languages Pocket TTS has since added are not surfaced in Settings. The cognitive-load-based speech-rate modulation `_speak_impl` already applies to the OS-native paths does not carry over to Pocket TTS, which has no equivalent integer rate knob. Verified end-to-end against the real model on real hardware (not just the mocked/fallback paths automated tests cover): a real first-use download (~42s), `sample_rate` read at runtime as 24000Hz, real CPU inference, and real audio played through actual speakers. The desktop bootstrap installs `pilot-daemon[all]` pinned to the desktop's own package version. The stable v0.15.0 release and matching `pilot-daemon==0.15.0` distribution are published; every future release must pass the same exact-version PyPI and clean-environment smoke gates before publication.
+**Known scope limits, stated plainly.** Uses Pocket TTS's one-shot `generate_audio()` API, not its chunked/streaming mode — simpler and consistent with `speak()`'s existing "one atomic, cancellable operation" model, at the cost of the ~200ms first-chunk-latency improvement streaming would give. Only the default English model/voice set is wired up (`tts_voice`, a handful of built-in presets) — the additional languages Pocket TTS has since added are not surfaced in Settings. The cognitive-load-based speech-rate modulation `_speak_impl` already applies to the OS-native paths does not carry over to Pocket TTS, which has no equivalent integer rate knob. Verified end-to-end against the real model on real hardware (not just the mocked/fallback paths automated tests cover): a real first-use download (~42s), `sample_rate` read at runtime as 24000Hz, real CPU inference, and real audio played through actual speakers. The desktop bootstrap installs `pilot-daemon[all]` pinned to the desktop's own package version. The stable v0.16.0 release and matching `pilot-daemon==0.16.0` distribution are published; every future release must pass the same exact-version PyPI and clean-environment smoke gates before publication.
 
 ---
 
@@ -862,6 +862,38 @@ weekday from 9 to 12") are focus sessions with the same rules.
   a shortcut cannot point at another shortcut. Settings → Voice shortcuts lists them.
 - **"Do that again"** resubmits the last task's request as a new request; nothing from
   the earlier approval carries over.
+
+## 📋 Lists, watchers, clipboard and helpers (v0.16.0)
+
+- **Answered in code, never acting.** The to-do list, habits, focus history, snippets,
+  quick answers, the file finder, the health check, watchers, app reminders, focus
+  heads-ups and good morning / good night are handled without a model and run no
+  action. Closing an app, opening a file or anything else that changes the computer is
+  an ordinary request with the normal planning, gateway and approvals.
+- **Watchers only look.** "Tell me when …" reads process, battery, processor and
+  Downloads-folder state every few seconds, lives in memory, says once what happened
+  and gives up after a day. App reminders and focus heads-ups compare the front window
+  with what you asked for every ten seconds and then forget it.
+- **Clipboard history is opt-in and memory-only** (`[clipboard] history`, off by
+  default): the last 25 copied texts for up to eight hours, never on disk or in a
+  backup, forgotten on restart or when turned off. On Windows the clipboard is opened
+  only after the system reports a change. Nothing is kept while an app or window the
+  activity timeline excludes is in front (password managers, private browsing).
+- **Secrets are refused.** Text that looks like a password, API key, token, private key
+  or card number is never kept in clipboard history, saved as a snippet or read aloud.
+  "Generate a password" uses the operating system's secure random source and puts the
+  password on the clipboard only: not in the reply, the chat, the disk or clipboard
+  history.
+- **The file finder reads folder listings only** (Desktop, Documents, Downloads,
+  Pictures, Music, Videos, OneDrive), at most four levels deep for three seconds, and
+  never inside git repositories, build output or caches. It opens nothing.
+- **Built-in phrases do not take over your shortcuts.** A voice shortcut you made before
+  a phrase became built-in keeps working, by voice and in chat; new shortcuts cannot
+  take a built-in phrase. Phrases that are only sometimes Heliox's ("copy my …", "where
+  is my …", "I drank …") answer only when they name a snippet, a kind of file or a habit
+  you track.
+- To-dos, habits, focus history, snippets, app reminders and focus distractions are
+  kept under `DATA_DIR`, listed in Settings → Your data and included in backups.
 
 ## 📱 Requests from a paired phone (opt-in)
 

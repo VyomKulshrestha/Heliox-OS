@@ -1,7 +1,7 @@
 # Heliox OS Architecture
 
 This document describes the current `main` source runtime (package version
-0.15.0). It is an architecture contract, not a roadmap. Exact action values live in
+0.16.0). It is an architecture contract, not a roadmap. Exact action values live in
 `daemon/pilot/actions.py`; exact RPC handlers live in
 `daemon/pilot/server.py`.
 

@@ -10,11 +10,86 @@ from typing import Any
 
 logger = logging.getLogger("pilot.changelog")
 
-VERSION = "0.15.0"
-PUBLIC_RELEASE_VERSION = "0.15.0"
-PUBLISHED_RELEASE_VERSIONS = ("0.15.0", "0.14.0", "0.13.0", "0.12.0", "0.11.1", "0.9.0")
+VERSION = "0.16.0"
+PUBLIC_RELEASE_VERSION = "0.16.0"
+PUBLISHED_RELEASE_VERSIONS = ("0.16.0", "0.15.0", "0.14.0", "0.13.0", "0.12.0", "0.11.1", "0.9.0")
 
 CHANGELOG = {
+    "0.16.0": {
+        "title": "To-dos, Watchers, Habits and Quick Answers",
+        "date": "2026-10-26",
+        "features": [
+            {
+                "name": "To-Do List",
+                "description": (
+                    '"Add call the bank to my list", "what\'s on my list" and "mark call the bank as done" are '
+                    "handled in code. Open items show in the Today tab, the daily brief and the exported report; "
+                    '"mark this email as done" still goes to the planner.'
+                ),
+                "jarvis_announce": "Tell me what to add to your list, and I'll keep it.",
+            },
+            {
+                "name": "Tell Me When",
+                "description": (
+                    '"Tell me when Chrome closes", "let me know when my download finishes", "tell me when my battery '
+                    'is full" and "tell me when my computer calms down" watch until it happens and say it once. '
+                    "Watchers only look, never change anything, and give up after a day."
+                ),
+                "jarvis_announce": "Ask me to tell you when an app closes or a download finishes.",
+            },
+            {
+                "name": "Repeating and App Reminders",
+                "description": (
+                    '"Remind me every hour to stand up" and "remind me every weekday at 9 to check email" repeat; '
+                    'interval reminders skip the night. "Remind me to submit my timesheet when I open Outlook" waits '
+                    "for that app to come to the front."
+                ),
+                "jarvis_announce": "Reminders can now repeat, or wait until you open an app.",
+            },
+            {
+                "name": "Good Morning, Good Night and Habits",
+                "description": (
+                    '"Good morning" gives today\'s reminders, your list, streaks to keep and a nearly full drive; '
+                    '"good night" sums up the day with focus time and tomorrow\'s first reminder. "Log a workout", '
+                    '"how many workouts this week" and "what\'s my workout streak" track habits, and "how long did I '
+                    'focus this week" reads your focus history.'
+                ),
+                "jarvis_announce": "Say good morning or good night, and I'll walk you through your day.",
+            },
+            {
+                "name": "Quick Answers and Helpers",
+                "description": (
+                    "Sums, percentages, unit conversions, date countdowns and the time in about 60 cities are worked "
+                    'out exactly in code. "Generate a password" puts one on the clipboard only; coin flips, dice, '
+                    'random picks, a stopwatch and "how long until 5 pm" need no model.'
+                ),
+                "jarvis_announce": "Ask me sums, conversions, dates or the time anywhere, and I'll answer instantly.",
+            },
+            {
+                "name": "Your Files and This Computer",
+                "description": (
+                    '"What did I download today", "where is my budget spreadsheet" and "why is my computer slow" are '
+                    "answered from folder listings and a quick reading of processor, memory and disks. Heliox only "
+                    "reports; closing anything still asks first."
+                ),
+                "jarvis_announce": "Ask where a file is, or why your computer is slow.",
+            },
+            {
+                "name": "Clipboard History, Snippets and Focus Heads-Ups",
+                "description": (
+                    "Opt-in clipboard history is kept in memory only and skips passwords and private windows. "
+                    '"Save that as my signature" and "copy my signature" reuse text. "During focus, tell me if I open '
+                    'YouTube" gives one gentle heads-up per session and blocks nothing.'
+                ),
+                "jarvis_announce": "I can remember what you copied, save snippets, and nudge you during focus.",
+            },
+        ],
+        "summary": (
+            "A to-do list, watchers, repeating and app reminders, good morning and good night, habits, focus history, "
+            "quick answers, a password generator, file and download questions, a health check, opt-in clipboard "
+            "history, snippets and focus heads-ups"
+        ),
+    },
     "0.15.0": {
         "title": "Undoable Tasks, Signed Receipts and Your Day",
         "date": "2026-10-24",

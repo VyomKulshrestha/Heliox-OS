@@ -2,7 +2,7 @@
   "schema_version": "1.0.0",
   "product": {
     "name": "Heliox OS",
-    "version": "0.15.0",
+    "version": "0.16.0",
     "kind": "desktop AI system-control agent",
     "license": "MIT",
     "declared_platforms": [

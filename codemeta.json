@@ -7,8 +7,8 @@
   "codeRepository": "https://github.com/VyomKulshrestha/Heliox-OS",
   "issueTracker": "https://github.com/VyomKulshrestha/Heliox-OS/issues",
   "url": "https://www.helioxos.dev/",
-  "version": "0.15.0",
-  "dateModified": "2026-10-24",
+  "version": "0.16.0",
+  "dateModified": "2026-10-26",
   "license": "https://spdx.org/licenses/MIT.html",
   "programmingLanguage": ["Python", "Rust", "TypeScript", "Svelte"],
   "operatingSystem": ["Windows", "macOS", "Linux"],
@@ -31,6 +31,10 @@
     "per-task undo",
     "signed task receipts",
     "activity timeline",
-    "local-first"
+    "local-first",
+    "voice to-do list",
+    "habit tracking",
+    "local quick answers",
+    "clipboard history"
   ]
 }

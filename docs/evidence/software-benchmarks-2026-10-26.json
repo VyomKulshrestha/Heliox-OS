@@ -1,0 +1,876 @@
+{
+  "schema_version": "1.0.0",
+  "captured_at": "2026-10-26T20:33:59.895172+05:30",
+  "captured_on": "2026-10-26",
+  "source_commit": "20a186bcc1196e4fbec053f551117b813df219f7",
+  "claim_boundary": "Local software benchmark bundle; no claim of model-provider, network, browser page-load, microphone, camera, speaker, gaze, gesture, EEG, or human accuracy",
+  "guarded_cpu_request": {
+    "schema_version": "2.0.0",
+    "benchmark": "guarded_local_cpu_usage",
+    "scope": "Ready-daemon guarded CPU usage request: local planning, routing, risk assessment, execution, postcondition verification, and response shaping",
+    "environment": {
+      "operating_system": "Windows",
+      "operating_system_release": "11",
+      "python": "3.13.13",
+      "warmup_iterations": 10
+    },
+    "cold_ready_request_ms": 69.152,
+    "steady_state": {
+      "iterations": 100,
+      "mean_ms": 25.464,
+      "median_ms": 25.234,
+      "p95_ms": 26.93,
+      "p99_ms": 27.992,
+      "min_ms": 23.895,
+      "max_ms": 28.324,
+      "stdev_ms": 0.902
+    },
+    "model_generate_calls": 0,
+    "total_model_generate_calls": 0,
+    "limitations": [
+      "Uses real local planner, policy, executor, verifier, and response code with in-memory transport.",
+      "Excludes daemon process startup, UI rendering, cloud models, networks, browsers, voice, cameras, TTS, and neural hardware.",
+      "A local reproducibility snapshot is not a universal performance guarantee."
+    ]
+  },
+  "local_status_suite": {
+    "schema_version": "1.0.0",
+    "benchmark": "guarded_local_status_suite",
+    "scope": "Ready-daemon local planning, routing, policy, real read-only execution, postcondition verification, and response shaping",
+    "environment": {
+      "operating_system": "Windows",
+      "operating_system_release": "11",
+      "python": "3.13.13",
+      "warmup_iterations_per_scenario": 5
+    },
+    "scenarios": {
+      "cpu_usage": {
+        "query": "What's my CPU usage?",
+        "expected_action": "cpu_usage",
+        "iterations": 50,
+        "mean_ms": 25.179,
+        "median_ms": 25.155,
+        "p95_ms": 26.266,
+        "p99_ms": 27.053,
+        "min_ms": 24.083,
+        "max_ms": 27.266,
+        "stdev_ms": 0.636
+      },
+      "memory_usage": {
+        "query": "What's my memory usage?",
+        "expected_action": "memory_usage",
+        "iterations": 50,
+        "mean_ms": 4.333,
+        "median_ms": 4.309,
+        "p95_ms": 4.835,
+        "p99_ms": 5.008,
+        "min_ms": 3.851,
+        "max_ms": 5.073,
+        "stdev_ms": 0.267
+      },
+      "disk_usage": {
+        "query": "What's my disk usage?",
+        "expected_action": "disk_usage",
+        "iterations": 50,
+        "mean_ms": 5.531,
+        "median_ms": 5.497,
+        "p95_ms": 6.63,
+        "p99_ms": 7.552,
+        "min_ms": 4.114,
+        "max_ms": 7.733,
+        "stdev_ms": 0.829
+      },
+      "system_information": {
+        "query": "Show system information",
+        "expected_action": "system_info",
+        "iterations": 50,
+        "mean_ms": 62.192,
+        "median_ms": 56.284,
+        "p95_ms": 91.052,
+        "p99_ms": 91.622,
+        "min_ms": 54.763,
+        "max_ms": 92.024,
+        "stdev_ms": 11.808
+      }
+    },
+    "model_generate_calls": 0,
+    "limitations": [
+      "Measures four deterministic local status intents with in-memory transport.",
+      "Does not measure model-backed planning, UI rendering, network, browser, voice, camera, TTS, or neural hardware.",
+      "Host state and operating-system APIs affect timings."
+    ]
+  },
+  "event_loop_responsiveness": {
+    "schema_version": "1.0.0",
+    "benchmark": "event_loop_responsiveness_during_cpu_monitor",
+    "scope": "Real psutil one-second CPU monitor sample with a concurrent asyncio heartbeat",
+    "environment": {
+      "operating_system": "Windows",
+      "operating_system_release": "11",
+      "python": "3.13.13",
+      "target_heartbeat_ms": 10.0
+    },
+    "sample_duration_ms": 1009.561,
+    "cpu_percent": 5.7,
+    "heartbeat_ticks": 65,
+    "heartbeat_median_ms": 15.587,
+    "heartbeat_p95_ms": 16.24,
+    "heartbeat_max_ms": 16.618,
+    "max_scheduler_delay_ms": 6.618,
+    "limitations": [
+      "Measures scheduler availability, not CPU-monitor completion latency.",
+      "Windows timer granularity and host load affect heartbeat intervals.",
+      "Does not measure UI rendering or hardware input latency."
+    ]
+  },
+  "intent_dispatch": {
+    "schema_version": "1.0.0",
+    "benchmark": "deterministic_intent_dispatch",
+    "scope": "Curated bounded local intents and ambiguous fall-through controls; planning only, no execution",
+    "environment": {
+      "operating_system": "Windows",
+      "python": "3.13.13"
+    },
+    "case_count": 59,
+    "passed": 59,
+    "failed": 0,
+    "accuracy": 1.0,
+    "categories": {
+      "url": {
+        "passed": 6,
+        "total": 6,
+        "accuracy": 1.0
+      },
+      "browser_click": {
+        "passed": 6,
+        "total": 6,
+        "accuracy": 1.0
+      },
+      "screen": {
+        "passed": 8,
+        "total": 8,
+        "accuracy": 1.0
+      },
+      "system_info": {
+        "passed": 4,
+        "total": 4,
+        "accuracy": 1.0
+      },
+      "usage": {
+        "passed": 9,
+        "total": 9,
+        "accuracy": 1.0
+      },
+      "application": {
+        "passed": 6,
+        "total": 6,
+        "accuracy": 1.0
+      },
+      "file_read": {
+        "passed": 3,
+        "total": 3,
+        "accuracy": 1.0
+      },
+      "forensics": {
+        "passed": 4,
+        "total": 4,
+        "accuracy": 1.0
+      },
+      "browser_workflow": {
+        "passed": 1,
+        "total": 1,
+        "accuracy": 1.0
+      },
+      "fallback": {
+        "passed": 12,
+        "total": 12,
+        "accuracy": 1.0
+      }
+    },
+    "latency": {
+      "iterations": 59,
+      "mean_ms": 0.04,
+      "median_ms": 0.026,
+      "p95_ms": 0.146,
+      "p99_ms": 0.239,
+      "min_ms": 0.007,
+      "max_ms": 0.359,
+      "stdev_ms": 0.054
+    },
+    "failures": [],
+    "limitations": [
+      "The fixed corpus is a regression set, not a population-level language-understanding benchmark.",
+      "Passing fall-through cases means model planning is required; it does not grade the model's later answer.",
+      "Application cases grade routing only and do not prove the application is installed or launched."
+    ]
+  },
+  "local_commands": {
+    "benchmark": "local_commands",
+    "iterations_per_example": 20,
+    "warmup_per_example": 2,
+    "python": "3.13.13",
+    "platform": "Windows-11-10.0.26300-SP0",
+    "examples": 91,
+    "handled": 91,
+    "unhandled": [],
+    "latency": {
+      "iterations": 1820,
+      "mean_ms": 3.006,
+      "median_ms": 1.384,
+      "p95_ms": 14.111,
+      "p99_ms": 16.681,
+      "min_ms": 0.005,
+      "max_ms": 21.233,
+      "stdev_ms": 4.329
+    },
+    "slowest_examples": [
+      {
+        "example": "save this as my coding setup",
+        "median_ms": 15.33
+      },
+      {
+        "example": "log a workout",
+        "median_ms": 14.606
+      },
+      {
+        "example": "remind me tomorrow at 9 am to send the report",
+        "median_ms": 14.553
+      }
+    ],
+    "model_generate_calls": 0,
+    "actions_executed": 0,
+    "claim_boundary": "In-process control path with stand-ins for the clipboard, speech, settings file and machine readings; no claim of speech recognition, text-to-speech, UI or end-to-end voice latency"
+  },
+  "learned_risk_world_model": {
+    "schema_version": "1.0.0",
+    "benchmark": "shipped_learned_risk_world_model",
+    "scope": "Shipped calibrated weights, stored temporal holdout evidence, direction invariants, and local inference latency",
+    "environment": {
+      "operating_system": "Windows",
+      "python": "3.13.13"
+    },
+    "model_version": "risk-mlp-v4-heldout",
+    "training_samples": 25200,
+    "validation_samples": 5400,
+    "learned_action_types": 12,
+    "validation": {
+      "disk_delta_mae": 3.3039651015087657e-08,
+      "disk_zero_baseline_mae": 7.18494490570265e-08,
+      "disk_improvement_percent": 54.0154,
+      "process_delta_mae": 1.3025066436966881e-05,
+      "process_zero_baseline_mae": 0.0022166655398905277,
+      "process_improvement_percent": 99.4124
+    },
+    "direction_checks": {
+      "file_write_increases_disk": true,
+      "file_delete_decreases_disk": true,
+      "service_start_increases_processes": true,
+      "service_stop_decreases_processes": true,
+      "process_kill_decreases_processes": true
+    },
+    "direction_checks_passed": 5,
+    "inference": {
+      "iterations": 12000,
+      "mean_ms": 0.054,
+      "median_ms": 0.047,
+      "p95_ms": 0.08,
+      "p99_ms": 0.183,
+      "min_ms": 0.04,
+      "max_ms": 0.42,
+      "stdev_ms": 0.025
+    },
+    "limitations": [
+      "Validation metrics are metadata for the exact saved weights on a stratified temporal holdout.",
+      "The benchmark verifies shipped metadata and inference behavior; it does not recreate the holdout.",
+      "Only 12 learnable action types use these weights; deterministic rules remain authoritative for safety and broader coverage.",
+      "The model predicts coarse disk/process effects, not the full physical world or user intent."
+    ]
+  },
+  "coadaptation_simulated_users": {
+    "schema_version": "1.0.0",
+    "benchmark": "coadaptation_simulated_users",
+    "evidence_kind": "simulated",
+    "scope": "Simulated users of F1, F3 (5 per family, 2 sessions) against policies 1_fixed_assistance_off, 4_uniform_random, 9_engine_full",
+    "families": [
+      "F1",
+      "F3"
+    ],
+    "split": "tune",
+    "in_sample": true,
+    "environment": {
+      "operating_system": "Windows",
+      "python": "3.13.13",
+      "numpy": "2.2.6"
+    },
+    "protocol_sha256": "7f39916e9c762abdcdb62553a1e8deaab175943c77a16324b4614e910d6eab27",
+    "metrics": {
+      "by_family": {
+        "F1": {
+          "split": "tune",
+          "label": "tuning families, in-sample",
+          "forms": {
+            "switch_form": "exp3",
+            "endpoint_form": "gaussian",
+            "aiming_form": "regime_independent",
+            "burden_form": "time_driven",
+            "practice_form": "power",
+            "day_form": "offset_fatigue"
+          },
+          "people": 5,
+          "sessions": 2,
+          "policies": {
+            "1_fixed_assistance_off": {
+              "people": 5,
+              "adaptive_positions": [
+                "B"
+              ],
+              "realized_utility_per_trial": {
+                "mean": 1.1089104637868656,
+                "ci95": [
+                  0.9013651752446341,
+                  1.2794659519956
+                ],
+                "people": 5
+              },
+              "realized_utility_per_trial_all_blocks": {
+                "mean": 0.9010663403774382,
+                "ci95": [
+                  0.7961397735781334,
+                  0.99231229687538
+                ],
+                "people": 5
+              },
+              "completion": 1.0,
+              "ua_per_trial": 0.029464,
+              "ua_per_idle_minute": 0.0,
+              "corrections_per_trial": 0.049107,
+              "median_time_ms": 1863.961,
+              "p95_time_ms": 3775.88,
+              "throughput_bits_s": 3.363713212978574,
+              "simulated_burden": {
+                "effort": 4.561538461538461,
+                "intrusiveness": 3.8461538461538463,
+                "control": 4.371900826446281
+              },
+              "veto_rate": 0.008928571428571428,
+              "override_rate": 0.008928571428571428,
+              "switch_rate": 0.7769230769230769,
+              "regime_entropy_bits": 2.3715000460576534,
+              "constraint_violations": 0,
+              "acting_under_ambiguity": 0,
+              "preference_replacements": 0,
+              "blocks_by_phase": {
+                "A": 60,
+                "A_lite": 30,
+                "B": 30,
+                "comparator": 10,
+                "probe": 10
+              },
+              "refused_blocks": 0,
+              "blocks_ended_by_refresh": 0
+            },
+            "4_uniform_random": {
+              "people": 5,
+              "adaptive_positions": [
+                "B"
+              ],
+              "realized_utility_per_trial": {
+                "mean": 0.6166238694132787,
+                "ci95": [
+                  0.479264063771461,
+                  0.7366123913177609
+                ],
+                "people": 5
+              },
+              "realized_utility_per_trial_all_blocks": {
+                "mean": 0.797754037526688,
+                "ci95": [
+                  0.7473255030502944,
+                  0.85031185076931
+                ],
+                "people": 5
+              },
+              "completion": 1.0,
+              "ua_per_trial": 0.019643,
+              "ua_per_idle_minute": 0.0,
+              "corrections_per_trial": 0.045536,
+              "median_time_ms": 1985.901,
+              "p95_time_ms": 3919.745,
+              "throughput_bits_s": 3.227813371292189,
+              "simulated_burden": {
+                "effort": 4.952,
+                "intrusiveness": 3.9223300970873787,
+                "control": 4.206611570247934
+              },
+              "veto_rate": 0.0125,
+              "override_rate": 0.0125,
+              "switch_rate": 0.9615384615384616,
+              "regime_entropy_bits": 2.5702672108051674,
+              "constraint_violations": 0,
+              "acting_under_ambiguity": 0,
+              "preference_replacements": 0,
+              "blocks_by_phase": {
+                "A": 60,
+                "A_lite": 30,
+                "B": 30,
+                "comparator": 10,
+                "probe": 10
+              },
+              "refused_blocks": 0,
+              "blocks_ended_by_refresh": 0
+            },
+            "9_engine_full": {
+              "people": 5,
+              "adaptive_positions": [
+                "B"
+              ],
+              "realized_utility_per_trial": {
+                "mean": 0.898014001091164,
+                "ci95": [
+                  0.6951464765222741,
+                  1.0709574187069033
+                ],
+                "people": 5
+              },
+              "realized_utility_per_trial_all_blocks": {
+                "mean": 0.8495590094224454,
+                "ci95": [
+                  0.747829498496369,
+                  0.917859963428056
+                ],
+                "people": 5
+              },
+              "completion": 1.0,
+              "ua_per_trial": 0.021429,
+              "ua_per_idle_minute": 0.0,
+              "corrections_per_trial": 0.046429,
+              "median_time_ms": 1912.077,
+              "p95_time_ms": 4004.835,
+              "throughput_bits_s": 3.1585133692260223,
+              "simulated_burden": {
+                "effort": 4.784,
+                "intrusiveness": 3.759259259259259,
+                "control": 4.434108527131783
+              },
+              "veto_rate": 0.01607142857142857,
+              "override_rate": 0.01607142857142857,
+              "switch_rate": 0.9,
+              "regime_entropy_bits": 2.5498544098311475,
+              "constraint_violations": 0,
+              "acting_under_ambiguity": 0,
+              "preference_replacements": 0,
+              "blocks_by_phase": {
+                "A": 60,
+                "A_lite": 30,
+                "B": 30,
+                "comparator": 10,
+                "probe": 10
+              },
+              "refused_blocks": 0,
+              "blocks_ended_by_refresh": 0
+            }
+          },
+          "prediction": {
+            "variants": {
+              "full": {
+                "log_score": {
+                  "complete": -0.016912055105690164,
+                  "ua": -0.10351346464738817,
+                  "correction": -0.19653092249443552,
+                  "veto": -0.08677087832611173,
+                  "log_time": -0.18036935188092407,
+                  "total": -0.5840966724545497
+                },
+                "trials": 720,
+                "brier_complete": 0.0004933317295744543,
+                "ece_complete": 0.01665635411482466,
+                "brier_ua": 0.02045101832650886,
+                "ece_ua": 0.01388612851713008,
+                "crps_log_time": 0.14799812337237456
+              },
+              "no_today": {
+                "log_score": {
+                  "complete": -0.01672020440951757,
+                  "ua": -0.10289822277600999,
+                  "correction": -0.19467575739814538,
+                  "veto": -0.08605670863580704,
+                  "log_time": -0.1846639533658597,
+                  "total": -0.5850148465853396
+                },
+                "trials": 720,
+                "brier_complete": 0.0004921625281519811,
+                "ece_complete": 0.016465660326756778,
+                "brier_ua": 0.02036451224536275,
+                "ece_ua": 0.013648119625060377,
+                "crps_log_time": 0.1501673818657366
+              }
+            },
+            "full_vs_no_today": {
+              "mean": 0.0009181741307899838,
+              "ci95": [
+                -0.013022322528832642,
+                0.01641610623743337
+              ],
+              "people": 5
+            }
+          },
+          "probe_reliance_detection": null
+        },
+        "F3": {
+          "split": "tune",
+          "label": "tuning families, in-sample",
+          "forms": {
+            "switch_form": "exp3",
+            "endpoint_form": "gaussian",
+            "aiming_form": "regime_independent",
+            "burden_form": "time_driven",
+            "practice_form": "power",
+            "day_form": "offset_fatigue"
+          },
+          "people": 5,
+          "sessions": 2,
+          "policies": {
+            "1_fixed_assistance_off": {
+              "people": 5,
+              "adaptive_positions": [
+                "B"
+              ],
+              "realized_utility_per_trial": {
+                "mean": -0.2092670208109845,
+                "ci95": [
+                  -0.7822451602870101,
+                  0.4188052199336296
+                ],
+                "people": 5
+              },
+              "realized_utility_per_trial_all_blocks": {
+                "mean": -0.04296879510770453,
+                "ci95": [
+                  -0.34673100020984193,
+                  0.3925081033934396
+                ],
+                "people": 5
+              },
+              "completion": 0.942857,
+              "ua_per_trial": 0.195536,
+              "ua_per_idle_minute": 0.2,
+              "corrections_per_trial": 0.474107,
+              "median_time_ms": 4348.494,
+              "p95_time_ms": 9434.639,
+              "throughput_bits_s": 0.8248617080871252,
+              "simulated_burden": {
+                "effort": 5.975409836065574,
+                "intrusiveness": 4.085714285714285,
+                "control": 3.204724409448819
+              },
+              "veto_rate": 0.0125,
+              "override_rate": 0.011607142857142858,
+              "switch_rate": 0.7846153846153846,
+              "regime_entropy_bits": 2.3329415635392126,
+              "constraint_violations": 0,
+              "acting_under_ambiguity": 0,
+              "preference_replacements": 0,
+              "blocks_by_phase": {
+                "A": 60,
+                "A_lite": 30,
+                "B": 30,
+                "comparator": 10,
+                "probe": 10
+              },
+              "refused_blocks": 0,
+              "blocks_ended_by_refresh": 0
+            },
+            "4_uniform_random": {
+              "people": 5,
+              "adaptive_positions": [
+                "B"
+              ],
+              "realized_utility_per_trial": {
+                "mean": 0.007951094031179889,
+                "ci95": [
+                  -0.480021461278054,
+                  0.4500717218150256
+                ],
+                "people": 5
+              },
+              "realized_utility_per_trial_all_blocks": {
+                "mean": 0.04360680266036094,
+                "ci95": [
+                  -0.313335700820483,
+                  0.4668701447592357
+                ],
+                "people": 5
+              },
+              "completion": 0.933929,
+              "ua_per_trial": 0.147321,
+              "ua_per_idle_minute": 0.2,
+              "corrections_per_trial": 0.433929,
+              "median_time_ms": 4632.569,
+              "p95_time_ms": 9581.761,
+              "throughput_bits_s": 0.7806691136466388,
+              "simulated_burden": {
+                "effort": 6.081967213114754,
+                "intrusiveness": 4.10752688172043,
+                "control": 3.3015873015873014
+              },
+              "veto_rate": 0.01875,
+              "override_rate": 0.017857142857142856,
+              "switch_rate": 0.9384615384615385,
+              "regime_entropy_bits": 2.5263181404193675,
+              "constraint_violations": 0,
+              "acting_under_ambiguity": 0,
+              "preference_replacements": 0,
+              "blocks_by_phase": {
+                "A": 60,
+                "A_lite": 30,
+                "B": 30,
+                "comparator": 10,
+                "probe": 10
+              },
+              "refused_blocks": 0,
+              "blocks_ended_by_refresh": 0
+            },
+            "9_engine_full": {
+              "people": 5,
+              "adaptive_positions": [
+                "B"
+              ],
+              "realized_utility_per_trial": {
+                "mean": 0.3552650750728915,
+                "ci95": [
+                  0.19422534469053826,
+                  0.5109218834722923
+                ],
+                "people": 5
+              },
+              "realized_utility_per_trial_all_blocks": {
+                "mean": 0.083035311004556,
+                "ci95": [
+                  -0.1705479980695582,
+                  0.3833462324772451
+                ],
+                "people": 5
+              },
+              "completion": 0.952679,
+              "ua_per_trial": 0.139286,
+              "ua_per_idle_minute": 0.2,
+              "corrections_per_trial": 0.404464,
+              "median_time_ms": 4484.368,
+              "p95_time_ms": 8880.385,
+              "throughput_bits_s": 0.8435987614660589,
+              "simulated_burden": {
+                "effort": 5.928571428571429,
+                "intrusiveness": 4.0588235294117645,
+                "control": 3.3442622950819674
+              },
+              "veto_rate": 0.019642857142857142,
+              "override_rate": 0.019642857142857142,
+              "switch_rate": 0.8615384615384616,
+              "regime_entropy_bits": 2.457668723681826,
+              "constraint_violations": 0,
+              "acting_under_ambiguity": 0,
+              "preference_replacements": 0,
+              "blocks_by_phase": {
+                "A": 60,
+                "A_lite": 30,
+                "B": 30,
+                "comparator": 10,
+                "probe": 10
+              },
+              "refused_blocks": 0,
+              "blocks_ended_by_refresh": 0
+            }
+          },
+          "prediction": {
+            "variants": {
+              "full": {
+                "log_score": {
+                  "complete": -0.20148243992168394,
+                  "ua": -0.3964784869248477,
+                  "correction": -0.5955285479943481,
+                  "veto": -0.10490633973439599,
+                  "log_time": -0.4997407729588043,
+                  "total": -1.79813658753408
+                },
+                "trials": 720,
+                "brier_complete": 0.05117465004082333,
+                "ece_complete": 0.008166164294416281,
+                "brier_ua": 0.11662267836994851,
+                "ece_ua": 0.040366165819350035,
+                "crps_log_time": 0.1969183972500671
+              },
+              "no_today": {
+                "log_score": {
+                  "complete": -0.20210082926814618,
+                  "ua": -0.39273468902000297,
+                  "correction": -0.5906795667820005,
+                  "veto": -0.10276868962679633,
+                  "log_time": -0.49513284396130375,
+                  "total": -1.7834166186582499
+                },
+                "trials": 720,
+                "brier_complete": 0.051316790109589935,
+                "ece_complete": 0.0125249411165878,
+                "brier_ua": 0.1153264857984443,
+                "ece_ua": 0.03730544693354276,
+                "crps_log_time": 0.19580339170777913
+              }
+            },
+            "full_vs_no_today": {
+              "mean": -0.014719968875830113,
+              "ci95": [
+                -0.021434229600461308,
+                -0.00792756838123454
+              ],
+              "people": 5
+            }
+          },
+          "probe_reliance_detection": null
+        }
+      },
+      "by_split": {
+        "tune": {
+          "label": "tuning families, in-sample",
+          "families": [
+            "F1",
+            "F3"
+          ],
+          "realized_utility_per_trial": {
+            "1_fixed_assistance_off": {
+              "mean": 0.44982172148794064,
+              "ci95": [
+                0.0038600849025214627,
+                0.9027523178945985
+              ],
+              "people": 10
+            },
+            "4_uniform_random": {
+              "mean": 0.3122874817222293,
+              "ci95": [
+                -0.0096433821007099,
+                0.5856965028444445
+              ],
+              "people": 10
+            },
+            "9_engine_full": {
+              "mean": 0.6266395380820278,
+              "ci95": [
+                0.4280560836384489,
+                0.8524185937583378
+              ],
+              "people": 10
+            }
+          }
+        }
+      }
+    },
+    "agency_audit": {
+      "1_fixed_assistance_off": {
+        "passed": true,
+        "counts": {
+          "A1": 0,
+          "A2": 0,
+          "A3": 0,
+          "A4": 0,
+          "A5": 0,
+          "A6": 0,
+          "A7": 1.0,
+          "A8": 1.0,
+          "A9": 0,
+          "A10": 0,
+          "A11": 0,
+          "A12": 0
+        },
+        "findings": [],
+        "a9_exemptions": 2,
+        "soft": {
+          "override_rate": 0.010714285714285714,
+          "never_creations": 1,
+          "pause_adapting_uses": 0,
+          "offers": {
+            "accepted": 11,
+            "dismissed": 15,
+            "ignored_missing": 24
+          },
+          "burden_prompts_per_hour": 60.87799321676865,
+          "regime_entropy_bits": 2.4455709462496635,
+          "switch_rate": 0.7807692307692308
+        }
+      },
+      "4_uniform_random": {
+        "passed": true,
+        "counts": {
+          "A1": 0,
+          "A2": 0,
+          "A3": 0,
+          "A4": 0,
+          "A5": 0,
+          "A6": 0,
+          "A7": 1.0,
+          "A8": 1.0,
+          "A9": 0,
+          "A10": 0,
+          "A11": 0,
+          "A12": 0
+        },
+        "findings": [],
+        "a9_exemptions": 7,
+        "soft": {
+          "override_rate": 0.015625,
+          "never_creations": 1,
+          "pause_adapting_uses": 0,
+          "offers": {
+            "accepted": 12,
+            "dismissed": 23,
+            "ignored_missing": 31
+          },
+          "burden_prompts_per_hour": 59.280503286674,
+          "regime_entropy_bits": 2.6823046791533325,
+          "switch_rate": 0.95
+        }
+      },
+      "9_engine_full": {
+        "passed": true,
+        "counts": {
+          "A1": 0,
+          "A2": 0,
+          "A3": 0,
+          "A4": 0,
+          "A5": 0,
+          "A6": 0,
+          "A7": 1.0,
+          "A8": 1.0,
+          "A9": 0,
+          "A10": 0,
+          "A11": 0,
+          "A12": 0
+        },
+        "findings": [],
+        "a9_exemptions": 8,
+        "soft": {
+          "override_rate": 0.017857142857142856,
+          "never_creations": 1,
+          "pause_adapting_uses": 0,
+          "offers": {
+            "accepted": 11,
+            "dismissed": 19,
+            "ignored_missing": 25
+          },
+          "burden_prompts_per_hour": 60.70605584608754,
+          "regime_entropy_bits": 2.647711980034375,
+          "switch_rate": 0.8807692307692307
+        }
+      }
+    },
+    "limitations": [
+      "Simulated people only: every number describes the simulator's families, not people.",
+      "The tuning families share the model's functional forms, so the full model and the policy win there largely by construction.",
+      "Validation and holdout families use forms the model lacks; even they come from the same literature as the priors.",
+      "Realized utility uses observed outcomes and each simulated person's priorities (the protocol weights); no switching penalty.",
+      "Offers have no mechanical effect on simulated selections.",
+      "2 sessions per person: cross-session and probe-trend metrics are not computed."
+    ],
+    "claim_boundary": "simulated users only; tuning families, in-sample; no claim about people",
+    "promoted_to_runtime": false
+  }
+}

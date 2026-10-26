@@ -2,9 +2,9 @@
 
 > This page separates reproducible software evidence, live CI status, developer-run hardware observations, and claims that have not yet been established. It is an evidence index, not a promise that every feature works on every computer.
 
-Evidence snapshot date: **2026-10-24**
+Evidence snapshot date: **2026-10-26**
 
-Product version: **0.15.0**
+Product version: **0.16.0**
 
 ## Capability and routing evidence
 
@@ -42,7 +42,7 @@ cd daemon
 python ../scripts/generate_benchmark_evidence.py
 ```
 
-Bundle environment: Windows 11, Python 3.13.13. Source commit: `1fcbcce7808d`.
+Bundle environment: Windows 11, Python 3.13.13. Source commit: `20a186bcc119`.
 
 ### Guarded local request latency
 
@@ -50,11 +50,11 @@ Scope: Ready-daemon guarded CPU usage request: local planning, routing, risk ass
 
 | Metric | Ready-cold | Warm steady state |
 | --- | ---: | ---: |
-| Median | — | 27.183 ms |
-| p95 | — | 28.257 ms |
-| p99 | — | 28.758 ms |
-| Minimum | — | 26.156 ms |
-| Maximum | 51.358 ms | 29.625 ms |
+| Median | — | 25.234 ms |
+| p95 | — | 26.930 ms |
+| p99 | — | 27.992 ms |
+| Minimum | — | 23.895 ms |
+| Maximum | 69.152 ms | 28.324 ms |
 
 - The harness executes local planning, routing, risk assessment, execution, post-condition verification, and response shaping.
 - All 100 measured steady-state iterations made **0 model calls**.
@@ -64,20 +64,24 @@ Scope: Ready-daemon guarded CPU usage request: local planning, routing, risk ass
 
 | Real guarded action | Iterations | Median | p95 | p99 |
 | --- | ---: | ---: | ---: | ---: |
-| CPU usage | 50 | 27.218 ms | 28.074 ms | 28.135 ms |
-| Memory usage | 50 | 7.226 ms | 8.429 ms | 9.225 ms |
-| Disk usage | 50 | 6.318 ms | 7.300 ms | 7.784 ms |
-| Comprehensive system information | 50 | 59.792 ms | 96.157 ms | 113.275 ms |
+| CPU usage | 50 | 25.155 ms | 26.266 ms | 27.053 ms |
+| Memory usage | 50 | 4.309 ms | 4.835 ms | 5.008 ms |
+| Disk usage | 50 | 5.497 ms | 6.630 ms | 7.552 ms |
+| Comprehensive system information | 50 | 56.284 ms | 91.052 ms | 91.622 ms |
 
 Each case validates the exact selected action, executes the real read-only host probe, and makes zero model calls.
 
 ### Event-loop responsiveness
 
-During a real one-second CPU monitor sample, a 10 ms asyncio heartbeat produced **64 ticks**, with **15.650 ms median**, **16.207 ms p95**, and **16.237 ms maximum** gaps. This measures scheduler availability—not monitor completion speed—and is affected by Windows timer granularity.
+During a real one-second CPU monitor sample, a 10 ms asyncio heartbeat produced **65 ticks**, with **15.587 ms median**, **16.240 ms p95**, and **16.618 ms maximum** gaps. This measures scheduler availability—not monitor completion speed—and is affected by Windows timer granularity.
 
 ### Deterministic intent dispatch
 
-The curated routing regression set passed **59/59 cases** with **0.023 ms median** dispatch latency. It covers bounded positive intents and ambiguous controls that must fall through to model planning. It is not a population-level language-understanding benchmark, and application routing does not prove an application is installed.
+The curated routing regression set passed **59/59 cases** with **0.026 ms median** dispatch latency. It covers bounded positive intents and ambiguous controls that must fall through to model planning. It is not a population-level language-understanding benchmark, and application routing does not prove an application is installed.
+
+### Built-in commands answered in code
+
+Every example in the command guide (**91** sentences, the list behind Ctrl+K) was sent through the daemon's control path: **91/91** were handled without planning, with **1.384 ms median** and **14.111 ms p95** per reply across 1,820 replies, zero model calls and zero actions executed. Stand-ins replace the clipboard, speech, the settings file and machine readings, so this is the control path itself, not speech recognition, text-to-speech or end-to-end voice latency.
 
 ### Learned-risk world model
 
@@ -88,7 +92,7 @@ The shipped `risk-mlp-v4-heldout` artifact records **25,200 training** and **5,4
 | Disk-delta MAE | 0.0000000330 | 0.0000000718 | 54.0154% |
 | Process-delta MAE | 0.0000130251 | 0.0022166655 | 99.4124% |
 
-The audit passed **5/5 direction invariants** and measured **0.038 ms median** inference. These are coarse disk/process predictions. Deterministic safety rules remain authoritative; this is not a general physical-world or user-intent model.
+The audit passed **5/5 direction invariants** and measured **0.047 ms median** inference. These are coarse disk/process predictions. Deterministic safety rules remain authoritative; this is not a general physical-world or user-intent model.
 
 ### Assistance co-adaptation: simulated users
 
@@ -136,7 +140,7 @@ A developer-machine run through the official **Codex CLI** passed **3/3 fixed pl
 - None of these software benchmarks measures model-provider, network, browser page-load, UI-rendering, microphone, TTS, camera, gaze, gesture, EEG, or human latency/accuracy.
 - Local snapshots are reproducibility evidence, not universal performance guarantees.
 
-Raw evidence: [`software-benchmarks-2026-10-24.json`](https://github.com/VyomKulshrestha/Heliox-OS/blob/main/docs/evidence/software-benchmarks-2026-10-24.json), [`subscription-planning-codex-2026-08-16.json`](https://github.com/VyomKulshrestha/Heliox-OS/blob/main/docs/evidence/subscription-planning-codex-2026-08-16.json), [`local-tts-isolation-2026-08-27.json`](https://github.com/VyomKulshrestha/Heliox-OS/blob/main/docs/evidence/local-tts-isolation-2026-08-27.json), and the [historical CPU artifact](https://github.com/VyomKulshrestha/Heliox-OS/blob/main/docs/evidence/react-latency-2026-08-12.json).
+Raw evidence: [`software-benchmarks-2026-10-26.json`](https://github.com/VyomKulshrestha/Heliox-OS/blob/main/docs/evidence/software-benchmarks-2026-10-26.json), [`subscription-planning-codex-2026-08-16.json`](https://github.com/VyomKulshrestha/Heliox-OS/blob/main/docs/evidence/subscription-planning-codex-2026-08-16.json), [`local-tts-isolation-2026-08-27.json`](https://github.com/VyomKulshrestha/Heliox-OS/blob/main/docs/evidence/local-tts-isolation-2026-08-27.json), and the [historical CPU artifact](https://github.com/VyomKulshrestha/Heliox-OS/blob/main/docs/evidence/react-latency-2026-08-12.json).
 
 ## Platform and hardware evidence
 

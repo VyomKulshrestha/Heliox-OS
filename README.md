@@ -39,9 +39,9 @@ User intent → Planner → Permission and risk gates → Specialist → Executo
                     ↘ durable task state, memory, audit, cancellation and recovery ↗
 ```
 
-Published release: **v0.15.0** · Python **3.11+** · Windows is the primary hardware-development platform.
+Published release: **v0.16.0** · Python **3.11+** · Windows is the primary hardware-development platform.
 
-v0.15.0 adds per-task undo with a line-by-line view of what changed, Ed25519-signed task receipts, an opt-in activity timeline with a Today tab and daily brief, focus sessions, reminders, notes, routines, voice shortcuts, saved app setups, task requests from a paired phone, a Ctrl+K command palette and a Your data panel. It builds on v0.14.0's consented assistance co-adaptation study, accessibility-grounded desktop control, durable and scheduled autonomy, MCP tools and fail-closed approvals. Provider subscriptions, integrations, peers, hardware inputs, and host actions remain subject to their documented availability and safety boundaries.
+v0.16.0 adds a to-do list, "tell me when" watchers, repeating reminders and reminders for when an app opens, good morning and good night, habits, focus history, quick answers (sums, conversions, dates and world time), a password generator, answers about your files and downloads, a "why is my computer slow?" health check, opt-in clipboard history kept in memory, snippets and focus heads-ups. All 91 built-in commands are answered in code without a model. It builds on v0.15.0's per-task undo, signed task receipts, activity timeline and Today tab, and on v0.14.0's consented co-adaptation study, accessibility-grounded desktop control, durable autonomy, MCP tools and fail-closed approvals. Provider subscriptions, integrations, peers, hardware inputs, and host actions remain subject to their documented availability and safety boundaries.
 
 ## Why Heliox
 
@@ -61,12 +61,12 @@ v0.15.0 adds per-task undo with a line-by-line view of what changed, Ed25519-sig
 | Action schema        | 162 declared action types                                                                     | Availability depends on OS, dependencies, permissions, credentials, and policy                 |
 | Specialist mesh      | 21 executable specialists with providers for 162/162 declared actions                         | Provider coverage is not universal environment compatibility                                   |
 | Outcome verification | 22 actions have an independent observed post-condition verifier                               | The other 140 currently rely on the executor result                                            |
-| Guarded fast path    | 27.183 ms median, 28.257 ms p95 across 100 non-LLM CPU-usage iterations; zero model calls (24 October 2026) | This is not provider, browser, voice, camera, TTS, neural, or full-workflow latency            |
+| Guarded fast path    | 25.234 ms median, 26.930 ms p95 across 100 non-LLM CPU-usage iterations; zero model calls (26 October 2026) | This is not provider, browser, voice, camera, TTS, neural, or full-workflow latency            |
 | Subscription planning | 3/3 fixed Codex CLI cases; 14.708 s median; zero executed or destructive actions             | One account and planning only; not action-execution, Claude, or universal provider evidence     |
 | Intent dispatch      | 59/59 curated bounded-intent and ambiguous-fall-through regression cases                     | Fixed corpus; not population-level language-understanding accuracy                            |
 | Typed decisions      | Gnomon v4.1 (Qwen3.5-2B QLoRA): 98.3% yes/no and 100% choice accuracy, 0 false allowances on a fresh 128-case authored set | Opt-in; reviews autonomous plans but can only ask for approval; authored labels; rating error 0.202 vs 0.024 for the hosted reference model |
 | Learned risk model   | 25,200 training, 5,400 calibration, and 5,400 temporal-validation samples; 5/5 direction invariants | Covers 12 coarse disk/process action transitions; deterministic policy remains authoritative |
-| Async responsiveness | 64 heartbeats during a real one-second CPU monitor; 16.237 ms maximum heartbeat interval      | Windows timer granularity and host load apply; this is not UI or hardware-input latency        |
+| Async responsiveness | 65 heartbeats during a real one-second CPU monitor; 16.618 ms maximum heartbeat interval      | Windows timer granularity and host load apply; this is not UI or hardware-input latency        |
 | Assistance co-adaptation | 3/3 policy agency audits passed on two simulated tuning families, five simulated people per family | In-sample simulation only; the adaptive engine does not beat the plain interface for every family; no human accuracy claim |
 | Plugins              | 6 manifests in the generated public catalog                                                   | Marketplace and local plugins remain capability-constrained                                    |
 | CI                   | Python, frontend, visual, Rust, marketplace, and installer gates                              | CI does not prove camera, microphone, speaker, EEG, or human accuracy                          |
@@ -78,8 +78,8 @@ v0.15.0 adds per-task undo with a line-by-line view of what changed, Ed25519-sig
 - [Human-readable evidence and limitations](https://www.helioxos.dev/proof.html)
 - [Detailed Markdown evidence](proof.md)
 - [Machine-readable capability catalog](capabilities.json)
-- [v0.15.0 release software benchmark snapshot (24 October 2026)](docs/evidence/software-benchmarks-2026-10-24.json)
-- [Earlier v0.14.0 snapshots: 18 October](docs/evidence/software-benchmarks-2026-10-18.json) and [16 October](docs/evidence/software-benchmarks-2026-10-16.json)
+- [v0.16.0 release software benchmark snapshot (26 October 2026)](docs/evidence/software-benchmarks-2026-10-26.json): includes the new built-in command suite (91/91 handled in code, 1.384 ms median, 14.111 ms p95 per reply, zero model calls)
+- [v0.15.0 snapshot (24 October)](docs/evidence/software-benchmarks-2026-10-24.json) and earlier v0.14.0 snapshots: [18 October](docs/evidence/software-benchmarks-2026-10-18.json), [16 October](docs/evidence/software-benchmarks-2026-10-16.json)
 - [Raw subscription-planning evidence](docs/evidence/subscription-planning-codex-2026-08-16.json)
 - [Historical guarded fast-path benchmark](docs/evidence/react-latency-2026-08-12.json)
 - [Live CI history](https://github.com/VyomKulshrestha/Heliox-OS/actions)
@@ -143,6 +143,12 @@ No comparison declares a universal winner. See the [transparent cost page](https
 | Reminders and recall   | "Remind me in 20 minutes to stretch" or "tomorrow at 9 to send the report" (kept across restarts, spoken when due); "where did you put my report?" from what Heliox moved or saved; **Show what changed** in the undo preview gives a line-by-line diff of each file Heliox wrote |
 | Routines and shortcuts | "Do that every day at 9" turns the last task into a routine that may use only the actions that task used (you confirm on screen); "when I say start work, open VS Code and Slack" creates a voice shortcut; "do that again" repeats the last task with fresh approvals |
 | Activity timeline      | Opt-in local record of which app and window title were in front, so "what was I working on yesterday afternoon?" gets an answer by voice or chat (and "what did you do today?" is answered from receipts); never pixels or screen text, password managers and private windows skipped |
+| To-do list and habits  | "Add call the bank to my list" / "mark it as done"; "log a workout", "how many workouts this week", "what's my workout streak"; open items and habits show in the Today tab |
+| Watchers and reminders | "Tell me when Chrome closes", "…when my download finishes", "…when my battery is full" (only looks, gives up after a day); "remind me every weekday at 9 to check email"; "remind me to submit my timesheet when I open Outlook" |
+| Good morning and night | "Good morning" gives today's reminders, your list, streaks to keep and a nearly full drive; "good night" sums up the day with focus time and tomorrow's first reminder; "how long did I focus this week" |
+| Quick answers          | Sums and percentages, unit conversions, date countdowns and the time in about 60 cities, worked out exactly in code; "generate a password" (clipboard only, never kept), coin flips, dice, a stopwatch |
+| Files and this computer | "What did I download today", "where is my budget spreadsheet" (your own folders, a few seconds at most) and "why is my computer slow" (processor, memory, disks and the biggest apps; closing still asks first) |
+| Clipboard and snippets | Opt-in clipboard history in memory only (never passwords or private windows): "what did I copy earlier", "copy the second one back"; "save that as my signature" / "copy my signature"; "during focus, tell me if I open YouTube" |
 | Secure integrations    | Settings-managed CalDAV, IMAP/SMTP, and allowlisted SSH connections with secrets kept in the operating-system credential store                            |
 
 While a task runs, choose **Ask without stopping** to ask a question, **Correct task** to interrupt the current step and replan, or **Queue next task** to submit another task for execution afterward. Spoken “quick question …”, status questions, and “next task …” use the corresponding paths. Queued interactive tasks are serialized through the normal approval and verification gates; they are not parallel desktop controllers. The passive screen monitor tracks the active window and visual changes; it does not continuously understand every pixel. “Read my screen” invokes local OCR on demand. Screen context never grants an action or bypasses approval.

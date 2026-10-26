@@ -1,12 +1,30 @@
 ---
 title: Heliox OS changelog
 canonical_url: https://www.helioxos.dev/changelog.md
-last_updated: 2026-10-24
+last_updated: 2026-10-26
 ---
 
 # Heliox OS changelog
 
 This page is generated from the changelog shipped by the Heliox daemon. It distinguishes published installers from draft and source-only milestones; current limitations remain in the proof center.
+
+## 0.16.0 — To-dos, Watchers, Habits and Quick Answers
+
+Status: **Published**
+
+Released: **2026-10-26**
+
+A to-do list, watchers, repeating and app reminders, good morning and good night, habits, focus history, quick answers, a password generator, file and download questions, a health check, opt-in clipboard history, snippets and focus heads-ups
+
+- **To-Do List** — "Add call the bank to my list", "what's on my list" and "mark call the bank as done" are handled in code. Open items show in the Today tab, the daily brief and the exported report; "mark this email as done" still goes to the planner.
+- **Tell Me When** — "Tell me when Chrome closes", "let me know when my download finishes", "tell me when my battery is full" and "tell me when my computer calms down" watch until it happens and say it once. Watchers only look, never change anything, and give up after a day.
+- **Repeating and App Reminders** — "Remind me every hour to stand up" and "remind me every weekday at 9 to check email" repeat; interval reminders skip the night. "Remind me to submit my timesheet when I open Outlook" waits for that app to come to the front.
+- **Good Morning, Good Night and Habits** — "Good morning" gives today's reminders, your list, streaks to keep and a nearly full drive; "good night" sums up the day with focus time and tomorrow's first reminder. "Log a workout", "how many workouts this week" and "what's my workout streak" track habits, and "how long did I focus this week" reads your focus history.
+- **Quick Answers and Helpers** — Sums, percentages, unit conversions, date countdowns and the time in about 60 cities are worked out exactly in code. "Generate a password" puts one on the clipboard only; coin flips, dice, random picks, a stopwatch and "how long until 5 pm" need no model.
+- **Your Files and This Computer** — "What did I download today", "where is my budget spreadsheet" and "why is my computer slow" are answered from folder listings and a quick reading of processor, memory and disks. Heliox only reports; closing anything still asks first.
+- **Clipboard History, Snippets and Focus Heads-Ups** — Opt-in clipboard history is kept in memory only and skips passwords and private windows. "Save that as my signature" and "copy my signature" reuse text. "During focus, tell me if I open YouTube" gives one gentle heads-up per session and blocks nothing.
+
+[Release artifacts](https://github.com/VyomKulshrestha/Heliox-OS/releases/tag/v0.16.0)
 
 ## 0.15.0 — Undoable Tasks, Signed Receipts and Your Day
 

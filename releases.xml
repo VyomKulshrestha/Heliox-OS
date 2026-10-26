@@ -6,6 +6,13 @@
     <description>Verified release milestones generated from the Heliox daemon changelog.</description>
     <language>en</language>
     <item>
+      <title>Heliox OS 0.16.0 — To-dos, Watchers, Habits and Quick Answers</title>
+      <link>https://github.com/VyomKulshrestha/Heliox-OS/releases/tag/v0.16.0</link>
+      <guid isPermaLink="false">heliox-0.16.0</guid>
+      <pubDate>Mon, 26 Oct 2026 00:00:00 +0000</pubDate>
+      <description>A to-do list, watchers, repeating and app reminders, good morning and good night, habits, focus history, quick answers, a password generator, file and download questions, a health check, opt-in clipboard history, snippets and focus heads-ups</description>
+    </item>
+    <item>
       <title>Heliox OS 0.15.0 — Undoable Tasks, Signed Receipts and Your Day</title>
       <link>https://github.com/VyomKulshrestha/Heliox-OS/releases/tag/v0.15.0</link>
       <guid isPermaLink="false">heliox-0.15.0</guid>
