@@ -952,6 +952,7 @@ class PilotServer:
         self._notes: Any = None
         self._todos: Any = None
         self._nudges: Any = None
+        self._watchers: Any = None
         self._queued_execute_requests: deque[tuple[str, str, dict[str, Any]]] = deque()
         self._queued_submission_lock = asyncio.Lock()
         self._queued_execute_worker: asyncio.Task[None] | None = None
@@ -1204,6 +1205,10 @@ class PilotServer:
             deliver=self._deliver_nudge,
         )
         self._nudges.start()
+        from pilot.workflows.watchers import WatcherStore
+
+        self._watchers = WatcherStore(deliver=self._deliver_watch)
+        self._watchers.start()
         from pilot.workflows.workspaces import WorkspaceStore
 
         self._workspaces = WorkspaceStore(DATA_DIR / "workspaces.json")
@@ -1755,6 +1760,9 @@ class PilotServer:
             "nudge_list": self._handle_nudge_list,
             "nudge_add": self._handle_nudge_add,
             "nudge_delete": self._handle_nudge_delete,
+            "watch_list": self._handle_watch_list,
+            "watch_add": self._handle_watch_add,
+            "watch_cancel": self._handle_watch_cancel,
             "workspace_save": self._handle_workspace_save,
             "workspace_delete": self._handle_workspace_delete,
             "receipts_search": self._handle_receipts_search,
@@ -5994,7 +6002,7 @@ class PilotServer:
 
     def _phrase_reserved(self, phrase: str) -> bool:
         """True for phrases that already mean something to Heliox and so cannot be shortcuts."""
-        from pilot.workflows import notes, nudges, todos, workspaces
+        from pilot.workflows import notes, nudges, todos, watchers, workspaces
         from pilot.workflows.activity_timeline import LAST_SEEN_QUESTION, TIMELINE_QUESTION
         from pilot.workflows.command_guide import HELP_REQUEST
         from pilot.workflows.focus import (
@@ -6039,6 +6047,9 @@ class PilotServer:
             todos.DONE_REQUEST,
             todos.REMOVE_REQUEST,
             todos.CLEAR_DONE_REQUEST,
+            watchers.SET_REQUEST,
+            watchers.LIST_REQUEST,
+            watchers.CANCEL_REQUEST,
             nudges.ADD_REQUEST,
             nudges.LIST_REQUEST,
             nudges.DELETE_REQUEST,
@@ -6260,6 +6271,46 @@ class PilotServer:
         await self._speak_companion_text(
             nudge["text"], channel=SpeechChannel.PROACTIVE_SUGGESTION, dedupe_key=f"nudge:{nudge['id']}"
         )
+
+    async def _deliver_watch(self, event: dict[str, Any]) -> None:
+        """Say what a watcher saw. The person asked for it, so focus does not hold it."""
+        await self._broadcast_notification("watch_fired", event)
+        await self._speak_companion_text(
+            event["text"], channel=SpeechChannel.TASK_NARRATION, dedupe_key=f"watch:{event['id']}"
+        )
+
+    async def _handle_watch_list(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        if self._watchers is None:
+            return {"status": "error", "message": "Watchers are not ready yet.", "watchers": []}
+        return {"status": "ok", "watchers": self._watchers.list()}
+
+    async def _handle_watch_add(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """Start a watcher from a sentence such as "tell me when Chrome closes"."""
+        text = params.get("text")
+        if not isinstance(text, str) or not 1 <= len(text) <= 200 or self._watchers is None:
+            return {"status": "error", "message": "text must be 1 to 200 characters"}
+        sentence = (
+            text
+            if text.casefold().lstrip().startswith(("tell", "let", "notify", "alert", "ping"))
+            else f"tell me when {text}"
+        )
+        try:
+            entry = await asyncio.to_thread(self._watchers.add, sentence)
+        except ValueError as exc:
+            return {"status": "error", "message": str(exc)}
+        return {
+            "status": "ok",
+            "watcher": {key: entry[key] for key in ("id", "kind", "label", "created_at")},
+            "watchers": self._watchers.list(),
+        }
+
+    async def _handle_watch_cancel(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        watcher_id = params.get("id")
+        if not isinstance(watcher_id, str) or self._watchers is None:
+            return {"status": "error", "message": "id is required"}
+        if not self._watchers.cancel(watcher_id):
+            return {"status": "error", "message": "No such watcher."}
+        return {"status": "ok", "watchers": self._watchers.list()}
 
     async def _settings_request(self, text: str) -> str | None:
         """Change a few everyday settings by voice. Security and approval settings are never changed this way."""
@@ -6775,6 +6826,7 @@ class PilotServer:
             self._notes,
             self._todos,
             self._nudges,
+            self._watchers,
         )
         for source in sources:
             if source is None:
@@ -11055,6 +11107,8 @@ def handle_tool(tool_name, params):
             await self._quiet_hours.stop()
         if self._nudges is not None:
             await self._nudges.stop()
+        if self._watchers is not None:
+            await self._watchers.stop()
         if self._gnomon_reviewer is not None:
             await self._gnomon_reviewer.close()
         if self._autonomous is not None:

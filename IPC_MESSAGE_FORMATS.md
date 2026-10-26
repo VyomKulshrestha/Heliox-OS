@@ -12,7 +12,7 @@ The Heliox OS UI and daemon communicate over a local WebSocket using the [JSON-R
 | Request timeout | 5 minutes |
 | Reconnect interval | 3 seconds (auto-reconnect on close) |
 
-The daemon currently registers **281 WebSocket RPC methods**. That is the API
+The daemon currently registers **284 WebSocket RPC methods**. That is the API
 surface count, not the action catalog: Heliox exposes **162 action
 types** through the guarded planner/executor system. This document names every
 registered RPC method; grouped tables are used where several methods share one
@@ -491,6 +491,22 @@ the bank as done", "remove call the bank from my list" and "clear finished items
 voice and in chat without the planner. "Mark … as done" only answers when the list is
 named or an open item matches, so "mark this email as done" still goes to the planner.
 `today_overview` includes the open items as `todos`, and the daily brief mentions them.
+
+#### `watch_list` / `watch_add` / `watch_cancel`
+Watchers (`{"id", "kind", "label", "created_at"}`) wait for one thing and then say it once:
+an app closing (`process`: every process of that app that was running when the watcher
+started has exited), the downloads in progress in the Downloads folder finishing
+(`download`), a new file whose name contains a word arriving there (`file`), the battery
+reaching a level (`battery`), or the processor staying under a level for three checks in
+a row (`cpu`). `watch_add` takes `{"text"}`, a sentence such as "tell me when Chrome
+closes" or just "Chrome closes"; it fails with a plain explanation when the app is not
+running, no download is in progress or the computer has no battery. Up to 10 watchers;
+each gives up after a day. Watchers only read process, battery, processor and Downloads
+folder state, never change anything, live in memory only (a restart forgets them), and
+are not held by focus because the person asked for them. "Tell me when Chrome closes",
+"let me know when my download finishes", "tell me when the invoice shows up", "tell me
+when my battery is full", "tell me when my computer calms down", "what are you watching
+for" and "stop watching Chrome" work by voice and in chat without the planner.
 
 #### `nudge_list` / `nudge_add` / `nudge_delete`
 Usage nudges (`{"id", "match", "minutes", "last_fired_day"}`): once a day, when today's
@@ -3159,6 +3175,10 @@ daily brief as `daily_brief`.
 
 ### `reminder`
 Broadcast when a reminder falls due: `{"id": "a1b2c3", "due": 1792760400.0, "text": "stretch", "late": false}`.
+
+#### `watch_fired`
+Broadcast once when a watcher sees its event or gives up after a day, and spoken:
+`{"id": "a1b2c3", "kind": "process", "label": "chrome closes", "text": "Chrome has closed."}`.
 `late` is true when it fell due while Heliox was not running (reminders more than a day
 late are dropped). The daemon also speaks it.
 

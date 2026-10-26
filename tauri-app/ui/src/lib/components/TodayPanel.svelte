@@ -53,6 +53,9 @@
   let todoText = $state("");
   let openTodos = $derived(todos.filter((item) => !item.done));
   let doneTodos = $derived(todos.filter((item) => item.done));
+  type Watcher = { id: string; kind: string; label: string; created_at: number };
+  let watchers = $state<Watcher[]>([]);
+  let watchText = $state("");
   let nudges = $state<Nudge[]>([]);
   let nudgeMatch = $state("");
   let nudgeMinutes = $state(60);
@@ -283,6 +286,19 @@
     todos = (await listCall<Todo>("todo_delete", "todos", { id })) ?? todos;
   }
 
+  async function addWatcher(event: SubmitEvent) {
+    event.preventDefault();
+    const next = await listCall<Watcher>("watch_add", "watchers", { text: watchText });
+    if (next) {
+      watchers = next;
+      watchText = "";
+    }
+  }
+
+  async function cancelWatcher(id: string) {
+    watchers = (await listCall<Watcher>("watch_cancel", "watchers", { id })) ?? watchers;
+  }
+
   async function clearDoneTodos() {
     todos = (await listCall<Todo>("todo_clear_done", "todos")) ?? todos;
   }
@@ -306,6 +322,7 @@
     void loadWorkspaces();
     void listCall<Note>("notes_list", "notes").then((items) => (notes = items ?? []));
     void listCall<Todo>("todo_list", "todos").then((items) => (todos = items ?? []));
+    void listCall<Watcher>("watch_list", "watchers").then((items) => (watchers = items ?? []));
     void listCall<Nudge>("nudge_list", "nudges").then((items) => (nudges = items ?? []));
     void listCall<QuietWindow>("focus_schedule_list", "windows").then((items) => (quietWindows = items ?? []));
   });
@@ -427,6 +444,37 @@
       <form class="brief-controls" onsubmit={addTodo}>
         <input class="reminder-text" bind:value={todoText} maxlength="200" aria-label="New to-do" required />
         <button type="submit">Add to-do</button>
+      </form>
+    </section>
+
+    <section aria-labelledby="today-watching">
+      <h3 id="today-watching">Watching</h3>
+      {#if watchers.length === 0}
+        <p class="empty">Not watching anything. Say "tell me when Chrome closes", or type what to wait for here.</p>
+      {:else}
+        <ul class="rows">
+          {#each watchers as watcher (watcher.id)}
+            <li>
+              <span class="row-text"><strong>Until {watcher.label}</strong></span>
+              <button
+                type="button"
+                aria-label={`Stop watching until ${watcher.label}`}
+                onclick={() => cancelWatcher(watcher.id)}>Stop</button
+              >
+            </li>
+          {/each}
+        </ul>
+      {/if}
+      <form class="brief-controls" onsubmit={addWatcher}>
+        <input
+          class="reminder-text"
+          bind:value={watchText}
+          maxlength="200"
+          aria-label="Tell me when"
+          placeholder="Chrome closes"
+          required
+        />
+        <button type="submit">Watch</button>
       </form>
     </section>
 

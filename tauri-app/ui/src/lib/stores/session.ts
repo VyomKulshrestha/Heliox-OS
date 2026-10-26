@@ -927,6 +927,15 @@ function createSession() {
         break;
       }
 
+      case "watch_fired": {
+        const text = String(p.text ?? "").trim();
+        if (text) {
+          addSystemMessage(text);
+          void notifyDesktop("Heliox", text);
+        }
+        break;
+      }
+
       case "focus_ended": {
         const text = String(p.text ?? "").trim();
         if (text) {

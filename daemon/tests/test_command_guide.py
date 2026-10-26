@@ -17,6 +17,7 @@ from pilot.workflows.routines import ShortcutStore, normalize_phrase
 from pilot.workflows.task_receipts import TaskReceipts
 from pilot.workflows.todos import TodoStore
 from pilot.workflows.undo_journal import UndoJournal
+from pilot.workflows.watchers import Probes, WatcherStore
 from pilot.workflows.workspaces import WorkspaceStore
 from tests.test_task_receipts import FakeVault
 
@@ -36,6 +37,18 @@ def server(tmp_path):
     server._notes = NoteStore(tmp_path / "notes.json")
     server._todos = TodoStore(tmp_path / "todos.json")
     server._todos.add("call the bank")
+    downloads = tmp_path / "Downloads"
+    downloads.mkdir()
+    (downloads / "report.pdf.crdownload").write_bytes(b"x")
+    server._watchers = WatcherStore(
+        probes=Probes(
+            processes=lambda: [(10, "chrome.exe", 1.0)],
+            alive=lambda pid, created: True,
+            battery=lambda: (50.0, True),
+            cpu=lambda: 80.0,
+            downloads=downloads,
+        )
+    )
     server._nudges = NudgeStore(tmp_path / "nudges.json", timeline_on=lambda: True)
     server._focus = FocusSession(tmp_path / "focus.json", on_end=server._on_focus_end)
     server._quiet_hours = QuietHours(tmp_path / "quiet.json", focus=server._focus, on_start=AsyncMock())

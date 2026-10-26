@@ -187,6 +187,26 @@ describe("TodayPanel", () => {
     await waitFor(() => expect(screen.queryByText("call the bank")).toBeNull());
   });
 
+  it("starts and stops a watcher", async () => {
+    let watchers: { id: string; kind: string; label: string; created_at: number }[] = [];
+    daemonMocks.call.mockImplementation(async (method: string, params: Record<string, unknown>) => {
+      if (method === "today_overview") return overview;
+      if (method === "watch_add") watchers = [{ id: "w1", kind: "process", label: "chrome closes", created_at: 1 }];
+      if (method === "watch_cancel") watchers = [];
+      return { status: "ok", watchers, text: params.text };
+    });
+    render(TodayPanel);
+    await waitFor(() => expect(screen.getByText(overview.brief)).toBeTruthy());
+
+    await fireEvent.input(screen.getByLabelText("Tell me when"), { target: { value: "Chrome closes" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Watch" }));
+    await waitFor(() => expect(screen.getByText("Until chrome closes")).toBeTruthy());
+    expect(daemonMocks.call).toHaveBeenCalledWith("watch_add", { text: "Chrome closes" });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Stop watching until chrome closes" }));
+    await waitFor(() => expect(screen.queryByText("Until chrome closes")).toBeNull());
+  });
+
   it("starts a pomodoro and manages quiet hours", async () => {
     let windows: { id: string; days: number[]; start: number; end: number }[] = [];
     daemonMocks.call.mockImplementation(async (method: string, params: Record<string, unknown>) => {

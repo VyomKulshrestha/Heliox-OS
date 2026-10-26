@@ -86,6 +86,18 @@ GUIDE: list[dict[str, Any]] = [
         ],
     },
     {
+        "group": "Tell me when",
+        "about": "Watches until something happens, then tells you once; it never changes anything.",
+        "examples": [
+            "tell me when Chrome closes",
+            "let me know when my download finishes",
+            "tell me when my battery is full",
+            "tell me when my computer calms down",
+            "what are you watching for",
+            "stop watching Chrome",
+        ],
+    },
+    {
         "group": "Usage nudges",
         "about": "A once-a-day heads-up from the activity timeline; nothing is blocked.",
         "examples": ["tell me if I spend more than an hour on YouTube today", "what nudges do I have"],

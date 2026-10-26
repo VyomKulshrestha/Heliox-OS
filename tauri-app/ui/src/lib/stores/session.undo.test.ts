@@ -320,3 +320,23 @@ describe("nudges in chat", () => {
     expect(get(session).messages.at(-1)?.text).toBe("Nudge: You have spent 1 h on YouTube today.");
   });
 });
+
+describe("watchers in chat", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    notificationHandler = null;
+    vi.resetModules();
+  });
+
+  it("shows what a watcher saw", async () => {
+    const { session } = await import("./session");
+
+    notificationHandler!("watch_fired", {
+      id: "w1",
+      kind: "process",
+      label: "chrome closes",
+      text: "Chrome has closed.",
+    });
+    expect(get(session).messages.at(-1)?.text).toBe("Chrome has closed.");
+  });
+});
