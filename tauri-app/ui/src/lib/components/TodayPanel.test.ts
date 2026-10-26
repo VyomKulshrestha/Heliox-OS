@@ -309,6 +309,24 @@ describe("TodayPanel", () => {
     await waitFor(() => expect(screen.queryByText("12 Main Street")).toBeNull());
   });
 
+  it("logs habits and shows focus totals", async () => {
+    let habits = [{ name: "workout", today: 0, week: 2, streak: 3, last: 1 }];
+    daemonMocks.call.mockImplementation(async (method: string) => {
+      if (method === "today_overview") return overview;
+      if (method === "focus_history")
+        return { status: "ok", today: { seconds: 2700, sessions: 1 }, this_week: { seconds: 7200, sessions: 3 } };
+      if (method === "habit_log") habits = [{ ...habits[0], today: 1, week: 3, streak: 4 }];
+      return { status: "ok", habits };
+    });
+    render(TodayPanel);
+    await waitFor(() => expect(screen.getByText("0 today · 2 this week · 3-day streak")).toBeTruthy());
+    expect(screen.getByText(/Focused 45 min today/)).toBeTruthy();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Log workout" }));
+    await waitFor(() => expect(screen.getByText("1 today · 3 this week · 4-day streak")).toBeTruthy());
+    expect(daemonMocks.call).toHaveBeenCalledWith("habit_log", { name: "workout", count: 1 });
+  });
+
   it("starts a pomodoro and manages quiet hours", async () => {
     let windows: { id: string; days: number[]; start: number; end: number }[] = [];
     daemonMocks.call.mockImplementation(async (method: string, params: Record<string, unknown>) => {

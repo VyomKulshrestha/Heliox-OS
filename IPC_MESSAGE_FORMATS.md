@@ -12,7 +12,7 @@ The Heliox OS UI and daemon communicate over a local WebSocket using the [JSON-R
 | Request timeout | 5 minutes |
 | Reconnect interval | 3 seconds (auto-reconnect on close) |
 
-The daemon currently registers **297 WebSocket RPC methods**. That is the API
+The daemon currently registers **301 WebSocket RPC methods**. That is the API
 surface count, not the action catalog: Heliox exposes **162 action
 types** through the guarded planner/executor system. This document names every
 registered RPC method; grouped tables are used where several methods share one
@@ -532,6 +532,35 @@ Processes of one app are added together; `cpu` is a share of the whole processor
 using my CPU" and "how much disk space do I have" are answered from the same reading by
 voice and in chat. Heliox only reports; closing an app is an ordinary request that goes
 through approval.
+
+#### `focus_history`
+Focus time from `DATA_DIR/focus_history.json`, where each finished focus session longer
+than a minute is logged (`{"started_at", "ended_at", "seconds", "reason"}`, kept a year):
+`{"status": "ok", "today": {"seconds", "sessions"}, "this_week": {"seconds", "sessions"},
+"recent": [<up to 20 sessions, newest first>]}`. "How long did I focus this week" and
+"how many focus sessions today" work by voice and in chat.
+
+#### `habit_list` / `habit_log` / `habit_delete`
+Habits (`{"name", "today", "week", "streak", "last"}`), kept as log times in
+`DATA_DIR/habits.json` for a year. `habit_log` takes `{"name", "count"}` (1 to 50; a new
+name starts a habit, up to 30) and `habit_delete` takes `{"name"}`; both return `habits`.
+A streak counts days in a row with a log, up to today, or yesterday when today has none
+yet. "Log a workout" starts or logs a habit; "I drank a glass of water" and "I did my
+workout" only log habits that already exist, so "I did the dishes" is left alone; "track
+my package" and "record a video" go to the planner. "How many workouts this week", "how
+much water today", "what's my workout streak" and "show my habits" work by voice and in
+chat.
+
+#### Helpers and the start and end of the day (no RPC)
+"Generate a password" (12 to 64 characters, default 20, from the operating system's
+secure random source) puts it on the clipboard and nowhere else: it is not in the reply,
+in chat, on disk or in clipboard history. "Flip a coin", "roll a die" (or a d20, or two
+dice), "pick a number between 1 and 100", "choose between pizza or sushi", "start a
+stopwatch", "how long has it been", "stop the stopwatch" and "how long until 5 pm" are
+answered in code. "Good morning" (also "what's my day look like") gives the date, today's
+reminders, the to-do list, habit streaks not yet logged today and a nearly full drive or
+low battery; "good night" gives the day's brief, focus time, finished to-dos and
+tomorrow's first reminder. Both are built from what Heliox already keeps.
 
 #### Your files (no RPC)
 "What did I download today" (or yesterday, this week, recently), "what was the last

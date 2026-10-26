@@ -18,6 +18,11 @@ HELP_REQUEST = re.compile(
 
 GUIDE: list[dict[str, Any]] = [
     {
+        "group": "Start and end the day",
+        "about": "Reminders, your list, streaks and anything wrong with the computer, then the day's summary.",
+        "examples": ["good morning", "what's my day look like", "good night"],
+    },
+    {
         "group": "Undo",
         "about": "Open the undo preview for recent tasks; every undo still needs your click.",
         "examples": ["undo that", "undo the last two tasks"],
@@ -73,6 +78,7 @@ GUIDE: list[dict[str, Any]] = [
             "focus every weekday from 9 to 12",
             "what is my focus schedule",
             "during focus, tell me if I open YouTube",
+            "how long did I focus this week",
             "what are my distractions",
             "stop focusing",
         ],
@@ -114,6 +120,7 @@ GUIDE: list[dict[str, Any]] = [
             "how many days until Christmas",
             "what day is December 25",
             "what time is it in Tokyo",
+            "how long until 5 pm",
         ],
     },
     {
@@ -148,6 +155,31 @@ GUIDE: list[dict[str, Any]] = [
             "copy my signature",
             "what snippets do I have",
             "read what I copied",
+        ],
+    },
+    {
+        "group": "Habits",
+        "about": "Log a habit by voice and see counts and streaks; kept on this computer.",
+        "examples": [
+            "log a workout",
+            "I drank a glass of water",
+            "how many workouts this week",
+            "what's my workout streak",
+            "show my habits",
+        ],
+    },
+    {
+        "group": "Helpers",
+        "about": "Passwords go straight to the clipboard and are never kept; chance and the stopwatch run in code.",
+        "examples": [
+            "generate a password",
+            "flip a coin",
+            "roll a die",
+            "pick a number between 1 and 100",
+            "choose between pizza or sushi",
+            "start a stopwatch",
+            "how long has it been",
+            "stop the stopwatch",
         ],
     },
     {

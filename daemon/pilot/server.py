@@ -961,6 +961,9 @@ class PilotServer:
         self._quick_answers: Any = None
         self._snippets: Any = None
         self._file_finder: Any = None
+        self._generators: Any = None
+        self._focus_log: Any = None
+        self._habits: Any = None
         self._queued_execute_requests: deque[tuple[str, str, dict[str, Any]]] = deque()
         self._queued_submission_lock = asyncio.Lock()
         self._queued_execute_worker: asyncio.Task[None] | None = None
@@ -1241,6 +1244,13 @@ class PilotServer:
         from pilot.workflows.file_finder import FileFinder
 
         self._file_finder = FileFinder()
+        from pilot.workflows.focus_log import FocusLog
+        from pilot.workflows.generators import Generators
+        from pilot.workflows.habits import HabitStore
+
+        self._generators = Generators(write=clipboard_write)
+        self._focus_log = FocusLog(DATA_DIR / "focus_history.json")
+        self._habits = HabitStore(DATA_DIR / "habits.json")
         from pilot.workflows.workspaces import WorkspaceStore
 
         self._workspaces = WorkspaceStore(DATA_DIR / "workspaces.json")
@@ -1820,6 +1830,10 @@ class PilotServer:
             "snippet_save": self._handle_snippet_save,
             "snippet_copy": self._handle_snippet_copy,
             "snippet_delete": self._handle_snippet_delete,
+            "focus_history": self._handle_focus_history,
+            "habit_list": self._handle_habit_list,
+            "habit_log": self._handle_habit_log,
+            "habit_delete": self._handle_habit_delete,
             "workspace_save": self._handle_workspace_save,
             "workspace_delete": self._handle_workspace_delete,
             "receipts_search": self._handle_receipts_search,
@@ -6062,8 +6076,12 @@ class PilotServer:
         from pilot.workflows import (
             app_reminders,
             clipboard_history,
+            day_briefing,
             file_finder,
             focus_guard,
+            focus_log,
+            generators,
+            habits,
             notes,
             nudges,
             snippets,
@@ -6138,6 +6156,22 @@ class PilotServer:
             snippets.READ_REQUEST,
             file_finder.DOWNLOADS_REQUEST,
             file_finder.LAST_DOWNLOAD_REQUEST,
+            day_briefing.MORNING_REQUEST,
+            day_briefing.NIGHT_REQUEST,
+            focus_log.HISTORY_REQUEST,
+            generators.PASSWORD_REQUEST,
+            generators.COIN_REQUEST,
+            generators.DIE_REQUEST,
+            generators.NUMBER_REQUEST,
+            generators.CHOICE_REQUEST,
+            generators.STOPWATCH_START,
+            generators.STOPWATCH_CHECK,
+            generators.STOPWATCH_STOP,
+            habits.LOG_REQUEST,
+            habits.COUNT_REQUEST,
+            habits.STREAK_REQUEST,
+            habits.LIST_REQUEST,
+            habits.DELETE_REQUEST,
             nudges.ADD_REQUEST,
             nudges.LIST_REQUEST,
             nudges.DELETE_REQUEST,
@@ -6162,8 +6196,16 @@ class PilotServer:
             or any(pattern.match(phrase) for pattern in questions)
             or QuickAnswers().answer(phrase) is not None
             or self._names_snippet(phrase)
+            or self._names_habit(phrase)
             or file_finder.names_a_kind(phrase)
         )
+
+    def _names_habit(self, phrase: str) -> bool:
+        """ "I drank a glass of water" is taken once a water habit exists; "I did the dishes" stays free."""
+        from pilot.workflows.habits import DID_REQUEST
+
+        asked = DID_REQUEST.match(phrase)
+        return bool(asked and self._habits is not None and self._habits.find(asked.group("habit")) is not None)
 
     def _names_snippet(self, phrase: str) -> bool:
         """ "Copy my signature" is taken once a signature snippet exists; "copy my files" stays free."""
@@ -6245,6 +6287,7 @@ class PilotServer:
         handlers = (
             self._help_request,
             self._say_again_request,
+            self._day_request,
             self._forget_request,
             self._local_answer,
             self._focus_request,
@@ -6270,6 +6313,12 @@ class PilotServer:
     async def _on_focus_end(self, summary: dict[str, Any]) -> None:
         """Deliver what a focus session held, with one summary."""
         from pilot.workflows.focus import compose_focus_summary
+
+        if self._focus_log is not None:
+            try:
+                await asyncio.to_thread(self._focus_log.add, summary)
+            except (OSError, ValueError, KeyError):
+                logger.warning("Could not log the focus session", exc_info=True)
 
         usage = None
         if self._activity_timeline is not None and self._activity_timeline.enabled:
@@ -6435,6 +6484,74 @@ class PilotServer:
         if self._clipboard_history is None:
             return {"status": "error", "message": "Clipboard history is not ready yet."}
         return {"status": "ok", "removed": self._clipboard_history.clear(), "items": []}
+
+    async def _day_request(self, text: str) -> str | None:
+        """ "Good morning" and "good night": the day's start and end, from what Heliox already keeps."""
+        from datetime import datetime
+
+        from pilot.workflows.day_briefing import MORNING_REQUEST, NIGHT_REQUEST, compose_morning, compose_night
+
+        normalized = _normalize_spoken_phrase(text)
+        morning, night = MORNING_REQUEST.match(normalized), NIGHT_REQUEST.match(normalized)
+        if not morning and not night:
+            return None
+        now = datetime.now()
+        reminders = await asyncio.to_thread(self._reminders.list) if self._reminders is not None else []
+        todos = await asyncio.to_thread(self._todos.open_items) if self._todos is not None else []
+        if morning:
+            habits = await asyncio.to_thread(self._habits.list) if self._habits is not None else []
+            health = None
+            if self._system_health is not None:
+                try:
+                    health = await self._system_health.snapshot()
+                except Exception:
+                    logger.debug("Health reading for the morning briefing failed", exc_info=True)
+            return compose_morning(now, reminders=reminders, todos=todos, habits=habits, health=health)
+        overview = await self._today_overview("today")
+        midnight = now.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+        focus_seconds = 0.0
+        if self._focus_log is not None:
+            focus_seconds = (await asyncio.to_thread(self._focus_log.totals, midnight, now.timestamp() + 1))["seconds"]
+        everything = await asyncio.to_thread(self._todos.list) if self._todos is not None else []
+        finished = sum(1 for item in everything if item.get("done") and (item.get("done_at") or 0) >= midnight)
+        return compose_night(
+            now,
+            brief=overview["brief"],
+            focus_seconds=focus_seconds,
+            finished_todos=finished,
+            open_todos=len(todos),
+            reminders=reminders,
+        )
+
+    async def _handle_focus_history(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """Focus time today and this week, and the most recent sessions."""
+        if self._focus_log is None:
+            return {"status": "error", "message": "Focus history is not ready yet."}
+        return {"status": "ok", **await asyncio.to_thread(self._focus_log.overview)}
+
+    async def _handle_habit_list(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        if self._habits is None:
+            return {"status": "error", "message": "Habits are not ready yet.", "habits": []}
+        return {"status": "ok", "habits": await asyncio.to_thread(self._habits.list)}
+
+    async def _handle_habit_log(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """Log a habit once (or ``count`` times, 1 to 50); a new name starts a new habit."""
+        name, count = params.get("name"), params.get("count", 1)
+        if not isinstance(name, str) or not isinstance(count, int) or isinstance(count, bool) or self._habits is None:
+            return {"status": "error", "message": "name and a whole-number count are required"}
+        try:
+            await asyncio.to_thread(self._habits.log, name, count)
+        except ValueError as exc:
+            return {"status": "error", "message": str(exc)}
+        return {"status": "ok", "habits": await asyncio.to_thread(self._habits.list)}
+
+    async def _handle_habit_delete(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        name = params.get("name")
+        if not isinstance(name, str) or self._habits is None:
+            return {"status": "error", "message": "name is required"}
+        if not await asyncio.to_thread(self._habits.delete, name):
+            return {"status": "error", "message": "No such habit."}
+        return {"status": "ok", "habits": await asyncio.to_thread(self._habits.list)}
 
     async def _handle_snippet_list(self, params: dict[str, Any], ws: ServerConnection) -> dict:
         if self._snippets is None:
@@ -6705,6 +6822,8 @@ class PilotServer:
         for key, store in (
             ("notes", self._notes),
             ("snippets", self._snippets),
+            ("habits", self._habits),
+            ("focus_history", self._focus_log),
             ("todos", self._todos),
             ("reminders", self._reminders),
             ("app_reminders", self._app_reminders),
@@ -7075,6 +7194,8 @@ class PilotServer:
             self._reminders,
             self._notes,
             self._todos,
+            self._habits,
+            self._focus_log,
             self._nudges,
             self._focus_guard,
             self._watchers,
@@ -7082,6 +7203,7 @@ class PilotServer:
             self._snippets,
             self._system_health,
             self._file_finder,
+            self._generators,
             self._quick_answers,
         )
         for source in sources:

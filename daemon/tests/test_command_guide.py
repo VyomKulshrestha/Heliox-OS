@@ -14,6 +14,9 @@ from pilot.workflows.command_guide import SPOKEN_HELP, all_examples, guide
 from pilot.workflows.file_finder import FileFinder
 from pilot.workflows.focus import FocusSession, QuietHours
 from pilot.workflows.focus_guard import FocusGuard
+from pilot.workflows.focus_log import FocusLog
+from pilot.workflows.generators import Generators
+from pilot.workflows.habits import HabitStore
 from pilot.workflows.notes import NoteStore
 from pilot.workflows.nudges import NudgeStore
 from pilot.workflows.quick_answers import QuickAnswers
@@ -79,6 +82,11 @@ def server(tmp_path):
     server._system_health = SystemHealth(read=lambda: SNAPSHOT)
     server._quick_answers = QuickAnswers()
     server._file_finder = FileFinder(roots=lambda: [downloads], downloads=lambda: downloads)
+    server._generators = Generators(write=AsyncMock())
+    server._focus_log = FocusLog(tmp_path / "focus_history.json")
+    server._habits = HabitStore(tmp_path / "habits.json")
+    server._habits.log("workout")
+    server._habits.log("water")
     clipboard = AsyncMock(return_value="Jane Doe, 12 Main Street")
     server._snippets = SnippetStore(tmp_path / "snippets.json", read=clipboard, write=AsyncMock())
     server._snippets.save("signature", "Best, Jane")

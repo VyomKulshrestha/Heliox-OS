@@ -254,6 +254,10 @@ OFFSET_REQUEST = re.compile(
 TODAY_REQUEST = re.compile(
     r"^(?:what s|what is|whats) (?:the date|today s date|the date today)(?: today)?$|^what day is (?:it|today)(?: today)?$"
 )
+UNTIL_TIME_REQUEST = re.compile(
+    r"^how (?:long|much time|many (?:minutes|hours)) (?:is it |is there |do i have )?(?:left )?(?:until|till|before) "
+    r"(?:(?P<named>midnight|noon|midday)|(?P<hour>\d{1,2})(?::(?P<minute>\d{2}))? ?(?P<meridiem>am|pm|a m|p m)?)$"
+)
 TIME_REQUEST = re.compile(r"^(?:what time is it|what s the time|what is the time)(?: now| right now)?$")
 ZONE_REQUEST = re.compile(
     r"^(?:what time is it|what s the time|what is the time|time) (?:now |right now )?in (?P<place>[\w ]+)$"
@@ -320,6 +324,31 @@ def date_answer(text: str, now: datetime) -> str | None:
         return f"It's {_clock(now)}."
     if TODAY_REQUEST.match(text):
         return f"Today is {_long(today)}."
+    until_time = UNTIL_TIME_REQUEST.match(text)
+    if until_time:
+        named = until_time.group("named")
+        if named:
+            hour, minute = (0, 0) if named == "midnight" else (12, 0)
+        else:
+            hour, minute = int(until_time.group("hour")), int(until_time.group("minute") or 0)
+            meridiem = (until_time.group("meridiem") or "").replace(" ", "")
+            if meridiem == "pm" and hour < 12:
+                hour += 12
+            elif meridiem == "am" and hour == 12:
+                hour = 0
+            elif not meridiem and 1 <= hour <= 7 and now.hour >= 8:
+                hour += 12  # "until 5" during the day means 5 PM
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            return "That is not a time I understand."
+        target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if target <= now:
+            target += timedelta(days=1)
+        minutes = round((target - now).total_seconds() / 60)
+        hours, rest = divmod(minutes, 60)
+        span = (f"{hours} hour{'' if hours == 1 else 's'}" if hours else "") + (
+            f"{' and ' if hours and rest else ''}{rest} minute{'' if rest == 1 else 's'}" if rest or not hours else ""
+        )
+        return f"{span} until {_clock(target)}{' tomorrow' if target.date() > today else ''}."
     zone = ZONE_REQUEST.match(text)
     if zone:
         place = zone.group("place").strip()

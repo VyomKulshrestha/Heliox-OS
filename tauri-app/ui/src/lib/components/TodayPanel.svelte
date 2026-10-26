@@ -46,6 +46,12 @@
   type AppReminder = { id: string; app: string; text: string; every_time: boolean };
   let appReminders = $state<AppReminder[]>([]);
   type Snippet = { name: string; text: string; created_at: number };
+  type Habit = { name: string; today: number; week: number; streak: number; last: number | null };
+  let habits = $state<Habit[]>([]);
+  let habitName = $state("");
+  type FocusTotals = { seconds: number; sessions: number };
+  let focusToday = $state<FocusTotals | null>(null);
+  let focusWeek = $state<FocusTotals | null>(null);
   let snippets = $state<Snippet[]>([]);
   let snippetName = $state("");
   let snippetText = $state("");
@@ -341,6 +347,36 @@
     distractions = (await listCall<string>("focus_distraction_delete", "words", { word })) ?? distractions;
   }
 
+  async function logHabit(name: string) {
+    const next = await listCall<Habit>("habit_log", "habits", { name, count: 1 });
+    if (next) habits = next;
+  }
+
+  async function addHabit(event: SubmitEvent) {
+    event.preventDefault();
+    const next = await listCall<Habit>("habit_log", "habits", { name: habitName, count: 1 });
+    if (next) {
+      habits = next;
+      habitName = "";
+    }
+  }
+
+  async function deleteHabit(name: string) {
+    habits = (await listCall<Habit>("habit_delete", "habits", { name })) ?? habits;
+  }
+
+  async function loadFocusHistory() {
+    try {
+      const result = await call<{ status: string; today?: FocusTotals; this_week?: FocusTotals }>("focus_history");
+      if (result.status === "ok") {
+        focusToday = result.today ?? null;
+        focusWeek = result.this_week ?? null;
+      }
+    } catch {
+      focusToday = null;
+    }
+  }
+
   async function saveSnippet(event: SubmitEvent) {
     event.preventDefault();
     const next = await listCall<Snippet>("snippet_save", "snippets", { name: snippetName, text: snippetText });
@@ -398,6 +434,8 @@
     void listCall<Todo>("todo_list", "todos").then((items) => (todos = items ?? []));
     void listCall<Watcher>("watch_list", "watchers").then((items) => (watchers = items ?? []));
     void loadCopied();
+    void listCall<Habit>("habit_list", "habits").then((items) => (habits = items ?? []));
+    void loadFocusHistory();
     void listCall<Snippet>("snippet_list", "snippets").then((items) => (snippets = items ?? []));
     void listCall<AppReminder>("app_reminder_list", "reminders").then((items) => (appReminders = items ?? []));
     void listCall<string>("focus_distractions_list", "words").then((items) => (distractions = items ?? []));
@@ -607,6 +645,39 @@
       >
     </section>
 
+    <section aria-labelledby="today-habits">
+      <h3 id="today-habits">Habits</h3>
+      {#if habits.length === 0}
+        <p class="empty">No habits yet. Say "log a workout", or add one here.</p>
+      {:else}
+        <ul class="rows">
+          {#each habits as habit (habit.name)}
+            <li>
+              <span class="row-text"
+                ><strong>{habit.name}</strong>
+                <small>{habit.today} today · {habit.week} this week · {habit.streak}-day streak</small></span
+              >
+              <button type="button" aria-label={`Log ${habit.name}`} onclick={() => logHabit(habit.name)}>+1</button>
+              <button type="button" aria-label={`Stop tracking ${habit.name}`} onclick={() => deleteHabit(habit.name)}
+                >Remove</button
+              >
+            </li>
+          {/each}
+        </ul>
+      {/if}
+      <form class="brief-controls" onsubmit={addHabit}>
+        <input
+          class="reminder-text"
+          bind:value={habitName}
+          maxlength="40"
+          aria-label="New habit"
+          placeholder="workout"
+          required
+        />
+        <button type="submit">Add habit</button>
+      </form>
+    </section>
+
     <section aria-labelledby="today-snippets">
       <h3 id="today-snippets">Snippets</h3>
       {#if snippetNotice}<p class="empty" role="status">{snippetNotice}</p>{/if}
@@ -785,6 +856,12 @@
 
     <section aria-labelledby="today-focus">
       <h3 id="today-focus">Focus</h3>
+      {#if focusToday && focusWeek && (focusToday.sessions || focusWeek.sessions)}
+        <p class="brief">
+          Focused {duration(focusToday.seconds)} today ({focusToday.sessions}
+          {focusToday.sessions === 1 ? "session" : "sessions"}) and {duration(focusWeek.seconds)} this week.
+        </p>
+      {/if}
       <p class="empty">
         Holds reminders and the daily brief and keeps Heliox quiet; approvals and answers still come through. You can
         also say "focus for 45 minutes".
