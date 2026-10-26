@@ -15,6 +15,7 @@ from pilot.workflows.nudges import NudgeStore
 from pilot.workflows.reminders import ReminderStore
 from pilot.workflows.routines import ShortcutStore, normalize_phrase
 from pilot.workflows.task_receipts import TaskReceipts
+from pilot.workflows.todos import TodoStore
 from pilot.workflows.undo_journal import UndoJournal
 from pilot.workflows.workspaces import WorkspaceStore
 from tests.test_task_receipts import FakeVault
@@ -33,6 +34,8 @@ def server(tmp_path):
     server._undo_journal = UndoJournal(tmp_path / "undo", config=UndoConfig())
     server._reminders = ReminderStore(tmp_path / "reminders.json")
     server._notes = NoteStore(tmp_path / "notes.json")
+    server._todos = TodoStore(tmp_path / "todos.json")
+    server._todos.add("call the bank")
     server._nudges = NudgeStore(tmp_path / "nudges.json", timeline_on=lambda: True)
     server._focus = FocusSession(tmp_path / "focus.json", on_end=server._on_focus_end)
     server._quiet_hours = QuietHours(tmp_path / "quiet.json", focus=server._focus, on_start=AsyncMock())

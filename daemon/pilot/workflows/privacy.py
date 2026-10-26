@@ -1,8 +1,8 @@
 """What Heliox keeps about you, how big it is, and how to clear it, forget it or take it with you.
 
 The inventory covers the personal stores under ``DATA_DIR``: the activity timeline, task
-receipts, undo copies, notes, reminders, voice shortcuts, setups, usage nudges and quiet
-hours. Each can be cleared on its own. "Forget my activity from the last hour" removes
+receipts, undo copies, notes, the to-do list, reminders, voice shortcuts, setups, usage
+nudges and quiet hours. Each can be cleared on its own. "Forget my activity from the last hour" removes
 just that stretch of the timeline.
 
 A backup is a zip of those stores written to the Downloads folder. It never contains
@@ -33,6 +33,7 @@ STORES: dict[str, tuple[str, str, str]] = {
     "receipts": ("Task receipts", "receipts", "Signed records of what Heliox ran; contents only as hashes."),
     "undo": ("Undo copies", "undo", "Copies of files Heliox changed, kept so tasks can be undone."),
     "notes": ("Notes", "notes.json", "Your quick notes."),
+    "todos": ("To-do list", "todos.json", "Things on your list, done or not."),
     "reminders": ("Reminders", "reminders.json", "Reminders and timers that have not fired yet."),
     "shortcuts": ("Voice shortcuts", "voice_shortcuts.json", "Phrases and the commands they stand for."),
     "workspaces": ("Setups", "workspaces.json", "Names of the apps in each saved setup."),
@@ -42,6 +43,7 @@ STORES: dict[str, tuple[str, str, str]] = {
 # Files a backup may contain, by archive name; nothing else is ever restored.
 BACKUP_FILES = (
     "notes.json",
+    "todos.json",
     "reminders.json",
     "voice_shortcuts.json",
     "workspaces.json",

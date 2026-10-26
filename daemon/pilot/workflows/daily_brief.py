@@ -48,7 +48,13 @@ def day_window(day: str, now: datetime) -> tuple[float, float, str, str]:
 
 
 async def today_overview(
-    *, receipts: Any, timeline: Any, undo_journal: Any, day: str = "today", now: datetime | None = None
+    *,
+    receipts: Any,
+    timeline: Any,
+    undo_journal: Any,
+    todos: Any = None,
+    day: str = "today",
+    now: datetime | None = None,
 ) -> dict[str, Any]:
     """Everything the Today view and the brief show for one day."""
     now = now or datetime.now()
@@ -73,6 +79,7 @@ async def today_overview(
         "timeline_enabled": timeline_enabled,
         "usage": usage,
         "undoable": undoable,
+        "todos": await asyncio.to_thread(todos.open_items) if todos is not None else [],
     }
     overview["brief"] = compose_brief(overview)
     return overview
@@ -100,6 +107,12 @@ def compose_brief(overview: dict[str, Any]) -> str:
     undoable = overview["undoable"]
     if undoable:
         sentences.append(f"{len(undoable)} task{' can' if len(undoable) == 1 else 's can'} still be undone.")
+    open_todos = overview.get("todos") or []
+    if open_todos:
+        count = len(open_todos)
+        sentences.append(
+            f'You have {count} thing{"" if count == 1 else "s"} to do, starting with "{open_todos[0]["text"]}".'
+        )
     return " ".join(sentences)
 
 
@@ -133,6 +146,9 @@ def compose_report(overview: dict[str, Any]) -> str:
             lines.append(f"- {targets} ({row['undoable']} change{'' if row['undoable'] == 1 else 's'})")
     else:
         lines.append("Nothing.")
+    if overview.get("todos"):
+        lines += ["", "## Still to do", ""]
+        lines += [f"- [ ] {item['text']}" for item in overview["todos"]]
     lines += ["", "Each receipt can be checked with `python -m pilot.workflows.task_receipts verify`.", ""]
     return "\n".join(lines)
 

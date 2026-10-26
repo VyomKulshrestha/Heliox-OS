@@ -50,6 +50,17 @@ GUIDE: list[dict[str, Any]] = [
         "examples": ["note that the plumber comes Tuesday", "read my notes", "what did I note about the plumber"],
     },
     {
+        "group": "To-do list",
+        "about": "Kept on this computer; open items show in the Today tab and the daily brief.",
+        "examples": [
+            "add call the bank to my list",
+            "what's on my list",
+            "mark call the bank as done",
+            "remove call the bank from my list",
+            "clear finished items",
+        ],
+    },
+    {
         "group": "Focus",
         "about": "Holds reminders and the brief; approvals still come through.",
         "examples": [
@@ -98,7 +109,7 @@ GUIDE: list[dict[str, Any]] = [
 
 SPOKEN_HELP = (
     "Besides doing things on your computer, I handle these right away: undo, reminders and timers, notes, "
-    "focus, your setups, routines and shortcuts, and questions about your day, like what did you do today. "
+    "your to-do list, focus, your setups, routines and shortcuts, and questions about your day, like what did you do today. "
     "The command palette is open on screen with examples; you can open it any time with Control K."
 )
 

@@ -950,6 +950,7 @@ class PilotServer:
         self._last_spoken = ""
         self._workspaces: Any = None
         self._notes: Any = None
+        self._todos: Any = None
         self._nudges: Any = None
         self._queued_execute_requests: deque[tuple[str, str, dict[str, Any]]] = deque()
         self._queued_submission_lock = asyncio.Lock()
@@ -1192,8 +1193,10 @@ class PilotServer:
         self._shortcuts = ShortcutStore(DATA_DIR / "voice_shortcuts.json", reserved=self._phrase_reserved)
         from pilot.workflows.notes import NoteStore
         from pilot.workflows.nudges import NudgeStore
+        from pilot.workflows.todos import TodoStore
 
         self._notes = NoteStore(DATA_DIR / "notes.json")
+        self._todos = TodoStore(DATA_DIR / "todos.json")
         self._nudges = NudgeStore(
             DATA_DIR / "nudges.json",
             usage=self._activity_timeline.time_matching,
@@ -1744,6 +1747,11 @@ class PilotServer:
             "notes_list": self._handle_notes_list,
             "note_add": self._handle_note_add,
             "note_delete": self._handle_note_delete,
+            "todo_list": self._handle_todo_list,
+            "todo_add": self._handle_todo_add,
+            "todo_set_done": self._handle_todo_set_done,
+            "todo_delete": self._handle_todo_delete,
+            "todo_clear_done": self._handle_todo_clear_done,
             "nudge_list": self._handle_nudge_list,
             "nudge_add": self._handle_nudge_add,
             "nudge_delete": self._handle_nudge_delete,
@@ -5926,7 +5934,11 @@ class PilotServer:
         from pilot.workflows.daily_brief import today_overview
 
         return await today_overview(
-            receipts=self._task_receipts, timeline=self._activity_timeline, undo_journal=self._undo_journal, day=day
+            receipts=self._task_receipts,
+            timeline=self._activity_timeline,
+            undo_journal=self._undo_journal,
+            todos=self._todos,
+            day=day,
         )
 
     async def _deliver_daily_brief(self, overview: dict[str, Any]) -> None:
@@ -5982,7 +5994,7 @@ class PilotServer:
 
     def _phrase_reserved(self, phrase: str) -> bool:
         """True for phrases that already mean something to Heliox and so cannot be shortcuts."""
-        from pilot.workflows import notes, nudges, workspaces
+        from pilot.workflows import notes, nudges, todos, workspaces
         from pilot.workflows.activity_timeline import LAST_SEEN_QUESTION, TIMELINE_QUESTION
         from pilot.workflows.command_guide import HELP_REQUEST
         from pilot.workflows.focus import (
@@ -6022,6 +6034,11 @@ class PilotServer:
             notes.READ_REQUEST,
             notes.SEARCH_REQUEST,
             notes.DELETE_LAST_REQUEST,
+            todos.ADD_REQUEST,
+            todos.READ_REQUEST,
+            todos.DONE_REQUEST,
+            todos.REMOVE_REQUEST,
+            todos.CLEAR_DONE_REQUEST,
             nudges.ADD_REQUEST,
             nudges.LIST_REQUEST,
             nudges.DELETE_REQUEST,
@@ -6304,6 +6321,46 @@ class PilotServer:
             return {"status": "error", "message": "No such note."}
         return {"status": "ok", "notes": list(reversed(await asyncio.to_thread(self._notes.list)))}
 
+    async def _todo_reply(self, **extra: Any) -> dict:
+        return {"status": "ok", **extra, "todos": await asyncio.to_thread(self._todos.list)}
+
+    async def _handle_todo_list(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        if self._todos is None:
+            return {"status": "error", "message": "The to-do list is not ready yet.", "todos": []}
+        return await self._todo_reply()
+
+    async def _handle_todo_add(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        text = params.get("text")
+        if not isinstance(text, str) or self._todos is None:
+            return {"status": "error", "message": "text is required"}
+        try:
+            await asyncio.to_thread(self._todos.add, text)
+        except ValueError as exc:
+            return {"status": "error", "message": str(exc)}
+        return await self._todo_reply()
+
+    async def _handle_todo_set_done(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        item_id, done = params.get("id"), params.get("done", True)
+        if not isinstance(item_id, str) or not isinstance(done, bool) or self._todos is None:
+            return {"status": "error", "message": "id and a true or false done are required"}
+        if await asyncio.to_thread(self._todos.set_done, item_id, done) is None:
+            return {"status": "error", "message": "No such to-do."}
+        return await self._todo_reply()
+
+    async def _handle_todo_delete(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        item_id = params.get("id")
+        if not isinstance(item_id, str) or self._todos is None:
+            return {"status": "error", "message": "id is required"}
+        if not await asyncio.to_thread(self._todos.delete, item_id):
+            return {"status": "error", "message": "No such to-do."}
+        return await self._todo_reply()
+
+    async def _handle_todo_clear_done(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        if self._todos is None:
+            return {"status": "error", "message": "The to-do list is not ready yet."}
+        removed = await asyncio.to_thread(self._todos.clear_done)
+        return await self._todo_reply(removed=removed)
+
     async def _handle_nudge_list(self, params: dict[str, Any], ws: ServerConnection) -> dict:
         if self._nudges is None:
             return {"status": "error", "message": "Nudges are not ready yet.", "nudges": []}
@@ -6359,6 +6416,7 @@ class PilotServer:
             counts["undo"] = len(await self._undo_journal.list_tasks(200))
         for key, store in (
             ("notes", self._notes),
+            ("todos", self._todos),
             ("reminders", self._reminders),
             ("shortcuts", self._shortcuts),
             ("workspaces", self._workspaces),
@@ -6715,6 +6773,7 @@ class PilotServer:
             self._undo_journal,
             self._reminders,
             self._notes,
+            self._todos,
             self._nudges,
         )
         for source in sources:

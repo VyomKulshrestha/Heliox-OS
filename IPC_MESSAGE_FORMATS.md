@@ -12,7 +12,7 @@ The Heliox OS UI and daemon communicate over a local WebSocket using the [JSON-R
 | Request timeout | 5 minutes |
 | Reconnect interval | 3 seconds (auto-reconnect on close) |
 
-The daemon currently registers **276 WebSocket RPC methods**. That is the API
+The daemon currently registers **281 WebSocket RPC methods**. That is the API
 surface count, not the action catalog: Heliox exposes **162 action
 types** through the guarded planner/executor system. This document names every
 registered RPC method; grouped tables are used where several methods share one
@@ -481,6 +481,16 @@ be used as a voice shortcut. "What can I say?" speaks a short summary and broadc
 Quick notes (`{"id", "text", "created_at"}`, newest first; text 1 to 500 characters).
 "Note that the plumber comes Tuesday", "read my notes", "what did I note about the
 bank" and "delete my last note" work by voice and in chat without the planner.
+
+#### `todo_list` / `todo_add` / `todo_set_done` / `todo_delete` / `todo_clear_done`
+The to-do list (`{"id", "text", "created_at", "done", "done_at"}`, oldest first; text 1 to
+200 characters, up to 300 items). `todo_set_done` takes `{"id", "done": true|false}`;
+`todo_clear_done` removes finished items and returns `removed`. Every call returns the
+whole list as `todos`. "Add call the bank to my list", "what's on my list", "mark call
+the bank as done", "remove call the bank from my list" and "clear finished items" work by
+voice and in chat without the planner. "Mark … as done" only answers when the list is
+named or an open item matches, so "mark this email as done" still goes to the planner.
+`today_overview` includes the open items as `todos`, and the daily brief mentions them.
 
 #### `nudge_list` / `nudge_add` / `nudge_delete`
 Usage nudges (`{"id", "match", "minutes", "last_fired_day"}`): once a day, when today's

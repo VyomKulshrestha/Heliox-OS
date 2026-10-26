@@ -46,8 +46,13 @@
   type Workspace = { name: string; apps: string[] };
   type Note = { id: string; text: string; created_at: number };
   type Nudge = { id: string; match: string; minutes: number };
+  type Todo = { id: string; text: string; created_at: number; done: boolean; done_at: number | null };
   let notes = $state<Note[]>([]);
   let noteText = $state("");
+  let todos = $state<Todo[]>([]);
+  let todoText = $state("");
+  let openTodos = $derived(todos.filter((item) => !item.done));
+  let doneTodos = $derived(todos.filter((item) => item.done));
   let nudges = $state<Nudge[]>([]);
   let nudgeMatch = $state("");
   let nudgeMinutes = $state(60);
@@ -261,6 +266,27 @@
     notes = (await listCall<Note>("note_delete", "notes", { id })) ?? notes;
   }
 
+  async function addTodo(event: SubmitEvent) {
+    event.preventDefault();
+    const next = await listCall<Todo>("todo_add", "todos", { text: todoText });
+    if (next) {
+      todos = next;
+      todoText = "";
+    }
+  }
+
+  async function setTodoDone(id: string, done: boolean) {
+    todos = (await listCall<Todo>("todo_set_done", "todos", { id, done })) ?? todos;
+  }
+
+  async function deleteTodo(id: string) {
+    todos = (await listCall<Todo>("todo_delete", "todos", { id })) ?? todos;
+  }
+
+  async function clearDoneTodos() {
+    todos = (await listCall<Todo>("todo_clear_done", "todos")) ?? todos;
+  }
+
   async function addNudge(event: SubmitEvent) {
     event.preventDefault();
     const next = await listCall<Nudge>("nudge_add", "nudges", { match: nudgeMatch, minutes: Number(nudgeMinutes) });
@@ -279,6 +305,7 @@
     void loadReminders();
     void loadWorkspaces();
     void listCall<Note>("notes_list", "notes").then((items) => (notes = items ?? []));
+    void listCall<Todo>("todo_list", "todos").then((items) => (todos = items ?? []));
     void listCall<Nudge>("nudge_list", "nudges").then((items) => (nudges = items ?? []));
     void listCall<QuietWindow>("focus_schedule_list", "windows").then((items) => (quietWindows = items ?? []));
   });
@@ -362,6 +389,46 @@
         {/if}
       </section>
     {/if}
+
+    <section aria-labelledby="today-todos">
+      <h3 id="today-todos">To-do</h3>
+      {#if openTodos.length === 0}
+        <p class="empty">Nothing to do. Say "add call the bank to my list", or add one here.</p>
+      {:else}
+        <ul class="rows">
+          {#each openTodos as item (item.id)}
+            <li>
+              <span class="row-text"><strong>{item.text}</strong></span>
+              <button type="button" aria-label={`Mark ${item.text} done`} onclick={() => setTodoDone(item.id, true)}
+                >Done</button
+              >
+              <button type="button" aria-label={`Delete to-do ${item.text}`} onclick={() => deleteTodo(item.id)}
+                >Delete</button
+              >
+            </li>
+          {/each}
+        </ul>
+      {/if}
+      {#if doneTodos.length > 0}
+        <ul class="rows">
+          {#each doneTodos.slice(-5) as item (item.id)}
+            <li>
+              <span class="row-text"><s>{item.text}</s></span>
+              <button
+                type="button"
+                aria-label={`Mark ${item.text} not done`}
+                onclick={() => setTodoDone(item.id, false)}>Undo</button
+              >
+            </li>
+          {/each}
+        </ul>
+        <button type="button" class="quiet" onclick={clearDoneTodos}>Clear finished ({doneTodos.length})</button>
+      {/if}
+      <form class="brief-controls" onsubmit={addTodo}>
+        <input class="reminder-text" bind:value={todoText} maxlength="200" aria-label="New to-do" required />
+        <button type="submit">Add to-do</button>
+      </form>
+    </section>
 
     <section aria-labelledby="today-notes">
       <h3 id="today-notes">Notes</h3>

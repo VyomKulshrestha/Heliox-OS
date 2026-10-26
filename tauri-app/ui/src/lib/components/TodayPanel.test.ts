@@ -161,6 +161,32 @@ describe("TodayPanel", () => {
     expect(daemonMocks.call).toHaveBeenCalledWith("nudge_add", { match: "YouTube", minutes: 60 });
   });
 
+  it("adds, finishes, reopens and clears to-dos", async () => {
+    type Todo = { id: string; text: string; created_at: number; done: boolean; done_at: number | null };
+    let todos: Todo[] = [];
+    daemonMocks.call.mockImplementation(async (method: string, params: Record<string, unknown>) => {
+      if (method === "today_overview") return overview;
+      if (method === "todo_add")
+        todos = [{ id: "t1", text: String(params.text), created_at: 1, done: false, done_at: null }];
+      if (method === "todo_set_done") todos = todos.map((item) => ({ ...item, done: Boolean(params.done) }));
+      if (method === "todo_clear_done") todos = todos.filter((item) => !item.done);
+      return { status: "ok", todos };
+    });
+    render(TodayPanel);
+    await waitFor(() => expect(screen.getByText(overview.brief)).toBeTruthy());
+
+    await fireEvent.input(screen.getByLabelText("New to-do"), { target: { value: "call the bank" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Add to-do" }));
+    await waitFor(() => expect(screen.getByText("call the bank")).toBeTruthy());
+
+    await fireEvent.click(screen.getByRole("button", { name: "Mark call the bank done" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Mark call the bank not done" })).toBeTruthy());
+    expect(daemonMocks.call).toHaveBeenCalledWith("todo_set_done", { id: "t1", done: true });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Clear finished (1)" }));
+    await waitFor(() => expect(screen.queryByText("call the bank")).toBeNull());
+  });
+
   it("starts a pomodoro and manages quiet hours", async () => {
     let windows: { id: string; days: number[]; start: number; end: number }[] = [];
     daemonMocks.call.mockImplementation(async (method: string, params: Record<string, unknown>) => {
