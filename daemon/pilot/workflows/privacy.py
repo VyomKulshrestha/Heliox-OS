@@ -39,6 +39,8 @@ STORES: dict[str, tuple[str, str, str]] = {
     "workspaces": ("Setups", "workspaces.json", "Names of the apps in each saved setup."),
     "nudges": ("Usage nudges", "nudges.json", "Daily limits for apps or sites."),
     "quiet_hours": ("Quiet hours", "quiet_hours.json", "When focus starts by itself."),
+    # Kept in memory only: nothing on disk, never in a backup, gone after a restart.
+    "clipboard": ("Clipboard history", "", "Text you copied recently, in memory only."),
 }
 # Files a backup may contain, by archive name; nothing else is ever restored.
 BACKUP_FILES = (
@@ -82,7 +84,7 @@ def inventory(data_dir: Path, counts: dict[str, int | None]) -> list[dict[str, A
     rows = []
     for key, (label, relative, about) in STORES.items():
         path = Path(data_dir) / relative
-        size = _size(path) if path.exists() else 0
+        size = _size(path) if relative and path.exists() else 0
         rows.append(
             {
                 "key": key,
@@ -91,6 +93,7 @@ def inventory(data_dir: Path, counts: dict[str, int | None]) -> list[dict[str, A
                 "bytes": size,
                 "size": human_size(size),
                 "items": counts.get(key),
+                "memory_only": not relative,
             }
         )
     return rows
@@ -194,7 +197,10 @@ def clear_store(data_dir: Path, key: str) -> None:
     """Delete one JSON store or folder (the timeline and undo copies are cleared through their own objects)."""
     if key not in STORES:
         raise ValueError(f"Unknown store: {key}")
-    path = Path(data_dir) / STORES[key][1]
+    relative = STORES[key][1]
+    if not relative:  # kept in memory only; there is nothing on disk to delete
+        return
+    path = Path(data_dir) / relative
     if path.is_dir():
         shutil.rmtree(path, ignore_errors=True)
     elif path.exists():

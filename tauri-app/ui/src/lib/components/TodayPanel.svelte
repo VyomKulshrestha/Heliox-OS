@@ -54,6 +54,9 @@
   let openTodos = $derived(todos.filter((item) => !item.done));
   let doneTodos = $derived(todos.filter((item) => item.done));
   type Watcher = { id: string; kind: string; label: string; created_at: number };
+  type Copied = { id: string; text: string; at: number; app: string };
+  let copied = $state<Copied[]>([]);
+  let clipboardOn = $derived(Boolean($settings.clipboard?.history));
   let watchers = $state<Watcher[]>([]);
   let watchText = $state("");
   let nudges = $state<Nudge[]>([]);
@@ -299,6 +302,14 @@
     watchers = (await listCall<Watcher>("watch_cancel", "watchers", { id })) ?? watchers;
   }
 
+  async function loadCopied() {
+    copied = (await listCall<Copied>("clipboard_history_list", "items")) ?? [];
+  }
+
+  async function copyAgain(id: string) {
+    copied = (await listCall<Copied>("clipboard_history_copy", "items", { id })) ?? copied;
+  }
+
   async function clearDoneTodos() {
     todos = (await listCall<Todo>("todo_clear_done", "todos")) ?? todos;
   }
@@ -323,6 +334,7 @@
     void listCall<Note>("notes_list", "notes").then((items) => (notes = items ?? []));
     void listCall<Todo>("todo_list", "todos").then((items) => (todos = items ?? []));
     void listCall<Watcher>("watch_list", "watchers").then((items) => (watchers = items ?? []));
+    void loadCopied();
     void listCall<Nudge>("nudge_list", "nudges").then((items) => (nudges = items ?? []));
     void listCall<QuietWindow>("focus_schedule_list", "windows").then((items) => (quietWindows = items ?? []));
   });
@@ -477,6 +489,31 @@
         <button type="submit">Watch</button>
       </form>
     </section>
+
+    {#if clipboardOn}
+      <section aria-labelledby="today-copied">
+        <h3 id="today-copied">Copied earlier</h3>
+        {#if copied.length === 0}
+          <p class="empty">Nothing yet. What you copy shows here for a few hours, in memory only.</p>
+        {:else}
+          <ul class="rows">
+            {#each copied.slice(0, 8) as item (item.id)}
+              <li>
+                <span class="row-text"
+                  ><strong>{item.text.length > 80 ? `${item.text.slice(0, 79)}…` : item.text}</strong></span
+                >
+                <button
+                  type="button"
+                  aria-label={`Copy again: ${item.text.slice(0, 40)}`}
+                  onclick={() => copyAgain(item.id)}>Copy</button
+                >
+              </li>
+            {/each}
+          </ul>
+        {/if}
+        <button type="button" class="quiet" onclick={loadCopied}>Refresh copied</button>
+      </section>
+    {/if}
 
     <section aria-labelledby="today-notes">
       <h3 id="today-notes">Notes</h3>

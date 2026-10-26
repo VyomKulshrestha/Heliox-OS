@@ -12,7 +12,7 @@ The Heliox OS UI and daemon communicate over a local WebSocket using the [JSON-R
 | Request timeout | 5 minutes |
 | Reconnect interval | 3 seconds (auto-reconnect on close) |
 
-The daemon currently registers **284 WebSocket RPC methods**. That is the API
+The daemon currently registers **287 WebSocket RPC methods**. That is the API
 surface count, not the action catalog: Heliox exposes **162 action
 types** through the guarded planner/executor system. This document names every
 registered RPC method; grouped tables are used where several methods share one
@@ -456,8 +456,9 @@ One day at a glance, composed in code from local records.
 
 #### `privacy_inventory` / `privacy_clear` / `timeline_forget`
 `privacy_inventory` lists each personal store under `DATA_DIR` (activity timeline, task
-receipts, undo copies, notes, reminders, voice shortcuts, setups, usage nudges, quiet
-hours) as `{"key", "label", "about", "bytes", "size", "items"}`. `privacy_clear` takes
+receipts, undo copies, notes, the to-do list, reminders, voice shortcuts, setups, usage
+nudges, quiet hours) and the in-memory clipboard history as `{"key", "label", "about",
+"bytes", "size", "items", "memory_only"}`; `memory_only` stores have nothing on disk. `privacy_clear` takes
 `key` and `confirmed: true` and returns the new inventory. `timeline_forget` removes the
 last `minutes` (1 to 1440) of the timeline; "forget my activity from the last hour" (or
 "from this morning") does the same by voice and in chat.
@@ -507,6 +508,19 @@ are not held by focus because the person asked for them. "Tell me when Chrome cl
 "let me know when my download finishes", "tell me when the invoice shows up", "tell me
 when my battery is full", "tell me when my computer calms down", "what are you watching
 for" and "stop watching Chrome" work by voice and in chat without the planner.
+
+#### `clipboard_history_list` / `clipboard_history_copy` / `clipboard_history_clear`
+Clipboard history, off unless `[clipboard] history` is true. `clipboard_history_list`
+returns `{"enabled", "items": [{"id", "text", "at", "app"}]}`, newest first: up to 25
+pieces of copied text from the last eight hours, held in memory only (never on disk or
+in a backup, forgotten on restart or when the setting is turned off). Nothing is kept
+while an app or window the activity timeline excludes is in front (password managers,
+private browsing), and text that looks like a password, API key, token, private key or
+card number is never kept. `clipboard_history_copy` takes `{"id"}` and puts that item back
+on the clipboard; `clipboard_history_clear` forgets everything. "What did I copy
+earlier", "copy the second one back", "copy back the link", "clear my clipboard
+history" and "turn on clipboard history" work by voice and in chat; "copy the link" on
+its own still goes to the planner.
 
 #### `nudge_list` / `nudge_add` / `nudge_delete`
 Usage nudges (`{"id", "match", "minutes", "last_fired_day"}`): once a day, when today's

@@ -1,8 +1,16 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { call } from "../api/daemon";
+  import { settings } from "../stores/settings";
 
-  type Store = { key: string; label: string; about: string; size: string; items: number | null };
+  type Store = {
+    key: string;
+    label: string;
+    about: string;
+    size: string;
+    items: number | null;
+    memory_only?: boolean;
+  };
   type Backup = { name: string; size: string; at: number };
   type Result = { status: string; message?: string; [key: string]: unknown };
 
@@ -52,6 +60,15 @@
     if (result) {
       stores = (result.stores as Store[]) ?? stores;
       notice = `${store.label} cleared.`;
+    }
+  }
+
+  async function setClipboardHistory(on: boolean) {
+    const result = await settings.updateSectionDetailed("clipboard", { history: on });
+    if (!result.ok) error = result.message;
+    else {
+      notice = on ? "Clipboard history is on." : "Clipboard history is off, and what you copied was forgotten.";
+      await load();
     }
   }
 
@@ -105,8 +122,22 @@
       <li>
         <span class="row-text">
           <strong>{store.label}</strong>
-          <small>{store.about} {store.items ?? 0} item{store.items === 1 ? "" : "s"} · {store.size}</small>
+          <small
+            >{store.about}
+            {store.items ?? 0} item{store.items === 1 ? "" : "s"} · {store.memory_only
+              ? "in memory only"
+              : store.size}</small
+          >
         </span>
+        {#if store.key === "clipboard"}
+          <label class="inline-toggle"
+            ><input
+              type="checkbox"
+              checked={Boolean($settings.clipboard?.history)}
+              onchange={(event) => setClipboardHistory((event.currentTarget as HTMLInputElement).checked)}
+            /> Keep</label
+          >
+        {/if}
         {#if store.key === "timeline"}
           <button type="button" onclick={forgetLastHour}>Forget last hour</button>
         {/if}
@@ -188,6 +219,13 @@
     gap: 8px;
     padding: 10px 20px;
     border-top: 1px solid var(--border);
+  }
+  .inline-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--text-secondary);
+    font-size: 11px;
   }
   .row-text {
     flex: 1;

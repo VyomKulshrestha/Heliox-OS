@@ -8,11 +8,26 @@ vi.mock("../api/daemon", async (importOriginal) => {
   return { ...actual, call: daemonMocks.call };
 });
 
+const settingsMocks = vi.hoisted(() => ({ updateSectionDetailed: vi.fn() }));
+vi.mock("../stores/settings", async () => {
+  const { writable } = await import("svelte/store");
+  const store = writable({ clipboard: { history: false } });
+  return { settings: { subscribe: store.subscribe, updateSectionDetailed: settingsMocks.updateSectionDetailed } };
+});
+
 import YourDataPanel from "./YourDataPanel.svelte";
 
 const stores = [
   { key: "timeline", label: "Activity timeline", about: "Apps and titles.", size: "40.0 KB", items: 12 },
   { key: "notes", label: "Notes", about: "Your quick notes.", size: "120 bytes", items: 2 },
+  {
+    key: "clipboard",
+    label: "Clipboard history",
+    about: "Text you copied recently, in memory only.",
+    size: "0 bytes",
+    items: 0,
+    memory_only: true,
+  },
 ];
 
 describe("YourDataPanel", () => {
@@ -56,5 +71,18 @@ describe("YourDataPanel", () => {
     await fireEvent.click(restore);
     await fireEvent.click(restore);
     await waitFor(() => expect(screen.getByRole("status").textContent).toContain("Restored: notes.json."));
+  });
+
+  it("turns clipboard history on from its row and shows it is memory only", async () => {
+    settingsMocks.updateSectionDetailed.mockResolvedValue({ ok: true });
+    render(YourDataPanel);
+    await waitFor(() => expect(screen.getByText("Clipboard history")).toBeTruthy());
+    expect(screen.getByText(/in memory only$/)).toBeTruthy();
+
+    await fireEvent.click(screen.getByRole("checkbox", { name: "Keep" }));
+    await waitFor(() =>
+      expect(settingsMocks.updateSectionDetailed).toHaveBeenCalledWith("clipboard", { history: true }),
+    );
+    await waitFor(() => expect(screen.getByText("Clipboard history is on.")).toBeTruthy());
   });
 });

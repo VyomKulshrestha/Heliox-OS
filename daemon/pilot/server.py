@@ -387,6 +387,7 @@ VOICE_TIMELINE_SETTING = re.compile(
     r"^(?:please )?(?:turn (?P<state>on|off) (?:the |my )?activity timeline|(?P<verb>start|stop) recording my activity)$"
 )
 VOICE_BRIEF_SETTING = re.compile(r"^(?:please )?turn (?P<state>on|off) (?:the |my )?daily brief$")
+VOICE_CLIPBOARD_SETTING = re.compile(r"^(?:please )?turn (?P<state>on|off) (?:the |my )?clipboard history$")
 VOICE_BRIEF_TIME_SETTING = re.compile(
     r"^(?:please )?send (?:me )?(?:a |the |my )?daily brief (?:every day )?at (?P<hour>\d{1,2})(?: (?P<minute>\d{2}))?"
     r"(?: (?P<meridiem>am|pm))?$"
@@ -953,6 +954,7 @@ class PilotServer:
         self._todos: Any = None
         self._nudges: Any = None
         self._watchers: Any = None
+        self._clipboard_history: Any = None
         self._queued_execute_requests: deque[tuple[str, str, dict[str, Any]]] = deque()
         self._queued_submission_lock = asyncio.Lock()
         self._queued_execute_worker: asyncio.Task[None] | None = None
@@ -1209,6 +1211,17 @@ class PilotServer:
 
         self._watchers = WatcherStore(deliver=self._deliver_watch)
         self._watchers.start()
+        from pilot.system.clipboard import clipboard_read, clipboard_write
+        from pilot.workflows.clipboard_history import ClipboardHistory
+
+        timeline = self._activity_timeline
+        self._clipboard_history = ClipboardHistory(
+            enabled=lambda: self.config.clipboard.history,
+            excluded=timeline.excludes if timeline is not None else (lambda app, title: False),
+            read=clipboard_read,
+            write=clipboard_write,
+        )
+        self._clipboard_history.start()
         from pilot.workflows.workspaces import WorkspaceStore
 
         self._workspaces = WorkspaceStore(DATA_DIR / "workspaces.json")
@@ -1763,6 +1776,9 @@ class PilotServer:
             "watch_list": self._handle_watch_list,
             "watch_add": self._handle_watch_add,
             "watch_cancel": self._handle_watch_cancel,
+            "clipboard_history_list": self._handle_clipboard_history_list,
+            "clipboard_history_copy": self._handle_clipboard_history_copy,
+            "clipboard_history_clear": self._handle_clipboard_history_clear,
             "workspace_save": self._handle_workspace_save,
             "workspace_delete": self._handle_workspace_delete,
             "receipts_search": self._handle_receipts_search,
@@ -6002,7 +6018,7 @@ class PilotServer:
 
     def _phrase_reserved(self, phrase: str) -> bool:
         """True for phrases that already mean something to Heliox and so cannot be shortcuts."""
-        from pilot.workflows import notes, nudges, todos, watchers, workspaces
+        from pilot.workflows import clipboard_history, notes, nudges, todos, watchers, workspaces
         from pilot.workflows.activity_timeline import LAST_SEEN_QUESTION, TIMELINE_QUESTION
         from pilot.workflows.command_guide import HELP_REQUEST
         from pilot.workflows.focus import (
@@ -6050,6 +6066,10 @@ class PilotServer:
             watchers.SET_REQUEST,
             watchers.LIST_REQUEST,
             watchers.CANCEL_REQUEST,
+            clipboard_history.LIST_REQUEST,
+            clipboard_history.COPY_BACK_REQUEST,
+            clipboard_history.CLEAR_REQUEST,
+            VOICE_CLIPBOARD_SETTING,
             nudges.ADD_REQUEST,
             nudges.LIST_REQUEST,
             nudges.DELETE_REQUEST,
@@ -6312,6 +6332,30 @@ class PilotServer:
             return {"status": "error", "message": "No such watcher."}
         return {"status": "ok", "watchers": self._watchers.list()}
 
+    async def _handle_clipboard_history_list(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """What you copied recently (memory only), newest first, while clipboard history is on."""
+        if self._clipboard_history is None:
+            return {"status": "error", "message": "Clipboard history is not ready yet.", "items": []}
+        return {"status": "ok", "enabled": self._clipboard_history.enabled, "items": self._clipboard_history.list()}
+
+    async def _handle_clipboard_history_copy(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """Put an earlier item back on the clipboard."""
+        item_id = params.get("id")
+        if not isinstance(item_id, str) or self._clipboard_history is None:
+            return {"status": "error", "message": "id is required"}
+        try:
+            item = await self._clipboard_history.copy_back(item_id)
+        except Exception as exc:
+            return {"status": "error", "message": f"Could not copy: {exc}"}
+        if item is None:
+            return {"status": "error", "message": "No such item."}
+        return {"status": "ok", "items": self._clipboard_history.list()}
+
+    async def _handle_clipboard_history_clear(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        if self._clipboard_history is None:
+            return {"status": "error", "message": "Clipboard history is not ready yet."}
+        return {"status": "ok", "removed": self._clipboard_history.clear(), "items": []}
+
     async def _settings_request(self, text: str) -> str | None:
         """Change a few everyday settings by voice. Security and approval settings are never changed this way."""
         normalized = _normalize_spoken_phrase(text)
@@ -6340,6 +6384,15 @@ class PilotServer:
             change = ("brief", {"speak": True}, "I'll read the daily brief aloud.")
         elif VOICE_BRIEF_QUIET_SETTING.match(normalized):
             change = ("brief", {"speak": False}, "I'll send the daily brief without reading it aloud.")
+        elif clipboard := VOICE_CLIPBOARD_SETTING.match(normalized):
+            on = clipboard.group("state") == "on"
+            change = (
+                "clipboard",
+                {"history": on},
+                "Clipboard history is on. I'll remember what you copy for a few hours, in memory only."
+                if on
+                else "Clipboard history is off, and I forgot what you copied.",
+            )
         if change is None:
             return None
         section, values, reply = change
@@ -6465,6 +6518,8 @@ class PilotServer:
         counts["receipts"] = len(list(receipts_dir.glob("*.json"))) if receipts_dir.is_dir() else 0
         if self._undo_journal is not None:
             counts["undo"] = len(await self._undo_journal.list_tasks(200))
+        if self._clipboard_history is not None:
+            counts["clipboard"] = len(self._clipboard_history.list())
         for key, store in (
             ("notes", self._notes),
             ("todos", self._todos),
@@ -6496,6 +6551,9 @@ class PilotServer:
             return {"status": "error", "message": "Clearing needs confirmation."}
         if key == "timeline" and self._activity_timeline is not None:
             await asyncio.to_thread(self._activity_timeline.clear)
+        elif key == "clipboard":
+            if self._clipboard_history is not None:
+                self._clipboard_history.clear()
         elif key == "undo" and self._undo_journal is not None:
             busy = self._undo_busy_message()
             if busy:
@@ -6827,6 +6885,7 @@ class PilotServer:
             self._todos,
             self._nudges,
             self._watchers,
+            self._clipboard_history,
         )
         for source in sources:
             if source is None:
@@ -7677,6 +7736,8 @@ class PilotServer:
                             "status": "error",
                             "message": "preview.confirm_timeout_seconds must be from 10 to 600",
                         }
+                if section == "clipboard" and k == "history" and not isinstance(v, bool):
+                    return {"status": "error", "message": "clipboard.history must be a boolean"}
                 if section == "brief" and k in {"enabled", "speak"} and not isinstance(v, bool):
                     return {"status": "error", "message": f"brief.{k} must be a boolean"}
                 if section == "brief" and k == "time":
@@ -11109,6 +11170,8 @@ def handle_tool(tool_name, params):
             await self._nudges.stop()
         if self._watchers is not None:
             await self._watchers.stop()
+        if self._clipboard_history is not None:
+            await self._clipboard_history.stop()
         if self._gnomon_reviewer is not None:
             await self._gnomon_reviewer.close()
         if self._autonomous is not None:

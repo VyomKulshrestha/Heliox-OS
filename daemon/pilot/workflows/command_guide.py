@@ -98,6 +98,11 @@ GUIDE: list[dict[str, Any]] = [
         ],
     },
     {
+        "group": "Clipboard history",
+        "about": "Off until you turn it on; kept in memory for a few hours, never passwords or keys.",
+        "examples": ["what did I copy earlier", "copy the second one back", "clear my clipboard history"],
+    },
+    {
         "group": "Usage nudges",
         "about": "A once-a-day heads-up from the activity timeline; nothing is blocked.",
         "examples": ["tell me if I spend more than an hour on YouTube today", "what nudges do I have"],
@@ -115,7 +120,12 @@ GUIDE: list[dict[str, Any]] = [
     {
         "group": "Settings",
         "about": "Everyday settings only; security and approval settings never change by voice.",
-        "examples": ["turn on the activity timeline", "send me a daily brief at 7 pm", "read the brief aloud"],
+        "examples": [
+            "turn on the activity timeline",
+            "turn on clipboard history",
+            "send me a daily brief at 7 pm",
+            "read the brief aloud",
+        ],
     },
 ]
 

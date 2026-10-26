@@ -70,6 +70,9 @@ export interface PilotSettings {
     time: string;
     speak: boolean;
   };
+  clipboard: {
+    history: boolean;
+  };
   typed_decision: {
     enabled: boolean;
     artifact_dir: string;
@@ -194,6 +197,9 @@ const defaultSettings: PilotSettings = {
     time: "18:00",
     speak: false,
   },
+  clipboard: {
+    history: false,
+  },
   typed_decision: {
     enabled: false,
     artifact_dir: "",
@@ -258,6 +264,7 @@ function mergeSettings(current: PilotSettings, incoming: Partial<PilotSettings>)
     undo: { ...current.undo, ...incoming.undo },
     timeline: { ...current.timeline, ...incoming.timeline },
     brief: { ...current.brief, ...incoming.brief },
+    clipboard: { ...current.clipboard, ...incoming.clipboard },
     typed_decision: { ...current.typed_decision, ...incoming.typed_decision },
     network: { ...current.network, ...incoming.network },
     calendar: { ...current.calendar, ...incoming.calendar },

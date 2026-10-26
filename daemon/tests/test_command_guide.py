@@ -8,6 +8,7 @@ import pytest
 
 from pilot.config import PilotConfig, TimelineConfig, UndoConfig
 from pilot.workflows.activity_timeline import ActivityTimeline
+from pilot.workflows.clipboard_history import ClipboardHistory
 from pilot.workflows.command_guide import SPOKEN_HELP, all_examples, guide
 from pilot.workflows.focus import FocusSession, QuietHours
 from pilot.workflows.notes import NoteStore
@@ -55,6 +56,9 @@ def server(tmp_path):
     server._workspaces = WorkspaceStore(tmp_path / "workspaces.json")
     server._workspaces.save("coding", ["Visual Studio Code"])
     server._shortcuts = ShortcutStore(tmp_path / "shortcuts.json", reserved=server._phrase_reserved)
+    server._clipboard_history = ClipboardHistory(
+        enabled=lambda: True, read=AsyncMock(return_value=""), write=AsyncMock()
+    )
     server._speech_coordinator = MagicMock()
     server._speech_coordinator.speak = AsyncMock()
     return server

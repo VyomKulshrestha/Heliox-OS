@@ -149,6 +149,10 @@ class ActivityTimeline:
             self._paused_until = time.time() + max(0.0, float(minutes)) * 60 if minutes else 0.0
         return self.paused_until
 
+    def excludes(self, app: str, title: str) -> bool:
+        """Whether a window belongs to an excluded app or a private browsing window."""
+        return self._excluded(app, title)
+
     def _excluded(self, app: str, title: str) -> bool:
         text = f"{app} {title}".lower()
         if any(marker in text for marker in ALWAYS_EXCLUDED_MARKERS):

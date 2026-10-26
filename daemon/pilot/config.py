@@ -467,6 +467,17 @@ class TimelineConfig:
 
 
 @dataclass
+class ClipboardConfig:
+    """Clipboard history (see pilot.workflows.clipboard_history). Off by default. When on,
+    Heliox remembers the last 25 pieces of text you copied, for up to eight hours, in
+    memory only, so you can ask "what did I copy earlier?". Nothing is kept from the
+    activity timeline's excluded apps or private windows, and text that looks like a
+    password, key or card number is never kept."""
+
+    history: bool = False
+
+
+@dataclass
 class SupervisionConfig:
     """User Manual Supervision (see pilot.agents.user_supervision) — watches
     the user's OWN independent screen/keyboard/mouse activity, never anything
@@ -703,6 +714,7 @@ class PilotConfig:
     receipts: ReceiptsConfig = field(default_factory=ReceiptsConfig)
     timeline: TimelineConfig = field(default_factory=TimelineConfig)
     brief: BriefConfig = field(default_factory=BriefConfig)
+    clipboard: ClipboardConfig = field(default_factory=ClipboardConfig)
     supervision: SupervisionConfig = field(default_factory=SupervisionConfig)
     co_adaptation: CoAdaptationConfig = field(default_factory=CoAdaptationConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
@@ -1080,6 +1092,9 @@ def _validate_config_types(raw: dict) -> None:
             "time": str,
             "speak": bool,
         },
+        "clipboard": {
+            "history": bool,
+        },
         "supervision": {
             "enabled": bool,
             "keyboard_mouse_hook_enabled": bool,
@@ -1426,6 +1441,9 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
         config.brief.speak = bool(b_raw.get("speak", config.brief.speak))
         if re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", str(b_raw.get("time", ""))):
             config.brief.time = str(b_raw["time"])
+
+    if "clipboard" in raw and isinstance(raw["clipboard"], dict):
+        config.clipboard.history = bool(raw["clipboard"].get("history", config.clipboard.history))
 
     if "supervision" in raw and isinstance(raw["supervision"], dict):
         s_raw = raw["supervision"]

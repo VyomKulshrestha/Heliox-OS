@@ -11,7 +11,7 @@ vi.mock("../api/daemon", async (importOriginal) => {
   return { ...actual, call: daemonMocks.call };
 });
 vi.mock("../stores/settings", () => {
-  const store = writable({ brief: { enabled: false, time: "18:00", speak: false } });
+  const store = writable({ brief: { enabled: false, time: "18:00", speak: false }, clipboard: { history: true } });
   return { settings: { subscribe: store.subscribe, updateSectionDetailed: settingsMocks.updateSectionDetailed } };
 });
 vi.mock("../stores/session", () => ({
@@ -205,6 +205,22 @@ describe("TodayPanel", () => {
 
     await fireEvent.click(screen.getByRole("button", { name: "Stop watching until chrome closes" }));
     await waitFor(() => expect(screen.queryByText("Until chrome closes")).toBeNull());
+  });
+
+  it("lists what was copied and copies an item again", async () => {
+    const items = [
+      { id: "c1", text: "https://example.com/report", at: 2, app: "msedge" },
+      { id: "c2", text: "meeting notes", at: 1, app: "notepad" },
+    ];
+    daemonMocks.call.mockImplementation(async (method: string) => {
+      if (method === "today_overview") return overview;
+      return { status: "ok", items };
+    });
+    render(TodayPanel);
+    await waitFor(() => expect(screen.getByText("https://example.com/report")).toBeTruthy());
+
+    await fireEvent.click(screen.getByRole("button", { name: "Copy again: meeting notes" }));
+    expect(daemonMocks.call).toHaveBeenCalledWith("clipboard_history_copy", { id: "c2" });
   });
 
   it("starts a pomodoro and manages quiet hours", async () => {
