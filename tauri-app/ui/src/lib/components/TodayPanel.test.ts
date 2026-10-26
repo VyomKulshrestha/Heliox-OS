@@ -223,6 +223,27 @@ describe("TodayPanel", () => {
     expect(daemonMocks.call).toHaveBeenCalledWith("clipboard_history_copy", { id: "c2" });
   });
 
+  it("checks this computer on request", async () => {
+    daemonMocks.call.mockImplementation(async (method: string) => {
+      if (method === "today_overview") return overview;
+      if (method === "system_health")
+        return {
+          status: "ok",
+          summary: "Nothing looks overloaded: the processor is at 12% and memory at 50%.",
+          cpu: 12,
+          memory: { percent: 50 },
+          apps: [{ app: "Chrome", cpu: 4, memory: 3 * 1024 ** 3, processes: 13 }],
+        };
+      return { status: "ok" };
+    });
+    render(TodayPanel);
+    await waitFor(() => expect(screen.getByText(overview.brief)).toBeTruthy());
+
+    await fireEvent.click(screen.getByRole("button", { name: "Check now" }));
+    await waitFor(() => expect(screen.getByText(/Nothing looks overloaded/)).toBeTruthy());
+    expect(screen.getByText("3.0 GB · 4% processor · 13 processes")).toBeTruthy();
+  });
+
   it("starts a pomodoro and manages quiet hours", async () => {
     let windows: { id: string; days: number[]; start: number; end: number }[] = [];
     daemonMocks.call.mockImplementation(async (method: string, params: Record<string, unknown>) => {

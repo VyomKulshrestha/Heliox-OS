@@ -955,6 +955,7 @@ class PilotServer:
         self._nudges: Any = None
         self._watchers: Any = None
         self._clipboard_history: Any = None
+        self._system_health: Any = None
         self._queued_execute_requests: deque[tuple[str, str, dict[str, Any]]] = deque()
         self._queued_submission_lock = asyncio.Lock()
         self._queued_execute_worker: asyncio.Task[None] | None = None
@@ -1222,6 +1223,9 @@ class PilotServer:
             write=clipboard_write,
         )
         self._clipboard_history.start()
+        from pilot.workflows.system_health import SystemHealth
+
+        self._system_health = SystemHealth()
         from pilot.workflows.workspaces import WorkspaceStore
 
         self._workspaces = WorkspaceStore(DATA_DIR / "workspaces.json")
@@ -1779,6 +1783,7 @@ class PilotServer:
             "clipboard_history_list": self._handle_clipboard_history_list,
             "clipboard_history_copy": self._handle_clipboard_history_copy,
             "clipboard_history_clear": self._handle_clipboard_history_clear,
+            "system_health": self._handle_system_health,
             "workspace_save": self._handle_workspace_save,
             "workspace_delete": self._handle_workspace_delete,
             "receipts_search": self._handle_receipts_search,
@@ -6018,7 +6023,7 @@ class PilotServer:
 
     def _phrase_reserved(self, phrase: str) -> bool:
         """True for phrases that already mean something to Heliox and so cannot be shortcuts."""
-        from pilot.workflows import clipboard_history, notes, nudges, todos, watchers, workspaces
+        from pilot.workflows import clipboard_history, notes, nudges, system_health, todos, watchers, workspaces
         from pilot.workflows.activity_timeline import LAST_SEEN_QUESTION, TIMELINE_QUESTION
         from pilot.workflows.command_guide import HELP_REQUEST
         from pilot.workflows.focus import (
@@ -6070,6 +6075,10 @@ class PilotServer:
             clipboard_history.COPY_BACK_REQUEST,
             clipboard_history.CLEAR_REQUEST,
             VOICE_CLIPBOARD_SETTING,
+            system_health.SLOW_QUESTION,
+            system_health.MEMORY_QUESTION,
+            system_health.CPU_QUESTION,
+            system_health.DISK_QUESTION,
             nudges.ADD_REQUEST,
             nudges.LIST_REQUEST,
             nudges.DELETE_REQUEST,
@@ -6355,6 +6364,18 @@ class PilotServer:
         if self._clipboard_history is None:
             return {"status": "error", "message": "Clipboard history is not ready yet."}
         return {"status": "ok", "removed": self._clipboard_history.clear(), "items": []}
+
+    async def _handle_system_health(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """A fresh reading of processor, memory, disks, battery and the biggest apps, with a summary."""
+        from pilot.workflows.system_health import describe_health
+
+        if self._system_health is None:
+            return {"status": "error", "message": "The health check is not ready yet."}
+        try:
+            snapshot = await self._system_health.snapshot()
+        except Exception as exc:
+            return {"status": "error", "message": f"Could not read this computer: {exc}"}
+        return {"status": "ok", **snapshot, "summary": describe_health(snapshot)}
 
     async def _settings_request(self, text: str) -> str | None:
         """Change a few everyday settings by voice. Security and approval settings are never changed this way."""
@@ -6886,6 +6907,7 @@ class PilotServer:
             self._nudges,
             self._watchers,
             self._clipboard_history,
+            self._system_health,
         )
         for source in sources:
             if source is None:

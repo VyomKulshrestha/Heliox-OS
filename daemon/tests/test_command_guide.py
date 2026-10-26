@@ -15,12 +15,22 @@ from pilot.workflows.notes import NoteStore
 from pilot.workflows.nudges import NudgeStore
 from pilot.workflows.reminders import ReminderStore
 from pilot.workflows.routines import ShortcutStore, normalize_phrase
+from pilot.workflows.system_health import SystemHealth
 from pilot.workflows.task_receipts import TaskReceipts
 from pilot.workflows.todos import TodoStore
 from pilot.workflows.undo_journal import UndoJournal
 from pilot.workflows.watchers import Probes, WatcherStore
 from pilot.workflows.workspaces import WorkspaceStore
 from tests.test_task_receipts import FakeVault
+
+SNAPSHOT = {
+    "at": 0.0,
+    "cpu": 12.0,
+    "memory": {"total": 16 * 1024**3, "used": 8 * 1024**3, "percent": 50.0},
+    "disks": [{"drive": "C:\\", "total": 500 * 1024**3, "free": 200 * 1024**3}],
+    "battery": None,
+    "apps": [{"app": "Chrome", "cpu": 5.0, "memory": 2 * 1024**3, "processes": 12}],
+}
 
 
 @pytest.fixture
@@ -59,6 +69,7 @@ def server(tmp_path):
     server._clipboard_history = ClipboardHistory(
         enabled=lambda: True, read=AsyncMock(return_value=""), write=AsyncMock()
     )
+    server._system_health = SystemHealth(read=lambda: SNAPSHOT)
     server._speech_coordinator = MagicMock()
     server._speech_coordinator.speak = AsyncMock()
     return server

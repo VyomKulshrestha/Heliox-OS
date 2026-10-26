@@ -12,7 +12,7 @@ The Heliox OS UI and daemon communicate over a local WebSocket using the [JSON-R
 | Request timeout | 5 minutes |
 | Reconnect interval | 3 seconds (auto-reconnect on close) |
 
-The daemon currently registers **287 WebSocket RPC methods**. That is the API
+The daemon currently registers **288 WebSocket RPC methods**. That is the API
 surface count, not the action catalog: Heliox exposes **162 action
 types** through the guarded planner/executor system. This document names every
 registered RPC method; grouped tables are used where several methods share one
@@ -521,6 +521,17 @@ on the clipboard; `clipboard_history_clear` forgets everything. "What did I copy
 earlier", "copy the second one back", "copy back the link", "clear my clipboard
 history" and "turn on clipboard history" work by voice and in chat; "copy the link" on
 its own still goes to the planner.
+
+#### `system_health`
+One fresh reading of this computer (it takes about half a second):
+`{"status": "ok", "at", "cpu": 17.0, "memory": {"total", "used", "percent"}, "disks":
+[{"drive": "C:\\", "total", "free"}], "battery": {"percent", "plugged"} | null, "apps":
+[{"app": "Chrome", "cpu": 4.0, "memory": 3221225472, "processes": 13}], "summary": "..."}`.
+Processes of one app are added together; `cpu` is a share of the whole processor and
+`memory` is resident bytes. "Why is my computer slow", "what's using my memory", "what's
+using my CPU" and "how much disk space do I have" are answered from the same reading by
+voice and in chat. Heliox only reports; closing an app is an ordinary request that goes
+through approval.
 
 #### `nudge_list` / `nudge_add` / `nudge_delete`
 Usage nudges (`{"id", "match", "minutes", "last_fired_day"}`): once a day, when today's

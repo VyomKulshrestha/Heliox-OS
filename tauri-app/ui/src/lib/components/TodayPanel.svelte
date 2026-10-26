@@ -57,6 +57,10 @@
   type Copied = { id: string; text: string; at: number; app: string };
   let copied = $state<Copied[]>([]);
   let clipboardOn = $derived(Boolean($settings.clipboard?.history));
+  type HealthApp = { app: string; cpu: number; memory: number; processes: number };
+  type Health = { summary: string; cpu: number; memory: { percent: number }; apps: HealthApp[] };
+  let health = $state<Health | null>(null);
+  let checking = $state(false);
   let watchers = $state<Watcher[]>([]);
   let watchText = $state("");
   let nudges = $state<Nudge[]>([]);
@@ -302,6 +306,19 @@
     watchers = (await listCall<Watcher>("watch_cancel", "watchers", { id })) ?? watchers;
   }
 
+  async function checkComputer() {
+    checking = true;
+    try {
+      const result = await call<Health & { status: string; message?: string }>("system_health");
+      if (result.status === "ok") health = result;
+      else error = String(result.message || "The check failed.");
+    } catch (err) {
+      error = err instanceof Error ? err.message : "The check failed.";
+    } finally {
+      checking = false;
+    }
+  }
+
   async function loadCopied() {
     copied = (await listCall<Copied>("clipboard_history_list", "items")) ?? [];
   }
@@ -514,6 +531,32 @@
         <button type="button" class="quiet" onclick={loadCopied}>Refresh copied</button>
       </section>
     {/if}
+
+    <section aria-labelledby="today-computer">
+      <h3 id="today-computer">This computer</h3>
+      {#if health}
+        <p class="brief">{health.summary}</p>
+        <ul class="rows">
+          {#each health.apps.slice(0, 5) as app (app.app)}
+            <li>
+              <span class="row-text"
+                ><strong>{app.app}</strong>
+                <small
+                  >{(app.memory / 1024 ** 3).toFixed(1)} GB · {Math.round(app.cpu)}% processor{app.processes > 1
+                    ? ` · ${app.processes} processes`
+                    : ""}</small
+                ></span
+              >
+            </li>
+          {/each}
+        </ul>
+      {:else}
+        <p class="empty">See what is using your processor, memory and disks. Or ask "why is my computer slow?"</p>
+      {/if}
+      <button type="button" class="quiet" onclick={checkComputer} disabled={checking}
+        >{checking ? "Checking…" : "Check now"}</button
+      >
+    </section>
 
     <section aria-labelledby="today-notes">
       <h3 id="today-notes">Notes</h3>

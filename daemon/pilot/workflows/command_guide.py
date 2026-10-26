@@ -98,6 +98,16 @@ GUIDE: list[dict[str, Any]] = [
         ],
     },
     {
+        "group": "This computer",
+        "about": "A quick reading of processor, memory and disks; closing anything still asks first.",
+        "examples": [
+            "why is my computer slow",
+            "what's using my memory",
+            "what's using my CPU",
+            "how much disk space do I have",
+        ],
+    },
+    {
         "group": "Clipboard history",
         "about": "Off until you turn it on; kept in memory for a few hours, never passwords or keys.",
         "examples": ["what did I copy earlier", "copy the second one back", "clear my clipboard history"],
