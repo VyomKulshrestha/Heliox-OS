@@ -8,6 +8,7 @@ import pytest
 
 from pilot.config import PilotConfig, TimelineConfig, UndoConfig
 from pilot.workflows.activity_timeline import ActivityTimeline
+from pilot.workflows.app_reminders import AppReminders
 from pilot.workflows.clipboard_history import ClipboardHistory
 from pilot.workflows.command_guide import SPOKEN_HELP, all_examples, guide
 from pilot.workflows.focus import FocusSession, QuietHours
@@ -46,6 +47,7 @@ def server(tmp_path):
     server._activity_timeline = ActivityTimeline(tmp_path / "t.db", config=TimelineConfig(enabled=True))
     server._undo_journal = UndoJournal(tmp_path / "undo", config=UndoConfig())
     server._reminders = ReminderStore(tmp_path / "reminders.json")
+    server._app_reminders = AppReminders(tmp_path / "app_reminders.json", foreground=lambda: ("Code", "x"))
     server._notes = NoteStore(tmp_path / "notes.json")
     server._todos = TodoStore(tmp_path / "todos.json")
     server._todos.add("call the bank")

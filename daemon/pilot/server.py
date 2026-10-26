@@ -957,6 +957,7 @@ class PilotServer:
         self._clipboard_history: Any = None
         self._system_health: Any = None
         self._focus_guard: Any = None
+        self._app_reminders: Any = None
         self._queued_execute_requests: deque[tuple[str, str, dict[str, Any]]] = deque()
         self._queued_submission_lock = asyncio.Lock()
         self._queued_execute_worker: asyncio.Task[None] | None = None
@@ -1242,6 +1243,10 @@ class PilotServer:
             deliver=self._deliver_distraction,
         )
         self._focus_guard.start()
+        from pilot.workflows.app_reminders import AppReminders
+
+        self._app_reminders = AppReminders(DATA_DIR / "app_reminders.json", deliver=self._deliver_app_reminder)
+        self._app_reminders.start()
         from pilot.workflows.focus import QuietHours
 
         self._quiet_hours = QuietHours(
@@ -1796,6 +1801,8 @@ class PilotServer:
             "focus_distractions_list": self._handle_focus_distractions_list,
             "focus_distraction_add": self._handle_focus_distraction_add,
             "focus_distraction_delete": self._handle_focus_distraction_delete,
+            "app_reminder_list": self._handle_app_reminder_list,
+            "app_reminder_delete": self._handle_app_reminder_delete,
             "workspace_save": self._handle_workspace_save,
             "workspace_delete": self._handle_workspace_delete,
             "receipts_search": self._handle_receipts_search,
@@ -6036,6 +6043,7 @@ class PilotServer:
     def _phrase_reserved(self, phrase: str) -> bool:
         """True for phrases that already mean something to Heliox and so cannot be shortcuts."""
         from pilot.workflows import (
+            app_reminders,
             clipboard_history,
             focus_guard,
             notes,
@@ -6103,6 +6111,8 @@ class PilotServer:
             focus_guard.ADD_REQUEST,
             focus_guard.LIST_REQUEST,
             focus_guard.REMOVE_REQUEST,
+            app_reminders.SET_REQUEST,
+            app_reminders.LIST_REQUEST,
             nudges.ADD_REQUEST,
             nudges.LIST_REQUEST,
             nudges.DELETE_REQUEST,
@@ -6389,6 +6399,30 @@ class PilotServer:
             return {"status": "error", "message": "Clipboard history is not ready yet."}
         return {"status": "ok", "removed": self._clipboard_history.clear(), "items": []}
 
+    async def _deliver_app_reminder(self, reminder: dict[str, Any]) -> None:
+        """An app reminder fires because the person just opened that app, so focus does not hold it."""
+        await self._broadcast_notification(
+            "reminder", {**reminder, "due": time.time(), "late": False, "trigger": "app"}
+        )
+        await self._speak_companion_text(
+            f"Reminder: {reminder['text']}",
+            channel=SpeechChannel.TASK_NARRATION,
+            dedupe_key=f"app-reminder:{reminder['id']}",
+        )
+
+    async def _handle_app_reminder_list(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        if self._app_reminders is None:
+            return {"status": "error", "message": "App reminders are not ready yet.", "reminders": []}
+        return {"status": "ok", "reminders": await asyncio.to_thread(self._app_reminders.list)}
+
+    async def _handle_app_reminder_delete(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        reminder_id = params.get("id")
+        if not isinstance(reminder_id, str) or self._app_reminders is None:
+            return {"status": "error", "message": "id is required"}
+        if not await asyncio.to_thread(self._app_reminders.delete, reminder_id):
+            return {"status": "error", "message": "No such app reminder."}
+        return {"status": "ok", "reminders": await asyncio.to_thread(self._app_reminders.list)}
+
     async def _deliver_distraction(self, event: dict[str, Any]) -> None:
         """One heads-up the person asked for; nothing is blocked or recorded."""
         await self._broadcast_notification("focus_distraction", event)
@@ -6599,6 +6633,7 @@ class PilotServer:
             ("notes", self._notes),
             ("todos", self._todos),
             ("reminders", self._reminders),
+            ("app_reminders", self._app_reminders),
             ("shortcuts", self._shortcuts),
             ("workspaces", self._workspaces),
             ("nudges", self._nudges),
@@ -6862,9 +6897,15 @@ class PilotServer:
         )
 
     async def _handle_reminder_list(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        from pilot.workflows.reminders import describe_repeat
+
         if self._reminders is None:
             return {"status": "error", "message": "Reminders are not ready yet.", "reminders": []}
-        return {"status": "ok", "reminders": await asyncio.to_thread(self._reminders.list)}
+        items = await asyncio.to_thread(self._reminders.list)
+        for item in items:
+            if item.get("repeat"):
+                item["repeat_label"] = describe_repeat(item["repeat"])
+        return {"status": "ok", "reminders": items}
 
     async def _handle_reminder_add(self, params: dict[str, Any], ws: ServerConnection) -> dict:
         """Add a reminder: ``text`` plus ``in_minutes`` (1 to 10080) or ``at`` (epoch seconds)."""
@@ -6956,6 +6997,7 @@ class PilotServer:
             self._activity_timeline,
             self._task_receipts,
             self._undo_journal,
+            self._app_reminders,
             self._reminders,
             self._notes,
             self._todos,
@@ -11252,6 +11294,8 @@ def handle_tool(tool_name, params):
             await self._clipboard_history.stop()
         if self._focus_guard is not None:
             await self._focus_guard.stop()
+        if self._app_reminders is not None:
+            await self._app_reminders.stop()
         if self._gnomon_reviewer is not None:
             await self._gnomon_reviewer.close()
         if self._autonomous is not None:

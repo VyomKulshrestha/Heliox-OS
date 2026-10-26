@@ -77,6 +77,7 @@ describe("TodayPanel", () => {
     let reminders = [{ id: "a1", due: 1792760400, text: "stretch" }];
     daemonMocks.call.mockImplementation(async (method: string, params: { text?: string }) => {
       if (method === "today_overview") return overview;
+      if (method === "app_reminder_list") return { status: "ok", reminders: [] };
       if (method === "reminder_add") reminders = [...reminders, { id: "b2", due: 1792764000, text: params.text ?? "" }];
       if (method === "reminder_cancel") reminders = reminders.filter((item) => item.id !== "a1");
       return { status: "ok", reminders };
@@ -261,6 +262,26 @@ describe("TodayPanel", () => {
 
     await fireEvent.click(screen.getByRole("button", { name: "Stop warning about YouTube" }));
     await waitFor(() => expect(screen.queryByText("Heads-up about YouTube")).toBeNull());
+  });
+
+  it("shows repeating and app reminders", async () => {
+    let appReminders = [{ id: "a1", app: "outlook", text: "submit my timesheet", every_time: false }];
+    daemonMocks.call.mockImplementation(async (method: string) => {
+      if (method === "today_overview") return overview;
+      if (method === "reminder_list")
+        return {
+          status: "ok",
+          reminders: [{ id: "r1", due: Date.now() / 1000 + 600, text: "stand up", repeat_label: "every hour" }],
+        };
+      if (method === "app_reminder_delete") appReminders = [];
+      return { status: "ok", reminders: appReminders };
+    });
+    render(TodayPanel);
+    await waitFor(() => expect(screen.getByText("every hour")).toBeTruthy());
+    expect(screen.getByText("Next time you open outlook")).toBeTruthy();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Cancel app reminder submit my timesheet" }));
+    await waitFor(() => expect(screen.queryByText("Next time you open outlook")).toBeNull());
   });
 
   it("starts a pomodoro and manages quiet hours", async () => {

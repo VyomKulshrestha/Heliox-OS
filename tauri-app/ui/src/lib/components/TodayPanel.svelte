@@ -42,7 +42,9 @@
   let notice = $state("");
   let saving = $state(false);
 
-  type Reminder = { id: string; due: number; text: string };
+  type Reminder = { id: string; due: number; text: string; repeat_label?: string };
+  type AppReminder = { id: string; app: string; text: string; every_time: boolean };
+  let appReminders = $state<AppReminder[]>([]);
   type Workspace = { name: string; apps: string[] };
   type Note = { id: string; text: string; created_at: number };
   type Nudge = { id: string; match: string; minutes: number };
@@ -334,6 +336,10 @@
     distractions = (await listCall<string>("focus_distraction_delete", "words", { word })) ?? distractions;
   }
 
+  async function deleteAppReminder(id: string) {
+    appReminders = (await listCall<AppReminder>("app_reminder_delete", "reminders", { id })) ?? appReminders;
+  }
+
   async function loadCopied() {
     copied = (await listCall<Copied>("clipboard_history_list", "items")) ?? [];
   }
@@ -367,6 +373,7 @@
     void listCall<Todo>("todo_list", "todos").then((items) => (todos = items ?? []));
     void listCall<Watcher>("watch_list", "watchers").then((items) => (watchers = items ?? []));
     void loadCopied();
+    void listCall<AppReminder>("app_reminder_list", "reminders").then((items) => (appReminders = items ?? []));
     void listCall<string>("focus_distractions_list", "words").then((items) => (distractions = items ?? []));
     void listCall<Nudge>("nudge_list", "nudges").then((items) => (nudges = items ?? []));
     void listCall<QuietWindow>("focus_schedule_list", "windows").then((items) => (quietWindows = items ?? []));
@@ -791,9 +798,29 @@
           {#each reminders as reminder (reminder.id)}
             <li>
               <span class="time">{dueText(reminder.due)}</span>
-              <span class="row-text"><strong>{reminder.text}</strong></span>
+              <span class="row-text"
+                ><strong>{reminder.text}</strong>{#if reminder.repeat_label}<small>{reminder.repeat_label}</small
+                  >{/if}</span
+              >
               <button type="button" aria-label={`Cancel ${reminder.text}`} onclick={() => cancelReminder(reminder.id)}
                 >Cancel</button
+              >
+            </li>
+          {/each}
+        </ul>
+      {/if}
+      {#if appReminders.length}
+        <ul class="rows">
+          {#each appReminders as reminder (reminder.id)}
+            <li>
+              <span class="row-text"
+                ><strong>{reminder.text}</strong>
+                <small>{reminder.every_time ? "Every time" : "Next time"} you open {reminder.app}</small></span
+              >
+              <button
+                type="button"
+                aria-label={`Cancel app reminder ${reminder.text}`}
+                onclick={() => deleteAppReminder(reminder.id)}>Cancel</button
               >
             </li>
           {/each}

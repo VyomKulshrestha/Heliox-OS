@@ -12,7 +12,7 @@ The Heliox OS UI and daemon communicate over a local WebSocket using the [JSON-R
 | Request timeout | 5 minutes |
 | Reconnect interval | 3 seconds (auto-reconnect on close) |
 
-The daemon currently registers **291 WebSocket RPC methods**. That is the API
+The daemon currently registers **293 WebSocket RPC methods**. That is the API
 surface count, not the action catalog: Heliox exposes **162 action
 types** through the guarded planner/executor system. This document names every
 registered RPC method; grouped tables are used where several methods share one
@@ -611,6 +611,27 @@ first). "Remind me in 20 minutes to stretch", "remind me tomorrow at 9 to send t
 report", "what are my reminders" and "cancel the reminder about rent" work by voice and
 in chat without the planner. "Set a timer for 10 minutes" (10 seconds to 24 hours) is a
 reminder whose text says the timer is done.
+
+Repeating reminders carry `repeat`: `{"minutes": 60}` (15 minutes to a day) or
+`{"days": [0, 1, 2, 3, 4], "time": "09:00"}` (Monday is 0), and `reminder_list` adds a
+`repeat_label` such as "every weekday at 9:00 AM". When one goes out it is moved to its
+next time instead of removed, keeping its cadence. Interval reminders skip the night (10 PM
+to 7 AM) and are not delivered late after a missed run; the next one comes on time. "Remind
+me every hour to stand up", "remind me every weekday at 9 to check email", "remind me
+every Monday at 8:30 am to plan the week" and "stop reminding me to stand up" work by
+voice and in chat.
+
+#### `app_reminder_list` / `app_reminder_delete`
+Reminders that wait for an app or site to come to the front (`{"id", "app", "text",
+"every_time", "created_at"}`), kept in `DATA_DIR/app_reminders.json`. Heliox compares the
+front window's app name and title with the waiting reminders every ten seconds and records
+nothing. A reminder fires when its app comes to the front after not being there (not for a
+window already in front when it was set), as a `reminder` notification with `"trigger":
+"app"`, spoken, and not held by focus. One-off reminders are then removed; "every time"
+reminders stay. "Remind me to submit my timesheet when I open Outlook", "when I open
+Excel, remind me to check the totals", "every time I open Slack, remind me to set my
+status" and "what app reminders do I have" work by voice and in chat; `app_reminder_delete`
+takes `{"id"}`.
 
 #### `routine_suggest`
 A routine made from a finished task's receipt: `name`, `goal` (the task's request) and

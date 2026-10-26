@@ -40,8 +40,12 @@ GUIDE: list[dict[str, Any]] = [
             "remind me in 20 minutes to stretch",
             "remind me tomorrow at 9 am to send the report",
             "set a timer for 10 minutes",
+            "remind me every hour to stand up",
+            "remind me every weekday at 9 to check email",
+            "remind me to submit my timesheet when I open Outlook",
             "what are my reminders",
             "cancel the reminder about rent",
+            "stop reminding me to stand up",
         ],
     },
     {
