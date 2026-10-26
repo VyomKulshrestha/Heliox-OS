@@ -82,17 +82,11 @@ def _server(root: Path) -> Any:
     server = PilotServer(config)
     server._broadcast_notification = AsyncMock()
     server._speak_companion_text = AsyncMock()
-    server._task_receipts = TaskReceipts(
-        root / "receipts", vault=_MemoryVault(), key_dir=root / "keys"
-    )
-    server._activity_timeline = ActivityTimeline(
-        root / "timeline.db", config=TimelineConfig(enabled=True)
-    )
+    server._task_receipts = TaskReceipts(root / "receipts", vault=_MemoryVault(), key_dir=root / "keys")
+    server._activity_timeline = ActivityTimeline(root / "timeline.db", config=TimelineConfig(enabled=True))
     server._undo_journal = UndoJournal(root / "undo", config=UndoConfig())
     server._reminders = ReminderStore(root / "reminders.json")
-    server._app_reminders = AppReminders(
-        root / "app_reminders.json", foreground=lambda: ("Code", "x")
-    )
+    server._app_reminders = AppReminders(root / "app_reminders.json", foreground=lambda: ("Code", "x"))
     server._notes = NoteStore(root / "notes.json")
     server._todos = TodoStore(root / "todos.json")
     server._todos.add("call the bank")
@@ -117,9 +111,7 @@ def _server(root: Path) -> Any:
         )
     )
     clipboard = AsyncMock(return_value="Jane Doe, 12 Main Street")
-    server._clipboard_history = ClipboardHistory(
-        enabled=lambda: True, read=clipboard, write=AsyncMock()
-    )
+    server._clipboard_history = ClipboardHistory(enabled=lambda: True, read=clipboard, write=AsyncMock())
     server._snippets = SnippetStore(root / "snippets.json", read=clipboard, write=AsyncMock())
     server._snippets.save("signature", "Best, Jane")
     server._system_health = SystemHealth(read=lambda: SNAPSHOT)
@@ -141,9 +133,7 @@ async def _measure(iterations: int, warmup: int) -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="heliox-local-commands-") as folder:
         server = _server(Path(folder))
         # "Save this as my coding setup" would list this computer's open apps; stand in for it.
-        apps = patch(
-            "pilot.workflows.workspaces.open_apps", AsyncMock(return_value=["Visual Studio Code"])
-        )
+        apps = patch("pilot.workflows.workspaces.open_apps", AsyncMock(return_value=["Visual Studio Code"]))
         apps.start()
         try:
             handled: dict[str, bool] = {}
@@ -155,9 +145,7 @@ async def _measure(iterations: int, warmup: int) -> dict[str, Any]:
                     reply = await server._control_reply(example)
                     expansion = await server._expand_request(example) if reply is None else None
                     elapsed_ms = (time.perf_counter() - started) * 1000
-                    if (
-                        run == 0
-                    ):  # many examples change state, so judge each on its first, fresh run
+                    if run == 0:  # many examples change state, so judge each on its first, fresh run
                         handled[example] = reply is not None or expansion is not None
                     if run >= warmup:
                         timings.append(elapsed_ms)
@@ -176,9 +164,7 @@ async def _measure(iterations: int, warmup: int) -> dict[str, Any]:
         "handled": sum(handled.values()),
         "unhandled": sorted(example for example, ok in handled.items() if not ok),
         "latency": summarize(all_timings),
-        "slowest_examples": [
-            {"example": example, "median_ms": round(median, 3)} for median, example in medians[:3]
-        ],
+        "slowest_examples": [{"example": example, "median_ms": round(median, 3)} for median, example in medians[:3]],
         "model_generate_calls": 0,
         "actions_executed": 0,
     }

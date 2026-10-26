@@ -52,12 +52,8 @@ STREAK_REQUEST = re.compile(
     r"^what(?: s| is) my (?P<habit>.+?) streak$|^what(?: s| is) my streak (?:for|on) (?P<habit2>.+)$"
     r"|^how long is my (?P<habit3>.+?) streak$"
 )
-LIST_REQUEST = re.compile(
-    r"^(?:show|list|what are) my habits$|^what habits (?:am i tracking|do i have)$"
-)
-DELETE_REQUEST = re.compile(
-    r"^(?:please )?(?:stop tracking|delete the habit|remove the habit) (?P<habit>.+)$"
-)
+LIST_REQUEST = re.compile(r"^(?:show|list|what are) my habits$|^what habits (?:am i tracking|do i have)$")
+DELETE_REQUEST = re.compile(r"^(?:please )?(?:stop tracking|delete the habit|remove the habit) (?P<habit>.+)$")
 _NOT_HABITS = re.compile(
     r"^(?:in|out|off|on|into|in to|me in|me out|this|that|it|these|those)\b"
     r"|\b(?:password|account|error|file|bug|issue|output|message|conversation)s?$"
@@ -124,11 +120,7 @@ class HabitStore:
                 return habit
         for habit in names:
             key = _key(habit)
-            if (
-                len(wanted) >= 4
-                and len(key) >= 4
-                and (key.startswith(wanted[:5]) or wanted.startswith(key[:5]))
-            ):
+            if len(wanted) >= 4 and len(key) >= 4 and (key.startswith(wanted[:5]) or wanted.startswith(key[:5])):
                 return habit
         return None
 
@@ -214,19 +206,12 @@ class HabitStore:
             items = self.list()
             if not items:
                 return 'You aren\'t tracking any habits. Say "log a workout" to start.'
-            listed = "; ".join(
-                f"{item['name']}: {item['today']} today, {item['streak']}-day streak"
-                for item in items
-            )
+            listed = "; ".join(f"{item['name']}: {item['today']} today, {item['streak']}-day streak" for item in items)
             return f"Your habits: {listed}."
         delete = DELETE_REQUEST.match(normalized)
         if delete:
             name = delete.group("habit")
-            return (
-                f"I stopped tracking {name}."
-                if self.delete(name)
-                else f"You aren't tracking {name}."
-            )
+            return f"I stopped tracking {name}." if self.delete(name) else f"You aren't tracking {name}."
         streak = STREAK_REQUEST.match(normalized)
         if streak:
             name = streak.group("habit") or streak.group("habit2") or streak.group("habit3")
