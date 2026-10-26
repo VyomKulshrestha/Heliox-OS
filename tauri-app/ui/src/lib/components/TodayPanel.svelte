@@ -60,6 +60,8 @@
   type HealthApp = { app: string; cpu: number; memory: number; processes: number };
   type Health = { summary: string; cpu: number; memory: { percent: number }; apps: HealthApp[] };
   let health = $state<Health | null>(null);
+  let distractions = $state<string[]>([]);
+  let distractionWord = $state("");
   let checking = $state(false);
   let watchers = $state<Watcher[]>([]);
   let watchText = $state("");
@@ -319,6 +321,19 @@
     }
   }
 
+  async function addDistraction(event: SubmitEvent) {
+    event.preventDefault();
+    const next = await listCall<string>("focus_distraction_add", "words", { word: distractionWord });
+    if (next) {
+      distractions = next;
+      distractionWord = "";
+    }
+  }
+
+  async function removeDistraction(word: string) {
+    distractions = (await listCall<string>("focus_distraction_delete", "words", { word })) ?? distractions;
+  }
+
   async function loadCopied() {
     copied = (await listCall<Copied>("clipboard_history_list", "items")) ?? [];
   }
@@ -352,6 +367,7 @@
     void listCall<Todo>("todo_list", "todos").then((items) => (todos = items ?? []));
     void listCall<Watcher>("watch_list", "watchers").then((items) => (watchers = items ?? []));
     void loadCopied();
+    void listCall<string>("focus_distractions_list", "words").then((items) => (distractions = items ?? []));
     void listCall<Nudge>("nudge_list", "nudges").then((items) => (nudges = items ?? []));
     void listCall<QuietWindow>("focus_schedule_list", "windows").then((items) => (quietWindows = items ?? []));
   });
@@ -740,6 +756,29 @@
         <input type="time" bind:value={quietFrom} aria-label="Quiet from" />
         <input type="time" bind:value={quietTo} aria-label="Quiet until" />
         <button type="submit">Add quiet hours</button>
+      </form>
+      {#if distractions.length}
+        <ul class="rows">
+          {#each distractions as word (word)}
+            <li>
+              <span class="row-text"><strong>Heads-up about {word}</strong></span>
+              <button type="button" aria-label={`Stop warning about ${word}`} onclick={() => removeDistraction(word)}
+                >Remove</button
+              >
+            </li>
+          {/each}
+        </ul>
+      {/if}
+      <form class="brief-controls" onsubmit={addDistraction}>
+        <input
+          class="reminder-text"
+          bind:value={distractionWord}
+          maxlength="40"
+          aria-label="Distraction during focus"
+          placeholder="YouTube"
+          required
+        />
+        <button type="submit">Warn me during focus</button>
       </form>
     </section>
 

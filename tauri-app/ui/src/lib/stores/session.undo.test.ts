@@ -331,6 +331,15 @@ describe("watchers in chat", () => {
   it("shows what a watcher saw", async () => {
     const { session } = await import("./session");
 
+    notificationHandler!("focus_distraction", {
+      word: "YouTube",
+      app: "msedge",
+      text: "Heads-up: YouTube is open, and you're focusing for another 25 minutes.",
+    });
+    expect(get(session).messages.at(-1)?.text).toBe(
+      "Heads-up: YouTube is open, and you're focusing for another 25 minutes.",
+    );
+
     notificationHandler!("watch_fired", {
       id: "w1",
       kind: "process",

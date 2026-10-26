@@ -2,7 +2,7 @@
 
 The inventory covers the personal stores under ``DATA_DIR``: the activity timeline, task
 receipts, undo copies, notes, the to-do list, reminders, voice shortcuts, setups, usage
-nudges and quiet hours. Each can be cleared on its own. "Forget my activity from the last hour" removes
+nudges, focus distractions and quiet hours, plus the clipboard history held in memory. Each can be cleared on its own. "Forget my activity from the last hour" removes
 just that stretch of the timeline.
 
 A backup is a zip of those stores written to the Downloads folder. It never contains
@@ -38,6 +38,7 @@ STORES: dict[str, tuple[str, str, str]] = {
     "shortcuts": ("Voice shortcuts", "voice_shortcuts.json", "Phrases and the commands they stand for."),
     "workspaces": ("Setups", "workspaces.json", "Names of the apps in each saved setup."),
     "nudges": ("Usage nudges", "nudges.json", "Daily limits for apps or sites."),
+    "distractions": ("Focus distractions", "focus_distractions.json", "Apps or sites to mention during focus."),
     "quiet_hours": ("Quiet hours", "quiet_hours.json", "When focus starts by itself."),
     # Kept in memory only: nothing on disk, never in a backup, gone after a restart.
     "clipboard": ("Clipboard history", "", "Text you copied recently, in memory only."),
@@ -50,6 +51,7 @@ BACKUP_FILES = (
     "voice_shortcuts.json",
     "workspaces.json",
     "nudges.json",
+    "focus_distractions.json",
     "quiet_hours.json",
 )
 FORGET_REQUEST = re.compile(

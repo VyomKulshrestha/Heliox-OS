@@ -244,6 +244,25 @@ describe("TodayPanel", () => {
     expect(screen.getByText("3.0 GB · 4% processor · 13 processes")).toBeTruthy();
   });
 
+  it("adds and removes a focus distraction", async () => {
+    let words: string[] = [];
+    daemonMocks.call.mockImplementation(async (method: string, params: Record<string, unknown>) => {
+      if (method === "today_overview") return overview;
+      if (method === "focus_distraction_add") words = [String(params.word)];
+      if (method === "focus_distraction_delete") words = [];
+      return { status: "ok", words };
+    });
+    render(TodayPanel);
+    await waitFor(() => expect(screen.getByText(overview.brief)).toBeTruthy());
+
+    await fireEvent.input(screen.getByLabelText("Distraction during focus"), { target: { value: "YouTube" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Warn me during focus" }));
+    await waitFor(() => expect(screen.getByText("Heads-up about YouTube")).toBeTruthy());
+
+    await fireEvent.click(screen.getByRole("button", { name: "Stop warning about YouTube" }));
+    await waitFor(() => expect(screen.queryByText("Heads-up about YouTube")).toBeNull());
+  });
+
   it("starts a pomodoro and manages quiet hours", async () => {
     let windows: { id: string; days: number[]; start: number; end: number }[] = [];
     daemonMocks.call.mockImplementation(async (method: string, params: Record<string, unknown>) => {

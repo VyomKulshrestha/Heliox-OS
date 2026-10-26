@@ -11,6 +11,7 @@ from pilot.workflows.activity_timeline import ActivityTimeline
 from pilot.workflows.clipboard_history import ClipboardHistory
 from pilot.workflows.command_guide import SPOKEN_HELP, all_examples, guide
 from pilot.workflows.focus import FocusSession, QuietHours
+from pilot.workflows.focus_guard import FocusGuard
 from pilot.workflows.notes import NoteStore
 from pilot.workflows.nudges import NudgeStore
 from pilot.workflows.reminders import ReminderStore
@@ -62,6 +63,7 @@ def server(tmp_path):
     )
     server._nudges = NudgeStore(tmp_path / "nudges.json", timeline_on=lambda: True)
     server._focus = FocusSession(tmp_path / "focus.json", on_end=server._on_focus_end)
+    server._focus_guard = FocusGuard(tmp_path / "distractions.json", focus_status=server._focus.status)
     server._quiet_hours = QuietHours(tmp_path / "quiet.json", focus=server._focus, on_start=AsyncMock())
     server._workspaces = WorkspaceStore(tmp_path / "workspaces.json")
     server._workspaces.save("coding", ["Visual Studio Code"])

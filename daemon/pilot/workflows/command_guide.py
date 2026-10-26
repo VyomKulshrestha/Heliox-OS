@@ -68,6 +68,8 @@ GUIDE: list[dict[str, Any]] = [
             "start a pomodoro",
             "focus every weekday from 9 to 12",
             "what is my focus schedule",
+            "during focus, tell me if I open YouTube",
+            "what are my distractions",
             "stop focusing",
         ],
     },

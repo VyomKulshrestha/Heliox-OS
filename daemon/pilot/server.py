@@ -956,6 +956,7 @@ class PilotServer:
         self._watchers: Any = None
         self._clipboard_history: Any = None
         self._system_health: Any = None
+        self._focus_guard: Any = None
         self._queued_execute_requests: deque[tuple[str, str, dict[str, Any]]] = deque()
         self._queued_submission_lock = asyncio.Lock()
         self._queued_execute_worker: asyncio.Task[None] | None = None
@@ -1233,6 +1234,14 @@ class PilotServer:
 
         self._focus = FocusSession(DATA_DIR / "focus.json", on_end=self._on_focus_end)
         self._focus.resume_timer()
+        from pilot.workflows.focus_guard import FocusGuard
+
+        self._focus_guard = FocusGuard(
+            DATA_DIR / "focus_distractions.json",
+            focus_status=lambda: self._focus.status() if self._focus is not None else {"active": False},
+            deliver=self._deliver_distraction,
+        )
+        self._focus_guard.start()
         from pilot.workflows.focus import QuietHours
 
         self._quiet_hours = QuietHours(
@@ -1784,6 +1793,9 @@ class PilotServer:
             "clipboard_history_copy": self._handle_clipboard_history_copy,
             "clipboard_history_clear": self._handle_clipboard_history_clear,
             "system_health": self._handle_system_health,
+            "focus_distractions_list": self._handle_focus_distractions_list,
+            "focus_distraction_add": self._handle_focus_distraction_add,
+            "focus_distraction_delete": self._handle_focus_distraction_delete,
             "workspace_save": self._handle_workspace_save,
             "workspace_delete": self._handle_workspace_delete,
             "receipts_search": self._handle_receipts_search,
@@ -6023,7 +6035,16 @@ class PilotServer:
 
     def _phrase_reserved(self, phrase: str) -> bool:
         """True for phrases that already mean something to Heliox and so cannot be shortcuts."""
-        from pilot.workflows import clipboard_history, notes, nudges, system_health, todos, watchers, workspaces
+        from pilot.workflows import (
+            clipboard_history,
+            focus_guard,
+            notes,
+            nudges,
+            system_health,
+            todos,
+            watchers,
+            workspaces,
+        )
         from pilot.workflows.activity_timeline import LAST_SEEN_QUESTION, TIMELINE_QUESTION
         from pilot.workflows.command_guide import HELP_REQUEST
         from pilot.workflows.focus import (
@@ -6079,6 +6100,9 @@ class PilotServer:
             system_health.MEMORY_QUESTION,
             system_health.CPU_QUESTION,
             system_health.DISK_QUESTION,
+            focus_guard.ADD_REQUEST,
+            focus_guard.LIST_REQUEST,
+            focus_guard.REMOVE_REQUEST,
             nudges.ADD_REQUEST,
             nudges.LIST_REQUEST,
             nudges.DELETE_REQUEST,
@@ -6365,6 +6389,36 @@ class PilotServer:
             return {"status": "error", "message": "Clipboard history is not ready yet."}
         return {"status": "ok", "removed": self._clipboard_history.clear(), "items": []}
 
+    async def _deliver_distraction(self, event: dict[str, Any]) -> None:
+        """One heads-up the person asked for; nothing is blocked or recorded."""
+        await self._broadcast_notification("focus_distraction", event)
+        await self._speak_companion_text(
+            event["text"], channel=SpeechChannel.TASK_NARRATION, dedupe_key=f"distraction:{event['word']}"
+        )
+
+    async def _handle_focus_distractions_list(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        if self._focus_guard is None:
+            return {"status": "error", "message": "Focus distractions are not ready yet.", "words": []}
+        return {"status": "ok", "words": await asyncio.to_thread(self._focus_guard.list)}
+
+    async def _handle_focus_distraction_add(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        word = params.get("word")
+        if not isinstance(word, str) or self._focus_guard is None:
+            return {"status": "error", "message": "word is required"}
+        try:
+            await asyncio.to_thread(self._focus_guard.add, word)
+        except ValueError as exc:
+            return {"status": "error", "message": str(exc)}
+        return {"status": "ok", "words": await asyncio.to_thread(self._focus_guard.list)}
+
+    async def _handle_focus_distraction_delete(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        word = params.get("word")
+        if not isinstance(word, str) or self._focus_guard is None:
+            return {"status": "error", "message": "word is required"}
+        if not await asyncio.to_thread(self._focus_guard.remove, word):
+            return {"status": "error", "message": "That is not on your list."}
+        return {"status": "ok", "words": await asyncio.to_thread(self._focus_guard.list)}
+
     async def _handle_system_health(self, params: dict[str, Any], ws: ServerConnection) -> dict:
         """A fresh reading of processor, memory, disks, battery and the biggest apps, with a summary."""
         from pilot.workflows.system_health import describe_health
@@ -6548,6 +6602,7 @@ class PilotServer:
             ("shortcuts", self._shortcuts),
             ("workspaces", self._workspaces),
             ("nudges", self._nudges),
+            ("distractions", self._focus_guard),
             ("quiet_hours", self._quiet_hours),
         ):
             if store is not None:
@@ -6905,6 +6960,7 @@ class PilotServer:
             self._notes,
             self._todos,
             self._nudges,
+            self._focus_guard,
             self._watchers,
             self._clipboard_history,
             self._system_health,
@@ -11194,6 +11250,8 @@ def handle_tool(tool_name, params):
             await self._watchers.stop()
         if self._clipboard_history is not None:
             await self._clipboard_history.stop()
+        if self._focus_guard is not None:
+            await self._focus_guard.stop()
         if self._gnomon_reviewer is not None:
             await self._gnomon_reviewer.close()
         if self._autonomous is not None:

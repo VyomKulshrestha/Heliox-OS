@@ -927,6 +927,12 @@ function createSession() {
         break;
       }
 
+      case "focus_distraction": {
+        const text = String(p.text ?? "").trim();
+        if (text) addSystemMessage(text);
+        break;
+      }
+
       case "watch_fired": {
         const text = String(p.text ?? "").trim();
         if (text) {

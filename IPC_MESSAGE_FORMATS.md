@@ -12,7 +12,7 @@ The Heliox OS UI and daemon communicate over a local WebSocket using the [JSON-R
 | Request timeout | 5 minutes |
 | Reconnect interval | 3 seconds (auto-reconnect on close) |
 
-The daemon currently registers **288 WebSocket RPC methods**. That is the API
+The daemon currently registers **291 WebSocket RPC methods**. That is the API
 surface count, not the action catalog: Heliox exposes **162 action
 types** through the guarded planner/executor system. This document names every
 registered RPC method; grouped tables are used where several methods share one
@@ -532,6 +532,15 @@ Processes of one app are added together; `cpu` is a share of the whole processor
 using my CPU" and "how much disk space do I have" are answered from the same reading by
 voice and in chat. Heliox only reports; closing an app is an ordinary request that goes
 through approval.
+
+#### `focus_distractions_list` / `focus_distraction_add` / `focus_distraction_delete`
+Words (2 to 40 characters, up to 20) to look for in the app name or window title during
+focus. Each call returns `{"words": [...]}`; add and delete take `{"word"}`. While a focus
+session runs, Heliox looks at the front window every ten seconds and, the first time a
+word shows up in that session, broadcasts `focus_distraction` and says it. The window is
+compared and forgotten; nothing is blocked, closed or recorded. "During focus, tell me if
+I open YouTube", "what are my distractions" and "stop warning me about reddit" work by
+voice and in chat.
 
 #### `nudge_list` / `nudge_add` / `nudge_delete`
 Usage nudges (`{"id", "match", "minutes", "last_fired_day"}`): once a day, when today's
@@ -3200,6 +3209,10 @@ daily brief as `daily_brief`.
 
 ### `reminder`
 Broadcast when a reminder falls due: `{"id": "a1b2c3", "due": 1792760400.0, "text": "stretch", "late": false}`.
+
+#### `focus_distraction`
+Broadcast once per word per focus session, and spoken:
+`{"word": "YouTube", "app": "msedge", "text": "Heads-up: YouTube is open, and you're focusing for another 25 minutes."}`.
 
 #### `watch_fired`
 Broadcast once when a watcher sees its event or gives up after a day, and spoken:
