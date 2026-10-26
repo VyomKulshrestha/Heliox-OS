@@ -958,6 +958,7 @@ class PilotServer:
         self._system_health: Any = None
         self._focus_guard: Any = None
         self._app_reminders: Any = None
+        self._quick_answers: Any = None
         self._queued_execute_requests: deque[tuple[str, str, dict[str, Any]]] = deque()
         self._queued_submission_lock = asyncio.Lock()
         self._queued_execute_worker: asyncio.Task[None] | None = None
@@ -1228,6 +1229,9 @@ class PilotServer:
         from pilot.workflows.system_health import SystemHealth
 
         self._system_health = SystemHealth()
+        from pilot.workflows.quick_answers import QuickAnswers
+
+        self._quick_answers = QuickAnswers()
         from pilot.workflows.workspaces import WorkspaceStore
 
         self._workspaces = WorkspaceStore(DATA_DIR / "workspaces.json")
@@ -6129,10 +6133,13 @@ class PilotServer:
             SCHEDULE_LIST_REQUEST,
             SCHEDULE_CLEAR_REQUEST,
         )
+        from pilot.workflows.quick_answers import QuickAnswers
+
         return (
             phrase.startswith("when i say")
             or any(pattern.match(phrase) for pattern in patterns)
             or any(pattern.match(phrase) for pattern in questions)
+            or QuickAnswers().answer(phrase) is not None
         )
 
     async def _latest_receipt(self, *, with_actions: bool = False) -> dict[str, Any] | None:
@@ -7006,6 +7013,7 @@ class PilotServer:
             self._watchers,
             self._clipboard_history,
             self._system_health,
+            self._quick_answers,
         )
         for source in sources:
             if source is None:

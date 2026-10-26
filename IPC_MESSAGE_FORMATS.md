@@ -533,6 +533,17 @@ using my CPU" and "how much disk space do I have" are answered from the same rea
 voice and in chat. Heliox only reports; closing an app is an ordinary request that goes
 through approval.
 
+#### Quick answers (no RPC)
+Sums and percentages ("what's 15 percent of 240", "what's 20 percent off 80", "a 15%
+tip on 64"), unit conversions (length, mass, volume, speed, time and temperature: "convert
+5 miles to km", "how many ounces in a pound"), dates ("how many days until Christmas",
+"what day is December 25", "what's the date in 3 weeks") and the time here or in about
+60 cities ("what time is it in Tokyo") are worked out in code and returned as the reply to
+`execute`, by voice or in chat. Arithmetic is parsed into a small expression tree (numbers,
+`+ - * / % **` and square roots; huge powers are refused), never evaluated as code. A
+sentence that does not parse cleanly, such as "convert this video to mp4", goes to the
+planner as before.
+
 #### `focus_distractions_list` / `focus_distraction_add` / `focus_distraction_delete`
 Words (2 to 40 characters, up to 20) to look for in the app name or window title during
 focus. Each call returns `{"words": [...]}`; add and delete take `{"word"}`. While a focus

@@ -15,6 +15,7 @@ from pilot.workflows.focus import FocusSession, QuietHours
 from pilot.workflows.focus_guard import FocusGuard
 from pilot.workflows.notes import NoteStore
 from pilot.workflows.nudges import NudgeStore
+from pilot.workflows.quick_answers import QuickAnswers
 from pilot.workflows.reminders import ReminderStore
 from pilot.workflows.routines import ShortcutStore, normalize_phrase
 from pilot.workflows.system_health import SystemHealth
@@ -74,6 +75,7 @@ def server(tmp_path):
         enabled=lambda: True, read=AsyncMock(return_value=""), write=AsyncMock()
     )
     server._system_health = SystemHealth(read=lambda: SNAPSHOT)
+    server._quick_answers = QuickAnswers()
     server._speech_coordinator = MagicMock()
     server._speech_coordinator.speak = AsyncMock()
     return server

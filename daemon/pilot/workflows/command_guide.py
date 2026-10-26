@@ -104,6 +104,19 @@ GUIDE: list[dict[str, Any]] = [
         ],
     },
     {
+        "group": "Quick answers",
+        "about": "Sums, percentages, conversions, dates and world time, worked out exactly on this computer.",
+        "examples": [
+            "what's 15 percent of 240",
+            "what's 20 percent off 80",
+            "convert 5 miles to km",
+            "what is 70 fahrenheit in celsius",
+            "how many days until Christmas",
+            "what day is December 25",
+            "what time is it in Tokyo",
+        ],
+    },
+    {
         "group": "This computer",
         "about": "A quick reading of processor, memory and disks; closing anything still asks first.",
         "examples": [
