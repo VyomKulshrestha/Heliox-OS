@@ -18,6 +18,7 @@ sys.path.insert(0, str(DAEMON_ROOT))
 from benchmarks.coadaptation_suite import benchmark as benchmark_coadaptation  # noqa: E402
 from benchmarks.event_loop_responsiveness import benchmark as benchmark_event_loop  # noqa: E402
 from benchmarks.intent_dispatch_suite import benchmark as benchmark_intents  # noqa: E402
+from benchmarks.local_commands_suite import benchmark_async as benchmark_local_commands  # noqa: E402
 from benchmarks.local_status_suite import benchmark_suite as benchmark_status  # noqa: E402
 from benchmarks.react_latency import benchmark_report as benchmark_guarded_request  # noqa: E402
 from benchmarks.world_model_suite import benchmark as benchmark_world_model  # noqa: E402
@@ -48,6 +49,7 @@ async def build_bundle() -> dict:
         "local_status_suite": await benchmark_status(iterations=50, warmup=5),
         "event_loop_responsiveness": await benchmark_event_loop(heartbeat_interval_ms=10.0),
         "intent_dispatch": benchmark_intents(),
+        "local_commands": await benchmark_local_commands(iterations=20, warmup=2),
         "learned_risk_world_model": benchmark_world_model(iterations=1000),
         # Simulated users only (tuning families, in-sample); never a claim about people.
         "coadaptation_simulated_users": benchmark_coadaptation(quick=True),

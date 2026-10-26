@@ -22,6 +22,25 @@ def test_committed_software_benchmark_bundle_has_truthful_passing_contracts() ->
     assert "no claim" in report["claim_boundary"].lower()
     if "coadaptation_simulated_users" in report:
         _assert_coadaptation_contracts(report["coadaptation_simulated_users"])
+    if "local_commands" in report:
+        _assert_local_command_contracts(report["local_commands"])
+
+
+def _assert_local_command_contracts(entry: dict) -> None:
+    """Every command-guide example is handled in code, with no model call and no action."""
+    assert entry["benchmark"] == "local_commands"
+    assert entry["handled"] == entry["examples"] > 0
+    assert entry["unhandled"] == []
+    assert entry["model_generate_calls"] == 0 and entry["actions_executed"] == 0
+    assert "no claim" in entry["claim_boundary"]
+
+
+def test_local_command_contracts_hold_for_a_quick_run() -> None:
+    import asyncio
+
+    from benchmarks.local_commands_suite import benchmark_async
+
+    _assert_local_command_contracts(asyncio.run(benchmark_async(iterations=1, warmup=0)))
 
 
 def _assert_coadaptation_contracts(entry: dict) -> None:

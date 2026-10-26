@@ -109,6 +109,21 @@ def build_proof() -> str:
     status_scenarios = benchmarks["local_status_suite"]["scenarios"]
     responsiveness = benchmarks["event_loop_responsiveness"]
     intents = benchmarks["intent_dispatch"]
+    local_commands = benchmarks.get("local_commands")
+    local_commands_section = (
+        ""
+        if not local_commands
+        else (
+            "\n### Built-in commands answered in code\n\n"
+            f"Every example in the command guide (**{local_commands['examples']}** sentences, the list behind Ctrl+K) "
+            f"was sent through the daemon's control path: **{local_commands['handled']}/{local_commands['examples']}** "
+            f"were handled without planning, with **{local_commands['latency']['median_ms']:.3f} ms median** and "
+            f"**{local_commands['latency']['p95_ms']:.3f} ms p95** per reply across "
+            f"{local_commands['latency']['iterations']:,} replies, zero model calls and zero actions executed. "
+            "Stand-ins replace the clipboard, speech, the settings file and machine readings, so this is the "
+            "control path itself, not speech recognition, text-to-speech or end-to-end voice latency.\n"
+        )
+    )
     world_model = benchmarks["learned_risk_world_model"]
     world_validation = world_model["validation"]
     subscription_rows = "\n".join(
@@ -205,7 +220,7 @@ During a real one-second CPU monitor sample, a 10 ms asyncio heartbeat produced 
 ### Deterministic intent dispatch
 
 The curated routing regression set passed **{intents["passed"]}/{intents["case_count"]} cases** with **{intents["latency"]["median_ms"]:.3f} ms median** dispatch latency. It covers bounded positive intents and ambiguous controls that must fall through to model planning. It is not a population-level language-understanding benchmark, and application routing does not prove an application is installed.
-
+{local_commands_section}
 ### Learned-risk world model
 
 The shipped `{world_model["model_version"]}` artifact records **{world_model["training_samples"]:,} training** and **{world_model["validation_samples"]:,} stratified temporal validation samples** across **{world_model["learned_action_types"]} action types**.
