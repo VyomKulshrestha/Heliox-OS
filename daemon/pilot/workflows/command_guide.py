@@ -117,6 +117,15 @@ GUIDE: list[dict[str, Any]] = [
         ],
     },
     {
+        "group": "Your files",
+        "about": "From folder listings and file dates in your own folders; nothing is opened.",
+        "examples": [
+            "what did I download today",
+            "what was the last file I downloaded",
+            "where is my budget spreadsheet",
+        ],
+    },
+    {
         "group": "This computer",
         "about": "A quick reading of processor, memory and disks; closing anything still asks first.",
         "examples": [

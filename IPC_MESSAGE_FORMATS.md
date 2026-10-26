@@ -533,6 +533,16 @@ using my CPU" and "how much disk space do I have" are answered from the same rea
 voice and in chat. Heliox only reports; closing an app is an ordinary request that goes
 through approval.
 
+#### Your files (no RPC)
+"What did I download today" (or yesterday, this week, recently), "what was the last
+file I downloaded" and "where is my budget spreadsheet" are answered from folder listings
+and file dates: the Downloads folder, and for "where is my …" also Desktop, Documents,
+Pictures, Music, Videos and OneDrive, four levels deep for at most three seconds. Git
+repositories, build output and caches are not searched below their top level. Words such
+as spreadsheet, PDF, photo or installer narrow the search to those file types, and names
+match at the start of words. Nothing is opened. When nothing is found and no kind of file
+was named ("where are my keys"), the question goes to the conversation as before.
+
 #### Quick answers (no RPC)
 Sums and percentages ("what's 15 percent of 240", "what's 20 percent off 80", "a 15%
 tip on 64"), unit conversions (length, mass, volume, speed, time and temperature: "convert

@@ -960,6 +960,7 @@ class PilotServer:
         self._app_reminders: Any = None
         self._quick_answers: Any = None
         self._snippets: Any = None
+        self._file_finder: Any = None
         self._queued_execute_requests: deque[tuple[str, str, dict[str, Any]]] = deque()
         self._queued_submission_lock = asyncio.Lock()
         self._queued_execute_worker: asyncio.Task[None] | None = None
@@ -1237,6 +1238,9 @@ class PilotServer:
         from pilot.workflows.quick_answers import QuickAnswers
 
         self._quick_answers = QuickAnswers()
+        from pilot.workflows.file_finder import FileFinder
+
+        self._file_finder = FileFinder()
         from pilot.workflows.workspaces import WorkspaceStore
 
         self._workspaces = WorkspaceStore(DATA_DIR / "workspaces.json")
@@ -6058,6 +6062,7 @@ class PilotServer:
         from pilot.workflows import (
             app_reminders,
             clipboard_history,
+            file_finder,
             focus_guard,
             notes,
             nudges,
@@ -6131,6 +6136,8 @@ class PilotServer:
             snippets.LIST_REQUEST,
             snippets.DELETE_REQUEST,
             snippets.READ_REQUEST,
+            file_finder.DOWNLOADS_REQUEST,
+            file_finder.LAST_DOWNLOAD_REQUEST,
             nudges.ADD_REQUEST,
             nudges.LIST_REQUEST,
             nudges.DELETE_REQUEST,
@@ -6155,6 +6162,7 @@ class PilotServer:
             or any(pattern.match(phrase) for pattern in questions)
             or QuickAnswers().answer(phrase) is not None
             or self._names_snippet(phrase)
+            or file_finder.names_a_kind(phrase)
         )
 
     def _names_snippet(self, phrase: str) -> bool:
@@ -7073,6 +7081,7 @@ class PilotServer:
             self._clipboard_history,
             self._snippets,
             self._system_health,
+            self._file_finder,
             self._quick_answers,
         )
         for source in sources:

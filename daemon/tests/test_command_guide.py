@@ -11,6 +11,7 @@ from pilot.workflows.activity_timeline import ActivityTimeline
 from pilot.workflows.app_reminders import AppReminders
 from pilot.workflows.clipboard_history import ClipboardHistory
 from pilot.workflows.command_guide import SPOKEN_HELP, all_examples, guide
+from pilot.workflows.file_finder import FileFinder
 from pilot.workflows.focus import FocusSession, QuietHours
 from pilot.workflows.focus_guard import FocusGuard
 from pilot.workflows.notes import NoteStore
@@ -77,6 +78,7 @@ def server(tmp_path):
     )
     server._system_health = SystemHealth(read=lambda: SNAPSHOT)
     server._quick_answers = QuickAnswers()
+    server._file_finder = FileFinder(roots=lambda: [downloads], downloads=lambda: downloads)
     clipboard = AsyncMock(return_value="Jane Doe, 12 Main Street")
     server._snippets = SnippetStore(tmp_path / "snippets.json", read=clipboard, write=AsyncMock())
     server._snippets.save("signature", "Best, Jane")
