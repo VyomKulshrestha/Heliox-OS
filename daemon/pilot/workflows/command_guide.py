@@ -132,6 +132,16 @@ GUIDE: list[dict[str, Any]] = [
         "examples": ["what did I copy earlier", "copy the second one back", "clear my clipboard history"],
     },
     {
+        "group": "Snippets",
+        "about": "Save what you copied under a name and put it back on the clipboard later; never passwords.",
+        "examples": [
+            "save that as my signature",
+            "copy my signature",
+            "what snippets do I have",
+            "read what I copied",
+        ],
+    },
+    {
         "group": "Usage nudges",
         "about": "A once-a-day heads-up from the activity timeline; nothing is blocked.",
         "examples": ["tell me if I spend more than an hour on YouTube today", "what nudges do I have"],

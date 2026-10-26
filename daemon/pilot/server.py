@@ -959,6 +959,7 @@ class PilotServer:
         self._focus_guard: Any = None
         self._app_reminders: Any = None
         self._quick_answers: Any = None
+        self._snippets: Any = None
         self._queued_execute_requests: deque[tuple[str, str, dict[str, Any]]] = deque()
         self._queued_submission_lock = asyncio.Lock()
         self._queued_execute_worker: asyncio.Task[None] | None = None
@@ -1216,7 +1217,7 @@ class PilotServer:
         self._watchers = WatcherStore(deliver=self._deliver_watch)
         self._watchers.start()
         from pilot.system.clipboard import clipboard_read, clipboard_write
-        from pilot.workflows.clipboard_history import ClipboardHistory
+        from pilot.workflows.clipboard_history import ClipboardHistory, change_detector
 
         timeline = self._activity_timeline
         self._clipboard_history = ClipboardHistory(
@@ -1224,8 +1225,12 @@ class PilotServer:
             excluded=timeline.excludes if timeline is not None else (lambda app, title: False),
             read=clipboard_read,
             write=clipboard_write,
+            changed=change_detector(),
         )
         self._clipboard_history.start()
+        from pilot.workflows.snippets import SnippetStore
+
+        self._snippets = SnippetStore(DATA_DIR / "snippets.json", read=clipboard_read, write=clipboard_write)
         from pilot.workflows.system_health import SystemHealth
 
         self._system_health = SystemHealth()
@@ -1807,6 +1812,10 @@ class PilotServer:
             "focus_distraction_delete": self._handle_focus_distraction_delete,
             "app_reminder_list": self._handle_app_reminder_list,
             "app_reminder_delete": self._handle_app_reminder_delete,
+            "snippet_list": self._handle_snippet_list,
+            "snippet_save": self._handle_snippet_save,
+            "snippet_copy": self._handle_snippet_copy,
+            "snippet_delete": self._handle_snippet_delete,
             "workspace_save": self._handle_workspace_save,
             "workspace_delete": self._handle_workspace_delete,
             "receipts_search": self._handle_receipts_search,
@@ -6052,6 +6061,7 @@ class PilotServer:
             focus_guard,
             notes,
             nudges,
+            snippets,
             system_health,
             todos,
             watchers,
@@ -6117,6 +6127,10 @@ class PilotServer:
             focus_guard.REMOVE_REQUEST,
             app_reminders.SET_REQUEST,
             app_reminders.LIST_REQUEST,
+            snippets.SAVE_REQUEST,
+            snippets.LIST_REQUEST,
+            snippets.DELETE_REQUEST,
+            snippets.READ_REQUEST,
             nudges.ADD_REQUEST,
             nudges.LIST_REQUEST,
             nudges.DELETE_REQUEST,
@@ -6140,7 +6154,15 @@ class PilotServer:
             or any(pattern.match(phrase) for pattern in patterns)
             or any(pattern.match(phrase) for pattern in questions)
             or QuickAnswers().answer(phrase) is not None
+            or self._names_snippet(phrase)
         )
+
+    def _names_snippet(self, phrase: str) -> bool:
+        """ "Copy my signature" is taken once a signature snippet exists; "copy my files" stays free."""
+        from pilot.workflows.snippets import COPY_REQUEST
+
+        asked = COPY_REQUEST.match(phrase)
+        return bool(asked and self._snippets is not None and self._snippets.get(asked.group("name")) is not None)
 
     async def _latest_receipt(self, *, with_actions: bool = False) -> dict[str, Any] | None:
         if self._task_receipts is None:
@@ -6406,6 +6428,42 @@ class PilotServer:
             return {"status": "error", "message": "Clipboard history is not ready yet."}
         return {"status": "ok", "removed": self._clipboard_history.clear(), "items": []}
 
+    async def _handle_snippet_list(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        if self._snippets is None:
+            return {"status": "error", "message": "Snippets are not ready yet.", "snippets": []}
+        return {"status": "ok", "snippets": await asyncio.to_thread(self._snippets.list)}
+
+    async def _handle_snippet_save(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """Save ``text`` under ``name`` (text that looks like a password or key is refused)."""
+        name, text = params.get("name"), params.get("text")
+        if not isinstance(name, str) or not isinstance(text, str) or self._snippets is None:
+            return {"status": "error", "message": "name and text are required"}
+        try:
+            await asyncio.to_thread(self._snippets.save, name, text)
+        except ValueError as exc:
+            return {"status": "error", "message": str(exc)}
+        return {"status": "ok", "snippets": await asyncio.to_thread(self._snippets.list)}
+
+    async def _handle_snippet_copy(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        name = params.get("name")
+        if not isinstance(name, str) or self._snippets is None:
+            return {"status": "error", "message": "name is required"}
+        try:
+            item = await self._snippets.copy(name)
+        except Exception as exc:
+            return {"status": "error", "message": f"Could not copy: {exc}"}
+        if item is None:
+            return {"status": "error", "message": "No such snippet."}
+        return {"status": "ok"}
+
+    async def _handle_snippet_delete(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        name = params.get("name")
+        if not isinstance(name, str) or self._snippets is None:
+            return {"status": "error", "message": "name is required"}
+        if not await asyncio.to_thread(self._snippets.delete, name):
+            return {"status": "error", "message": "No such snippet."}
+        return {"status": "ok", "snippets": await asyncio.to_thread(self._snippets.list)}
+
     async def _deliver_app_reminder(self, reminder: dict[str, Any]) -> None:
         """An app reminder fires because the person just opened that app, so focus does not hold it."""
         await self._broadcast_notification(
@@ -6638,6 +6696,7 @@ class PilotServer:
             counts["clipboard"] = len(self._clipboard_history.list())
         for key, store in (
             ("notes", self._notes),
+            ("snippets", self._snippets),
             ("todos", self._todos),
             ("reminders", self._reminders),
             ("app_reminders", self._app_reminders),
@@ -7012,6 +7071,7 @@ class PilotServer:
             self._focus_guard,
             self._watchers,
             self._clipboard_history,
+            self._snippets,
             self._system_health,
             self._quick_answers,
         )

@@ -12,7 +12,7 @@ The Heliox OS UI and daemon communicate over a local WebSocket using the [JSON-R
 | Request timeout | 5 minutes |
 | Reconnect interval | 3 seconds (auto-reconnect on close) |
 
-The daemon currently registers **293 WebSocket RPC methods**. That is the API
+The daemon currently registers **297 WebSocket RPC methods**. That is the API
 surface count, not the action catalog: Heliox exposes **162 action
 types** through the guarded planner/executor system. This document names every
 registered RPC method; grouped tables are used where several methods share one
@@ -552,6 +552,17 @@ word shows up in that session, broadcasts `focus_distraction` and says it. The w
 compared and forgotten; nothing is blocked, closed or recorded. "During focus, tell me if
 I open YouTube", "what are my distractions" and "stop warning me about reddit" work by
 voice and in chat.
+
+#### `snippet_list` / `snippet_save` / `snippet_copy` / `snippet_delete`
+Named texts to reuse (`{"name", "text", "created_at"}`; names are lower-cased, 1 to 40
+characters; text up to 5,000 characters; up to 50), kept in `DATA_DIR/snippets.json`.
+`snippet_save` takes `{"name", "text"}` and refuses text that looks like a password, API
+key, token, private key or card number. `snippet_copy` takes `{"name"}` and puts the text
+on the clipboard; nothing is typed into other apps. "Save that as my signature" saves what
+is on the clipboard now, "copy my signature" puts it back, "what snippets do I have" and
+"delete my signature snippet" work by voice and in chat. "Copy my …" only answers when a
+snippet has that name, so "copy my files to the D drive" still goes to the planner. "Read
+what I copied" reads the clipboard back unless it looks like a secret.
 
 #### `nudge_list` / `nudge_add` / `nudge_delete`
 Usage nudges (`{"id", "match", "minutes", "last_fired_day"}`): once a day, when today's

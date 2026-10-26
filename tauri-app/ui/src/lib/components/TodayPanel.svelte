@@ -45,6 +45,11 @@
   type Reminder = { id: string; due: number; text: string; repeat_label?: string };
   type AppReminder = { id: string; app: string; text: string; every_time: boolean };
   let appReminders = $state<AppReminder[]>([]);
+  type Snippet = { name: string; text: string; created_at: number };
+  let snippets = $state<Snippet[]>([]);
+  let snippetName = $state("");
+  let snippetText = $state("");
+  let snippetNotice = $state("");
   type Workspace = { name: string; apps: string[] };
   type Note = { id: string; text: string; created_at: number };
   type Nudge = { id: string; match: string; minutes: number };
@@ -336,6 +341,26 @@
     distractions = (await listCall<string>("focus_distraction_delete", "words", { word })) ?? distractions;
   }
 
+  async function saveSnippet(event: SubmitEvent) {
+    event.preventDefault();
+    const next = await listCall<Snippet>("snippet_save", "snippets", { name: snippetName, text: snippetText });
+    if (next) {
+      snippets = next;
+      snippetName = "";
+      snippetText = "";
+    }
+  }
+
+  async function copySnippet(name: string) {
+    const result = await call<{ status: string; message?: string }>("snippet_copy", { name });
+    if (result.status === "ok") snippetNotice = `Your ${name} is on the clipboard.`;
+    else error = String(result.message || "Could not copy.");
+  }
+
+  async function deleteSnippet(name: string) {
+    snippets = (await listCall<Snippet>("snippet_delete", "snippets", { name })) ?? snippets;
+  }
+
   async function deleteAppReminder(id: string) {
     appReminders = (await listCall<AppReminder>("app_reminder_delete", "reminders", { id })) ?? appReminders;
   }
@@ -373,6 +398,7 @@
     void listCall<Todo>("todo_list", "todos").then((items) => (todos = items ?? []));
     void listCall<Watcher>("watch_list", "watchers").then((items) => (watchers = items ?? []));
     void loadCopied();
+    void listCall<Snippet>("snippet_list", "snippets").then((items) => (snippets = items ?? []));
     void listCall<AppReminder>("app_reminder_list", "reminders").then((items) => (appReminders = items ?? []));
     void listCall<string>("focus_distractions_list", "words").then((items) => (distractions = items ?? []));
     void listCall<Nudge>("nudge_list", "nudges").then((items) => (nudges = items ?? []));
@@ -579,6 +605,48 @@
       <button type="button" class="quiet" onclick={checkComputer} disabled={checking}
         >{checking ? "Checking…" : "Check now"}</button
       >
+    </section>
+
+    <section aria-labelledby="today-snippets">
+      <h3 id="today-snippets">Snippets</h3>
+      {#if snippetNotice}<p class="empty" role="status">{snippetNotice}</p>{/if}
+      {#if snippets.length === 0}
+        <p class="empty">No snippets. Copy some text and say "save that as my signature", or add one here.</p>
+      {:else}
+        <ul class="rows">
+          {#each snippets as snippet (snippet.name)}
+            <li>
+              <span class="row-text"
+                ><strong>{snippet.name}</strong><small
+                  >{snippet.text.length > 60 ? `${snippet.text.slice(0, 59)}…` : snippet.text}</small
+                ></span
+              >
+              <button
+                type="button"
+                aria-label={`Copy snippet ${snippet.name}`}
+                onclick={() => copySnippet(snippet.name)}>Copy</button
+              >
+              <button
+                type="button"
+                aria-label={`Delete snippet ${snippet.name}`}
+                onclick={() => deleteSnippet(snippet.name)}>Delete</button
+              >
+            </li>
+          {/each}
+        </ul>
+      {/if}
+      <form class="brief-controls" onsubmit={saveSnippet}>
+        <input
+          class="minutes"
+          bind:value={snippetName}
+          maxlength="40"
+          aria-label="Snippet name"
+          placeholder="address"
+          required
+        />
+        <input class="reminder-text" bind:value={snippetText} maxlength="5000" aria-label="Snippet text" required />
+        <button type="submit">Save snippet</button>
+      </form>
     </section>
 
     <section aria-labelledby="today-notes">

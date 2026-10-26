@@ -284,6 +284,31 @@ describe("TodayPanel", () => {
     await waitFor(() => expect(screen.queryByText("Next time you open outlook")).toBeNull());
   });
 
+  it("saves, copies and deletes a snippet", async () => {
+    let snippets: { name: string; text: string; created_at: number }[] = [];
+    daemonMocks.call.mockImplementation(async (method: string, params: Record<string, unknown>) => {
+      if (method === "today_overview") return overview;
+      if (method === "snippet_save")
+        snippets = [{ name: String(params.name), text: String(params.text), created_at: 1 }];
+      if (method === "snippet_delete") snippets = [];
+      return { status: "ok", snippets };
+    });
+    render(TodayPanel);
+    await waitFor(() => expect(screen.getByText(overview.brief)).toBeTruthy());
+
+    await fireEvent.input(screen.getByLabelText("Snippet name"), { target: { value: "address" } });
+    await fireEvent.input(screen.getByLabelText("Snippet text"), { target: { value: "12 Main Street" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Save snippet" }));
+    await waitFor(() => expect(screen.getByText("12 Main Street")).toBeTruthy());
+
+    await fireEvent.click(screen.getByRole("button", { name: "Copy snippet address" }));
+    await waitFor(() => expect(screen.getByText("Your address is on the clipboard.")).toBeTruthy());
+    expect(daemonMocks.call).toHaveBeenCalledWith("snippet_copy", { name: "address" });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Delete snippet address" }));
+    await waitFor(() => expect(screen.queryByText("12 Main Street")).toBeNull());
+  });
+
   it("starts a pomodoro and manages quiet hours", async () => {
     let windows: { id: string; days: number[]; start: number; end: number }[] = [];
     daemonMocks.call.mockImplementation(async (method: string, params: Record<string, unknown>) => {

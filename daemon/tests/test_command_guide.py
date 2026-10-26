@@ -18,6 +18,7 @@ from pilot.workflows.nudges import NudgeStore
 from pilot.workflows.quick_answers import QuickAnswers
 from pilot.workflows.reminders import ReminderStore
 from pilot.workflows.routines import ShortcutStore, normalize_phrase
+from pilot.workflows.snippets import SnippetStore
 from pilot.workflows.system_health import SystemHealth
 from pilot.workflows.task_receipts import TaskReceipts
 from pilot.workflows.todos import TodoStore
@@ -76,6 +77,9 @@ def server(tmp_path):
     )
     server._system_health = SystemHealth(read=lambda: SNAPSHOT)
     server._quick_answers = QuickAnswers()
+    clipboard = AsyncMock(return_value="Jane Doe, 12 Main Street")
+    server._snippets = SnippetStore(tmp_path / "snippets.json", read=clipboard, write=AsyncMock())
+    server._snippets.save("signature", "Best, Jane")
     server._speech_coordinator = MagicMock()
     server._speech_coordinator.speak = AsyncMock()
     return server

@@ -115,6 +115,34 @@ def _foreground() -> tuple[str, str]:
     return _get_active_window()
 
 
+def change_detector() -> Callable[[], bool] | None:
+    """On Windows, a cheap "did the clipboard change?" check, so it is only opened when it did.
+
+    Opening the clipboard every two seconds can briefly block other apps from using it.
+    Elsewhere there is no cheap check and the clipboard is read each time.
+    """
+    import sys
+
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+
+        sequence = ctypes.windll.user32.GetClipboardSequenceNumber  # type: ignore[attr-defined]
+    except (AttributeError, OSError):
+        return None
+    last = [None]
+
+    def changed() -> bool:
+        current = sequence()
+        if current == last[0]:
+            return False
+        last[0] = current
+        return True
+
+    return changed
+
+
 class ClipboardHistory:
     """The last few things copied, in memory only, while the setting is on."""
 
@@ -127,8 +155,10 @@ class ClipboardHistory:
         write: Callable[[str], Awaitable[Any]] | None = None,
         foreground: Callable[[], tuple[str, str]] = _foreground,
         clock: Callable[[], float] = time.time,
+        changed: Callable[[], bool] | None = None,
     ) -> None:
         self._enabled = enabled
+        self._changed = changed
         self._excluded = excluded
         self._read = read
         self._write = write
@@ -171,6 +201,8 @@ class ClipboardHistory:
             self._last_seen = None
             return False
         if self._read is None:
+            return False
+        if self._changed is not None and not self._changed():
             return False
         try:
             text = await self._read()
