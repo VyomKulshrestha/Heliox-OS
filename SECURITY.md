@@ -42,12 +42,13 @@ This policy covers the following Heliox OS components:
 
 ## 🚨 Reporting a Vulnerability
 
-**Please do NOT open a public GitHub issue for security vulnerabilities.**
+**Please do NOT open a public GitHub issue for security vulnerabilities.** A public issue shows the problem to everyone before a fix exists.
 
-Public issues expose the problem to everyone before it's fixed — which could put users at risk. Instead:
+**Security contact:** Vyom Kulshrestha ([@VyomKulshrestha](https://github.com/VyomKulshrestha)), maintainer of Heliox OS. Every report goes to the maintainer.
 
-1. **GitHub Private Advisory** *(preferred)* — use the [Security tab](https://github.com/VyomKulshrestha/Heliox-OS/security/advisories/new) to submit a private report directly.
-2. **Email the maintainer** — contact [@VyomKulshrestha](https://github.com/VyomKulshrestha) via the email listed on their GitHub profile.
+**How to report:** private vulnerability reporting is turned on for this repository. Open [Report a vulnerability](https://github.com/VyomKulshrestha/Heliox-OS/security/advisories/new) (Security tab → Advisories → Report a vulnerability) and fill in the form. Only you and the maintainer can see the report. The discussion, any private fix and the published advisory, with credit to you if you want it, all happen in that draft advisory.
+
+If you can't use GitHub, contact [@VyomKulshrestha](https://github.com/VyomKulshrestha) through the email on that GitHub profile and say the message is a security report. Don't put exploit details in an unencrypted first message; we'll move to a private GitHub advisory.
 
 ### What to include in your report
 
