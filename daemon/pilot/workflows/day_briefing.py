@@ -57,9 +57,11 @@ def compose_morning(
     todos: list[dict[str, Any]],
     habits: list[dict[str, Any]],
     health: dict[str, Any] | None = None,
+    name: str = "",
 ) -> str:
     greeting = "Good morning" if now.hour < 12 else "Good afternoon" if now.hour < 18 else "Good evening"
-    parts = [f"{greeting}. It's {now.strftime('%A')}, {now.day} {now.strftime('%B')}."]
+    opener = f"{greeting}, {name}." if name else f"{greeting}."
+    parts = [f"{opener} It's {now.strftime('%A')}, {now.day} {now.strftime('%B')}."]
     end_of_day = now.replace(hour=23, minute=59, second=59)
     today = [item for item in reminders if now.timestamp() <= item["due"] <= end_of_day.timestamp()]
     if today:

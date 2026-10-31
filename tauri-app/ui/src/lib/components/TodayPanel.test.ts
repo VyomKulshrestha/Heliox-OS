@@ -309,6 +309,29 @@ describe("TodayPanel", () => {
     await waitFor(() => expect(screen.queryByText("12 Main Street")).toBeNull());
   });
 
+  it("shows the About you profile, sets a name and forgets an entry", async () => {
+    let entries = [
+      { id: "call_me", kind: "name", text: "Call me Vyom" },
+      { id: "e1", kind: "about", text: "I'm a founder" },
+    ];
+    daemonMocks.call.mockImplementation(async (method: string, params: Record<string, unknown>) => {
+      if (method === "today_overview") return overview;
+      if (method === "profile_set_name") entries = [{ id: "call_me", kind: "name", text: `Call me ${params.name}` }];
+      if (method === "profile_delete") entries = entries.filter((e) => e.id !== params.id);
+      return { status: "ok", entries };
+    });
+    render(TodayPanel);
+    await waitFor(() => expect(screen.getByText("I'm a founder")).toBeTruthy());
+
+    await fireEvent.click(screen.getByRole("button", { name: "Forget I'm a founder" }));
+    await waitFor(() => expect(screen.queryByText("I'm a founder")).toBeNull());
+    expect(daemonMocks.call).toHaveBeenCalledWith("profile_delete", { id: "e1" });
+
+    await fireEvent.input(screen.getByLabelText("Call me"), { target: { value: "Hardik" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Set name" }));
+    await waitFor(() => expect(screen.getByText("Call me Hardik")).toBeTruthy());
+  });
+
   it("logs habits and shows focus totals", async () => {
     let habits = [{ name: "workout", today: 0, week: 2, streak: 3, last: 1 }];
     daemonMocks.call.mockImplementation(async (method: string) => {

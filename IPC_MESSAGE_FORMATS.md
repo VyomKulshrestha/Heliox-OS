@@ -12,7 +12,7 @@ The Heliox OS UI and daemon communicate over a local WebSocket using the [JSON-R
 | Request timeout | 5 minutes |
 | Reconnect interval | 3 seconds (auto-reconnect on close) |
 
-The daemon currently registers **301 WebSocket RPC methods**. That is the API
+The daemon currently registers **305 WebSocket RPC methods**. That is the API
 surface count, not the action catalog: Heliox exposes **162 action
 types** through the guarded planner/executor system. This document names every
 registered RPC method; grouped tables are used where several methods share one
@@ -539,6 +539,21 @@ than a minute is logged (`{"started_at", "ended_at", "seconds", "reason"}`, kept
 `{"status": "ok", "today": {"seconds", "sessions"}, "this_week": {"seconds", "sessions"},
 "recent": [<up to 20 sessions, newest first>]}`. "How long did I focus this week" and
 "how many focus sessions today" work by voice and in chat.
+
+#### `profile_get` / `profile_add` / `profile_set_name` / `profile_delete`
+The About you profile, kept in `DATA_DIR/user_profile.json`: how to address you
+(`call_me`), short first-person facts (`about`), the people you name (`people`), your
+stated preferences (`prefers`) and tone (`style`: `length` and `formality`). `profile_get`
+returns `{"profile", "entries"}` where `entries` is a flat list `{"id", "kind", "text"}`
+for display; `profile_add` takes `{"kind": "about"|"people"|"prefers", "text"}`,
+`profile_set_name` takes `{"name"}`, and `profile_delete` takes a flat-list `id`. Only what
+you say is stored, as your own words, never inferred silently from activity; text that
+looks like a password or key is refused. Each entry is mirrored into long-term memory as
+an explicit-user fact (so the planner has it) and retracted when removed or cleared.
+"Call me Vyom", "remember that I'm a founder", "my manager is Sarah", "I prefer short
+answers", "be brief", "what do you know about me", "that's wrong, I ..." and "forget
+everything about me" work by voice and in chat. The morning briefing greets you by name,
+and the profile never grants Heliox authority.
 
 #### `habit_list` / `habit_log` / `habit_delete`
 Habits (`{"name", "today", "week", "streak", "last"}`), kept as log times in

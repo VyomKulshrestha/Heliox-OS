@@ -48,6 +48,11 @@
   type Snippet = { name: string; text: string; created_at: number };
   type Habit = { name: string; today: number; week: number; streak: number; last: number | null };
   let habits = $state<Habit[]>([]);
+  type ProfileEntry = { id: string; kind: string; text: string };
+  let profileEntries = $state<ProfileEntry[]>([]);
+  let profileName = $state("");
+  let profileText = $state("");
+  let profileKind = $state<"about" | "people" | "prefers">("about");
   let habitName = $state("");
   type FocusTotals = { seconds: number; sessions: number };
   let focusToday = $state<FocusTotals | null>(null);
@@ -352,6 +357,43 @@
     if (next) habits = next;
   }
 
+  async function loadProfile() {
+    const result = await call<{ status: string; entries?: ProfileEntry[] }>("profile_get");
+    if (result.status === "ok") profileEntries = result.entries ?? [];
+  }
+
+  async function setProfileName(event: SubmitEvent) {
+    event.preventDefault();
+    const trimmed = profileName.trim();
+    if (!trimmed) return;
+    const result = await call<{ status: string; entries?: ProfileEntry[]; message?: string }>("profile_set_name", {
+      name: trimmed,
+    });
+    if (result.status === "ok") {
+      profileEntries = result.entries ?? [];
+      profileName = "";
+    } else error = String(result.message ?? "Could not save.");
+  }
+
+  async function addProfileEntry(event: SubmitEvent) {
+    event.preventDefault();
+    const trimmed = profileText.trim();
+    if (!trimmed) return;
+    const result = await call<{ status: string; entries?: ProfileEntry[]; message?: string }>("profile_add", {
+      kind: profileKind,
+      text: trimmed,
+    });
+    if (result.status === "ok") {
+      profileEntries = result.entries ?? [];
+      profileText = "";
+    } else error = String(result.message ?? "Could not save.");
+  }
+
+  async function deleteProfileEntry(id: string) {
+    const result = await call<{ status: string; entries?: ProfileEntry[] }>("profile_delete", { id });
+    if (result.status === "ok") profileEntries = result.entries ?? [];
+  }
+
   async function addHabit(event: SubmitEvent) {
     event.preventDefault();
     const next = await listCall<Habit>("habit_log", "habits", { name: habitName, count: 1 });
@@ -435,6 +477,7 @@
     void listCall<Watcher>("watch_list", "watchers").then((items) => (watchers = items ?? []));
     void loadCopied();
     void listCall<Habit>("habit_list", "habits").then((items) => (habits = items ?? []));
+    void loadProfile();
     void loadFocusHistory();
     void listCall<Snippet>("snippet_list", "snippets").then((items) => (snippets = items ?? []));
     void listCall<AppReminder>("app_reminder_list", "reminders").then((items) => (appReminders = items ?? []));
@@ -643,6 +686,54 @@
       <button type="button" class="quiet" onclick={checkComputer} disabled={checking}
         >{checking ? "Checking…" : "Check now"}</button
       >
+    </section>
+
+    <section aria-labelledby="today-profile">
+      <h3 id="today-profile">About you</h3>
+      <p class="empty">
+        What Heliox keeps about you, on this computer, to personalize greetings and tone. You can also say "call me …",
+        "remember that I …" or "I prefer …".
+      </p>
+      {#if profileEntries.length > 0}
+        <ul class="rows">
+          {#each profileEntries as entry (entry.id)}
+            <li>
+              <span class="row-text"><strong>{entry.text}</strong><small>{entry.kind}</small></span>
+              {#if entry.id !== "call_me" && !entry.id.startsWith("style:")}
+                <button type="button" aria-label={`Forget ${entry.text}`} onclick={() => deleteProfileEntry(entry.id)}
+                  >Forget</button
+                >
+              {/if}
+            </li>
+          {/each}
+        </ul>
+      {/if}
+      <form class="brief-controls" onsubmit={setProfileName}>
+        <input
+          class="reminder-text"
+          bind:value={profileName}
+          maxlength="40"
+          aria-label="Call me"
+          placeholder="Call me …"
+        />
+        <button type="submit">Set name</button>
+      </form>
+      <form class="brief-controls" onsubmit={addProfileEntry}>
+        <select bind:value={profileKind} aria-label="Kind">
+          <option value="about">About me</option>
+          <option value="people">Person</option>
+          <option value="prefers">Preference</option>
+        </select>
+        <input
+          class="reminder-text"
+          bind:value={profileText}
+          maxlength="200"
+          aria-label="Profile entry"
+          placeholder="I'm a founder"
+          required
+        />
+        <button type="submit">Remember</button>
+      </form>
     </section>
 
     <section aria-labelledby="today-habits">

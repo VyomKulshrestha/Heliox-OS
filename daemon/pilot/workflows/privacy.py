@@ -34,6 +34,7 @@ STORES: dict[str, tuple[str, str, str]] = {
     "undo": ("Undo copies", "undo", "Copies of files Heliox changed, kept so tasks can be undone."),
     "notes": ("Notes", "notes.json", "Your quick notes."),
     "snippets": ("Snippets", "snippets.json", "Named texts you saved to copy again."),
+    "profile": ("About you", "user_profile.json", "What you told Heliox to remember about you."),
     "habits": ("Habits", "habits.json", "When you logged each habit."),
     "focus_history": ("Focus history", "focus_history.json", "When each focus session started and ended."),
     "todos": ("To-do list", "todos.json", "Things on your list, done or not."),
@@ -51,6 +52,7 @@ STORES: dict[str, tuple[str, str, str]] = {
 BACKUP_FILES = (
     "notes.json",
     "snippets.json",
+    "user_profile.json",
     "habits.json",
     "focus_history.json",
     "todos.json",

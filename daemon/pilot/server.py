@@ -964,6 +964,7 @@ class PilotServer:
         self._generators: Any = None
         self._focus_log: Any = None
         self._habits: Any = None
+        self._user_profile: Any = None
         self._queued_execute_requests: deque[tuple[str, str, dict[str, Any]]] = deque()
         self._queued_submission_lock = asyncio.Lock()
         self._queued_execute_worker: asyncio.Task[None] | None = None
@@ -1251,6 +1252,11 @@ class PilotServer:
         self._generators = Generators(write=clipboard_write)
         self._focus_log = FocusLog(DATA_DIR / "focus_history.json")
         self._habits = HabitStore(DATA_DIR / "habits.json")
+        from pilot.workflows.user_profile import UserProfile
+
+        self._user_profile = UserProfile(
+            DATA_DIR / "user_profile.json", remember=self._profile_remember, forget=self._profile_forget
+        )
         from pilot.workflows.workspaces import WorkspaceStore
 
         self._workspaces = WorkspaceStore(DATA_DIR / "workspaces.json")
@@ -1834,6 +1840,10 @@ class PilotServer:
             "habit_list": self._handle_habit_list,
             "habit_log": self._handle_habit_log,
             "habit_delete": self._handle_habit_delete,
+            "profile_get": self._handle_profile_get,
+            "profile_add": self._handle_profile_add,
+            "profile_set_name": self._handle_profile_set_name,
+            "profile_delete": self._handle_profile_delete,
             "workspace_save": self._handle_workspace_save,
             "workspace_delete": self._handle_workspace_delete,
             "receipts_search": self._handle_receipts_search,
@@ -6087,6 +6097,7 @@ class PilotServer:
             snippets,
             system_health,
             todos,
+            user_profile,
             watchers,
             workspaces,
         )
@@ -6158,6 +6169,13 @@ class PilotServer:
             file_finder.LAST_DOWNLOAD_REQUEST,
             day_briefing.MORNING_REQUEST,
             day_briefing.NIGHT_REQUEST,
+            user_profile.NAME_REQUEST,
+            user_profile.ABOUT_REQUEST,
+            user_profile.PERSON_REQUEST,
+            user_profile.PREF_REQUEST,
+            user_profile.STYLE_REQUEST,
+            user_profile.READ_REQUEST,
+            user_profile.CLEAR_REQUEST,
             focus_log.HISTORY_REQUEST,
             generators.PASSWORD_REQUEST,
             generators.COIN_REQUEST,
@@ -6292,6 +6310,7 @@ class PilotServer:
         handlers = (
             self._help_request,
             self._say_again_request,
+            self._profile_request,
             self._day_request,
             self._forget_request,
             self._local_answer,
@@ -6490,6 +6509,73 @@ class PilotServer:
             return {"status": "error", "message": "Clipboard history is not ready yet."}
         return {"status": "ok", "removed": self._clipboard_history.clear(), "items": []}
 
+    async def _profile_remember(self, predicate: str, value: str) -> str | None:
+        """Mirror a profile entry into long-term memory as an explicit-user fact; return its id."""
+        if self._memory is None:
+            return None
+        from pilot.memory.temporal import MemoryProvenance, MemoryScope
+
+        fact = await self._memory.remember_fact(
+            subject="user",
+            predicate=predicate,
+            value=value,
+            scope=MemoryScope.USER,
+            confidence=1.0,
+            provenance=MemoryProvenance.EXPLICIT_USER,
+            evidence_payload={"source": "user_profile"},
+        )
+        return fact.fact_id if fact is not None else None
+
+    async def _profile_forget(self, fact_id: str) -> None:
+        if self._memory is not None:
+            try:
+                await self._memory.retract_fact(fact_id, reason="Removed from your profile")
+            except KeyError:
+                pass
+
+    async def _profile_request(self, text: str) -> str | None:
+        """ "Call me Vyom", "remember that I'm a founder", "what do you know about me" — the About you profile."""
+        if self._user_profile is None:
+            return None
+        return await self._user_profile.answer_async(text)
+
+    async def _handle_profile_get(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """The About you profile: how to address you, facts, people, preferences and tone, plus a flat list."""
+        if self._user_profile is None:
+            return {"status": "error", "message": "Your profile is not ready yet.", "profile": {}, "entries": []}
+        profile = await asyncio.to_thread(self._user_profile.get)
+        entries = await asyncio.to_thread(self._user_profile.list)
+        return {"status": "ok", "profile": {k: v for k, v in profile.items() if k != "_mirror"}, "entries": entries}
+
+    async def _handle_profile_add(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """Add one profile entry: text plus kind (about, people, prefers)."""
+        kind, text = params.get("kind"), params.get("text")
+        if kind not in ("about", "people", "prefers") or not isinstance(text, str) or self._user_profile is None:
+            return {"status": "error", "message": "kind (about, people or prefers) and text are required"}
+        try:
+            await self._user_profile.add(kind, text)
+        except ValueError as exc:
+            return {"status": "error", "message": str(exc)}
+        return await self._handle_profile_get({}, ws)
+
+    async def _handle_profile_set_name(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        name = params.get("name")
+        if not isinstance(name, str) or self._user_profile is None:
+            return {"status": "error", "message": "name is required"}
+        try:
+            await self._user_profile.set_name(name)
+        except ValueError as exc:
+            return {"status": "error", "message": str(exc)}
+        return await self._handle_profile_get({}, ws)
+
+    async def _handle_profile_delete(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        entry_id = params.get("id")
+        if not isinstance(entry_id, str) or self._user_profile is None:
+            return {"status": "error", "message": "id is required"}
+        if not await self._user_profile.delete(entry_id):
+            return {"status": "error", "message": "No such profile entry."}
+        return await self._handle_profile_get({}, ws)
+
     async def _day_request(self, text: str) -> str | None:
         """ "Good morning" and "good night": the day's start and end, from what Heliox already keeps."""
         from datetime import datetime
@@ -6511,7 +6597,8 @@ class PilotServer:
                     health = await self._system_health.snapshot()
                 except Exception:
                     logger.debug("Health reading for the morning briefing failed", exc_info=True)
-            return compose_morning(now, reminders=reminders, todos=todos, habits=habits, health=health)
+            name = self._user_profile.name() if self._user_profile is not None else ""
+            return compose_morning(now, reminders=reminders, todos=todos, habits=habits, health=health, name=name)
         overview = await self._today_overview("today")
         midnight = now.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
         focus_seconds = 0.0
@@ -6827,6 +6914,7 @@ class PilotServer:
         for key, store in (
             ("notes", self._notes),
             ("snippets", self._snippets),
+            ("profile", self._user_profile),
             ("habits", self._habits),
             ("focus_history", self._focus_log),
             ("todos", self._todos),
@@ -7199,6 +7287,7 @@ class PilotServer:
             self._reminders,
             self._notes,
             self._todos,
+            self._user_profile,
             self._habits,
             self._focus_log,
             self._nudges,

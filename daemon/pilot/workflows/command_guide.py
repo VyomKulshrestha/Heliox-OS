@@ -18,6 +18,18 @@ HELP_REQUEST = re.compile(
 
 GUIDE: list[dict[str, Any]] = [
     {
+        "group": "About you",
+        "about": "What you tell Heliox to remember about you, kept on this computer and used to personalize it.",
+        "examples": [
+            "call me Vyom",
+            "remember that I'm a founder",
+            "my manager is Sarah",
+            "I prefer short answers",
+            "what do you know about me",
+            "forget everything about me",
+        ],
+    },
+    {
         "group": "Start and end the day",
         "about": "Reminders, your list, streaks and anything wrong with the computer, then the day's summary.",
         "examples": ["good morning", "what's my day look like", "good night"],

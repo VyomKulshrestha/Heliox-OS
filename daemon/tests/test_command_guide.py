@@ -27,6 +27,7 @@ from pilot.workflows.system_health import SystemHealth
 from pilot.workflows.task_receipts import TaskReceipts
 from pilot.workflows.todos import TodoStore
 from pilot.workflows.undo_journal import UndoJournal
+from pilot.workflows.user_profile import UserProfile
 from pilot.workflows.watchers import Probes, WatcherStore
 from pilot.workflows.workspaces import WorkspaceStore
 from tests.test_task_receipts import FakeVault
@@ -87,6 +88,7 @@ def server(tmp_path):
     server._habits = HabitStore(tmp_path / "habits.json")
     server._habits.log("workout")
     server._habits.log("water")
+    server._user_profile = UserProfile(tmp_path / "user_profile.json")
     clipboard = AsyncMock(return_value="Jane Doe, 12 Main Street")
     server._snippets = SnippetStore(tmp_path / "snippets.json", read=clipboard, write=AsyncMock())
     server._snippets.save("signature", "Best, Jane")
