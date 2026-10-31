@@ -34,6 +34,17 @@ export async function mockTauriIpc(page: Page): Promise<void> {
       return mockTime;
     };
 
+    // `new Date()` reads the same mocked clock, so time-of-day text (the empty-state greeting) is the same on every
+    // run. With the time zone pinned in playwright.config.ts the clock starts at 19:00, an evening greeting.
+    const RealDate = Date;
+    (window as any).Date = class extends RealDate {
+      constructor(...args: any[]) {
+        if (args.length === 0) super(Date.now());
+        else super(...(args as [any]));
+      }
+      static now = Date.now;
+    };
+
     const invoke = async (cmd: string) => {
       if (cmd === "get_system_stats") return { cpu: 18, ram: 62 };
       return null;

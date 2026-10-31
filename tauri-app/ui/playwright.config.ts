@@ -30,6 +30,9 @@ export default defineConfig({
     /* Consistent viewport matching the Tauri window size in tauri.conf.json */
     viewport: { width: 700, height: 500 },
 
+    /* Pinned so the mocked clock (2024-05-27 00:00 UTC) reads 19:00 local on every runner and OS */
+    timezoneId: "America/Chicago",
+
     /* Pixel diff tolerance — 0.2% of pixels may differ (anti-aliasing, fonts) */
     toHaveScreenshot: {
       maxDiffPixelRatio: 0.002,
