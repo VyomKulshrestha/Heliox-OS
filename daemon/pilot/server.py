@@ -965,6 +965,7 @@ class PilotServer:
         self._focus_log: Any = None
         self._habits: Any = None
         self._user_profile: Any = None
+        self._goals: Any = None
         self._queued_execute_requests: deque[tuple[str, str, dict[str, Any]]] = deque()
         self._queued_submission_lock = asyncio.Lock()
         self._queued_execute_worker: asyncio.Task[None] | None = None
@@ -1257,6 +1258,9 @@ class PilotServer:
         self._user_profile = UserProfile(
             DATA_DIR / "user_profile.json", remember=self._profile_remember, forget=self._profile_forget
         )
+        from pilot.workflows.goals import GoalStore
+
+        self._goals = GoalStore(DATA_DIR / "goals.json")
         from pilot.workflows.workspaces import WorkspaceStore
 
         self._workspaces = WorkspaceStore(DATA_DIR / "workspaces.json")
@@ -1844,6 +1848,12 @@ class PilotServer:
             "profile_add": self._handle_profile_add,
             "profile_set_name": self._handle_profile_set_name,
             "profile_delete": self._handle_profile_delete,
+            "goal_list": self._handle_goal_list,
+            "goal_create": self._handle_goal_create,
+            "goal_update": self._handle_goal_update,
+            "goal_set_next": self._handle_goal_set_next,
+            "goal_set_status": self._handle_goal_set_status,
+            "goal_delete": self._handle_goal_delete,
             "workspace_save": self._handle_workspace_save,
             "workspace_delete": self._handle_workspace_delete,
             "receipts_search": self._handle_receipts_search,
@@ -6091,6 +6101,7 @@ class PilotServer:
             focus_guard,
             focus_log,
             generators,
+            goals,
             habits,
             notes,
             nudges,
@@ -6176,6 +6187,14 @@ class PilotServer:
             user_profile.STYLE_REQUEST,
             user_profile.READ_REQUEST,
             user_profile.CLEAR_REQUEST,
+            goals.CREATE_REQUEST,
+            goals.UPDATE_REQUEST,
+            goals.NEXT_SET_REQUEST,
+            goals.NEXT_GET_REQUEST,
+            goals.LIST_REQUEST,
+            goals.DONE_REQUEST,
+            goals.STATUS_REQUEST,
+            goals.DELETE_REQUEST,
             focus_log.HISTORY_REQUEST,
             generators.PASSWORD_REQUEST,
             generators.COIN_REQUEST,
@@ -6311,6 +6330,7 @@ class PilotServer:
             self._help_request,
             self._say_again_request,
             self._profile_request,
+            self._goal_request,
             self._day_request,
             self._forget_request,
             self._local_answer,
@@ -6533,6 +6553,61 @@ class PilotServer:
             except KeyError:
                 pass
 
+    async def _goal_request(self, text: str) -> str | None:
+        """ "Start a goal: ...", "add to my ... goal: ...", "what's my next step on ...", "what are my goals"."""
+        if self._goals is None:
+            return None
+        return await self._goals.answer_async(text)
+
+    async def _handle_goal_list(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        if self._goals is None:
+            return {"status": "error", "message": "Goals are not ready yet.", "goals": []}
+        goals = await asyncio.to_thread(self._goals.list)
+        stale = {g["id"] for g in await asyncio.to_thread(self._goals.stale)}
+        return {"status": "ok", "goals": [{**g, "stale": g["id"] in stale} for g in goals]}
+
+    async def _handle_goal_create(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        title = params.get("title")
+        if not isinstance(title, str) or self._goals is None:
+            return {"status": "error", "message": "title is required"}
+        try:
+            await asyncio.to_thread(self._goals.create, title)
+        except ValueError as exc:
+            return {"status": "error", "message": str(exc)}
+        return await self._handle_goal_list({}, ws)
+
+    async def _handle_goal_update(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        goal_id, text = params.get("id"), params.get("text")
+        if not isinstance(goal_id, str) or not isinstance(text, str) or self._goals is None:
+            return {"status": "error", "message": "id and text are required"}
+        if await asyncio.to_thread(self._goals.add_update, goal_id, text) is None:
+            return {"status": "error", "message": "No such goal."}
+        return await self._handle_goal_list({}, ws)
+
+    async def _handle_goal_set_next(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        goal_id, step = params.get("id"), params.get("step", "")
+        if not isinstance(goal_id, str) or not isinstance(step, str) or self._goals is None:
+            return {"status": "error", "message": "id is required"}
+        if await asyncio.to_thread(self._goals.set_next, goal_id, step) is None:
+            return {"status": "error", "message": "No such goal."}
+        return await self._handle_goal_list({}, ws)
+
+    async def _handle_goal_set_status(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        goal_id, status = params.get("id"), params.get("status")
+        if not isinstance(goal_id, str) or status not in ("active", "paused", "done") or self._goals is None:
+            return {"status": "error", "message": "id and status (active, paused or done) are required"}
+        if await asyncio.to_thread(self._goals.set_status, goal_id, status) is None:
+            return {"status": "error", "message": "No such goal."}
+        return await self._handle_goal_list({}, ws)
+
+    async def _handle_goal_delete(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        goal_id = params.get("id")
+        if not isinstance(goal_id, str) or self._goals is None:
+            return {"status": "error", "message": "id is required"}
+        if not await asyncio.to_thread(self._goals.delete, goal_id):
+            return {"status": "error", "message": "No such goal."}
+        return await self._handle_goal_list({}, ws)
+
     async def _profile_request(self, text: str) -> str | None:
         """ "Call me Vyom", "remember that I'm a founder", "what do you know about me" — the About you profile."""
         if self._user_profile is None:
@@ -6598,7 +6673,10 @@ class PilotServer:
                 except Exception:
                     logger.debug("Health reading for the morning briefing failed", exc_info=True)
             name = self._user_profile.name() if self._user_profile is not None else ""
-            return compose_morning(now, reminders=reminders, todos=todos, habits=habits, health=health, name=name)
+            goal_steps = await asyncio.to_thread(self._goals.next_steps) if self._goals is not None else []
+            return compose_morning(
+                now, reminders=reminders, todos=todos, habits=habits, health=health, name=name, goals=goal_steps
+            )
         overview = await self._today_overview("today")
         midnight = now.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
         focus_seconds = 0.0
@@ -6915,6 +6993,7 @@ class PilotServer:
             ("notes", self._notes),
             ("snippets", self._snippets),
             ("profile", self._user_profile),
+            ("goals", self._goals),
             ("habits", self._habits),
             ("focus_history", self._focus_log),
             ("todos", self._todos),
@@ -7288,6 +7367,7 @@ class PilotServer:
             self._notes,
             self._todos,
             self._user_profile,
+            self._goals,
             self._habits,
             self._focus_log,
             self._nudges,

@@ -16,6 +16,7 @@ from pilot.workflows.focus import FocusSession, QuietHours
 from pilot.workflows.focus_guard import FocusGuard
 from pilot.workflows.focus_log import FocusLog
 from pilot.workflows.generators import Generators
+from pilot.workflows.goals import GoalStore
 from pilot.workflows.habits import HabitStore
 from pilot.workflows.notes import NoteStore
 from pilot.workflows.nudges import NudgeStore
@@ -89,6 +90,8 @@ def server(tmp_path):
     server._habits.log("workout")
     server._habits.log("water")
     server._user_profile = UserProfile(tmp_path / "user_profile.json")
+    server._goals = GoalStore(tmp_path / "goals.json")
+    server._goals.create("launch the podcast")
     clipboard = AsyncMock(return_value="Jane Doe, 12 Main Street")
     server._snippets = SnippetStore(tmp_path / "snippets.json", read=clipboard, write=AsyncMock())
     server._snippets.save("signature", "Best, Jane")

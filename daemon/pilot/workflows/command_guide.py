@@ -18,6 +18,18 @@ HELP_REQUEST = re.compile(
 
 GUIDE: list[dict[str, Any]] = [
     {
+        "group": "Goals",
+        "about": "Long-lived goals Heliox keeps; your next steps show in the morning and the Today tab.",
+        "examples": [
+            "start a goal: launch the podcast",
+            "add to my podcast goal: recorded episode one",
+            "set the next step on the podcast to book a guest",
+            "what's my next step on the podcast",
+            "what are my goals",
+            "I finished the podcast goal",
+        ],
+    },
+    {
         "group": "About you",
         "about": "What you tell Heliox to remember about you, kept on this computer and used to personalize it.",
         "examples": [

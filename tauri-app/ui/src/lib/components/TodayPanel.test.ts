@@ -309,6 +309,33 @@ describe("TodayPanel", () => {
     await waitFor(() => expect(screen.queryByText("12 Main Street")).toBeNull());
   });
 
+  it("lists goals, logs progress and completes one", async () => {
+    type G = {
+      id: string;
+      title: string;
+      status: string;
+      next_step: string;
+      updates: { at: number; text: string }[];
+      stale: boolean;
+    };
+    let goals: G[] = [
+      { id: "g1", title: "launch the podcast", status: "active", next_step: "book a guest", updates: [], stale: false },
+    ];
+    daemonMocks.call.mockImplementation(async (method: string, params: Record<string, unknown>) => {
+      if (method === "today_overview") return overview;
+      if (method === "goal_update") goals = [{ ...goals[0], updates: [{ at: 1, text: String(params.text) }] }];
+      if (method === "goal_set_status") goals = [];
+      return { status: "ok", goals };
+    });
+    render(TodayPanel);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Mark launch the podcast done" })).toBeTruthy());
+    expect(screen.getByText(/next: book a guest/)).toBeTruthy();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Mark launch the podcast done" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Mark launch the podcast done" })).toBeNull());
+    expect(daemonMocks.call).toHaveBeenCalledWith("goal_set_status", { id: "g1", status: "done" });
+  });
+
   it("shows the About you profile, sets a name and forgets an entry", async () => {
     let entries = [
       { id: "call_me", kind: "name", text: "Call me Vyom" },

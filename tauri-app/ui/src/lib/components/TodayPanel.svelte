@@ -49,6 +49,18 @@
   type Habit = { name: string; today: number; week: number; streak: number; last: number | null };
   let habits = $state<Habit[]>([]);
   type ProfileEntry = { id: string; kind: string; text: string };
+  type Goal = {
+    id: string;
+    title: string;
+    status: string;
+    next_step: string;
+    updates: { at: number; text: string }[];
+    stale: boolean;
+  };
+  let goals = $state<Goal[]>([]);
+  let goalTitle = $state("");
+  let goalUpdateFor = $state("");
+  let goalUpdateText = $state("");
   let profileEntries = $state<ProfileEntry[]>([]);
   let profileName = $state("");
   let profileText = $state("");
@@ -357,6 +369,38 @@
     if (next) habits = next;
   }
 
+  async function loadGoals() {
+    const result = await call<{ status: string; goals?: Goal[] }>("goal_list");
+    if (result.status === "ok") goals = (result.goals ?? []).filter((g) => g.status !== "done");
+  }
+
+  async function createGoal(event: SubmitEvent) {
+    event.preventDefault();
+    const title = goalTitle.trim();
+    if (!title) return;
+    const result = await call<{ status: string; goals?: Goal[]; message?: string }>("goal_create", { title });
+    if (result.status === "ok") {
+      goals = (result.goals ?? []).filter((g) => g.status !== "done");
+      goalTitle = "";
+    } else error = String(result.message ?? "Could not create the goal.");
+  }
+
+  async function addGoalUpdate(event: SubmitEvent) {
+    event.preventDefault();
+    const text = goalUpdateText.trim();
+    if (!text || !goalUpdateFor) return;
+    const result = await call<{ status: string; goals?: Goal[] }>("goal_update", { id: goalUpdateFor, text });
+    if (result.status === "ok") {
+      goals = (result.goals ?? []).filter((g) => g.status !== "done");
+      goalUpdateText = "";
+    }
+  }
+
+  async function completeGoal(id: string) {
+    const result = await call<{ status: string; goals?: Goal[] }>("goal_set_status", { id, status: "done" });
+    if (result.status === "ok") goals = (result.goals ?? []).filter((g) => g.status !== "done");
+  }
+
   async function loadProfile() {
     const result = await call<{ status: string; entries?: ProfileEntry[] }>("profile_get");
     if (result.status === "ok") profileEntries = result.entries ?? [];
@@ -478,6 +522,7 @@
     void loadCopied();
     void listCall<Habit>("habit_list", "habits").then((items) => (habits = items ?? []));
     void loadProfile();
+    void loadGoals();
     void loadFocusHistory();
     void listCall<Snippet>("snippet_list", "snippets").then((items) => (snippets = items ?? []));
     void listCall<AppReminder>("app_reminder_list", "reminders").then((items) => (appReminders = items ?? []));
@@ -686,6 +731,58 @@
       <button type="button" class="quiet" onclick={checkComputer} disabled={checking}
         >{checking ? "Checking…" : "Check now"}</button
       >
+    </section>
+
+    <section aria-labelledby="today-goals">
+      <h3 id="today-goals">Goals</h3>
+      {#if goals.length === 0}
+        <p class="empty">No goals yet. Say "start a goal: …", or add one here. Your next steps show each morning.</p>
+      {:else}
+        <ul class="rows">
+          {#each goals as goal (goal.id)}
+            <li>
+              <span class="row-text">
+                <strong>{goal.title}</strong>
+                <small>
+                  {goal.status !== "active" ? `${goal.status} · ` : ""}{goal.next_step
+                    ? `next: ${goal.next_step}`
+                    : "no next step yet"}{goal.stale ? " · not touched in a while" : ""}
+                </small>
+              </span>
+              <button type="button" aria-label={`Mark ${goal.title} done`} onclick={() => completeGoal(goal.id)}
+                >Done</button
+              >
+            </li>
+          {/each}
+        </ul>
+        <form class="brief-controls" onsubmit={addGoalUpdate}>
+          <select bind:value={goalUpdateFor} aria-label="Goal to update">
+            <option value="">Log progress on…</option>
+            {#each goals as goal (goal.id)}
+              <option value={goal.id}>{goal.title}</option>
+            {/each}
+          </select>
+          <input
+            class="reminder-text"
+            bind:value={goalUpdateText}
+            maxlength="300"
+            aria-label="Goal update"
+            placeholder="what you did"
+          />
+          <button type="submit">Log</button>
+        </form>
+      {/if}
+      <form class="brief-controls" onsubmit={createGoal}>
+        <input
+          class="reminder-text"
+          bind:value={goalTitle}
+          maxlength="80"
+          aria-label="New goal"
+          placeholder="launch the podcast"
+          required
+        />
+        <button type="submit">Start goal</button>
+      </form>
     </section>
 
     <section aria-labelledby="today-profile">

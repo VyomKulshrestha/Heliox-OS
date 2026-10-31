@@ -63,6 +63,7 @@ def _server(root: Path) -> Any:
     from pilot.workflows.focus_guard import FocusGuard
     from pilot.workflows.focus_log import FocusLog
     from pilot.workflows.generators import Generators
+    from pilot.workflows.goals import GoalStore
     from pilot.workflows.habits import HabitStore
     from pilot.workflows.notes import NoteStore
     from pilot.workflows.nudges import NudgeStore
@@ -123,6 +124,8 @@ def _server(root: Path) -> Any:
     server._habits.log("workout")
     server._habits.log("water")
     server._user_profile = UserProfile(root / "user_profile.json")
+    server._goals = GoalStore(root / "goals.json")
+    server._goals.create("launch the podcast")
     server._speech_coordinator = MagicMock()
     server._speech_coordinator.speak = AsyncMock()
     return server

@@ -12,7 +12,7 @@ The Heliox OS UI and daemon communicate over a local WebSocket using the [JSON-R
 | Request timeout | 5 minutes |
 | Reconnect interval | 3 seconds (auto-reconnect on close) |
 
-The daemon currently registers **305 WebSocket RPC methods**. That is the API
+The daemon currently registers **311 WebSocket RPC methods**. That is the API
 surface count, not the action catalog: Heliox exposes **162 action
 types** through the guarded planner/executor system. This document names every
 registered RPC method; grouped tables are used where several methods share one
@@ -539,6 +539,19 @@ than a minute is logged (`{"started_at", "ended_at", "seconds", "reason"}`, kept
 `{"status": "ok", "today": {"seconds", "sessions"}, "this_week": {"seconds", "sessions"},
 "recent": [<up to 20 sessions, newest first>]}`. "How long did I focus this week" and
 "how many focus sessions today" work by voice and in chat.
+
+#### `goal_list` / `goal_create` / `goal_update` / `goal_set_next` / `goal_set_status` / `goal_delete`
+Long-lived goals, kept in `DATA_DIR/goals.json`: `{"id", "title", "status" (active, paused
+or done), "next_step", "updates": [{"at", "text"}], "created_at", "updated_at"}`.
+`goal_list` returns every goal with a `stale` flag (active and untouched for ten days);
+`goal_create` takes `{"title"}`, `goal_update` `{"id", "text"}` (appends one of your own
+notes), `goal_set_next` `{"id", "step"}`, `goal_set_status` `{"id", "status"}`, and
+`goal_delete` `{"id"}`. Heliox only tracks and reminds; it advances a goal only through
+the usual approved requests. "Start a goal: launch the podcast", "add to my podcast goal:
+recorded episode one", "set the next step on the podcast to book a guest", "what's my next
+step on the podcast", "what are my goals" and "I finished the podcast goal" work by voice
+and in chat; the colon is optional (the word "goal" is the separator). The morning
+briefing names up to two goals' next steps.
 
 #### `profile_get` / `profile_add` / `profile_set_name` / `profile_delete`
 The About you profile, kept in `DATA_DIR/user_profile.json`: how to address you

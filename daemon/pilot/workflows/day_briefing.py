@@ -58,6 +58,7 @@ def compose_morning(
     habits: list[dict[str, Any]],
     health: dict[str, Any] | None = None,
     name: str = "",
+    goals: list[dict[str, Any]] | None = None,
 ) -> str:
     greeting = "Good morning" if now.hour < 12 else "Good afternoon" if now.hour < 18 else "Good evening"
     opener = f"{greeting}, {name}." if name else f"{greeting}."
@@ -77,6 +78,8 @@ def compose_morning(
     if keep:
         names = " and ".join(f"{habit['name']} ({habit['streak']} days)" for habit in keep[:2])
         parts.append(f"Keep your streak going: {names}.")
+    for goal in (goals or [])[:2]:
+        parts.append(f"On {goal['title']}, your next step is {goal['next_step']}.")
     warnings = _health_warnings(health)
     if warnings:
         parts.append("Heads-up: " + "; ".join(warnings) + ".")
