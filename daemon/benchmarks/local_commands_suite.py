@@ -74,6 +74,7 @@ def _server(root: Path) -> Any:
     from pilot.workflows.task_receipts import TaskReceipts
     from pilot.workflows.todos import TodoStore
     from pilot.workflows.undo_journal import UndoJournal
+    from pilot.workflows.user_profile import UserProfile
     from pilot.workflows.watchers import Probes, WatcherStore
     from pilot.workflows.workspaces import WorkspaceStore
 
@@ -121,6 +122,7 @@ def _server(root: Path) -> Any:
     server._habits = HabitStore(root / "habits.json")
     server._habits.log("workout")
     server._habits.log("water")
+    server._user_profile = UserProfile(root / "user_profile.json")
     server._speech_coordinator = MagicMock()
     server._speech_coordinator.speak = AsyncMock()
     return server
