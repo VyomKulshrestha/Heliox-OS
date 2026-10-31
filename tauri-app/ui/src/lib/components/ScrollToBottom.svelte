@@ -22,7 +22,7 @@
     height: 36px;
     border-radius: 50%;
     background: var(--accent);
-    color: white;
+    color: var(--on-accent);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -44,5 +44,6 @@
 
   .scroll-fab:hover {
     background: var(--accent-hover);
+    color: var(--on-accent);
   }
 </style>

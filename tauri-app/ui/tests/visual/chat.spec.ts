@@ -51,7 +51,7 @@ test.describe("Chat Interface", () => {
 
   test("command input focused state matches baseline", async ({ page }) => {
     // Focus the text input to trigger the accent border
-    await page.click(".command-input input");
+    await page.click(".command-input textarea");
     await page.waitForTimeout(50);
 
     const inputWrapper = page.locator(".input-wrapper");
@@ -60,7 +60,7 @@ test.describe("Chat Interface", () => {
 
   test("user message renders correctly", async ({ page }) => {
     // Type a command and press Enter
-    await page.fill(".command-input input", "Show system information");
+    await page.fill(".command-input textarea", "Show system information");
     await page.keyboard.press("Enter");
 
     // Give Svelte a tick to re-render
@@ -71,7 +71,7 @@ test.describe("Chat Interface", () => {
   });
 
   test("error message renders correctly", async ({ page }) => {
-    await page.fill(".command-input input", "Trigger error");
+    await page.fill(".command-input textarea", "Trigger error");
     await page.keyboard.press("Enter");
 
     // Send the error response back through the mock WS
@@ -141,7 +141,7 @@ test.describe("Chat Interface", () => {
     await page.waitForTimeout(100);
     const before = await scroller.evaluate((element) => element.scrollTop);
 
-    await page.fill(".command-input input", "Continue with a new task");
+    await page.fill(".command-input textarea", "Continue with a new task");
     await page.keyboard.press("Enter");
     for (const token of ["New", " streamed", " content", " should", " stay below."]) {
       await emitNotification(page, "token_stream", { token });

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { call, requireResultStatus } from "../api/daemon";
   import { loadLocalCommandHistory } from "../utils/chatSessions";
+  import { History as HistoryIcon, X } from "@lucide/svelte";
 
   // Props
   let { onReplay }: { onReplay: (command: string) => void } = $props();
@@ -79,13 +80,18 @@
 </script>
 
 <div class="history-wrapper">
-  <button class="history-toggle" onclick={togglePanel} title="Command History"> 🕒 History </button>
+  <button class="history-toggle" onclick={togglePanel} title="Command history" aria-label="Command history">
+    <HistoryIcon size={15} aria-hidden="true" />
+    <span class="history-label">History</span>
+  </button>
 
   {#if isOpen}
     <div class="history-panel">
       <div class="history-header">
         <span class="history-title">Command History</span>
-        <button class="close-btn" onclick={() => (isOpen = false)}>✕</button>
+        <button class="close-btn" aria-label="Close command history" onclick={() => (isOpen = false)}
+          ><X size={14} /></button
+        >
       </div>
 
       {#if loading}
@@ -132,13 +138,29 @@
   }
 
   .history-toggle {
-    padding: 5px 12px;
-    font-size: 12px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 32px;
+    padding: 0 10px;
+    font-size: var(--text-sm);
     color: var(--text-secondary);
     background: transparent;
     border-radius: var(--radius-sm);
     transition: all 0.15s;
   }
+  @media (max-width: 880px) {
+    .history-toggle {
+      width: 32px;
+      padding: 0;
+      justify-content: center;
+    }
+
+    .history-label {
+      display: none;
+    }
+  }
+
   .history-toggle:hover {
     color: var(--text-primary);
     background: var(--bg-hover);
@@ -279,6 +301,6 @@
   }
   .replay-btn:hover {
     background: var(--accent);
-    color: white;
+    color: var(--on-accent);
   }
 </style>

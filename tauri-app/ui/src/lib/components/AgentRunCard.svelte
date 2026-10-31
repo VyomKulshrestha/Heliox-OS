@@ -171,6 +171,7 @@
   .call.running .dot {
     background: var(--accent);
     animation: pulse 1s ease-in-out infinite;
+    color: var(--on-accent);
   }
   .call.success .dot {
     background: var(--success);

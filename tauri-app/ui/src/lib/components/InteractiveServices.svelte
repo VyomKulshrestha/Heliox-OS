@@ -2,6 +2,7 @@
   import { onDestroy, onMount } from "svelte";
   import { call, offNotification, onNotification } from "../api/daemon";
   import { companion } from "../stores/companion";
+  import { ChevronDown } from "@lucide/svelte";
 
   let { onconfigure } = $props<{ onconfigure: () => void }>();
 
@@ -134,144 +135,212 @@
     offNotification(onDaemonNotification);
     if (refreshTimer) clearInterval(refreshTimer);
   });
+
+  type ServiceState = "on" | "off" | "down";
+  type ServiceRow = { name: string; detail: string; state: ServiceState };
+
+  // Off by choice is neutral; red is kept for "the daemon cannot be reached".
+  function rowState(on: boolean): ServiceState {
+    return !reachable ? "down" : on ? "on" : "off";
+  }
+
+  let services = $derived.by((): ServiceRow[] => {
+    const rows: ServiceRow[] = [
+      { name: "World model", detail: worldModelDetail, state: rowState(Boolean(riskGate.enabled)) },
+    ];
+    if (gnomon.state && gnomon.state !== "disabled") {
+      rows.push({
+        name: "Gnomon",
+        detail: gnomonDetail,
+        state: rowState(gnomon.state === "ready" || gnomon.state === "loading"),
+      });
+    }
+    rows.push(
+      {
+        name: "Voice",
+        detail: voiceActive ? "Step narration ready" : "Narration is off",
+        state: rowState(voiceActive),
+      },
+      { name: "Interference", detail: interferenceDetail, state: rowState(interferenceActive) },
+      {
+        name: "Suggestions",
+        detail: suggestionActive ? "Verified follow-ups ready" : "Follow-ups are off",
+        state: rowState(suggestionActive),
+      },
+      { name: "Coordinator", detail: coordinatorDetail, state: "on" },
+    );
+    return rows;
+  });
+  let onCount = $derived(services.filter((row) => row.state === "on").length);
+  let expanded = $state(false);
 </script>
 
 <section class="service-strip" aria-label="Interactive services">
-  <div class="service-heading">
-    <span>Interactive services</span>
-    <button type="button" onclick={onconfigure}>Configure</button>
+  <div class="service-summary">
+    <button
+      type="button"
+      class="summary-toggle"
+      aria-expanded={expanded}
+      aria-controls="service-list"
+      onclick={() => (expanded = !expanded)}
+    >
+      <span class="dots" aria-hidden="true">
+        {#each services as row (row.name)}
+          <span class="service-dot {row.state}"></span>
+        {/each}
+      </span>
+      <span class="summary-text">
+        {#if !reachable}
+          Daemon unavailable
+        {:else}
+          {onCount} of {services.length} services on
+        {/if}
+      </span>
+      <ChevronDown size={14} aria-hidden="true" class={expanded ? "chevron open" : "chevron"} />
+    </button>
+    <button type="button" class="configure" onclick={onconfigure}>Configure</button>
   </div>
 
-  <div class="service-list">
-    <div class="service" class:active={Boolean(riskGate.enabled && reachable)}>
-      <span class="service-dot"></span>
-      <span class="service-copy">
-        <strong>World model</strong>
-        <small>{worldModelDetail}</small>
-      </span>
-    </div>
-    {#if gnomon.state && gnomon.state !== "disabled"}
-      <div class="service" class:active={reachable && (gnomon.state === "ready" || gnomon.state === "loading")}>
-        <span class="service-dot"></span>
-        <span class="service-copy">
-          <strong>Gnomon</strong>
-          <small>{gnomonDetail}</small>
-        </span>
-      </div>
-    {/if}
-    <div class="service" class:active={voiceActive && reachable}>
-      <span class="service-dot"></span>
-      <span class="service-copy">
-        <strong>Voice</strong>
-        <small>{voiceActive ? "Step narration ready" : "Narration is off"}</small>
-      </span>
-    </div>
-    <div class="service" class:active={interferenceActive && reachable}>
-      <span class="service-dot"></span>
-      <span class="service-copy">
-        <strong>Interference</strong>
-        <small>{interferenceDetail}</small>
-      </span>
-    </div>
-    <div class="service" class:active={suggestionActive && reachable}>
-      <span class="service-dot"></span>
-      <span class="service-copy">
-        <strong>Suggestions</strong>
-        <small>{suggestionActive ? "Verified follow-ups ready" : "Follow-ups are off"}</small>
-      </span>
-    </div>
-    <div class="service active">
-      <span class="service-dot"></span>
-      <span class="service-copy">
-        <strong>Coordinator</strong>
-        <small>{coordinatorDetail}</small>
-      </span>
-    </div>
-  </div>
+  {#if expanded}
+    <ul class="service-list" id="service-list">
+      {#each services as row (row.name)}
+        <li class="service {row.state}">
+          <span class="service-dot {row.state}" aria-hidden="true"></span>
+          <span class="service-copy">
+            <strong>{row.name}</strong>
+            <small>{row.detail}</small>
+          </span>
+        </li>
+      {/each}
+    </ul>
+  {/if}
 </section>
 
 <style>
   .service-strip {
     position: relative;
-    z-index: 2;
-    margin: 0 12px 8px;
-    padding: 8px 10px;
-    border: 1px solid color-mix(in srgb, var(--border) 88%, var(--accent));
-    border-radius: 8px;
-    background: color-mix(in srgb, var(--bg-secondary) 92%, transparent);
+    z-index: var(--z-raised);
+    margin: 8px 12px 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-secondary);
   }
 
-  .service-heading {
+  .service-summary {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    margin-bottom: 7px;
-    color: var(--text-muted);
-    font-family: var(--font-mono);
-    font-size: 10px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    gap: 6px;
+    padding: 3px 6px 3px 3px;
   }
 
-  .service-heading button {
-    border: 0;
-    background: transparent;
+  .summary-toggle {
+    display: inline-flex;
+    flex: 1;
+    align-items: center;
+    gap: 9px;
+    min-width: 0;
+    padding: 4px 8px;
+    color: var(--text-secondary);
+    font-size: var(--text-xs);
+    border-radius: var(--radius-sm);
+    text-align: left;
+  }
+
+  .summary-toggle:hover {
+    color: var(--text-primary);
+    background: var(--bg-hover);
+  }
+
+  .summary-toggle :global(.chevron) {
+    flex: none;
+    transition: transform var(--dur) var(--ease-out);
+  }
+
+  .summary-toggle :global(.chevron.open) {
+    transform: rotate(180deg);
+  }
+
+  .summary-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .dots {
+    display: inline-flex;
+    gap: 4px;
+  }
+
+  .configure {
+    flex: none;
+    padding: 4px 8px;
     color: var(--accent);
-    font: inherit;
-    cursor: pointer;
+    font-size: var(--text-xs);
+    font-weight: 600;
+    border-radius: var(--radius-sm);
+  }
+
+  .configure:hover {
+    background: var(--accent-muted);
   }
 
   .service-list {
     display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
-    gap: 8px;
+    grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+    gap: 8px 14px;
+    padding: 6px 12px 10px;
+    list-style: none;
+    border-top: 1px solid var(--border);
   }
 
   .service {
     display: flex;
     align-items: center;
+    gap: 8px;
     min-width: 0;
-    gap: 7px;
-    color: var(--text-muted);
+    padding-top: 4px;
   }
 
   .service-dot {
+    flex: none;
     width: 7px;
     height: 7px;
-    flex: 0 0 auto;
     border-radius: 50%;
-    background: var(--danger);
-    box-shadow: 0 0 7px color-mix(in srgb, var(--danger) 70%, transparent);
+    background: var(--text-muted);
+    opacity: 0.6;
   }
 
-  .service.active .service-dot {
+  .service-dot.on {
     background: var(--success);
-    box-shadow: 0 0 7px color-mix(in srgb, var(--success) 70%, transparent);
+    opacity: 1;
+  }
+
+  .service-dot.down {
+    background: var(--danger);
+    opacity: 1;
   }
 
   .service-copy {
-    display: flex;
+    display: grid;
     min-width: 0;
-    flex-direction: column;
     gap: 1px;
   }
 
   .service-copy strong {
-    color: var(--text);
-    font-size: 11px;
-    font-weight: 650;
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .service.off .service-copy strong {
+    color: var(--text-secondary);
   }
 
   .service-copy small {
     overflow: hidden;
-    font-size: 9px;
+    font-size: var(--text-xs);
+    color: var(--text-muted);
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-
-  @media (max-width: 920px) {
-    .service-list {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
   }
 </style>

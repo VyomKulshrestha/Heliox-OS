@@ -514,7 +514,7 @@
 
   .progress-step.active .step-num {
     background: var(--accent);
-    color: white;
+    color: var(--on-accent);
     border-color: var(--accent);
   }
 
@@ -728,7 +728,7 @@
 
   .btn-inline {
     padding: 5px 10px;
-    color: white;
+    color: var(--on-accent);
     background: var(--accent);
     border-radius: var(--radius-sm);
     font-size: 11px;
@@ -800,7 +800,7 @@
     padding: 8px 24px;
     font-size: 13px;
     font-weight: 600;
-    color: white;
+    color: var(--on-accent);
     background: var(--accent);
     border-radius: var(--radius-sm);
   }
@@ -808,5 +808,6 @@
   .btn-next:hover,
   .btn-finish:hover {
     background: var(--accent-hover);
+    color: var(--on-accent);
   }
 </style>

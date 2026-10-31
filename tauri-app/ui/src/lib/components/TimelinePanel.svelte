@@ -263,6 +263,7 @@
   }
   .toggle.active {
     background: var(--accent);
+    color: var(--on-accent);
   }
   .toggle-knob {
     position: absolute;

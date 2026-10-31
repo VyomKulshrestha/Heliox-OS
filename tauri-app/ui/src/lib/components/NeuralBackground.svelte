@@ -210,4 +210,9 @@
     height: 100%;
     display: block;
   }
+
+  /* The particles are a dark-theme effect; on the light theme they read as dust, so they stay faint. */
+  :global(:root.light-mode) .neural-bg {
+    opacity: 0.3;
+  }
 </style>

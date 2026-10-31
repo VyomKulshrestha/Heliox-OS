@@ -282,7 +282,7 @@
     border: 0;
     border-radius: 6px;
     background: var(--accent);
-    color: white;
+    color: var(--on-accent);
     font-size: 12px;
     font-weight: 600;
     white-space: nowrap;

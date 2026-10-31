@@ -1488,6 +1488,7 @@
     min-width: 4px;
     border-radius: 3px;
     background: var(--accent);
+    color: var(--on-accent);
   }
   .brief-controls {
     display: flex;

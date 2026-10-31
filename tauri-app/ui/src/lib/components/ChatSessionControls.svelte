@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { History, MessageSquarePlus, X } from "@lucide/svelte";
+  import { Download, History, MessageSquarePlus, X } from "@lucide/svelte";
   import { session } from "../stores/session";
   import type { ChatSessionSummary } from "../utils/chatSessions";
 
@@ -116,6 +116,16 @@
       {#if $session.loading}
         <p class="busy-note">Finish or stop the active task before changing chats.</p>
       {/if}
+
+      <footer class="export-row">
+        <span>Export this chat</span>
+        <button type="button" aria-label="Export this chat as JSON" onclick={() => session.exportChat("json")}>
+          <Download size={14} aria-hidden="true" />JSON
+        </button>
+        <button type="button" aria-label="Export this chat as CSV" onclick={() => session.exportChat("csv")}>
+          <Download size={14} aria-hidden="true" />CSV
+        </button>
+      </footer>
     </div>
   </div>
 {/if}
@@ -154,6 +164,51 @@
   .session-button.icon-only {
     width: 30px;
     padding: 0;
+  }
+
+  /* In the default 700 px window the button keeps its icon and tooltip and drops the label. */
+  @media (max-width: 880px) {
+    .session-button:not(.icon-only) {
+      width: 30px;
+      padding: 0;
+    }
+
+    .session-button span {
+      display: none;
+    }
+  }
+
+  .export-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+  }
+
+  .export-row span {
+    margin-right: auto;
+  }
+
+  .export-row button {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 30px;
+    padding: 0 12px;
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: var(--text-primary);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+  }
+
+  .export-row button:hover {
+    border-color: var(--accent-line);
+    background: var(--accent-muted);
   }
 
   .session-button:hover:not(:disabled),

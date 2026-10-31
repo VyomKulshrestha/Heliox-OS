@@ -25,7 +25,7 @@
   import ArcReactor from "./lib/components/ArcReactor.svelte";
   import NeuralBackground from "./lib/components/NeuralBackground.svelte";
   import ParticleBurst from "./lib/components/ParticleBurst.svelte";
-  import ExecutionGraph from "./lib/components/ExecutionGraph.svelte";
+  import RunStatus from "./lib/components/RunStatus.svelte";
   import AgentRunCard from "./lib/components/AgentRunCard.svelte";
   import VirtualList from "./lib/components/VirtualList.svelte";
   import PluginsTab from "./lib/components/PluginsTab.svelte";
@@ -35,7 +35,10 @@
   import type { Message } from "./lib/stores/session";
   import { settings } from "./lib/stores/settings";
   import { tick, onDestroy, onMount, untrack } from "svelte";
-  import { Copy } from "@lucide/svelte";
+  import { Circle, CircleCheck, CircleX, Copy, LoaderCircle, ShieldAlert } from "@lucide/svelte";
+  import heliosMark from "./assets/heliox-mark.webp";
+  import { actionTitle } from "./lib/utils/phase";
+  import type { LiveActionState, PlanAction } from "./lib/stores/session";
   import ScrollToBottom from "./lib/components/ScrollToBottom.svelte";
   import { shouldFollowLatest } from "./lib/utils/scrollPolicy";
   import { selectActiveModal } from "./lib/utils/modalPriority";
@@ -199,23 +202,43 @@
       });
     }
   });
-  function formatActionType(t: string): string {
-    return t.replace(/_/g, " ");
+  function actionLabel(action: { action_type: string; dry_run?: boolean }, planDryRun = false): string {
+    const title = actionTitle(action.action_type);
+    return action.dry_run || planDryRun ? `${title} (dry run)` : title;
+  }
+  function isRisky(action: { requires_root?: boolean; destructive?: boolean }): boolean {
+    return Boolean(action.requires_root || action.destructive);
   }
   function tierLabel(action: { requires_root?: boolean; destructive?: boolean }): string {
-    if (action.requires_root) return "ROOT";
-    if (action.destructive) return "DESTRUCTIVE";
-    return "SAFE";
-  }
-  function actionLabel(action: { action_type: string; dry_run?: boolean }, planDryRun = false): string {
-    return action.dry_run || planDryRun
-      ? `${formatActionType(action.action_type)} (dry run)`
-      : formatActionType(action.action_type);
+    return action.requires_root ? "Root" : "Destructive";
   }
   function tierClass(action: { requires_root?: boolean; destructive?: boolean }): string {
-    if (action.requires_root) return "tier-root";
-    if (action.destructive) return "tier-destructive";
-    return "tier-safe";
+    return action.requires_root ? "tier-root" : "tier-destructive";
+  }
+  /** The live step states for the plan that is running now; older plans show their numbered steps. */
+  function liveSteps(plan: { plan_id: string; actions: PlanAction[] }): LiveActionState[] | null {
+    const live = $session.liveActions;
+    if (!plan.plan_id || plan.plan_id !== $session.currentPlan?.plan_id) return null;
+    return live.length === plan.actions.length ? live : null;
+  }
+  function stepStatusText(status: LiveActionState["status"] | undefined): string {
+    if (status === "running") return "running";
+    if (status === "success") return "done";
+    if (status === "error") return "failed";
+    if (status === "pending") return "waiting";
+    return "";
+  }
+  /** A Heliox reply that follows a user message (or opens the chat) starts a new turn with the Heliox name. */
+  function startsTurn(index: number): boolean {
+    return index === 0 || $session.messages[index - 1]?.type === "user";
+  }
+  function greeting(): string {
+    const hour = new Date().getHours();
+    if (hour < 5) return $_("chat.greeting_night");
+    if (hour < 12) return $_("chat.greeting_morning");
+    if (hour < 17) return $_("chat.greeting_afternoon");
+    if (hour < 22) return $_("chat.greeting_evening");
+    return $_("chat.greeting_night");
   }
 
   let prevMsgLen = 0;
@@ -487,52 +510,28 @@
         <div class="results">
           {#if $session.messages.length === 0 && !$session.loading}
             <div class="empty-state">
-              <div class="empty-logo">C</div>
-              <h2>{$_("chat.empty_title")}</h2>
+              <img class="empty-mark" src={heliosMark} alt="" width="64" height="64" />
+              <h2>{greeting()}</h2>
               <p>{$_("chat.empty_subtitle")}</p>
               <div class="suggestions">
+                <button class="suggestion" onclick={() => session.sendCommand("What should I do now?")}
+                  >{$_("chat.suggestion_next")}</button
+                >
                 <button class="suggestion" onclick={() => session.sendCommand("Show system information")}
                   >{$_("chat.suggestion_sysinfo")}</button
                 >
-                <button class="suggestion" onclick={() => session.sendCommand("Take a screenshot and describe it")}
-                  >{$_("chat.suggestion_screenshot")}</button
-                >
-                <button class="suggestion" onclick={() => session.sendCommand("What processes are running?")}
-                  >{$_("chat.suggestion_processes")}</button
-                >
+                <button class="suggestion" onclick={openPalette}>{$_("chat.suggestion_help")}</button>
               </div>
+              <p class="empty-hint"><kbd>Ctrl</kbd> <kbd>K</kbd> {$_("chat.palette_hint")}</p>
             </div>
           {:else}
             <VirtualList bind:this={virtualListEl} items={$session.messages} bind:atBottom={isAtBottom}>
-              {#snippet item(msg)}
-                {@render messageBlock(msg)}
+              {#snippet item(msg, index)}
+                {@render messageBlock(msg, index)}
               {/snippet}
               {#snippet footer()}
                 {#if $session.loading}
-                  <ExecutionGraph />
-                  {#if $session.streamingText}
-                    <div class="message system streaming">
-                      <div class="msg-header">
-                        <span class="msg-label">HELIOX</span>
-                        <span class="phase-badge">{$_("chat.streaming")}</span>
-                        <button class="stop-btn" type="button" onclick={() => session.abort()}>{$_("chat.stop")}</button
-                        >
-                      </div>
-                      <span class="msg-text">{$session.streamingText}</span>
-                    </div>
-                  {:else}
-                    <div class="message system">
-                      <div class="msg-header">
-                        <span class="msg-label">HELIOX</span>
-                        <span class="phase-badge">{$session.phase || $_("chat.thinking")}</span>
-                        <button class="stop-btn" type="button" onclick={() => session.abort()}>{$_("chat.stop")}</button
-                        >
-                      </div>
-                      <span class="msg-text loading-dots">
-                        {$session.phase ? `${$session.phase}` : $_("chat.thinking")}
-                      </span>
-                    </div>
-                  {/if}
+                  <RunStatus />
                 {/if}
               {/snippet}
             </VirtualList>
@@ -554,11 +553,6 @@
             />
           </div>
           <AirHandoffControl />
-          <div class="export-controls">
-            <button class="tab" type="button" onclick={() => session.exportChat("json")}>{$_("app.export_json")}</button
-            >
-            <button class="tab" type="button" onclick={() => session.exportChat("csv")}>{$_("app.export_csv")}</button>
-          </div>
         </div>
       </div>
       <!-- Outside the connection-epoch key, so a daemon reconnect pauses the study instead of destroying it. Kept
@@ -617,242 +611,228 @@
   <!-- Particle Burst Overlay -->
   <ParticleBurst bind:this={particleBurst} />
 </main>
-{#snippet messageBlock(msg: Message)}
+{#snippet copyControl(msg: Message)}
+  <button class="copy-button" type="button" aria-label="Copy message" title="Copy" onclick={() => copyMessage(msg)}>
+    <Copy size={14} />
+  </button>
+  <span
+    class="copy-feedback"
+    role="status"
+    aria-live="polite"
+    aria-atomic="true"
+    class:active={copiedMessageId === msg.timestamp}
+  >
+    {$_("chat.copied")}
+  </span>
+{/snippet}
+
+{#snippet messageBlock(msg: Message, index: number)}
   {#if msg.type === "user"}
-    <div class="message user-msg">
-      <span class="msg-label">YOU</span>
-      <span class="msg-text">{msg.text}</span>
+    <div class="turn turn-user">
+      <p class="bubble"><span class="sr-only">{$_("chat.you_said")}</span>{msg.text}</p>
     </div>
-  {:else if msg.type === "agent_run" && msg.agentRun}
-    <AgentRunCard run={msg.agentRun} />
-  {:else if msg.type === "plan" && msg.plan}
-    <div class="message plan-msg has-copy">
-      <div class="msg-header">
-        <span class="msg-label">{$_("plan.label")}</span>
-        <span class="phase-badge">{msg.plan.dry_run ? $_("plan.dry_run") : $_("plan.planning")}</span>
-      </div>
-      {#if msg.plan.explanation}
-        <p class="plan-explanation">{msg.plan.explanation}</p>
+  {:else}
+    <div class="turn turn-heliox" class:continues={!startsTurn(index)}>
+      {#if startsTurn(index)}
+        <div class="who" aria-hidden="true">
+          <img class="who-mark" src={heliosMark} alt="" width="22" height="22" />
+          <span>Heliox</span>
+        </div>
       {/if}
-      <div class="action-list">
-        {#each msg.plan.actions as action, i}
-          <div class="action-item">
-            <span class="action-index">{i + 1}</span>
-            <div class="action-detail">
-              <span class="action-type">{actionLabel(action, Boolean(msg.plan.dry_run))}</span>
-              <span class="action-target">{action.target}</span>
-            </div>
-            <span class="tier-badge {tierClass(action)}">{tierLabel(action)}</span>
-          </div>
-        {/each}
-      </div>
-      <button class="copy-button" type="button" aria-label="Copy message" title="Copy" onclick={() => copyMessage(msg)}>
-        <Copy size={14} />
-      </button>
-      <span
-        class="copy-feedback"
-        role="status"
-        aria-live="polite"
-        aria-atomic="true"
-        class:active={copiedMessageId === msg.timestamp}
-      >
-        {$_("chat.copied")}
-      </span>
-    </div>
-  {:else if msg.type === "result"}
-    <div class="message result-msg has-copy">
-      <div class="msg-header">
-        <span class="msg-label">{$_("result.label")}</span>
-        {#if msg.verification}
-          <span class="status-badge" class:passed={msg.verification.passed} class:failed={!msg.verification.passed}>
-            {msg.verification.passed ? $_("result.verified") : $_("result.issues")}
-          </span>
-        {/if}
-      </div>
-      {#if msg.text}
-        <p class="result-summary">{msg.text}</p>
-      {/if}
-      {#if msg.actionResults && msg.actionResults.length > 0}
-        {#each msg.actionResults as ar, i}
-          <div class="action-result" class:action-success={ar.success} class:action-failure={!ar.success}>
-            <div class="ar-header">
-              <span class="ar-type">{formatActionType(ar.action_type)}</span>
-              {#if ar.target}
-                <code class="ar-target">{ar.target}</code>
+      <div class="turn-body">
+        {#if msg.type === "agent_run" && msg.agentRun}
+          <AgentRunCard run={msg.agentRun} />
+        {:else if msg.type === "plan" && msg.plan}
+          {@const live = liveSteps(msg.plan)}
+          {@const risky = msg.plan.actions.filter(isRisky).length}
+          <section class="card plan-msg has-copy" aria-label={$_("plan.label")}>
+            <header class="card-head">
+              <span class="card-title">{$_("plan.label")}</span>
+              <span class="card-meta">{$_("plan.steps", { values: { count: msg.plan.actions.length } })}</span>
+              {#if msg.plan.dry_run}
+                <span class="chip">{$_("plan.dry_run")}</span>
               {/if}
-              <span class="ar-status" class:success={ar.success} class:failure={!ar.success}>
-                {ar.success ? $_("result.ok") : $_("result.failed")}
-              </span>
-            </div>
-            {#if ar.success && ar.output}
-              <div class="ar-output">
-                {@html renderMarkdown(ar.output.trim())}
+              {#if risky}
+                <span class="chip chip-warn">
+                  <ShieldAlert size={12} aria-hidden="true" />
+                  {$_("plan.needs_care", { values: { count: risky } })}
+                </span>
+              {/if}
+            </header>
+            {#if msg.plan.explanation}
+              <p class="plan-explanation">{msg.plan.explanation}</p>
+            {/if}
+            <ol class="steps">
+              {#each msg.plan.actions as action, i}
+                {@const step = live?.[i]}
+                <li
+                  class="step"
+                  class:running={step?.status === "running"}
+                  class:ok={step?.status === "success"}
+                  class:bad={step?.status === "error"}
+                  class:waiting={step?.status === "pending"}
+                  aria-current={step?.status === "running" ? "step" : undefined}
+                >
+                  <span class="step-icon" aria-hidden="true">
+                    {#if step?.status === "running"}
+                      <span class="spin"><LoaderCircle size={16} /></span>
+                    {:else if step?.status === "success"}
+                      <CircleCheck size={16} />
+                    {:else if step?.status === "error"}
+                      <CircleX size={16} />
+                    {:else if step?.status === "pending"}
+                      <Circle size={16} />
+                    {:else}
+                      <span class="step-num">{i + 1}</span>
+                    {/if}
+                  </span>
+                  <span class="step-text">
+                    <span class="step-title"
+                      >{actionLabel(action, Boolean(msg.plan.dry_run))}{#if step}<span class="sr-only"
+                          >, {stepStatusText(step.status)}</span
+                        >{/if}</span
+                    >
+                    {#if action.target}
+                      <span class="step-target">{action.target}</span>
+                    {/if}
+                    {#if step?.status === "error" && step.error}
+                      <span class="step-error">{step.error}</span>
+                    {/if}
+                  </span>
+                  {#if isRisky(action)}
+                    <span class="tier-badge {tierClass(action)}">{tierLabel(action)}</span>
+                  {/if}
+                </li>
+              {/each}
+            </ol>
+            {@render copyControl(msg)}
+          </section>
+        {:else if msg.type === "result"}
+          <section class="card result-msg has-copy" aria-label={$_("result.label")}>
+            <header class="card-head">
+              <span class="card-title result-title"
+                ><CircleCheck size={14} aria-hidden="true" />{$_("result.label")}</span
+              >
+              {#if msg.verification}
+                <span class="chip" class:chip-ok={msg.verification.passed} class:chip-bad={!msg.verification.passed}>
+                  {msg.verification.passed ? $_("result.verified") : $_("result.issues")}
+                </span>
+              {/if}
+            </header>
+            {#if msg.text}
+              <div class="result-summary">{@html renderMarkdown(msg.text)}</div>
+            {/if}
+            {#if msg.actionResults && msg.actionResults.length > 0}
+              <ul class="outcomes">
+                {#each msg.actionResults as ar}
+                  <li class="outcome" class:failed={!ar.success}>
+                    <div class="outcome-head">
+                      <span class="outcome-icon" aria-hidden="true">
+                        {#if ar.success}<CircleCheck size={15} />{:else}<CircleX size={15} />{/if}
+                      </span>
+                      <span class="outcome-title"
+                        >{actionTitle(ar.action_type)}<span class="sr-only"
+                          >, {ar.success ? $_("result.ok") : $_("result.failed")}</span
+                        ></span
+                      >
+                      {#if ar.target}
+                        <code class="outcome-target">{ar.target}</code>
+                      {/if}
+                    </div>
+                    {#if ar.success && ar.output}
+                      <div class="ar-output">
+                        {@html renderMarkdown(ar.output.trim())}
+                      </div>
+                    {/if}
+                    {#if !ar.success && ar.error}
+                      <pre class="ar-error">{ar.error}</pre>
+                    {/if}
+                  </li>
+                {/each}
+              </ul>
+            {:else if !msg.text}
+              <p class="result-summary">{$_("result.done")}</p>
+            {/if}
+            {#if msg.verification && msg.verification.details.length > 0}
+              <div class="verification-section">
+                <span class="verification-label">{$_("result.verification")}</span>
+                {#each msg.verification.details as detail}
+                  <span
+                    class="verification-detail"
+                    class:v-pass={detail.includes("VERIFIED")}
+                    class:v-fail={detail.includes("FAILED") || detail.includes("MISMATCH")}
+                  >
+                    {detail}
+                  </span>
+                {/each}
               </div>
             {/if}
-            {#if !ar.success && ar.error}
-              <pre class="ar-error">{ar.error}</pre>
+            {#if msg.task}
+              <div class="task-footer" data-testid="task-footer">
+                {#if msg.task.undo?.available}
+                  <button
+                    class="task-chip"
+                    type="button"
+                    onclick={() => session.openUndoPreview(msg.task?.undo?.taskKey)}
+                  >
+                    {$_("task_footer.undo", { values: { count: msg.task.undo.undoable } })}
+                  </button>
+                {:else if msg.task.undo?.undone}
+                  <span class="task-note">{$_("task_footer.undone")}</span>
+                {/if}
+                {#if msg.task.receiptId}
+                  <button
+                    class="task-chip"
+                    type="button"
+                    onclick={() => msg.task?.receiptId && session.suggestRoutine(msg.task.receiptId)}
+                  >
+                    {$_("task_footer.routine")}
+                  </button>
+                  <button
+                    class="task-chip"
+                    type="button"
+                    onclick={() => msg.task?.receiptId && session.verifyReceipt(msg.task.receiptId)}
+                  >
+                    {$_("task_footer.receipt")}
+                  </button>
+                {/if}
+                {#if msg.task.receiptCheck}
+                  <span class="task-note" role="status">{msg.task.receiptCheck}</span>
+                {/if}
+              </div>
             {/if}
+            {@render copyControl(msg)}
+          </section>
+        {:else if msg.type === "error"}
+          <section class="card error-msg has-copy" role="group" aria-label={$_("error.label")}>
+            <header class="card-head">
+              <span class="card-title error-title"><CircleX size={14} aria-hidden="true" />{$_("error.label")}</span>
+            </header>
+            <p class="msg-text">{msg.text}</p>
+            {@render copyControl(msg)}
+          </section>
+        {:else if msg.type === "git_conflict" && msg.gitConflict}
+          <GitConflictResolver payload={msg.gitConflict} />
+        {:else}
+          <div class="system-msg has-copy">
+            <div class="msg-text prose">
+              {@html renderMarkdown(msg.text || "")}
+            </div>
+            {@render copyControl(msg)}
           </div>
-        {/each}
-      {:else if !msg.text}
-        <span class="msg-text">{$_("result.done")}</span>
-      {/if}
-      {#if msg.verification && msg.verification.details.length > 0}
-        <div class="verification-section">
-          <span class="verification-label">{$_("result.verification")}</span>
-          {#each msg.verification.details as detail}
-            <span
-              class="verification-detail"
-              class:v-pass={detail.includes("VERIFIED")}
-              class:v-fail={detail.includes("FAILED") || detail.includes("MISMATCH")}
-            >
-              {detail}
-            </span>
-          {/each}
-        </div>
-      {/if}
-      {#if msg.task}
-        <div class="task-footer" data-testid="task-footer">
-          {#if msg.task.undo?.available}
-            <button class="task-chip" type="button" onclick={() => session.openUndoPreview(msg.task?.undo?.taskKey)}>
-              {$_("task_footer.undo", { values: { count: msg.task.undo.undoable } })}
-            </button>
-          {:else if msg.task.undo?.undone}
-            <span class="task-note">{$_("task_footer.undone")}</span>
-          {/if}
-          {#if msg.task.receiptId}
-            <button
-              class="task-chip"
-              type="button"
-              onclick={() => msg.task?.receiptId && session.suggestRoutine(msg.task.receiptId)}
-            >
-              {$_("task_footer.routine")}
-            </button>
-            <button
-              class="task-chip"
-              type="button"
-              onclick={() => msg.task?.receiptId && session.verifyReceipt(msg.task.receiptId)}
-            >
-              {$_("task_footer.receipt")}
-            </button>
-          {/if}
-          {#if msg.task.receiptCheck}
-            <span class="task-note" role="status">{msg.task.receiptCheck}</span>
-          {/if}
-        </div>
-      {/if}
-      <button class="copy-button" type="button" aria-label="Copy message" title="Copy" onclick={() => copyMessage(msg)}>
-        <Copy size={14} />
-      </button>
-      <span
-        class="copy-feedback"
-        role="status"
-        aria-live="polite"
-        aria-atomic="true"
-        class:active={copiedMessageId === msg.timestamp}
-      >
-        {$_("chat.copied")}
-      </span>
-    </div>
-  {:else if msg.type === "error"}
-    <div class="message error-msg has-copy">
-      <span class="msg-label">{$_("error.label")}</span>
-      <span class="msg-text">{msg.text}</span>
-      <button class="copy-button" type="button" aria-label="Copy message" title="Copy" onclick={() => copyMessage(msg)}>
-        <Copy size={14} />
-      </button>
-      <span
-        class="copy-feedback"
-        role="status"
-        aria-live="polite"
-        aria-atomic="true"
-        class:active={copiedMessageId === msg.timestamp}
-      >
-        {$_("chat.copied")}
-      </span>
-    </div>
-  {:else if msg.type === "git_conflict" && msg.gitConflict}
-    <GitConflictResolver payload={msg.gitConflict} />
-  {:else}
-    <div class="message system-msg has-copy">
-      <span class="msg-label">HELIOX</span>
-      <div class="msg-text">
-        {@html renderMarkdown(msg.text || "")}
+        {/if}
       </div>
-      <button class="copy-button" type="button" aria-label="Copy message" title="Copy" onclick={() => copyMessage(msg)}>
-        <Copy size={14} />
-      </button>
-      <span
-        class="copy-feedback"
-        role="status"
-        aria-live="polite"
-        aria-atomic="true"
-        class:active={copiedMessageId === msg.timestamp}
-      >
-        {$_("chat.copied")}
-      </span>
     </div>
   {/if}
 {/snippet}
 
 <style>
-  .undo-banner {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 8px 14px;
-    margin: 0 0 8px 0;
-    background: var(--bg-tertiary);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    font-size: 12px;
-    color: var(--text-secondary);
-  }
-
-  .undo-btn {
-    padding: 4px 14px;
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--text-primary);
-    background: var(--bg-hover);
-    border-radius: var(--radius-sm);
-    transition: background 0.15s;
-    white-space: nowrap;
-  }
-
-  .undo-banner-actions {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-
-  .undo-dismiss {
-    padding: 2px 8px;
-    font-size: 14px;
-    color: var(--text-secondary);
-    background: transparent;
-    border-radius: var(--radius-sm);
-  }
-
-  .undo-dismiss:hover {
-    color: var(--text-primary);
-    background: var(--bg-hover);
-  }
-
-  .undo-btn:hover {
-    background: var(--danger-bg);
-    color: var(--danger);
-  }
-
+  /* ── Window and header ─────────────────────────────────────────────── */
   .window {
     height: 100%;
     display: flex;
     flex-direction: column;
     background: var(--bg-primary);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    box-shadow: var(--shadow);
     overflow: hidden;
   }
 
@@ -863,8 +843,9 @@
   .titlebar {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    padding: 10px 16px;
+    gap: 12px;
+    min-height: 48px;
+    padding: 6px 12px;
     background: var(--bg-secondary);
     border-bottom: 1px solid var(--border);
     user-select: none;
@@ -873,79 +854,81 @@
 
   .titlebar-left {
     display: flex;
+    flex: none;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
+  }
+
+  .title {
+    font-family: var(--font-display);
+    font-size: var(--text-md);
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
   }
 
   .titlebar-right {
     display: flex;
+    flex: none;
     align-items: center;
     gap: 6px;
+    margin-left: auto;
     -webkit-app-region: no-drag;
-  }
-
-  .logo {
-    width: 24px;
-    height: 24px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: linear-gradient(135deg, #00c8ff, #7c3aed);
-    color: white;
-    font-weight: 700;
-    font-size: 13px;
-    border-radius: var(--radius-sm);
-    box-shadow: 0 0 10px rgba(0, 200, 255, 0.3);
-  }
-
-  .title {
-    font-weight: 600;
-    font-size: 14px;
-    letter-spacing: 0.5px;
   }
 
   .tabs {
     display: flex;
+    min-width: 0;
     gap: 2px;
+    overflow-x: auto;
+    scrollbar-width: none;
     -webkit-app-region: no-drag;
   }
 
-  .input-row {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 12px;
-    border-top: 1px solid var(--border);
-    background: var(--bg-secondary);
-    position: relative;
-  }
-
-  .export-controls {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    margin-left: auto;
+  .tabs::-webkit-scrollbar {
+    display: none;
   }
 
   .tab {
-    padding: 5px 14px;
-    font-size: 12px;
+    flex: none;
+    padding: 6px 11px;
+    font-size: var(--text-sm);
+    font-weight: 500;
     color: var(--text-secondary);
-    background: transparent;
     border-radius: var(--radius-sm);
-    transition: all 0.15s;
+    transition:
+      color var(--dur-fast) ease,
+      background var(--dur-fast) ease;
   }
 
   .tab:hover {
     color: var(--text-primary);
     background: var(--bg-hover);
   }
+
   .tab.active {
     color: var(--accent);
     background: var(--accent-muted);
   }
 
+  /* The default window is 700 px wide: the wordmark, the resource monitor and button labels give way to the tabs. */
+  @media (max-width: 880px) {
+    .title,
+    .titlebar-right :global(.mini-monitor) {
+      display: none;
+    }
+
+    .titlebar {
+      gap: 8px;
+      padding: 6px 8px;
+    }
+
+    .tab {
+      padding: 6px 8px;
+    }
+  }
+
+  /* ── Panels ────────────────────────────────────────────────────────── */
   .content {
     flex: 1;
     overflow: hidden;
@@ -1044,18 +1027,90 @@
     position: relative;
   }
 
+  /* ── Banners above the conversation ────────────────────────────────── */
+  .undo-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 12px;
+    margin: 8px 12px 0;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+  }
+
+  .undo-banner-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .undo-btn {
+    padding: 5px 12px;
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: var(--text-primary);
+    background: var(--bg-hover);
+    border-radius: var(--radius-sm);
+    white-space: nowrap;
+    transition: background var(--dur-fast) ease;
+  }
+
+  .undo-btn:hover {
+    background: var(--border-strong);
+  }
+
+  .undo-btn:disabled {
+    cursor: wait;
+    opacity: 0.55;
+  }
+
+  .undo-dismiss {
+    display: inline-grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    font-size: var(--text-lg);
+    color: var(--text-secondary);
+    border-radius: var(--radius-sm);
+  }
+
+  .undo-dismiss:hover {
+    color: var(--text-primary);
+    background: var(--bg-hover);
+  }
+
+  .routine-time {
+    margin: 0 4px;
+    padding: 2px 6px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font: inherit;
+  }
+
+  .routine-actions {
+    display: block;
+    margin-top: 2px;
+    color: var(--text-secondary);
+    font-size: var(--text-xs);
+  }
+
   .proactive-card {
-    z-index: 3;
+    z-index: var(--z-raised);
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 16px;
     margin: 8px 12px 0;
     padding: 12px 14px;
-    background: color-mix(in srgb, var(--accent) 10%, var(--bg-secondary));
-    border: 1px solid color-mix(in srgb, var(--accent) 50%, var(--border));
+    background: color-mix(in srgb, var(--accent) 7%, var(--bg-secondary));
+    border: 1px solid var(--accent-line);
     border-radius: var(--radius-md);
-    box-shadow: 0 8px 24px rgb(0 0 0 / 18%);
   }
 
   .proactive-card.high-priority {
@@ -1067,26 +1122,24 @@
     min-width: 0;
     flex-direction: column;
     gap: 3px;
-    font-size: 12px;
+    font-size: var(--text-sm);
     color: var(--text-secondary);
   }
 
   .proactive-copy strong {
     color: var(--text-primary);
-    font-size: 13px;
+    font-size: var(--text-base);
   }
 
-  .proactive-copy small,
-  .proactive-eyebrow {
+  .proactive-copy small {
     color: var(--text-muted);
-    font-size: 10px;
+    font-size: var(--text-xs);
   }
 
   .proactive-eyebrow {
     color: var(--accent);
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    font-size: var(--text-xs);
+    font-weight: 600;
   }
 
   .proactive-actions {
@@ -1097,7 +1150,8 @@
 
   .proactive-actions button {
     padding: 6px 12px;
-    font-size: 11px;
+    font-size: var(--text-sm);
+    font-weight: 600;
     border-radius: var(--radius-sm);
   }
 
@@ -1108,7 +1162,7 @@
   }
 
   .proactive-accept {
-    color: white;
+    color: var(--on-accent);
     background: var(--accent);
   }
 
@@ -1117,171 +1171,16 @@
     opacity: 0.55;
   }
 
-  .empty-state {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 12px;
-    text-align: center;
-    padding: 32px 24px;
-  }
-
-  .empty-logo {
-    width: 48px;
-    height: 48px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: var(--accent);
-    color: white;
-    font-weight: 700;
-    font-size: 22px;
-    border-radius: 12px;
-    margin-bottom: 4px;
-  }
-
-  .empty-state h2 {
-    font-size: 18px;
-    font-weight: 700;
-    color: var(--text-primary);
-  }
-  .empty-state p {
-    font-size: 13px;
-    color: var(--text-muted);
-    max-width: 320px;
-    line-height: 1.5;
-  }
-
-  .suggestions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    justify-content: center;
-    margin-top: 8px;
-  }
-
-  .suggestion {
-    padding: 6px 14px;
-    font-size: 12px;
-    color: var(--accent);
-    background: var(--accent-muted);
-    border-radius: 20px;
-    transition: all 0.15s;
-  }
-
-  .suggestion:hover {
-    background: var(--accent);
-    color: white;
-  }
-
-  .message {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    padding: 10px 12px;
-    border-radius: var(--radius-md);
-    border: 1px solid var(--border);
-    animation: fadeIn 0.2s ease-out;
-  }
-
-  .message.has-copy {
-    position: relative;
-    padding-right: 38px;
-  }
-
-  .copy-button {
-    position: absolute;
-    top: 8px;
-    right: 8px;
-    width: 24px;
-    height: 24px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 6px;
-    border: 1px solid transparent;
-    background: transparent;
-    color: var(--text-muted);
-    opacity: 0;
-    transform: translateY(-2px);
-    pointer-events: none;
-    transition:
-      opacity 0.15s ease,
-      transform 0.15s ease,
-      background 0.15s ease,
-      border-color 0.15s ease,
-      color 0.15s ease;
-  }
-
-  .message.has-copy:hover .copy-button,
-  .message.has-copy:focus-within .copy-button {
-    opacity: 1;
-    transform: translateY(0);
-    pointer-events: auto;
-  }
-
-  .copy-button:hover {
-    background: var(--bg-hover);
-    border-color: var(--border);
-    color: var(--text-primary);
-  }
-
-  .copy-button:active {
-    transform: translateY(0) scale(0.98);
-  }
-
-  .copy-feedback {
-    position: absolute;
-    top: 10px;
-    right: 36px;
-    font-size: 10px;
-    font-weight: 600;
-    color: var(--success);
-    background: rgba(74, 222, 128, 0.12);
-    padding: 2px 6px;
-    border-radius: 10px;
-    opacity: 0;
-    transform: translateY(-2px);
-    transition:
-      opacity 0.15s ease,
-      transform 0.15s ease;
-    pointer-events: none;
-  }
-
-  .copy-feedback.active {
-    opacity: 1;
-    transform: translateY(0);
-  }
-
-  @keyframes fadeIn {
-    from {
-      opacity: 0;
-      transform: translateY(4px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-
-  .msg-header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
   .task-recovery {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 16px;
-    margin: 8px 16px 0;
+    margin: 8px 12px 0;
     padding: 10px 12px;
-    border: 1px solid rgba(245, 158, 11, 0.45);
-    border-radius: 10px;
-    background: rgba(245, 158, 11, 0.08);
+    border: 1px solid color-mix(in srgb, var(--warning) 45%, transparent);
+    border-radius: var(--radius-md);
+    background: var(--warning-bg);
     color: var(--text-primary);
   }
 
@@ -1291,18 +1190,18 @@
   }
 
   .task-recovery span {
-    color: var(--text-muted);
-    font-size: 12px;
+    color: var(--text-secondary);
+    font-size: var(--text-sm);
   }
 
   .task-recovery button {
     flex: 0 0 auto;
-    border: 1px solid rgba(245, 158, 11, 0.55);
-    border-radius: 8px;
+    border: 1px solid color-mix(in srgb, var(--warning) 55%, transparent);
+    border-radius: var(--radius-sm);
     padding: 7px 11px;
-    background: rgba(245, 158, 11, 0.14);
+    background: var(--warning-bg);
     color: var(--text-primary);
-    cursor: pointer;
+    font-weight: 600;
   }
 
   .task-recovery button:disabled {
@@ -1310,347 +1209,467 @@
     opacity: 0.55;
   }
 
-  .msg-label {
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+  /* ── Empty state ───────────────────────────────────────────────────── */
+  .empty-state {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    text-align: center;
+    padding: 24px;
+    animation: rise var(--dur-slow) var(--ease-out) both;
   }
 
-  .msg-text {
+  .empty-mark {
+    width: 64px;
+    height: 64px;
+    margin-bottom: 4px;
+    border-radius: 50%;
+    border: 1px solid var(--accent-line);
+    object-fit: cover;
+  }
+
+  .empty-state h2 {
+    font-size: var(--text-2xl);
     color: var(--text-primary);
-    font-size: 13px;
+  }
+
+  .empty-state p {
+    max-width: 46ch;
+    font-size: var(--text-base);
+    line-height: 1.55;
+    color: var(--text-secondary);
+  }
+
+  .suggestions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: center;
+    margin-top: 6px;
+  }
+
+  .suggestion {
+    padding: 7px 14px;
+    font-size: var(--text-sm);
+    font-weight: 500;
+    color: var(--text-primary);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-pill);
+    transition:
+      border-color var(--dur-fast) ease,
+      background var(--dur-fast) ease,
+      transform var(--dur-fast) ease;
+  }
+
+  .suggestion:hover {
+    border-color: var(--accent-line);
+    background: var(--accent-muted);
+  }
+
+  .suggestion:active {
+    transform: translateY(1px);
+  }
+
+  .empty-state .empty-hint {
+    margin-top: 6px;
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+  }
+
+  /* ── Conversation turns ────────────────────────────────────────────── */
+  .turn {
+    display: flex;
+    flex-direction: column;
+    padding: 4px 4px 2px;
+    animation: rise var(--dur) var(--ease-out) both;
+  }
+
+  .turn-user {
+    align-items: flex-end;
+    padding-top: 12px;
+  }
+
+  .bubble {
+    max-width: min(78%, 68ch);
+    padding: 8px 13px;
+    font-size: var(--text-base);
     line-height: 1.5;
+    color: var(--text-primary);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg) var(--radius-lg) var(--radius-xs) var(--radius-lg);
     white-space: pre-wrap;
     word-break: break-word;
   }
 
-  .user-msg {
-    background: var(--bg-secondary);
-  }
-  .system-msg {
-    background: var(--bg-tertiary);
+  .turn-heliox {
+    gap: 6px;
+    padding-top: 10px;
   }
 
-  .error-msg {
-    border-color: var(--danger);
-    background: var(--danger-bg);
+  .turn-heliox.continues {
+    padding-top: 4px;
   }
 
-  .error-msg .msg-label {
-    color: var(--danger);
-  }
-
-  .message.system.streaming {
-    background: var(--bg-tertiary);
-    border-left: 3px solid var(--accent);
-    animation: pulse-glow 2s ease-in-out infinite;
-  }
-
-  @keyframes pulse-glow {
-    0%,
-    100% {
-      border-left-color: var(--accent);
-    }
-    50% {
-      border-left-color: var(--accent-hover);
-    }
-  }
-
-  .plan-msg {
-    background: var(--bg-tertiary);
-    border-color: var(--accent-muted);
-  }
-
-  .plan-msg .msg-label {
-    color: var(--accent);
-  }
-
-  .phase-badge {
-    font-size: 10px;
-    font-weight: 500;
-    padding: 2px 8px;
-    border-radius: 20px;
-    background: var(--accent-muted);
-    color: var(--accent);
-    text-transform: lowercase;
-  }
-
-  .stop-btn {
-    margin-left: auto;
-    padding: 3px 12px;
-    font-size: 11px;
+  .who {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--font-display);
+    font-size: var(--text-sm);
     font-weight: 600;
-    color: var(--danger);
-    background: var(--danger-bg);
-    border-radius: var(--radius-sm);
-    transition:
-      background 0.15s,
-      color 0.15s;
-    white-space: nowrap;
+    color: var(--text-secondary);
   }
 
-  .stop-btn:hover {
-    background: var(--danger);
-    color: var(--bg-primary);
+  .who-mark {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    border: 1px solid var(--accent-line);
+    object-fit: cover;
+  }
+
+  .turn-body {
+    min-width: 0;
+    padding-left: 30px;
+  }
+
+  .msg-text {
+    color: var(--text-primary);
+    font-size: var(--text-base);
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .msg-text.prose {
+    max-width: 72ch;
+    white-space: normal;
+  }
+
+  .system-msg {
+    position: relative;
+  }
+
+  /* Cards: plans, results and errors. */
+  .card {
+    display: grid;
+    gap: 8px;
+    padding: 10px 12px 12px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+  }
+
+  .card-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    min-height: 22px;
+  }
+
+  .card-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--font-display);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .card-meta {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    font-size: var(--text-xs);
+    font-weight: 600;
+    color: var(--text-secondary);
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-pill);
+  }
+
+  .chip-warn {
+    color: var(--warning);
+    background: var(--warning-bg);
+  }
+
+  .chip-ok {
+    color: var(--success);
+    background: var(--success-bg);
+  }
+
+  .chip-bad {
+    color: var(--danger);
+    background: var(--danger-bg);
   }
 
   .plan-explanation {
-    font-size: 13px;
+    max-width: 72ch;
+    font-size: var(--text-base);
+    line-height: 1.5;
     color: var(--text-secondary);
-    line-height: 1.4;
-    margin: 0;
   }
 
-  .action-list {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    margin-top: 4px;
+  .steps {
+    display: grid;
+    gap: 1px;
+    list-style: none;
   }
 
-  .action-item {
+  .step {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 10px;
-    padding: 5px 8px;
+    padding: 6px 8px;
     border-radius: var(--radius-sm);
+    transition: background var(--dur) ease;
   }
 
-  .action-item:hover {
-    background: var(--bg-hover);
+  .step.running {
+    background: var(--accent-muted);
   }
 
-  .action-index {
-    width: 20px;
-    height: 20px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 11px;
-    font-weight: 600;
+  .step-icon {
+    display: inline-grid;
+    flex: none;
+    place-items: center;
+    width: 18px;
+    height: 18px;
+    margin-top: 1px;
     color: var(--text-muted);
-    background: var(--bg-primary);
-    border-radius: 50%;
-    flex-shrink: 0;
   }
 
-  .action-detail {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
+  .step.running .step-icon {
+    color: var(--accent);
   }
 
-  .action-type {
-    font-size: 12px;
-    font-weight: 500;
-    font-family: var(--font-mono);
-    color: var(--text-primary);
-    text-transform: capitalize;
-  }
-
-  .action-target {
-    font-size: 11px;
-    color: var(--text-muted);
-    font-family: var(--font-mono);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .tier-badge {
-    font-size: 10px;
-    font-weight: 600;
-    padding: 2px 8px;
-    border-radius: 20px;
-    flex-shrink: 0;
-  }
-
-  .tier-safe {
-    background: rgba(74, 222, 128, 0.1);
+  .step.ok .step-icon {
     color: var(--success);
   }
-  .tier-destructive {
-    background: rgba(251, 191, 36, 0.1);
-    color: var(--warning);
-  }
-  .tier-root {
-    background: var(--danger-bg);
+
+  .step.bad .step-icon {
     color: var(--danger);
   }
 
-  .result-msg {
-    background: var(--bg-secondary);
-    gap: 8px;
+  .step.waiting .step-title {
+    color: var(--text-secondary);
   }
 
-  .result-msg .msg-label {
+  .step-num {
+    display: inline-grid;
+    place-items: center;
+    width: 18px;
+    height: 18px;
+    font-size: var(--text-2xs);
+    font-weight: 600;
+    color: var(--text-secondary);
+    background: var(--bg-tertiary);
+    border-radius: 50%;
+  }
+
+  .spin {
+    display: inline-flex;
+    animation: spin 0.9s linear infinite;
+  }
+
+  .step-text {
+    display: grid;
+    flex: 1;
+    min-width: 0;
+    gap: 1px;
+  }
+
+  .step-title {
+    font-size: var(--text-base);
+    font-weight: 500;
+    color: var(--text-primary);
+  }
+
+  .step-target,
+  .outcome-target {
+    overflow: hidden;
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .step-error {
+    font-size: var(--text-xs);
+    color: var(--danger);
+  }
+
+  .tier-badge {
+    flex: none;
+    padding: 2px 8px;
+    font-size: var(--text-2xs);
+    font-weight: 600;
+    border-radius: var(--radius-pill);
+  }
+
+  .tier-destructive {
+    color: var(--warning);
+    background: var(--warning-bg);
+  }
+
+  .tier-root {
+    color: var(--danger);
+    background: var(--danger-bg);
+  }
+
+  .result-title {
     color: var(--success);
   }
 
   .result-summary {
-    margin: 0;
+    max-width: 72ch;
+    font-size: var(--text-base);
+    line-height: 1.6;
     color: var(--text-primary);
-    line-height: 1.5;
   }
 
-  .status-badge {
-    font-size: 10px;
-    font-weight: 600;
-    padding: 2px 10px;
-    border-radius: 20px;
+  .outcomes {
+    display: grid;
+    gap: 6px;
+    list-style: none;
   }
 
-  .status-badge.passed {
-    background: rgba(74, 222, 128, 0.1);
-    color: var(--success);
-  }
-  .status-badge.failed {
-    background: var(--danger-bg);
-    color: var(--danger);
-  }
-
-  .action-result {
-    border-radius: var(--radius-sm);
-    border: 1px solid var(--border);
+  .outcome {
     overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
   }
 
-  .ar-header {
+  .outcome-head {
     display: flex;
     align-items: center;
     gap: 8px;
+    min-width: 0;
     padding: 6px 10px;
     background: var(--bg-tertiary);
-    border-bottom: 1px solid var(--border);
   }
 
-  .ar-type {
-    font-size: 12px;
-    font-weight: 600;
-    font-family: var(--font-mono);
-    color: var(--text-primary);
-    text-transform: capitalize;
-  }
-
-  .ar-target {
-    font-size: 11px;
-    font-family: var(--font-mono);
-    color: var(--text-muted);
-    flex: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .ar-status {
-    font-size: 10px;
-    font-weight: 700;
-    padding: 1px 8px;
-    border-radius: 10px;
-    flex-shrink: 0;
-  }
-
-  .ar-status.success {
-    background: rgba(74, 222, 128, 0.15);
+  .outcome-icon {
+    display: inline-flex;
+    flex: none;
     color: var(--success);
   }
-  .ar-status.failure {
-    background: var(--danger-bg);
+
+  .outcome.failed .outcome-icon {
     color: var(--danger);
   }
 
-  .ar-output {
-    padding: 8px 10px;
-    font-size: 12px;
-    font-family: var(--font-mono);
+  .outcome-title {
+    flex: none;
+    font-size: var(--text-sm);
+    font-weight: 600;
     color: var(--text-primary);
-    background: var(--bg-primary);
-    margin: 0;
-    white-space: pre-wrap;
-    word-break: break-all;
+  }
+
+  .outcome-target {
+    flex: 1;
+  }
+
+  .ar-output {
     max-height: 200px;
     overflow-y: auto;
-    line-height: 1.5;
+    padding: 8px 10px;
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    line-height: 1.55;
+    color: var(--text-primary);
+    background: var(--bg-primary);
+    word-break: break-word;
+  }
+
+  /* Rendered markdown: paragraphs and code blocks sit flush inside the output box. */
+  .ar-output :global(:is(p, pre, ul, ol)) {
+    margin: 0;
+  }
+
+  .ar-output :global(* + :is(p, pre, ul, ol)) {
+    margin-top: 6px;
   }
 
   .ar-error {
     padding: 8px 10px;
-    font-size: 12px;
     font-family: var(--font-mono);
+    font-size: var(--text-sm);
     color: var(--danger);
     background: var(--danger-bg);
-    margin: 0;
     white-space: pre-wrap;
-    word-break: break-all;
+    word-break: break-word;
   }
 
   .verification-section {
-    display: flex;
-    flex-direction: column;
+    display: grid;
     gap: 2px;
-    padding-top: 6px;
+    padding-top: 8px;
     border-top: 1px solid var(--border);
   }
 
   .verification-label {
-    font-size: 10px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: var(--text-muted);
     margin-bottom: 2px;
+    font-size: var(--text-xs);
+    font-weight: 600;
+    color: var(--text-secondary);
   }
 
   .verification-detail {
-    font-size: 11px;
     font-family: var(--font-mono);
+    font-size: var(--text-xs);
     color: var(--text-secondary);
-    padding: 2px 0;
   }
 
   .verification-detail.v-pass {
     color: var(--success);
   }
+
   .verification-detail.v-fail {
     color: var(--danger);
   }
 
-  .routine-time {
-    margin: 0 4px;
-    padding: 2px 6px;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--bg-primary);
-    color: var(--text-primary);
-    font: inherit;
+  .error-msg {
+    border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+    background: var(--danger-bg);
   }
 
-  .routine-actions {
-    display: block;
-    margin-top: 2px;
-    color: var(--text-secondary);
-    font-size: 11px;
+  .error-title {
+    color: var(--danger);
   }
 
   .task-footer {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 8px;
-    margin-top: 10px;
+    gap: 6px;
+    padding-top: 2px;
   }
 
   .task-chip {
-    padding: 3px 10px;
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    background: var(--bg-tertiary);
+    padding: 4px 10px;
+    font-size: var(--text-xs);
+    font-weight: 500;
     color: var(--text-secondary);
-    font-size: 11px;
-    cursor: pointer;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-pill);
+    transition:
+      color var(--dur-fast) ease,
+      background var(--dur-fast) ease;
   }
 
   .task-chip:hover {
@@ -1659,80 +1678,98 @@
   }
 
   .task-note {
+    font-size: var(--text-xs);
     color: var(--text-secondary);
-    font-size: 11px;
   }
 
-  .loading-dots::after {
-    content: "";
-    animation: dots 1.5s infinite;
+  /* Copy appears on hover or keyboard focus. */
+  .has-copy {
+    position: relative;
   }
 
-  @keyframes dots {
-    0%,
-    20% {
-      content: ".";
-    }
-    40% {
-      content: "..";
-    }
-    60%,
-    100% {
-      content: "...";
-    }
+  .card.has-copy {
+    padding-right: 40px;
   }
 
-  .hlx-code-wrapper {
-    margin: 8px 0;
+  .copy-button {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    color: var(--text-muted);
+    border: 1px solid transparent;
     border-radius: var(--radius-sm);
-    overflow: hidden;
-    border: 1px solid var(--border);
-    background: #1a1a24;
+    opacity: 0;
+    transition:
+      opacity var(--dur-fast) ease,
+      background var(--dur-fast) ease,
+      color var(--dur-fast) ease;
   }
 
-  .hlx-code-header {
+  .has-copy:hover .copy-button,
+  .has-copy:focus-within .copy-button {
+    opacity: 1;
+  }
+
+  .copy-button:hover {
+    color: var(--text-primary);
+    background: var(--bg-hover);
+    border-color: var(--border);
+  }
+
+  .copy-feedback {
+    position: absolute;
+    top: 11px;
+    right: 40px;
+    padding: 2px 7px;
+    font-size: var(--text-2xs);
+    font-weight: 600;
+    color: var(--success);
+    background: var(--success-bg);
+    border-radius: var(--radius-pill);
+    opacity: 0;
+    transition: opacity var(--dur-fast) ease;
+    pointer-events: none;
+  }
+
+  .copy-feedback.active {
+    opacity: 1;
+  }
+
+  /* ── Composer row ──────────────────────────────────────────────────── */
+  .input-row {
+    position: relative;
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    padding: 4px 10px;
-    background: rgba(0, 0, 0, 0.3);
-    border-bottom: 1px solid var(--border);
-    min-height: 26px;
+    gap: 6px;
+    padding: 8px 10px;
+    background: var(--bg-secondary);
+    border-top: 1px solid var(--border);
   }
 
-  .hlx-lang-badge {
-    font-size: 10px;
-    font-weight: 600;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--accent);
-    opacity: 0.85;
+  .input-row > :global(.command-input) {
+    flex: 1;
+    min-width: 0;
   }
 
-  .hlx-copy-btn {
-    font-size: 10px;
-    padding: 2px 8px;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    color: var(--text-muted);
-    cursor: pointer;
-    font-family: var(--font-sans);
-    transition: all 0.15s;
+  @keyframes rise {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
   }
 
-  .hlx-copy-btn:hover {
-    background: var(--accent-muted);
-    border-color: var(--accent);
-    color: var(--accent);
-  }
-
-  .hlx-pre {
-    margin: 0;
-    padding: 12px 14px;
-    overflow-x: auto;
-    font-size: 12px;
-    line-height: 1.6;
-    background: transparent;
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
   }
 </style>

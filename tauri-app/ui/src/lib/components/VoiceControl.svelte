@@ -397,6 +397,7 @@
     onclick={toggleListening}
     disabled={!pushToTalkEnabled || wakeWordActive}
     title={isListening ? "Stop listening" : "Push to talk"}
+    aria-label={isListening ? "Stop listening" : "Push to talk"}
   >
     <div class="pulse-ring" style="--intensity: {pulseIntensity}"></div>
     <svg class="mic-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -424,6 +425,8 @@
     onclick={toggleWakeWord}
     disabled={wakeWordBusy}
     title={wakeWordActive ? "Disable continuous listening" : "Enable continuous listening"}
+    aria-label={wakeWordActive ? "Disable continuous listening" : "Enable continuous listening"}
+    aria-pressed={wakeWordActive}
   >
     <svg class="wave-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
       <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z" />
@@ -464,6 +467,17 @@
 </div>
 
 <style>
+  @media (max-width: 880px) {
+    .wake-label {
+      display: none;
+    }
+
+    .wake-btn {
+      width: 32px;
+      padding: 0;
+      justify-content: center;
+    }
+  }
   .voice-control {
     display: flex;
     align-items: center;
@@ -474,32 +488,32 @@
   /* ── Push to Talk Button ── */
   .voice-btn {
     position: relative;
-    width: 36px;
-    height: 36px;
+    width: 32px;
+    height: 32px;
     border-radius: 50%;
-    border: 2px solid rgba(0, 200, 255, 0.3);
-    background: rgba(0, 200, 255, 0.06);
-    color: rgba(0, 200, 255, 0.7);
+    border: 1px solid var(--accent-line);
+    background: var(--accent-muted);
+    color: var(--accent);
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: all 0.3s ease;
+    transition:
+      border-color var(--dur-fast) ease,
+      background var(--dur-fast) ease;
     overflow: visible;
     flex-shrink: 0;
   }
 
   .voice-btn:hover {
-    border-color: rgba(0, 200, 255, 0.6);
-    background: rgba(0, 200, 255, 0.12);
-    color: rgba(0, 200, 255, 1);
-    box-shadow: 0 0 15px rgba(0, 200, 255, 0.2);
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 20%, transparent);
   }
 
   .voice-btn.listening {
-    border-color: rgba(255, 60, 60, 0.8);
-    background: rgba(255, 60, 60, 0.15);
-    color: rgba(255, 60, 60, 0.9);
+    border-color: var(--danger);
+    background: var(--danger-bg);
+    color: var(--danger);
     animation: breathe 1.5s ease-in-out infinite;
   }
 
@@ -555,29 +569,32 @@
     align-items: center;
     gap: 4px;
     padding: 4px 10px;
-    border-radius: 16px;
-    border: 1px solid rgba(0, 200, 255, 0.2);
-    background: rgba(0, 200, 255, 0.04);
-    color: rgba(200, 200, 220, 0.6);
+    height: 32px;
+    border-radius: var(--radius-pill);
+    border: 1px solid var(--border);
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
     cursor: pointer;
-    font-size: 11px;
-    font-family: "Inter", sans-serif;
-    transition: all 0.3s ease;
+    font-size: var(--text-sm);
+    font-weight: 500;
+    transition:
+      color var(--dur-fast) ease,
+      border-color var(--dur-fast) ease,
+      background var(--dur-fast) ease;
     white-space: nowrap;
     flex-shrink: 0;
   }
 
   .wake-btn:hover {
-    border-color: rgba(0, 200, 255, 0.5);
-    color: rgba(0, 200, 255, 0.9);
-    background: rgba(0, 200, 255, 0.08);
+    border-color: var(--accent-line);
+    color: var(--text-primary);
+    background: var(--accent-muted);
   }
 
   .wake-btn.active {
-    border-color: rgba(0, 255, 136, 0.5);
-    background: rgba(0, 255, 136, 0.1);
-    color: rgba(0, 255, 136, 0.9);
-    animation: gentle-glow 3s ease-in-out infinite;
+    border-color: color-mix(in srgb, var(--success) 50%, transparent);
+    background: var(--success-bg);
+    color: var(--success);
   }
 
   @keyframes gentle-glow {

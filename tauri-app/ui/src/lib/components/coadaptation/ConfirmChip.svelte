@@ -163,7 +163,7 @@
   }
 
   button.confirm {
-    color: white;
+    color: var(--on-accent);
     background: var(--accent);
     border-color: var(--accent);
   }

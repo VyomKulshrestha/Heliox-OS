@@ -10,7 +10,8 @@
     "tab_settings": "Settings",
     "export_json": "Export JSON",
     "export_csv": "Export CSV",
-    "tab_study": "Study"
+    "tab_study": "Study",
+    "export_title": "Export this chat"
   },
   "neural": {
     "title": "Neural Intent (Research)",
@@ -93,15 +94,23 @@
   },
   "chat": {
     "empty_title": "Heliox OS",
-    "empty_subtitle": "Your AI system control agent. Type, speak, or gesture — I'm ready.",
+    "empty_subtitle": "Type, speak or gesture. Heliox plans each step, asks before anything risky, and shows you what it did.",
     "suggestion_sysinfo": "Show system info",
     "suggestion_screenshot": "Screenshot + OCR",
     "suggestion_processes": "List processes",
     "thinking": "Thinking",
     "streaming": "streaming",
     "copy": "Copy",
-    "copied": "Copied!",
-    "stop": "Stop"
+    "copied": "Copied",
+    "stop": "Stop",
+    "you_said": "You said: ",
+    "suggestion_next": "What should I do now?",
+    "suggestion_help": "What can I say?",
+    "palette_hint": "shows everything Heliox can do",
+    "greeting_morning": "Good morning",
+    "greeting_afternoon": "Good afternoon",
+    "greeting_evening": "Good evening",
+    "greeting_night": "Working late"
   },
   "companion": {
     "suggestion_label": "Adaptive suggestion",
@@ -111,12 +120,14 @@
     "starting": "Starting..."
   },
   "plan": {
-    "label": "PLAN",
+    "label": "Plan",
     "dry_run": "dry run",
-    "planning": "planning"
+    "planning": "planning",
+    "steps": "{count, plural, one {# step} other {# steps}}",
+    "needs_care": "{count, plural, one {# needs care} other {# need care}}"
   },
   "result": {
-    "label": "RESULT",
+    "label": "Result",
     "verified": "Verified",
     "issues": "Issues detected",
     "ok": "OK",
@@ -125,7 +136,7 @@
     "verification": "Verification"
   },
   "error": {
-    "label": "ERROR"
+    "label": "Something went wrong"
   },
   "tier": {
     "root": "ROOT",
@@ -399,5 +410,16 @@
     "agent_working": "Heliox is working on its own.",
     "take": "Take control",
     "error": "Could not change control: {message}"
+  },
+  "run": {
+    "progress": "Progress",
+    "stage_understand": "Understand",
+    "stage_plan": "Plan",
+    "stage_act": "Act",
+    "stage_check": "Check",
+    "step_of": "Step {current} of {total}",
+    "steps_done": "{done} of {total} steps done",
+    "stop": "Stop",
+    "stop_hint": "Stop the running task (Esc)"
   }
 }

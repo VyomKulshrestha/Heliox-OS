@@ -280,6 +280,7 @@
   .switch.on span {
     transform: translateX(20px);
     background: var(--accent);
+    color: var(--on-accent);
   }
   .security-note {
     display: grid;

@@ -84,13 +84,9 @@
         <svg width="45" height="14" viewBox="0 0 45 14" class="sparkline">
           <defs>
             <linearGradient id="cpu-grad" x1="0%" y1="0%" x2="100%" y2="0%">
-              <stop offset="0%" stop-color="rgba(0, 255, 136, 0.1)" />
-              <stop offset="100%" stop-color="rgba(0, 255, 136, 1)" />
+              <stop offset="0%" stop-color="currentColor" stop-opacity="0.15" />
+              <stop offset="100%" stop-color="currentColor" />
             </linearGradient>
-            <filter id="glow-cpu" x="-20%" y="-20%" width="140%" height="140%">
-              <feGaussianBlur stdDeviation="1.5" result="blur" />
-              <feComposite in="SourceGraphic" in2="blur" operator="over" />
-            </filter>
           </defs>
           <path
             d={generatePath(cpuHistory, 45, 14)}
@@ -99,10 +95,9 @@
             stroke-width="1.5"
             stroke-linecap="round"
             stroke-linejoin="round"
-            filter="url(#glow-cpu)"
             class="chart-path"
           />
-          <circle cx={cpuEnd.x} cy={cpuEnd.y} r="2" fill="#00ff88" filter="url(#glow-cpu)" />
+          <circle cx={cpuEnd.x} cy={cpuEnd.y} r="2" fill="currentColor" />
         </svg>
       </div>
     </div>
@@ -118,13 +113,9 @@
         <svg width="45" height="14" viewBox="0 0 45 14" class="sparkline">
           <defs>
             <linearGradient id="ram-grad" x1="0%" y1="0%" x2="100%" y2="0%">
-              <stop offset="0%" stop-color="rgba(168, 85, 247, 0.1)" />
-              <stop offset="100%" stop-color="rgba(168, 85, 247, 1)" />
+              <stop offset="0%" stop-color="currentColor" stop-opacity="0.15" />
+              <stop offset="100%" stop-color="currentColor" />
             </linearGradient>
-            <filter id="glow-ram" x="-20%" y="-20%" width="140%" height="140%">
-              <feGaussianBlur stdDeviation="1.5" result="blur" />
-              <feComposite in="SourceGraphic" in2="blur" operator="over" />
-            </filter>
           </defs>
           <path
             d={generatePath(ramHistory, 45, 14)}
@@ -133,10 +124,9 @@
             stroke-width="1.5"
             stroke-linecap="round"
             stroke-linejoin="round"
-            filter="url(#glow-ram)"
             class="chart-path"
           />
-          <circle cx={ramEnd.x} cy={ramEnd.y} r="2" fill="#a855f7" filter="url(#glow-ram)" />
+          <circle cx={ramEnd.x} cy={ramEnd.y} r="2" fill="currentColor" />
         </svg>
       </div>
     </div>
@@ -147,73 +137,57 @@
   .mini-monitor {
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 6px 14px;
-    background: rgba(15, 20, 35, 0.5);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    border-radius: 10px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    box-shadow:
-      0 4px 12px rgba(0, 0, 0, 0.2),
-      inset 0 1px 0 rgba(255, 255, 255, 0.05);
-    margin-right: 8px;
+    gap: 10px;
+    height: 32px;
+    padding: 0 10px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
     -webkit-app-region: no-drag;
-    transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
-  }
-
-  .mini-monitor:hover {
-    background: rgba(20, 25, 45, 0.7);
-    border-color: rgba(255, 255, 255, 0.15);
-    box-shadow:
-      0 6px 16px rgba(0, 0, 0, 0.3),
-      inset 0 1px 0 rgba(255, 255, 255, 0.1);
   }
 
   .stat-group {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     cursor: default;
+  }
+
+  .cpu-group {
+    color: var(--accent);
+  }
+
+  .ram-group {
+    color: var(--success);
   }
 
   .stat-info {
     display: flex;
     flex-direction: column;
     justify-content: center;
-    min-width: 32px;
+    min-width: 30px;
   }
 
   .label {
-    font-size: 8px;
-    font-weight: 800;
-    text-transform: uppercase;
-    letter-spacing: 0.8px;
-    color: var(--text-muted, #8b949e);
-    margin-bottom: -2px;
+    margin-bottom: -1px;
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
   }
 
   .value {
-    font-size: 11px;
-    font-weight: 700;
-    font-family: "SF Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-    letter-spacing: -0.5px;
-  }
-
-  .cpu-group .value {
-    color: #00ff88;
-    text-shadow: 0 0 8px rgba(0, 255, 136, 0.4);
-  }
-
-  .ram-group .value {
-    color: #a855f7;
-    text-shadow: 0 0 8px rgba(168, 85, 247, 0.4);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-primary);
   }
 
   .divider {
     width: 1px;
     height: 18px;
-    background: linear-gradient(to bottom, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0));
+    background: var(--border);
   }
 
   .chart-wrapper {

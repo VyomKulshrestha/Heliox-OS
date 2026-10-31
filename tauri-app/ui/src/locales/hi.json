@@ -10,7 +10,8 @@
     "tab_settings": "सेटिंग्स",
     "export_json": "JSON निर्यात करें",
     "export_csv": "CSV निर्यात करें",
-    "tab_study": "अध्ययन"
+    "tab_study": "अध्ययन",
+    "export_title": "यह चैट निर्यात करें"
   },
   "neural": {
     "task_launcher": "न्यूरल स्वायत्त कार्य लॉन्चर",
@@ -93,7 +94,7 @@
   },
   "chat": {
     "empty_title": "हेलिओक्स OS",
-    "empty_subtitle": "आपका AI सिस्टम कंट्रोल एजेंट। टाइप करें, बोलें, या इशारा करें — मैं तैयार हूँ।",
+    "empty_subtitle": "टाइप करें, बोलें या इशारा करें। हेलिओक्स हर कदम की योजना बनाता है, जोखिम वाले काम से पहले पूछता है, और बताता है कि उसने क्या किया।",
     "suggestion_sysinfo": "सिस्टम जानकारी दिखाएं",
     "suggestion_screenshot": "स्क्रीनशॉट + OCR",
     "suggestion_processes": "प्रक्रियाएं सूचीबद्ध करें",
@@ -101,7 +102,15 @@
     "streaming": "स्ट्रीमिंग",
     "copy": "कॉपी करें",
     "copied": "कॉपी हो गया!",
-    "stop": "रोकें"
+    "stop": "रोकें",
+    "you_said": "आपने कहा: ",
+    "suggestion_next": "अब मुझे क्या करना चाहिए?",
+    "suggestion_help": "मैं क्या कह सकता हूँ?",
+    "palette_hint": "हेलिओक्स जो कुछ कर सकता है, सब दिखाता है",
+    "greeting_morning": "सुप्रभात",
+    "greeting_afternoon": "नमस्कार",
+    "greeting_evening": "शुभ संध्या",
+    "greeting_night": "देर रात तक काम"
   },
   "companion": {
     "suggestion_label": "अनुकूलित सुझाव",
@@ -113,7 +122,9 @@
   "plan": {
     "label": "योजना",
     "dry_run": "ड्राई रन",
-    "planning": "योजना बनाना"
+    "planning": "योजना बनाना",
+    "steps": "{count, plural, one {# चरण} other {# चरण}}",
+    "needs_care": "{count} पर ध्यान दें"
   },
   "result": {
     "label": "परिणाम",
@@ -125,7 +136,7 @@
     "verification": "सत्यापन"
   },
   "error": {
-    "label": "त्रुटि"
+    "label": "कुछ गलत हो गया"
   },
   "tier": {
     "root": "रूट",
@@ -393,5 +404,16 @@
     "agent_working": "Heliox अपने आप काम कर रहा है।",
     "take": "नियंत्रण लें",
     "error": "नियंत्रण नहीं बदला जा सका: {message}"
+  },
+  "run": {
+    "progress": "प्रगति",
+    "stage_understand": "समझना",
+    "stage_plan": "योजना",
+    "stage_act": "करना",
+    "stage_check": "जाँचना",
+    "step_of": "चरण {current} / {total}",
+    "steps_done": "{total} में से {done} चरण पूरे",
+    "stop": "रोकें",
+    "stop_hint": "चल रहा काम रोकें (Esc)"
   }
 }

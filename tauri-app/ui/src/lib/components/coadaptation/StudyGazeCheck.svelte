@@ -147,6 +147,7 @@
     border-radius: 50%;
     box-shadow: 0 0 0 6px var(--accent-muted);
     transform: translate(-50%, -50%);
+    color: var(--on-accent);
   }
 
   .marker.center {
@@ -209,7 +210,7 @@
 
   .primary {
     font-weight: 600;
-    color: white;
+    color: var(--on-accent);
     background: var(--accent);
     border: 1px solid var(--accent);
   }

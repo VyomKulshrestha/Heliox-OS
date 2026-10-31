@@ -1,45 +1,112 @@
 @import "./styles/highlight.css";
+
+/* Design tokens. Surfaces, text and the single cyan accent come from the helioxos.dev brand; every text/surface
+   pair below meets WCAG AA (4.5:1) in both themes. Components use these names, never raw hex. */
 :root {
-  --bg-primary: #0f0f14;
-  --bg-secondary: #16161e;
-  --bg-tertiary: #1e1e2a;
-  --bg-hover: #252535;
-  --border: #2a2a3c;
-  --text-primary: #e0e0ec;
-  --text-secondary: #9090a8;
-  --text-muted: #606078;
-  --accent: #7c6fe0;
-  --accent-hover: #9088e8;
-  --accent-muted: rgba(124, 111, 224, 0.15);
-  --success: #4ade80;
-  --warning: #fbbf24;
-  --danger: #f87171;
-  --danger-bg: rgba(248, 113, 113, 0.1);
+  color-scheme: dark;
+
+  --bg-primary: #0b0e14;
+  --bg-secondary: #10141c;
+  --bg-tertiary: #161b25;
+  --bg-hover: #1d2330;
+  --bg-elevated: #131822;
+  --border: #232a37;
+  --border-strong: #313a4b;
+
+  --text-primary: #e7ecf3;
+  --text-secondary: #a4aec0;
+  --text-muted: #8390a5;
+
+  --accent: #5fd6ea;
+  --accent-hover: #86e3f2;
+  --accent-muted: rgb(95 214 234 / 12%);
+  --accent-line: rgb(95 214 234 / 38%);
+  --on-accent: #04161c;
+
+  --success: #4fd69c;
+  --success-bg: rgb(79 214 156 / 11%);
+  --warning: #f2c14e;
+  --warning-bg: rgb(242 193 78 / 11%);
+  --danger: #f47c7c;
+  --danger-bg: rgb(244 124 124 / 11%);
+
+  --radius-xs: 4px;
   --radius-sm: 6px;
   --radius-md: 10px;
   --radius-lg: 14px;
-  --shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-  --font-mono: "JetBrains Mono", "Fira Code", "SF Mono", monospace;
-  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+  --radius-pill: 999px;
+
+  --shadow-sm: 0 1px 2px rgb(2 6 12 / 40%);
+  --shadow: 0 12px 32px rgb(2 6 12 / 55%);
+
+  --font-sans:
+    "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+  --font-display: "Space Grotesk Variable", "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", "Cascadia Code", "SF Mono", Consolas, monospace;
+
+  --text-2xs: 10px;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-base: 13px;
+  --text-md: 14px;
+  --text-lg: 16px;
+  --text-xl: 20px;
+  --text-2xl: 26px;
+
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-fast: 120ms;
+  --dur: 180ms;
+  --dur-slow: 320ms;
+
+  --z-raised: 2;
+  --z-sticky: 10;
+  --z-overlay: 100;
+  --z-modal: 1000;
+
+  /* Older names still used by a few panels. */
+  --text: var(--text-primary);
+  --text-tertiary: var(--text-muted);
+  --accent-light: var(--accent-hover);
+  --danger-hover: color-mix(in srgb, var(--danger) 85%, white);
+  --color-text: var(--text-primary);
+  --color-text-dim: var(--text-secondary);
+  --color-muted: var(--text-muted);
+  --color-warn: var(--warning);
+  --color-link: var(--accent);
+  --color-inline-code: var(--accent);
 }
 
 :root.light-mode {
-  --bg-primary: #f8f9fa;
+  color-scheme: light;
+
+  --bg-primary: #f5f7fa;
   --bg-secondary: #ffffff;
-  --bg-tertiary: #edf0f5;
-  --bg-hover: #e2e8f0;
-  --border: #d1d5db;
-  --text-primary: #1e1e2a;
-  --text-secondary: #4b5563;
-  --text-muted: #9ca3af;
-  --accent: #5b4ec2;
-  --accent-hover: #473cb0;
-  --accent-muted: rgba(91, 78, 194, 0.1);
-  --success: #16a34a;
-  --warning: #d97706;
-  --danger: #dc2626;
-  --danger-bg: rgba(220, 38, 38, 0.08);
-  --shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
+  --bg-tertiary: #eef1f5;
+  --bg-hover: #e5e9ef;
+  --bg-elevated: #ffffff;
+  --border: #dde2ea;
+  --border-strong: #c5ccd8;
+
+  --text-primary: #111620;
+  --text-secondary: #465062;
+  --text-muted: #5a6578;
+
+  --accent: #0a7189;
+  --accent-hover: #085c70;
+  --accent-muted: rgb(10 113 137 / 10%);
+  --accent-line: rgb(10 113 137 / 35%);
+  --on-accent: #ffffff;
+
+  --success: #137a3c;
+  --success-bg: rgb(19 122 60 / 9%);
+  --warning: #9a4d06;
+  --warning-bg: rgb(154 77 6 / 9%);
+  --danger: #c42b2b;
+  --danger-bg: rgb(196 43 43 / 8%);
+
+  --shadow-sm: 0 1px 2px rgb(17 22 32 / 8%);
+  --shadow: 0 12px 32px rgb(17 22 32 / 10%);
 }
 
 * {
@@ -54,33 +121,37 @@ body,
   height: 100%;
   overflow: hidden;
   font-family: var(--font-sans);
-  font-size: 14px;
+  font-size: var(--text-md);
   color: var(--text-primary);
   background: var(--bg-primary);
 }
 
 body {
   -webkit-font-smoothing: antialiased;
-  transition:
-    background-color 0.3s ease,
-    color 0.3s ease,
-    border-color 0.3s ease;
+  text-rendering: optimizeLegibility;
 }
 
-#app,
-header,
-sidebar,
-main,
-div,
-button {
-  transition:
-    background-color 0.3s ease,
-    color 0.3s ease,
-    border-color 0.3s ease;
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+}
+
+p {
+  text-wrap: pretty;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--accent) 32%, transparent);
 }
 
 ::-webkit-scrollbar {
-  width: 6px;
+  width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-track {
@@ -89,27 +160,80 @@ button {
 
 ::-webkit-scrollbar-thumb {
   background: var(--border);
-  border-radius: 3px;
+  border: 2px solid transparent;
+  border-radius: var(--radius-pill);
+  background-clip: padding-box;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--text-muted);
+  background-color: var(--border-strong);
 }
 
 button {
   font-family: inherit;
   cursor: pointer;
   border: none;
-  outline: none;
   background: transparent;
   color: inherit;
 }
 
 input,
-textarea {
+textarea,
+select {
   font-family: inherit;
-  outline: none;
+  color: inherit;
+}
+
+input,
+textarea {
   border: none;
   background: transparent;
-  color: inherit;
+}
+
+/* Keyboard focus is always visible. Mouse clicks do not draw the ring (:focus-visible). */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+kbd {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  padding: 1px 5px;
+  border: 1px solid var(--border-strong);
+  border-bottom-width: 2px;
+  border-radius: var(--radius-xs);
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

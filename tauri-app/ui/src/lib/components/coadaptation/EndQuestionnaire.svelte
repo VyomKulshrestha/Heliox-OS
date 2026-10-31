@@ -241,7 +241,7 @@
 
   .scale button.selected,
   .pair button.selected {
-    color: white;
+    color: var(--on-accent);
     background: var(--accent);
     border-color: var(--accent);
   }
@@ -266,7 +266,7 @@
     padding: 6px 16px;
     font-size: 13px;
     font-weight: 600;
-    color: white;
+    color: var(--on-accent);
     background: var(--accent);
     border: none;
     border-radius: var(--radius-sm);

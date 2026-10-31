@@ -183,7 +183,7 @@
 
   .verify-btn:hover:not(:disabled) {
     background: var(--accent);
-    color: white;
+    color: var(--on-accent);
   }
 
   .verify-btn:disabled {

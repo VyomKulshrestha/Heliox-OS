@@ -437,6 +437,7 @@
   .toggle.active {
     background: var(--accent);
     border-color: var(--accent);
+    color: var(--on-accent);
   }
 
   .toggle-knob {
@@ -459,7 +460,7 @@
     padding: 5px 14px;
     font-size: 12px;
     font-weight: 600;
-    color: white;
+    color: var(--on-accent);
     background: var(--accent);
     border-radius: var(--radius-sm);
   }

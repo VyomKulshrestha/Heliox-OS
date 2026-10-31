@@ -192,7 +192,7 @@
     margin-top: 16px;
   }
   .preview-actions .approve {
-    color: white;
+    color: var(--on-accent);
     background: var(--accent);
     border-color: var(--accent);
   }

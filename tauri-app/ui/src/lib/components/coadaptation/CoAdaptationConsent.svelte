@@ -365,7 +365,7 @@
 
   .primary {
     font-weight: 600;
-    color: white;
+    color: var(--on-accent);
     background: var(--accent);
     border: 1px solid var(--accent);
   }

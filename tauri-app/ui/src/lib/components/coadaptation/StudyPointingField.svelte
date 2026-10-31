@@ -1170,6 +1170,7 @@
   .candidate.cued {
     background: var(--accent);
     border-color: var(--accent-hover);
+    color: var(--on-accent);
   }
 
   .candidate.expanded {

@@ -2824,6 +2824,7 @@
   .toggle.active {
     background: var(--accent);
     border-color: var(--accent);
+    color: var(--on-accent);
   }
 
   .toggle-knob {
@@ -2864,7 +2865,7 @@
 
   .btn-group button.active {
     background: var(--accent);
-    color: white;
+    color: var(--on-accent);
   }
 
   .input-sm {
@@ -2968,7 +2969,7 @@
     padding: 5px 14px;
     font-size: 12px;
     font-weight: 600;
-    color: white;
+    color: var(--on-accent);
     background: var(--accent);
     border-radius: var(--radius-sm);
     transition: all 0.15s;
@@ -2977,6 +2978,7 @@
 
   .btn-save:hover:not(:disabled) {
     background: var(--accent-hover);
+    color: var(--on-accent);
   }
 
   .btn-save:disabled {

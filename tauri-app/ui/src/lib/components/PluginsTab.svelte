@@ -590,7 +590,7 @@
   }
 
   .refresh-btn {
-    color: white;
+    color: var(--on-accent);
     background: var(--accent);
   }
 
@@ -604,11 +604,12 @@
   .btn-create:hover,
   .btn-guide:hover {
     background: var(--accent);
-    color: white;
+    color: var(--on-accent);
   }
 
   .refresh-btn:hover:not(:disabled) {
     background: var(--accent-hover);
+    color: var(--on-accent);
   }
 
   .refresh-btn:disabled {
@@ -905,7 +906,7 @@
     padding: 8px;
     font-size: 13px;
     font-weight: 600;
-    color: white;
+    color: var(--on-accent);
     background: var(--accent);
     border-radius: var(--radius-sm);
     cursor: pointer;
@@ -915,6 +916,7 @@
 
   .btn-submit:hover:not(:disabled) {
     background: var(--accent-hover);
+    color: var(--on-accent);
   }
 
   .btn-submit:disabled {
@@ -1235,11 +1237,12 @@
 
   .btn-install {
     background: var(--accent);
-    color: white;
+    color: var(--on-accent);
   }
 
   .btn-install:hover:not(:disabled) {
     background: var(--accent-hover);
+    color: var(--on-accent);
   }
 
   .btn-uninstall {

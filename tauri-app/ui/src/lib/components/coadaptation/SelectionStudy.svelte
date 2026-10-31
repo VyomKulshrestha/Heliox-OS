@@ -1844,7 +1844,7 @@
 
   button.primary {
     font-weight: 600;
-    color: white;
+    color: var(--on-accent);
     background: var(--accent);
     border-color: var(--accent);
   }

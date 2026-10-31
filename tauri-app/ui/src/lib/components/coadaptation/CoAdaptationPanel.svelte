@@ -759,6 +759,7 @@
   .toggle.active {
     background: var(--accent);
     border-color: var(--accent);
+    color: var(--on-accent);
   }
 
   .toggle:disabled {
@@ -805,7 +806,7 @@
     padding: 5px 14px;
     font-size: 12px;
     font-weight: 600;
-    color: white;
+    color: var(--on-accent);
     white-space: nowrap;
     background: var(--accent);
     border: 1px solid var(--accent);

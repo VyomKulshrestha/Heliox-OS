@@ -180,7 +180,6 @@ vi.mock("./lib/components/AmbientHUD.svelte", () => harness.stubModule("AmbientH
 vi.mock("./lib/components/ArcReactor.svelte", () => harness.stubModule("ArcReactor"));
 vi.mock("./lib/components/NeuralBackground.svelte", () => harness.stubModule("NeuralBackground"));
 vi.mock("./lib/components/ParticleBurst.svelte", () => harness.stubModule("ParticleBurst"));
-vi.mock("./lib/components/ExecutionGraph.svelte", () => harness.stubModule("ExecutionGraph"));
 vi.mock("./lib/components/AgentRunCard.svelte", () => harness.stubModule("AgentRunCard"));
 vi.mock("./lib/components/VirtualList.svelte", () => harness.stubModule("VirtualList"));
 vi.mock("./lib/components/PluginsTab.svelte", () => harness.stubModule("PluginsTab"));

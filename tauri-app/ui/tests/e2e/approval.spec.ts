@@ -149,7 +149,7 @@ test("one UI approval produces exactly one same-WebSocket local navigation", asy
     });
     await page.goto("/");
     await expect(page.locator(".window")).toBeVisible();
-    await page.locator(".command-input input").fill("Open the controlled Antler approval page");
+    await page.locator(".command-input textarea").fill("Open the controlled Antler approval page");
     await page.locator(".command-input").press("Enter");
 
     const dialog = page.locator(".confirm-dialog");

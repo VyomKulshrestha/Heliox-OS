@@ -97,7 +97,7 @@
     padding: 8px 20px;
     font-size: 13px;
     font-weight: 600;
-    color: white;
+    color: var(--on-accent);
     background: var(--accent);
     border-radius: var(--radius-sm);
     transition: background 0.15s;
