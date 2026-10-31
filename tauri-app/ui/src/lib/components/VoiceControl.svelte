@@ -533,13 +533,13 @@
     position: absolute;
     inset: -4px;
     border-radius: 50%;
-    border: 2px solid rgba(0, 200, 255, calc(var(--intensity, 0) * 0.6));
+    border: 2px solid color-mix(in srgb, var(--accent) calc(var(--intensity, 0) * 60%), transparent);
     animation: pulse-expand 1s ease-out infinite;
     pointer-events: none;
   }
 
   .voice-btn.listening .pulse-ring {
-    border-color: rgba(255, 60, 60, calc(var(--intensity, 0) * 0.8));
+    border-color: color-mix(in srgb, var(--danger) calc(var(--intensity, 0) * 80%), transparent);
   }
 
   @keyframes pulse-expand {
@@ -556,10 +556,8 @@
   @keyframes breathe {
     0%,
     100% {
-      box-shadow: 0 0 8px rgba(255, 60, 60, 0.3);
     }
     50% {
-      box-shadow: 0 0 20px rgba(255, 60, 60, 0.6);
     }
   }
 
@@ -600,10 +598,8 @@
   @keyframes gentle-glow {
     0%,
     100% {
-      box-shadow: 0 0 8px rgba(0, 255, 136, 0.1);
     }
     50% {
-      box-shadow: 0 0 16px rgba(0, 255, 136, 0.25);
     }
   }
 
@@ -629,8 +625,8 @@
     width: 32px;
     height: 32px;
     border-radius: 50%;
-    border: 1px solid rgba(0, 200, 255, 0.3);
-    background: rgba(0, 200, 255, 0.08);
+    border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
     cursor: pointer;
     flex-shrink: 0;
   }
@@ -645,7 +641,7 @@
   .bar {
     display: block;
     width: 2px;
-    background: rgba(0, 200, 255, 0.8);
+    background: color-mix(in srgb, var(--accent) 80%, transparent);
     border-radius: 1px;
     animation: speak-bar 0.6s ease-in-out infinite;
   }
@@ -687,8 +683,8 @@
     bottom: calc(100% + 8px);
     left: 50%;
     transform: translateX(-50%);
-    background: rgba(10, 12, 20, 0.95);
-    border: 1px solid rgba(0, 200, 255, 0.2);
+    background: var(--bg-primary);
+    border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
     border-radius: 8px;
     padding: 8px 14px;
     font-size: 12px;
@@ -699,17 +695,17 @@
   }
 
   .transcript-preview .final {
-    color: rgba(255, 255, 255, 0.9);
+    color: var(--text-primary);
   }
 
   .transcript-preview .interim {
-    color: rgba(0, 200, 255, 0.6);
+    color: var(--accent);
     font-style: italic;
   }
 
   .voice-error {
     font-size: 10px;
-    color: rgba(255, 80, 80, 0.8);
+    color: var(--danger);
     max-width: 160px;
     text-align: center;
   }

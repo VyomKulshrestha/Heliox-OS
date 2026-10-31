@@ -187,6 +187,5 @@
   .audio-viz {
     width: 80px;
     height: 80px;
-    filter: drop-shadow(0 0 10px rgba(0, 200, 255, 0.2));
   }
 </style>

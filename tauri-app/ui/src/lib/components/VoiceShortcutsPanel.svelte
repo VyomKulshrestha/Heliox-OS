@@ -119,8 +119,8 @@
   .message {
     padding: 10px 20px;
     border-top: 1px solid var(--border);
-    color: #ff8b94;
-    background: rgba(255, 70, 85, 0.08);
+    color: var(--danger);
+    background: color-mix(in srgb, var(--danger) 8%, transparent);
     font-size: 11px;
   }
   .form {

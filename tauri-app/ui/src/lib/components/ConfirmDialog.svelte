@@ -378,7 +378,7 @@
     font-weight: 600;
     padding: 1px 6px;
     border-radius: 10px;
-    background: rgba(251, 191, 36, 0.1);
+    background: color-mix(in srgb, var(--warning) 10%, transparent);
     color: var(--warning);
   }
 
@@ -388,7 +388,7 @@
     padding: 1px 6px;
     border-radius: 10px;
     background: var(--danger);
-    color: white;
+    color: var(--text-primary);
   }
 
   .undo-tag {
@@ -401,8 +401,8 @@
   }
 
   .undo-tag.can-undo {
-    background: rgba(52, 211, 153, 0.12);
-    color: var(--success, #34d399);
+    background: color-mix(in srgb, var(--success) 12%, transparent);
+    color: var(--success);
   }
 
   .confirm-checkbox {
@@ -441,8 +441,8 @@
     margin: 0 0 14px;
     padding: 10px 12px;
     color: var(--warning);
-    background: rgba(251, 191, 36, 0.08);
-    border: 1px solid rgba(251, 191, 36, 0.35);
+    background: color-mix(in srgb, var(--warning) 8%, transparent);
+    border: 1px solid color-mix(in srgb, var(--warning) 35%, transparent);
     border-radius: var(--radius-sm);
     font-size: 12px;
     line-height: 1.4;

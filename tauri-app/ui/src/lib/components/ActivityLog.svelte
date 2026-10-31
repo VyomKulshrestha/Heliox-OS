@@ -214,12 +214,12 @@
   }
 
   .entry-status.success {
-    background: rgba(74, 222, 128, 0.1);
+    background: color-mix(in srgb, var(--success) 10%, transparent);
     color: var(--success);
   }
 
   .entry-status.unverified {
-    background: rgba(245, 158, 11, 0.12);
+    background: color-mix(in srgb, var(--warning) 12%, transparent);
     color: var(--warning);
   }
 
@@ -254,8 +254,8 @@
     transition: background 0.15s;
   }
   .open-logs-btn:hover {
-    background: var(--accent, #38bdf8);
-    color: #000;
+    background: var(--accent);
+    color: var(--on-accent);
   }
 
   .open-logs-btn {

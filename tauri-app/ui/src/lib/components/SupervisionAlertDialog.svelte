@@ -49,7 +49,7 @@
 
   .supervision-dialog {
     background: var(--bg-secondary);
-    border: 1px solid var(--warning, rgba(251, 191, 36, 0.5));
+    border: 1px solid var(--warning);
     border-radius: var(--radius-lg);
     padding: 24px;
     max-width: 480px;

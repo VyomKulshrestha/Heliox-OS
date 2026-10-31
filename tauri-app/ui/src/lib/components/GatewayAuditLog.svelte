@@ -262,7 +262,7 @@
   }
 
   .verify-banner.valid {
-    background: rgba(74, 222, 128, 0.1);
+    background: color-mix(in srgb, var(--success) 10%, transparent);
     color: var(--success);
   }
 
@@ -346,12 +346,12 @@
   }
 
   .decision-ok {
-    background: rgba(74, 222, 128, 0.1);
+    background: color-mix(in srgb, var(--success) 10%, transparent);
     color: var(--success);
   }
 
   .decision-partial {
-    background: rgba(251, 191, 36, 0.1);
+    background: color-mix(in srgb, var(--warning) 10%, transparent);
     color: var(--warning);
   }
 
@@ -376,7 +376,7 @@
     font-weight: 600;
     padding: 1px 6px;
     border-radius: 10px;
-    background: rgba(251, 191, 36, 0.1);
+    background: color-mix(in srgb, var(--warning) 10%, transparent);
     color: var(--warning);
   }
 

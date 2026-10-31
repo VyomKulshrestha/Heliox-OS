@@ -3062,7 +3062,7 @@
     padding: 10px 14px;
     font-size: 12px;
     line-height: 1.5;
-    border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+    border: 1px solid var(--border);
     background: var(--bg-secondary);
   }
 
@@ -3072,15 +3072,15 @@
   }
 
   .settings-banner-error {
-    color: #f87171;
-    border-color: rgba(248, 113, 113, 0.4);
-    background: rgba(248, 113, 113, 0.1);
+    color: var(--danger);
+    border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+    background: color-mix(in srgb, var(--danger) 10%, transparent);
   }
 
   .settings-banner-info {
-    color: #60a5fa;
-    border-color: rgba(96, 165, 250, 0.4);
-    background: rgba(96, 165, 250, 0.1);
+    color: var(--accent);
+    border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
   }
 
   /* Root Access Toast & Banner */
@@ -3093,15 +3093,15 @@
   }
 
   .root-toast-warning {
-    background: rgba(245, 158, 11, 0.12);
-    color: #f59e0b;
-    border-bottom: 1px solid rgba(245, 158, 11, 0.3);
+    background: color-mix(in srgb, var(--warning) 12%, transparent);
+    color: var(--warning);
+    border-bottom: 1px solid color-mix(in srgb, var(--warning) 30%, transparent);
   }
 
   .root-toast-success {
-    background: rgba(16, 185, 129, 0.12);
-    color: #10b981;
-    border-bottom: 1px solid rgba(16, 185, 129, 0.3);
+    background: color-mix(in srgb, var(--success) 12%, transparent);
+    color: var(--success);
+    border-bottom: 1px solid color-mix(in srgb, var(--success) 30%, transparent);
   }
 
   @keyframes toastSlide {
@@ -3120,19 +3120,19 @@
     padding: 10px 14px;
     font-size: 11px;
     line-height: 1.4;
-    color: var(--warning, #f59e0b);
-    background: rgba(245, 158, 11, 0.08);
+    color: var(--warning);
+    background: color-mix(in srgb, var(--warning) 8%, transparent);
     border-bottom: 1px solid var(--border);
   }
 
   .hotkey-status {
     margin-top: 3px;
     font-size: 11px;
-    color: var(--success, #10b981);
+    color: var(--success);
   }
 
   .hotkey-status.unsupported {
-    color: var(--warning, #f59e0b);
+    color: var(--warning);
   }
 
   .gaze-status-row {
@@ -3140,15 +3140,15 @@
     align-items: center;
     gap: 9px;
     padding: 10px 14px;
-    background: rgba(245, 158, 11, 0.06);
+    background: color-mix(in srgb, var(--warning) 6%, transparent);
   }
 
   .gaze-status-row.active {
-    background: rgba(16, 185, 129, 0.08);
+    background: color-mix(in srgb, var(--success) 8%, transparent);
   }
 
   .gaze-status-row.error {
-    background: rgba(239, 68, 68, 0.08);
+    background: color-mix(in srgb, var(--danger) 8%, transparent);
   }
 
   .gaze-status-dot {
@@ -3156,18 +3156,15 @@
     height: 8px;
     border-radius: 50%;
     flex-shrink: 0;
-    background: #f59e0b;
-    box-shadow: 0 0 8px rgba(245, 158, 11, 0.55);
+    background: var(--warning);
   }
 
   .gaze-status-row.active .gaze-status-dot {
-    background: #10b981;
-    box-shadow: 0 0 8px rgba(16, 185, 129, 0.6);
+    background: var(--success);
   }
 
   .gaze-status-row.error .gaze-status-dot {
-    background: #ef4444;
-    box-shadow: 0 0 8px rgba(239, 68, 68, 0.6);
+    background: var(--danger);
   }
 
   .gaze-status-copy {
@@ -3192,9 +3189,9 @@
   .gaze-open-command {
     flex-shrink: 0;
     padding: 6px 10px;
-    border: 1px solid rgba(180, 120, 255, 0.45);
+    border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
     border-radius: 6px;
-    background: rgba(180, 120, 255, 0.1);
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
     color: var(--text-primary);
     font-size: 10px;
     font-weight: 600;
@@ -3202,7 +3199,7 @@
   }
 
   .gaze-open-command:hover {
-    background: rgba(180, 120, 255, 0.18);
+    background: color-mix(in srgb, var(--accent) 18%, transparent);
   }
 
   .root-status-banner {
@@ -3210,7 +3207,7 @@
     align-items: center;
     gap: 10px;
     padding: 10px 14px;
-    background: rgba(245, 158, 11, 0.08);
+    background: color-mix(in srgb, var(--warning) 8%, transparent);
     border-bottom: 1px solid var(--border);
   }
 
@@ -3230,7 +3227,7 @@
   .root-status-title {
     font-size: 12px;
     font-weight: 600;
-    color: #f59e0b;
+    color: var(--warning);
   }
 
   .root-status-desc {
@@ -3250,36 +3247,36 @@
     align-items: center;
     gap: 10px;
     padding: 10px 14px;
-    background: rgba(239, 68, 68, 0.08);
-    border-bottom: 1px solid rgba(239, 68, 68, 0.22);
+    background: color-mix(in srgb, var(--danger) 8%, transparent);
+    border-bottom: 1px solid color-mix(in srgb, var(--danger) 22%, transparent);
   }
 
   .snapshot-status-title {
     font-size: 12px;
     font-weight: 600;
-    color: var(--danger, #ef4444);
+    color: var(--danger);
   }
 
   .elevation-button {
     flex-shrink: 0;
     padding: 7px 11px;
-    border: 1px solid rgba(245, 158, 11, 0.48);
+    border: 1px solid color-mix(in srgb, var(--warning) 48%, transparent);
     border-radius: 6px;
-    background: rgba(245, 158, 11, 0.12);
-    color: #f59e0b;
+    background: color-mix(in srgb, var(--warning) 12%, transparent);
+    color: var(--warning);
     font-size: 11px;
     font-weight: 700;
     cursor: pointer;
   }
 
   .elevation-button:hover:not(:disabled) {
-    background: rgba(245, 158, 11, 0.2);
+    background: color-mix(in srgb, var(--warning) 20%, transparent);
   }
 
   .elevation-button-danger {
-    border-color: rgba(239, 68, 68, 0.5);
-    background: rgba(239, 68, 68, 0.12);
-    color: var(--danger, #ef4444);
+    border-color: color-mix(in srgb, var(--danger) 50%, transparent);
+    background: color-mix(in srgb, var(--danger) 12%, transparent);
+    color: var(--danger);
   }
 
   .elevation-button:disabled {
@@ -3289,8 +3286,8 @@
 
   .elevation-message {
     padding: 8px 14px;
-    border-bottom: 1px solid rgba(245, 158, 11, 0.24);
-    background: rgba(245, 158, 11, 0.07);
+    border-bottom: 1px solid color-mix(in srgb, var(--warning) 24%, transparent);
+    background: color-mix(in srgb, var(--warning) 7%, transparent);
     color: var(--text-secondary);
     font-size: 11px;
   }
@@ -3300,14 +3297,14 @@
     align-items: center;
     gap: 10px;
     padding: 10px 14px;
-    background: rgba(16, 185, 129, 0.08);
-    border-bottom: 1px solid rgba(16, 185, 129, 0.22);
+    background: color-mix(in srgb, var(--success) 8%, transparent);
+    border-bottom: 1px solid color-mix(in srgb, var(--success) 22%, transparent);
   }
 
   .dry-run-status-title {
     font-size: 12px;
     font-weight: 600;
-    color: var(--success, #10b981);
+    color: var(--success);
   }
 
   .api-key-status {
@@ -3321,7 +3318,7 @@
     margin: 0;
     text-align: right;
     max-width: 520px;
-    color: var(--danger, #ef4444);
+    color: var(--danger);
     font-size: 11px;
     line-height: 1.4;
   }

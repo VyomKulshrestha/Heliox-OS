@@ -260,7 +260,7 @@
     transition: 0.2s ease;
   }
   .pin-btn.pinned {
-    background: rgba(255, 0, 0, 0.15);
+    background: color-mix(in srgb, var(--danger) 15%, transparent);
     color: var(--danger);
     border: 1px solid var(--danger);
   }
@@ -297,7 +297,7 @@
     color: var(--text-primary);
   }
   .action-btn:hover {
-    border-color: rgba(59, 130, 246, 0.5);
+    border-color: color-mix(in srgb, var(--accent) 50%, transparent);
     transform: translateY(-2px);
   }
   .icon {
@@ -340,7 +340,7 @@
   }
   path {
     fill: none;
-    stroke: #14f1c7;
+    stroke: var(--accent);
     stroke-width: 3;
     stroke-linecap: round;
     stroke-linejoin: round;

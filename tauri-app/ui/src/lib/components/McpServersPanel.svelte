@@ -129,8 +129,8 @@
     font-size: 11px;
   }
   .error {
-    color: #ff8b94;
-    background: rgba(255, 70, 85, 0.08);
+    color: var(--danger);
+    background: color-mix(in srgb, var(--danger) 8%, transparent);
   }
   .config-row {
     display: flex;
@@ -165,7 +165,7 @@
   }
   .server-error {
     margin-top: 4px;
-    color: #ff8b94;
+    color: var(--danger);
   }
   .status-badge {
     flex-shrink: 0;
@@ -176,8 +176,8 @@
     font: 700 10px/1 var(--font-mono);
   }
   .status-badge.online {
-    border-color: #18d6b0;
-    color: #18d6b0;
+    border-color: var(--accent);
+    color: var(--accent);
   }
   button.secondary {
     flex-shrink: 0;

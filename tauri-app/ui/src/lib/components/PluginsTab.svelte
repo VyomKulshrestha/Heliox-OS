@@ -559,18 +559,18 @@
   .local-badge {
     width: fit-content;
     padding: 3px 8px;
-    border: 1px solid rgba(74, 222, 128, 0.35);
+    border: 1px solid color-mix(in srgb, var(--success) 35%, transparent);
     border-radius: 999px;
-    color: var(--success, #4ade80);
-    background: rgba(74, 222, 128, 0.1);
+    color: var(--success);
+    background: color-mix(in srgb, var(--success) 10%, transparent);
     font-size: 10px;
     font-weight: 600;
   }
 
   .catalog-source.offline {
-    color: #f59e0b;
-    border-color: rgba(245, 158, 11, 0.35);
-    background: rgba(245, 158, 11, 0.1);
+    color: var(--warning);
+    border-color: color-mix(in srgb, var(--warning) 35%, transparent);
+    background: color-mix(in srgb, var(--warning) 10%, transparent);
   }
 
   h2 {
@@ -597,7 +597,7 @@
   .btn-create,
   .btn-guide {
     color: var(--accent);
-    background: var(--accent-muted, rgba(99, 102, 241, 0.12));
+    background: var(--accent-muted);
     border: 1px solid var(--accent);
   }
 
@@ -619,9 +619,9 @@
 
   .error-message {
     padding: 10px 14px;
-    background: var(--danger-bg, rgba(239, 68, 68, 0.1));
-    color: var(--danger, #ef4444);
-    border: 1px solid var(--danger, #ef4444);
+    background: var(--danger-bg);
+    color: var(--danger);
+    border: 1px solid var(--danger);
     border-radius: var(--radius-md);
     margin-bottom: 16px;
     font-size: 13px;
@@ -632,7 +632,7 @@
 
   .dismiss-btn {
     background: none;
-    color: var(--danger, #ef4444);
+    color: var(--danger);
     font-size: 14px;
     cursor: pointer;
     padding: 0 4px;
@@ -650,19 +650,19 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    border: 1px solid rgba(74, 222, 128, 0.4);
-    color: var(--success, #4ade80);
-    background: rgba(74, 222, 128, 0.08);
+    border: 1px solid color-mix(in srgb, var(--success) 40%, transparent);
+    color: var(--success);
+    background: color-mix(in srgb, var(--success) 8%, transparent);
   }
 
   .notice-dismiss {
-    color: var(--success, #4ade80);
+    color: var(--success);
   }
 
   .catalog-warning {
-    border: 1px solid rgba(245, 158, 11, 0.35);
-    color: #f59e0b;
-    background: rgba(245, 158, 11, 0.08);
+    border: 1px solid color-mix(in srgb, var(--warning) 35%, transparent);
+    color: var(--warning);
+    background: color-mix(in srgb, var(--warning) 8%, transparent);
   }
 
   .publishing-guide {
@@ -702,7 +702,7 @@
   }
 
   .publishing-guide .release-note {
-    color: var(--success, #4ade80);
+    color: var(--success);
     font-weight: 600;
   }
 
@@ -856,7 +856,7 @@
 
   .tool-remove {
     background: none;
-    color: var(--danger, #ef4444);
+    color: var(--danger);
     font-size: 12px;
     cursor: pointer;
     padding: 0 4px;
@@ -896,7 +896,7 @@
     font-size: 11px;
     font-weight: 600;
     color: var(--accent);
-    background: var(--accent-muted, rgba(99, 102, 241, 0.12));
+    background: var(--accent-muted);
     border-radius: var(--radius-sm);
     cursor: pointer;
   }
@@ -940,8 +940,8 @@
   }
 
   .plugin-card.installed {
-    border-color: var(--success, #4ade80);
-    background: rgba(74, 222, 128, 0.05);
+    border-color: var(--success);
+    background: color-mix(in srgb, var(--success) 5%, transparent);
   }
 
   .plugin-header {
@@ -979,13 +979,13 @@
     font-weight: 600;
     padding: 3px 10px;
     border-radius: 20px;
-    background: var(--accent-muted, rgba(99, 102, 241, 0.12));
+    background: var(--accent-muted);
     color: var(--accent);
   }
 
   .status-badge.installed {
-    background: rgba(74, 222, 128, 0.15);
-    color: var(--success, #4ade80);
+    background: color-mix(in srgb, var(--success) 15%, transparent);
+    color: var(--success);
   }
 
   .description {
@@ -998,14 +998,14 @@
   .capability-panel {
     margin: 0 0 12px;
     padding: 10px;
-    border: 1px solid rgba(56, 189, 248, 0.25);
+    border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
     border-radius: var(--radius-sm);
-    background: rgba(56, 189, 248, 0.05);
+    background: color-mix(in srgb, var(--accent) 5%, transparent);
   }
 
   .capability-panel.destructive {
-    border-color: rgba(245, 158, 11, 0.4);
-    background: rgba(245, 158, 11, 0.06);
+    border-color: color-mix(in srgb, var(--warning) 40%, transparent);
+    background: color-mix(in srgb, var(--warning) 6%, transparent);
   }
 
   .capability-heading {
@@ -1023,14 +1023,14 @@
   .isolation-badge {
     padding: 2px 7px;
     border-radius: 999px;
-    color: #38bdf8;
-    background: rgba(56, 189, 248, 0.12);
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
     font-size: 9px;
   }
 
   .destructive .isolation-badge {
-    color: #f59e0b;
-    background: rgba(245, 158, 11, 0.12);
+    color: var(--warning);
+    background: color-mix(in srgb, var(--warning) 12%, transparent);
   }
 
   .capability-list {
@@ -1047,7 +1047,7 @@
 
   .approval-note {
     margin: 7px 0 0;
-    color: #f59e0b;
+    color: var(--warning);
     font-size: 10px;
     line-height: 1.4;
   }
@@ -1092,7 +1092,7 @@
   }
 
   .tool-tag.clickable:hover {
-    background: var(--accent-muted, rgba(99, 102, 241, 0.12));
+    background: var(--accent-muted);
     border-color: var(--accent);
     color: var(--accent);
   }
@@ -1172,8 +1172,8 @@
     padding: 6px 16px;
     font-size: 12px;
     font-weight: 600;
-    color: white;
-    background: linear-gradient(135deg, var(--accent), #8b5cf6);
+    color: var(--text-primary);
+    background: linear-gradient(135deg, var(--accent), var(--accent));
     border-radius: var(--radius-sm);
     cursor: pointer;
     transition: all 0.15s;
@@ -1193,16 +1193,16 @@
   .tool-output {
     margin-top: 8px;
     padding: 10px;
-    background: rgba(16, 185, 129, 0.08);
-    border: 1px solid rgba(16, 185, 129, 0.25);
+    background: color-mix(in srgb, var(--success) 8%, transparent);
+    border: 1px solid color-mix(in srgb, var(--success) 25%, transparent);
     border-radius: var(--radius-sm);
     max-height: 200px;
     overflow-y: auto;
   }
 
   .tool-output.error-output {
-    background: rgba(239, 68, 68, 0.08);
-    border-color: rgba(239, 68, 68, 0.25);
+    background: color-mix(in srgb, var(--danger) 8%, transparent);
+    border-color: color-mix(in srgb, var(--danger) 25%, transparent);
   }
 
   .tool-output pre {
@@ -1215,7 +1215,7 @@
   }
 
   .error-output pre {
-    color: var(--danger, #ef4444);
+    color: var(--danger);
   }
 
   /* ── Action Buttons ── */
@@ -1252,9 +1252,9 @@
   }
 
   .btn-uninstall:hover:not(:disabled) {
-    background: var(--danger-bg, rgba(239, 68, 68, 0.1));
-    color: var(--danger, #ef4444);
-    border-color: var(--danger, #ef4444);
+    background: var(--danger-bg);
+    color: var(--danger);
+    border-color: var(--danger);
   }
 
   .btn-install:disabled,

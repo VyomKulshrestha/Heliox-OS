@@ -288,7 +288,7 @@
     gap: 16px;
     padding: 12px 20px;
     border-block: 1px solid var(--border);
-    background: color-mix(in srgb, #18d6b0 7%, transparent);
+    background: color-mix(in srgb, var(--accent) 7%, transparent);
     font-size: 11px;
   }
   .security-note span {
@@ -353,10 +353,10 @@
     padding: 0 20px 16px;
   }
   .message.ok {
-    color: var(--success, #10b981);
+    color: var(--success);
   }
   .message.error {
-    color: var(--danger, #ef4444);
+    color: var(--danger);
   }
   @media (max-width: 850px) {
     .fields {

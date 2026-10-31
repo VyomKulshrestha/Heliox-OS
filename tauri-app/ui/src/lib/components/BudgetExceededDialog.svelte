@@ -110,7 +110,7 @@
 
   .budget-dialog {
     background: var(--bg-secondary);
-    border: 1px solid var(--danger, rgba(255, 60, 60, 0.5));
+    border: 1px solid var(--danger);
     border-radius: var(--radius-lg);
     padding: 24px;
     max-width: 520px;
@@ -125,7 +125,7 @@
     font-size: 16px;
     font-weight: 600;
     margin-bottom: 10px;
-    color: var(--danger, #ff5050);
+    color: var(--danger);
   }
 
   .warn-icon {
@@ -202,13 +202,13 @@
     padding: 8px 20px;
     font-size: 13px;
     font-weight: 600;
-    color: white;
-    background: var(--danger, #d04040);
+    color: var(--text-primary);
+    background: var(--danger);
     border-radius: var(--radius-sm);
     transition: background 0.15s;
   }
 
   .btn-primary:hover {
-    background: var(--danger-hover, #b03030);
+    background: var(--danger-hover, var(--danger));
   }
 </style>

@@ -212,7 +212,7 @@
     font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
     font-size: 13px;
     line-height: 1.6;
-    color: var(--color-text, #e2e8f0);
+    color: var(--color-text, var(--text-primary));
   }
 
   .hlx-message--agent {
@@ -220,18 +220,18 @@
     padding-left: 10px;
   }
   .hlx-message--user {
-    border-left: 2px solid var(--color-muted, #64748b);
+    border-left: 2px solid var(--color-muted, var(--border-strong));
     padding-left: 10px;
   }
   .hlx-message--system {
-    border-left: 2px solid var(--color-warn, #f59e0b);
+    border-left: 2px solid var(--color-warn, var(--warning));
     padding-left: 10px;
     opacity: 0.75;
   }
 
   .hlx-timestamp {
     font-size: 10px;
-    color: var(--color-muted, #64748b);
+    color: var(--color-muted, var(--text-muted));
     letter-spacing: 0.04em;
   }
 
@@ -251,21 +251,21 @@
     color: var(--accent);
   }
   .hlx-content :global(em) {
-    color: var(--color-text-dim, #94a3b8);
+    color: var(--color-text-dim, var(--text-secondary));
   }
   .hlx-content :global(a) {
-    color: var(--color-link, #7dd3fc);
+    color: var(--color-link, var(--accent));
     text-decoration: underline;
   }
 
   /* Inline code */
   .hlx-content :global(:not(pre) > code) {
-    background: rgba(255, 255, 255, 0.07);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: var(--bg-hover);
+    border: 1px solid var(--border);
     border-radius: 3px;
     padding: 1px 5px;
     font-size: 12px;
-    color: var(--color-inline-code, #f472b6);
+    color: var(--color-inline-code, var(--accent));
     font-family: inherit;
   }
 
@@ -274,8 +274,8 @@
     margin: 6px 0;
     padding: 4px 12px;
     border-left: 3px solid var(--accent);
-    background: rgba(56, 189, 248, 0.06);
-    color: var(--color-text-dim, #94a3b8);
+    background: color-mix(in srgb, var(--accent) 6%, transparent);
+    color: var(--color-text-dim, var(--text-secondary));
     font-style: italic;
   }
 
@@ -288,12 +288,12 @@
   }
   .hlx-content :global(th),
   .hlx-content :global(td) {
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    border: 1px solid var(--border);
     padding: 5px 10px;
     text-align: left;
   }
   .hlx-content :global(th) {
-    background: rgba(255, 255, 255, 0.05);
+    background: var(--bg-tertiary);
     color: var(--accent);
     font-weight: 600;
   }
@@ -303,8 +303,8 @@
     margin: 10px 0;
     border-radius: 6px;
     overflow: hidden;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    background: #282c34; /* atom-one-dark base */
+    border: 1px solid var(--border);
+    background: var(--bg-tertiary); /* atom-one-dark base */
   }
 
   /* Header bar (lang badge + copy button) */
@@ -313,8 +313,8 @@
     align-items: center;
     justify-content: space-between;
     padding: 4px 10px;
-    background: rgba(0, 0, 0, 0.25);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    background: var(--bg-tertiary);
+    border-bottom: 1px solid var(--border);
     min-height: 28px;
   }
 
@@ -333,10 +333,10 @@
     align-items: center;
     gap: 5px;
     padding: 3px 8px;
-    background: rgba(255, 255, 255, 0.06);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: var(--bg-hover);
+    border: 1px solid var(--border);
     border-radius: 4px;
-    color: var(--color-text-dim, #94a3b8);
+    color: var(--color-text-dim, var(--text-secondary));
     font-size: 11px;
     font-family: inherit;
     cursor: pointer;
@@ -347,8 +347,8 @@
     line-height: 1;
   }
   .hlx-content :global(.hlx-copy-btn:hover) {
-    background: rgba(56, 189, 248, 0.12);
-    border-color: rgba(56, 189, 248, 0.3);
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    border-color: color-mix(in srgb, var(--accent) 30%, transparent);
     color: var(--accent);
   }
   .hlx-content :global(.hlx-copy-btn:active) {
@@ -366,7 +366,7 @@
 
     /* Custom scrollbar to match dark UI */
     scrollbar-width: thin;
-    scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+    scrollbar-color: var(--border-strong) transparent;
   }
   .hlx-content :global(.hlx-pre::-webkit-scrollbar) {
     height: 5px;
@@ -375,7 +375,7 @@
     background: transparent;
   }
   .hlx-content :global(.hlx-pre::-webkit-scrollbar-thumb) {
-    background: rgba(255, 255, 255, 0.15);
+    background: var(--bg-hover);
     border-radius: 3px;
   }
 

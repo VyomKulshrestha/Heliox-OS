@@ -40,7 +40,7 @@
     transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
     backdrop-filter: blur(8px);
     -webkit-backdrop-filter: blur(8px);
-    border: 1px solid rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--border);
     cursor: default;
     user-select: none;
     -webkit-app-region: no-drag;
@@ -48,39 +48,43 @@
 
   /* Online State - Sleek, success-themed glass pill */
   .connection-hub.online {
-    background: rgba(16, 185, 129, 0.15); /* Emerald 500 with low opacity */
-    color: #34d399; /* Emerald 400 */
-    border-color: rgba(52, 211, 153, 0.3);
-    box-shadow:
-      0 0 15px rgba(16, 185, 129, 0.2),
-      inset 0 0 8px rgba(52, 211, 153, 0.1);
+    background: color-mix(in srgb, var(--success) 15%, transparent); /* Emerald 500 with low opacity */
+    color: var(--success); /* Emerald 400 */
+    border-color: color-mix(in srgb, var(--success) 30%, transparent);
   }
 
   .connection-hub.online:hover {
-    background: rgba(16, 185, 129, 0.25);
-    box-shadow:
-      0 0 20px rgba(16, 185, 129, 0.3),
-      inset 0 0 10px rgba(52, 211, 153, 0.2);
+    background: color-mix(in srgb, var(--success) 25%, transparent);
   }
 
   /* Connecting State - Shimmering, fluid glowing gradient */
   .connection-hub.connecting,
   .connection-hub.reconnecting {
-    background: linear-gradient(90deg, rgba(59, 130, 246, 0.15), rgba(139, 92, 246, 0.15), rgba(59, 130, 246, 0.15));
+    background: linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--accent) 15%, transparent),
+      color-mix(in srgb, var(--accent) 15%, transparent),
+      color-mix(in srgb, var(--accent) 15%, transparent)
+    );
     background-size: 200% 100%;
-    color: #60a5fa; /* Blue 400 */
-    border-color: rgba(96, 165, 250, 0.3);
-    box-shadow: 0 0 15px rgba(59, 130, 246, 0.2);
+    color: var(--accent); /* Blue 400 */
+    border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+
     animation:
       gradient-pan 2s linear infinite,
       pulse-glow 2s ease-in-out infinite;
   }
 
   .connection-hub.reconnecting {
-    color: #fbbf24; /* Amber 400 */
-    border-color: rgba(251, 191, 36, 0.3);
-    box-shadow: 0 0 15px rgba(245, 158, 11, 0.2);
-    background: linear-gradient(90deg, rgba(245, 158, 11, 0.15), rgba(217, 119, 6, 0.15), rgba(245, 158, 11, 0.15));
+    color: var(--warning); /* Amber 400 */
+    border-color: color-mix(in srgb, var(--warning) 30%, transparent);
+
+    background: linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--warning) 15%, transparent),
+      color-mix(in srgb, var(--warning) 15%, transparent),
+      color-mix(in srgb, var(--warning) 15%, transparent)
+    );
     background-size: 200% 100%;
   }
 

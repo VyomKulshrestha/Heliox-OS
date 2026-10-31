@@ -209,7 +209,7 @@
     transition: 0.2s ease;
   }
   .pin-btn.pinned {
-    background: rgba(255, 0, 0, 0.15);
+    background: color-mix(in srgb, var(--danger) 15%, transparent);
     color: var(--danger);
     border: 1px solid var(--danger);
   }

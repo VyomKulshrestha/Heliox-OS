@@ -263,7 +263,7 @@
     gap: 16px;
     padding: 12px 20px;
     border-block: 1px solid var(--border);
-    background: color-mix(in srgb, #18d6b0 7%, transparent);
+    background: color-mix(in srgb, var(--accent) 7%, transparent);
     font-size: 11px;
   }
   .message {
@@ -272,12 +272,12 @@
     font-size: 11px;
   }
   .error {
-    color: #ff8b94;
-    background: rgba(255, 70, 85, 0.08);
+    color: var(--danger);
+    background: color-mix(in srgb, var(--danger) 8%, transparent);
   }
   .notice {
-    color: #8ee8d5;
-    background: rgba(24, 214, 176, 0.06);
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 6%, transparent);
   }
   .runtime-row strong,
   .secret-copy small {
@@ -294,8 +294,8 @@
     font: 700 10px/1 var(--font-mono);
   }
   .status-badge.online {
-    border-color: #18d6b0;
-    color: #18d6b0;
+    border-color: var(--accent);
+    color: var(--accent);
   }
   .secret-row {
     align-items: flex-end;
@@ -342,7 +342,7 @@
   button.primary {
     border-color: var(--accent);
     background: var(--accent);
-    color: #090b12;
+    color: var(--on-accent);
     font-weight: 700;
   }
   button.secondary {

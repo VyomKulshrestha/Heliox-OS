@@ -146,9 +146,9 @@
   }
 
   function getStatusColor(percent: number): string {
-    if (percent > 85) return "rgba(255, 60, 60, 0.9)";
-    if (percent > 65) return "rgba(255, 180, 0, 0.9)";
-    return "rgba(0, 255, 136, 0.9)";
+    if (percent > 85) return "var(--danger)";
+    if (percent > 65) return "var(--warning)";
+    return "var(--success)";
   }
 
   $effect(() => {
@@ -260,9 +260,9 @@
     width: 32px;
     height: 32px;
     border-radius: 8px;
-    border: 1px solid rgba(0, 200, 255, 0.2);
-    background: rgba(0, 200, 255, 0.04);
-    color: rgba(0, 200, 255, 0.6);
+    border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
+    background: color-mix(in srgb, var(--accent) 4%, transparent);
+    color: var(--accent);
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -271,15 +271,15 @@
   }
 
   .hud-toggle:hover {
-    border-color: rgba(0, 200, 255, 0.5);
-    color: rgba(0, 200, 255, 1);
-    background: rgba(0, 200, 255, 0.1);
+    border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
   }
 
   .ambient-hud.expanded .hud-toggle {
-    border-color: rgba(0, 200, 255, 0.5);
-    color: rgba(0, 200, 255, 0.9);
-    background: rgba(0, 200, 255, 0.12);
+    border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
   }
 
   .hud-panel {
@@ -287,15 +287,12 @@
     top: 50px;
     right: 8px;
     width: 260px;
-    background: rgba(6, 8, 16, 0.95);
-    border: 1px solid rgba(0, 200, 255, 0.15);
+    background: var(--bg-primary);
+    border: 1px solid color-mix(in srgb, var(--accent) 15%, transparent);
     border-radius: 12px;
     padding: 14px;
     backdrop-filter: blur(16px);
-    box-shadow:
-      0 0 40px rgba(0, 200, 255, 0.06),
-      0 8px 32px rgba(0, 0, 0, 0.5),
-      inset 0 0 60px rgba(0, 200, 255, 0.02);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
     z-index: 500;
     animation: hudSlideIn 0.3s ease;
     font-family: "Inter", "JetBrains Mono", monospace;
@@ -325,15 +322,15 @@
     font-size: 11px;
     font-weight: 700;
     letter-spacing: 2px;
-    color: rgba(0, 200, 255, 0.9);
+    color: var(--accent);
   }
 
   .heliox-dot {
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: rgba(0, 255, 136, 0.9);
-    box-shadow: 0 0 8px rgba(0, 255, 136, 0.5);
+    background: color-mix(in srgb, var(--success) 90%, transparent);
+
     animation: dot-pulse 2s ease-in-out infinite;
   }
 
@@ -350,14 +347,14 @@
   .hud-time {
     font-size: 13px;
     font-weight: 600;
-    color: rgba(255, 255, 255, 0.7);
+    color: var(--text-secondary);
     font-variant-numeric: tabular-nums;
     letter-spacing: 1px;
   }
 
   .hud-divider {
     height: 1px;
-    background: linear-gradient(90deg, transparent, rgba(0, 200, 255, 0.2), transparent);
+    background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--accent) 20%, transparent), transparent);
     margin: 10px 0;
   }
 
@@ -375,13 +372,13 @@
     font-size: 9px;
     font-weight: 600;
     letter-spacing: 1.5px;
-    color: rgba(200, 200, 220, 0.5);
+    color: var(--text-secondary);
   }
 
   .stat-value {
     font-size: 11px;
     font-weight: 600;
-    color: rgba(0, 200, 255, 0.9);
+    color: var(--accent);
     font-variant-numeric: tabular-nums;
   }
 
@@ -390,8 +387,8 @@
     height: 40px;
     border-radius: 6px;
     overflow: hidden;
-    background: rgba(0, 200, 255, 0.03);
-    border: 1px solid rgba(0, 200, 255, 0.08);
+    background: color-mix(in srgb, var(--accent) 3%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 8%, transparent);
   }
 
   .cpu-graph svg {
@@ -404,8 +401,8 @@
     position: relative;
     height: 14px;
     border-radius: 7px;
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.06);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
     overflow: hidden;
   }
 
@@ -426,7 +423,7 @@
     transform: translateY(-50%);
     font-size: 8px;
     font-weight: 700;
-    color: rgba(255, 255, 255, 0.7);
+    color: var(--text-secondary);
     letter-spacing: 0.5px;
   }
 
@@ -446,13 +443,13 @@
     font-size: 8px;
     font-weight: 600;
     letter-spacing: 1.5px;
-    color: rgba(200, 200, 220, 0.4);
+    color: var(--text-muted);
   }
 
   .footer-value {
     font-size: 12px;
     font-weight: 600;
-    color: rgba(255, 255, 255, 0.7);
+    color: var(--text-secondary);
     font-variant-numeric: tabular-nums;
   }
 </style>

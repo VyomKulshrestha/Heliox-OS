@@ -121,8 +121,8 @@
     flex-direction: column;
     gap: 10px;
     padding: 14px 16px;
-    border: 1px solid rgba(0, 200, 255, 0.18);
-    background: rgba(0, 200, 255, 0.04);
+    border: 1px solid color-mix(in srgb, var(--accent) 18%, transparent);
+    background: color-mix(in srgb, var(--accent) 4%, transparent);
     border-radius: 10px;
     backdrop-filter: blur(12px);
     font-family: "Inter", sans-serif;
@@ -134,22 +134,22 @@
   }
 
   .budget-meter.alerting {
-    border-color: rgba(255, 60, 60, 0.5);
-    background: rgba(255, 60, 60, 0.06);
+    border-color: color-mix(in srgb, var(--danger) 50%, transparent);
+    background: color-mix(in srgb, var(--danger) 6%, transparent);
   }
 
   .header {
     display: flex;
     align-items: center;
     gap: 6px;
-    color: rgba(0, 200, 255, 0.9);
+    color: var(--accent);
     font-size: 11px;
     letter-spacing: 0.6px;
     text-transform: uppercase;
   }
 
   .alerting .header {
-    color: rgba(255, 60, 60, 0.9);
+    color: var(--danger);
   }
 
   .icon {
@@ -166,8 +166,8 @@
     flex-direction: column;
     gap: 4px;
     padding: 10px 12px;
-    border: 1px solid rgba(255, 60, 60, 0.35);
-    background: rgba(255, 60, 60, 0.08);
+    border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
+    background: color-mix(in srgb, var(--danger) 8%, transparent);
     border-radius: 6px;
     transition: opacity 0.2s ease;
   }
@@ -184,26 +184,26 @@
   }
 
   .alert-type {
-    color: rgba(255, 90, 90, 1);
+    color: var(--danger);
     font-size: 12px;
     font-weight: 600;
   }
 
   .alert-message {
-    color: rgba(255, 220, 220, 0.85);
+    color: var(--text-primary);
     font-size: 11px;
     line-height: 1.4;
     margin: 0;
   }
 
   .alert-meta {
-    color: rgba(255, 220, 220, 0.5);
+    color: var(--text-secondary);
     font-size: 10px;
     margin: 0;
   }
 
   .alert-meta code {
-    background: rgba(255, 255, 255, 0.06);
+    background: var(--bg-hover);
     padding: 1px 4px;
     border-radius: 3px;
     font-family: monospace;
@@ -211,8 +211,8 @@
 
   .ack-btn {
     background: transparent;
-    border: 1px solid rgba(255, 60, 60, 0.4);
-    color: rgba(255, 220, 220, 0.9);
+    border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
+    color: var(--text-primary);
     width: 22px;
     height: 22px;
     border-radius: 4px;
@@ -224,14 +224,14 @@
   }
 
   .ack-btn:hover {
-    background: rgba(255, 60, 60, 0.2);
+    background: color-mix(in srgb, var(--danger) 20%, transparent);
   }
 
   .status-ok {
     display: flex;
     align-items: center;
     gap: 6px;
-    color: rgba(200, 200, 220, 0.6);
+    color: var(--text-secondary);
     font-size: 12px;
     padding: 4px 0;
   }
@@ -240,8 +240,7 @@
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: rgba(0, 255, 136, 0.7);
-    box-shadow: 0 0 6px rgba(0, 255, 136, 0.4);
+    background: color-mix(in srgb, var(--success) 70%, transparent);
   }
 
   .live-usage {
@@ -249,8 +248,8 @@
     flex-direction: column;
     gap: 4px;
     padding: 6px 8px;
-    background: rgba(0, 255, 136, 0.05);
-    border: 1px solid rgba(0, 255, 136, 0.18);
+    background: color-mix(in srgb, var(--success) 5%, transparent);
+    border: 1px solid color-mix(in srgb, var(--success) 18%, transparent);
     border-radius: 6px;
     margin-bottom: 2px;
   }
@@ -260,16 +259,16 @@
     font-weight: 700;
     letter-spacing: 1px;
     text-transform: uppercase;
-    color: rgba(0, 200, 255, 0.85);
+    color: var(--accent);
     margin-bottom: 2px;
   }
 
   .live-title {
-    color: rgba(0, 255, 136, 0.9);
+    color: var(--success);
   }
 
   .highlight {
-    color: rgba(0, 255, 136, 0.95);
+    color: var(--success);
     font-weight: 700;
   }
 
@@ -278,7 +277,7 @@
     flex-direction: column;
     gap: 4px;
     padding-top: 4px;
-    border-top: 1px solid rgba(0, 200, 255, 0.1);
+    border-top: 1px solid color-mix(in srgb, var(--accent) 10%, transparent);
   }
 
   .cap-row {
@@ -290,19 +289,19 @@
   }
 
   .cap-label {
-    color: rgba(200, 200, 220, 0.55);
+    color: var(--text-secondary);
   }
 
   .cap-value {
-    color: rgba(220, 230, 240, 0.95);
+    color: var(--text-primary);
     font-family: monospace;
   }
 
   .disabled-note {
     font-size: 10px;
-    color: rgba(255, 180, 80, 0.7);
+    color: var(--warning);
     font-style: italic;
     padding: 4px 0;
-    border-top: 1px dashed rgba(255, 180, 80, 0.2);
+    border-top: 1px dashed color-mix(in srgb, var(--warning) 20%, transparent);
   }
 </style>

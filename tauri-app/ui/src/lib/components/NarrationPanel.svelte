@@ -359,10 +359,10 @@
   .panel-error {
     margin: 10px 14px 0;
     padding: 8px 10px;
-    color: var(--danger, #ef4444);
+    color: var(--danger);
     font-size: 11px;
-    background: rgba(239, 68, 68, 0.08);
-    border: 1px solid rgba(239, 68, 68, 0.35);
+    background: color-mix(in srgb, var(--danger) 8%, transparent);
+    border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
     border-radius: var(--radius-sm);
   }
 

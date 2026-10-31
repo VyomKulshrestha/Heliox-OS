@@ -520,7 +520,7 @@
 
   .progress-step.done .step-num {
     background: var(--success);
-    color: white;
+    color: var(--text-primary);
     border-color: var(--success);
   }
 
@@ -778,7 +778,7 @@
   .finish-error {
     margin: 0 auto 0 0;
     max-width: 58%;
-    color: var(--danger, #ef4444);
+    color: var(--danger);
     font-size: 11px;
     line-height: 1.35;
   }

@@ -1199,7 +1199,7 @@
     width: 12px;
     height: 12px;
     background: var(--warning);
-    border: 2px solid white;
+    border: 2px solid var(--border-strong);
     border-radius: 50%;
     pointer-events: none;
     transform: translate(-50%, -50%);

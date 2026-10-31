@@ -42,13 +42,13 @@
   }
 
   .human-control-banner.holding {
-    background: rgba(234, 179, 8, 0.14);
-    border: 1px solid rgba(234, 179, 8, 0.5);
+    background: color-mix(in srgb, var(--warning) 14%, transparent);
+    border: 1px solid color-mix(in srgb, var(--warning) 50%, transparent);
   }
 
   .human-control-banner.working {
-    background: rgba(56, 189, 248, 0.1);
-    border: 1px solid rgba(56, 189, 248, 0.4);
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
   }
 
   .copy {
@@ -75,6 +75,6 @@
   .human-control-error {
     margin: 0 12px 6px;
     font-size: 12px;
-    color: #f87171;
+    color: var(--danger);
   }
 </style>

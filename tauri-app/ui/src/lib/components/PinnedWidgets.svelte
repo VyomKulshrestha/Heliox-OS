@@ -91,7 +91,7 @@
     position: absolute;
     top: 140px;
     right: 40px;
-    background: #111827;
+    background: var(--bg-secondary);
     border: 1px solid var(--border-strong);
     border-radius: 14px;
     padding: 10px;
@@ -118,7 +118,7 @@
     padding: 20px;
     border-radius: 22px;
     background: var(--bg-secondary);
-    border: 1px solid #1d2540;
+    border: 1px solid var(--border);
     margin-top: 20px;
   }
   .pinned-header {
@@ -193,7 +193,7 @@
     height: 92px;
     border-radius: 18px;
     border: 1px dashed var(--border-strong);
-    background: #101827;
+    background: var(--bg-secondary);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -205,7 +205,7 @@
   }
   .add-card:hover {
     border-color: var(--accent);
-    background: #131d34;
+    background: var(--bg-tertiary);
     color: var(--text-primary);
   }
   .plus {

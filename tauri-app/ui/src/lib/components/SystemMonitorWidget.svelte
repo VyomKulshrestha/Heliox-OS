@@ -218,7 +218,7 @@
     cursor: pointer;
   }
   .pin-btn.pinned {
-    background: rgba(255, 0, 0, 0.15);
+    background: color-mix(in srgb, var(--danger) 15%, transparent);
     color: var(--danger);
     border: 1px solid var(--danger);
   }
@@ -281,7 +281,7 @@
     gap: 14px;
     flex-wrap: wrap;
     margin-top: 10px;
-    color: #67e8f9;
+    color: var(--accent);
     font-size: 13px;
   }
   .network p {

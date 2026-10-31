@@ -183,22 +183,22 @@
 
 <style>
   .git-resolver-card {
-    background: var(--bg-secondary, #1e1e2e);
-    border: 1px solid var(--border, #313244);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
     border-radius: var(--radius-lg, 12px);
     margin: 16px 0;
     box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    color: var(--text-primary, #cdd6f4);
+    color: var(--text-primary);
     font-family: inherit;
   }
 
   .resolver-header {
-    background: linear-gradient(90deg, #313244 0%, #1e1e2e 100%);
+    background: linear-gradient(90deg, var(--bg-hover) 0%, var(--bg-tertiary) 100%);
     padding: 16px 20px;
-    border-bottom: 1px solid var(--border, #313244);
+    border-bottom: 1px solid var(--border);
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -210,20 +210,20 @@
     gap: 8px;
     font-weight: 700;
     font-size: 16px;
-    color: #f38ba8;
+    color: var(--danger);
   }
 
   .git-icon {
     font-family: monospace;
     font-weight: bold;
-    color: #f38ba8;
+    color: var(--danger);
   }
 
   .header-subtitle {
     font-size: 13px;
-    color: var(--text-secondary, #a6adc8);
+    color: var(--text-secondary);
     font-family: var(--font-mono, monospace);
-    background: rgba(0, 0, 0, 0.2);
+    background: var(--bg-tertiary);
     padding: 4px 10px;
     border-radius: 6px;
   }
@@ -238,8 +238,8 @@
   }
 
   .conflict-block {
-    border: 1px solid rgba(255, 255, 255, 0.05);
-    background: rgba(0, 0, 0, 0.15);
+    border: 1px solid var(--border);
+    background: var(--bg-tertiary);
     border-radius: 10px;
     padding: 16px;
     display: flex;
@@ -251,20 +251,20 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    border-bottom: 1px solid var(--border);
     padding-bottom: 8px;
   }
 
   .block-badge {
     font-size: 12px;
     font-weight: 600;
-    color: var(--accent, #cba6f7);
+    color: var(--accent);
     text-transform: uppercase;
   }
 
   .block-path {
     font-size: 12px;
-    color: var(--text-secondary, #a6adc8);
+    color: var(--text-secondary);
     font-family: var(--font-mono, monospace);
   }
 
@@ -281,10 +281,10 @@
   }
 
   .diff-pane {
-    background: rgba(0, 0, 0, 0.25);
+    background: var(--bg-tertiary);
     border-radius: 8px;
     overflow: hidden;
-    border: 1px solid rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--border);
   }
 
   .pane-header {
@@ -296,25 +296,25 @@
   }
 
   .pane-original {
-    border-left: 3px solid #f38ba8;
+    border-left: 3px solid var(--danger);
   }
   .pane-original .pane-header {
-    background: rgba(243, 139, 168, 0.1);
-    color: #f38ba8;
+    background: color-mix(in srgb, var(--danger) 10%, transparent);
+    color: var(--danger);
   }
   .pane-original .code-container {
-    background: rgba(243, 139, 168, 0.02);
+    background: color-mix(in srgb, var(--danger) 2%, transparent);
   }
 
   .pane-conflict {
-    border-left: 3px solid #89b4fa;
+    border-left: 3px solid var(--accent);
   }
   .pane-conflict .pane-header {
-    background: rgba(137, 180, 250, 0.1);
-    color: #89b4fa;
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    color: var(--accent);
   }
   .pane-conflict .code-container {
-    background: rgba(137, 180, 250, 0.02);
+    background: color-mix(in srgb, var(--accent) 2%, transparent);
   }
 
   .code-container {
@@ -330,20 +330,19 @@
   }
 
   .resolution-pane {
-    background: rgba(166, 227, 161, 0.03);
-    border: 1px solid rgba(166, 227, 161, 0.15);
+    background: color-mix(in srgb, var(--success) 3%, transparent);
+    border: 1px solid color-mix(in srgb, var(--success) 15%, transparent);
     border-radius: 8px;
     overflow: hidden;
-    box-shadow: 0 4px 20px rgba(166, 227, 161, 0.05);
   }
 
   .resolution-header-bar {
-    background: rgba(166, 227, 161, 0.08);
+    background: color-mix(in srgb, var(--success) 8%, transparent);
     display: flex;
     justify-content: space-between;
     align-items: center;
     padding: 8px 14px;
-    border-bottom: 1px solid rgba(166, 227, 161, 0.12);
+    border-bottom: 1px solid color-mix(in srgb, var(--success) 12%, transparent);
   }
 
   .resolution-title-group {
@@ -353,34 +352,34 @@
   }
 
   .ai-glow-star {
-    color: #a6e3a1;
+    color: var(--success);
     animation: pulse 2s infinite alternate;
   }
 
   .resolution-title {
     font-size: 12px;
     font-weight: 700;
-    color: #a6e3a1;
+    color: var(--success);
   }
 
   .ai-badge {
     font-size: 10px;
     font-weight: 800;
-    background: #a6e3a1;
-    color: #11111b;
+    background: var(--success);
+    color: var(--on-accent);
     padding: 2px 6px;
     border-radius: 4px;
   }
 
   .ai-code {
-    background: rgba(0, 0, 0, 0.3) !important;
+    background: var(--bg-tertiary) !important;
   }
 
   .selection-bar {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    background: rgba(255, 255, 255, 0.02);
+    background: var(--bg-tertiary);
     padding: 8px 12px;
     border-radius: 6px;
     margin-top: 4px;
@@ -391,7 +390,7 @@
   .selection-label {
     font-size: 12px;
     font-weight: 600;
-    color: var(--text-secondary, #a6adc8);
+    color: var(--text-secondary);
   }
 
   .option-picker {
@@ -404,46 +403,45 @@
     font-size: 11px;
     font-weight: 600;
     border-radius: 4px;
-    background: #313244;
+    background: var(--bg-hover);
     border: 1px solid transparent;
-    color: var(--text-secondary, #a6adc8);
+    color: var(--text-secondary);
     transition: all 0.15s ease;
   }
 
   .opt-btn:hover {
-    background: #45475a;
-    color: #cdd6f4;
+    background: var(--bg-hover);
+    color: var(--text-primary);
   }
 
   .opt-btn.active {
-    background: var(--accent, #cba6f7);
-    color: #11111b;
+    background: var(--accent);
+    color: var(--on-accent);
   }
 
   .opt-btn.active.opt-ai {
-    background: #a6e3a1;
-    color: #11111b;
-    box-shadow: 0 0 10px rgba(166, 227, 161, 0.2);
+    background: var(--success);
+    color: var(--on-accent);
   }
 
   .error-banner {
-    background: rgba(243, 139, 168, 0.1);
-    border: 1px solid rgba(243, 139, 168, 0.2);
+    background: color-mix(in srgb, var(--danger) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--danger) 20%, transparent);
     border-radius: 8px;
     padding: 12px;
     margin: 0 20px;
     font-size: 12px;
-    color: #f38ba8;
+    color: var(--danger);
   }
 
   .success-banner {
-    background: rgba(166, 227, 161, 0.1);
-    border: 1px solid rgba(166, 227, 161, 0.2);
+    background: color-mix(in srgb, var(--success) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--success) 20%, transparent);
     border-radius: 8px;
     padding: 12px;
     margin: 0 20px;
     font-size: 12px;
-    color: #a6e3a1;
+    color: var(--success);
     text-align: center;
   }
 
@@ -452,8 +450,8 @@
     justify-content: flex-end;
     gap: 10px;
     padding: 16px 20px;
-    background: #11111b;
-    border-top: 1px solid var(--border, #313244);
+    background: var(--bg-secondary);
+    border-top: 1px solid var(--border);
   }
 
   .btn-secondary {
@@ -461,14 +459,14 @@
     font-size: 13px;
     font-weight: 600;
     border-radius: var(--radius-sm, 6px);
-    background: #313244;
-    color: var(--text-secondary, #a6adc8);
+    background: var(--bg-hover);
+    color: var(--text-secondary);
     transition: all 0.15s ease;
   }
 
   .btn-secondary:hover {
-    background: #45475a;
-    color: #cdd6f4;
+    background: var(--bg-hover);
+    color: var(--text-primary);
   }
 
   .btn-primary {
@@ -476,15 +474,14 @@
     font-size: 13px;
     font-weight: 600;
     border-radius: var(--radius-sm, 6px);
-    background: #a6e3a1;
-    color: #11111b;
+    background: var(--success);
+    color: var(--on-accent);
     transition: all 0.15s ease;
   }
 
   .btn-primary:hover:not(:disabled) {
-    background: #94e2d5;
+    background: var(--accent);
     transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(166, 227, 161, 0.3);
   }
 
   .btn-primary:disabled {
@@ -495,11 +492,9 @@
   @keyframes pulse {
     0% {
       opacity: 0.7;
-      text-shadow: 0 0 2px rgba(166, 227, 161, 0.5);
     }
     100% {
       opacity: 1;
-      text-shadow: 0 0 10px rgba(166, 227, 161, 0.9);
     }
   }
 </style>

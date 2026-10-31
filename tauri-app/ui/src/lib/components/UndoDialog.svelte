@@ -205,7 +205,7 @@
 
   .undo-list code {
     font-size: 11px;
-    color: var(--text-muted, var(--text-secondary));
+    color: var(--text-muted);
     overflow-wrap: anywhere;
   }
 
@@ -237,7 +237,7 @@
   }
 
   .change .added {
-    color: var(--success, #34d399);
+    color: var(--success);
   }
 
   .change .removed {

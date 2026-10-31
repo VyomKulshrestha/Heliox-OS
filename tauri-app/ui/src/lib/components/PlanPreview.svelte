@@ -147,12 +147,12 @@
   }
 
   .tier-safe {
-    background: rgba(74, 222, 128, 0.1);
+    background: color-mix(in srgb, var(--success) 10%, transparent);
     color: var(--success);
   }
 
   .tier-destructive {
-    background: rgba(251, 191, 36, 0.1);
+    background: color-mix(in srgb, var(--warning) 10%, transparent);
     color: var(--warning);
   }
 

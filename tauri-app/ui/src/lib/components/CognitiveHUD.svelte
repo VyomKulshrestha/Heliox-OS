@@ -110,21 +110,21 @@
   });
 
   function getAttentionColor(val: number) {
-    if (val > 0.7) return "#00ff88";
-    if (val > 0.4) return "#00c8ff";
-    return "#888888";
+    if (val > 0.7) return "var(--success)";
+    if (val > 0.4) return "var(--accent)";
+    return "var(--text-muted)";
   }
 
   function getStressColor(val: number) {
-    if (val > 0.7) return "#ff3c3c";
-    if (val > 0.4) return "#ffb400";
-    return "#00ff88";
+    if (val > 0.7) return "var(--danger)";
+    if (val > 0.4) return "var(--warning)";
+    return "var(--success)";
   }
 
   function getLoadColor(val: number) {
-    if (val > 0.7) return "#7c3aed";
-    if (val > 0.4) return "#a78bfa";
-    return "#00c8ff";
+    if (val > 0.7) return "var(--warning)";
+    if (val > 0.4) return "var(--accent)";
+    return "var(--text-secondary)";
   }
 </script>
 
@@ -204,18 +204,15 @@
     position: relative;
     margin-top: 14px;
     padding: 12px;
-    background: rgba(10, 12, 24, 0.6);
-    border: 1px solid rgba(124, 58, 237, 0.2);
+    background: color-mix(in srgb, var(--bg-secondary) 88%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
     border-radius: 8px;
     overflow: hidden;
     transition: all 0.5s ease;
   }
 
   .cognitive-hud.active {
-    border-color: rgba(124, 58, 237, 0.5);
-    box-shadow:
-      0 0 20px rgba(124, 58, 237, 0.1),
-      inset 0 0 10px rgba(124, 58, 237, 0.05);
+    border-color: color-mix(in srgb, var(--accent) 50%, transparent);
   }
 
   .hud-header {
@@ -232,15 +229,15 @@
     font-size: 10px;
     font-weight: 700;
     letter-spacing: 1.5px;
-    color: rgba(255, 255, 255, 0.9);
+    color: var(--text-primary);
   }
 
   .cognitive-dot {
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: #7c3aed;
-    box-shadow: 0 0 8px #7c3aed;
+    background: var(--accent);
+
     animation: pulse 2s infinite;
   }
 
@@ -260,8 +257,8 @@
     font-size: 9px;
     font-weight: 700;
     padding: 2px 6px;
-    background: rgba(124, 58, 237, 0.15);
-    color: #a78bfa;
+    background: color-mix(in srgb, var(--accent) 15%, transparent);
+    color: var(--accent);
     border-radius: 4px;
     letter-spacing: 1px;
   }
@@ -276,8 +273,8 @@
     padding: 2px 6px;
     font-size: 8px;
     font-weight: 700;
-    color: rgba(0, 200, 255, 0.85);
-    background: rgba(0, 200, 255, 0.08);
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
     border-radius: 4px;
     letter-spacing: 0.7px;
   }
@@ -304,7 +301,7 @@
     font-size: 9px;
     font-weight: 600;
     letter-spacing: 1px;
-    color: rgba(200, 200, 220, 0.6);
+    color: var(--text-secondary);
   }
 
   .value {
@@ -315,7 +312,7 @@
 
   .bar-bg {
     height: 6px;
-    background: rgba(255, 255, 255, 0.05);
+    background: var(--bg-tertiary);
     border-radius: 3px;
     overflow: hidden;
   }
@@ -332,7 +329,7 @@
     margin-top: 9px;
     font-size: 8px;
     line-height: 1.35;
-    color: rgba(200, 200, 220, 0.48);
+    color: var(--text-muted);
   }
 
   .overlay {
@@ -341,7 +338,7 @@
     left: 0;
     right: 0;
     bottom: 0;
-    background: rgba(10, 12, 24, 0.8);
+    background: color-mix(in srgb, var(--bg-secondary) 94%, transparent);
     backdrop-filter: blur(2px);
     display: flex;
     align-items: center;
@@ -353,7 +350,7 @@
     font-size: 9px;
     font-weight: 700;
     letter-spacing: 2px;
-    color: rgba(124, 58, 237, 0.8);
+    color: var(--accent);
     animation: flash 1.5s infinite;
   }
 

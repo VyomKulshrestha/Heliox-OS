@@ -126,20 +126,20 @@
     white-space: nowrap;
   }
   .badge.connected {
-    background: rgba(0, 255, 170, 0.12);
+    background: color-mix(in srgb, var(--success) 12%, transparent);
     color: var(--success);
-    border: 1px solid rgba(0, 255, 170, 0.35);
+    border: 1px solid color-mix(in srgb, var(--success) 35%, transparent);
   }
   .badge.active {
-    background: rgba(0, 255, 170, 0.12);
+    background: color-mix(in srgb, var(--success) 12%, transparent);
     color: var(--success);
   }
   .badge.cpu {
-    background: rgba(0, 255, 170, 0.12);
+    background: color-mix(in srgb, var(--success) 12%, transparent);
     color: var(--success);
   }
   .badge.memory {
-    background: rgba(139, 92, 246, 0.14);
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
     color: var(--accent);
   }
   .network {

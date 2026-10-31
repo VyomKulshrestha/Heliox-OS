@@ -314,7 +314,7 @@
     gap: 16px;
     padding: 12px 20px;
     border-block: 1px solid var(--border);
-    background: color-mix(in srgb, #18d6b0 7%, transparent);
+    background: color-mix(in srgb, var(--accent) 7%, transparent);
     font-size: 11px;
   }
   .security-note span,
@@ -413,7 +413,7 @@
   button.primary {
     border-color: var(--accent);
     background: var(--accent);
-    color: #080914;
+    color: var(--on-accent);
   }
   button.secondary {
     background: var(--bg-primary);

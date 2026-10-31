@@ -256,10 +256,10 @@
   .panel-error {
     margin: 10px 14px 0;
     padding: 8px 10px;
-    color: var(--danger, #ef4444);
+    color: var(--danger);
     font-size: 11px;
-    background: rgba(239, 68, 68, 0.08);
-    border: 1px solid rgba(239, 68, 68, 0.35);
+    background: color-mix(in srgb, var(--danger) 8%, transparent);
+    border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
     border-radius: var(--radius-sm);
   }
 
@@ -334,16 +334,16 @@
   .supervision-hook-section {
     margin: 10px 14px 0;
     padding: 10px 12px;
-    border: 1px solid var(--warning, #f59e0b);
+    border: 1px solid var(--warning);
     border-radius: var(--radius-sm);
-    background: rgba(245, 158, 11, 0.06);
+    background: color-mix(in srgb, var(--warning) 6%, transparent);
   }
 
   .supervision-hook-warning {
     margin: 0 0 8px 0;
     font-size: 11px;
     line-height: 1.5;
-    color: var(--warning, #f59e0b);
+    color: var(--warning);
   }
 
   .hook-understood {
@@ -359,11 +359,11 @@
   .hook-status {
     margin: 8px 0 0 0;
     font-size: 11px;
-    color: var(--success, #22c55e);
+    color: var(--success);
   }
 
   .hook-status-bad {
-    color: var(--danger, #ef4444);
+    color: var(--danger);
   }
 
   .supervision-actions {

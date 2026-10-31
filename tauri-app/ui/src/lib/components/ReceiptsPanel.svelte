@@ -169,7 +169,7 @@
     line-height: 1.45;
   }
   small.bad {
-    color: #ff8b94;
+    color: var(--danger);
   }
   code {
     font-size: 10px;
@@ -188,8 +188,8 @@
     font-size: 11px;
   }
   .message {
-    color: #ff8b94;
-    background: rgba(255, 70, 85, 0.08);
+    color: var(--danger);
+    background: color-mix(in srgb, var(--danger) 8%, transparent);
   }
   .note {
     color: var(--text-secondary);

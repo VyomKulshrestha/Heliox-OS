@@ -187,6 +187,5 @@
   .arc-reactor {
     width: 28px;
     height: 28px;
-    filter: drop-shadow(0 0 6px rgba(0, 200, 255, 0.3));
   }
 </style>

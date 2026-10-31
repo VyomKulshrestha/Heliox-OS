@@ -87,7 +87,7 @@
     box-shadow: 0 0 18px color-mix(in srgb, var(--accent) 15%, transparent);
   }
   .handoff-control.holding {
-    border-color: #5ee6bb;
+    border-color: var(--success);
   }
   .handoff-main {
     display: flex;

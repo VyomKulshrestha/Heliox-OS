@@ -308,9 +308,9 @@
 
   .panel-error {
     padding: 8px 10px;
-    border: 1px solid rgba(248, 113, 113, 0.35);
+    border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
     border-radius: 6px;
-    background: rgba(248, 113, 113, 0.08);
+    background: color-mix(in srgb, var(--danger) 8%, transparent);
     color: var(--danger);
     font-size: 11px;
   }
@@ -450,7 +450,6 @@
 
   .monitor-dot.running {
     background: var(--success);
-    box-shadow: 0 0 6px rgba(74, 222, 128, 0.45);
   }
 
   .monitor-state {
@@ -508,12 +507,12 @@
   }
 
   .state-paused {
-    background: rgba(251, 191, 36, 0.1);
+    background: color-mix(in srgb, var(--warning) 10%, transparent);
     color: var(--warning);
   }
 
   .state-running {
-    background: rgba(74, 222, 128, 0.1);
+    background: color-mix(in srgb, var(--success) 10%, transparent);
     color: var(--success);
   }
 

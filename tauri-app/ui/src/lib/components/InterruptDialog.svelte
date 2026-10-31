@@ -103,7 +103,7 @@
 
   .interrupt-dialog {
     background: var(--bg-secondary);
-    border: 1px solid var(--warning, rgba(251, 191, 36, 0.5));
+    border: 1px solid var(--warning);
     border-radius: var(--radius-lg);
     padding: 24px;
     max-width: 480px;
@@ -121,7 +121,7 @@
     margin-bottom: 16px;
     border-radius: var(--radius-sm);
     overflow: hidden;
-    border: 1px solid var(--border, rgba(255, 255, 255, 0.1));
+    border: 1px solid var(--border);
   }
 
   .preview-screenshot {
@@ -132,8 +132,8 @@
 
   .preview-bbox {
     position: absolute;
-    border: 2px solid var(--accent, #7c3aed);
-    box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.3);
+    border: 2px solid var(--accent);
+
     border-radius: 2px;
     pointer-events: none;
   }

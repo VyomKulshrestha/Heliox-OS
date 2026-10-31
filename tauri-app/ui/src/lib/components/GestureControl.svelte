@@ -2247,9 +2247,9 @@
     width: 36px;
     height: 36px;
     border-radius: 50%;
-    border: 2px solid rgba(180, 120, 255, 0.3);
-    background: rgba(180, 120, 255, 0.06);
-    color: rgba(180, 120, 255, 0.7);
+    border: 2px solid color-mix(in srgb, var(--accent) 30%, transparent);
+    background: color-mix(in srgb, var(--accent) 6%, transparent);
+    color: var(--accent);
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -2259,35 +2259,32 @@
   }
 
   .gesture-btn:hover {
-    border-color: rgba(180, 120, 255, 0.6);
-    background: rgba(180, 120, 255, 0.12);
-    color: rgba(180, 120, 255, 1);
-    box-shadow: 0 0 15px rgba(180, 120, 255, 0.2);
+    border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    color: var(--accent);
   }
 
   .gesture-btn.active {
-    border-color: rgba(0, 255, 136, 0.6);
-    background: rgba(0, 255, 136, 0.1);
-    color: rgba(0, 255, 136, 0.9);
+    border-color: color-mix(in srgb, var(--success) 60%, transparent);
+    background: color-mix(in srgb, var(--success) 10%, transparent);
+    color: var(--success);
     animation: gesture-pulse 2s ease-in-out infinite;
   }
 
   @keyframes gesture-pulse {
     0%,
     100% {
-      box-shadow: 0 0 8px rgba(0, 255, 136, 0.15);
     }
     50% {
-      box-shadow: 0 0 20px rgba(0, 255, 136, 0.3);
     }
   }
 
   .cursor-mode-btn {
     padding: 4px 10px;
     border-radius: 12px;
-    border: 1px solid rgba(255, 120, 60, 0.35);
-    background: rgba(255, 120, 60, 0.08);
-    color: rgba(255, 150, 90, 0.9);
+    border: 1px solid color-mix(in srgb, var(--warning) 35%, transparent);
+    background: color-mix(in srgb, var(--warning) 8%, transparent);
+    color: var(--warning);
     font-size: 11px;
     font-weight: 600;
     cursor: pointer;
@@ -2297,27 +2294,27 @@
   }
 
   .cursor-mode-btn:hover {
-    border-color: rgba(255, 120, 60, 0.6);
-    background: rgba(255, 120, 60, 0.15);
+    border-color: color-mix(in srgb, var(--warning) 60%, transparent);
+    background: color-mix(in srgb, var(--warning) 15%, transparent);
   }
 
   .cursor-mode-btn.active {
-    border-color: rgba(255, 60, 60, 0.7);
-    background: rgba(255, 60, 60, 0.18);
-    color: rgba(255, 200, 200, 1);
+    border-color: color-mix(in srgb, var(--danger) 70%, transparent);
+    background: color-mix(in srgb, var(--danger) 18%, transparent);
+    color: var(--text-primary);
     animation: gesture-pulse 2s ease-in-out infinite;
   }
 
   .cursor-mode-btn.active.waiting {
-    border-color: rgba(245, 158, 11, 0.75);
-    background: rgba(245, 158, 11, 0.14);
-    color: rgba(255, 220, 150, 1);
+    border-color: color-mix(in srgb, var(--warning) 75%, transparent);
+    background: color-mix(in srgb, var(--warning) 14%, transparent);
+    color: var(--warning);
   }
 
   .cursor-mode-btn.active.error {
-    border-color: rgba(255, 70, 80, 0.85);
-    background: rgba(180, 35, 45, 0.22);
-    color: rgba(255, 180, 185, 1);
+    border-color: color-mix(in srgb, var(--danger) 85%, transparent);
+    background: color-mix(in srgb, var(--danger) 22%, transparent);
+    color: var(--text-primary);
     animation: none;
   }
 
@@ -2334,7 +2331,7 @@
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: rgba(255, 200, 0, 0.8);
+    background: color-mix(in srgb, var(--warning) 80%, transparent);
     animation: blink 0.8s infinite;
   }
 
@@ -2354,9 +2351,9 @@
     gap: 5px;
     padding: 4px 9px;
     border-radius: 12px;
-    border: 1px solid rgba(180, 120, 255, 0.35);
-    background: rgba(180, 120, 255, 0.08);
-    color: rgba(220, 200, 255, 0.9);
+    border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
+    color: var(--text-primary);
     font-size: 10px;
     font-weight: 600;
     white-space: nowrap;
@@ -2369,19 +2366,19 @@
   }
 
   .gaze-runtime-chip.active {
-    border-color: rgba(0, 255, 136, 0.5);
-    background: rgba(0, 255, 136, 0.1);
-    color: rgba(130, 255, 195, 0.95);
+    border-color: color-mix(in srgb, var(--success) 50%, transparent);
+    background: color-mix(in srgb, var(--success) 10%, transparent);
+    color: var(--success);
   }
 
   .gaze-runtime-chip.scanning {
-    border-color: rgba(245, 158, 11, 0.5);
-    color: rgba(255, 205, 110, 0.95);
+    border-color: color-mix(in srgb, var(--warning) 50%, transparent);
+    color: var(--warning);
   }
 
   .gaze-runtime-chip.error {
-    border-color: rgba(255, 80, 80, 0.55);
-    color: rgba(255, 135, 135, 0.95);
+    border-color: color-mix(in srgb, var(--danger) 55%, transparent);
+    color: var(--danger);
   }
 
   .gaze-runtime-dot {
@@ -2398,24 +2395,24 @@
     gap: 5px;
     padding: 4px 9px;
     border-radius: 12px;
-    border: 1px solid rgba(245, 158, 11, 0.45);
-    background: rgba(245, 158, 11, 0.08);
-    color: rgba(255, 205, 110, 0.95);
+    border: 1px solid color-mix(in srgb, var(--warning) 45%, transparent);
+    background: color-mix(in srgb, var(--warning) 8%, transparent);
+    color: var(--warning);
     font-size: 10px;
     font-weight: 600;
     white-space: nowrap;
   }
 
   .spatial-status.active {
-    border-color: rgba(0, 255, 136, 0.5);
-    background: rgba(0, 255, 136, 0.1);
-    color: rgba(130, 255, 195, 0.95);
+    border-color: color-mix(in srgb, var(--success) 50%, transparent);
+    background: color-mix(in srgb, var(--success) 10%, transparent);
+    color: var(--success);
   }
 
   .spatial-status.fallback {
-    border-color: rgba(160, 170, 190, 0.35);
-    background: rgba(160, 170, 190, 0.07);
-    color: rgba(190, 200, 220, 0.8);
+    border-color: var(--border-strong);
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
   }
 
   .spatial-status-dot {
@@ -2432,18 +2429,18 @@
     gap: 4px;
     padding: 3px 10px;
     border-radius: 12px;
-    background: rgba(180, 120, 255, 0.1);
-    border: 1px solid rgba(180, 120, 255, 0.3);
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
     font-size: 11px;
-    color: rgba(180, 120, 255, 0.9);
+    color: var(--accent);
     white-space: nowrap;
     animation: fadeIn 0.2s ease;
   }
 
   .gesture-label.high-conf {
-    border-color: rgba(0, 255, 136, 0.5);
-    background: rgba(0, 255, 136, 0.08);
-    color: rgba(0, 255, 136, 0.9);
+    border-color: color-mix(in srgb, var(--success) 50%, transparent);
+    background: color-mix(in srgb, var(--success) 8%, transparent);
+    color: var(--success);
   }
 
   .gesture-emoji {
@@ -2471,7 +2468,7 @@
     gap: 2px;
     padding: 2px 6px;
     border-radius: 10px;
-    background: rgba(255, 255, 255, 0.03);
+    background: var(--bg-tertiary);
   }
 
   .history-emoji {
@@ -2492,20 +2489,16 @@
     height: 165px;
     border-radius: 12px;
     overflow: hidden;
-    border: 2px solid rgba(180, 120, 255, 0.3);
-    box-shadow:
-      0 8px 32px rgba(0, 0, 0, 0.5),
-      0 0 20px rgba(180, 120, 255, 0.1);
+    border: 2px solid color-mix(in srgb, var(--accent) 30%, transparent);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
     z-index: 1000;
     transition: border-color 0.3s;
   }
 
   .camera-pip.gesture-detected,
   .camera-pip.hand-detected {
-    border-color: rgba(0, 255, 136, 0.6);
-    box-shadow:
-      0 8px 32px rgba(0, 0, 0, 0.5),
-      0 0 20px rgba(0, 255, 136, 0.15);
+    border-color: color-mix(in srgb, var(--success) 60%, transparent);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
   }
 
   .cam-video {
@@ -2534,7 +2527,7 @@
     border-radius: 50%;
     border: none;
     background: rgba(0, 0, 0, 0.6);
-    color: white;
+    color: var(--text-primary);
     font-size: 12px;
     cursor: pointer;
     display: flex;
@@ -2551,7 +2544,7 @@
     padding: 2px 10px;
     border-radius: 8px;
     background: rgba(0, 0, 0, 0.7);
-    color: rgba(0, 255, 136, 0.9);
+    color: var(--success);
     font-size: 11px;
     font-family: "Inter", sans-serif;
     text-transform: capitalize;
@@ -2567,8 +2560,8 @@
     left: 4px;
     padding: 1px 6px;
     border-radius: 6px;
-    background: rgba(180, 120, 255, 0.3);
-    color: rgba(255, 255, 255, 0.7);
+    background: color-mix(in srgb, var(--accent) 30%, transparent);
+    color: var(--text-secondary);
     font-size: 8px;
     font-family: "Inter", sans-serif;
     letter-spacing: 0.5px;
@@ -2581,15 +2574,15 @@
     left: 4px;
     padding: 2px 6px;
     border-radius: 6px;
-    background: rgba(60, 70, 90, 0.82);
-    color: rgba(255, 255, 255, 0.85);
+    background: var(--bg-hover);
+    color: var(--text-primary);
     font-size: 9px;
     font-family: "Inter", sans-serif;
     z-index: 2;
   }
 
   .pip-hand-badge.active {
-    background: rgba(0, 130, 80, 0.85);
+    background: color-mix(in srgb, var(--success) 85%, transparent);
   }
 
   .pip-gaze-badge {
@@ -2598,8 +2591,8 @@
     left: 4px;
     padding: 2px 6px;
     border-radius: 6px;
-    background: rgba(245, 158, 11, 0.75);
-    color: white;
+    background: color-mix(in srgb, var(--warning) 75%, transparent);
+    color: var(--text-primary);
     font-size: 9px;
     font-family: "Inter", sans-serif;
     text-transform: capitalize;
@@ -2607,16 +2600,16 @@
   }
 
   .pip-gaze-badge.active {
-    background: rgba(0, 130, 80, 0.82);
+    background: color-mix(in srgb, var(--success) 82%, transparent);
   }
 
   .pip-gaze-badge.error {
-    background: rgba(180, 35, 45, 0.85);
+    background: color-mix(in srgb, var(--danger) 85%, transparent);
   }
 
   .gesture-error {
     font-size: 10px;
-    color: rgba(255, 80, 80, 0.8);
+    color: var(--danger);
     max-width: 160px;
   }
 

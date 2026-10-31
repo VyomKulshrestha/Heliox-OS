@@ -265,8 +265,8 @@
     padding: 8px 10px;
     color: var(--danger);
     font-size: 11px;
-    background: rgba(248, 113, 113, 0.08);
-    border: 1px solid rgba(248, 113, 113, 0.35);
+    background: color-mix(in srgb, var(--danger) 8%, transparent);
+    border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
     border-radius: var(--radius-sm);
   }
 
