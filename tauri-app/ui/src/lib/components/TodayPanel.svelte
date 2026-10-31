@@ -64,6 +64,10 @@
   type Companion = { name: string; persona: string; presets: Record<string, string> };
   let companion = $state<Companion | null>(null);
   let companionName = $state("");
+  type Suggestion = { kind: string; key: string; text: string; say: string | null };
+  let suggestion = $state<Suggestion | null>(null);
+  let suggestionsOn = $derived(Boolean($settings.suggestions?.enabled));
+  let suggestionChecked = $state(false);
   let profileEntries = $state<ProfileEntry[]>([]);
   let profileName = $state("");
   let profileText = $state("");
@@ -370,6 +374,21 @@
   async function logHabit(name: string) {
     const next = await listCall<Habit>("habit_log", "habits", { name, count: 1 });
     if (next) habits = next;
+  }
+
+  async function whatNow() {
+    suggestionChecked = true;
+    try {
+      const result = await call<{ status: string; suggestion: Suggestion | null }>("suggestion_now");
+      if (result.status === "ok") suggestion = result.suggestion;
+    } catch {
+      suggestion = null;
+    }
+  }
+
+  async function setSuggestions(on: boolean) {
+    const result = await settings.updateSectionDetailed("suggestions", { enabled: on });
+    if (!result.ok) error = result.message;
   }
 
   async function loadCompanion() {
@@ -803,6 +822,31 @@
       <button type="button" class="quiet" onclick={checkComputer} disabled={checking}
         >{checking ? "Checking…" : "Check now"}</button
       >
+    </section>
+
+    <section aria-labelledby="today-suggestions">
+      <h3 id="today-suggestions">Suggestions</h3>
+      {#if suggestion}
+        <p class="brief">{suggestion.text}</p>
+        {#if suggestion.say}
+          <p class="empty">You can say "{suggestion.say}".</p>
+        {/if}
+      {:else if suggestionChecked}
+        <p class="empty">Nothing pressing right now.</p>
+      {:else}
+        <p class="empty">One timely nudge from your goals, habits and list. Or ask "what should I do now?"</p>
+      {/if}
+      <div class="brief-controls">
+        <button type="button" class="quiet" onclick={whatNow}>What now?</button>
+        <label class="inline-toggle"
+          ><input
+            type="checkbox"
+            checked={suggestionsOn}
+            onchange={(e) => setSuggestions((e.currentTarget as HTMLInputElement).checked)}
+          />
+          Offer gentle check-ins</label
+        >
+      </div>
     </section>
 
     <section aria-labelledby="today-companion">

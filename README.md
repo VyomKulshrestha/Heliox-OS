@@ -375,6 +375,9 @@ speak = false
 [clipboard]
 history = false              # remember recent copies in memory for "what did I copy earlier?"
 
+[suggestions]
+enabled = false              # offer one gentle, code-computed nudge now and then; never acts
+
 [co_adaptation]
 enabled = false              # the selection study; also needs a consent record per participant
 adaptive_enabled = false     # learned choices from the second session; also needs the adaptive_assistance purpose

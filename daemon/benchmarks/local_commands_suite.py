@@ -128,6 +128,10 @@ def _server(root: Path) -> Any:
     server._goals = GoalStore(root / "goals.json")
     server._goals.create("launch the podcast")
     server._companion = Companion(root / "companion.json")
+    from pilot.workflows.suggestions import Suggester
+
+    server._suggester = Suggester(goals=server._goals.list, stale_goals=server._goals.stale)
+    server._suggestions = object()
     server._speech_coordinator = MagicMock()
     server._speech_coordinator.speak = AsyncMock()
     return server

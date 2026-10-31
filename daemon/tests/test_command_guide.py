@@ -94,6 +94,10 @@ def server(tmp_path):
     server._goals = GoalStore(tmp_path / "goals.json")
     server._goals.create("launch the podcast")
     server._companion = Companion(tmp_path / "companion.json")
+    from pilot.workflows.suggestions import Suggester
+
+    server._suggester = Suggester(goals=server._goals.list, stale_goals=server._goals.stale)
+    server._suggestions = object()
     clipboard = AsyncMock(return_value="Jane Doe, 12 Main Street")
     server._snippets = SnippetStore(tmp_path / "snippets.json", read=clipboard, write=AsyncMock())
     server._snippets.save("signature", "Best, Jane")

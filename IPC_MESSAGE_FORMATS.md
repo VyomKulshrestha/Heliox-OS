@@ -12,7 +12,7 @@ The Heliox OS UI and daemon communicate over a local WebSocket using the [JSON-R
 | Request timeout | 5 minutes |
 | Reconnect interval | 3 seconds (auto-reconnect on close) |
 
-The daemon currently registers **314 WebSocket RPC methods**. That is the API
+The daemon currently registers **315 WebSocket RPC methods**. That is the API
 surface count, not the action catalog: Heliox exposes **162 action
 types** through the guarded planner/executor system. This document names every
 registered RPC method; grouped tables are used where several methods share one
@@ -539,6 +539,18 @@ than a minute is logged (`{"started_at", "ended_at", "seconds", "reason"}`, kept
 `{"status": "ok", "today": {"seconds", "sessions"}, "this_week": {"seconds", "sessions"},
 "recent": [<up to 20 sessions, newest first>]}`. "How long did I focus this week" and
 "how many focus sessions today" work by voice and in chat.
+
+#### `suggestion_now` (and `[suggestions]`, no RPC for the loop)
+One proactive suggestion computed on demand from the local stores:
+`{"status": "ok", "enabled", "suggestion": {"kind", "key", "text", "say"} | null}`. The
+suggestion is chosen in code by priority: a goal that has gone quiet with a next step, a
+habit streak not kept today (afternoon on), open to-dos in the evening, then any active
+goal's next step. `say` is a phrase you can say back; Heliox never acts on a suggestion.
+With `[suggestions] enabled` on (off by default; "turn on suggestions"), a background
+check offers one at most every few hours, held during a focus session and never twice
+for the same thing in a day, as a `suggestion` notification. "What should I do now",
+"any suggestions" and "what should I work on" answer from the same logic by voice and in
+chat.
 
 #### `companion_get` / `companion_set` / `companion_reset`
 The assistant's name and tone, kept in `DATA_DIR/companion.json`. `companion_get` returns

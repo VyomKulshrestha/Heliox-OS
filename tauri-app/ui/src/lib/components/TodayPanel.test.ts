@@ -309,6 +309,25 @@ describe("TodayPanel", () => {
     await waitFor(() => expect(screen.queryByText("12 Main Street")).toBeNull());
   });
 
+  it("fetches a suggestion on demand", async () => {
+    daemonMocks.call.mockImplementation(async (method: string) => {
+      if (method === "today_overview") return overview;
+      if (method === "suggestion_now")
+        return {
+          status: "ok",
+          enabled: false,
+          suggestion: { kind: "stale_goal", key: "s1", text: "Pick up the podcast.", say: "remind me to book a guest" },
+        };
+      return { status: "ok" };
+    });
+    render(TodayPanel);
+    await waitFor(() => expect(screen.getByText(overview.brief)).toBeTruthy());
+
+    await fireEvent.click(screen.getByRole("button", { name: "What now?" }));
+    await waitFor(() => expect(screen.getByText("Pick up the podcast.")).toBeTruthy());
+    expect(screen.getByText(/remind me to book a guest/)).toBeTruthy();
+  });
+
   it("names the assistant and changes its tone", async () => {
     let companion = {
       name: "Heliox",

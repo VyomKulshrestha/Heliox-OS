@@ -388,6 +388,9 @@ VOICE_TIMELINE_SETTING = re.compile(
 )
 VOICE_BRIEF_SETTING = re.compile(r"^(?:please )?turn (?P<state>on|off) (?:the |my )?daily brief$")
 VOICE_CLIPBOARD_SETTING = re.compile(r"^(?:please )?turn (?P<state>on|off) (?:the |my )?clipboard history$")
+VOICE_SUGGESTIONS_SETTING = re.compile(
+    r"^(?:please )?turn (?P<state>on|off) (?:proactive )?suggestions$|^(?:please )?(?:start|stop) suggesting things$"
+)
 VOICE_BRIEF_TIME_SETTING = re.compile(
     r"^(?:please )?send (?:me )?(?:a |the |my )?daily brief (?:every day )?at (?P<hour>\d{1,2})(?: (?P<minute>\d{2}))?"
     r"(?: (?P<meridiem>am|pm))?$"
@@ -967,6 +970,7 @@ class PilotServer:
         self._user_profile: Any = None
         self._goals: Any = None
         self._companion: Any = None
+        self._suggestions: Any = None
         self._queued_execute_requests: deque[tuple[str, str, dict[str, Any]]] = deque()
         self._queued_submission_lock = asyncio.Lock()
         self._queued_execute_worker: asyncio.Task[None] | None = None
@@ -1266,6 +1270,22 @@ class PilotServer:
 
         self._companion = Companion(DATA_DIR / "companion.json", on_change=self._companion_apply)
         await self._companion_apply()
+        from pilot.workflows.suggestions import Suggester, SuggestionLoop
+
+        suggester = Suggester(
+            goals=self._goals.list if self._goals is not None else list,
+            stale_goals=self._goals.stale if self._goals is not None else list,
+            habits=self._habits.list if self._habits is not None else list,
+            open_todos=self._todos.open_items if self._todos is not None else list,
+            focus_active=lambda: bool(self._focus is not None and self._focus.active),
+        )
+        self._suggester = suggester
+        self._suggestions = SuggestionLoop(
+            suggester,
+            enabled=lambda: self.config.suggestions.enabled,
+            deliver=self._deliver_suggestion,
+        )
+        self._suggestions.start()
         from pilot.workflows.workspaces import WorkspaceStore
 
         self._workspaces = WorkspaceStore(DATA_DIR / "workspaces.json")
@@ -1862,6 +1882,7 @@ class PilotServer:
             "companion_get": self._handle_companion_get,
             "companion_set": self._handle_companion_set,
             "companion_reset": self._handle_companion_reset,
+            "suggestion_now": self._handle_suggestion_now,
             "workspace_save": self._handle_workspace_save,
             "workspace_delete": self._handle_workspace_delete,
             "receipts_search": self._handle_receipts_search,
@@ -6115,6 +6136,7 @@ class PilotServer:
             notes,
             nudges,
             snippets,
+            suggestions,
             system_health,
             todos,
             user_profile,
@@ -6210,6 +6232,8 @@ class PilotServer:
             companion.PERSONA_GET_REQUEST,
             companion.INTRO_REQUEST,
             companion.RESET_REQUEST,
+            suggestions.ASK_REQUEST,
+            VOICE_SUGGESTIONS_SETTING,
             focus_log.HISTORY_REQUEST,
             generators.PASSWORD_REQUEST,
             generators.COIN_REQUEST,
@@ -6347,6 +6371,7 @@ class PilotServer:
             self._profile_request,
             self._goal_request,
             self._companion_request,
+            self._suggestion_request,
             self._day_request,
             self._forget_request,
             self._local_answer,
@@ -6568,6 +6593,31 @@ class PilotServer:
                 await self._memory.retract_fact(fact_id, reason="Removed from your profile")
             except KeyError:
                 pass
+
+    async def _deliver_suggestion(self, pick: dict[str, Any]) -> None:
+        """Offer one suggestion. Held during focus; it changes nothing on its own."""
+        if self._focus is not None and self._focus.hold("suggestion", pick):
+            return
+        await self._broadcast_notification("suggestion", pick)
+        await self._speak_companion_text(
+            pick["text"], channel=SpeechChannel.PROACTIVE_SUGGESTION, dedupe_key=f"suggestion:{pick['key']}"
+        )
+
+    async def _suggestion_request(self, text: str) -> str | None:
+        """ "What should I do now?", "any suggestions?" — one suggestion from the local stores."""
+        if self._suggestions is None:
+            return None
+        return await self._suggester.answer_async(text)
+
+    async def _handle_suggestion_now(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """Compute one suggestion on demand (for a What now? button). Suggestion-only."""
+        if getattr(self, "_suggester", None) is None:
+            return {"status": "error", "message": "Suggestions are not ready yet.", "suggestion": None}
+        return {
+            "status": "ok",
+            "enabled": self.config.suggestions.enabled,
+            "suggestion": await asyncio.to_thread(self._suggester.suggest),
+        }
 
     async def _companion_apply(self) -> None:
         """Push the assistant's name and tone into the planner's system prompt (wording only)."""
@@ -6924,6 +6974,15 @@ class PilotServer:
                 "Clipboard history is on. I'll remember what you copy for a few hours, in memory only."
                 if on
                 else "Clipboard history is off, and I forgot what you copied.",
+            )
+        elif suggest := VOICE_SUGGESTIONS_SETTING.match(normalized):
+            on = suggest.group("state") != "off"
+            change = (
+                "suggestions",
+                {"enabled": on},
+                "Okay, I'll offer a suggestion now and then, held while you focus."
+                if on
+                else "Okay, I'll keep suggestions to when you ask.",
             )
         if change is None:
             return None
@@ -8294,6 +8353,8 @@ class PilotServer:
                         }
                 if section == "clipboard" and k == "history" and not isinstance(v, bool):
                     return {"status": "error", "message": "clipboard.history must be a boolean"}
+                if section == "suggestions" and k == "enabled" and not isinstance(v, bool):
+                    return {"status": "error", "message": "suggestions.enabled must be a boolean"}
                 if section == "brief" and k in {"enabled", "speak"} and not isinstance(v, bool):
                     return {"status": "error", "message": f"brief.{k} must be a boolean"}
                 if section == "brief" and k == "time":
@@ -11728,6 +11789,8 @@ def handle_tool(tool_name, params):
             await self._watchers.stop()
         if self._clipboard_history is not None:
             await self._clipboard_history.stop()
+        if self._suggestions is not None:
+            await self._suggestions.stop()
         if self._focus_guard is not None:
             await self._focus_guard.stop()
         if self._app_reminders is not None:

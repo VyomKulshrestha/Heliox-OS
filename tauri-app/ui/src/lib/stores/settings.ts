@@ -73,6 +73,9 @@ export interface PilotSettings {
   clipboard: {
     history: boolean;
   };
+  suggestions: {
+    enabled: boolean;
+  };
   typed_decision: {
     enabled: boolean;
     artifact_dir: string;
@@ -200,6 +203,9 @@ const defaultSettings: PilotSettings = {
   clipboard: {
     history: false,
   },
+  suggestions: {
+    enabled: false,
+  },
   typed_decision: {
     enabled: false,
     artifact_dir: "",
@@ -265,6 +271,7 @@ function mergeSettings(current: PilotSettings, incoming: Partial<PilotSettings>)
     timeline: { ...current.timeline, ...incoming.timeline },
     brief: { ...current.brief, ...incoming.brief },
     clipboard: { ...current.clipboard, ...incoming.clipboard },
+    suggestions: { ...current.suggestions, ...incoming.suggestions },
     typed_decision: { ...current.typed_decision, ...incoming.typed_decision },
     network: { ...current.network, ...incoming.network },
     calendar: { ...current.calendar, ...incoming.calendar },

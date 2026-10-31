@@ -467,6 +467,15 @@ class TimelineConfig:
 
 
 @dataclass
+class SuggestionsConfig:
+    """Proactive suggestions (see pilot.workflows.suggestions). Off by default. When on,
+    Heliox offers one gentle suggestion now and then, computed in code from your goals,
+    habits and to-do list, held during a focus session. It never acts on a suggestion."""
+
+    enabled: bool = False
+
+
+@dataclass
 class ClipboardConfig:
     """Clipboard history (see pilot.workflows.clipboard_history). Off by default. When on,
     Heliox remembers the last 25 pieces of text you copied, for up to eight hours, in
@@ -715,6 +724,7 @@ class PilotConfig:
     timeline: TimelineConfig = field(default_factory=TimelineConfig)
     brief: BriefConfig = field(default_factory=BriefConfig)
     clipboard: ClipboardConfig = field(default_factory=ClipboardConfig)
+    suggestions: SuggestionsConfig = field(default_factory=SuggestionsConfig)
     supervision: SupervisionConfig = field(default_factory=SupervisionConfig)
     co_adaptation: CoAdaptationConfig = field(default_factory=CoAdaptationConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
@@ -1095,6 +1105,9 @@ def _validate_config_types(raw: dict) -> None:
         "clipboard": {
             "history": bool,
         },
+        "suggestions": {
+            "enabled": bool,
+        },
         "supervision": {
             "enabled": bool,
             "keyboard_mouse_hook_enabled": bool,
@@ -1444,6 +1457,9 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
 
     if "clipboard" in raw and isinstance(raw["clipboard"], dict):
         config.clipboard.history = bool(raw["clipboard"].get("history", config.clipboard.history))
+
+    if "suggestions" in raw and isinstance(raw["suggestions"], dict):
+        config.suggestions.enabled = bool(raw["suggestions"].get("enabled", config.suggestions.enabled))
 
     if "supervision" in raw and isinstance(raw["supervision"], dict):
         s_raw = raw["supervision"]
