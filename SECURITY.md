@@ -1065,7 +1065,7 @@ app's "Heliox-OS" title. When Windows names the process that owns that window,
 the process must also be the Heliox executable. A browser page, editor or folder
 whose title only mentions the project is recorded. Before, clicks inside the
 desktop app, including selection-study clicks, could be captured. The check does
-not cover the UI opened in a browser, whose page is titled "Pilot", and on Linux
+not cover the UI opened in a browser, whose page is titled "Heliox", and on Linux
 and macOS nothing is skipped, so in those cases clicks and keystrokes inside
 Heliox's own UI go into the recording.
 Independently, the selection study refuses to start or

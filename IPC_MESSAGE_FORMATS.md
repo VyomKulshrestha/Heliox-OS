@@ -1982,7 +1982,7 @@ in the foreground. The check compares the foreground window's whole title (case,
 hyphens and underscores ignored) and, when Windows names the owning process,
 requires the Heliox executable, so a page or editor whose title only mentions the
 project is recorded. It does not cover the UI opened in a browser (the page is
-titled "Pilot"), and on Linux and macOS nothing is skipped.
+titled "Heliox"), and on Linux and macOS nothing is skipped.
 
 ### Human Control
 
