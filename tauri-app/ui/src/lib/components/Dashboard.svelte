@@ -36,59 +36,69 @@
 
 <style>
   .dashboard {
-    padding: 24px;
-    padding-bottom: 120px;
-    color: white;
-    background: #050816;
-    height: 100vh;
-    overflow-y: scroll;
+    flex: 1;
+    min-height: 0;
+    padding: 20px 20px 96px;
+    color: var(--text-primary);
+    background: var(--bg-primary);
     overflow-x: hidden;
+    overflow-y: auto;
   }
-  /* WIDTH */
-  .dashboard::-webkit-scrollbar {
-    width: 10px;
-  }
-  /* TRACK */
-  .dashboard::-webkit-scrollbar-track {
-    background: rgba(255, 255, 255, 0.02);
-    border-radius: 999px;
-  }
-  /* HANDLE */
-  .dashboard::-webkit-scrollbar-thumb {
-    background: linear-gradient(180deg, #00ff88, #06b6d4);
-    border-radius: 999px;
-    border: 2px solid transparent;
-    background-clip: padding-box;
-  }
-  /* HOVER */
-  .dashboard::-webkit-scrollbar-thumb:hover {
-    background: linear-gradient(180deg, #34d399, #38bdf8);
-  }
-  /* FIREFOX */
-  .dashboard {
-    scrollbar-width: thin;
-    scrollbar-color: #06b6d4 rgba(255, 255, 255, 0.02);
-  }
-  .dashboard-grid > div {
-    min-width: 0;
-  }
+
   .dashboard-header {
-    margin-bottom: 24px;
+    margin-bottom: 18px;
   }
+
+  .dashboard-header h1 {
+    font-size: var(--text-xl);
+  }
+
   .dashboard-header p {
-    color: #9ca3af;
+    margin-top: 2px;
+    font-size: var(--text-base);
+    color: var(--text-secondary);
   }
+
   .dashboard-grid {
     display: grid;
     grid-template-columns: 1.2fr 1fr 0.9fr;
-    gap: 20px;
+    gap: 16px;
     align-items: start;
   }
+
+  .dashboard-grid > div {
+    min-width: 0;
+  }
+
   .left-column,
   .center-column,
   .right-column {
     display: flex;
     flex-direction: column;
-    gap: 20px;
+    gap: 16px;
+  }
+
+  /* Two columns in a mid-size window, one in the default 700 px window. */
+  @media (max-width: 1080px) {
+    .dashboard-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .right-column {
+      grid-column: 1 / -1;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  @media (max-width: 760px) {
+    .dashboard {
+      padding: 16px 12px 96px;
+    }
+
+    .dashboard-grid,
+    .right-column {
+      grid-template-columns: minmax(0, 1fr);
+    }
   }
 </style>

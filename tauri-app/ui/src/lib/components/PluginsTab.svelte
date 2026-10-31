@@ -265,7 +265,7 @@
 <div class="plugins-tab">
   <div class="header">
     <div class="header-title">
-      <h2>🧩 Plugin Marketplace</h2>
+      <h2>Plugin marketplace</h2>
       {#if marketplaceSource}
         <span class="catalog-source" class:offline={marketplaceSource === "bundled"}>
           {marketplaceSource === "github" ? "GitHub catalog" : "Bundled offline catalog"}
@@ -471,7 +471,7 @@
             {#if expandedPlugin === `${plugin.name}:${tool.name}` && plugin.installed}
               <div class="tool-runner">
                 <div class="tool-runner-header">
-                  <span class="tool-runner-name">⚡ {tool.name}</span>
+                  <span class="tool-runner-name">{tool.name}</span>
                   <span class="tool-runner-desc">{tool.description}</span>
                 </div>
                 {#if tool.inputs && tool.inputs.length > 0}

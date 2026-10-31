@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Pin } from "@lucide/svelte";
   import { onMount } from "svelte";
   import { invoke } from "../api/invoke";
   import { pollAfterSuccessfulProbe } from "../polling";
@@ -86,9 +87,16 @@
 <div class="card">
   <!-- HEADER -->
   <div class="header">
-    <h3>🌡 SYSTEM TEMPERATURES</h3>
+    <h3>System temperatures</h3>
     <div class="actions">
-      <button class="pin-btn" class:pinned on:click={togglePin}>📌</button>
+      <button
+        class="pin-btn"
+        class:pinned
+        on:click={togglePin}
+        aria-pressed={pinned}
+        aria-label={pinned ? "Unpin widget" : "Pin widget"}
+        title={pinned ? "Unpin" : "Pin"}><Pin size={15} /></button
+      >
     </div>
   </div>
   {#if !sensorsAvailable}
@@ -164,11 +172,11 @@
 
 <style>
   .card {
-    background: #0b1020;
-    border: 1px solid rgba(255, 255, 255, 0.06);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
     border-radius: 22px;
     padding: 20px;
-    color: white;
+    color: var(--text-primary);
     width: 100%;
     min-height: 420px;
   }
@@ -182,11 +190,12 @@
     margin: 0;
     font-size: 15px;
     font-weight: 700;
-    color: #ff5c8a;
+    color: var(--text-primary);
+    font-family: var(--font-display);
   }
   .sensor-unavailable {
     margin: -12px 0 16px;
-    color: #f6ad55;
+    color: var(--warning);
     font-size: 13px;
   }
   .pin-btn {
@@ -194,16 +203,15 @@
     height: 42px;
     border: none;
     border-radius: 14px;
-    background: rgba(255, 255, 255, 0.05);
-    color: white;
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
     cursor: pointer;
     transition: 0.2s ease;
   }
   .pin-btn.pinned {
     background: rgba(255, 0, 0, 0.15);
-    color: #ff4d4d;
-    border: 1px solid #ff4d4d;
-    box-shadow: 0 0 12px rgba(255, 0, 0, 0.4);
+    color: var(--danger);
+    border: 1px solid var(--danger);
   }
   .actions {
     display: flex;
@@ -214,13 +222,13 @@
     height: 32px;
     border: none;
     border-radius: 10px;
-    background: rgba(255, 255, 255, 0.05);
-    color: white;
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
     cursor: pointer;
     transition: 0.3s;
   }
   button:hover {
-    background: rgba(255, 255, 255, 0.12);
+    background: var(--bg-hover);
   }
   .body {
     display: grid;
@@ -243,7 +251,7 @@
     margin-bottom: 8px;
   }
   .top span {
-    color: #d1d5db;
+    color: var(--text-secondary);
     font-size: 14px;
   }
   .top p {
@@ -254,7 +262,7 @@
   .bar {
     width: 100%;
     height: 8px;
-    background: rgba(255, 255, 255, 0.08);
+    background: var(--bg-hover);
     border-radius: 999px;
     overflow: hidden;
   }
@@ -262,7 +270,6 @@
     height: 100%;
     border-radius: 999px;
     transition: all 0.5s ease;
-    box-shadow: 0 0 14px rgba(255, 255, 255, 0.2);
   }
   .extra {
     display: grid;
@@ -271,7 +278,7 @@
     margin-top: 10px;
   }
   .stat-box {
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--bg-tertiary);
     border-radius: 14px;
     padding: 14px;
     display: flex;
@@ -279,7 +286,7 @@
     gap: 6px;
   }
   .stat-box span {
-    color: #9ca3af;
+    color: var(--text-secondary);
     font-size: 13px;
   }
   .stat-box strong {
@@ -302,11 +309,8 @@
     position: relative;
     margin-left: -35px;
     background:
-      radial-gradient(circle at center, #0b1020 58%, transparent 59%),
-      conic-gradient(var(--circleColor) 0% var(--temp), rgba(255, 255, 255, 0.08) var(--temp) 100%);
-    box-shadow:
-      0 0 45px rgba(255, 77, 166, 0.35),
-      inset 0 0 20px rgba(255, 255, 255, 0.03);
+      radial-gradient(circle at center, var(--bg-secondary) 58%, transparent 59%),
+      conic-gradient(var(--circleColor) 0% var(--temp), var(--bg-hover) var(--temp) 100%);
     padding: 0%;
     flex-shrink: 0;
     transition: all 0.5s ease;
@@ -314,7 +318,7 @@
   .inner {
     display: flex;
     align-items: flex-start;
-    color: white;
+    color: var(--text-primary);
   }
   .inner h1 {
     margin: 0;
@@ -323,7 +327,7 @@
   }
   .label {
     margin-top: 10px;
-    color: #9ca3af;
+    color: var(--text-secondary);
     font-size: 14px;
     text-align: left;
   }

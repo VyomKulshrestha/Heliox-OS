@@ -51,12 +51,12 @@
 
 <style>
   .terminal-card {
-    background: #0b1020;
-    border: 1px solid rgba(255, 255, 255, 0.06);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
     border-radius: 22px;
     padding: 20px;
     min-height: 450px;
-    color: white;
+    color: var(--text-primary);
     height: 100%;
   }
   .terminal-content {
@@ -70,15 +70,15 @@
   p {
     margin: 0;
     font-size: 14px;
-    color: #d1d5db;
+    color: var(--text-secondary);
   }
   .info {
-    color: #22d3ee;
+    color: var(--accent);
   }
   .success {
-    color: #00ff88;
+    color: var(--success);
   }
   .warn {
-    color: #facc15;
+    color: var(--warning);
   }
 </style>

@@ -43,25 +43,25 @@
 
 <style>
   .rss-card {
-    background: #0b1020;
-    border: 1px solid rgba(255, 255, 255, 0.06);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
     border-radius: 22px;
     padding: 20px;
-    color: white;
+    color: var(--text-primary);
     height: fit-content;
   }
   .feed-item {
     padding: 12px 0;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    border-bottom: 1px solid var(--border);
   }
   .title {
     margin: 0;
-    color: #e5e7eb;
+    color: var(--text-primary);
     font-size: 14px;
     line-height: 1.5;
   }
   span {
-    color: #9ca3af;
+    color: var(--text-secondary);
     font-size: 12px;
   }
 </style>

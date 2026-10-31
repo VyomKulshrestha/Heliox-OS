@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { FolderOpen } from "@lucide/svelte";
   import { onMount } from "svelte";
   import { call, requireResultStatus } from "../api/daemon";
   import { invoke } from "../api/invoke";
@@ -71,17 +72,26 @@
 
 <div class="activity-log">
   <div class="log-header">
-    <h2>Activity Log</h2>
+    <h2>Activity log</h2>
     <div class="header-right">
       <span class="count">{entries.length} entries</span>
-      <button class="open-logs-btn" onclick={openLogsFolder} title="Open Logs Folder"> 📂 Open Logs </button>
+      <button class="open-logs-btn" onclick={openLogsFolder} title="Open the logs folder"
+        ><FolderOpen size={14} aria-hidden="true" /> Open logs</button
+      >
     </div>
   </div>
 
   <BackgroundTasksPanel />
 
   {#if loading}
-    <div class="empty">Loading...</div>
+    <div class="log-skeleton" aria-busy="true" aria-label="Loading activity">
+      {#each [0, 1, 2, 3] as row (row)}
+        <div class="skeleton-row" style:animation-delay={`${row * 90}ms`}>
+          <span class="skeleton-line short"></span>
+          <span class="skeleton-line"></span>
+        </div>
+      {/each}
+    </div>
   {:else}
     {#if historyNotice}
       <div class="history-notice" role="status">{historyNotice}</div>
@@ -246,5 +256,43 @@
   .open-logs-btn:hover {
     background: var(--accent, #38bdf8);
     color: #000;
+  }
+
+  .open-logs-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .log-skeleton {
+    display: grid;
+    gap: 10px;
+    padding: 16px;
+  }
+
+  .skeleton-row {
+    display: grid;
+    gap: 8px;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-secondary);
+    animation: skeleton-pulse 1.4s ease-in-out infinite;
+  }
+
+  .skeleton-line {
+    height: 10px;
+    border-radius: var(--radius-pill);
+    background: var(--bg-hover);
+  }
+
+  .skeleton-line.short {
+    width: 38%;
+  }
+
+  @keyframes skeleton-pulse {
+    50% {
+      opacity: 0.55;
+    }
   }
 </style>

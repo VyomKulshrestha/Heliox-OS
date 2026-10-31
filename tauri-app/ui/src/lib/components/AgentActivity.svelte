@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Pin } from "@lucide/svelte";
   import WidgetCard from "./WidgetCard.svelte";
   import { onMount } from "svelte";
   import { invoke } from "../api/invoke";
@@ -47,8 +48,15 @@
 
 <div class="card">
   <div class="actions">
-    <h3>⚡ AGENT ACTIVITY</h3>
-    <button class="pin-btn" class:pinned on:click={togglePin}> 📌 </button>
+    <h3>Agent activity</h3>
+    <button
+      class="pin-btn"
+      class:pinned
+      on:click={togglePin}
+      aria-pressed={pinned}
+      aria-label={pinned ? "Unpin widget" : "Pin widget"}
+      title={pinned ? "Unpin" : "Pin"}><Pin size={15} /></button
+    >
   </div>
   {#if unavailable}
     <p class="unavailable">Agent activity requires a connected daemon.</p>
@@ -75,19 +83,20 @@
 
 <style>
   .card {
-    background: #0b1020;
-    border: 1px solid rgba(255, 255, 255, 0.06);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
     border-radius: 22px;
     padding: 20px;
-    color: white;
+    color: var(--text-primary);
   }
   h3 {
-    color: #8b5cf6;
+    color: var(--text-primary);
     font-size: 14px;
     margin-bottom: 20px;
+    font-family: var(--font-display);
   }
   .unavailable {
-    color: #f6ad55;
+    color: var(--warning);
     font-size: 13px;
   }
   .pin-btn {
@@ -95,22 +104,21 @@
     height: 34px;
     border: none;
     border-radius: 10px;
-    background: rgba(255, 255, 255, 0.05);
-    color: white;
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
     cursor: pointer;
   }
   .pin-btn.pinned {
     background: rgba(255, 0, 0, 0.15);
-    color: #ff4d4d;
-    border: 1px solid #ff4d4d;
-    box-shadow: 0 0 12px rgba(255, 0, 0, 0.4);
+    color: var(--danger);
+    border: 1px solid var(--danger);
   }
   .agent {
     display: flex;
     justify-content: space-between;
     align-items: center;
     padding: 14px 0;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    border-bottom: 1px solid var(--border);
   }
   .left {
     display: flex;
@@ -123,12 +131,10 @@
     border-radius: 999px;
   }
   .green {
-    background: #00ff88;
-    box-shadow: 0 0 10px #00ff88;
+    background: var(--success);
   }
   .yellow {
-    background: #facc15;
-    box-shadow: 0 0 10px #facc15;
+    background: var(--warning);
   }
   h4 {
     margin: 0;
@@ -136,7 +142,7 @@
   }
   p {
     margin: 2px 0 0;
-    color: #9ca3af;
+    color: var(--text-secondary);
     font-size: 12px;
   }
   span {
@@ -151,13 +157,12 @@
     gap: 8px;
   }
   .active {
-    color: #00ff88;
+    color: var(--success);
   }
   .idle {
-    color: #facc15;
+    color: var(--warning);
   }
   .warning {
-    box-shadow: 0 0 12px #ff4d4d;
-    color: #f97316;
+    color: var(--warning);
   }
 </style>

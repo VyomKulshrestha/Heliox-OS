@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { ShieldAlert, ShieldCheck } from "@lucide/svelte";
   import { settings, settingsLoadErrors, type SettingsSaveResult } from "../stores/settings";
   import { _, locale } from "svelte-i18n";
   import { session } from "../stores/session";
@@ -1272,7 +1273,7 @@
 
     {#if $settings.security.root_enabled}
       <div class="root-status-banner">
-        <span class="root-icon">⚡</span>
+        <span class="root-icon" aria-hidden="true"><ShieldAlert size={18} /></span>
         <div class="root-status-info">
           <span class="root-status-title">
             {rootRuntime
@@ -1330,7 +1331,7 @@
 
     {#if $settings.security.snapshot_on_destructive && snapshotRuntime && !snapshotRuntime.ready}
       <div class="snapshot-status-banner">
-        <span class="root-icon">🛡</span>
+        <span class="root-icon" aria-hidden="true"><ShieldCheck size={18} /></span>
         <div class="root-status-info">
           <span class="snapshot-status-title">Snapshot protection is fail-closed</span>
           <span class="root-status-desc">{snapshotRuntime.detail}</span>

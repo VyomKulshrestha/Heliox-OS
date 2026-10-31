@@ -86,9 +86,9 @@
     width: 100%;
     padding: 20px 28px;
     border-radius: 24px;
-    background: #0b1020;
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    color: white;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
     overflow: hidden;
   }
   .scroll-content {
@@ -114,44 +114,44 @@
   }
   .label {
     font-size: 15px;
-    color: #cbd5e1;
+    color: var(--text-secondary);
     white-space: nowrap;
   }
   .badge {
     padding: 8px 16px;
     border-radius: 999px;
-    background: rgba(255, 255, 255, 0.06);
+    background: var(--bg-hover);
     font-size: 14px;
     font-weight: 600;
     white-space: nowrap;
   }
   .badge.connected {
     background: rgba(0, 255, 170, 0.12);
-    color: #00ffae;
+    color: var(--success);
     border: 1px solid rgba(0, 255, 170, 0.35);
   }
   .badge.active {
     background: rgba(0, 255, 170, 0.12);
-    color: #00ffae;
+    color: var(--success);
   }
   .badge.cpu {
     background: rgba(0, 255, 170, 0.12);
-    color: #00ffae;
+    color: var(--success);
   }
   .badge.memory {
     background: rgba(139, 92, 246, 0.14);
-    color: #b07cff;
+    color: var(--accent);
   }
   .network {
     gap: 12px;
   }
   .network-stats {
-    color: #e2e8f0;
+    color: var(--text-primary);
     font-size: 15px;
     white-space: nowrap;
   }
   .dashboard-title {
-    color: #cbd5e1;
+    color: var(--text-secondary);
     font-size: 15px;
     white-space: nowrap;
     padding-right: 40px;

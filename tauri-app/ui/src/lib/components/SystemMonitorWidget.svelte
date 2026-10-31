@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Pin } from "@lucide/svelte";
   import { onMount } from "svelte";
   import { invoke } from "../api/invoke";
   import { pinnedWidgets } from "../stores/pinnedWidgets";
@@ -134,9 +135,16 @@
 <div class="monitor-card">
   <!-- Header -->
   <div class="header">
-    <h3>🟢 SYSTEM MONITOR</h3>
+    <h3>System monitor</h3>
     <div class="actions">
-      <button class="pin-btn" class:pinned on:click={togglePin}>📌</button>
+      <button
+        class="pin-btn"
+        class:pinned
+        on:click={togglePin}
+        aria-pressed={pinned}
+        aria-label={pinned ? "Unpin widget" : "Pin widget"}
+        title={pinned ? "Unpin" : "Pin"}><Pin size={15} /></button
+      >
     </div>
   </div>
   <!-- Grid -->
@@ -187,11 +195,11 @@
   .monitor-card {
     width: 100%;
     max-width: 680px;
-    background: #0b1020;
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
     border-radius: 22px;
     padding: 20px;
-    color: white;
+    color: var(--text-primary);
     overflow: hidden;
   }
   .header {
@@ -205,21 +213,21 @@
     height: 34px;
     border: none;
     border-radius: 10px;
-    background: rgba(255, 255, 255, 0.05);
-    color: white;
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
     cursor: pointer;
   }
   .pin-btn.pinned {
     background: rgba(255, 0, 0, 0.15);
-    color: #ff4d4d;
-    border: 1px solid #ff4d4d;
-    box-shadow: 0 0 12px rgba(255, 0, 0, 0.4);
+    color: var(--danger);
+    border: 1px solid var(--danger);
   }
   h3 {
     margin: 0;
-    color: #00ff88;
+    color: var(--text-primary);
     font-size: 14px;
     font-weight: 700;
+    font-family: var(--font-display);
   }
   .actions {
     display: flex;
@@ -230,8 +238,8 @@
     height: 32px;
     border: none;
     border-radius: 10px;
-    background: rgba(255, 255, 255, 0.05);
-    color: white;
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
     cursor: pointer;
   }
   .grid {
@@ -241,15 +249,15 @@
     width: 100%;
   }
   .box {
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(255, 255, 255, 0.05);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
     border-radius: 18px;
     padding: 16px;
     min-height: 160px;
     overflow: hidden;
   }
   span {
-    color: #9ca3af;
+    color: var(--text-secondary);
     font-size: 13px;
   }
   h2 {
@@ -257,15 +265,16 @@
     margin-bottom: 12px;
     font-size: 36px;
     font-weight: 700;
+    font-family: var(--font-display);
   }
   .green {
-    color: #00ff88;
+    color: var(--success);
   }
   .purple {
-    color: #a855f7;
+    color: var(--accent);
   }
   .blue {
-    color: #3b82f6;
+    color: var(--accent);
   }
   .network {
     display: flex;
@@ -285,7 +294,7 @@
   }
   .footer {
     margin-top: 18px;
-    color: #6b7280;
+    color: var(--text-muted);
     font-size: 12px;
   }
 </style>

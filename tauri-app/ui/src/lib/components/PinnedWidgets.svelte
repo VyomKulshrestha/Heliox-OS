@@ -44,7 +44,7 @@
 
 <div class="pinned-widgets">
   <div class="pinned-header">
-    <h2>📌 PINNED WIDGETS</h2>
+    <h2>Pinned widgets</h2>
   </div>
   <div class="pinned-row">
     {#each $pinnedWidgets as widget}
@@ -92,7 +92,7 @@
     top: 140px;
     right: 40px;
     background: #111827;
-    border: 1px solid #334155;
+    border: 1px solid var(--border-strong);
     border-radius: 14px;
     padding: 10px;
     display: flex;
@@ -103,21 +103,21 @@
   .widget-option {
     background: transparent;
     border: none;
-    color: white;
+    color: var(--text-primary);
     padding: 10px 14px;
     border-radius: 10px;
     text-align: left;
     cursor: pointer;
   }
   .widget-option:hover {
-    background: rgba(255, 255, 255, 0.06);
+    background: var(--bg-hover);
   }
   .pinned-widgets {
     width: 100%;
     position: relative;
     padding: 20px;
     border-radius: 22px;
-    background: #0b1020;
+    background: var(--bg-secondary);
     border: 1px solid #1d2540;
     margin-top: 20px;
   }
@@ -130,7 +130,7 @@
   .pinned-header h2 {
     font-size: 15px;
     font-weight: 700;
-    color: #b07cff;
+    color: var(--accent);
     letter-spacing: 1px;
   }
   .pinned-row {
@@ -173,7 +173,7 @@
   .card-content span {
     font-size: 17px;
     font-weight: 600;
-    color: white;
+    color: var(--text-primary);
   }
   .remove-btn {
     position: absolute;
@@ -181,32 +181,32 @@
     right: 12px;
     border: none;
     background: transparent;
-    color: #cbd5e1;
+    color: var(--text-secondary);
     cursor: pointer;
     font-size: 14px;
   }
   .remove-btn:hover {
-    color: #ff5c8a;
+    color: var(--accent);
   }
   .add-card {
     min-width: 210px;
     height: 92px;
     border-radius: 18px;
-    border: 1px dashed #334155;
+    border: 1px dashed var(--border-strong);
     background: #101827;
     display: flex;
     align-items: center;
     justify-content: center;
     gap: 10px;
-    color: #94a3b8;
+    color: var(--text-secondary);
     cursor: pointer;
     flex-shrink: 0;
     transition: 0.25s ease;
   }
   .add-card:hover {
-    border-color: #8b5cf6;
+    border-color: var(--accent);
     background: #131d34;
-    color: white;
+    color: var(--text-primary);
   }
   .plus {
     font-size: 22px;

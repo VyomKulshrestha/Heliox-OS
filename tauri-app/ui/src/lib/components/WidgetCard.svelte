@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Pin } from "@lucide/svelte";
   import { pinnedWidgets } from "../stores/pinnedWidgets";
   export let title = "";
   export let color = "#8b5cf6";
@@ -24,7 +25,14 @@
   <div class="widget-header">
     <h3>{title}</h3>
     <div class="actions">
-      <button class="pin-btn" class:pinned on:click={togglePin}> 📌 </button>
+      <button
+        class="pin-btn"
+        class:pinned
+        on:click={togglePin}
+        aria-pressed={pinned}
+        aria-label={pinned ? "Unpin widget" : "Pin widget"}
+        title={pinned ? "Unpin" : "Pin"}><Pin size={15} /></button
+      >
     </div>
   </div>
   <div class="widget-content">
@@ -34,32 +42,29 @@
 
 <style>
   .widget-card {
-    background: rgba(20, 20, 35, 0.9);
-    border: 1px solid rgba(120, 120, 255, 0.15);
-    border-radius: 18px;
-    padding: 18px;
-    color: white;
-    backdrop-filter: blur(10px);
-    transition: 0.2s ease;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 16px;
+    color: var(--text-primary);
+    transition: border-color var(--dur) ease;
   }
   .pin-btn {
     width: 34px;
     height: 34px;
     border: none;
     border-radius: 10px;
-    background: rgba(255, 255, 255, 0.05);
-    color: white;
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
     cursor: pointer;
   }
   .pin-btn.pinned {
     background: rgba(255, 0, 0, 0.15);
-    color: #ff4d4d;
-    border: 1px solid #ff4d4d;
-    box-shadow: 0 0 12px rgba(255, 0, 0, 0.4);
+    color: var(--danger);
+    border: 1px solid var(--danger);
   }
   .widget-card:hover {
-    transform: translateY(-2px);
-    border-color: rgba(140, 140, 255, 0.35);
+    border-color: var(--border-strong);
   }
   .widget-header {
     display: flex;
@@ -70,7 +75,8 @@
   h3 {
     margin: 0;
     font-size: 16px;
-    color: #a78bfa;
+    color: var(--text-primary);
+    font-family: var(--font-display);
   }
   .pin-btn {
     width: 34px;

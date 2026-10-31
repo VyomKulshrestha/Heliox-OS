@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Camera, Mic, Pin, RotateCw, ShieldCheck, SquareTerminal, Trash2 } from "@lucide/svelte";
   import { invoke } from "../api/invoke";
   import { onMount } from "svelte";
   import { pinnedWidgets } from "../stores/pinnedWidgets";
@@ -69,7 +70,7 @@
           break;
         case "Restart Agents":
           const restartRes = await invoke("restart_agents");
-          alert(`Agent Status:\n${restartRes}`);
+          clearMessage = `Agent status: ${restartRes}`;
           break;
         case "System Scan":
           const stats: any = await invoke("system_scan");
@@ -80,11 +81,11 @@
                   .map(([k, v]) => `• ${k.replace(/_/g, " ")}: ${v}`)
                   .join("\n")
               : String(stats);
-          alert(`=== HELIOX OS SYSTEM HEALTH SCAN ===\n\n${formatted}`);
+          clearMessage = `System health scan\n\n${formatted}`;
           break;
         case "Take Screenshot":
           const shotPath = await invoke("take_screenshot");
-          alert(`Screenshot Saved Successfully!\n\nFile Location:\n${shotPath}`);
+          clearMessage = `Screenshot saved to ${shotPath}`;
           break;
         case "Voice Command":
           let voiceRequestHandled = false;
@@ -105,32 +106,32 @@
       }
     } catch (err) {
       console.error(err);
-      alert(`Action error: ${err}`);
+      clearMessage = `That action failed: ${err}`;
     }
   }
   const actions = [
     {
-      icon: "⌲",
+      icon: SquareTerminal,
       title: "Open Terminal",
     },
     {
-      icon: "🗑",
+      icon: Trash2,
       title: "Clear Logs",
     },
     {
-      icon: "⟳",
+      icon: RotateCw,
       title: "Restart Agents",
     },
     {
-      icon: "🛡",
+      icon: ShieldCheck,
       title: "System Scan",
     },
     {
-      icon: "🎙",
+      icon: Mic,
       title: "Voice Command",
     },
     {
-      icon: "📷",
+      icon: Camera,
       title: "Take Screenshot",
     },
   ];
@@ -141,17 +142,24 @@
   <div class="card">
     <!-- HEADER -->
     <div class="header">
-      <h3>⚡ QUICK ACTIONS</h3>
+      <h3>Quick actions</h3>
       <div class="actions">
-        <button class="pin-btn" class:pinned on:click={togglePin}>📌</button>
+        <button
+          class="pin-btn"
+          class:pinned
+          on:click={togglePin}
+          aria-pressed={pinned}
+          aria-label={pinned ? "Unpin widget" : "Pin widget"}
+          title={pinned ? "Unpin" : "Pin"}><Pin size={15} /></button
+        >
       </div>
     </div>
     <!-- GRID -->
     <div class="grid">
       {#each actions as action}
         <button class="action-btn" on:click={() => handleAction(action.title)}>
-          <div class="icon">
-            {action.icon}
+          <div class="icon" aria-hidden="true">
+            <svelte:component this={action.icon} size={20} />
           </div>
           <span>
             {action.title}
@@ -161,7 +169,7 @@
     </div>
   </div>
   {#if clearMessage}
-    <div class="log-status">
+    <div class="log-status" role="status">
       {clearMessage}
     </div>
   {/if}
@@ -212,20 +220,21 @@
   }
   /* QUICK ACTIONS CARD */
   .log-status {
+    white-space: pre-line;
     margin-top: 18px;
     padding: 10px 14px;
     border-radius: 12px;
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(255, 255, 255, 0.05);
-    color: #d1d5db;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
     font-size: 13px;
   }
   .card {
-    background: #0b1020;
-    border: 1px solid rgba(255, 255, 255, 0.06);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
     border-radius: 22px;
     padding: 20px;
-    color: white;
+    color: var(--text-primary);
   }
   .header {
     display: flex;
@@ -235,25 +244,25 @@
   }
   h3 {
     margin: 0;
-    color: #3b82f6;
+    color: var(--text-primary);
     font-size: 14px;
     font-weight: 700;
+    font-family: var(--font-display);
   }
   .pin-btn {
     width: 42px;
     height: 42px;
     border: none;
     border-radius: 14px;
-    background: rgba(255, 255, 255, 0.05);
-    color: white;
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
     cursor: pointer;
     transition: 0.2s ease;
   }
   .pin-btn.pinned {
     background: rgba(255, 0, 0, 0.15);
-    color: #ff4d4d;
-    border: 1px solid #ff4d4d;
-    box-shadow: 0 0 12px rgba(255, 0, 0, 0.4);
+    color: var(--danger);
+    border: 1px solid var(--danger);
   }
   .actions {
     display: flex;
@@ -264,8 +273,8 @@
     height: 30px;
     border: none;
     border-radius: 10px;
-    background: rgba(255, 255, 255, 0.05);
-    color: white;
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
     cursor: pointer;
   }
   .grid {
@@ -274,8 +283,8 @@
     gap: 14px;
   }
   .action-btn {
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(255, 255, 255, 0.05);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
     border-radius: 18px;
     padding: 18px 12px;
     display: flex;
@@ -285,26 +294,25 @@
     gap: 12px;
     cursor: pointer;
     transition: 0.2s ease;
-    color: white;
+    color: var(--text-primary);
   }
   .action-btn:hover {
     border-color: rgba(59, 130, 246, 0.5);
-    box-shadow: 0 0 18px rgba(59, 130, 246, 0.18);
     transform: translateY(-2px);
   }
   .icon {
     font-size: 26px;
-    color: #38bdf8;
+    color: var(--accent);
   }
   .action-btn span {
     font-size: 13px;
     text-align: center;
-    color: #d1d5db;
+    color: var(--text-secondary);
   }
   /* UPTIME CARD */
   .uptime-card {
-    background: #0b1020;
-    border: 1px solid rgba(255, 255, 255, 0.06);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
     border-radius: 22px;
     padding: 20px;
     display: flex;
@@ -313,13 +321,13 @@
     gap: 20px;
   }
   .uptime-title {
-    color: #9ca3af;
+    color: var(--text-secondary);
     font-size: 12px;
     margin-bottom: 8px;
   }
   .uptime-card h2 {
     margin: 0;
-    color: white;
+    color: var(--text-primary);
     font-size: 28px;
   }
   .ecg {
@@ -336,6 +344,5 @@
     stroke-width: 3;
     stroke-linecap: round;
     stroke-linejoin: round;
-    filter: drop-shadow(0 0 8px rgba(20, 241, 199, 0.7));
   }
 </style>
