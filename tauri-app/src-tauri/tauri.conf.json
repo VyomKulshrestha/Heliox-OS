@@ -26,7 +26,7 @@
     ],
     "trayIcon": {
       "iconPath": "icons/icon.png",
-      "iconAsTemplate": true
+      "iconAsTemplate": false
     },
     "security": {
       "csp": "default-src 'self'; connect-src 'self' ws://127.0.0.1:* http://127.0.0.1:* ws://localhost:* http://localhost:*; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; media-src 'self' mediastream:; img-src 'self' blob: data:;"
