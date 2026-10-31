@@ -58,6 +58,7 @@ def _server(root: Path) -> Any:
     from pilot.workflows.activity_timeline import ActivityTimeline
     from pilot.workflows.app_reminders import AppReminders
     from pilot.workflows.clipboard_history import ClipboardHistory
+    from pilot.workflows.companion import Companion
     from pilot.workflows.file_finder import FileFinder
     from pilot.workflows.focus import FocusSession, QuietHours
     from pilot.workflows.focus_guard import FocusGuard
@@ -126,6 +127,7 @@ def _server(root: Path) -> Any:
     server._user_profile = UserProfile(root / "user_profile.json")
     server._goals = GoalStore(root / "goals.json")
     server._goals.create("launch the podcast")
+    server._companion = Companion(root / "companion.json")
     server._speech_coordinator = MagicMock()
     server._speech_coordinator.speak = AsyncMock()
     return server

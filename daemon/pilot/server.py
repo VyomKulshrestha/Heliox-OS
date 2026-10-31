@@ -966,6 +966,7 @@ class PilotServer:
         self._habits: Any = None
         self._user_profile: Any = None
         self._goals: Any = None
+        self._companion: Any = None
         self._queued_execute_requests: deque[tuple[str, str, dict[str, Any]]] = deque()
         self._queued_submission_lock = asyncio.Lock()
         self._queued_execute_worker: asyncio.Task[None] | None = None
@@ -1261,6 +1262,10 @@ class PilotServer:
         from pilot.workflows.goals import GoalStore
 
         self._goals = GoalStore(DATA_DIR / "goals.json")
+        from pilot.workflows.companion import Companion
+
+        self._companion = Companion(DATA_DIR / "companion.json", on_change=self._companion_apply)
+        await self._companion_apply()
         from pilot.workflows.workspaces import WorkspaceStore
 
         self._workspaces = WorkspaceStore(DATA_DIR / "workspaces.json")
@@ -1854,6 +1859,9 @@ class PilotServer:
             "goal_set_next": self._handle_goal_set_next,
             "goal_set_status": self._handle_goal_set_status,
             "goal_delete": self._handle_goal_delete,
+            "companion_get": self._handle_companion_get,
+            "companion_set": self._handle_companion_set,
+            "companion_reset": self._handle_companion_reset,
             "workspace_save": self._handle_workspace_save,
             "workspace_delete": self._handle_workspace_delete,
             "receipts_search": self._handle_receipts_search,
@@ -6096,6 +6104,7 @@ class PilotServer:
         from pilot.workflows import (
             app_reminders,
             clipboard_history,
+            companion,
             day_briefing,
             file_finder,
             focus_guard,
@@ -6195,6 +6204,12 @@ class PilotServer:
             goals.DONE_REQUEST,
             goals.STATUS_REQUEST,
             goals.DELETE_REQUEST,
+            companion.NAME_REQUEST,
+            companion.NAME_GET_REQUEST,
+            companion.PERSONA_REQUEST,
+            companion.PERSONA_GET_REQUEST,
+            companion.INTRO_REQUEST,
+            companion.RESET_REQUEST,
             focus_log.HISTORY_REQUEST,
             generators.PASSWORD_REQUEST,
             generators.COIN_REQUEST,
@@ -6331,6 +6346,7 @@ class PilotServer:
             self._say_again_request,
             self._profile_request,
             self._goal_request,
+            self._companion_request,
             self._day_request,
             self._forget_request,
             self._local_answer,
@@ -6552,6 +6568,53 @@ class PilotServer:
                 await self._memory.retract_fact(fact_id, reason="Removed from your profile")
             except KeyError:
                 pass
+
+    async def _companion_apply(self) -> None:
+        """Push the assistant's name and tone into the planner's system prompt (wording only)."""
+        if self._planner is None or self._companion is None:
+            return
+        user_name = self._user_profile.name() if self._user_profile is not None else ""
+        try:
+            self._planner.set_persona_context(self._companion.system_prompt_line(user_name))
+        except Exception:
+            logger.debug("Could not apply the companion persona", exc_info=True)
+
+    async def _companion_request(self, text: str) -> str | None:
+        """ "Your name is Nova", "be more playful", "what's your name", "introduce yourself"."""
+        if self._companion is None:
+            return None
+        return await self._companion.answer_async(text)
+
+    async def _handle_companion_get(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        """The assistant's name, tone preset and the available presets."""
+        from pilot.workflows.companion import PERSONAS
+
+        if self._companion is None:
+            return {"status": "error", "message": "The companion is not ready yet."}
+        return {
+            "status": "ok",
+            **await asyncio.to_thread(self._companion.get),
+            "presets": {key: label for key, (label, _tone) in PERSONAS.items()},
+        }
+
+    async def _handle_companion_set(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        name, persona = params.get("name"), params.get("persona")
+        if self._companion is None:
+            return {"status": "error", "message": "The companion is not ready yet."}
+        try:
+            if isinstance(name, str) and name.strip():
+                await self._companion.set_name(name)
+            if isinstance(persona, str):
+                await self._companion.set_persona(persona)
+        except ValueError as exc:
+            return {"status": "error", "message": str(exc)}
+        return await self._handle_companion_get({}, ws)
+
+    async def _handle_companion_reset(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        if self._companion is None:
+            return {"status": "error", "message": "The companion is not ready yet."}
+        await self._companion.reset()
+        return await self._handle_companion_get({}, ws)
 
     async def _goal_request(self, text: str) -> str | None:
         """ "Start a goal: ...", "add to my ... goal: ...", "what's my next step on ...", "what are my goals"."""

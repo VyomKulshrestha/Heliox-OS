@@ -18,6 +18,18 @@ HELP_REQUEST = re.compile(
 
 GUIDE: list[dict[str, Any]] = [
     {
+        "group": "Your assistant",
+        "about": "Name Heliox and shape its tone; the tone carries into both quick replies and the model's voice.",
+        "examples": [
+            "call yourself Nova",
+            "what's your name",
+            "be more playful",
+            "be strictly professional",
+            "introduce yourself",
+            "go back to normal",
+        ],
+    },
+    {
         "group": "Goals",
         "about": "Long-lived goals Heliox keeps; your next steps show in the morning and the Today tab.",
         "examples": [

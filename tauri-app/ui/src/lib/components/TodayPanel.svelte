@@ -61,6 +61,9 @@
   let goalTitle = $state("");
   let goalUpdateFor = $state("");
   let goalUpdateText = $state("");
+  type Companion = { name: string; persona: string; presets: Record<string, string> };
+  let companion = $state<Companion | null>(null);
+  let companionName = $state("");
   let profileEntries = $state<ProfileEntry[]>([]);
   let profileName = $state("");
   let profileText = $state("");
@@ -369,6 +372,42 @@
     if (next) habits = next;
   }
 
+  async function loadCompanion() {
+    try {
+      const result = await call<{ status: string } & Companion>("companion_get");
+      if (result.status === "ok" && result.presets) {
+        companion = result;
+        companionName = result.name;
+      }
+    } catch {
+      companion = null;
+    }
+  }
+
+  async function setCompanionName(event: SubmitEvent) {
+    event.preventDefault();
+    const trimmed = companionName.trim();
+    if (!trimmed) return;
+    try {
+      const result = await call<{ status: string } & Companion>("companion_set", { name: trimmed });
+      if (result.status === "ok") companion = result;
+    } catch {
+      /* ignore */
+    }
+  }
+
+  async function setCompanionPersona(persona: string) {
+    try {
+      const result = await call<{ status: string } & Companion>("companion_set", { persona });
+      if (result.status === "ok" && result.presets) {
+        companion = result;
+        companionName = result.name;
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
   async function loadGoals() {
     try {
       const result = await call<{ status: string; goals?: Goal[] }>("goal_list");
@@ -555,6 +594,7 @@
     void listCall<Habit>("habit_list", "habits").then((items) => (habits = items ?? []));
     void loadProfile();
     void loadGoals();
+    void loadCompanion();
     void loadFocusHistory();
     void listCall<Snippet>("snippet_list", "snippets").then((items) => (snippets = items ?? []));
     void listCall<AppReminder>("app_reminder_list", "reminders").then((items) => (appReminders = items ?? []));
@@ -763,6 +803,38 @@
       <button type="button" class="quiet" onclick={checkComputer} disabled={checking}
         >{checking ? "Checking…" : "Check now"}</button
       >
+    </section>
+
+    <section aria-labelledby="today-companion">
+      <h3 id="today-companion">Your assistant</h3>
+      {#if companion}
+        <p class="empty">
+          Name your assistant and pick its tone. The tone carries into its replies and the model's voice.
+        </p>
+        <form class="brief-controls" onsubmit={setCompanionName}>
+          <input
+            class="reminder-text"
+            bind:value={companionName}
+            maxlength="24"
+            aria-label="Assistant name"
+            placeholder="Heliox"
+          />
+          <button type="submit">Save assistant</button>
+        </form>
+        <div class="brief-controls" role="group" aria-label="Assistant tone">
+          <label
+            >Tone
+            <select
+              value={companion.persona}
+              onchange={(e) => setCompanionPersona((e.currentTarget as HTMLSelectElement).value)}
+            >
+              {#each Object.entries(companion.presets ?? {}) as [key, label] (key)}
+                <option value={key}>{label}</option>
+              {/each}
+            </select>
+          </label>
+        </div>
+      {/if}
     </section>
 
     <section aria-labelledby="today-goals">

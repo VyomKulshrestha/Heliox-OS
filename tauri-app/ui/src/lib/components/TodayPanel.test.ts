@@ -309,6 +309,28 @@ describe("TodayPanel", () => {
     await waitFor(() => expect(screen.queryByText("12 Main Street")).toBeNull());
   });
 
+  it("names the assistant and changes its tone", async () => {
+    let companion = {
+      name: "Heliox",
+      persona: "balanced",
+      presets: { balanced: "balanced and clear", witty: "dry and witty" },
+    };
+    daemonMocks.call.mockImplementation(async (method: string, params: Record<string, unknown>) => {
+      if (method === "today_overview") return overview;
+      if (method === "companion_set") companion = { ...companion, ...(params as object) };
+      return { status: "ok", ...companion };
+    });
+    render(TodayPanel);
+    await waitFor(() => expect(screen.getByLabelText("Assistant name")).toBeTruthy());
+
+    await fireEvent.input(screen.getByLabelText("Assistant name"), { target: { value: "Nova" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Save assistant" }));
+    await waitFor(() => expect(daemonMocks.call).toHaveBeenCalledWith("companion_set", { name: "Nova" }));
+
+    await fireEvent.change(screen.getByLabelText("Tone"), { target: { value: "witty" } });
+    await waitFor(() => expect(daemonMocks.call).toHaveBeenCalledWith("companion_set", { persona: "witty" }));
+  });
+
   it("lists goals, logs progress and completes one", async () => {
     type G = {
       id: string;

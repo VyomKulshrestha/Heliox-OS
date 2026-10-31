@@ -432,6 +432,7 @@ class Planner:
         self._skills_context = skills_context.strip()
         self._plugin_context = ""
         self._mcp_context = ""
+        self._persona_context = ""
         self._rebuild_system_prompt()
 
     def set_skills_context(self, skills_context: str) -> None:
@@ -449,6 +450,11 @@ class Planner:
         self._mcp_context = mcp_context.strip()
         self._rebuild_system_prompt()
 
+    def set_persona_context(self, persona_context: str) -> None:
+        """Set the assistant's chosen name and tone, added to the system prompt. Wording only."""
+        self._persona_context = persona_context.strip()
+        self._rebuild_system_prompt()
+
     def set_multi_agent_router(self, router: Any | None) -> None:
         """Use specialist guidance when building model-backed plans."""
         self._multi_agent_router = router
@@ -461,6 +467,8 @@ class Planner:
             self._system_prompt += "\n\n" + self._plugin_context
         if getattr(self, "_mcp_context", ""):
             self._system_prompt += "\n\n" + self._mcp_context
+        if getattr(self, "_persona_context", ""):
+            self._system_prompt += "\n\n" + self._persona_context
 
     # ------------------------------------------------------------------
     # Fast-path: instant local matching for simple commands (no LLM call)

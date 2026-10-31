@@ -11,6 +11,7 @@ from pilot.workflows.activity_timeline import ActivityTimeline
 from pilot.workflows.app_reminders import AppReminders
 from pilot.workflows.clipboard_history import ClipboardHistory
 from pilot.workflows.command_guide import SPOKEN_HELP, all_examples, guide
+from pilot.workflows.companion import Companion
 from pilot.workflows.file_finder import FileFinder
 from pilot.workflows.focus import FocusSession, QuietHours
 from pilot.workflows.focus_guard import FocusGuard
@@ -92,6 +93,7 @@ def server(tmp_path):
     server._user_profile = UserProfile(tmp_path / "user_profile.json")
     server._goals = GoalStore(tmp_path / "goals.json")
     server._goals.create("launch the podcast")
+    server._companion = Companion(tmp_path / "companion.json")
     clipboard = AsyncMock(return_value="Jane Doe, 12 Main Street")
     server._snippets = SnippetStore(tmp_path / "snippets.json", read=clipboard, write=AsyncMock())
     server._snippets.save("signature", "Best, Jane")

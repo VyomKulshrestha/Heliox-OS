@@ -12,7 +12,7 @@ The Heliox OS UI and daemon communicate over a local WebSocket using the [JSON-R
 | Request timeout | 5 minutes |
 | Reconnect interval | 3 seconds (auto-reconnect on close) |
 
-The daemon currently registers **311 WebSocket RPC methods**. That is the API
+The daemon currently registers **314 WebSocket RPC methods**. That is the API
 surface count, not the action catalog: Heliox exposes **162 action
 types** through the guarded planner/executor system. This document names every
 registered RPC method; grouped tables are used where several methods share one
@@ -539,6 +539,17 @@ than a minute is logged (`{"started_at", "ended_at", "seconds", "reason"}`, kept
 `{"status": "ok", "today": {"seconds", "sessions"}, "this_week": {"seconds", "sessions"},
 "recent": [<up to 20 sessions, newest first>]}`. "How long did I focus this week" and
 "how many focus sessions today" work by voice and in chat.
+
+#### `companion_get` / `companion_set` / `companion_reset`
+The assistant's name and tone, kept in `DATA_DIR/companion.json`. `companion_get` returns
+`{"name", "persona", "presets"}` (preset -> short label); `companion_set` takes `{"name"?,
+"persona"?}` (persona one of balanced, friendly, warm, professional, concise, playful,
+witty, calm, direct); `companion_reset` returns to Heliox and a balanced tone. The chosen
+name is used in greetings and self-introductions, and the tone is added to the model's
+system prompt (wording only; the model is still told to stay truthful and never claim an
+action it did not take). "Call yourself Nova", "what's your name", "be more playful", "be
+strictly professional", "what's your personality", "introduce yourself" and "go back to
+normal" work by voice and in chat. This changes how Heliox speaks, never what it may do.
 
 #### `goal_list` / `goal_create` / `goal_update` / `goal_set_next` / `goal_set_status` / `goal_delete`
 Long-lived goals, kept in `DATA_DIR/goals.json`: `{"id", "title", "status" (active, paused
