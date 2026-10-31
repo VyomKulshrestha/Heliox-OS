@@ -370,72 +370,104 @@
   }
 
   async function loadGoals() {
-    const result = await call<{ status: string; goals?: Goal[] }>("goal_list");
-    if (result.status === "ok") goals = (result.goals ?? []).filter((g) => g.status !== "done");
+    try {
+      const result = await call<{ status: string; goals?: Goal[] }>("goal_list");
+      if (result.status === "ok") goals = (result.goals ?? []).filter((g) => g.status !== "done");
+    } catch {
+      goals = [];
+    }
   }
 
   async function createGoal(event: SubmitEvent) {
     event.preventDefault();
     const title = goalTitle.trim();
     if (!title) return;
-    const result = await call<{ status: string; goals?: Goal[]; message?: string }>("goal_create", { title });
-    if (result.status === "ok") {
-      goals = (result.goals ?? []).filter((g) => g.status !== "done");
-      goalTitle = "";
-    } else error = String(result.message ?? "Could not create the goal.");
+    try {
+      const result = await call<{ status: string; goals?: Goal[]; message?: string }>("goal_create", { title });
+      if (result.status === "ok") {
+        goals = (result.goals ?? []).filter((g) => g.status !== "done");
+        goalTitle = "";
+      } else error = String(result.message ?? "Could not create the goal.");
+    } catch (err) {
+      error = err instanceof Error ? err.message : "Could not create the goal.";
+    }
   }
 
   async function addGoalUpdate(event: SubmitEvent) {
     event.preventDefault();
     const text = goalUpdateText.trim();
     if (!text || !goalUpdateFor) return;
-    const result = await call<{ status: string; goals?: Goal[] }>("goal_update", { id: goalUpdateFor, text });
-    if (result.status === "ok") {
-      goals = (result.goals ?? []).filter((g) => g.status !== "done");
-      goalUpdateText = "";
+    try {
+      const result = await call<{ status: string; goals?: Goal[] }>("goal_update", { id: goalUpdateFor, text });
+      if (result.status === "ok") {
+        goals = (result.goals ?? []).filter((g) => g.status !== "done");
+        goalUpdateText = "";
+      }
+    } catch {
+      /* ignore */
     }
   }
 
   async function completeGoal(id: string) {
-    const result = await call<{ status: string; goals?: Goal[] }>("goal_set_status", { id, status: "done" });
-    if (result.status === "ok") goals = (result.goals ?? []).filter((g) => g.status !== "done");
+    try {
+      const result = await call<{ status: string; goals?: Goal[] }>("goal_set_status", { id, status: "done" });
+      if (result.status === "ok") goals = (result.goals ?? []).filter((g) => g.status !== "done");
+    } catch {
+      /* ignore */
+    }
   }
 
   async function loadProfile() {
-    const result = await call<{ status: string; entries?: ProfileEntry[] }>("profile_get");
-    if (result.status === "ok") profileEntries = result.entries ?? [];
+    try {
+      const result = await call<{ status: string; entries?: ProfileEntry[] }>("profile_get");
+      if (result.status === "ok") profileEntries = result.entries ?? [];
+    } catch {
+      profileEntries = [];
+    }
   }
 
   async function setProfileName(event: SubmitEvent) {
     event.preventDefault();
     const trimmed = profileName.trim();
     if (!trimmed) return;
-    const result = await call<{ status: string; entries?: ProfileEntry[]; message?: string }>("profile_set_name", {
-      name: trimmed,
-    });
-    if (result.status === "ok") {
-      profileEntries = result.entries ?? [];
-      profileName = "";
-    } else error = String(result.message ?? "Could not save.");
+    try {
+      const result = await call<{ status: string; entries?: ProfileEntry[]; message?: string }>("profile_set_name", {
+        name: trimmed,
+      });
+      if (result.status === "ok") {
+        profileEntries = result.entries ?? [];
+        profileName = "";
+      } else error = String(result.message ?? "Could not save.");
+    } catch (err) {
+      error = err instanceof Error ? err.message : "Could not save.";
+    }
   }
 
   async function addProfileEntry(event: SubmitEvent) {
     event.preventDefault();
     const trimmed = profileText.trim();
     if (!trimmed) return;
-    const result = await call<{ status: string; entries?: ProfileEntry[]; message?: string }>("profile_add", {
-      kind: profileKind,
-      text: trimmed,
-    });
-    if (result.status === "ok") {
-      profileEntries = result.entries ?? [];
-      profileText = "";
-    } else error = String(result.message ?? "Could not save.");
+    try {
+      const result = await call<{ status: string; entries?: ProfileEntry[]; message?: string }>("profile_add", {
+        kind: profileKind,
+        text: trimmed,
+      });
+      if (result.status === "ok") {
+        profileEntries = result.entries ?? [];
+        profileText = "";
+      } else error = String(result.message ?? "Could not save.");
+    } catch (err) {
+      error = err instanceof Error ? err.message : "Could not save.";
+    }
   }
 
   async function deleteProfileEntry(id: string) {
-    const result = await call<{ status: string; entries?: ProfileEntry[] }>("profile_delete", { id });
-    if (result.status === "ok") profileEntries = result.entries ?? [];
+    try {
+      const result = await call<{ status: string; entries?: ProfileEntry[] }>("profile_delete", { id });
+      if (result.status === "ok") profileEntries = result.entries ?? [];
+    } catch {
+      /* ignore */
+    }
   }
 
   async function addHabit(event: SubmitEvent) {
