@@ -242,6 +242,17 @@
     animation: blink 1s steps(2, start) infinite;
   }
 
+  /* Without motion the sweep cannot mark the current stage, so it gets a steady tint instead. */
+  @media (prefers-reduced-motion: reduce) {
+    .current .bar {
+      background: var(--accent-line);
+    }
+
+    .waiting .current .bar {
+      background: color-mix(in srgb, var(--warning) 45%, transparent);
+    }
+  }
+
   @keyframes appear {
     from {
       opacity: 0;

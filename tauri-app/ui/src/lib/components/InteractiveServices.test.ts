@@ -25,11 +25,13 @@ describe("InteractiveServices", () => {
     const { container } = render(InteractiveServices, { onconfigure });
 
     const toggle = await screen.findByRole("button", { name: /3 of 5 services on/ });
+    const list = container.querySelector(`#${toggle.getAttribute("aria-controls")}`) as HTMLElement;
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
-    expect(screen.queryByText("Follow-ups are off")).toBeNull();
+    expect(list.hidden).toBe(true);
 
     await fireEvent.click(toggle);
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(list.hidden).toBe(false);
     expect(screen.getByText("Follow-ups are off")).toBeTruthy();
     expect(container.querySelectorAll(".service.off").length).toBe(2);
     expect(container.querySelectorAll(".service.down").length).toBe(0);

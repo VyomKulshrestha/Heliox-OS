@@ -880,6 +880,8 @@
     display: flex;
     min-width: 0;
     gap: 2px;
+    /* Room for the focus ring, which the scrolling strip would otherwise clip. */
+    padding: 4px;
     overflow-x: auto;
     scrollbar-width: none;
     -webkit-app-region: no-drag;

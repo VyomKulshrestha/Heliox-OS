@@ -201,19 +201,17 @@
     <button type="button" class="configure" onclick={onconfigure}>Configure</button>
   </div>
 
-  {#if expanded}
-    <ul class="service-list" id="service-list">
-      {#each services as row (row.name)}
-        <li class="service {row.state}">
-          <span class="service-dot {row.state}" aria-hidden="true"></span>
-          <span class="service-copy">
-            <strong>{row.name}</strong>
-            <small>{row.detail}</small>
-          </span>
-        </li>
-      {/each}
-    </ul>
-  {/if}
+  <ul class="service-list" id="service-list" hidden={!expanded}>
+    {#each services as row (row.name)}
+      <li class="service {row.state}">
+        <span class="service-dot {row.state}" aria-hidden="true"></span>
+        <span class="service-copy">
+          <strong>{row.name}</strong>
+          <small>{row.detail}</small>
+        </span>
+      </li>
+    {/each}
+  </ul>
 </section>
 
 <style>
@@ -282,6 +280,10 @@
 
   .configure:hover {
     background: var(--accent-muted);
+  }
+
+  .service-list[hidden] {
+    display: none;
   }
 
   .service-list {
