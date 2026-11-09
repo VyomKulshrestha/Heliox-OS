@@ -1,10 +1,12 @@
 {
   "mode": "lightweight",
-  "probes": 10,
-  "passed": 10,
+  "pressure": 0,
+  "budget": null,
+  "probes": 11,
+  "passed": 11,
   "recall": 1.0,
   "stale": 0,
-  "median_prompt_tokens": 5233,
+  "median_prompt_tokens": 5092,
   "rows": [
     {
       "id": "sister",
@@ -13,7 +15,7 @@
       "pass": true,
       "missing": [],
       "stale": [],
-      "prompt_tokens": 5232
+      "prompt_tokens": 5091
     },
     {
       "id": "pets",
@@ -22,7 +24,7 @@
       "pass": true,
       "missing": [],
       "stale": [],
-      "prompt_tokens": 5230
+      "prompt_tokens": 5089
     },
     {
       "id": "workplace",
@@ -31,7 +33,7 @@
       "pass": true,
       "missing": [],
       "stale": [],
-      "prompt_tokens": 5230
+      "prompt_tokens": 5089
     },
     {
       "id": "home-now",
@@ -40,7 +42,7 @@
       "pass": true,
       "missing": [],
       "stale": [],
-      "prompt_tokens": 5233
+      "prompt_tokens": 5092
     },
     {
       "id": "style",
@@ -49,7 +51,7 @@
       "pass": true,
       "missing": [],
       "stale": [],
-      "prompt_tokens": 5231
+      "prompt_tokens": 5090
     },
     {
       "id": "manager",
@@ -58,7 +60,7 @@
       "pass": true,
       "missing": [],
       "stale": [],
-      "prompt_tokens": 5232
+      "prompt_tokens": 5091
     },
     {
       "id": "same-day",
@@ -67,7 +69,7 @@
       "pass": true,
       "missing": [],
       "stale": [],
-      "prompt_tokens": 5407
+      "prompt_tokens": 5266
     },
     {
       "id": "last-week",
@@ -76,7 +78,7 @@
       "pass": true,
       "missing": [],
       "stale": [],
-      "prompt_tokens": 5235
+      "prompt_tokens": 5094
     },
     {
       "id": "forgotten",
@@ -85,7 +87,7 @@
       "pass": true,
       "missing": [],
       "stale": [],
-      "prompt_tokens": 5233
+      "prompt_tokens": 5092
     },
     {
       "id": "mid-session",
@@ -94,7 +96,16 @@
       "pass": true,
       "missing": [],
       "stale": [],
-      "prompt_tokens": 5509
+      "prompt_tokens": 5368
+    },
+    {
+      "id": "via-manager",
+      "ask": "Remind me what my manager said about getting extra staff for the holidays",
+      "why": "found through who the manager is: the request never names Rahul or hiring",
+      "pass": true,
+      "missing": [],
+      "stale": [],
+      "prompt_tokens": 5095
     }
   ]
 }

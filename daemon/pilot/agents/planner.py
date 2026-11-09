@@ -62,6 +62,7 @@ from pilot.actions import (
     WifiParams,
     WindowParams,
 )
+from pilot.memory import session_recall
 from pilot.memory.session_recall import EARLIER_TURNS_LOOKED_AT, earlier_turns
 from pilot.memory.sliding_window import build_sliding_context, fit_messages_to_token_budget
 
@@ -1059,7 +1060,9 @@ class Planner:
             older, history_entries = history_entries[:-recent_limit], history_entries[-recent_limit:]
             if older:
                 # A long session: the turns before the recent ones that still matter (pilot.memory.session_recall).
-                earlier = earlier_turns(older, retrieval_query, max(200, memory_budget // 2))
+                earlier = earlier_turns(
+                    older, retrieval_query, max(200, int(memory_budget * session_recall.EARLIER_SHARE))
+                )
                 if earlier:
                     context = f"{context}\n\n{earlier}" if context else earlier
 

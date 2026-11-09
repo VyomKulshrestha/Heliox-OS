@@ -1,0 +1,262 @@
+{
+  "pressure": 2,
+  "budgets": [
+    1500,
+    2400,
+    4000
+  ],
+  "train_probes": [
+    "forgotten",
+    "last-week",
+    "mid-session",
+    "same-day",
+    "style",
+    "workplace"
+  ],
+  "held_out_probes": [
+    "home-now",
+    "manager",
+    "pets",
+    "sister",
+    "via-manager"
+  ],
+  "baseline": {
+    "settings": {
+      "pilot.memory.store.PROFILE_TOKENS": 400,
+      "pilot.memory.store.PROFILE_RANK_BY_QUERY": true,
+      "pilot.memory.session_recall.EARLIER_SHARE": 0.5,
+      "pilot.memory.session_recall.FIRST_TURNS": 2,
+      "pilot.memory.assembler.MMR_RELEVANCE_WEIGHT": 0.7
+    },
+    "train": 18,
+    "held_out": 15,
+    "stale": 0
+  },
+  "tried": [
+    {
+      "settings": {
+        "pilot.memory.store.PROFILE_TOKENS": 400,
+        "pilot.memory.store.PROFILE_RANK_BY_QUERY": true,
+        "pilot.memory.session_recall.EARLIER_SHARE": 0.6,
+        "pilot.memory.session_recall.FIRST_TURNS": 3,
+        "pilot.memory.assembler.MMR_RELEVANCE_WEIGHT": 0.9
+      },
+      "train": 18,
+      "held_out": 15,
+      "stale": 0,
+      "regressions": [],
+      "accepted": false
+    },
+    {
+      "settings": {
+        "pilot.memory.store.PROFILE_TOKENS": 500,
+        "pilot.memory.store.PROFILE_RANK_BY_QUERY": true,
+        "pilot.memory.session_recall.EARLIER_SHARE": 0.6,
+        "pilot.memory.session_recall.FIRST_TURNS": 3,
+        "pilot.memory.assembler.MMR_RELEVANCE_WEIGHT": 0.8
+      },
+      "train": 18,
+      "held_out": 15,
+      "stale": 0,
+      "regressions": [],
+      "accepted": false
+    },
+    {
+      "settings": {
+        "pilot.memory.store.PROFILE_TOKENS": 500,
+        "pilot.memory.store.PROFILE_RANK_BY_QUERY": true,
+        "pilot.memory.session_recall.EARLIER_SHARE": 0.6,
+        "pilot.memory.session_recall.FIRST_TURNS": 1,
+        "pilot.memory.assembler.MMR_RELEVANCE_WEIGHT": 0.7
+      },
+      "train": 18,
+      "held_out": 15,
+      "stale": 0,
+      "regressions": [],
+      "accepted": false
+    },
+    {
+      "settings": {
+        "pilot.memory.store.PROFILE_TOKENS": 400,
+        "pilot.memory.store.PROFILE_RANK_BY_QUERY": true,
+        "pilot.memory.session_recall.EARLIER_SHARE": 0.5,
+        "pilot.memory.session_recall.FIRST_TURNS": 2,
+        "pilot.memory.assembler.MMR_RELEVANCE_WEIGHT": 0.6
+      },
+      "train": 18,
+      "held_out": 15,
+      "stale": 0,
+      "regressions": [],
+      "accepted": false
+    },
+    {
+      "settings": {
+        "pilot.memory.store.PROFILE_TOKENS": 300,
+        "pilot.memory.store.PROFILE_RANK_BY_QUERY": true,
+        "pilot.memory.session_recall.EARLIER_SHARE": 0.3,
+        "pilot.memory.session_recall.FIRST_TURNS": 3,
+        "pilot.memory.assembler.MMR_RELEVANCE_WEIGHT": 0.8
+      },
+      "train": 18,
+      "held_out": 15,
+      "stale": 0,
+      "regressions": [],
+      "accepted": false
+    },
+    {
+      "settings": {
+        "pilot.memory.store.PROFILE_TOKENS": 400,
+        "pilot.memory.store.PROFILE_RANK_BY_QUERY": true,
+        "pilot.memory.session_recall.EARLIER_SHARE": 0.6,
+        "pilot.memory.session_recall.FIRST_TURNS": 2,
+        "pilot.memory.assembler.MMR_RELEVANCE_WEIGHT": 0.7
+      },
+      "train": 18,
+      "held_out": 15,
+      "stale": 0,
+      "regressions": [],
+      "accepted": false
+    },
+    {
+      "settings": {
+        "pilot.memory.store.PROFILE_TOKENS": 400,
+        "pilot.memory.store.PROFILE_RANK_BY_QUERY": false,
+        "pilot.memory.session_recall.EARLIER_SHARE": 0.4,
+        "pilot.memory.session_recall.FIRST_TURNS": 2,
+        "pilot.memory.assembler.MMR_RELEVANCE_WEIGHT": 0.8
+      },
+      "train": 18,
+      "held_out": 15,
+      "stale": 0,
+      "regressions": [],
+      "accepted": false
+    },
+    {
+      "settings": {
+        "pilot.memory.store.PROFILE_TOKENS": 300,
+        "pilot.memory.store.PROFILE_RANK_BY_QUERY": true,
+        "pilot.memory.session_recall.EARLIER_SHARE": 0.3,
+        "pilot.memory.session_recall.FIRST_TURNS": 2,
+        "pilot.memory.assembler.MMR_RELEVANCE_WEIGHT": 0.9
+      },
+      "train": 18,
+      "held_out": 15,
+      "stale": 0,
+      "regressions": [],
+      "accepted": false
+    },
+    {
+      "settings": {
+        "pilot.memory.store.PROFILE_TOKENS": 500,
+        "pilot.memory.store.PROFILE_RANK_BY_QUERY": false,
+        "pilot.memory.session_recall.EARLIER_SHARE": 0.5,
+        "pilot.memory.session_recall.FIRST_TURNS": 1,
+        "pilot.memory.assembler.MMR_RELEVANCE_WEIGHT": 0.9
+      },
+      "train": 18,
+      "held_out": 15,
+      "stale": 0,
+      "regressions": [],
+      "accepted": false
+    },
+    {
+      "settings": {
+        "pilot.memory.store.PROFILE_TOKENS": 200,
+        "pilot.memory.store.PROFILE_RANK_BY_QUERY": false,
+        "pilot.memory.session_recall.EARLIER_SHARE": 0.5,
+        "pilot.memory.session_recall.FIRST_TURNS": 3,
+        "pilot.memory.assembler.MMR_RELEVANCE_WEIGHT": 0.7
+      },
+      "train": 18,
+      "held_out": 15,
+      "stale": 0,
+      "regressions": [],
+      "accepted": false
+    },
+    {
+      "settings": {
+        "pilot.memory.store.PROFILE_TOKENS": 200,
+        "pilot.memory.store.PROFILE_RANK_BY_QUERY": false,
+        "pilot.memory.session_recall.EARLIER_SHARE": 0.3,
+        "pilot.memory.session_recall.FIRST_TURNS": 1,
+        "pilot.memory.assembler.MMR_RELEVANCE_WEIGHT": 0.7
+      },
+      "train": 18,
+      "held_out": 15,
+      "stale": 0,
+      "regressions": [],
+      "accepted": false
+    },
+    {
+      "settings": {
+        "pilot.memory.store.PROFILE_TOKENS": 500,
+        "pilot.memory.store.PROFILE_RANK_BY_QUERY": true,
+        "pilot.memory.session_recall.EARLIER_SHARE": 0.3,
+        "pilot.memory.session_recall.FIRST_TURNS": 3,
+        "pilot.memory.assembler.MMR_RELEVANCE_WEIGHT": 0.6
+      },
+      "train": 18,
+      "held_out": 15,
+      "stale": 0,
+      "regressions": [],
+      "accepted": false
+    },
+    {
+      "settings": {
+        "pilot.memory.store.PROFILE_TOKENS": 300,
+        "pilot.memory.store.PROFILE_RANK_BY_QUERY": true,
+        "pilot.memory.session_recall.EARLIER_SHARE": 0.4,
+        "pilot.memory.session_recall.FIRST_TURNS": 1,
+        "pilot.memory.assembler.MMR_RELEVANCE_WEIGHT": 0.6
+      },
+      "train": 18,
+      "held_out": 15,
+      "stale": 0,
+      "regressions": [],
+      "accepted": false
+    },
+    {
+      "settings": {
+        "pilot.memory.store.PROFILE_TOKENS": 400,
+        "pilot.memory.store.PROFILE_RANK_BY_QUERY": true,
+        "pilot.memory.session_recall.EARLIER_SHARE": 0.5,
+        "pilot.memory.session_recall.FIRST_TURNS": 1,
+        "pilot.memory.assembler.MMR_RELEVANCE_WEIGHT": 0.9
+      },
+      "train": 18,
+      "held_out": 15,
+      "stale": 0,
+      "regressions": [],
+      "accepted": false
+    },
+    {
+      "settings": {
+        "pilot.memory.store.PROFILE_TOKENS": 200,
+        "pilot.memory.store.PROFILE_RANK_BY_QUERY": false,
+        "pilot.memory.session_recall.EARLIER_SHARE": 0.4,
+        "pilot.memory.session_recall.FIRST_TURNS": 1,
+        "pilot.memory.assembler.MMR_RELEVANCE_WEIGHT": 0.5
+      },
+      "train": 18,
+      "held_out": 15,
+      "stale": 0,
+      "regressions": [],
+      "accepted": false
+    },
+    {
+      "settings": {
+        "pilot.memory.store.PROFILE_TOKENS": 300,
+        "pilot.memory.store.PROFILE_RANK_BY_QUERY": false,
+        "pilot.memory.session_recall.EARLIER_SHARE": 0.3,
+        "pilot.memory.session_recall.FIRST_TURNS": 1,
+        "pilot.memory.assembler.MMR_RELEVANCE_WEIGHT": 0.7
+      },
+      "train": 18,
+      "held_out": 15,
+      "stale": 0,
+      "regressions": [],
+      "accepted": false
+    }
+  ],
+  "recommendation": null
+}

@@ -20,6 +20,7 @@ from pilot.memory.sliding_window import get_token_count
 FIRST_TURNS = 2
 MAX_TURN_CHARS = 220
 EARLIER_TURNS_LOOKED_AT = 40
+EARLIER_SHARE = 0.5  # of the memory budget, at most, for earlier turns of a long session (pilot.memory.tune)
 _STOP = frozenset(
     [
         "this",

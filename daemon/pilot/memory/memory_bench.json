@@ -115,6 +115,10 @@
         {
           "say": "Book a table for two near home on Friday evening",
           "reply": "Booked a table for two at Malaka Spice on Friday at 8 PM."
+        },
+        {
+          "say": "Ask Rahul whether we can hire for December",
+          "reply": "Rahul approved hiring two more bakers for December."
         }
       ]
     }
@@ -215,6 +219,15 @@
         "14 late deliveries"
       ],
       "why": "a result from the middle of a long session, not its opening"
+    },
+    {
+      "id": "via-manager",
+      "session": "new",
+      "ask": "Remind me what my manager said about getting extra staff for the holidays",
+      "expect": [
+        "approved hiring two more bakers"
+      ],
+      "why": "found through who the manager is: the request never names Rahul or hiring"
     }
   ]
 }

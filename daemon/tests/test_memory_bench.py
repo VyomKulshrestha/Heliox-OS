@@ -10,6 +10,7 @@ import pytest
 from pilot.actions import ActionPlan
 from pilot.memory import bench
 from pilot.memory.session_recall import earlier_turns
+from pilot.memory.sliding_window import get_token_count
 from pilot.memory.store import MemoryStore
 from pilot.models.ollama import OllamaClient, context_size
 from pilot.workflows.user_profile import UserProfile
@@ -95,7 +96,11 @@ async def test_the_profile_leads_the_context_within_its_budget(tmp_path):
         assert context.startswith("What they have told Heliox about themselves:")
         assert "I have two cats" in context and "short answers" in context
         store.set_profile_source(lambda: [f"About them: fact number {i} " + "word " * 30 for i in range(50)])
-        assert "fact number 49" not in await store.get_context("x", max_tokens=600)  # the block has a ceiling
+        crowded = await store.get_context("x", max_tokens=600)
+        # The block has a ceiling; over it, what matches the request comes first, then the most recent.
+        assert "fact number 49" in crowded and "fact number 0 " not in crowded
+        assert get_token_count(crowded.split("Relevant memory")[0]) <= 300
+        assert "fact number 3 " in await store.get_context("what about fact number 3", max_tokens=600)
 
         # An answer is remembered as an episode, so it can be found later without the vector index.
         plan = ActionPlan(actions=[], explanation="Drafted the Q4 summary for Lisbon: revenue up 12 percent.")

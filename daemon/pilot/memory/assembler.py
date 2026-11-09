@@ -86,6 +86,7 @@ class TemporalContextAssembler:
         session_id: str = "",
         task_id: str = "",
         max_tokens: int = 2000,
+        skip_fact_prefixes: tuple[str, ...] = (),
     ) -> AssembledContext:
         max_tokens = max(0, int(max_tokens))
         working = await self._store.get_working(
@@ -109,6 +110,9 @@ class TemporalContextAssembler:
             task_id=task_id,
             limit=50,
         )
+        if skip_fact_prefixes:
+            # Facts already shown elsewhere in the context (the profile block) would only take room twice.
+            facts = [fact for fact in facts if not fact.text.startswith(skip_fact_prefixes)]
         episodes = await self._store.query_episodes(
             query,
             session_id=session_id,

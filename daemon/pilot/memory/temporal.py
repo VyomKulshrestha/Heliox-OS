@@ -875,6 +875,48 @@ class TemporalMemoryStore:
             await db.commit()
         return count
 
+    async def recent_episodes(self, *, limit: int = 2000) -> list[dict[str, Any]]:
+        """The newest episodes, for upkeep (pilot.memory.consolidate)."""
+        pool = self._require_pool()
+        async with pool.read() as db:
+            cursor = await db.execute(
+                "SELECT episode_id, summary, outcome, importance, occurred_at FROM episodic_memories "
+                "ORDER BY occurred_at DESC LIMIT ?",
+                (max(0, int(limit)),),
+            )
+            rows = await cursor.fetchall()
+            await cursor.close()
+        return [
+            {"episode_id": r[0], "summary": r[1], "outcome": r[2], "importance": float(r[3]), "occurred_at": r[4]}
+            for r in rows
+        ]
+
+    async def set_episode_importance(self, episode_id: str, importance: float) -> None:
+        pool = self._require_pool()
+        async with pool.write() as db:
+            await db.execute(
+                "UPDATE episodic_memories SET importance = ? WHERE episode_id = ?",
+                (max(0.0, min(1.0, float(importance))), episode_id),
+            )
+            await db.commit()
+
+    async def delete_episodes(self, episode_ids: list[str]) -> int:
+        if not episode_ids:
+            return 0
+        pool = self._require_pool()
+        removed = 0
+        async with pool.write() as db:
+            for start in range(0, len(episode_ids), 500):
+                chunk = episode_ids[start : start + 500]
+                cursor = await db.execute(
+                    f"DELETE FROM episodic_memories WHERE episode_id IN ({','.join('?' for _ in chunk)})",  # noqa: S608
+                    chunk,
+                )
+                removed += cursor.rowcount
+                await cursor.close()
+            await db.commit()
+        return removed
+
     async def purge_expired_working(self, *, now: datetime | None = None) -> int:
         current_iso = (now or datetime.now(UTC)).isoformat()
         pool = self._require_pool()

@@ -35,6 +35,53 @@ from pilot.workflows.user_profile import UserProfile
 
 SCRIPT = Path(__file__).with_name("memory_bench.json")
 
+# Pressure: months of ordinary use around the script, so the memory budget has to choose. Generated, not random,
+# so every run is the same.
+_FILLER_FACTS = [
+    "I like jazz", "I am learning Spanish", "I cycle to work on Tuesdays", "I drink oat milk",
+    "I support Arsenal", "I read before bed", "I use a standing desk", "I keep a paper diary",
+    "I am allergic to peanuts", "I grew up near the sea", "I play chess online", "I collect vinyl records",
+    "I prefer window seats", "I volunteer at a library", "I am saving for a car", "I bake bread on Sundays",
+    "I have a sourdough starter called Bob", "I wake up at six", "I use dark mode everywhere",
+    "I listen to podcasts while cooking", "I am vegetarian on weekdays", "I go swimming on Fridays",
+    "I sketch in the evenings", "I water the plants on Mondays",
+]  # fmt: skip
+_FILLER_TASKS = [
+    ("Open the monthly invoice spreadsheet", "Opened invoices-{n}.xlsx."),
+    ("Check how much RAM is free", "{n} GB of RAM is free."),
+    ("Find photos from the {n}th", "Found {n} photos in Pictures."),
+    ("Turn on do not disturb", "Do not disturb is on for an hour."),
+    ("What's on my calendar this afternoon?", "You have {n} meetings this afternoon."),
+    ("Summarize the email from the flour mill", "The mill raised prices by {n} percent from next month."),
+    ("Rename the screenshots on the desktop", "Renamed {n} screenshots."),
+    ("Play some focus music", "Playing a focus playlist."),
+    ("Draft a reply thanking the landlord", "Drafted a short thank-you reply."),
+    ("Clean up the downloads folder", "Moved {n} old installers to the bin."),
+]
+
+
+_FOODS = ("ramen", "pho", "dosa", "paella", "falafel", "pierogi", "bibimbap", "tagine", "ceviche", "laksa", "goulash",
+          "arepas")  # fmt: skip
+_PLACES = ("Goa", "Hampi", "Kyoto", "Lisbon", "Oslo", "Cusco", "Tbilisi", "Hanoi", "Zanzibar", "Bergen", "Porto",
+           "Seville")  # fmt: skip
+
+
+def _pressure(script: dict[str, Any], level: int = 1) -> dict[str, Any]:
+    facts = list(_FILLER_FACTS)
+    if level >= 2:  # twice the profile and twice the history
+        facts += [f"I once ate {food} in {place}" for food, place in zip(_FOODS, _PLACES, strict=True)]
+        facts += [f"I want to visit {place} someday" for place in reversed(_PLACES)]
+    sessions = [{"id": "filler-facts", "turns": [{"say": f"Remember that {fact}"} for fact in facts]}]
+    for week in range(8 * level):
+        turns = []
+        for i in range(10):
+            asked, answered = _FILLER_TASKS[(week * 3 + i) % len(_FILLER_TASKS)]
+            n = 3 + week * 10 + i
+            turns.append({"say": asked.format(n=n), "reply": answered.format(n=n)})
+        sessions.append({"id": f"filler-week-{week}", "turns": turns})
+    # The filler comes first, so the scripted facts are not simply the most recent ones.
+    return {**script, "sessions": sessions + script["sessions"]}
+
 
 class RecordingModel:
     """Stands in for the model router: keeps the messages the planner sends and answers with an empty plan."""
@@ -54,14 +101,24 @@ class RecordingModel:
         return nothing
 
 
-async def run(script: dict[str, Any] | None = None, *, mode: str = "lightweight") -> dict[str, Any]:
+async def run(
+    script: dict[str, Any] | None = None,
+    *,
+    mode: str = "lightweight",
+    pressure: int = 0,
+    budget: int | None = None,
+) -> dict[str, Any]:
     from pilot.agents.planner import Planner
 
     script = script or json.loads(SCRIPT.read_text(encoding="utf-8"))
+    if pressure:
+        script = _pressure(script, int(pressure))
     with tempfile.TemporaryDirectory(prefix="heliox-memory-bench-") as folder:
         root = Path(folder)
         config = PilotConfig()
         config.model.mode = mode
+        if budget:
+            config.memory.max_context_tokens = budget  # the memory share is a third of this
         memory = MemoryStore(
             checkpoint_interval_seconds=0,
             pruning_interval_seconds=0,
@@ -90,6 +147,7 @@ async def run(script: dict[str, Any] | None = None, *, mode: str = "lightweight"
 
         profile = UserProfile(root / "user_profile.json", remember=remember, forget=forget)
         memory.set_profile_source(profile.context_lines)  # as the server wires it
+        memory.set_people_source(profile.people_by_relation)
         try:
             for session in script["sessions"]:
                 for turn in session["turns"]:
@@ -128,6 +186,8 @@ async def run(script: dict[str, Any] | None = None, *, mode: str = "lightweight"
     passed = sum(row["pass"] for row in rows)
     return {
         "mode": mode,
+        "pressure": pressure,
+        "budget": budget,
         "probes": len(rows),
         "passed": passed,
         "recall": round(sum(not row["missing"] for row in rows) / len(rows), 3) if rows else 1.0,
@@ -140,9 +200,13 @@ async def run(script: dict[str, Any] | None = None, *, mode: str = "lightweight"
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m pilot.memory.bench", description=__doc__.split("\n\n")[0])
     parser.add_argument("--mode", choices=("lightweight", "full"), default="lightweight")
+    parser.add_argument(
+        "--pressure", type=int, choices=(0, 1, 2), default=0, help="add months (1) or twice that (2) of ordinary use"
+    )
+    parser.add_argument("--budget", type=int, help="the context budget in tokens (memory gets a third)")
     parser.add_argument("--json", type=Path, help="write every probe's result here")
     args = parser.parse_args(argv)
-    result = asyncio.run(run(mode=args.mode))
+    result = asyncio.run(run(mode=args.mode, pressure=args.pressure, budget=args.budget))
     for row in result["rows"]:
         mark = "ok  " if row["pass"] else "FAIL"
         detail = ""

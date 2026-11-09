@@ -141,6 +141,12 @@ grant permission, remove deterministic warnings, or execute by itself.
   Conversation history and long-term memory are listed with counts in Your data
   and can each be wiped; evidence stays append-only to every code path except
   that wipe. See [Memory and context](docs/MEMORY.md).
+- Memory upkeep runs in code every six hours: expired working memory is
+  deleted, near-identical episodes are merged and answer-only episodes older
+  than 90 days are let go. It never changes facts.
+- The memory tuning loop (`python -m pilot.memory.tune`) only recommends
+  retrieval settings that win on held-out benchmark probes without a single
+  regression. It never applies them; a person changes the code.
 - Online adaptation learns only from new ledger events and verified callbacks.
   Repeated evidence, bounded replay, drift detection, and explicit reset limit
   stale or one-off behavior. It cannot browse or act merely to collect data.

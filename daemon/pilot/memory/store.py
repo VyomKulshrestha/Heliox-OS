@@ -34,6 +34,7 @@ from pilot.memory.temporal import (
 from pilot.models.router import ModelRouter
 
 PROFILE_TOKENS = 400  # what the person told Heliox about themselves, at most, in every context
+PROFILE_RANK_BY_QUERY = True  # over budget, keep the profile lines that match the request (pilot.memory.tune)
 
 if TYPE_CHECKING:
     from pilot.actions import ActionPlan, ActionResult
@@ -77,13 +78,19 @@ class MemoryStore:
         *,
         db_file: str | Path | None = None,
         semantic_search: bool = True,
+        consolidation_interval_seconds: int = 6 * 3600,
     ) -> None:
         # db_file and semantic_search=False let a benchmark or test run the real store in a folder of its own,
         # without the vector index (pilot.memory.bench).
         self._db_file_override = Path(db_file) if db_file else None
+        self._consolidation_interval = consolidation_interval_seconds
+        self._consolidation_task: asyncio.Task[None] | None = None
+        self.last_consolidation: dict[str, Any] = {}
         self._semantic_search = semantic_search
         # What the person told Heliox about themselves (UserProfile.context_lines): always in the context.
         self._profile_source: Any = None
+        # relation -> name from the profile ("manager" -> "Rahul"): followed when a request names the relation.
+        self._people_source: Any = None
         self._pool: AsyncSqlitePool | None = None
         self._chroma_collection: Any = None
         self._workspace_index = None
@@ -132,6 +139,9 @@ class MemoryStore:
                 "Memory WAL checkpoint scheduler started (interval=%ss)",
                 self._checkpoint_interval_seconds,
             )
+
+        if self._consolidation_interval > 0 and self._checkpoint_interval_seconds > 0:
+            self._consolidation_task = asyncio.create_task(self._consolidation_loop())
 
         if router and self._pruning_interval_seconds > 0:
             self._pruning_task = asyncio.create_task(self._periodic_pruning_loop(router))
@@ -467,7 +477,11 @@ class MemoryStore:
         """``source()`` returns the lines the person told Heliox about themselves; they lead every context."""
         self._profile_source = source
 
-    def _profile_block(self, budget: int) -> str:
+    def set_people_source(self, source: Any) -> None:
+        """``source()`` returns relation -> name; a request naming the relation also searches for the name."""
+        self._people_source = source
+
+    def _profile_block(self, budget: int, query: str = "") -> str:
         if self._profile_source is None or budget <= 0:
             return ""
         try:
@@ -475,12 +489,23 @@ class MemoryStore:
         except Exception:
             logger.debug("Could not read the profile for context", exc_info=True)
             return ""
-        block = ["What they have told Heliox about themselves:"]
-        for line in lines:
-            if get_token_count("\n".join([*block, f"- {line}"])) > budget:
-                break
-            block.append(f"- {line}")
-        return "\n".join(block) if len(block) > 1 else ""
+        header = "What they have told Heliox about themselves:"
+        if get_token_count("\n".join([header, *(f"- {line}" for line in lines)])) > budget:
+            # More than fits: the lines that share words with the request first, then the most recent ones.
+            wanted = memory_terms(query)
+            order = sorted(
+                range(len(lines)),
+                key=lambda i: (len(wanted & memory_terms(lines[i])) * (1 if PROFILE_RANK_BY_QUERY else 0), i),
+                reverse=True,
+            )
+        else:
+            order = list(range(len(lines)))
+        kept: list[int] = []
+        for i in order:
+            trial = sorted([*kept, i])
+            if get_token_count("\n".join([header, *(f"- {lines[j]}" for j in trial)])) <= budget:
+                kept = trial
+        return "\n".join([header, *(f"- {lines[i]}" for i in kept)]) if kept else ""
 
     async def get_context(
         self,
@@ -494,7 +519,14 @@ class MemoryStore:
         """Retrieve ranked memory context without exceeding the token budget."""
         parts: list[str] = []
         max_tokens = max(0, int(max_tokens))
-        about = self._profile_block(min(PROFILE_TOKENS, max_tokens // 2))
+        if self._people_source is not None:
+            from pilot.memory.links import expand_query
+
+            try:
+                query = expand_query(query, self._people_source())  # "my manager" also searches for "Rahul"
+            except Exception:
+                logger.debug("Could not follow people links", exc_info=True)
+        about = self._profile_block(min(PROFILE_TOKENS, max_tokens // 2), query)
         if about:
             parts.append(about)
             max_tokens -= get_token_count(about)
@@ -509,6 +541,7 @@ class MemoryStore:
                 session_id=effective_session_id,
                 task_id=effective_task_id,
                 max_tokens=max_tokens,
+                skip_fact_prefixes=("user profile:",) if about else (),
             )
             if assembled.text:
                 parts.append(assembled.text)
@@ -865,6 +898,27 @@ class MemoryStore:
             n_results,
         )
 
+    async def consolidate(self) -> dict[str, int]:
+        """One upkeep pass over long-term memory (pilot.memory.consolidate)."""
+        from pilot.memory.consolidate import consolidate
+
+        if self._temporal is None:
+            return {}
+        report = await consolidate(self._temporal)
+        self.last_consolidation = {**report, "at": datetime.now(UTC).isoformat()}
+        return report
+
+    async def _consolidation_loop(self) -> None:
+        await asyncio.sleep(120)  # let start-up finish first
+        while True:
+            try:
+                await self.consolidate()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.warning("Memory consolidation failed", exc_info=True)
+            await asyncio.sleep(self._consolidation_interval)
+
     async def counts(self) -> dict[str, int]:
         """How much is kept: conversation turns, and long-term facts plus episodes."""
         found = {"history": 0, "long_term": 0}
@@ -900,6 +954,11 @@ class MemoryStore:
         return await self._temporal.clear() if self._temporal is not None else 0
 
     async def close(self) -> None:
+        if self._consolidation_task is not None:
+            self._consolidation_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._consolidation_task
+            self._consolidation_task = None
         if self._checkpoint_task:
             self._checkpoint_task.cancel()
 

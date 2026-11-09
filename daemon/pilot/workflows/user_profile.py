@@ -304,7 +304,7 @@ class UserProfile:
             lines.append(f"Call them {profile['call_me']}.")
         lines += [f"About them: {item['text']}" for item in profile["about"]]
         lines += [f"Person they know: {item['text']}" for item in profile["people"]]
-        lines += [f"They prefer: {item['text']}" for item in profile["prefers"]]
+        lines += [f"Preference: {item['text']}" for item in profile["prefers"]]
         lines += [f"Answer style, {field}: {value}" for field, value in profile["style"].items()]
         return lines
 

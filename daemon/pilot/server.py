@@ -1277,6 +1277,7 @@ class PilotServer:
         if self._memory is not None:
             # What they told Heliox about themselves leads every planner context (pilot.memory.store).
             self._memory.set_profile_source(self._user_profile.context_lines)
+            self._memory.set_people_source(self._user_profile.people_by_relation)
         from pilot.workflows.goals import GoalStore
 
         self._goals = GoalStore(DATA_DIR / "goals.json")
