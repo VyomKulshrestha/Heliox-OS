@@ -589,6 +589,16 @@ async def test_transition_promotion_requires_support_for_action_and_source(tmp_p
             disk_path="/",
         ),
     )
+    # The gate scores at the current time and transition features include hour and weekday, so evaluate at the
+    # time the labels were recorded; otherwise the result depends on when the test runs.
+    labelled_at = datetime.fromisoformat(occurred_at)
+
+    class _LabelledClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return labelled_at.astimezone(tz) if tz is not None else labelled_at
+
+    monkeypatch.setattr("pilot.intelligence.online_learning.datetime", _LabelledClock)
     gate = RiskGate(weights_path="/nonexistent.npz")
     gate.set_online_learner(rebuilt)
     plan = ActionPlan(
