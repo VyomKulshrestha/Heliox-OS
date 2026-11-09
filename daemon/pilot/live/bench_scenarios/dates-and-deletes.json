@@ -1,0 +1,136 @@
+[
+  {
+    "name": "chat: tomorrow with the wrong weekday",
+    "app": "slack.exe",
+    "title": "#team - Slack",
+    "expect": ["weekday_date"],
+    "steps": [
+      {"type": "Works for me, see you tomorrow (Wednesday) at"},
+      {"pause": "think"},
+      {"type": " the usual place."},
+      {"pause": "done"}
+    ]
+  },
+  {
+    "name": "email: a weekday next to a numeric date",
+    "app": "OUTLOOK.EXE",
+    "title": "RE: Handover - Message (HTML)",
+    "expect": ["weekday_date"],
+    "steps": [
+      {"type": "The handover is on Thursday 11/11 so"},
+      {"pause": "think"},
+      {"type": " please send your notes before then."},
+      {"pause": "done"}
+    ]
+  },
+  {
+    "name": "notes: a date that does not exist",
+    "app": "notepad.exe",
+    "title": "plan.txt - Notepad",
+    "expect": ["weekday_date"],
+    "steps": [
+      {"type": "Invoices go out on 31 November and"},
+      {"pause": "think"},
+      {"type": " reminders a week later."},
+      {"pause": "done"}
+    ]
+  },
+  {
+    "name": "chat: a time with both clocks",
+    "app": "slack.exe",
+    "title": "#design - Slack",
+    "expect": ["weekday_date"],
+    "steps": [
+      {"type": "Design review moved to 15pm because"},
+      {"pause": "think"},
+      {"type": " the room was double booked."},
+      {"pause": "done"}
+    ]
+  },
+  {
+    "name": "document: a percentage said with so",
+    "app": "WINWORD.EXE",
+    "title": "Budget.docx - Word",
+    "expect": ["arithmetic"],
+    "steps": [
+      {"type": "Marketing gets 20% of 150, so 35 and"},
+      {"pause": "think"},
+      {"type": " the rest stays with product."},
+      {"pause": "done"}
+    ]
+  },
+  {
+    "name": "terminal: a recursive delete of Documents",
+    "app": "WindowsTerminal.exe",
+    "title": "PowerShell",
+    "start_text": "PS C:\\Users\\me> ",
+    "expect": ["risky_command"],
+    "steps": [
+      {"type": "Remove-Item -Recurse -Force C:\\Users\\me\\Documents"},
+      {"pause": 1.5, "label": "ready"},
+      {"send": true},
+      {"pause": 1.0, "label": "idle"}
+    ]
+  },
+  {
+    "name": "decoy: a list of days after tomorrow",
+    "app": "slack.exe",
+    "title": "#team - Slack",
+    "expect": [],
+    "steps": [
+      {"type": "I'm out tomorrow, Thursday and Friday so"},
+      {"pause": "think"},
+      {"type": " ping Sam for anything urgent."},
+      {"pause": "done"}
+    ]
+  },
+  {
+    "name": "decoy: a fraction after a weekday",
+    "app": "slack.exe",
+    "title": "#team - Slack",
+    "expect": [],
+    "steps": [
+      {"type": "On Friday 3/4 of the team is"},
+      {"pause": "think"},
+      {"type": " at the conference."},
+      {"pause": "done"}
+    ]
+  },
+  {
+    "name": "decoy: a duration that looks like a time",
+    "app": "notepad.exe",
+    "title": "edit.txt - Notepad",
+    "expect": [],
+    "steps": [
+      {"type": "The final cut is 25:00 long, and"},
+      {"pause": "think"},
+      {"type": " the trailer is 1:30."},
+      {"pause": "done"}
+    ]
+  },
+  {
+    "name": "decoy: a percentage followed by more",
+    "app": "WINWORD.EXE",
+    "title": "Seats.docx - Word",
+    "expect": [],
+    "steps": [
+      {"type": "Last year we added 20% of 150, so 35 more seats"},
+      {"pause": "think"},
+      {"type": " would be a similar jump."},
+      {"pause": "done"}
+    ]
+  },
+  {
+    "name": "decoy: a recursive delete of a build folder",
+    "app": "WindowsTerminal.exe",
+    "title": "PowerShell",
+    "start_text": "PS C:\\repo> ",
+    "expect": [],
+    "steps": [
+      {"type": "Remove-Item -Recurse -Force .\\dist"},
+      {"pause": 1.5, "label": "ready"},
+      {"send": true},
+      {"pause": 1.0, "label": "idle"}
+    ]
+  }
+]

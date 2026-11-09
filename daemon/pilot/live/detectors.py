@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import calendar
 import re
-from dataclasses import dataclass, field
-from datetime import date, timedelta
+from dataclasses import dataclass, field, replace
+from datetime import date, datetime, timedelta
 
 URGENT, NORMAL, LOW = "urgent", "normal", "low"
 
@@ -33,7 +33,7 @@ KINDS = (
 KIND_LABELS = {
     "risky_command": "Risky commands before you run them",
     "secret_in_text": "Keys and passwords pasted into messages",
-    "weekday_date": "A weekday that doesn't match its date",
+    "weekday_date": "Weekdays, dates and times that can't be right",
     "arithmetic": "Arithmetic slips",
     "profile_fact": "Names that contradict what you told me",
     "error_on_screen": "Errors on screen, with the fix",
@@ -73,6 +73,9 @@ class TextContext:
     title: str = ""
     source: str = "focused_field"  # "focused_field", "screen_ocr" or "speech"
     people: dict[str, str] = field(default_factory=dict)  # relation -> the one name the person gave
+    # The local hour, for "today" and "tomorrow" (after midnight people still mean the day they are finishing).
+    # None: the clock's hour when ``today`` is the real today, otherwise midday.
+    hour: int | None = None
 
     @property
     def where(self) -> str:
@@ -159,6 +162,7 @@ def _resolve_year(day: int, month: int, today: date) -> int | None:
 
 
 def weekday_date(text: str, ctx: TextContext) -> list[Correction]:
+    """A weekday that doesn't match its date, and dates and clock times that cannot exist."""
     found: list[Correction] = []
     seen: set[tuple[int, int]] = set()
     for pattern in _DATE_PATTERNS:
@@ -173,16 +177,7 @@ def weekday_date(text: str, ctx: TextContext) -> list[Correction]:
             evidence = match.group(0).strip()
             if year is None or day > calendar.monthrange(year, month)[1] or day < 1:
                 if 1 <= day <= 31:
-                    found.append(
-                        Correction(
-                            kind="weekday_date",
-                            key=f"weekday_date:{evidence.casefold()}",
-                            title=f"There's no {day} {month_name}",
-                            message=f"{month_name} doesn't have a {day}{_ordinal(day)}.",
-                            evidence=evidence,
-                            urgency=NORMAL,
-                        )
-                    )
+                    found.append(_no_such_date(evidence, day, month, int(match["y"]) if match["y"] else None, ctx))
                 continue
             actual = date(year, month, day)
             if actual.weekday() == stated:
@@ -209,6 +204,313 @@ def weekday_date(text: str, ctx: TextContext) -> list[Correction]:
                     trailing=_at_end(text, match.end()),
                 )
             )
+    if ctx.is_terminal or ctx.is_code_editor:
+        return found  # code and logs are full of test dates, timestamps and ratios that are not claims
+    found.extend(_impossible_dates(text, ctx, seen))
+    found.extend(_numeric_weekdays(text, ctx))
+    found.extend(_relative_days(text, ctx))
+    found.extend(_clock_times(text))
+    return found
+
+
+# ── Dates that do not exist ──
+
+# Only the months shorter than 31 days can be wrong, so "may" and "march" as ordinary words never matter here.
+_SHORT_MONTH_RE = r"(?P<m>feb(?:ruary)?|apr(?:il)?|june?|sep(?:t(?:ember)?)?|nov(?:ember)?)"
+_LONE_DATES = (
+    # "31 November", "the 31st of November 2026", "30 Feb"
+    re.compile(
+        rf"(?<![\w/.:,-])(?P<d>\d{{1,2}})(?:st|nd|rd|th)?(?:\s+of)?\s+{_SHORT_MONTH_RE}\b(?![-/]\w)\.?"
+        rf"(?:,?\s+(?P<y>\d{{4}})\b)?",
+        re.IGNORECASE,
+    ),
+    # "November 31", "February 30th, 2027"
+    re.compile(
+        rf"\b{_SHORT_MONTH_RE}\.?\s+(?P<d>\d{{1,2}})(?:st|nd|rd|th)?\b(?![/.:]\d)(?:,?\s+(?P<y>\d{{4}})\b)?",
+        re.IGNORECASE,
+    ),
+)
+# Someone writing about the impossible date rather than making a slip: "there's no 31 November".
+_DATE_NEGATION_BEFORE = re.compile(
+    r"\b(?:no|not|never|isn'?t|aren'?t|wasn'?t|doesn'?t|invalid|impossible|non-?existent|fake)\b[^.!?\n]{0,12}$",
+    re.IGNORECASE,
+)
+_DATE_NEGATION_AFTER = re.compile(r"^\W{0,3}(?:doesn'?t|does not|isn'?t|is not|never)\b", re.IGNORECASE)
+
+
+def _plausible_year(month: int, today: date) -> int:
+    """The year a yearless month most likely means: this year, unless that month is well past."""
+    return today.year if month >= today.month - 2 else today.year + 1
+
+
+def _no_such_date(evidence: str, day: int, month: int, stated_year: int | None, ctx: TextContext) -> Correction:
+    month_name = calendar.month_name[month]
+    if month == 2 and day == 29:
+        year = stated_year or _plausible_year(month, ctx.today)
+        title = f"There's no 29 February {year}"
+        message = f"{year} isn't a leap year, so February has no 29th."
+    else:
+        title = f"There's no {day} {month_name}"
+        message = f"{month_name} doesn't have a {day}{_ordinal(day)}."
+    return Correction(
+        kind="weekday_date",
+        key=f"weekday_date:{evidence.casefold()}",
+        title=title,
+        message=message,
+        evidence=evidence,
+        urgency=NORMAL,
+    )
+
+
+def _impossible_dates(text: str, ctx: TextContext, covered: set[tuple[int, int]]) -> list[Correction]:
+    found: list[Correction] = []
+    keys: set[str] = set()
+    for pattern in _LONE_DATES:
+        for match in pattern.finditer(text):
+            if any(match.start() < end and start < match.end() for start, end in covered):
+                continue  # already checked together with its weekday
+            day, month = int(match["d"]), _month_number(match["m"])
+            if not 29 <= day <= 31:
+                continue
+            year = int(match["y"]) if match["y"] else _plausible_year(month, ctx.today)
+            if day <= calendar.monthrange(year, month)[1]:
+                continue
+            if _DATE_NEGATION_BEFORE.search(text[max(0, match.start() - 40) : match.start()]):
+                continue
+            if _DATE_NEGATION_AFTER.search(text[match.end() : match.end() + 20]):
+                continue
+            evidence = match.group(0).strip()
+            correction = _no_such_date(evidence, day, month, int(match["y"]) if match["y"] else None, ctx)
+            if correction.key not in keys:
+                keys.add(correction.key)
+                found.append(replace(correction, trailing=_at_end(text, match.end())))
+    return found
+
+
+# ── A weekday next to a numeric date ──
+
+_NUMERIC_DATE = re.compile(
+    rf"\b{_DAY_RE}\.?,?\s+(?:the\s+)?(?P<a>\d{{1,2}})/(?P<b>\d{{1,2}})(?:/(?P<y>\d{{4}}|\d{{2}}))?(?![\w/:%]|\.\d)",
+    re.IGNORECASE,
+)
+# What may follow such a date. Anything else ("Friday 3/4 of the team", "Monday 1/2 day") reads as a fraction.
+_AFTER_NUMERIC_DATE = re.compile(
+    r"^(?:\s*$|\s*[,.;:!?)]|\s+(?:at|@|from|to|until|till|by|before|after|works|morning|afternoon|evening|night|"
+    r"so|but|if|unless|then|please|we|i|you|they)\b"
+    r"|\s+\d)",
+    re.IGNORECASE,
+)
+
+
+def _numeric_weekdays(text: str, ctx: TextContext) -> list[Correction]:
+    found: list[Correction] = []
+    for match in _NUMERIC_DATE.finditer(text):
+        token = match["wd"]
+        if len(token) < 6 and not token[:1].isupper():
+            continue  # "sat", "wed" and "sun" are also ordinary words
+        if not _AFTER_NUMERIC_DATE.match(text[match.end() :]):
+            continue
+        a, b = int(match["a"]), int(match["b"])
+        stated_year = None
+        if match["y"]:
+            stated_year = int(match["y"]) + (2000 if len(match["y"]) == 2 else 0)
+        # Every reading that is a real date: day/month and month/day.
+        readings: dict[date, str] = {}
+        for day, month in ((a, b), (b, a)):
+            if not 1 <= month <= 12 or day < 1:
+                continue
+            year = stated_year or _resolve_year(day, month, ctx.today)
+            if year is None or day > calendar.monthrange(year, month)[1]:
+                continue
+            readings[date(year, month, day)] = f"{day} {calendar.month_name[month]}"
+        stated = _weekday_number(token)
+        if not readings or any(when.weekday() == stated for when in readings):
+            continue
+        stated_name = _DAYS[stated].title()
+        numeric = f"{match['a']}/{match['b']}"
+        evidence = match.group(0).strip()
+        common = {
+            "kind": "weekday_date",
+            "key": f"weekday_date:{evidence.casefold()}",
+            "evidence": evidence,
+            "urgency": NORMAL,
+            "trailing": _at_end(text, match.end()),
+        }
+        if len(readings) == 1:
+            [(when, spoken)] = readings.items()
+            actual_name = _DAYS[when.weekday()].title()
+            found.append(
+                Correction(
+                    title=f"{spoken} is a {actual_name}",
+                    message=f"{spoken} is a {actual_name}, not a {stated_name}.",
+                    fix=evidence.replace(token, _match_case(actual_name, token), 1),
+                    fix_kind="replace",
+                    confidence=0.95,
+                    **common,
+                )
+            )
+        else:
+            (first, first_name), (second, second_name) = sorted(readings.items())
+            found.append(
+                Correction(
+                    title=f"{numeric} isn't a {stated_name}",
+                    message=(
+                        f"{first_name} is a {_DAYS[first.weekday()].title()} and {second_name} is a "
+                        f"{_DAYS[second.weekday()].title()}, so {numeric} isn't a {stated_name} either way."
+                    ),
+                    confidence=0.9,
+                    **common,
+                )
+            )
+    return found
+
+
+# ── "Tomorrow, Thursday" when tomorrow is a Wednesday ──
+
+_FULL_DAYS = "monday|tuesday|wednesday|thursday|friday|saturday|sunday"
+# "tomorrow (Thursday)", "tomorrow, Thursday", "today is Monday"
+_RELATIVE = re.compile(
+    rf"\b(?P<rel>today|tomorrow|yesterday)"
+    rf"(?:\s*\(\s*(?P<wd>{_FULL_DAYS})\s*\)|(?:\s*,\s*|\s+[-–]\s+|\s+(?:is|was)\s+)(?P<wd2>{_FULL_DAYS})\b)",
+    re.IGNORECASE,
+)
+_RELATIVE_OFFSET = {"yesterday": -1, "today": 0, "tomorrow": 1}
+# Hypotheticals, alternatives and "the day after tomorrow" do not claim what day it is.
+_RELATIVE_NOT_A_CLAIM_BEFORE = re.compile(
+    r"(?:\b(?:if|whether|when|unless|assuming|suppose|thought|thinking|forgot|like|not|instead of|rather than|"
+    r"either|or|and|after|before)|n't|[,&/])\s*$",
+    re.IGNORECASE,
+)
+# After a comma or dash form, the weekday must end the phrase: "tomorrow, Thursday and Friday" is a list.
+_RELATIVE_END = re.compile(
+    r"^(?:\s*$|\s*[.!;:)]|,?\s+(?:at|@|from|morning|afternoon|evening|night|first thing|by)\b|\s+\d)", re.IGNORECASE
+)
+
+
+def _local_hour(ctx: TextContext) -> int:
+    if ctx.hour is not None:
+        return ctx.hour
+    return datetime.now().hour if ctx.today == date.today() else 12
+
+
+def _relative_days(text: str, ctx: TextContext) -> list[Correction]:
+    if _local_hour(ctx) < 5:
+        return []  # at 1 a.m. "tomorrow" usually means after some sleep, not the calendar's tomorrow
+    found: list[Correction] = []
+    for match in _RELATIVE.finditer(text):
+        token = match["wd"] or match["wd2"]
+        rest = text[match.end() :]
+        if rest.startswith("'") or rest.startswith("’") or re.match(r"\s*\?", rest):
+            continue  # "today is Monday's deadline", "tomorrow is Thursday?"
+        if match["wd2"] and not _RELATIVE_END.match(rest):
+            continue
+        if _RELATIVE_NOT_A_CLAIM_BEFORE.search(text[max(0, match.start() - 20) : match.start()]):
+            continue
+        rel = match["rel"].casefold()
+        when = ctx.today + timedelta(days=_RELATIVE_OFFSET[rel])
+        stated = _weekday_number(token)
+        if when.weekday() == stated:
+            continue
+        actual_name, stated_name = _DAYS[when.weekday()].title(), _DAYS[stated].title()
+        verb = "was" if rel == "yesterday" else "is"
+        offset = (stated - ctx.today.weekday()) % 7 or 7
+        meant = ctx.today + timedelta(days=offset)
+        evidence = match.group(0).strip()
+        group = "wd" if match["wd"] else "wd2"
+        start, end = match.start(group) - match.start(), match.end(group) - match.start()
+        detail = (
+            "" if rel == "yesterday" else f"The next {stated_name} is {meant.day} {calendar.month_name[meant.month]}."
+        )
+        found.append(
+            Correction(
+                kind="weekday_date",
+                key=f"weekday_date:{evidence.casefold()}",
+                title=f"{rel.title()} {verb} {actual_name}",
+                message=f"{rel.title()} {verb} {actual_name}, not {stated_name}.",
+                evidence=evidence,
+                detail=detail,
+                fix=evidence[:start] + _match_case(actual_name, token) + evidence[end:],
+                fix_kind="replace",
+                urgency=NORMAL,
+                confidence=0.9,
+                trailing=_at_end(text, match.end()),
+            )
+        )
+    return found
+
+
+# ── Clock times that do not exist ──
+
+# "14pm": a 24-hour hour with a 12-hour suffix. With a space only lower-case or dotted, so "14 PM" (people) is left.
+_MIXED_CLOCK = re.compile(
+    r"(?<![\w:.,])(?P<h>1[3-9]|2[0-3])(?::(?P<mm>[0-5]\d))?(?:(?P<ap>[AaPp][Mm]|[ap]\.m\.)|\s(?P<ap2>[ap]m|[ap]\.m\.))"
+    r"(?!\w)",
+)
+# "at 25:00", "until 13:75": only after a word that makes it a time of day, never a duration or a ratio.
+_CLOCK = re.compile(
+    r"(?:\b(?:at|by|from|until|till|before|after|around|about)\s+|@\s*)(?P<t>(?P<h>\d{1,2}):(?P<mm>\d{2}))"
+    r"(?![\d:]|\.\d|\s*(?:min|mins|minutes|sec|secs|seconds|into|in|mark|left|remaining)\b)",
+    re.IGNORECASE,
+)
+
+
+def _clock_times(text: str) -> list[Correction]:
+    found: list[Correction] = []
+    for match in _MIXED_CLOCK.finditer(text):
+        hour = int(match["h"])
+        minutes = match["mm"]
+        spelled = match["ap"] or match["ap2"]
+        evidence = match.group(0).strip()
+        common = {
+            "kind": "weekday_date",
+            "key": f"weekday_date:{evidence.casefold()}",
+            "evidence": evidence,
+            "urgency": NORMAL,
+            "trailing": _at_end(text, match.end()),
+        }
+        if spelled[:1].casefold() == "p":
+            twelve = f"{hour - 12}{':' + minutes if minutes else ''}"
+            gap = " " if match["ap2"] else ""
+            found.append(
+                Correction(
+                    title=f"{evidence} is {twelve}{gap}{spelled}",
+                    message=f"{evidence} mixes the 24-hour and 12-hour clocks. {hour}:{minutes or '00'} is {twelve}{gap}{spelled}.",
+                    fix=f"{twelve}{gap}{spelled}",
+                    fix_kind="replace",
+                    confidence=0.9,
+                    **common,
+                )
+            )
+        else:
+            found.append(
+                Correction(
+                    title=f"There's no {evidence}",
+                    message=f"{evidence} mixes the 24-hour and 12-hour clocks, so it isn't a time.",
+                    confidence=0.9,
+                    **common,
+                )
+            )
+    for match in _CLOCK.finditer(text):
+        hour, minutes = int(match["h"]), int(match["mm"])
+        shown = match["t"]
+        if minutes >= 60:
+            message = f"An hour has 60 minutes, so {shown} isn't a time."
+        elif hour >= 25 or (hour == 24 and minutes > 0):
+            message = f"A day ends at 23:59, so {shown} isn't a time."
+        else:
+            continue
+        found.append(
+            Correction(
+                kind="weekday_date",
+                key=f"weekday_date:{shown}",
+                title=f"There's no {shown}",
+                message=message,
+                evidence=shown,
+                urgency=NORMAL,
+                confidence=0.9,
+                trailing=_at_end(text, match.end()),
+            )
+        )
     return found
 
 
@@ -232,6 +534,16 @@ _ARITH = re.compile(
 )
 _PERCENT = re.compile(
     rf"(?<![\w.])(?P<p>{_NUM})\s*%\s*of\s*(?P<base>{_NUM})\s*(?:=|is|equals)\s*(?P<c>{_NUM})(?![\w.%])",
+    re.IGNORECASE,
+)
+# "20% of 150, so 35", "20% of 150, which is 35", "20% of 150 would be 35". The result has to end the claim:
+# "so 35 more" or "so 35 + tax" is a different sum, and "so about 35" is not exact.
+_PERCENT_SAID = re.compile(
+    rf"(?<![\w.])(?P<p>{_NUM})\s*%\s*of\s*(?P<base>{_NUM})"
+    r"(?:,?\s+so(?:\s+that['’]s)?|,?\s+which\s+(?:is|makes)|,?\s+that['’]s|,?\s+that\s+is|\s+would\s+be|\s+comes\s+to"
+    r"|\s+works\s+out\s+(?:to|at)|\s*(?:->|→|=>))"
+    rf"\s*(?P<c>{_NUM})(?![\w%/:]|\.\d)"
+    r"(?!\s*(?:more|less|fewer|extra|left|remaining|others?|plus|minus|[-+*/×÷]))",
     re.IGNORECASE,
 )
 
@@ -284,12 +596,13 @@ def arithmetic(text: str, ctx: TextContext) -> list[Correction]:
                 trailing=_at_end(text, match.end()),
             )
         )
-    for match in _PERCENT.finditer(text):
+    percents = [*_PERCENT.finditer(text), *_PERCENT_SAID.finditer(text)]
+    for match in percents:
         p, base, c = float(match["p"]), float(match["base"]), float(match["c"])
         value = p * base / 100
         places = _decimals(match["c"])
-        if round(value, places) == round(c, places):
-            continue
+        if abs(value - c) <= 0.5 * 10**-places + 1e-9:
+            continue  # right, or rounded the way people round
         shown = _fmt(value, places)
         evidence = match.group(0).strip()
         found.append(
@@ -382,17 +695,143 @@ _RISKY: tuple[tuple[str, re.Pattern[str], str, str, str], ...] = (
         "That command erases an entire drive.",
         "",
     ),
-    (
-        "remove_drive_root",
-        re.compile(
-            r"\b(?:remove-item|rm|ri|del|rd|rmdir)\b[^\n]*?(?:-recurse|/s)\b[^\n]*?\s(?:[a-z]:\\?|\$home|~|\$env:userprofile)(?=\s|$)",
-            re.I,
-        ),
-        "That deletes a whole drive or your home folder",
-        "That recursive delete targets a drive root or your home folder.",
-        "",
-    ),
 )  # fmt: skip
+
+# ── Recursive deletes aimed at something broad: a drive, a home folder, Documents, a system folder ──
+#
+# The command alone says little: "rm -rf ./build" and "Remove-Item -Recurse .\dist" are routine. What makes a delete
+# a likely slip is its target, so this reads the arguments and only speaks when one of them is broad.
+
+# Where a command can start: the start of the line, after a prompt ("PS C:\repo>", "C:\Users\me>", "me@box:~$"),
+# or after ";", "&&", "||", "|" or "(". Mid-sentence mentions in prose are left alone.
+_DELETE_START = re.compile(
+    r"(?:^\s*|^\s*(?:PS\s[^>\n]*>|[^\s>]*[>$#])\s*|[;&|(]\s*)(?:sudo\s+)?(?P<cmd>rm|remove-item|ri|del|erase|rd|rmdir)(?=\s)",
+    re.IGNORECASE,
+)
+_HOME_VARS = r"(?:~|\$home|\$\{home\}|\$env:userprofile|\$env:home|%userprofile%)"
+_KNOWN_FOLDERS = ("Documents", "Desktop", "Downloads", "Pictures", "Videos", "Music", "OneDrive")
+_KNOWN_RE = "|".join(_KNOWN_FOLDERS)
+_SYSTEM_DIRS = re.compile(
+    r"[a-z]:\\(?:windows|program files|program files \(x86\)|programdata)|/(?:etc|usr|bin|sbin|lib|lib64|boot|var)",
+    re.IGNORECASE,
+)
+_PS_PATH_PARAMS = ("path", "literalpath", "lp", "pspath")
+_PS_VALUE_PARAMS = ("include", "exclude", "filter", "credential", "stream")
+
+
+def _broad_target(token: str) -> tuple[str, bool] | None:
+    """What a delete target covers, as a noun phrase, and whether it was a wildcard; None when it is specific."""
+    raw = token.strip("\"'")
+    wildcard = False
+    star = re.fullmatch(r"(.*?)[\\/]\*(?:\.\*)?", raw)
+    if star:
+        raw, wildcard = star[1] or "/", True
+    path = raw if raw in ("/", "\\") else raw.rstrip("\\/")
+    if re.match(r"[a-z]:", path, re.I):
+        path = path.replace("/", "\\")
+    if re.fullmatch(r"[a-z]:", path, re.I):
+        return f"everything on {path.upper()}", wildcard
+    if path == "/":
+        return "everything on the drive", wildcard
+    if re.fullmatch(_HOME_VARS, path, re.I):
+        return "your home folder", wildcard
+    known = re.fullmatch(rf"{_HOME_VARS}[\\/](?P<k>{_KNOWN_RE})", path, re.I)
+    if known:
+        return f"your {_canonical_folder(known['k'])} folder", wildcard
+    if re.fullmatch(r"[a-z]:\\users|/home|/users", path, re.I):
+        return "every user's files", wildcard
+    if re.fullmatch(r"[a-z]:\\users\\[^\\]+|/home/[^/]+|/users/[^/]+", path, re.I):
+        return "a whole user folder", wildcard
+    known = re.fullmatch(rf"(?:[a-z]:\\users\\[^\\]+\\|/(?:home|users)/[^/]+/)(?P<k>{_KNOWN_RE})", path, re.I)
+    if known:
+        return f"the whole {_canonical_folder(known['k'])} folder", wildcard
+    if _SYSTEM_DIRS.fullmatch(path):
+        return "a system folder", wildcard
+    return None
+
+
+def _canonical_folder(name: str) -> str:
+    return next(folder for folder in _KNOWN_FOLDERS if folder.casefold() == name.casefold())
+
+
+def _broad_delete(line: str) -> Correction | None:
+    for start in _DELETE_START.finditer(line):
+        cmd = start["cmd"].casefold()
+        segment = re.split(r"[;|]|&&", line[start.end() :], maxsplit=1)[0]
+        tokens = re.findall(r'"[^"]*"|\'[^\']*\'|\S+', segment)
+        recursive = careful = False
+        powershell = cmd in ("remove-item", "ri")
+        targets: list[str] = []
+        take_next = skip_next = False
+        for token in tokens:
+            low = token.casefold()
+            if skip_next:
+                skip_next = False
+                continue
+            if take_next:
+                targets.extend(token.split(","))
+                take_next = False
+                continue
+            if cmd in ("del", "erase", "rd", "rmdir") and re.fullmatch(r"/[a-z](?::\S*)?", low):
+                recursive = recursive or low == "/s"
+                careful = careful or low == "/p"
+                continue
+            if low == "--recursive":
+                recursive = True
+                continue
+            if low.startswith("--"):
+                careful = careful or low.startswith("--interactive")
+                continue
+            if cmd == "rm" and re.fullmatch(r"-[rRfvidI]+", token):  # rm's own short options: -rf, -fr, -ri
+                recursive = recursive or "r" in low
+                careful = careful or "i" in low
+                continue
+            if low.startswith("-") and len(low) > 1:
+                name, _, value = low[1:].partition(":")
+                powershell = True
+                if len(name) >= 1 and "recurse".startswith(name):
+                    recursive = True
+                elif name in ("whatif", "wi") or (name in ("confirm", "cf") and value != "$false"):
+                    careful = careful or value != "$false"
+                elif any(param.startswith(name) and len(name) >= 2 for param in _PS_PATH_PARAMS):
+                    take_next = True
+                elif any(param.startswith(name) and len(name) >= 2 for param in _PS_VALUE_PARAMS):
+                    skip_next = True
+                continue
+            targets.extend(token.split(",") if powershell else [token])
+        if not recursive or careful:
+            continue
+        for target in targets:
+            broad = _broad_target(target)
+            if broad is None:
+                continue
+            what, wildcard = broad
+            shown = target.strip("\"'")
+            windows = cmd != "rm" or powershell or bool(re.match(r"[a-z]:|%|\$env:", shown, re.I))
+            command = line[start.start("cmd") :].strip()
+            if wildcard and not what.startswith("everything"):
+                what = "everything in " + what.replace("a whole ", "a ").replace("the whole ", "the ")
+            tail = "Nothing goes to the Recycle Bin." if windows else "rm has no undo."
+            if wildcard:
+                message = f"That deletes {what}. {tail}"
+            else:
+                message = f"That deletes {shown} and everything in it. {tail}"
+            fix = ""
+            if powershell and not segment.rstrip().endswith("-WhatIf"):
+                fix = line[start.start("cmd") : start.end() + len(segment)].rstrip() + " -WhatIf"
+            return Correction(
+                kind="risky_command",
+                key=f"risky_command:broad_delete:{command}",
+                title=f"That deletes {what}",
+                message=message,
+                evidence=_short(command),
+                detail="Adding -WhatIf lists what it would delete without deleting anything." if fix else "",
+                fix=fix,
+                fix_kind="command" if fix else "",
+                urgency=URGENT,
+                confidence=0.95,
+            )
+    return None
 
 
 def _current_command_lines(text: str, ctx: TextContext) -> list[str]:
@@ -410,6 +849,11 @@ def risky_command(text: str, ctx: TextContext) -> list[Correction]:
         return []
     found: list[Correction] = []
     for line in _current_command_lines(text, ctx):
+        if not any(pattern.search(line) for _, pattern, *_ in _RISKY):
+            broad = _broad_delete(line)
+            if broad is not None:
+                found.append(broad)
+            continue
         for name, pattern, title, message, fix_name in _RISKY:
             match = pattern.search(line)
             if not match:
@@ -438,9 +882,15 @@ def risky_command(text: str, ctx: TextContext) -> list[Correction]:
 
 # ── Keys and passwords pasted where other people will read them ─────────────────────────────────────────────────
 
+# First match wins, so the specific "sk-" prefixes come before the generic one.
 _SECRETS: tuple[tuple[str, re.Pattern[str]], ...] = (
-    ("an OpenAI API key", re.compile(r"\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}")),
     ("an Anthropic API key", re.compile(r"\bsk-ant-[A-Za-z0-9_-]{20,}")),
+    (
+        "an OpenAI API key",
+        re.compile(r"\bsk-(?:proj|svcacct|admin)-[A-Za-z0-9_-]{20,}|\bsk-[A-Za-z0-9]*T3BlbkFJ[A-Za-z0-9]*"),
+    ),
+    # Any other "sk-" key: named neutrally, and only with a long random run, so a slug like "sk-hynix-..." is not one.
+    ("an API key", re.compile(r"\bsk-(?:[A-Za-z0-9_-]*-)?(?=[A-Za-z0-9]*\d)(?=[A-Za-z0-9]*[A-Za-z])[A-Za-z0-9]{20,}")),
     ("a GitHub token", re.compile(r"\b(?:ghp|gho|ghs|ghu)_[A-Za-z0-9]{30,}|\bgithub_pat_[A-Za-z0-9_]{40,}")),
     ("an AWS access key", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
     ("a Slack token", re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}")),
