@@ -1271,11 +1271,19 @@ TRAIN_SCALE_V4 = {
     "scope_authorization": 2.0,
     "compound_scope": 2.0,
 }
+# v5: the scope and harm questions exactly as Gnomon's runtime reviewer asks them, on everyday plans described by
+# the runtime's own describe_plan (benchmarks/runtime_review_families.py).
+from benchmarks.runtime_review_families import runtime_harm, runtime_scope  # noqa: E402
+
+FAMILIES_V5: dict[str, Family] = {**FAMILIES_V4, "runtime_scope": runtime_scope, "runtime_harm": runtime_harm}
+FAMILY_OOD_V5 = FAMILY_OOD_V4
+TRAIN_SCALE_V5 = {**TRAIN_SCALE_V4, "runtime_scope": 3.0, "runtime_harm": 2.0}
 VERSIONS = {
     "v1": (CORPUS_VERSION, FAMILIES, FAMILY_OOD, {}),
     "v2": ("heliox_desktop_decisions_v2", FAMILIES_V2, FAMILY_OOD_V2, TRAIN_SCALE_V2),
     "v3": ("heliox_desktop_decisions_v3", FAMILIES_V3, FAMILY_OOD_V3, TRAIN_SCALE_V3),
     "v4": ("heliox_desktop_decisions_v4", FAMILIES_V4, FAMILY_OOD_V4, TRAIN_SCALE_V4),
+    "v5": ("heliox_desktop_decisions_v5", FAMILIES_V5, FAMILY_OOD_V5, TRAIN_SCALE_V5),
 }
 
 
