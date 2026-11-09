@@ -15,12 +15,19 @@ prediction can add caution but cannot replace a stronger rule prediction.
 
 from __future__ import annotations
 
+import asyncio
 import math
-from dataclasses import replace
+import os
+import re
+import sys
+import threading
+import time
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
+from pilot.actions import ActionType
 from pilot.intelligence.world_model import (
     HistoricalFailureRisk,
     HybridWorldModel,
@@ -30,13 +37,355 @@ from pilot.intelligence.world_model import (
     WorldState,
 )
 from pilot.security.risk_model import EMBEDDING_SIZE, LEARNABLE_ACTION_TYPES, RiskTransitionModel
-from pilot.security.risk_observation import NOMINAL_PROC_CAPACITY, capture_os_snapshot
-from pilot.security.risk_safety import score_outcome
+from pilot.security.risk_observation import (
+    NOMINAL_PROC_CAPACITY,
+    ON_LOOP_SCAN_BUDGET_SECONDS,
+    PLAN_SCAN_BUDGET_SECONDS,
+    OsSnapshot,
+    TreeSize,
+    VolumeUsage,
+    capture_os_snapshot,
+    measure_tree_size,
+    volume_of,
+)
+from pilot.security.risk_safety import DISK_USAGE_RISK_THRESHOLD, DISK_USAGE_RISK_WEIGHT, score_outcome
 
 if TYPE_CHECKING:
-    from pilot.actions import ActionPlan
+    from pilot.actions import Action, ActionPlan
     from pilot.config import PilotConfig
     from pilot.intelligence.online_learning import VerifiedOnlineLearner
+
+
+# ── Deterministic disk-size lookahead ──
+#
+# The transition model's disk inputs are the current usage fraction and the
+# action type; nothing tells it how many bytes an action writes. Its rule
+# table adds a fixed fraction of the system drive per action (copy +1%,
+# write +2%, download +3%) and the learned MLP, trained on 1 KB to 512 KB
+# sandbox files, predicts about +0.00001%. Both are blind to size. Where the
+# size is knowable before running, the gate measures it here, and that
+# measurement replaces the rule table's fixed guess for that action.
+
+# Adds an approval (destructive_critic.HEURISTIC_RISK_THRESHOLD is 0.3)
+# without claiming a fill the gate cannot prove; a proven fill scores
+# DISK_USAGE_RISK_WEIGHT (0.8).
+UNMEASURED_SIZE_RISK = 0.5
+# Same 1e-6 fraction risk_safety uses to decide a prediction "added" disk
+# usage: about 1 MB on a 1 TB drive. Smaller writes never flag.
+_MATERIAL_FRACTION = 1e-6
+_WRITE_PLACEHOLDER = re.compile(r"\{[A-Z][A-Z0-9_]*\}")
+_PATH_TOKEN = r"(\"[^\"]+\"|'[^']+'|[^\s;|&\"']+)"
+_FSUTIL_CREATENEW = re.compile(
+    r"\bfsutil(?:\.exe)?\s+file\s+createnew\s+" + _PATH_TOKEN + r"\s+(\d+)(?![\w.])",
+    re.IGNORECASE,
+)
+_FALLOCATE_LENGTH = re.compile(r"\bfallocate\s+(?:-l\s*|--length[\s=]+)(\d+)([KMGTPE])?(iB|B)?\s+" + _PATH_TOKEN)
+_UNIT_POWER = {"K": 1, "M": 2, "G": 3, "T": 4, "P": 5, "E": 6}
+
+
+@dataclass(frozen=True)
+class _DiskWrite:
+    """Bytes one action is expected to add to the volume of `destination`."""
+
+    verb: str
+    noun: str
+    label: str
+    destination: str
+    bytes: int
+    complete: bool
+    entries: int = 1
+    files: int = 0
+    stopped_early: bool = False
+    source: str | None = None
+
+
+def _format_bytes(size: int) -> str:
+    """Binary units with the labels Windows Explorer shows (1 GB = 1024^3)."""
+    value = float(max(0, size))
+    if value < 1024:
+        return f"{int(value)} bytes"
+    for unit in ("KB", "MB", "GB", "TB"):
+        value /= 1024
+        if value < 1024 or unit == "TB":
+            return f"{value:.1f} {unit}" if value < 10 else f"{value:.0f} {unit}"
+    return f"{value:.0f} TB"
+
+
+def _format_fraction(fraction: float) -> str:
+    text = f"{fraction:.0%}"
+    if text == f"{DISK_USAGE_RISK_THRESHOLD:.0%}":
+        text = f"{fraction:.1%}"
+    return text
+
+
+def _volume_name(root: str) -> str:
+    stripped = root.rstrip("\\/")
+    return stripped or root
+
+
+def _unquote(token: str) -> str:
+    if len(token) >= 2 and token[0] == token[-1] and token[0] in "\"'":
+        return token[1:-1]
+    return token
+
+
+def _label(path: str) -> str:
+    stripped = path.rstrip("\\/")
+    return os.path.basename(stripped) or path
+
+
+def _shell_created_files(text: str, working_directory: str | None) -> list[tuple[str, int]]:
+    """Files whose exact size the shell text states: `fsutil file createnew
+    <path> <bytes>` and `fallocate -l <size> <path>`. Both allocate real
+    space. `truncate -s` is not counted (it makes sparse files) and `dd` is
+    not counted (its size depends on bs, count and the input)."""
+    created: list[tuple[str, int]] = []
+    for match in _FSUTIL_CREATENEW.finditer(text):
+        created.append((_unquote(match.group(1)), int(match.group(2))))
+    for match in _FALLOCATE_LENGTH.finditer(text):
+        number, unit, suffix, token = match.groups()
+        base = 1000 if suffix == "B" else 1024
+        created.append((_unquote(token), int(number) * base ** _UNIT_POWER.get(unit or "", 0)))
+    base_dir = working_directory or os.getcwd()
+    return [(path if os.path.isabs(path) else os.path.join(base_dir, path), size) for path, size in created]
+
+
+def _scan_budget_seconds() -> float:
+    """Full budget off the event loop; a short one if a caller still runs
+    evaluate_plan() on a loop thread, so the loop is never held for long."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return PLAN_SCAN_BUDGET_SECONDS
+    return ON_LOOP_SCAN_BUDGET_SECONDS
+
+
+class _PlanDiskLookahead:
+    """Per-plan, ordered disk ledger keyed by volume.
+
+    Only proven growth is added. Space that a delete or a cross-volume move
+    would free is never credited, so a delete earlier in the plan cannot
+    make a later fill look safe (the delete may fail, go to a recycle bin,
+    or be declined while the later step still runs).
+    """
+
+    def __init__(
+        self,
+        snapshot: OsSnapshot,
+        *,
+        measure: Callable[..., TreeSize | None],
+        volume_lookup: Callable[[str], VolumeUsage | None],
+    ) -> None:
+        self._measure = measure
+        self._budget_seconds = _scan_budget_seconds()
+        self._volume_lookup = volume_lookup
+        self._deadline: float | None = None
+        self._sizes: dict[str, TreeSize | None] = {}
+        self._volumes: dict[str, dict[str, Any]] = {}
+        self._os_key: str | None = None
+        os_volume = self._lookup(snapshot.disk_path) if snapshot.disk_path else None
+        if os_volume is not None:
+            # The plan's snapshot is authoritative for its own volume.
+            self._os_key = os_volume.key
+            self._volumes[os_volume.key] = {
+                "root": os_volume.root,
+                "total": os_volume.total,
+                "used": round(snapshot.disk_usage_fraction * os_volume.total),
+            }
+
+    def _lookup(self, path: str) -> VolumeUsage | None:
+        try:
+            return self._volume_lookup(path)
+        except Exception:
+            return None
+
+    def _volume_state(self, path: str) -> dict[str, Any] | None:
+        volume = self._lookup(path)
+        if volume is None or volume.total <= 0:
+            return None
+        return self._volumes.setdefault(
+            volume.key,
+            {"root": volume.root, "total": volume.total, "used": volume.used},
+        )
+
+    def sync_system_volume(self, fraction: float) -> None:
+        """Carry rule or learned growth on the snapshot volume into the ledger."""
+        state = self._volumes.get(self._os_key) if self._os_key else None
+        if state is not None:
+            state["used"] = max(state["used"], round(fraction * state["total"]))
+
+    def system_volume_fraction(self) -> float | None:
+        state = self._volumes.get(self._os_key) if self._os_key else None
+        return state["used"] / state["total"] if state is not None else None
+
+    def _size_of(self, path: str) -> TreeSize | None:
+        key = os.path.normcase(os.path.abspath(os.path.expanduser(path)))
+        if key not in self._sizes:
+            if self._deadline is None:
+                self._deadline = time.perf_counter() + self._budget_seconds
+            try:
+                self._sizes[key] = self._measure(path, deadline=self._deadline)
+            except Exception:
+                self._sizes[key] = None
+        return self._sizes[key]
+
+    def _volume_root_size(self, path: str) -> TreeSize | None:
+        """A whole volume holds exactly its used bytes (plus file-system
+        metadata the copy skips), so copying its root needs no scan. Only
+        exact volume roots qualify; ordinary folders are always walked."""
+        try:
+            root = os.path.abspath(os.path.expanduser(path))
+            if not os.path.ismount(root):
+                return None
+        except Exception:
+            return None
+        volume = self._lookup(root)
+        if volume is None:
+            return None
+        return TreeSize(bytes=volume.used, entries=0, complete=True, files=0)
+
+    def estimate(self, action: Action) -> list[_DiskWrite]:
+        """Bytes the action would add, where knowable without running it."""
+        try:
+            return self._estimate(action)
+        except Exception:
+            return []
+
+    def _estimate(self, action: Action) -> list[_DiskWrite]:
+        params = action.parameters
+        action_type = action.action_type
+        if action_type in (ActionType.FILE_COPY, ActionType.FILE_MOVE):
+            source = str(getattr(params, "path", "") or action.target or "")
+            destination = str(getattr(params, "destination", "") or "")
+            if not source or not destination:
+                return []
+            destination_volume = self._lookup(destination)
+            if destination_volume is None:
+                return []  # no local volume to charge: keep the rule table, skip the scan
+            if action_type == ActionType.FILE_MOVE:
+                source_volume = self._lookup(source)
+                if source_volume is None:
+                    return []
+                if source_volume.key == destination_volume.key:
+                    return []  # a rename on one volume adds nothing
+            size = self._volume_root_size(source) or self._size_of(source)
+            if size is None:
+                return []
+            copying = action_type == ActionType.FILE_COPY
+            return [
+                _DiskWrite(
+                    verb="copying" if copying else "moving",
+                    noun="the copy" if copying else "the move",
+                    label=_label(source),
+                    destination=destination,
+                    bytes=size.bytes,
+                    complete=size.complete,
+                    entries=size.entries,
+                    files=size.files,
+                    stopped_early=size.stopped_early,
+                    source=source,
+                )
+            ]
+        if action_type == ActionType.FILE_WRITE:
+            path = str(getattr(params, "path", "") or action.target or "")
+            content = getattr(params, "content", None)
+            if not path or not isinstance(content, str):
+                return []
+            if action.use_previous_output or _WRITE_PLACEHOLDER.search(content):
+                return []  # the executor substitutes earlier output of unknown size
+            size = len(content.encode("utf-8"))
+            if sys.platform == "win32":
+                size += content.count("\n")  # text-mode write turns \n into \r\n
+            return [_DiskWrite("writing", "the write", _label(path), path, size, True)]
+        if action_type in (ActionType.SHELL_COMMAND, ActionType.SHELL_SCRIPT):
+            text = str(getattr(params, "command", "") or getattr(params, "script", "") or "")
+            args = getattr(params, "args", None)
+            if isinstance(args, list):
+                text = " ".join([text, *(str(arg) for arg in args)])
+            working_directory = getattr(params, "working_directory", None)
+            return [
+                _DiskWrite("creating", "the new file", _label(path), path, size, True)
+                for path, size in _shell_created_files(text, working_directory)
+            ]
+        return []
+
+    def apply(self, writes: list[_DiskWrite]) -> tuple[float, str, list[dict[str, Any]], bool]:
+        """Add each write to its volume in plan order.
+
+        Returns (risk, reason, records, resolved). `resolved` is True when
+        every write landed on a known local volume, so the measurement can
+        stand in for the rule table's fixed guess.
+        """
+        risk = 0.0
+        reason = ""
+        records: list[dict[str, Any]] = []
+        resolved = bool(writes)
+        for write in writes:
+            state = self._volume_state(write.destination)
+            if state is None:
+                resolved = False
+                continue
+            total = state["total"]
+            before = state["used"]
+            place = _volume_name(state["root"])
+            state["used"] = before + write.bytes
+            after = state["used"]
+            free_before = max(0, total - before)
+            material = write.bytes > _MATERIAL_FRACTION * total
+            size_text = f"{'about' if write.complete else 'at least'} {_format_bytes(write.bytes)}"
+            write_risk = 0.0
+            write_reason = ""
+            if material and after / total > DISK_USAGE_RISK_THRESHOLD:
+                write_risk = DISK_USAGE_RISK_WEIGHT
+                if after > total:
+                    write_reason = (
+                        f"{write.verb} {write.label} ({size_text}) needs more than the "
+                        f"{_format_bytes(free_before)} free on {place}"
+                    )
+                else:
+                    write_reason = (
+                        f"{write.verb} {write.label} ({size_text}) would take {place} from "
+                        f"{_format_fraction(before / total)} to {'' if write.complete else 'at least '}"
+                        f"{_format_fraction(after / total)}, past the safe level of "
+                        f"{DISK_USAGE_RISK_THRESHOLD:.0%}"
+                    )
+            elif not write.complete and not self._fits_whole_source_volume(write, before, total):
+                write_risk = UNMEASURED_SIZE_RISK
+                why = "is too large to measure quickly" if write.stopped_early else "could not be fully measured"
+                write_reason = (
+                    f"{write.label} {why} (at least {_format_bytes(write.bytes)} in "
+                    f"{write.files:,} files so far). {place} has "
+                    f"{_format_bytes(free_before)} free, so {write.noun} may not fit."
+                )
+            records.append(
+                {
+                    "path_label": write.label,
+                    "bytes": write.bytes,
+                    "size_is_exact": write.complete,
+                    "entries_scanned": write.entries,
+                    "volume": state["root"],
+                    "usage_before": before / total,
+                    "usage_after": after / total,
+                    "risk": write_risk,
+                }
+            )
+            if write_risk > risk:
+                risk = write_risk
+                reason = write_reason
+        return risk, reason, records, resolved
+
+    def _fits_whole_source_volume(self, write: _DiskWrite, used_before: int, total: int) -> bool:
+        """Cheap upper bound for an unfinished scan: a source tree cannot
+        hold more than its volume's used bytes (ignoring hard links and
+        sparse or compressed files, which a copy can expand). If even that
+        much stays under the safe level, the copy is known to fit."""
+        if write.source is None:
+            return False
+        source_volume = self._lookup(write.source)
+        if source_volume is None:
+            return False
+        remaining = max(0, source_volume.used - write.bytes)
+        return (used_before + write.bytes + remaining) / total <= DISK_USAGE_RISK_THRESHOLD
 
 
 def _highest_risk_evidence(prediction: WorldPrediction) -> RiskEvidence | None:
@@ -79,6 +428,15 @@ class RiskGate:
         self._online_learner: VerifiedOnlineLearner | None = None
         self._ui_observation_provider: Callable[[], dict[str, Any] | None] | None = None
         self._last_evaluation: dict[str, object] | None = None
+        # evaluate_plan() may run in worker threads (the daemon calls it via
+        # asyncio.to_thread) and overlap with another plan's evaluation. One
+        # lock serializes evaluations; a thread-local copy lets a caller read
+        # back the evaluation its own call produced, not a newer one.
+        self._evaluate_lock = threading.Lock()
+        self._history_lock = threading.Lock()
+        self._thread_state = threading.local()
+        self._measure_tree_size: Callable[..., TreeSize | None] = measure_tree_size
+        self._volume_of: Callable[[str], VolumeUsage | None] = volume_of
 
     def set_online_learner(self, learner: VerifiedOnlineLearner) -> None:
         """Attach verified outcome evidence without changing policy authority."""
@@ -102,7 +460,8 @@ class RiskGate:
 
     def record_outcome(self, action_type: object, success: bool) -> None:
         """Feed only observed execution outcomes into historical caution."""
-        self._history.record(action_type, success)
+        with self._history_lock:
+            self._history.record(action_type, success)
 
     @property
     def available(self) -> bool:
@@ -114,8 +473,34 @@ class RiskGate:
 
     @property
     def last_evaluation(self) -> dict[str, object] | None:
-        """Return a defensive copy of the latest plan assessment."""
-        return dict(self._last_evaluation) if self._last_evaluation is not None else None
+        """Return a copy of the assessment made by this thread's latest
+        evaluate_plan() call, or the latest from any thread if this thread
+        has made none."""
+        evaluation = getattr(self._thread_state, "evaluation", None) or self._last_evaluation
+        return dict(evaluation) if evaluation is not None else None
+
+    def _history_status(self) -> dict[str, Any]:
+        with self._history_lock:
+            return self._history.status()
+
+    def _history_score(self, action_type: object) -> tuple[float, str]:
+        with self._history_lock:
+            return self._history.score(action_type)
+
+    def _online_adaptation(self, action_type: str, source: str) -> Any:
+        """The learner is updated on the event loop; reading it from a worker
+        thread can meet a deque or dict mid-update, which raises RuntimeError.
+        Retry a few times; if it keeps failing, raise so assess_plan_risk()
+        treats the evaluation as unavailable (it escalates, never relaxes)."""
+        assert self._online_learner is not None
+        for attempt in range(5):
+            try:
+                return self._online_learner.score_transition(action_type=action_type, source=source)
+            except RuntimeError:
+                if attempt == 4:
+                    raise
+                time.sleep(0.001)
+        return None
 
     def status(self, enabled: bool) -> dict[str, object]:
         """Return user-safe runtime/model metadata for Settings."""
@@ -137,7 +522,7 @@ class RiskGate:
             "embedding_size": EMBEDDING_SIZE,
             "learnable_action_types": sorted(action_type.value for action_type in LEARNABLE_ACTION_TYPES),
             "prediction_contract": self._world_model.status(),
-            "historical_risk": self._history.status(),
+            "historical_risk": self._history_status(),
             "verified_online_transition": (
                 self._online_learner.status()["transitions"] if self._online_learner is not None else None
             ),
@@ -146,7 +531,15 @@ class RiskGate:
 
     def evaluate_plan(self, plan: ActionPlan, config: PilotConfig, *, source: str = "") -> tuple[float, list[str]]:
         """Returns (worst risk in [0,1] seen across the plan's actions,
-        the reasons that fired for that worst action — empty if none)."""
+        the reasons that fired for that worst action, empty if none)."""
+        with self._evaluate_lock:
+            result = self._evaluate_plan_locked(plan, config, source=source)
+            self._thread_state.evaluation = self._last_evaluation
+        return result
+
+    def _evaluate_plan_locked(
+        self, plan: ActionPlan, config: PilotConfig, *, source: str = ""
+    ) -> tuple[float, list[str]]:
         if not plan.actions:
             self._last_evaluation = {
                 "evaluated_at": datetime.now(UTC).isoformat(),
@@ -174,6 +567,11 @@ class RiskGate:
                 ui_observation = {}
 
         simulated = snapshot
+        lookahead = _PlanDiskLookahead(
+            snapshot,
+            measure=self._measure_tree_size,
+            volume_lookup=self._volume_of,
+        )
         cumulative_proc_delta = 0.0
         worst_risk = 0.0
         worst_reasons: list[str] = []
@@ -193,6 +591,15 @@ class RiskGate:
             rollout_browser = dict(contract_prediction.predicted_state.browser)
             learned_or_rule = self._transition.predict(simulated, action)
             deterministic = self._transition.predict_rule(simulated, action)
+            lookahead.sync_system_volume(simulated.disk_usage_fraction)
+            disk_writes = lookahead.estimate(action)
+            size_risk, size_reason, size_records, size_resolved = lookahead.apply(disk_writes)
+            if size_resolved:
+                # A measured size replaces the rule table's fixed per-action
+                # disk guess; the lookahead ledger now carries that growth.
+                deterministic = replace(deterministic, disk_usage_after=simulated.disk_usage_fraction)
+                if learned_or_rule.source == "rule":
+                    learned_or_rule = deterministic
             candidates = [learned_or_rule]
             if learned_or_rule.source != "rule":
                 candidates.append(deterministic)
@@ -228,6 +635,16 @@ class RiskGate:
             transition_risk = action_risk
             transition_reasons = list(action_reasons)
 
+            if size_risk > action_risk:
+                action_risk = size_risk
+                action_reasons = [size_reason]
+            if size_risk > worst_risk:
+                worst_risk = size_risk
+                worst_reasons = [size_reason]
+                worst_action_type = action.action_type.value
+                worst_sources = ["size_estimate"]
+                worst_prediction_confidence = None
+
             if contract_evidence is not None and contract_evidence.score > action_risk:
                 action_risk = contract_evidence.score
                 action_reasons = [contract_evidence.reason]
@@ -248,7 +665,7 @@ class RiskGate:
                     else max(0.0, min(1.0, 1.0 - contract_prediction.uncertainty))
                 )
 
-            historical_risk, historical_reason = self._history.score(action.action_type)
+            historical_risk, historical_reason = self._history_score(action.action_type)
             if historical_risk > action_risk:
                 action_risk = historical_risk
                 action_reasons = [historical_reason]
@@ -259,16 +676,13 @@ class RiskGate:
                 worst_sources = ["execution_history"]
                 worst_prediction_confidence = min(
                     1.0,
-                    self._history.status()["samples"] / 10.0,
+                    self._history_status()["samples"] / 10.0,
                 )
 
             online_risk = 0.0
             online_reason = ""
             if self._online_learner is not None and source:
-                adaptation = self._online_learner.score_transition(
-                    action_type=action.action_type.value,
-                    source=source,
-                )
+                adaptation = self._online_adaptation(action.action_type.value, source)
                 if adaptation.state == "promoted" and adaptation.probability < 0.42:
                     online_risk = min(0.7, max(0.0, (0.5 - adaptation.probability) * 2.0))
                     online_reason = (
@@ -318,6 +732,18 @@ class RiskGate:
                         "deterministic": False,
                     }
                 )
+            if size_records:
+                contract_payload["sources"] = list(dict.fromkeys([*contract_payload["sources"], "size_estimate"]))
+                contract_payload["size_estimates"] = size_records
+                if size_risk > 0:
+                    contract_payload["risk_evidence"].append(
+                        {
+                            "source": "size_estimate",
+                            "score": size_risk,
+                            "reason": size_reason,
+                            "deterministic": True,
+                        }
+                    )
             contract_payload["risk_evidence"].extend(
                 {
                     "source": "risk_transition",
@@ -329,9 +755,15 @@ class RiskGate:
             )
             world_predictions.append(contract_payload)
 
+            # The lookahead never lowers predicted usage: freed space is not
+            # credited, so a delete cannot hide a later fill in the plan.
+            disk_after = max(simulated.disk_usage_fraction, *(outcome.disk_usage_after for outcome in candidates))
+            system_volume_fraction = lookahead.system_volume_fraction()
+            if system_volume_fraction is not None:
+                disk_after = max(disk_after, system_volume_fraction)
             simulated = replace(
                 simulated,
-                disk_usage_fraction=max(outcome.disk_usage_after for outcome in candidates),
+                disk_usage_fraction=min(1.0, disk_after),
                 proc_count=max(
                     0,
                     round(snapshot.proc_count + cumulative_proc_delta * NOMINAL_PROC_CAPACITY),

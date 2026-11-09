@@ -3721,7 +3721,10 @@ class PilotServer:
             plan_has_irreversible = any(getattr(a, "is_irreversible", False) for a in plan.actions)
             plan_has_blockable_authority = plan_has_tier4 or plan_has_tier3 or plan_has_irreversible
             invocation_source, scope_override = self._execution_scope_for_source(interaction_source)
-            risk_assessment = assess_plan_risk(plan, self.config, source=invocation_source.value)
+            # Off the event loop: the world model may walk folders to size a copy.
+            risk_assessment = await asyncio.to_thread(
+                assess_plan_risk, plan, self.config, source=invocation_source.value
+            )
             risk_score = risk_assessment.combined_score
             world_model_interrupt = risk_assessment.requires_confirmation
             await self._append_experience(

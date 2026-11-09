@@ -56,6 +56,10 @@ FAMILY_ORDER = [ActionFamily.SHELL, ActionFamily.BROWSING, ActionFamily.SYSTEM_C
 # actually have well-understood, repeatable effects for. Mirrors
 # transition.rs's honest "no predicted change" default for every action it
 # doesn't explicitly model.
+#
+# The disk deltas are fractions of the system drive and ignore size: they
+# are the fallback for when the size is unknown. RiskGate replaces them with
+# a measured size where one is knowable (see risk_gate._PlanDiskLookahead).
 _DISK_DELTA_RULES: dict[ActionType, float] = {
     ActionType.FILE_WRITE: 0.02,
     ActionType.DOWNLOAD_FILE: 0.03,

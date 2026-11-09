@@ -735,7 +735,10 @@ class AgentGateway:
         plan_has_irreversible = any(getattr(a, "is_irreversible", False) for a in plan.actions)
         plan_has_blockable_authority = plan_has_tier4 or plan_has_tier3 or plan_has_irreversible
 
-        risk_assessment = assess_plan_risk(plan, self._config)
+        import asyncio
+
+        # Off the event loop: the world model may walk folders to size a copy.
+        risk_assessment = await asyncio.to_thread(assess_plan_risk, plan, self._config)
         if (
             source != InvocationSource.INTERACTIVE
             and state_changing
