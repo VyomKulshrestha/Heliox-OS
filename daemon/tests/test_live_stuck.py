@@ -35,7 +35,7 @@ def test_one_long_deletion_read_over_several_looks_counts_once():
     found = []
     for step in range(0, 100, 8):  # backspacing, seen every 0.6 s
         found += watcher.observe(text[: len(text) - step], WORD, NOTES, now=step / 10)
-    assert found == [] and len(watcher._fields[WORD].rewrites) == 1
+    assert found == [] and len(watcher._fields[f"{WORD}|"].rewrites) == 1
 
 
 def test_ordinary_editing_is_not_being_stuck():

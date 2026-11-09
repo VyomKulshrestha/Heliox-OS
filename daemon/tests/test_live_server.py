@@ -111,10 +111,53 @@ async def test_supervision_risk_warnings_become_live_cards_when_live_is_on(tmp_p
     server.config.live.enabled = True
     clock = [100.0]
     server._live._clock = lambda: clock[0]
-    await server._supervision_broadcast("supervision_risk_warning", {"pattern": "destructive_sql", "source": "ocr"})
-    assert not server._broadcast_notification.await_args_list  # not the dialog
-    for _ in range(10):
-        clock[0] += 0.2
-        await server._live.tick()
-    cards = [c.args[1] for c in server._broadcast_notification.await_args_list if c.args[0] == "live_interjection"]
-    assert cards and cards[0]["urgency"] == "urgent" and "permanently" in cards[0]["message"]
+
+    async def run(seconds: float) -> list[dict]:
+        for _ in range(int(seconds / 0.2)):
+            clock[0] += 0.2
+            await server._live.tick()
+        calls = server._broadcast_notification.await_args_list
+        return [c.args[1] for c in calls if c.args[0] == "live_interjection"]
+
+    # Something on screen matched by OCR: not the dialog and not a card, however often it is seen.
+    for _ in range(3):
+        await server._supervision_broadcast("supervision_risk_warning", {"pattern": "destructive_sql", "source": "ocr"})
+        assert await run(31) == []
+    assert not [c for c in server._broadcast_notification.await_args_list if c.args[0] != "live_state"]
+
+    # What the person typed, from the keyboard hook: one card, never repeated.
+    for _ in range(3):
+        await server._supervision_broadcast(
+            "supervision_risk_warning", {"pattern": "destructive_sql", "source": "keystroke"}
+        )
+        cards = await run(31)
+    assert len(cards) == 1 and cards[0]["urgency"] == "normal" and "permanently" in cards[0]["message"]
+
+
+@pytest.mark.asyncio
+async def test_live_reads_only_writable_fields(tmp_path, monkeypatch):
+    from pilot.agents import screen_vision
+    from pilot.live.focused_text import FocusedText
+
+    server = make_server(tmp_path)
+    server.config.live.ocr_fallback = False
+    monkeypatch.setattr(screen_vision, "_get_active_window", lambda: ("claude.exe", "Claude"))
+    answer: list[FocusedText] = []
+
+    class Reader:
+        available = True
+
+        async def read(self):
+            return answer[0]
+
+    server._live_reader = Reader()
+    answer.append(FocusedText(text="", control_type="Document", pid=4, password=False))
+    obs = await server._live_observe()
+    assert obs is not None and not obs.editable and obs.text == "" and obs.app == "claude.exe"
+
+    answer[0] = FocusedText(text="hello there", control_type="Edit", pid=4, password=False, editable=True, field="9")
+    obs = await server._live_observe()
+    assert obs is not None and obs.editable and obs.text == "hello there" and obs.field == "9"
+
+    answer[0] = FocusedText(text="", control_type="Edit", pid=4, password=True)
+    assert await server._live_observe() is None

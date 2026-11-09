@@ -84,6 +84,19 @@ kept its "may still be typing" flag after the person typed on, which held it bac
 read every 0.6 s but delivered on the 200 ms clock, so a card could land just after typing resumed. The engine now
 refreshes each correction on every read and looks at the text once more right before speaking up.
 
+## Update, 10 November 2026: reading is not writing
+
+With Live on in the Claude desktop app, a person got cards about text they had not written: a doubled word
+from the page, a "you've rewritten this" offer quoting a page button, and an urgent "that looks like a
+password or key" card with no evidence, repeated every minute, from a screen OCR match. Three decoys in
+`reading.json` cover this: a chat page with a doubled word that has focus while it streams, an email reply that
+quotes someone else's doubled word, and key-like text on a web page that screen OCR matches three times.
+
+Before the fix, the first two gave 3 false alarms for every persona and policy (the bench could not script the
+OCR notice then). After it, all three give none, and the 34 earlier scenarios score exactly as in the table
+above. The fix: the focused-field reader passes text on only from writable fields and terminals, text already in
+a field when focus arrives is not counted as the person's slip, and OCR risk matches no longer become cards.
+
 ## What it does not show
 
 These are scripted sessions and simulated people, not recordings of real ones. The personas are three points on
@@ -105,6 +118,7 @@ is a list of scenarios:
   "today": "2026-11-09",
   "people": {"manager": "Priya"},
   "start_text": "",
+  "editable": true,
   "expect": ["weekday_date"],
   "steps": [
     {"type": "Hi Sam, can we move the review to Tuesday, 14 November at 3pm so that"},
@@ -126,10 +140,13 @@ is a list of scenarios:
 | `{"say": "text", "seconds": 2.5}` | The person talks to Heliox; at the end the sentence is checked like a spoken command |
 | `{"delete": 30}` | Backspacing 30 characters, at twice the persona's typing speed |
 | `{"switch": "app\|title", "text": "..."}` | Another window comes to the front; `text` is what its field holds the first time |
+| `{"notice": "credential_exposure", "source": "ocr"}` | Supervision reports a risk rule match, from `ocr` or `keystroke` |
 
 `expect` lists the correction kinds that should be delivered (see `KINDS` in `pilot/live/detectors.py`); an
 empty list makes the scenario a decoy, where any delivery is a false alarm. `today` defaults to 9 November 2026
-and `people` to none. Scenarios must not contain real names, addresses, keys or other personal data; a key
+and `people` to none. `start_text` is what the field held before the person touched it, so slips in it are not
+the person's. `editable: false` makes the focused element page text the person reads (a web page, a chat
+transcript): the engine is handed the text but must not check it. Scenarios must not contain real names, addresses, keys or other personal data; a key
 should look like a key without being one.
 
 A new detector, or a new kind of slip, should come with scenarios that catch it and decoys that look like it

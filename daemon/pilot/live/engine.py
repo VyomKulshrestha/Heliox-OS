@@ -18,7 +18,7 @@ import logging
 import re
 import time
 import uuid
-from collections import deque
+from collections import OrderedDict, deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -27,7 +27,16 @@ from typing import Any
 
 from pilot.live.commitments import KIND as COMMITMENT
 from pilot.live.commitments import find_commitments
-from pilot.live.detectors import KINDS, MODEL_KINDS, SPEECH_KINDS, URGENT, Correction, TextContext, detect
+from pilot.live.detectors import (
+    KINDS,
+    MODEL_KINDS,
+    NORMAL,
+    SPEECH_KINDS,
+    URGENT,
+    Correction,
+    TextContext,
+    detect,
+)
 from pilot.live.policy import (
     DEFAULT_LEVEL,
     DROP,
@@ -59,6 +68,25 @@ OCR_KINDS = ("error_on_screen",)  # a whole-screen OCR is too noisy for anything
 STICKY_KINDS = frozenset({STUCK, COMMITMENT})
 GROUNDED_PAUSE_SECONDS = 1.0  # typing stopped this long: worth asking the local model about the last sentence
 GROUNDED_EVERY_SECONDS = 5.0  # and at most this often, so a laptop CPU is not kept busy
+# Kinds about the person's own words. Text that was already in a field when it got focus (a quoted email, a
+# document someone else wrote, terminal history) does not raise them unless the person's edits add the slip again.
+OWN_WORDS_KINDS = frozenset(
+    {
+        "weekday_date",
+        "arithmetic",
+        "profile_fact",
+        "missing_attachment",
+        "repeated_word",
+        "community_catch",
+        "personal_fact",
+        COMMITMENT,
+    }
+)
+BASELINE_LIMIT = 64  # fields whose starting text is remembered, most recent first
+# Supervision notices: only keyboard-hook matches (what the person just typed) become cards, each rule at most once
+# an hour. An OCR match can be anywhere on screen and has no evidence the person could check.
+NOTICE_SOURCES = frozenset({"keystroke"})
+NOTICE_QUIET_SECONDS = 3600.0
 
 
 @dataclass(frozen=True)
@@ -69,10 +97,22 @@ class Observation:
     app: str
     title: str
     source: str  # "focused_field" or "screen_ocr"
+    # False when focus is on page text, a label or a button: the person is reading, not writing, and the text is
+    # not checked. The reader sends no text at all in that case.
+    editable: bool = True
+    field: str = ""  # which field in the window (UI Automation runtime id), "" when unknown
 
     @property
     def window(self) -> str:
         return f"{self.app}|{self.title}"
+
+    @property
+    def field_key(self) -> str:
+        return f"{self.window}|{self.field}"
+
+
+def _norm(text: str) -> str:
+    return " ".join(text.split()).casefold()
 
 
 @dataclass(frozen=True)
@@ -85,16 +125,16 @@ class LiveReply:
 _RISK_NOTICES = {
     "destructive_shell_command": (
         "That command could wipe a lot",
-        "That command could delete a lot of files, and there's no undo.",
+        "The command you just typed could delete a lot of files, and there's no undo.",
     ),
     "credential_exposure": (
         "That looks like a password or key",
-        "That looks like a password or key. Make sure it isn't going somewhere other people can read.",
+        "What you just typed looks like a password or key. Make sure it isn't going somewhere other people can read.",
     ),
-    "destructive_sql": ("That SQL deletes data for good", "That SQL drops or deletes data permanently."),
+    "destructive_sql": ("That SQL deletes data for good", "The SQL you just typed drops or deletes data permanently."),
     "unauthorized_admin_command": (
         "That changes admin rights",
-        "That command changes administrator accounts or permissions.",
+        "The command you just typed changes administrator accounts or permissions.",
     ),
 }
 
@@ -163,6 +203,10 @@ class LiveCompanion:
         self._last_spoken_at = float("-inf")
         self._last_shown_at = float("-inf")
         self._state: dict[str, Any] = {}
+        # Each field's text when it was first seen, or after it was emptied (see OWN_WORDS_KINDS).
+        self._baselines: OrderedDict[str, str] = OrderedDict()
+        self._writing_seen = False  # a writable field has been seen since Live was turned on
+        self._notices: dict[str, float] = {}  # supervision rule -> when it last raised a card
 
     # ── lifecycle ──
 
@@ -230,6 +274,8 @@ class LiveCompanion:
                 await self._withdraw_all("off")
                 self._pending.clear()
                 self._last_obs = None
+                self._baselines.clear()
+                self._writing_seen = False
                 if self._on_disable:
                     with contextlib.suppress(Exception):
                         await self._on_disable()
@@ -254,18 +300,30 @@ class LiveCompanion:
         if obs is None:
             self._last_obs = None
             return
+        if not obs.editable:
+            # Focus is on page text, a label or a button: the person is reading. Only the window counts (for the
+            # back-and-forth sign); nothing is checked, and cards about a field elsewhere stay as they are.
+            if STUCK in self._kinds():
+                ctx = self._context(obs, obs.source)
+                for offer in self.stuck.observe("", obs.window, ctx, now, writing=False):
+                    self._note(offer, obs.source, obs.window, now)
+            self._last_obs = obs
+            return
         digest = hashlib.sha1(obs.text.encode("utf-8", errors="ignore")).hexdigest()
-        same_window = self._last_obs is not None and obs.window == self._last_obs.window
-        changed = digest != self._last_hash or not same_window
+        last = self._last_obs
+        same_field = last is not None and last.editable and obs.field_key == last.field_key
+        changed = digest != self._last_hash or not same_field
         if changed:
-            if same_window:
+            if same_field:
                 self._typed_on(obs.window, now)
             self._last_hash = digest
             self._last_text_change = now
             self._last_text = obs.text
         self._last_obs = obs
+        self._remember_baseline(obs)
         if obs.source == "focused_field" and STUCK in self._kinds():
-            for offer in self.stuck.observe(obs.text, obs.window, self._context(obs, obs.source), now):
+            ctx = self._context(obs, obs.source)
+            for offer in self.stuck.observe(obs.text, obs.window, ctx, now, field=obs.field):
                 self._note(offer, obs.source, obs.window, now)
         if changed or now - self._last_detect >= REDETECT_EVERY_SECONDS:
             self._last_detect = now
@@ -275,7 +333,8 @@ class LiveCompanion:
             found: set[str] = set()
             for correction in detect(obs.text, self._context(obs, obs.source), kinds=kinds):
                 found.add(correction.key)
-                self._note(correction, obs.source, obs.window, now)
+                if not self._pre_existing(correction, obs):
+                    self._note(correction, obs.source, obs.window, now)
             if COMMITMENT in kinds and obs.source == "focused_field":
                 try:
                     promises = find_commitments(
@@ -285,7 +344,8 @@ class LiveCompanion:
                     logger.debug("Commitment check failed", exc_info=True)
                     promises = []
                 for promise in promises:
-                    self._note(promise, obs.source, obs.window, now)
+                    if not self._pre_existing(promise, obs):
+                        self._note(promise, obs.source, obs.window, now)
             for item in [*self._pending.values(), *self._visible.values()]:
                 if item.source == "speech" or item.window != obs.window or item.correction.kind in STICKY_KINDS:
                     continue  # an offer is not about text that can be fixed away
@@ -295,6 +355,38 @@ class LiveCompanion:
                     item.missing_since = None
                 elif item.missing_since is None:
                     item.missing_since = now
+
+    def _remember_baseline(self, obs: Observation) -> None:
+        """Keep the text a field held when focus moved into it; an emptied field (a sent message) starts over.
+
+        The first field seen after Live is turned on has no baseline: someone who turns Live on mid-draft wants
+        that draft checked. Every field focus moves to after that keeps what it already held as its baseline.
+        """
+        if obs.source != "focused_field":
+            return
+        key = obs.field_key
+        if key not in self._baselines or not obs.text.strip():
+            self._baselines[key] = obs.text if self._writing_seen else ""
+        self._writing_seen = True
+        self._baselines.move_to_end(key)
+        while len(self._baselines) > BASELINE_LIMIT:
+            self._baselines.popitem(last=False)
+
+    def _pre_existing(self, correction: Correction, obs: Observation) -> bool:
+        """The slip was already in the field before the person started editing it, so it is not theirs.
+
+        Only for kinds about the person's own words, and never for a correction already waiting or on screen.
+        Counting matters: a doubled word that was there once and that the person types again is theirs.
+        """
+        if correction.kind not in OWN_WORDS_KINDS or obs.source != "focused_field":
+            return False
+        if correction.key in self._pending or any(i.correction.key == correction.key for i in self._visible.values()):
+            return False
+        evidence = _norm(correction.evidence)
+        baseline = _norm(self._baselines.get(obs.field_key, ""))
+        if not evidence or not baseline or evidence not in baseline:
+            return False
+        return baseline.count(evidence) >= _norm(obs.text).count(evidence)
 
     def _typed_on(self, window: str, now: float) -> None:
         """The person typed again in the same window: learn how long they paused, and whether a card cut in."""
@@ -344,7 +436,9 @@ class LiveCompanion:
 
     def _maybe_ground(self, now: float) -> None:
         obs = self._last_obs
-        if not self._grounding() or obs is None or obs.source != "focused_field" or self._user_speaking():
+        if not self._grounding() or obs is None or obs.source != "focused_field" or not obs.editable:
+            return
+        if self._user_speaking():
             return
         if self._grounded_task is not None and not self._grounded_task.done():
             return
@@ -373,22 +467,47 @@ class LiveCompanion:
                 # The answer took a while: only raise it if the words it quotes are still on screen.
                 if obs is None or obs.window != window or correction.evidence not in obs.text:
                     continue
+                if self._pre_existing(correction, obs):
+                    continue
             self._note(correction, source, window, self._clock())
 
     def _gone(self, item: Pending, now: float) -> bool:
         return item.missing_since is not None and now - item.missing_since > STALE_AFTER_SECONDS
 
     async def notice_risk(self, pattern: str, source: str) -> None:
-        """A risk the supervision keyboard hook or OCR caught, by rule name only; delivered as an urgent card."""
-        title, message = _RISK_NOTICES.get(pattern, ("That looks risky", "Heads up, that looks risky."))
+        """A risk supervision caught, by rule name only (the matched text never reaches Live).
+
+        Only keyboard-hook matches become cards, since they are about what the person just typed. A screen OCR
+        match can come from anywhere on screen (a web page, a chat transcript, one of Live's own cards) and has
+        no evidence the person could check; the focused-field detectors already catch keys and risky commands
+        in what the person writes, with the evidence. A notice is a normal card, so the level's rate limits,
+        focus sessions, relevance and mutes apply, and each rule raises at most one card an hour. When a field
+        card of the same kind is already waiting, on screen or recent, that card covers it.
+        """
+        if source not in NOTICE_SOURCES:
+            return
+        kind = "secret_in_text" if pattern == "credential_exposure" else "risky_command"
         now = self._clock()
+        last = self._notices.get(pattern)
+        if last is not None and now - last < NOTICE_QUIET_SECONDS:
+            return
+        if any(
+            item.correction.kind == kind and item.source == "focused_field"
+            for item in [*self._pending.values(), *self._visible.values()]
+        ) or any(
+            entry["kind"] == kind and entry["source"] == "focused_field" and now - entry["at"] < NOTICE_QUIET_SECONDS
+            for entry in self._recent
+        ):
+            return
+        self._notices[pattern] = now
+        title, message = _RISK_NOTICES.get(pattern, ("That looks risky", "Heads up, what you just typed looks risky."))
         correction = Correction(
-            kind="secret_in_text" if pattern == "credential_exposure" else "risky_command",
-            key=f"notice:{pattern}:{int(now // 60)}",
+            kind=kind,
+            key=f"notice:{pattern}",
             title=title,
             message=message,
             evidence="",
-            urgency=URGENT,
+            urgency=NORMAL,
         )
         self._note(correction, "notice", "notice", now)
 
@@ -482,7 +601,7 @@ class LiveCompanion:
             "urgency": correction.urgency,
             "spoken": spoken,
             "source": item.source,
-            "app": item.window.split("|", 1)[0],
+            "app": "" if item.source == "notice" else item.window.split("|", 1)[0],
         }
         self._recent.append({**payload, "key": correction.key, "at": now})
         self._last_shown_at = now

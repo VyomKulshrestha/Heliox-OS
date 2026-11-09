@@ -2,8 +2,11 @@
 
 One hidden PowerShell process stays alive and answers each ``read`` request with the focused element's visible
 text, so a read costs milliseconds instead of a new process. Only the focused element is read, only its visible
-text (the last part of the field for long ones), and never a password field: UI Automation marks those and the
-helper refuses them before touching their value. Nothing it returns is logged or stored.
+text (the last part of the field for long ones), and only when it is somewhere the person writes: a writable
+text field or document, or a terminal. Page text, labels and buttons that happen to have focus are not read, so
+an article or a chat transcript on screen is never treated as what the person typed. A password field is never
+read either: UI Automation marks those and the helper refuses them before touching their value. Nothing it
+returns is logged or stored.
 
 This is the live layer's privacy boundary on Windows. Other platforms return nothing here.
 """
@@ -19,6 +22,7 @@ import os
 import subprocess
 import time
 from dataclasses import dataclass
+from typing import Any
 
 from pilot.system.platform_detect import CURRENT_PLATFORM, Platform
 
@@ -29,11 +33,32 @@ READ_TIMEOUT_SECONDS = 1.5
 STARTUP_TIMEOUT_SECONDS = 12.0  # PowerShell start plus loading the UI Automation assemblies
 RESTART_BACKOFF_SECONDS = (2.0, 5.0, 15.0, 60.0)
 
+# Terminal hosts whose text control is the console buffer: the prompt line at the end is what the person types.
+TERMINAL_PROCESSES = ("WindowsTerminal", "OpenConsole", "conhost")
+
+# Whether the focused element is somewhere the person writes, decided before any text is read:
+# - a terminal (Windows Terminal's TermControl, or a console host) with a text pattern: kind "terminal";
+# - an Edit or Document control whose ValuePattern says it is not read-only: kind "field". This is the signal
+#   that holds in Chromium and Electron, where a web page's Document reports read-only and a text box or
+#   contenteditable editor (a chat input) reports writable. The text selection's IsReadOnly attribute is not
+#   used there: Chromium reports it as writable even on plain page text;
+# - an Edit or Document without a ValuePattern (Word, some rich editors) whose whole text is marked not
+#   read-only by the TextPattern: kind "field". A mixed or missing answer counts as read-only.
+# Anything else (a page, a label, a button, a list) is not the person's writing, and its text is never read.
 _HELPER = rf"""
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$terminals = @({", ".join(f"'{name}'" for name in TERMINAL_PROCESSES)})
+$names = @{{}}
+function ProcName($id) {{
+  if (-not $names.ContainsKey($id)) {{
+    if ($names.Count -gt 200) {{ $names.Clear() }}
+    try {{ $names[$id] = (Get-Process -Id $id).ProcessName }} catch {{ $names[$id] = '' }}
+  }}
+  return $names[$id]
+}}
 while ($true) {{
   $line = [Console]::In.ReadLine()
   if ($line -eq $null -or $line -eq 'quit') {{ break }}
@@ -46,20 +71,38 @@ while ($true) {{
       $out.type = $c.ControlType.ProgrammaticName
       $out.password = [bool]$c.IsPassword
       $out.pid = $c.ProcessId
+      $out.editable = $false
+      $out.kind = ''
       if (-not $c.IsPassword) {{
-        $text = $null
         $tp = $null
-        if ($el.TryGetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern, [ref]$tp)) {{
-          $parts = @()
-          try {{ foreach ($r in $tp.GetVisibleRanges()) {{ $parts += $r.GetText({MAX_CHARS}) }} }} catch {{ }}
-          if ($parts.Count -gt 0) {{ $text = ($parts -join "`n") }} else {{ $text = $tp.DocumentRange.GetText({MAX_CHARS}) }}
-        }} else {{
-          $vp = $null
-          if ($el.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$vp)) {{ $text = $vp.Current.Value }}
+        $vp = $null
+        $hasText = $el.TryGetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern, [ref]$tp)
+        $hasValue = $el.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$vp)
+        if ($hasText -and ($c.ClassName -eq 'TermControl' -or $terminals -contains (ProcName $c.ProcessId))) {{
+          $out.kind = 'terminal'
+        }} elseif ($out.type -eq 'ControlType.Edit' -or $out.type -eq 'ControlType.Document') {{
+          if ($hasValue) {{
+            if (-not $vp.Current.IsReadOnly) {{ $out.kind = 'field' }}
+          }} elseif ($hasText) {{
+            $ro = $tp.DocumentRange.GetAttributeValue([System.Windows.Automation.TextPattern]::IsReadOnlyAttribute)
+            if (($ro -is [bool]) -and (-not $ro)) {{ $out.kind = 'field' }}
+          }}
         }}
-        if ($text -ne $null) {{
-          if ($text.Length -gt {MAX_CHARS}) {{ $text = $text.Substring($text.Length - {MAX_CHARS}) }}
-          $out.text = $text
+        if ($out.kind -ne '') {{
+          $out.editable = $true
+          $out.field = ($el.GetRuntimeId() -join '.')
+          $text = $null
+          if ($hasText) {{
+            $parts = @()
+            try {{ foreach ($r in $tp.GetVisibleRanges()) {{ $parts += $r.GetText({MAX_CHARS}) }} }} catch {{ }}
+            if ($parts.Count -gt 0) {{ $text = ($parts -join "`n") }} else {{ $text = $tp.DocumentRange.GetText({MAX_CHARS}) }}
+          }} elseif ($hasValue) {{
+            $text = $vp.Current.Value
+          }}
+          if ($text -ne $null) {{
+            if ($text.Length -gt {MAX_CHARS}) {{ $text = $text.Substring($text.Length - {MAX_CHARS}) }}
+            $out.text = $text
+          }}
         }}
       }}
     }}
@@ -76,6 +119,28 @@ class FocusedText:
     control_type: str
     pid: int
     password: bool
+    # True only when the focused element is a writable text field, document or terminal; text is empty otherwise.
+    editable: bool = False
+    kind: str = ""  # "field", "terminal", or "" when not editable
+    field: str = ""  # UI Automation runtime id: a new id means a different field, even in the same window
+
+
+def parse_reply(data: dict[str, Any]) -> FocusedText | None:
+    """The helper's answer for one read. Text is kept only for a writable, non-password element."""
+    if not data.get("ok"):
+        return None
+    password = bool(data.get("password"))
+    kind = str(data.get("kind") or "")
+    editable = bool(data.get("editable")) and not password and kind in ("field", "terminal")
+    return FocusedText(
+        text=str(data.get("text") or "") if editable else "",
+        control_type=str(data.get("type") or "").removeprefix("ControlType."),
+        pid=int(data.get("pid") or 0),
+        password=password,
+        editable=editable,
+        kind=kind if editable else "",
+        field=str(data.get("field") or "") if editable else "",
+    )
 
 
 class FocusedTextReader:
@@ -108,14 +173,7 @@ class FocusedTextReader:
             except (OSError, ConnectionError, TimeoutError, ValueError, AssertionError):
                 await self._fail()
                 return None
-        if not data.get("ok"):
-            return None
-        return FocusedText(
-            text=str(data.get("text") or "") if not data.get("password") else "",
-            control_type=str(data.get("type") or "").removeprefix("ControlType."),
-            pid=int(data.get("pid") or 0),
-            password=bool(data.get("password")),
-        )
+        return parse_reply(data) if isinstance(data, dict) else None
 
     async def _ensure(self) -> asyncio.subprocess.Process:
         if self._proc is not None and self._proc.returncode is None:

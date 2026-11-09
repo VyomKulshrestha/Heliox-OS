@@ -687,27 +687,31 @@ _LEGIT_REPEATS = {"had", "that", "is", "do", "bye", "no", "so", "very", "ha", "g
 
 
 def repeated_word(text: str, ctx: TextContext) -> list[Correction]:
+    """Each different doubled word, up to three. Every one is reported so that a doubled word that was already in
+    the field (and is left alone by the engine) does not hide one the person types later."""
     if ctx.source != "focused_field" or ctx.is_terminal or ctx.is_code_editor:
         return []
+    found: dict[str, Correction] = {}
     for match in _REPEAT.finditer(text):
         word = match["w"]
-        if word.casefold() in _LEGIT_REPEATS:
+        key = f"repeated_word:{match.group(0).casefold()}"
+        if word.casefold() in _LEGIT_REPEATS or key in found:
             continue
-        return [
-            Correction(
-                kind="repeated_word",
-                key=f"repeated_word:{match.group(0).casefold()}",
-                title="A doubled word",
-                message=f'"{word} {word}" has the word twice.',
-                evidence=match.group(0),
-                fix=word,
-                fix_kind="replace",
-                urgency=LOW,
-                confidence=0.8,
-                trailing=_at_end(text, match.end()),
-            )
-        ]
-    return []
+        if len(found) == 3:
+            break
+        found[key] = Correction(
+            kind="repeated_word",
+            key=key,
+            title="A doubled word",
+            message=f'"{word} {word}" has the word twice.',
+            evidence=match.group(0),
+            fix=word,
+            fix_kind="replace",
+            urgency=LOW,
+            confidence=0.8,
+            trailing=_at_end(text, match.end()),
+        )
+    return list(found.values())
 
 
 def community_catch(text: str, ctx: TextContext) -> list[Correction]:

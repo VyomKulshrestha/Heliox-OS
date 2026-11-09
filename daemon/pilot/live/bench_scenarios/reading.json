@@ -1,0 +1,46 @@
+[
+  {
+    "name": "reading a page that contains a doubled word: no card",
+    "app": "claude.exe",
+    "title": "Claude",
+    "editable": false,
+    "start_text": "Work Work\nThanks Don't mention these\nHere is the the summary you asked for.",
+    "expect": [],
+    "steps": [
+      {"pause": 3.0, "label": "idle"},
+      {"paste": "\nThe reply keeps streaming in with more text."},
+      {"pause": 3.0, "label": "idle"},
+      {"switch": "claude.exe|Claude - New chat", "text": "Thanks Don't mention these"},
+      {"pause": 3.0, "label": "idle"},
+      {"switch": "claude.exe|Claude"},
+      {"pause": 4.0, "label": "done"}
+    ]
+  },
+  {
+    "name": "email reply quoting someone else's doubled word: no card",
+    "app": "OUTLOOK.EXE",
+    "title": "RE: Friday - Message (HTML)",
+    "start_text": "\n\nFrom: Sam\nWe can can meet on Friday if that suits you.",
+    "expect": [],
+    "steps": [
+      {"type": "Thanks Sam, that suits me."},
+      {"pause": "done"}
+    ]
+  },
+  {
+    "name": "key-like text visible on screen: no card",
+    "app": "chrome.exe",
+    "title": "API keys - Chrome",
+    "editable": false,
+    "start_text": "Your key: sk-proj-abcdefghijklmnopqrstuvwxyz123456",
+    "expect": [],
+    "steps": [
+      {"notice": "credential_exposure", "source": "ocr"},
+      {"pause": 3.0, "label": "idle"},
+      {"notice": "credential_exposure", "source": "ocr"},
+      {"pause": 3.0, "label": "idle"},
+      {"notice": "credential_exposure", "source": "ocr"},
+      {"pause": 4.0, "label": "done"}
+    ]
+  }
+]

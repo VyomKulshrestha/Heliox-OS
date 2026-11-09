@@ -66,24 +66,40 @@ class StuckWatcher:
         self._window = ""
         self._offered: dict[tuple[str, str], float] = {}
 
-    def observe(self, text: str, window: str, ctx: TextContext, now: float | None = None) -> list[Correction]:
-        """One look: the focused text and its window. Returns any offers that are due."""
+    def observe(
+        self,
+        text: str,
+        window: str,
+        ctx: TextContext,
+        now: float | None = None,
+        *,
+        writing: bool = True,
+        field: str = "",
+    ) -> list[Correction]:
+        """One look: the focused text and its window. Returns any offers that are due.
+
+        ``writing`` is False when focus is on page text, a label or a button: the window still counts for the
+        back-and-forth sign, but there is no text of the person's to look at. ``field`` tells two text fields
+        in the same window apart, so moving between them is not read as deleting text.
+        """
         now = self._clock() if now is None else now
         found: list[Correction] = []
         if self._window and window != self._window:
             self._switches.append((now, self._window, window))
             found += self._back_and_forth(now, window)
         self._window = window
+        if not writing:
+            return found
         if ctx.is_terminal:
             found += self._repeated_error(text, window, ctx, now)
         elif not ctx.is_code_editor:
-            found += self._rewriting(text, window, now)
+            found += self._rewriting(text, window, now, field)
         return found
 
     # ── the three signs ──
 
-    def _rewriting(self, text: str, window: str, now: float) -> list[Correction]:
-        state = self._fields.setdefault(window, _Field(peak=len(text), last=len(text)))
+    def _rewriting(self, text: str, window: str, now: float, field: str = "") -> list[Correction]:
+        state = self._fields.setdefault(f"{window}|{field}", _Field(peak=len(text), last=len(text)))
         length = len(text)
         while state.rewrites and now - state.rewrites[0][0] > REWRITE_WINDOW_SECONDS:
             state.rewrites.popleft()
@@ -177,7 +193,8 @@ class StuckWatcher:
         return True
 
     def forget_window(self, window: str) -> None:
-        self._fields.pop(window, None)
+        for key in [key for key in self._fields if key.startswith(f"{window}|")]:
+            self._fields.pop(key, None)
 
 
 __all__ = ["KIND", "StuckWatcher"]

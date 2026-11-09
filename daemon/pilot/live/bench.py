@@ -173,7 +173,10 @@ def validate(scenario: dict[str, Any], where: str = "") -> None:
     steps = scenario.get("steps")
     if not isinstance(steps, list) or not steps:
         raise ValueError(f"{where}: {name}: needs steps")
-    allowed = {"type", "pause", "replace", "paste", "send", "say", "label", "seconds", "switch", "text", "delete"}
+    allowed = {
+        "type", "pause", "replace", "paste", "send", "say", "label", "seconds", "switch", "text", "delete", "notice",
+        "source",
+    }  # fmt: skip
     for step in steps:
         if not isinstance(step, dict) or not set(step) <= allowed:
             raise ValueError(f"{where}: {name}: bad step {step!r}")
@@ -211,6 +214,10 @@ def expand(scenario: dict[str, Any], persona: Persona, rng: random.Random) -> li
             # Another window comes to the front: {"switch": "app|title", "text": "what its field holds"}.
             script.append(Step(t, t + 0.6, "idle", "switch", text=raw["switch"], old=raw.get("text", ""), seconds=0.6))
             seconds = 0.6
+        elif "notice" in raw:
+            # Supervision matched a risk rule: {"notice": "credential_exposure", "source": "ocr" or "keystroke"}.
+            script.append(Step(t, t, "idle", "notice", text=raw["notice"], old=raw.get("source", "ocr")))
+            seconds = 0.0
         elif "say" in raw:
             seconds = float(raw.get("seconds", 2.5))
             script.append(Step(t, t + seconds, "speaking", "say", text=raw["say"], seconds=seconds))
@@ -255,6 +262,9 @@ class Session:
         self._edit_at = -1
         self.reactions: list[tuple[float, dict[str, Any]]] = []
         self.said: list[str] = []
+        self.notices: list[tuple[str, str]] = []
+        # False: focus is on page text (a web page, a chat transcript), which the person reads but does not write.
+        self.editable = bool(scenario.get("editable", True))
 
     @property
     def doc(self) -> str:
@@ -313,6 +323,8 @@ class Session:
             elif step.kind == "switch":
                 self.window = step.text
                 self.docs.setdefault(self.window, step.old)
+            elif step.kind == "notice":
+                self.notices.append((step.text, step.old))
             elif step.kind == "say":
                 if rel < step.until:
                     break
@@ -370,7 +382,8 @@ async def run(
         if session is None:
             return None
         app, _, title = session.window.partition("|")
-        return Observation(text=session.doc, app=app, title=title, source="focused_field")
+        # Page text is passed on here (the real reader never sends it) to show the engine ignores it anyway.
+        return Observation(text=session.doc, app=app, title=title, source="focused_field", editable=session.editable)
 
     async def emit(event: str, payload: dict[str, Any]) -> None:
         if event == "live_interjection":
@@ -417,6 +430,9 @@ async def run(
             for text in session.said:
                 live.offer_speech(text)
             session.said.clear()
+            for pattern, source in session.notices:
+                await live.notice_risk(pattern, source)
+            session.notices.clear()
             await live.tick()
             await asyncio.sleep(0)
             for payload, at in deliveries[seen:]:

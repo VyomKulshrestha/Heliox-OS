@@ -6732,10 +6732,17 @@ class PilotServer:
             or any(name in where for name in excluded)
         ):
             return None  # Heliox's own window, password managers, and apps the person excluded are never read
+        reading = None
         if cfg.read_focused_text and self._live_reader is not None:
             focused = await self._live_reader.read()
-            if focused is not None and not focused.password and focused.text.strip():
-                return Observation(text=focused.text, app=app, title=title, source="focused_field")
+            if focused is not None and not focused.password:
+                if focused.editable and focused.text.strip():
+                    return Observation(
+                        text=focused.text, app=app, title=title, source="focused_field", field=focused.field
+                    )
+                if not focused.editable:
+                    # Page text, a label or a button has focus: the person is reading, so no text is passed on.
+                    reading = Observation(text="", app=app, title=title, source="focused_field", editable=False)
         if cfg.ocr_fallback and time.monotonic() - self._live_last_ocr >= 5.0:
             self._live_last_ocr = time.monotonic()
             from pilot.system.vision import screen_ocr
@@ -6746,7 +6753,7 @@ class PilotServer:
                 text = ""
             if text.strip():
                 return Observation(text=text[-6000:], app=app, title=title, source="screen_ocr")
-        return None
+        return reading
 
     async def _live_speak(self, text: str, urgent: bool) -> None:
         channel = SpeechChannel.LIVE_CORRECTION if urgent else SpeechChannel.PROACTIVE_SUGGESTION
