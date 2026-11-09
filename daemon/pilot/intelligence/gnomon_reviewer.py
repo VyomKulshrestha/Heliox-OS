@@ -17,13 +17,18 @@ proceeds on its deterministic rules, world model and approvals alone.
 
 The model needs a CUDA GPU and about 2.5 GiB of free RAM, takes ~30 s to load
 and ~0.2-0.6 s per question afterwards. It is loaded in the background on first
-use, never on the voice path itself, and unloaded after a quiet period.
+use, never on the voice path itself, and unloaded after a quiet period. When a
+load fails for lack of memory, the reviewer checks free memory every minute
+(psutil, plus the CUDA query only if CUDA is already set up) and loads again on
+its own once there is room, backing off after each failed attempt.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import re
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -73,7 +78,71 @@ LOCAL_ONLY_ACTIONS = frozenset(
 CALL_TIMEOUT_SECONDS = 8.0
 IDLE_UNLOAD_SECONDS = 600.0
 RETRY_AFTER_FAILURE_SECONDS = 300.0
+RESOURCE_CHECK_SECONDS = 60.0
+RESOURCE_RETRY_MAX_SECONDS = 900.0
 MAX_TEXT_CHARS = 1200
+GIB = 1024**3
+# Matches the loader guard in typed_decision.require_available_host_memory, which runs first.
+HOST_RAM_FLOOR_BYTES = int(2.5 * GIB)
+
+_REQUIRED_GIB = re.compile(r"at least ([0-9]+(?:\.[0-9]+)?) GiB", re.IGNORECASE)
+
+
+@dataclass
+class ResourceShortage:
+    """Why Gnomon could not load when the cause was memory, with the numbers to show the person."""
+
+    resource: str  # "memory" (system RAM) or "graphics memory" (CUDA)
+    required_bytes: int | None
+    free_bytes: int | None = None
+
+
+def classify_resource_shortage(error: BaseException) -> ResourceShortage | None:
+    """Read a load failure; None unless it says memory was short."""
+    message = str(error)
+    lowered = message.lower()
+    match = _REQUIRED_GIB.search(message)
+    required = int(float(match.group(1)) * GIB) if match else None
+    if "system ram" in lowered or isinstance(error, MemoryError):
+        return ResourceShortage("memory", required)
+    if "cuda memory" in lowered or "out of memory" in lowered:
+        return ResourceShortage("graphics memory", required)
+    return None
+
+
+def _free_host_memory() -> int | None:
+    try:
+        import psutil
+
+        return int(psutil.virtual_memory().available)
+    except Exception:
+        return None
+
+
+def _free_gpu_memory() -> int | None:
+    """Free CUDA memory, only when torch has already set CUDA up; never creates a context."""
+    torch = sys.modules.get("torch")
+    if torch is None:
+        return None
+    try:
+        if not torch.cuda.is_initialized():
+            return None
+        free, _total = torch.cuda.mem_get_info()
+        return int(free)
+    except Exception:
+        return None
+
+
+def _gb(value: int) -> str:
+    return f"{round(value / GIB, 1):g}"
+
+
+def describe_shortage(shortage: ResourceShortage) -> str:
+    """Plain words for the services strip, e.g. 'Needs 2.5 GB of free memory, 1.8 GB free now'."""
+    free = f", {_gb(shortage.free_bytes)} GB free now" if shortage.free_bytes is not None else ""
+    if shortage.required_bytes is None:
+        return f"Ran out of {shortage.resource} while loading{free}"
+    return f"Needs {_gb(shortage.required_bytes)} GB of free {shortage.resource}{free}"
 
 
 @dataclass
@@ -177,6 +246,7 @@ class GnomonReviewer:
         *,
         call_timeout: float = CALL_TIMEOUT_SECONDS,
         idle_unload_seconds: float = IDLE_UNLOAD_SECONDS,
+        resource_check_seconds: float = RESOURCE_CHECK_SECONDS,
     ) -> None:
         self._engine_provider = engine_provider
         self._call_timeout = call_timeout
@@ -189,6 +259,12 @@ class GnomonReviewer:
         self._loader: threading.Thread | None = None
         self._loaded_engine: Any = None
         self._idle_task: asyncio.Task[None] | None = None
+        self._resource_check_seconds = resource_check_seconds
+        self._shortage: ResourceShortage | None = None
+        self._resource_failures = 0  # load attempts in a row that failed for lack of memory
+        self._resource_task: asyncio.Task[None] | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._closed = False
 
     # -- lifecycle -------------------------------------------------------
 
@@ -199,18 +275,50 @@ class GnomonReviewer:
             state = "cold"  # Settings replaced or switched off the engine since it loaded
         if state in {"cold", "disabled"}:
             state = "cold" if current is not None else "disabled"
-        return {"state": state, "last_error": self._last_error, "execution_authority": False}
+        status: dict[str, Any] = {
+            "state": state,
+            "last_error": self._last_error,
+            "execution_authority": False,
+            "reason": "",
+            "waiting_for": None,
+            "retrying": False,
+        }
+        shortage = self._shortage
+        if state == "unavailable" and shortage is not None:
+            if shortage.resource == "memory":
+                shortage.free_bytes = _free_host_memory()  # cheap; keeps "free now" current
+            retrying = self._resource_task is not None and not self._resource_task.done()
+            status["reason"] = describe_shortage(shortage) + (". Tries again on its own." if retrying else ".")
+            status["waiting_for"] = {
+                "resource": shortage.resource,
+                "required_gb": round(shortage.required_bytes / GIB, 1) if shortage.required_bytes else None,
+                "free_gb": round(shortage.free_bytes / GIB, 1) if shortage.free_bytes is not None else None,
+            }
+            status["retrying"] = retrying
+        elif state == "unavailable":
+            status["reason"] = f"Could not load: {self._last_error}" if self._last_error else "Could not load."
+        return status
 
     def warm(self) -> None:
         """Start loading Gnomon in the background if it is enabled and not loaded; never blocks."""
         if self._state in {"loading", "ready"}:
             return
-        if self._state == "unavailable" and time.monotonic() - self._failed_at < RETRY_AFTER_FAILURE_SECONDS:
-            return
+        if self._state == "unavailable":
+            if self._resource_task is not None and not self._resource_task.done():
+                return  # the memory watch owns retries while memory is short
+            if time.monotonic() - self._failed_at < RETRY_AFTER_FAILURE_SECONDS:
+                return
+        self._start_load()
+
+    def _start_load(self) -> None:
         engine = self._engine_provider()
         if engine is None:
             self._state = "disabled"
             return
+        try:
+            self._loop = asyncio.get_running_loop()
+        except RuntimeError:
+            pass
         self._state = "loading"
         self._loader = threading.Thread(target=self._load, args=(engine,), name="gnomon-load", daemon=True)
         self._loader.start()
@@ -220,10 +328,19 @@ class GnomonReviewer:
         try:
             engine.load()
         except Exception as error:  # out of memory, no CUDA, missing artifacts
-            self._state = "unavailable"
+            shortage = classify_resource_shortage(error)
+            if shortage is not None:
+                shortage.free_bytes = _free_host_memory() if shortage.resource == "memory" else _free_gpu_memory()
+                self._resource_failures += 1
+            else:
+                self._resource_failures = 0
+            self._shortage = shortage
             self._last_error = str(error)[:300] or type(error).__name__
             self._failed_at = time.monotonic()
+            self._state = "unavailable"
             logger.info("Gnomon unavailable for autonomous review: %s", self._last_error)
+            if shortage is not None:
+                self._schedule_resource_watch()
             return
         try:  # the first forward pass sets up CUDA kernels (about 15 s for the 2B model); pay it while loading
             engine.score(WARM_UP_STATE, "noul", SCOPE_QUESTION, ["no", "yes"])
@@ -231,8 +348,69 @@ class GnomonReviewer:
             logger.info("Gnomon warm-up call failed: %s", str(error)[:200] or type(error).__name__)
         self._loaded_engine = engine
         self._last_used = time.monotonic()
+        self._shortage = None
+        self._resource_failures = 0
+        self._last_error = ""
         self._state = "ready"
         logger.info("Gnomon loaded for autonomous review")
+
+    # -- waiting for memory ------------------------------------------------
+
+    def _schedule_resource_watch(self) -> None:
+        """Called from the loader thread: start the memory watch on the event loop."""
+        loop = self._loop
+        if loop is None or self._closed:
+            return
+        try:
+            loop.call_soon_threadsafe(self._start_resource_watch)
+        except RuntimeError:  # the loop has shut down
+            pass
+
+    def _start_resource_watch(self) -> None:
+        if self._closed or self._shortage is None or self._state != "unavailable":
+            return
+        if self._resource_task is None or self._resource_task.done():
+            self._resource_task = asyncio.get_running_loop().create_task(self._resource_watch())
+
+    def _resources_sufficient(self) -> bool:
+        """Cheap check before a load attempt; refreshes the free numbers shown in status()."""
+        shortage = self._shortage
+        if shortage is None:
+            return True
+        host_free = _free_host_memory()
+        if shortage.resource == "memory":
+            shortage.free_bytes = host_free
+            needed = shortage.required_bytes or HOST_RAM_FLOOR_BYTES
+            return host_free is None or host_free >= needed
+        if host_free is not None and host_free < HOST_RAM_FLOOR_BYTES:
+            return False  # the RAM guard runs before the GPU check; it would fail first
+        gpu_free = _free_gpu_memory()
+        if gpu_free is not None:
+            shortage.free_bytes = gpu_free
+            if shortage.required_bytes is not None:
+                return gpu_free >= shortage.required_bytes
+        return True  # cannot measure cheaply: the backoff below bounds the attempts
+
+    async def _resource_watch(self) -> None:
+        """Check free memory every interval; load once there is room. One attempt per back-off window."""
+        backoff = min(
+            self._resource_check_seconds * 2 ** max(self._resource_failures - 1, 0),
+            max(RESOURCE_RETRY_MAX_SECONDS, self._resource_check_seconds),
+        )
+        next_attempt = time.monotonic() + backoff
+        while not self._closed and self._state == "unavailable" and self._shortage is not None:
+            await asyncio.sleep(self._resource_check_seconds)
+            if self._closed or self._state != "unavailable" or self._shortage is None:
+                return
+            if self._engine_provider() is None:
+                self._state = "disabled"
+                return
+            if time.monotonic() < next_attempt or not self._resources_sufficient():
+                continue
+            logger.info("Memory is free again; loading Gnomon")
+            self._resource_task = None  # let warm() through and allow the next failure to start a new watch
+            self._start_load()
+            return
 
     def _ensure_idle_watch(self) -> None:
         try:
@@ -248,8 +426,15 @@ class GnomonReviewer:
             if self._state == "ready" and time.monotonic() - self._last_used > self._idle_unload_seconds:
                 await self.unload()
 
+    async def _cancel_resource_watch(self) -> None:
+        task, self._resource_task = self._resource_task, None
+        if task is not None and task is not asyncio.current_task():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
     async def unload(self) -> None:
         """Release the model this reviewer loaded (not whichever engine the config points at now)."""
+        await self._cancel_resource_watch()
         async with self._lock:
             engine, self._loaded_engine = self._loaded_engine, None
             if engine is not None:
@@ -258,6 +443,7 @@ class GnomonReviewer:
                 self._state = "cold"
 
     async def close(self) -> None:
+        self._closed = True
         if self._idle_task is not None:
             self._idle_task.cancel()
             await asyncio.gather(self._idle_task, return_exceptions=True)

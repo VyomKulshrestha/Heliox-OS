@@ -25,7 +25,8 @@
     } | null;
   };
 
-  type GnomonStatus = { state?: string; last_error?: string };
+  // `reason` explains an unavailable model, e.g. "Needs 2.5 GB of free memory, 1.8 GB free now."
+  type GnomonStatus = { state?: string; last_error?: string; reason?: string };
 
   let narration = $state<NarrationStatus>({});
   let gnomon = $state<GnomonStatus>({ state: "disabled" });
@@ -97,7 +98,7 @@
       case "cold":
         return "Loads when a task starts";
       case "unavailable":
-        return `Unavailable: ${(gnomon.last_error || "not loaded").slice(0, 60)}`;
+        return gnomon.reason || `Unavailable: ${(gnomon.last_error || "not loaded").slice(0, 60)}`;
       default:
         return "Off in config";
     }
@@ -207,7 +208,7 @@
         <span class="service-dot {row.state}" aria-hidden="true"></span>
         <span class="service-copy">
           <strong>{row.name}</strong>
-          <small>{row.detail}</small>
+          <small title={row.detail}>{row.detail}</small>
         </span>
       </li>
     {/each}

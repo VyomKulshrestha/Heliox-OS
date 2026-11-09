@@ -40,6 +40,19 @@ describe("InteractiveServices", () => {
     expect(onconfigure).toHaveBeenCalled();
   });
 
+  it("shows why Gnomon is not loaded and does not count it as on", async () => {
+    const reason = "Needs 2.5 GB of free memory, 1.8 GB free now. Tries again on its own.";
+    daemonMocks.call.mockImplementation(async (method: string) => {
+      if (method === "narration_status") return { enabled: true, narrate_steps: true, follow_up_enabled: false };
+      if (method === "risk_gate_status") return { enabled: true, weights_loaded: true };
+      return { gnomon: { state: "unavailable", last_error: "At least 2.5 GiB of available system RAM", reason } };
+    });
+    render(InteractiveServices, { onconfigure: vi.fn() });
+
+    await screen.findByRole("button", { name: /3 of 6 services on/ });
+    expect(screen.getByText(reason).getAttribute("title")).toBe(reason);
+  });
+
   it("says when the daemon cannot be reached", async () => {
     daemonMocks.call.mockRejectedValue(new Error("offline"));
     render(InteractiveServices, { onconfigure: vi.fn() });

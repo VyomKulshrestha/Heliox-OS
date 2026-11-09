@@ -100,12 +100,13 @@ async def screen_ocr(
     errors: list[str] = []
 
     # ── Platform-native OCR ──────────────────────────────────────────
+    # A native engine that ran cleanly is the answer even when the screen has
+    # no text: falling through would load EasyOCR (torch) for nothing.
     if CURRENT_PLATFORM == Platform.WINDOWS:
         try:
             result = await _ocr_windows_native(img_bytes)
-            if result and result.strip():
-                logger.info("OCR succeeded via Windows native (WinRT)")
-                return result
+            logger.info("OCR succeeded via Windows native (WinRT)")
+            return result
         except Exception as e:
             errors.append(f"Windows native OCR: {e}")
             logger.debug("Windows native OCR failed: %s", e)
@@ -113,9 +114,8 @@ async def screen_ocr(
     elif CURRENT_PLATFORM == Platform.MACOS:
         try:
             result = await _ocr_macos_native(img_bytes)
-            if result and result.strip():
-                logger.info("OCR succeeded via macOS Vision framework")
-                return result
+            logger.info("OCR succeeded via macOS Vision framework")
+            return result
         except Exception as e:
             errors.append(f"macOS Vision OCR: {e}")
             logger.debug("macOS Vision OCR failed: %s", e)
@@ -130,7 +130,7 @@ async def screen_ocr(
         errors.append(f"Tesseract CLI: {e}")
         logger.debug("Tesseract CLI failed: %s", e)
 
-    # ── EasyOCR (GPU accelerated) ────────────────────────────────────
+    # ── EasyOCR (CPU; see _easyocr_reader) ───────────────────────────
     try:
         result = await _ocr_easyocr(img_bytes, language)
         if result and result.strip():
@@ -185,6 +185,16 @@ def _get_install_hint() -> str:
 # ──────────────────────────────────────────────────────────────────────
 
 
+def _powershell_literal(value: str) -> str:
+    """Escape text for a single-quoted PowerShell string.
+
+    Single-quoted PowerShell strings are literal, so backslashes stay as they
+    are and only a single quote needs doubling. Doubling backslashes here made
+    WinRT reject every path, which silently pushed all screen OCR to EasyOCR.
+    """
+    return value.replace("'", "''")
+
+
 async def _ocr_windows_native(img_bytes: bytes) -> str:
     """Use Windows 10/11 built-in OCR via PowerShell WinRT APIs.
 
@@ -219,7 +229,7 @@ try {{
     }}
 
     # Open image file
-    $imgPath = '{tmp_img.replace(chr(92), chr(92) + chr(92))}'
+    $imgPath = '{_powershell_literal(tmp_img)}'
     $file = Await ([Windows.Storage.StorageFile]::GetFileFromPathAsync($imgPath)) ([Windows.Storage.StorageFile])
 
     # Open stream and create decoder
@@ -366,6 +376,41 @@ async def _ocr_tesseract_cli(img_bytes: bytes, language: str) -> str:
 # ──────────────────────────────────────────────────────────────────────
 
 
+def _easyocr_reader(easyocr_module, lang_code: str, *, gpu: bool = False):
+    """Return a cached EasyOCR reader.
+
+    Screen OCR runs on CPU by default. A GPU reader keeps the CUDA context,
+    weights and the torch caching allocator (about 3.3 GB on a 1920x1080 screen
+    measured 2026-11-10) for the life of the daemon, which keeps the local
+    review model from loading on an 8 GB card. Callers that ask for ``gpu=True``
+    get a separate reader and must call ``_release_easyocr_gpu_cache`` after use.
+    """
+    cache_key = f"_easyocr_reader_{lang_code}_{'gpu' if gpu else 'cpu'}"
+    reader = getattr(_ocr_easyocr, cache_key, None)
+    if reader is None:
+        if gpu:
+            try:
+                reader = easyocr_module.Reader([lang_code], gpu=True, verbose=False)
+            except Exception:
+                reader = easyocr_module.Reader([lang_code], gpu=False, verbose=False)
+        else:
+            reader = easyocr_module.Reader([lang_code], gpu=False, verbose=False)
+        setattr(_ocr_easyocr, cache_key, reader)
+    return reader
+
+
+def _release_easyocr_gpu_cache() -> None:
+    """Hand torch's cached GPU blocks back to the driver after an on-demand GPU read."""
+    torch = sys.modules.get("torch")
+    if torch is None:
+        return
+    try:
+        if torch.cuda.is_initialized():
+            torch.cuda.empty_cache()
+    except Exception:
+        logger.debug("Could not release EasyOCR GPU cache", exc_info=True)
+
+
 async def _ocr_easyocr(img_bytes: bytes, language: str) -> str:
     from io import BytesIO
 
@@ -389,14 +434,8 @@ async def _ocr_easyocr(img_bytes: bytes, language: str) -> str:
     lang_code = lang_map.get(language, language[:2] if len(language) >= 2 else "en")
 
     def _do():
-        cache_key = f"_easyocr_reader_{lang_code}"
-        reader = getattr(_ocr_easyocr, cache_key, None)
-        if reader is None:
-            try:
-                reader = easyocr.Reader([lang_code], gpu=True, verbose=False)
-            except Exception:
-                reader = easyocr.Reader([lang_code], gpu=False, verbose=False)
-            setattr(_ocr_easyocr, cache_key, reader)
+        # CPU only: screen_ocr also serves periodic supervision checks.
+        reader = _easyocr_reader(easyocr, lang_code, gpu=False)
         img = Image.open(BytesIO(img_bytes))
         results = reader.readtext(np.array(img))
         lines = [text for (_, text, conf) in results if conf > 0.3]
@@ -443,16 +482,13 @@ async def screen_find_text(
         from PIL import Image
 
         def _do():
-            cache_key = "_easyocr_reader_en"
-            reader = getattr(_ocr_easyocr, cache_key, None)
-            if reader is None:
-                try:
-                    reader = easyocr.Reader(["en"], gpu=True, verbose=False)
-                except Exception:
-                    reader = easyocr.Reader(["en"], gpu=False, verbose=False)
-                setattr(_ocr_easyocr, cache_key, reader)
+            # On-demand tool: GPU when available, cached blocks released after the read.
+            reader = _easyocr_reader(easyocr, "en", gpu=True)
             img = Image.open(BytesIO(img_bytes))
-            results = reader.readtext(np.array(img))
+            try:
+                results = reader.readtext(np.array(img))
+            finally:
+                _release_easyocr_gpu_cache()
             matches = []
             for bbox, text, conf in results:
                 if target_text.lower() in text.lower():
@@ -845,16 +881,13 @@ async def screen_element_map(
         from PIL import Image
 
         def _do():
-            cache_key = "_easyocr_reader_en"
-            reader = getattr(_ocr_easyocr, cache_key, None)
-            if reader is None:
-                try:
-                    reader = easyocr.Reader(["en"], gpu=True, verbose=False)
-                except Exception:
-                    reader = easyocr.Reader(["en"], gpu=False, verbose=False)
-                setattr(_ocr_easyocr, cache_key, reader)
+            # On-demand tool: GPU when available, cached blocks released after the read.
+            reader = _easyocr_reader(easyocr, "en", gpu=True)
             img = Image.open(BytesIO(img_bytes))
-            results = reader.readtext(np.array(img))
+            try:
+                results = reader.readtext(np.array(img))
+            finally:
+                _release_easyocr_gpu_cache()
             elements = []
             for i, (bbox, text, conf) in enumerate(results):
                 if conf < 0.3 or not text.strip():
