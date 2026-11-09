@@ -1,0 +1,100 @@
+{
+  "mode": "lightweight",
+  "probes": 10,
+  "passed": 10,
+  "recall": 1.0,
+  "stale": 0,
+  "median_prompt_tokens": 5233,
+  "rows": [
+    {
+      "id": "sister",
+      "ask": "Find a birthday present for my sister and order it",
+      "why": "a person they told Heliox about two weeks ago",
+      "pass": true,
+      "missing": [],
+      "stale": [],
+      "prompt_tokens": 5232
+    },
+    {
+      "id": "pets",
+      "ask": "Order a month of food for my pets",
+      "why": "a fact told once, in another session",
+      "pass": true,
+      "missing": [],
+      "stale": [],
+      "prompt_tokens": 5230
+    },
+    {
+      "id": "workplace",
+      "ask": "Write an email signature for my work account",
+      "why": "where they work",
+      "pass": true,
+      "missing": [],
+      "stale": [],
+      "prompt_tokens": 5230
+    },
+    {
+      "id": "home-now",
+      "ask": "Plan a weekend trip within three hours of where I live",
+      "why": "a fact that changed: the old one must not come back",
+      "pass": true,
+      "missing": [],
+      "stale": [],
+      "prompt_tokens": 5233
+    },
+    {
+      "id": "style",
+      "ask": "Summarize today's tech news for me",
+      "why": "a standing preference should apply to every request, not only ones that share its words",
+      "pass": true,
+      "missing": [],
+      "stale": [],
+      "prompt_tokens": 5231
+    },
+    {
+      "id": "manager",
+      "ask": "Draft a note to my manager asking for Friday off",
+      "why": "a person who changed: the new manager, and never the old one",
+      "pass": true,
+      "missing": [],
+      "stale": [],
+      "prompt_tokens": 5232
+    },
+    {
+      "id": "same-day",
+      "ask": "Email the finished report to the warehouse team we're auditing",
+      "why": "said at the start of a long session, eleven turns back",
+      "pass": true,
+      "missing": [],
+      "stale": [],
+      "prompt_tokens": 5407
+    },
+    {
+      "id": "last-week",
+      "ask": "Update the sales summary we drafted for the Lisbon office with December numbers",
+      "why": "what Heliox did in an earlier session",
+      "pass": true,
+      "missing": [],
+      "stale": [],
+      "prompt_tokens": 5235
+    },
+    {
+      "id": "forgotten",
+      "ask": "Plan my Saturday morning, I have a free few hours",
+      "why": "something they asked Heliox to forget must not come back",
+      "pass": true,
+      "missing": [],
+      "stale": [],
+      "prompt_tokens": 5233
+    },
+    {
+      "id": "mid-session",
+      "ask": "How many late deliveries did we count? Put that number in the summary",
+      "why": "a result from the middle of a long session, not its opening",
+      "pass": true,
+      "missing": [],
+      "stale": [],
+      "prompt_tokens": 5509
+    }
+  ]
+}

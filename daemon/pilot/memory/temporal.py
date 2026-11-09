@@ -200,6 +200,13 @@ CREATE INDEX IF NOT EXISTS idx_working_memory_expiry
 """
 
 
+_EVIDENCE_NO_DELETE = """CREATE TRIGGER IF NOT EXISTS fact_evidence_no_delete
+BEFORE DELETE ON fact_evidence
+BEGIN
+    SELECT RAISE(ABORT, 'fact evidence is append-only');
+END;"""
+
+
 class TemporalMemoryStore:
     """Stores changing facts without erasing their evidence or history."""
 
@@ -227,6 +234,42 @@ class TemporalMemoryStore:
         if self._pool is not None:
             await self._pool.close()
             self._pool = None
+
+    async def counts(self) -> dict[str, int]:
+        pool = self._require_pool()
+        found = {}
+        async with pool.read() as db:
+            for table in ("temporal_facts", "episodic_memories", "working_memory"):
+                cursor = await db.execute(f"SELECT COUNT(*) FROM {table}")  # noqa: S608 - fixed table names
+                found[table] = int((await cursor.fetchone())[0])
+                await cursor.close()
+        return found
+
+    async def clear(self) -> int:
+        """Delete every fact, its evidence and contradictions, every episode and all working memory.
+
+        Evidence is append-only so that no code path can quietly rewrite why Heliox believes something. Wiping
+        memory at the person's request is the one exception: the guard is lifted for this transaction only.
+        """
+        pool = self._require_pool()
+        removed = sum((await self.counts()).values())
+        async with pool.write() as db:
+            try:
+                await db.execute("DROP TRIGGER IF EXISTS fact_evidence_no_delete")
+                for table in (
+                    "fact_evidence",
+                    "fact_contradictions",
+                    "temporal_facts",
+                    "episodic_memories",
+                    "working_memory",
+                ):
+                    await db.execute(f"DELETE FROM {table}")  # noqa: S608 - fixed table names
+                await db.execute(_EVIDENCE_NO_DELETE)
+                await db.commit()
+            except Exception:
+                await db.rollback()
+                raise
+        return removed
 
     async def remember_fact(
         self,

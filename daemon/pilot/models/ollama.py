@@ -12,6 +12,19 @@ from pilot.system.http_client import create_httpx_client
 logger = logging.getLogger("pilot.models.ollama")
 
 DEFAULT_TIMEOUT = 600.0  # 10 minutes — local LLMs can be slow for complex plans
+# The context window to ask for. Older Ollama releases default to 2,048 or 4,096 tokens and silently cut the start
+# of a longer prompt, which is the system prompt; Heliox's planner prompt alone is about 4,100 tokens. So every call
+# asks for a window that fits its prompt plus room to answer, rounded up, and never more than the model supports.
+MIN_CONTEXT = 4096
+ANSWER_ROOM = 2048
+TOKENIZER_SLACK = 1.25  # prompts are counted with a GPT tokenizer; local models' tokenizers can use more
+
+
+def context_size(prompt_tokens: int, model_max: int | None) -> int:
+    size = MIN_CONTEXT
+    while size < prompt_tokens * TOKENIZER_SLACK + ANSWER_ROOM:
+        size *= 2
+    return min(size, model_max) if model_max else min(size, 32768)
 
 
 class OllamaModelNotFoundError(RuntimeError):
@@ -34,9 +47,30 @@ class OllamaClient:
         self._config = resolved_config
         self._base_url = base_url.rstrip("/")
         self._client = create_httpx_client(resolved_config, timeout=DEFAULT_TIMEOUT)
+        self._model_max: dict[str, int | None] = {}
 
     def _keep_alive_seconds(self) -> int:
         return max(0, int(self._config.model.idle_unload_seconds))
+
+    async def _max_context(self, model: str) -> int | None:
+        """The model's own context length, from /api/show, asked once per model."""
+        if model not in self._model_max:
+            try:
+                resp = await self._client.post(f"{self._base_url}/api/show", json={"model": model})
+                info = resp.json().get("model_info", {}) if resp.status_code == 200 else {}
+                lengths = [int(v) for k, v in info.items() if k.endswith(".context_length") and str(v).isdigit()]
+                self._model_max[model] = max(lengths) if lengths else None
+            except Exception:
+                self._model_max[model] = None
+        return self._model_max[model]
+
+    async def _options(self, model: str, text: str, temperature: float) -> dict[str, Any]:
+        from pilot.memory.sliding_window import get_token_count
+
+        return {
+            "temperature": temperature,
+            "num_ctx": context_size(get_token_count(text), await self._max_context(model)),
+        }
 
     async def is_available(self) -> bool:
         try:
@@ -84,7 +118,7 @@ class OllamaClient:
             "prompt": prompt,
             "stream": stream_callback is not None,
             "keep_alive": self._keep_alive_seconds(),
-            "options": {"temperature": temperature},
+            "options": await self._options(model, f"{system}\n{prompt}", temperature),
         }
         if system:
             payload["system"] = system
@@ -122,7 +156,7 @@ class OllamaClient:
             "prompt": prompt,
             "stream": True,
             "keep_alive": self._keep_alive_seconds(),
-            "options": {"temperature": temperature},
+            "options": await self._options(model, f"{system}\n{prompt}", temperature),
         }
         if system:
             payload["system"] = system
@@ -165,7 +199,7 @@ class OllamaClient:
             "messages": messages,
             "stream": stream_callback is not None,
             "keep_alive": self._keep_alive_seconds(),
-            "options": {"temperature": temperature},
+            "options": await self._options(model, "\n".join(str(m.get("content", "")) for m in messages), temperature),
         }
         if json_mode:
             payload["format"] = "json"

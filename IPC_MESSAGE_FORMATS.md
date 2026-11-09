@@ -457,7 +457,8 @@ One day at a glance, composed in code from local records.
 #### `privacy_inventory` / `privacy_clear` / `timeline_forget`
 `privacy_inventory` lists each personal store under `DATA_DIR` (activity timeline, task
 receipts, undo copies, notes, the to-do list, reminders, voice shortcuts, setups, usage
-nudges, quiet hours) and the in-memory clipboard history as `{"key", "label", "about",
+nudges, quiet hours, conversation history, long-term memory, the live companion's
+relevance and timing) and the in-memory clipboard history as `{"key", "label", "about",
 "bytes", "size", "items", "memory_only"}`; `memory_only` stores have nothing on disk. `privacy_clear` takes
 `key` and `confirmed: true` and returns the new inventory. `timeline_forget` removes the
 last `minutes` (1 to 1440) of the timeline; "forget my activity from the last hour" (or

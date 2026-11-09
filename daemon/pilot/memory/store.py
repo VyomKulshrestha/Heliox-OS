@@ -33,6 +33,8 @@ from pilot.memory.temporal import (
 )
 from pilot.models.router import ModelRouter
 
+PROFILE_TOKENS = 400  # what the person told Heliox about themselves, at most, in every context
+
 if TYPE_CHECKING:
     from pilot.actions import ActionPlan, ActionResult
 
@@ -72,7 +74,16 @@ class MemoryStore:
         pruning_interval_seconds: int = 3600,
         pruning_min_memories: int = 10,
         temporal_db_file: str | Path | None = None,
+        *,
+        db_file: str | Path | None = None,
+        semantic_search: bool = True,
     ) -> None:
+        # db_file and semantic_search=False let a benchmark or test run the real store in a folder of its own,
+        # without the vector index (pilot.memory.bench).
+        self._db_file_override = Path(db_file) if db_file else None
+        self._semantic_search = semantic_search
+        # What the person told Heliox about themselves (UserProfile.context_lines): always in the context.
+        self._profile_source: Any = None
         self._pool: AsyncSqlitePool | None = None
         self._chroma_collection: Any = None
         self._workspace_index = None
@@ -88,9 +99,12 @@ class MemoryStore:
         self._pruning_min_memories = pruning_min_memories
 
     async def initialize(self, router: ModelRouter = None) -> None:
-        await aiofiles.os.makedirs(DATA_DIR, exist_ok=True)
+        # Resolved here, not in __init__, so the defaults follow pilot.config at start-up.
+        self._db_file = self._db_file_override or Path(DB_FILE)
+        self._data_dir = self._db_file_override.parent if self._db_file_override else Path(DATA_DIR)
+        await aiofiles.os.makedirs(self._data_dir, exist_ok=True)
 
-        self._pool = AsyncSqlitePool(DB_FILE)
+        self._pool = AsyncSqlitePool(self._db_file)
         await self._pool.start()
 
         async with self._pool.write() as db:
@@ -103,14 +117,14 @@ class MemoryStore:
             await db.execute("CREATE INDEX IF NOT EXISTS idx_history_session ON action_history(session_id, id)")
             await db.commit()
 
-        temporal_path = self._temporal_db_file or Path(DB_FILE).with_name("temporal_memory.db")
+        temporal_path = self._temporal_db_file or self._db_file.with_name("temporal_memory.db")
         self._temporal = TemporalMemoryStore(temporal_path)
         await self._temporal.initialize()
         self._context_assembler = TemporalContextAssembler(self._temporal)
 
-        await asyncio.to_thread(self._init_chroma)
-
-        self._init_workspace_index()
+        if self._semantic_search:
+            await asyncio.to_thread(self._init_chroma)
+            self._init_workspace_index()
 
         if self._checkpoint_interval_seconds > 0:
             self._checkpoint_task = asyncio.create_task(self._periodic_checkpoint_loop())
@@ -127,7 +141,7 @@ class MemoryStore:
         """Initialize the workspace RAG index."""
         from pilot.memory.workspace_index import WorkspaceIndex
 
-        workspace_dir = DATA_DIR / "workspace_index"
+        workspace_dir = self._data_dir / "workspace_index"
         self._workspace_index = WorkspaceIndex(workspace_dir)
 
         logger.info("WorkspaceIndex initialized at %s", workspace_dir)
@@ -137,7 +151,7 @@ class MemoryStore:
         try:
             import chromadb
 
-            chroma_dir = DATA_DIR / "chroma"
+            chroma_dir = self._data_dir / "chroma"
             chroma_dir.mkdir(parents=True, exist_ok=True)
 
             client = chromadb.PersistentClient(path=str(chroma_dir))
@@ -349,6 +363,20 @@ class MemoryStore:
             except Exception:
                 logger.debug("ChromaDB write failed", exc_info=True)
 
+        if self._temporal is not None and not getattr(plan, "actions", None):
+            answer = str(getattr(plan, "explanation", "") or "").strip()
+            if answer and not getattr(plan, "error", None):
+                # An answer is worth remembering too ("the Q4 summary for Lisbon: revenue up 12 percent"), even
+                # where there is no vector index to find it in the history later.
+                await self._temporal.record_episode(
+                    session_id=session_id or get_experience_context().session_id or "default",
+                    task_id=task_id or get_experience_context().task_id,
+                    summary=f"Request: {user_input[:500]}. Answer: {answer[:500]}",
+                    outcome="answered",
+                    tags=["conversation"],
+                    importance=0.45,
+                    provenance_event_id=provenance_event_id,
+                )
         if self._temporal is not None and getattr(plan, "actions", None):
             context = get_experience_context()
             effective_session_id = session_id or context.session_id or "default"
@@ -435,6 +463,25 @@ class MemoryStore:
             ),
         )
 
+    def set_profile_source(self, source: Any) -> None:
+        """``source()`` returns the lines the person told Heliox about themselves; they lead every context."""
+        self._profile_source = source
+
+    def _profile_block(self, budget: int) -> str:
+        if self._profile_source is None or budget <= 0:
+            return ""
+        try:
+            lines = [str(line) for line in self._profile_source() if str(line).strip()]
+        except Exception:
+            logger.debug("Could not read the profile for context", exc_info=True)
+            return ""
+        block = ["What they have told Heliox about themselves:"]
+        for line in lines:
+            if get_token_count("\n".join([*block, f"- {line}"])) > budget:
+                break
+            block.append(f"- {line}")
+        return "\n".join(block) if len(block) > 1 else ""
+
     async def get_context(
         self,
         query: str,
@@ -447,6 +494,10 @@ class MemoryStore:
         """Retrieve ranked memory context without exceeding the token budget."""
         parts: list[str] = []
         max_tokens = max(0, int(max_tokens))
+        about = self._profile_block(min(PROFILE_TOKENS, max_tokens // 2))
+        if about:
+            parts.append(about)
+            max_tokens -= get_token_count(about)
         context = get_experience_context()
         effective_session_id = session_id or context.session_id or "default"
         effective_task_id = task_id if task_id is not None else context.task_id
@@ -813,6 +864,40 @@ class MemoryStore:
             query,
             n_results,
         )
+
+    async def counts(self) -> dict[str, int]:
+        """How much is kept: conversation turns, and long-term facts plus episodes."""
+        found = {"history": 0, "long_term": 0}
+        if self._pool is not None:
+            async with self._pool.read() as db:
+                cursor = await db.execute("SELECT COUNT(*) FROM action_history")
+                found["history"] = int((await cursor.fetchone())[0])
+                await cursor.close()
+        if self._temporal is not None:
+            temporal = await self._temporal.counts()
+            found["long_term"] = temporal["temporal_facts"] + temporal["episodic_memories"]
+        return found
+
+    async def clear_history(self) -> int:
+        """Delete every remembered request and answer, and the copies kept for semantic search."""
+        removed = (await self.counts())["history"]
+        if self._pool is not None:
+            async with self._pool.write() as db:
+                await db.execute("DELETE FROM action_history")
+                await db.execute("DELETE FROM user_preferences")
+                await db.commit()
+        if self._chroma_collection is not None:
+            try:
+                ids = self._chroma_collection.get().get("ids") or []
+                if ids:
+                    self._chroma_collection.delete(ids=ids)
+            except Exception:
+                logger.warning("Could not clear the semantic search copies", exc_info=True)
+        return removed
+
+    async def clear_long_term(self) -> int:
+        """Delete every long-term fact, episode and piece of working memory."""
+        return await self._temporal.clear() if self._temporal is not None else 0
 
     async def close(self) -> None:
         if self._checkpoint_task:

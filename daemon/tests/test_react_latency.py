@@ -12,6 +12,7 @@ from benchmarks.local_status_suite import benchmark_suite
 from benchmarks.react_latency import benchmark, benchmark_report, summarize
 from pilot.actions import ActionType
 from pilot.agents.planner import Planner
+from pilot.memory.session_recall import EARLIER_TURNS_LOOKED_AT
 from pilot.system import sysinfo
 
 
@@ -194,7 +195,32 @@ async def test_planner_bounds_memory_and_raw_history() -> None:
         "session_id": "chat-42",
         "max_tokens": 1000,
     }
+    # Six recent turns go to the model as messages; older ones are read only to pick what still matters for
+    # "Earlier in this conversation" (pilot.memory.session_recall).
     assert memory.history_kwargs == {
-        "limit": 6,
+        "limit": 6 + EARLIER_TURNS_LOOKED_AT,
         "session_id": "chat-42",
     }
+
+
+@pytest.mark.asyncio
+async def test_a_long_session_still_sends_six_raw_turns_and_recalls_the_rest_as_context() -> None:
+    class LongMemory(PlanningMemory):
+        async def get_history(self, **kwargs: Any) -> list[dict[str, Any]]:
+            self.history_kwargs = kwargs
+            turns = [{"user_input": "Today's report is for the Porto warehouse", "explanation": "Got it."}]
+            turns += [{"user_input": f"Step {i}", "explanation": f"Done {i}."} for i in range(19)]
+            return list(reversed(turns))  # newest first, like the store
+
+    class KeepingModel(PlanningModel):
+        sent: list[dict[str, Any]] = []
+
+        async def generate(self, messages, *args: Any, **kwargs: Any) -> str:  # noqa: ARG002
+            KeepingModel.sent = messages
+            return '{"explanation":"No action needed.","actions":[]}'
+
+    planner = Planner(KeepingModel(), LongMemory())  # type: ignore[arg-type]
+    await planner.plan("Email the warehouse report to the Porto team", session_id="chat-7")
+    history = [m for m in KeepingModel.sent[1:-1] if m["role"] == "user"]
+    assert 0 < len(history) <= 6 and not any("Porto" in m["content"] for m in history)
+    assert "Porto warehouse" in KeepingModel.sent[-1]["content"]  # recalled into the context block

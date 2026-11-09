@@ -1,0 +1,220 @@
+{
+  "sessions": [
+    {
+      "id": "week1-monday",
+      "turns": [
+        {
+          "say": "Remember that I work at a bakery called Crumb and Co"
+        },
+        {
+          "say": "Remember that I live in Mumbai"
+        },
+        {
+          "say": "My manager is Priya"
+        },
+        {
+          "say": "I prefer short answers"
+        },
+        {
+          "say": "Find a flour supplier in Mumbai that delivers on weekends",
+          "reply": "Found three flour suppliers in Mumbai with weekend delivery: GrainWorks, MillHouse and Annapurna Flour."
+        },
+        {
+          "say": "Make a shopping list for tomorrow's sourdough bake",
+          "reply": "Made a list: bread flour, rye flour, salt and a new proofing basket."
+        }
+      ]
+    },
+    {
+      "id": "week1-wednesday",
+      "turns": [
+        {
+          "say": "Remember that I have two cats called Miso and Tofu"
+        },
+        {
+          "say": "My sister is Ana"
+        },
+        {
+          "say": "Remember that I am training for a marathon"
+        },
+        {
+          "say": "Draft the Q4 sales summary for the Lisbon office",
+          "reply": "Drafted the Q4 sales summary for the Lisbon office: revenue up 12 percent, two new wholesale clients."
+        },
+        {
+          "say": "Check how much disk space is left",
+          "reply": "You have 112 GB free on C:."
+        }
+      ]
+    },
+    {
+      "id": "week2-long-day",
+      "turns": [
+        {
+          "say": "Today's report is the supplier audit for the Porto warehouse",
+          "reply": "Got it: today we're working on the supplier audit for the Porto warehouse."
+        },
+        {
+          "say": "Open the audit template",
+          "reply": "Opened audit-template.docx."
+        },
+        {
+          "say": "Find last quarter's delivery logs",
+          "reply": "Found deliveries-q3.xlsx in Documents."
+        },
+        {
+          "say": "Count the late deliveries in it",
+          "reply": "There were 14 late deliveries out of 210."
+        },
+        {
+          "say": "Which supplier was late most often?",
+          "reply": "GrainWorks was late 6 times."
+        },
+        {
+          "say": "Make a chart of late deliveries by month",
+          "reply": "Made a bar chart: July 3, August 7, September 4."
+        },
+        {
+          "say": "Paste the chart into the audit",
+          "reply": "Pasted the chart into section 2."
+        },
+        {
+          "say": "Check the spelling in section 2",
+          "reply": "Fixed two typos in section 2."
+        },
+        {
+          "say": "Mute notifications for an hour",
+          "reply": "Notifications are muted until 3 PM."
+        },
+        {
+          "say": "What's the weather tomorrow?",
+          "reply": "Tomorrow: 31 degrees and sunny."
+        },
+        {
+          "say": "Add a summary paragraph at the top",
+          "reply": "Added a three-sentence summary at the top."
+        },
+        {
+          "say": "Save the audit as a PDF",
+          "reply": "Saved audit.pdf to Documents."
+        }
+      ]
+    },
+    {
+      "id": "week3-monday",
+      "turns": [
+        {
+          "say": "Remember that I live in Pune now"
+        },
+        {
+          "say": "My manager is Rahul now"
+        },
+        {
+          "say": "Forget that I am training for a marathon"
+        },
+        {
+          "say": "Book a table for two near home on Friday evening",
+          "reply": "Booked a table for two at Malaka Spice on Friday at 8 PM."
+        }
+      ]
+    }
+  ],
+  "probes": [
+    {
+      "id": "sister",
+      "session": "new",
+      "ask": "Find a birthday present for my sister and order it",
+      "expect": [
+        "Ana"
+      ],
+      "why": "a person they told Heliox about two weeks ago"
+    },
+    {
+      "id": "pets",
+      "session": "new",
+      "ask": "Order a month of food for my pets",
+      "expect": [
+        "cats"
+      ],
+      "why": "a fact told once, in another session"
+    },
+    {
+      "id": "workplace",
+      "session": "new",
+      "ask": "Write an email signature for my work account",
+      "expect": [
+        "Crumb"
+      ],
+      "why": "where they work"
+    },
+    {
+      "id": "home-now",
+      "session": "new",
+      "ask": "Plan a weekend trip within three hours of where I live",
+      "expect": [
+        "Pune"
+      ],
+      "forbid": [
+        "live in Mumbai"
+      ],
+      "why": "a fact that changed: the old one must not come back"
+    },
+    {
+      "id": "style",
+      "session": "new",
+      "ask": "Summarize today's tech news for me",
+      "expect": [
+        "short answers"
+      ],
+      "why": "a standing preference should apply to every request, not only ones that share its words"
+    },
+    {
+      "id": "manager",
+      "session": "new",
+      "ask": "Draft a note to my manager asking for Friday off",
+      "expect": [
+        "Rahul"
+      ],
+      "forbid": [
+        "Priya"
+      ],
+      "why": "a person who changed: the new manager, and never the old one"
+    },
+    {
+      "id": "same-day",
+      "session": "week2-long-day",
+      "ask": "Email the finished report to the warehouse team we're auditing",
+      "expect": [
+        "Porto"
+      ],
+      "why": "said at the start of a long session, eleven turns back"
+    },
+    {
+      "id": "last-week",
+      "session": "new",
+      "ask": "Update the sales summary we drafted for the Lisbon office with December numbers",
+      "expect": [
+        "revenue up 12 percent"
+      ],
+      "why": "what Heliox did in an earlier session"
+    },
+    {
+      "id": "forgotten",
+      "session": "new",
+      "ask": "Plan my Saturday morning, I have a free few hours",
+      "forbid": [
+        "marathon"
+      ],
+      "why": "something they asked Heliox to forget must not come back"
+    },
+    {
+      "id": "mid-session",
+      "session": "week2-long-day",
+      "ask": "How many late deliveries did we count? Put that number in the summary",
+      "expect": [
+        "14 late deliveries"
+      ],
+      "why": "a result from the middle of a long session, not its opening"
+    }
+  ]
+}

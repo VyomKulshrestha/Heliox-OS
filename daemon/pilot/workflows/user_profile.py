@@ -51,8 +51,10 @@ ABOUT_REQUEST = re.compile(
     r" (?P<text>.+)$"
 )
 PERSON_REQUEST = re.compile(
-    rf"^(?:please )?(?:remember (?:that )?)?my (?P<rel>{_REL})(?:'s name)? is (?P<name>[\w .'-]{{1,40}})$"
-    rf"|^(?:please )?(?:remember (?:that )?)?(?P<name2>[\w .'-]{{1,40}}) is my (?P<rel2>{_REL})$"
+    rf"^(?:please )?(?:remember (?:that )?)?my (?:new |current )?(?P<rel>{_REL})(?:'s name)? is (?:now )?"
+    rf"(?P<name>[\w .'-]{{1,40}}?)(?: now| these days| at the moment)?$"
+    rf"|^(?:please )?(?:remember (?:that )?)?(?P<name2>[\w .'-]{{1,40}}) is (?:now )?my (?:new )?(?P<rel2>{_REL})"
+    rf"(?: now)?$"
 )
 PREF_REQUEST = re.compile(
     r"^(?:please )?(?:remember (?:that )?)?i(?:'d| would)? (?P<verb>prefer|like my|rather|usually|always|normally) (?P<text>.+)$"
@@ -81,6 +83,26 @@ _STYLE_MAP = {
     "formal": ("formality", "formal"), "professional": ("formality", "formal"),
 }  # fmt: skip
 _LISTS = ("about", "people", "prefers")
+
+# Things with one current value: a newer statement replaces the older one ("I live in Pune now" after "I live in
+# Mumbai"). Everything else is kept side by side.
+_SLOTS = (
+    ("home", re.compile(r"\b(?:i live in|i'm living in|i am living in|i moved to|i've moved to|i'm based in|"
+                        r"i am based in|my home is in|i'm from|i am from)\b", re.IGNORECASE)),
+    ("work", re.compile(r"\b(?:i work (?:at|for|as)|i'm working (?:at|for)|i am working (?:at|for)|my job is|"
+                        r"i'm employed (?:at|by))\b", re.IGNORECASE)),
+)  # fmt: skip
+
+
+def _slot(kind: str, text: str, extra: dict[str, str]) -> str:
+    if kind == "people":
+        from pilot.live.detectors import SINGULAR_RELATIONS
+
+        relation = str(extra.get("relation", "")).casefold()
+        return f"person:{relation}" if relation in SINGULAR_RELATIONS else ""
+    if kind == "about":
+        return next((name for name, pattern in _SLOTS if pattern.search(text)), "")
+    return ""
 
 
 def _normalize(text: str) -> str:
@@ -222,12 +244,19 @@ class UserProfile:
         profile = self._load()
         items = profile[kind]
         norm = _normalize(text)
-        items[:] = [item for item in items if _normalize(item.get("text", "")) != norm]
+        slot = _slot(kind, text, extra)
+        replaced = [item for item in items if slot and item.get("slot") == slot]
+        for item in replaced:
+            await self._mirror_forget(profile, item["id"])  # the old value is no longer true
+        items[:] = [item for item in items if _normalize(item.get("text", "")) != norm and item not in replaced]
         if len(items) >= MAX_ENTRIES:
             raise ValueError(f"I can keep up to {MAX_ENTRIES} of those; clear some first")
         entry = {"id": uuid.uuid4().hex[:10], "text": text, "at": time.time(), **extra}
+        if slot:
+            entry["slot"] = slot
         items.append(entry)
-        await self._mirror_add(profile, entry["id"], f"profile:{kind}", text)
+        # One memory label per slot, or per entry: a shared label made each new entry supersede every other one.
+        await self._mirror_add(profile, entry["id"], f"profile:{kind}:{slot or entry['id']}", text)
         self._save(profile)
         return entry
 
@@ -266,6 +295,18 @@ class UserProfile:
             if relation and name:
                 names.setdefault(relation, set()).add(name)
         return {relation: next(iter(found)) for relation, found in names.items() if len(found) == 1}
+
+    def context_lines(self) -> list[str]:
+        """Everything the person told Heliox about themselves, one line each, for every planner prompt."""
+        profile = self._load()
+        lines = []
+        if profile["call_me"]:
+            lines.append(f"Call them {profile['call_me']}.")
+        lines += [f"About them: {item['text']}" for item in profile["about"]]
+        lines += [f"Person they know: {item['text']}" for item in profile["people"]]
+        lines += [f"They prefer: {item['text']}" for item in profile["prefers"]]
+        lines += [f"Answer style, {field}: {value}" for field, value in profile["style"].items()]
+        return lines
 
     def list(self) -> list[dict[str, Any]]:
         """A flat view for Your data: one row per stored thing."""

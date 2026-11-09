@@ -41,6 +41,16 @@ STORES: dict[str, tuple[str, str, str]] = {
         "live_relevance.json",
         "Which kinds of correction you found useful, so Heliox speaks up less about the ones you wave away.",
     ),
+    "conversation_history": (
+        "Conversation history",
+        "pilot.db",
+        "What you asked Heliox and what it answered, used as context for later requests.",
+    ),
+    "long_term_memory": (
+        "Long-term memory",
+        "temporal_memory.db",
+        "Facts about you and past outcomes Heliox keeps to answer better, each with where it came from.",
+    ),
     "live_timing": (
         "Live companion timing",
         "live_timing.json",

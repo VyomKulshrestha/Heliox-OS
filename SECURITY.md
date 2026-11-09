@@ -135,6 +135,12 @@ grant permission, remove deterministic warnings, or execute by itself.
   cancelled, not resumed, after a restart (see **Mid-flight Cancellation**).
 - Temporal memory retains provenance, confidence, validity, contradiction, and
   retraction state. It is advisory and cannot prove current machine state.
+- What the person told Heliox about themselves leads every planner prompt (at
+  most 400 tokens). A fact with one current value (home, workplace, a manager)
+  is replaced, and the old one retracted, when the person states a new one.
+  Conversation history and long-term memory are listed with counts in Your data
+  and can each be wiped; evidence stays append-only to every code path except
+  that wipe. See [Memory and context](docs/MEMORY.md).
 - Online adaptation learns only from new ledger events and verified callbacks.
   Repeated evidence, bounded replay, drift detection, and explicit reset limit
   stale or one-off behavior. It cannot browse or act merely to collect data.

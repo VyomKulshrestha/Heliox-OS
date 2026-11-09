@@ -41,12 +41,14 @@ async def test_ollama_applies_configured_idle_timeout_to_every_request_path():
 
     with patch("pilot.models.ollama.create_httpx_client", return_value=transport):
         client = OllamaClient(config=config)
+    client._model_max["model"] = 32768  # its context length is known, so no /api/show call here
 
     assert await client.generate("model", "prompt") == "generated"
     assert await client.generate("model", "prompt", stream_callback=AsyncMock()) == "ready"
     assert await client.generate("model", [{"role": "user", "content": "hello"}]) == "chatted"
 
     assert transport.post.await_args_list[0].kwargs["json"]["keep_alive"] == 37
+    assert transport.post.await_args_list[0].kwargs["json"]["options"]["num_ctx"] == 4096
     assert transport.stream.call_args.kwargs["json"]["keep_alive"] == 37
     assert transport.post.await_args_list[1].kwargs["json"]["keep_alive"] == 37
 

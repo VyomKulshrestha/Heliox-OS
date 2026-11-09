@@ -114,11 +114,15 @@ async def test_memory_mirror_adds_and_retracts(profile, mirror):
     await profile.answer_async("remember that I'm a founder")
     await profile.answer_async("my manager is Sarah")
     assert len(store) == 3
-    assert ("profile:about", "I'm a founder") in store.values()
-
     founder = next(item["id"] for item in profile.get()["about"])
+    # Each entry has its own memory label, so a new one never supersedes the others.
+    assert (f"profile:about:{founder}", "I'm a founder") in store.values()
+    assert ("profile:people:person:manager", "Sarah (manager)") in store.values()
+
     await profile.delete(founder)
-    assert ("profile:about", "I'm a founder") not in store.values()
+    assert (f"profile:about:{founder}", "I'm a founder") not in store.values()
+    await profile.answer_async("my manager is Priya now")  # one manager: the old one is retracted
+    assert [value for _, value in store.values() if "manager" in value] == ["Priya (manager)"]
     await profile.clear()
     assert store == {}
 

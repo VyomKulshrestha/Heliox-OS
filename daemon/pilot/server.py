@@ -1274,6 +1274,9 @@ class PilotServer:
         self._user_profile = UserProfile(
             DATA_DIR / "user_profile.json", remember=self._profile_remember, forget=self._profile_forget
         )
+        if self._memory is not None:
+            # What they told Heliox about themselves leads every planner context (pilot.memory.store).
+            self._memory.set_profile_source(self._user_profile.context_lines)
         from pilot.workflows.goals import GoalStore
 
         self._goals = GoalStore(DATA_DIR / "goals.json")
@@ -7330,6 +7333,12 @@ class PilotServer:
             counts["undo"] = len(await self._undo_journal.list_tasks(200))
         if self._clipboard_history is not None:
             counts["clipboard"] = len(self._clipboard_history.list())
+        if self._memory is not None:
+            try:
+                kept = await self._memory.counts()
+                counts["conversation_history"], counts["long_term_memory"] = kept["history"], kept["long_term"]
+            except Exception:
+                logger.debug("Could not count memory", exc_info=True)
         for key, store in (
             ("notes", self._notes),
             ("snippets", self._snippets),
@@ -7371,6 +7380,13 @@ class PilotServer:
         elif key == "clipboard":
             if self._clipboard_history is not None:
                 self._clipboard_history.clear()
+        elif key in ("conversation_history", "long_term_memory"):
+            # Databases that are open: emptied through the store, not deleted from under it.
+            if self._memory is not None:
+                if key == "conversation_history":
+                    await self._memory.clear_history()
+                else:
+                    await self._memory.clear_long_term()
         elif key == "undo" and self._undo_journal is not None:
             busy = self._undo_busy_message()
             if busy:
