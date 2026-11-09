@@ -11,6 +11,7 @@ from pilot.actions import (
     ActionType,
     BrowserParams,
     EmptyParams,
+    FileParams,
     GitParams,
     OpenApplicationParams,
     SystemInfoParams,
@@ -217,129 +218,127 @@ def test_revision_without_feedback_is_downgraded_to_warning():
     assert review.decision == "WARN"
 
 
-@pytest.mark.asyncio
-async def test_follow_up_is_grounded_and_excludes_raw_tool_output():
-    model = _Model(
-        '{"message":"The OS version is confirmed.",'
-        '"suggestions":["Compare compatibility with your target app","Save a short system report"]}'
-    )
-    companion = ExecutionCompanion(model)
-    plan = _plan()
-    result = ActionResult(action=plan.actions[0], success=True, output="PRIVATE RAW SYSTEM OUTPUT")
-    verification = VerificationResult(passed=True, details=["verified"])
-
-    follow_up = await companion.follow_up("Show the OS version.", plan, [result], verification)
-
-    assert follow_up == CompanionFollowUp(
-        message="The OS version is confirmed.",
-        suggestions=["Compare compatibility with your target app", "Save a short system report"],
-    )
-    prompt, kwargs = model.calls[0]
-    assert "PRIVATE RAW SYSTEM OUTPUT" not in prompt
-    assert "system_info: succeeded" in prompt
-    assert kwargs["json_mode"] is True
-
-
-@pytest.mark.asyncio
-async def test_follow_up_requires_a_message_and_specific_ideas():
-    companion = ExecutionCompanion(_Model('{"message":"Done.","suggestions":[]}'))
-
-    follow_up = await companion.follow_up(
-        "Show the OS version.",
-        _plan(),
-        [],
-        VerificationResult(passed=True, details=["verified"]),
+def _done(action_type: ActionType, target: str, parameters, output: str = "ok") -> ActionResult:
+    return ActionResult(
+        action=Action(action_type=action_type, target=target, parameters=parameters),
+        success=True,
+        output=output,
     )
 
-    assert follow_up is None
+
+_PASSED = VerificationResult(passed=True, details=["verified"])
+_GENERIC_NOUNS = ("resulting files", "intended destination", "local summary", "Review the verified result")
 
 
-@pytest.mark.asyncio
-async def test_follow_up_uses_grounded_local_fallback_when_model_is_offline():
-    companion = ExecutionCompanion(_Model(error=RuntimeError("offline")))
-    plan = ActionPlan(
-        actions=[
-            Action(
-                action_type=ActionType.BROWSER_EXTRACT,
-                target="main",
-                parameters=BrowserParams(selector="main"),
-            )
-        ],
-        explanation="Extract the final page.",
-    )
-    result = ActionResult(action=plan.actions[0], success=True, output="PRIVATE PAGE CONTENT")
-
-    follow_up = await companion.follow_up(
-        "Find the information on example.com.",
-        plan,
-        [result],
-        VerificationResult(passed=True, details=["verified"]),
-    )
-
-    assert follow_up is not None
-    assert follow_up.source == "local_fallback"
-    assert follow_up.message == "The requested task completed and passed verification."
-    assert "final page" in follow_up.suggestions[0]
-    assert "PRIVATE PAGE CONTENT" not in follow_up.spoken_text()
-
-
-@pytest.mark.asyncio
-async def test_application_follow_up_is_immediate_and_does_not_call_model():
-    model = _Model(error=AssertionError("model should not be called"))
-    companion = ExecutionCompanion(model)
-    plan = ActionPlan(
-        actions=[
-            Action(
-                action_type=ActionType.OPEN_APPLICATION,
-                target="Openscreen",
-                parameters=OpenApplicationParams(name="Openscreen"),
-            )
-        ],
-        explanation="Launch Openscreen",
-    )
-    result = ActionResult(action=plan.actions[0], success=True, output="Launched Openscreen")
-
-    follow_up = await companion.follow_up(
-        "open Openscreen",
-        plan,
-        [result],
-        VerificationResult(passed=True, details=["verified"]),
-    )
-
-    assert follow_up is not None
-    assert follow_up.source == "local_fallback"
-    assert "inside the application" in follow_up.suggestions[0]
+async def _follow_up(results: list[ActionResult], *, undo_enabled=lambda: True, request: str = "do it"):
+    model = _Model(error=AssertionError("follow-up must not call the model"))
+    companion = ExecutionCompanion(model, undo_enabled=undo_enabled)
+    plan = ActionPlan(actions=[r.action for r in results], explanation="plan")
+    follow_up = await companion.follow_up(request, plan, results, _PASSED)
     assert model.calls == []
+    return follow_up
 
 
 @pytest.mark.asyncio
-async def test_battery_follow_up_is_immediate_and_specific():
-    model = _Model(error=AssertionError("model should not be called"))
-    companion = ExecutionCompanion(model)
-    plan = ActionPlan(
-        actions=[
-            Action(
-                action_type=ActionType.BATTERY_INFO,
-                target="battery",
-                parameters=EmptyParams(),
-            )
-        ],
-        explanation="Check current battery status",
+async def test_file_write_follow_up_names_the_real_file_and_has_no_generic_lines():
+    path = "C:\\Users\\marcu\\Desktop\\launch-checklist.txt"
+    result = _done(
+        ActionType.FILE_WRITE,
+        path,
+        FileParams(path=path, content="record the demo\nwrite the post\nship v0.17"),
     )
-    result = ActionResult(action=plan.actions[0], success=True, output="Charge: 100%")
 
-    follow_up = await companion.follow_up(
-        "Show current battery status.",
-        plan,
-        [result],
-        VerificationResult(passed=True, details=["verified"]),
-    )
+    follow_up = await _follow_up([result])
 
     assert follow_up is not None
-    assert follow_up.source == "local_fallback"
-    assert "charge and power state" in follow_up.suggestions[0]
-    assert "Review the verified result" not in follow_up.spoken_text()
-    assert model.calls == []
+    assert follow_up.suggestions == ["Undo the change to launch-checklist.txt"]
+    text = follow_up.spoken_text()
+    assert not any(noun in text for noun in _GENERIC_NOUNS)
+    assert "Verify" not in text
+
+
+@pytest.mark.asyncio
+async def test_file_write_gets_no_suggestions_when_undo_is_off_or_unwired():
+    path = "/tmp/launch-checklist.txt"
+    result = _done(ActionType.FILE_WRITE, path, FileParams(path=path, content="x"))
+
+    assert await _follow_up([result], undo_enabled=lambda: False) is None
+    assert await _follow_up([result], undo_enabled=None) is None
+
+
+@pytest.mark.asyncio
+async def test_read_only_system_info_gets_no_suggestions():
+    result = _done(ActionType.SYSTEM_INFO, "os", SystemInfoParams(categories=["os"]), output="Windows 11")
+    battery = _done(ActionType.BATTERY_INFO, "battery", EmptyParams(), output="Charge: 100%")
+
+    assert await _follow_up([result]) is None
+    assert await _follow_up([battery]) is None
+
+
+@pytest.mark.asyncio
+async def test_open_application_gets_no_suggestions():
+    result = _done(ActionType.OPEN_APPLICATION, "Openscreen", OpenApplicationParams(name="Openscreen"))
+
+    assert await _follow_up([result]) is None
+
+
+@pytest.mark.asyncio
+async def test_task_that_cannot_be_undone_gets_no_undo_suggestion():
+    write = _done(ActionType.FILE_WRITE, "/tmp/a.txt", FileParams(path="/tmp/a.txt", content="x"))
+    push = _done(ActionType.GIT_PUSH, "origin", GitParams(remote="origin", branch="main"))
+
+    mixed = await _follow_up([write, push])
+    only_push = await _follow_up([push])
+
+    assert mixed is None
+    assert only_push is None
+
+
+@pytest.mark.asyncio
+async def test_multi_file_task_offers_one_undo_for_the_whole_task():
+    results = [
+        _done(ActionType.FILE_WRITE, f"/tmp/f{i}.txt", FileParams(path=f"/tmp/f{i}.txt", content="x")) for i in range(3)
+    ]
+
+    follow_up = await _follow_up(results)
+
+    assert follow_up is not None
+    assert follow_up.suggestions == ["Undo all 3 changes from this task"]
+
+
+@pytest.mark.asyncio
+async def test_follow_up_never_repeats_what_the_task_already_did():
+    stage = _done(ActionType.GIT_STAGE, "repo", GitParams(files=["a.py"]))
+    commit = _done(ActionType.GIT_COMMIT, "repo", GitParams(message="fix"))
+
+    staged_only = await _follow_up([stage])
+    staged_and_committed = await _follow_up([stage, commit])
+
+    assert staged_only is not None and staged_only.suggestions == ["Commit the staged changes"]
+    assert staged_and_committed is not None
+    assert staged_and_committed.suggestions == ["Push the commit to origin"]
+
+
+@pytest.mark.asyncio
+async def test_follow_up_is_capped_at_two_suggestions(monkeypatch):
+    companion = ExecutionCompanion(_Model(), undo_enabled=lambda: True)
+    monkeypatch.setattr(ExecutionCompanion, "_undo_suggestions", lambda self, ok: ["one", "two"])
+    monkeypatch.setattr(ExecutionCompanion, "_git_suggestions", staticmethod(lambda ok: ["three", "four"]))
+    result = _done(ActionType.FILE_WRITE, "/tmp/a.txt", FileParams(path="/tmp/a.txt", content="x"))
+    plan = ActionPlan(actions=[result.action], explanation="plan")
+
+    follow_up = await companion.follow_up("x", plan, [result], _PASSED)
+
+    assert follow_up is not None
+    assert follow_up.suggestions == ["one", "two"]
+
+
+@pytest.mark.asyncio
+async def test_skipped_actions_do_not_count_as_completed_work():
+    result = _done(ActionType.FILE_WRITE, "/tmp/a.txt", FileParams(path="/tmp/a.txt", content="x"))
+    result.executed = False
+
+    assert await _follow_up([result]) is None
 
 
 @pytest.mark.asyncio

@@ -1385,6 +1385,7 @@ class PilotServer:
         self._execution_companion = ExecutionCompanion(
             model_router,
             timeout_seconds=self.config.narration.advisory_timeout_seconds,
+            undo_enabled=lambda: self.config.undo.enabled,
         )
 
         # Agent Gateway — source-scoped permission floor (interactive/

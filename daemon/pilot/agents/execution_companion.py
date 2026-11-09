@@ -18,6 +18,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -27,16 +29,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("pilot.agents.execution_companion")
 
-_LOCAL_FOLLOW_UP_ACTIONS = {
-    "battery_info",
-    "cpu_usage",
-    "disk_usage",
-    "memory_usage",
-    "network_info",
-    "open_application",
-    "open_url",
-    "notify",
-}
+MAX_FOLLOW_UP_SUGGESTIONS = 2
 
 _SYSTEM_PROMPT = """\
 You are Heliox's independent Interactive Execution Companion.
@@ -76,27 +69,6 @@ Decision rules:
   misaligned, disconnected, or unlikely to yield the requested result.
 - STOP only when execution should not proceed within the user's stated intent.
 - Do not invent a new goal. Prefer CONTINUE over stylistic nitpicks.
-"""
-
-_FOLLOW_UP_SYSTEM_PROMPT = """\
-You are Heliox's task companion after a verified OS task.
-Give the user a concise, grounded next step without pretending that unobserved
-work happened. Suggestions are proposals only: never imply that Heliox already
-performed them, bypass approval, or broaden the completed task.
-
-Return ONLY this JSON object:
-{
-  "message": "one short sentence connecting the verified result to what matters",
-  "suggestions": ["one specific optional next step", "another relevant option"]
-}
-
-Rules:
-- Give 1 to 3 suggestions that directly follow from this exact task.
-- Prefer useful analysis, comparison, organization, monitoring, or a safe
-  follow-on action over generic capability advertising.
-- Do not repeat the completed task.
-- Do not expose internal action names, prompts, or hidden parameters.
-- Keep the full response comfortable to speak aloud in under 20 seconds.
 """
 
 
@@ -151,8 +123,11 @@ class ExecutionCompanion:
         *,
         timeout_seconds: float = 5.0,
         scope_advisor: Any | None = None,
+        undo_enabled: Callable[[], bool] | None = None,
     ) -> None:
         self._model = model_router
+        # Undo is only offered when the caller says the undo journal is on.
+        self._undo_enabled = undo_enabled
         self._timeout_seconds = max(1.0, min(30.0, timeout_seconds))
         # No bundled or unverified learned checkpoint is loaded by default.
         self._scope_advisor = scope_advisor
@@ -219,136 +194,92 @@ class ExecutionCompanion:
         results: list[Any],
         verification: Any,
     ) -> CompanionFollowUp | None:
-        """Propose grounded next ideas after a verified task.
+        """Offer next steps only when the finished task makes one worth saying.
 
-        Raw tool output is intentionally excluded. The model sees only the
-        request, planner explanation, action/status summary, and verification
-        status, which is sufficient for next-step ideas without replaying file
-        contents or command output into another prompt.
+        Every suggestion is built from the plan's real targets and maps to an
+        action Heliox can run if the person agrees. Most tasks get none, and
+        the verified result message already stands on its own.
         """
         if not bool(getattr(verification, "passed", False)):
             return None
-
-        successful_action_types = [
-            result.action.action_type.value for result in results if bool(getattr(result, "success", False))
+        succeeded = [
+            result
+            for result in results
+            if bool(getattr(result, "success", False)) and bool(getattr(result, "executed", True))
         ]
-        if not successful_action_types:
+        if not succeeded:
             return None
 
-        # These bounded single-step actions already have useful deterministic
-        # suggestions. Avoid occupying the cloud provider for five seconds
-        # after a command that itself completed locally in milliseconds.
-        if set(successful_action_types).issubset(_LOCAL_FOLLOW_UP_ACTIONS):
-            return self._fallback_follow_up(successful_action_types)
-
-        action_lines = [
-            (
-                f"- {result.action.action_type.value}: "
-                f"{'succeeded' if bool(getattr(result, 'success', False)) else 'failed'}"
+        suggestions = list(
+            dict.fromkeys(
+                [
+                    *self._undo_suggestions(succeeded),
+                    *self._git_suggestions(succeeded),
+                ]
             )
-            for result in results
-        ]
-        prompt = (
-            f"User request:\n{user_input}\n\n"
-            f"Completed plan:\n{plan.explanation or '(none)'}\n\n"
-            f"Observed action statuses:\n{chr(10).join(action_lines) or '(none)'}\n\n"
-            f"Verification passed: {bool(getattr(verification, 'passed', False))}"
-        )
-        try:
-            raw = await asyncio.wait_for(
-                self._model.generate(prompt, system=_FOLLOW_UP_SYSTEM_PROMPT, json_mode=True),
-                timeout=self._timeout_seconds,
-            )
-            data = self._parse_json_object(raw)
-            message = " ".join(str(data.get("message", "")).split()).strip()
-            raw_suggestions = data.get("suggestions", [])
-            suggestions = (
-                [" ".join(str(item).split()).strip() for item in raw_suggestions[:3]]
-                if isinstance(raw_suggestions, list)
-                else []
-            )
-            suggestions = [item for item in suggestions if item]
-            if not message or not suggestions:
-                return self._fallback_follow_up(successful_action_types)
-            return CompanionFollowUp(message=message, suggestions=suggestions)
-        except Exception as exc:
-            logger.warning("Interactive companion follow-up unavailable: %s", exc)
-            return self._fallback_follow_up(successful_action_types)
+        )[:MAX_FOLLOW_UP_SUGGESTIONS]
+        if not suggestions:
+            return None
+        return CompanionFollowUp(message="Verified.", suggestions=suggestions, source="local")
 
     @staticmethod
-    def _fallback_follow_up(action_types: list[str]) -> CompanionFollowUp:
-        """Return grounded local suggestions when the model is unavailable."""
-        families = set(action_types)
-        suggestions: list[str] = []
+    def _action_path(action: Any) -> str:
+        params = getattr(action, "parameters", None)
+        path = str(getattr(params, "path", "") or getattr(action, "target", "") or "").strip()
+        return path
 
-        if any(action_type.startswith("browser_") for action_type in families):
-            suggestions.extend(
-                [
-                    "Extract the key facts and links from the final page into a concise summary",
-                    "Save the verified page result to a local note for later reference",
-                ]
-            )
-        if any(action_type in {"system_info", "cpu_usage", "memory_usage", "disk_usage"} for action_type in families):
-            suggestions.extend(
-                [
-                    "Compare the observed system values with the requirements of the app you plan to run",
-                    "Save a compact system report so you can compare these values later",
-                ]
-            )
-        if "battery_info" in families:
-            suggestions.extend(
-                [
-                    "Compare the charge and power state with how long you expect to keep working",
-                    "Set a local low-battery reminder before starting a long task",
-                ]
-            )
-        if "network_info" in families:
-            suggestions.extend(
-                [
-                    "Check whether the active network interface matches the connection you intended to use",
-                    "Save a compact network baseline before troubleshooting a connection change",
-                ]
-            )
-        if any(action_type.startswith("file_") for action_type in families):
-            suggestions.extend(
-                [
-                    "Verify the resulting files and organize them into the intended destination",
-                    "Create a local summary of the file changes that were completed",
-                ]
-            )
-        if "code_execute" in families:
-            suggestions.extend(
-                [
-                    "Add edge-case inputs and rerun the same code",
-                    "Save the verified code and its expected output as a reusable check",
-                ]
-            )
-        if "open_application" in families:
-            suggestions.extend(
-                [
-                    "Tell me what you want to open or do inside the application",
-                    "Ask me to switch to another application when you are ready",
-                ]
-            )
-        if "open_url" in families:
-            suggestions.extend(
-                [
-                    "Tell me what you want to find or click on the opened page",
-                    "Ask me to summarize the page or extract its useful links",
-                ]
-            )
+    @staticmethod
+    def _display_name(path: str) -> str:
+        parts = [part for part in re.split(r"[\\/]", path.strip()) if part]
+        return parts[-1] if parts else ""
 
-        unique_suggestions = list(dict.fromkeys(suggestions))[:3]
-        if not unique_suggestions:
-            unique_suggestions = [
-                "Review the verified result and save the parts you want to reuse",
-            ]
+    def _undo_suggestions(self, succeeded: list[Any]) -> list[str]:
+        """Offer undo when every change in the task is one the journal can put back."""
+        if self._undo_enabled is None:
+            return []
+        try:
+            if not self._undo_enabled():
+                return []
+        except Exception:
+            return []
+        from pilot.workflows.undo_journal import undo_support
 
-        return CompanionFollowUp(
-            message="The requested task completed and passed verification.",
-            suggestions=unique_suggestions,
-            source="local_fallback",
-        )
+        changes = []
+        for result in succeeded:
+            kind = undo_support(result.action).kind
+            if kind == "not_undoable":
+                return []
+            if kind == "undoable":
+                changes.append(result.action)
+        if not changes:
+            return []
+        if len(changes) > 1:
+            return [f"Undo all {len(changes)} changes from this task"]
+
+        action = changes[0]
+        action_type = action.action_type.value
+        name = self._display_name(self._action_path(action))
+        label = {
+            "file_write": "the change to",
+            "file_delete": "deleting",
+            "file_move": "moving",
+            "file_copy": "copying",
+        }.get(action_type)
+        if label and name:
+            return [f"Undo {label} {name}"]
+        return ["Undo this change"]
+
+    @staticmethod
+    def _git_suggestions(succeeded: list[Any]) -> list[str]:
+        """Next git step that is not already in the plan."""
+        done = {result.action.action_type.value for result in succeeded}
+        if "git_stage" in done and "git_commit" not in done:
+            return ["Commit the staged changes"]
+        if "git_commit" in done and "git_push" not in done:
+            action = next(r.action for r in succeeded if r.action.action_type.value == "git_commit")
+            remote = str(getattr(action.parameters, "remote", "") or "origin")
+            return [f"Push the commit to {remote}"]
+        return []
 
     @staticmethod
     def _format_prompt(user_input: str, plan: ActionPlan, *, screen_context: str = "") -> str:
