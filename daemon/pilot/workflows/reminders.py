@@ -34,6 +34,10 @@ DROP_LATE_AFTER_SECONDS = 24 * 3600
 MIN_REPEAT_MINUTES = 15
 NIGHT_START, NIGHT_END = 22, 7  # repeating-by-interval reminders stay quiet in between
 WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+MONTHS = [
+    "january", "february", "march", "april", "may", "june",
+    "july", "august", "september", "october", "november", "december",
+]  # fmt: skip
 
 SET_REQUEST = re.compile(r"^(?:please |hey heliox |heliox )?remind me (?P<rest>.+)$")
 LIST_REQUEST = re.compile(
@@ -93,6 +97,13 @@ def parse_reminder(text: str, now: datetime) -> tuple[float, str] | None:
         return None
     rest = asked.group("rest")
     when_patterns = (
+        # "on friday", "on friday at 10am": first, so "to call mom on friday at 5" is not read as today at 5
+        r"on (?P<weekday>monday|tuesday|wednesday|thursday|friday|saturday|sunday)"
+        r"(?: (?:at|by) (?P<hour3>\d{1,2})(?::(?P<minute3>\d{2}))? ?(?P<meridiem3>am|pm|a m|p m)?)?",
+        # "on 18 november at 10am"
+        r"on (?P<dom>\d{1,2})(?:st|nd|rd|th)? (?P<month>january|february|march|april|may|june|july|august|"
+        r"september|october|november|december)"
+        r"(?: (?:at|by) (?P<hour4>\d{1,2})(?::(?P<minute4>\d{2}))? ?(?P<meridiem4>am|pm|a m|p m)?)?",
         r"in (?P<amount>\d+|a|an|one|two|three|four|five|ten|fifteen) (?P<unit>minute|minutes|min|mins|hour|hours)",
         r"(?P<tomorrow>tomorrow )?(?:at|by) (?P<hour>\d{1,2})(?::(?P<minute>\d{2}))? ?(?P<meridiem>am|pm|a m|p m)?",
         r"(?P<tomorrow2>tomorrow)(?: morning)?",
@@ -114,6 +125,31 @@ def parse_reminder(text: str, now: datetime) -> tuple[float, str] | None:
                 if not 1 <= minutes <= 7 * 24 * 60:
                     return None
                 due = now + timedelta(minutes=minutes)
+            elif groups.get("weekday"):
+                clock = (9, 0)
+                if groups.get("hour3"):
+                    clock = _parse_clock(groups["hour3"], groups.get("minute3"), groups.get("meridiem3"), now)
+                    if clock is None:
+                        return None
+                ahead = (WEEKDAYS.index(groups["weekday"]) - now.weekday()) % 7
+                due = (now + timedelta(days=ahead)).replace(hour=clock[0], minute=clock[1], second=0, microsecond=0)
+                if due <= now:  # "on monday" said on a Monday afternoon means next Monday
+                    due += timedelta(days=7)
+            elif groups.get("dom"):
+                clock = (9, 0)
+                if groups.get("hour4"):
+                    clock = _parse_clock(groups["hour4"], groups.get("minute4"), groups.get("meridiem4"), now)
+                    if clock is None:
+                        return None
+                month = MONTHS.index(groups["month"]) + 1
+                try:
+                    due = datetime(now.year, month, int(groups["dom"]), clock[0], clock[1])
+                    if due <= now:
+                        due = due.replace(year=now.year + 1)
+                except ValueError:
+                    return None
+                if due - now > timedelta(days=366):
+                    return None
             elif groups.get("hour"):
                 clock = _parse_clock(groups["hour"], groups.get("minute"), groups.get("meridiem"), now)
                 if clock is None:

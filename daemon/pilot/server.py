@@ -1318,6 +1318,7 @@ class PilotServer:
             relevance_path=DATA_DIR / "live_relevance.json",
             timing_path=DATA_DIR / "live_timing.json",
             grounded=self._build_live_grounded(),
+            reminders=lambda: self._reminders.list() if getattr(self, "_reminders", None) is not None else [],
         )
         await self._live.start()
         from pilot.workflows.workspaces import WorkspaceStore

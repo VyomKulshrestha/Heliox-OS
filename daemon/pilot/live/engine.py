@@ -21,10 +21,12 @@ import uuid
 from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
+from pilot.live.commitments import KIND as COMMITMENT
+from pilot.live.commitments import find_commitments
 from pilot.live.detectors import KINDS, MODEL_KINDS, SPEECH_KINDS, URGENT, Correction, TextContext, detect
 from pilot.live.policy import (
     DEFAULT_LEVEL,
@@ -53,6 +55,8 @@ VISIBLE_TTL_SECONDS = 600.0  # a card left alone this long is withdrawn and coun
 RECENT_LIMIT = 20
 REPLY_WINDOW_SECONDS = 90.0  # how long "why?", "thanks" or "fix it" refer to the last correction
 OCR_KINDS = ("error_on_screen",)  # a whole-screen OCR is too noisy for anything finer
+# Offers that stay up when their text leaves the field: a promise matters most once the message is sent.
+STICKY_KINDS = frozenset({STUCK, COMMITMENT})
 GROUNDED_PAUSE_SECONDS = 1.0  # typing stopped this long: worth asking the local model about the last sentence
 GROUNDED_EVERY_SECONDS = 5.0  # and at most this often, so a laptop CPU is not kept busy
 
@@ -119,6 +123,8 @@ class LiveCompanion:
         grounded: Any = None,
         clock: Callable[[], float] = time.monotonic,
         today: Callable[[], date] = date.today,
+        wallclock: Callable[[], datetime] = datetime.now,
+        reminders: Callable[[], list[dict[str, Any]]] = list,
     ) -> None:
         self._settings = settings
         self._observe = observe
@@ -133,6 +139,8 @@ class LiveCompanion:
         self._was_on = False
         self._clock = clock
         self._today = today
+        self._wallclock = wallclock
+        self._reminders = reminders
         self.relevance = Relevance(relevance_path)
         self.timing = PersonalTiming(timing_path)
         self.stuck = StuckWatcher(clock)
@@ -268,9 +276,19 @@ class LiveCompanion:
             for correction in detect(obs.text, self._context(obs, obs.source), kinds=kinds):
                 found.add(correction.key)
                 self._note(correction, obs.source, obs.window, now)
+            if COMMITMENT in kinds and obs.source == "focused_field":
+                try:
+                    promises = find_commitments(
+                        obs.text, self._context(obs, obs.source), self._wallclock(), self._reminders()
+                    )
+                except Exception:
+                    logger.debug("Commitment check failed", exc_info=True)
+                    promises = []
+                for promise in promises:
+                    self._note(promise, obs.source, obs.window, now)
             for item in [*self._pending.values(), *self._visible.values()]:
-                if item.source == "speech" or item.window != obs.window or item.correction.kind == STUCK:
-                    continue  # an offer of help is not about text that can be fixed away
+                if item.source == "speech" or item.window != obs.window or item.correction.kind in STICKY_KINDS:
+                    continue  # an offer is not about text that can be fixed away
                 if item.correction.kind in MODEL_KINDS and item.correction.evidence in obs.text:
                     found.add(item.correction.key)
                 if item.correction.key in found:

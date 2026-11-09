@@ -228,7 +228,9 @@ async def test_the_bench_scores_personal_timing_against_fixed_rules():
     # Fixed rules cut slow thinkers off mid-sentence; their own timing does not.
     assert scores["rules", "thinker"].cut_offs >= 5
     assert scores["personal", "thinker"].cut_offs <= 2
-    assert sum(s.cut_offs for (policy, _), s in scores.items() if policy == "personal") <= 2
+    personal = sum(s.cut_offs for (policy, _), s in scores.items() if policy == "personal")
+    rules = sum(s.cut_offs for (policy, _), s in scores.items() if policy == "rules")
+    assert personal <= 3 and personal * 4 <= rules, (personal, rules)
     # It is deterministic, so a change to the policy shows up as a change in these numbers.
     again = await bench.run("personal", bench.PERSONAS["thinker"], bench.load_scenarios())
     assert again.as_dict() == scores["personal", "thinker"].as_dict()

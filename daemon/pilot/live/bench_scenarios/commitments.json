@@ -1,0 +1,44 @@
+[
+  {
+    "name": "commitment: a promise in chat, then sent",
+    "app": "slack.exe",
+    "title": "#design - Slack",
+    "expect": ["commitment"],
+    "steps": [
+      {"type": "Sounds good, I'll send you the final deck by Friday."},
+      {"pause": 1.5, "label": "ready"},
+      {"send": true},
+      {"pause": "done"}
+    ]
+  },
+  {
+    "name": "commitment: getting back to someone tomorrow",
+    "app": "OUTLOOK.EXE",
+    "title": "RE: Contract terms - Message (HTML)",
+    "expect": ["commitment"],
+    "steps": [
+      {"type": "Hi Ana, thanks for the draft. Let me check with legal and get back to you tomorrow."},
+      {"pause": "done"}
+    ]
+  },
+  {
+    "name": "decoy: asking about someone else's deadline",
+    "app": "slack.exe",
+    "title": "#launch - Slack",
+    "expect": [],
+    "steps": [
+      {"type": "Did you send the slides by Friday? He'll share the recording on Monday."},
+      {"pause": "done"}
+    ]
+  },
+  {
+    "name": "decoy: a vague promise and a past one",
+    "app": "OUTLOOK.EXE",
+    "title": "RE: Budget - Message (HTML)",
+    "expect": [],
+    "steps": [
+      {"type": "I'll think about it and let you know. I sent the budget on Friday."},
+      {"pause": "done"}
+    ]
+  }
+]

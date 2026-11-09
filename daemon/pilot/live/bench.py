@@ -7,7 +7,8 @@ detectors, same policy, same personal timing model) against scripted sessions on
 - **missed**: expected corrections that never came (or came after the person pressed Enter);
 - **false alarms**: anything delivered that the scenario did not expect, including slips the person was about
   to fix themselves;
-- **cut-offs**: deliveries while the person was still typing, thinking mid-sentence, or talking;
+- **cut-offs**: moments Live spoke up while the person was still typing, thinking mid-sentence, or talking
+  (two cards arriving together are one interruption, so they count once);
 - **wait**: seconds from the moment the person really stopped to the delivery (lower is better, when on time).
 
 Each scenario is typed by three personas with different rhythms (``quick``, ``steady``, ``thinker``), so a policy
@@ -30,7 +31,7 @@ import random
 import statistics
 import sys
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -352,7 +353,7 @@ async def run(
     level: str = "balanced",
     seed: int = 7,
 ) -> Score:
-    rng = random.Random(f"{seed}:{persona.name}")
+    # Each scenario has its own seed, so adding a scenario never changes the pauses in another one.
     clock = {"t": 1000.0}
     state: dict[str, Any] = {"session": None}
     settings = SimpleNamespace(
@@ -396,15 +397,21 @@ async def run(
         people=people,
         clock=lambda: clock["t"],
         today=today,
+        # Wall-clock time for deadlines: 11:00 on the scenario's day, plus the simulated seconds.
+        wallclock=lambda: (
+            datetime.combine(today(), datetime.min.time()) + timedelta(hours=11, seconds=clock["t"] - 1000)
+        ),
     )
     score = Score(policy, persona.name)
 
     async def play(scenario: dict[str, Any], scored: bool) -> None:
+        rng = random.Random(f"{seed}:{persona.name}:{scenario['name']}")
         session = Session(scenario, expand(scenario, persona, rng), clock["t"])
         state["session"] = session
         seen = len(deliveries)
         expected = list(scenario.get("expect", []))
         cut_in: set[str] = set()
+        cut_moments: set[float] = set()
         while clock["t"] < session.end:
             session.advance(clock["t"])
             for text in session.said:
@@ -427,7 +434,9 @@ async def run(
                     score.deliveries += 1
                     score.catches += int(hit)
                     score.false_alarms += int(not hit)
-                    score.cut_offs += int(busy)
+                    if busy and at not in cut_moments:
+                        cut_moments.add(at)
+                        score.cut_offs += 1
                     wait = None if busy else round(at - session.stopped_at(at), 2)
                     if wait is not None and hit:
                         score.waits.append(wait)

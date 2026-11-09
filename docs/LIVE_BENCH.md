@@ -25,7 +25,7 @@ code gives the same numbers on any machine.
 | caught | Expected corrections that were delivered, out of all expected |
 | missed | Expected corrections that never came, or came after the person pressed Enter |
 | false | Deliveries the scenario did not expect, including a slip the person was already fixing themselves |
-| cut-offs | Deliveries while the person was typing, pausing mid-sentence to think, or talking |
+| cut-offs | Moments Live spoke up while the person was typing, pausing mid-sentence to think, or talking. Two cards arriving together are one interruption and count once |
 | precision | caught ÷ deliveries |
 | recall | caught ÷ expected |
 | wait s | Median seconds from the moment the person really stopped to a well-timed catch (cut-offs excluded) |
@@ -40,7 +40,8 @@ Each scenario is typed by three personas with different rhythms:
 | steady | 5.5 characters/s | 1.5 s | 6 s |
 | thinker | 4 characters/s | 2.6 s | 7 s |
 
-Every pause varies by up to 25% either way. Before the scored scenarios each persona types 24 plain sentences
+Every pause varies by up to 25% either way, drawn from a seed per persona and scenario, so adding a scenario never
+changes the pauses in another one. Before the scored scenarios each persona types 24 plain sentences
 with a pause in the middle of each. That warm-up is when the personal timing model learns their rhythm, and it is
 not scored.
 
@@ -51,27 +52,30 @@ as well as the first guess.
 
 ## Results, 9 November 2026
 
-30 scenarios in two packs. `core.json` has 14 with slips (15 expected catches: weekdays, sums, a wrong name, a
+34 scenarios in three packs. `core.json` has 14 with slips (15 expected catches: weekdays, sums, a wrong name, a
 doubled word, an attachment, a force push, a `DELETE` without `WHERE`, a pasted API key, an error with a fix, two
 spoken slips) and 11 decoys (a correct date, correct sums, code, safe commands, grammar that looks like a doubled
 word, a half-typed word, and two slips the person fixes themselves). `stuck.json` has 3 moments of being stuck
 (rewriting the same sentence three times, copying between two windows by hand, the same error three times) and 2
-look-alikes (one cut while drafting, checking another window twice). Level: Balanced. Raw output with every
+look-alikes (one cut while drafting, checking another window twice). `commitments.json` has 2 promises with a
+deadline (one in a chat message that is sent before the pause) and 2 look-alikes (a question about someone else's
+deadline, a vague promise next to a past one). Level: Balanced. Raw output with every
 delivery: [`docs/evidence/live-bench-2026-11-09.json`](evidence/live-bench-2026-11-09.json).
 
 | Policy | Persona | Caught | False | Cut-offs | Precision | Recall | Wait s |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| fixed rules | quick | 19/19 | 0 | 0 | 1.00 | 1.00 | 1.33 |
-| fixed rules | steady | 19/19 | 0 | 8 | 1.00 | 1.00 | 1.13 |
-| fixed rules | thinker | 19/19 | 2 | 11 | 0.90 | 1.00 | 1.02 |
-| personal timing | quick | 19/19 | 0 | 0 | 1.00 | 1.00 | 1.51 |
-| personal timing | steady | 19/19 | 0 | 0 | 1.00 | 1.00 | 1.57 |
-| personal timing | thinker | 19/19 | 0 | 1 | 1.00 | 1.00 | 1.51 |
+| fixed rules | quick | 21/21 | 0 | 0 | 1.00 | 1.00 | 1.53 |
+| fixed rules | steady | 21/21 | 1 | 5 | 0.95 | 1.00 | 1.35 |
+| fixed rules | thinker | 21/21 | 2 | 10 | 0.91 | 1.00 | 1.12 |
+| personal timing | quick | 21/21 | 0 | 0 | 1.00 | 1.00 | 1.48 |
+| personal timing | steady | 21/21 | 0 | 1 | 1.00 | 1.00 | 1.48 |
+| personal timing | thinker | 21/21 | 0 | 1 | 1.00 | 1.00 | 1.12 |
 
 Fixed rules wait 1.2 s after typing stops. That is fine for someone who pauses for under a second, and it
-interrupts anyone who stops longer to find the next word: 8 of 19 deliveries cut in on the steady typist and 11 of
-21 on the thinker, and the thinker was told about two slips they were in the middle of fixing. Personal timing
-learned a mid-sentence wait of 1.6 s, 1.75 s and 3.0 s for the three personas, kept every catch, and cut in once.
+interrupts anyone who stops longer to find the next word: 5 times for the steady typist and 10 for the thinker, who
+was also told about two slips they were in the middle of fixing. Personal timing learned a mid-sentence wait of
+1.35 s, 2.06 s and 2.86 s for the three personas, kept every catch, raised no false alarm, and cut in twice in all,
+both times on a pause near the long end of that persona's range.
 The low wait for fixed rules on the slower personas is not a win: most of their catches arrived as cut-offs, which
 the wait column excludes.
 
