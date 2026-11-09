@@ -979,6 +979,9 @@ class PilotServer:
         self._live: Any = None
         self._live_reader: Any = None
         self._live_last_ocr = 0.0
+        self._live_events: list[dict[str, Any]] = []
+        self._live_events_at = float("-inf")
+        self._live_events_task: asyncio.Task[None] | None = None
         self._queued_execute_requests: deque[tuple[str, str, dict[str, Any]]] = deque()
         self._queued_submission_lock = asyncio.Lock()
         self._queued_execute_worker: asyncio.Task[None] | None = None
@@ -1311,6 +1314,7 @@ class PilotServer:
             on_disable=self._live_reader.close,
             relevance_path=DATA_DIR / "live_relevance.json",
             timing_path=DATA_DIR / "live_timing.json",
+            grounded=self._build_live_grounded(),
         )
         await self._live.start()
         from pilot.workflows.workspaces import WorkspaceStore
@@ -6638,6 +6642,49 @@ class PilotServer:
 
     # ── Heliox Live ─────────────────────────────────────────────────────────────────────────────────────────────
 
+    def _build_live_grounded(self) -> Any:
+        """Grounded corrections (pilot.live.grounded): the person's own calendar, to-dos and reminders."""
+        from pilot.live.grounded import GroundedChecker, build_facts, ollama_complete
+
+        async def complete(system: str, prompt: str) -> str:
+            model = ollama_complete(self.config.live.grounded_model, self.config.model.ollama_base_url)
+            return await model(system, prompt)
+
+        def facts() -> list[Any]:
+            self._refresh_live_events()
+            return build_facts(
+                today=datetime.now().date(),
+                events=self._live_events,
+                todos=self._todos.open_items() if self._todos is not None else [],
+                reminders=self._reminders.list() if getattr(self, "_reminders", None) is not None else [],
+            )
+
+        return GroundedChecker(complete, facts)
+
+    def _refresh_live_events(self) -> None:
+        """Re-read the calendar (local .ics files, and CalDAV when set up) at most every 15 minutes, off the loop."""
+        if time.monotonic() - self._live_events_at < 900 or (
+            self._live_events_task is not None and not self._live_events_task.done()
+        ):
+            return
+        self._live_events_at = time.monotonic()
+
+        async def refresh() -> None:
+            if self._orchestrator is None:
+                return
+            from pilot.agents.base_agent import AgentRole
+            from pilot.agents.calendar_agent import CalendarAgent
+
+            agent = self._orchestrator.get_agent(AgentRole.CALENDAR)
+            if isinstance(agent, CalendarAgent):
+                try:
+                    events, _, _ = await agent.collect_events()
+                    self._live_events = events
+                except Exception:
+                    logger.debug("Live could not read the calendar", exc_info=True)
+
+        self._live_events_task = asyncio.ensure_future(refresh())
+
     async def _live_observe(self) -> Any:
         """One look at what the person is typing, for the live layer. The text never leaves this process."""
         from pilot.agents.screen_vision import _get_active_window
@@ -6729,7 +6776,16 @@ class PilotServer:
             self._live.set_paused(bool(params["paused"]))
         if params.get("reset_timing") is True:
             self._live.timing.reset()
-        keys = ("enabled", "level", "read_focused_text", "ocr_fallback", "listen_to_speech", "personal_timing")
+        keys = (
+            "enabled",
+            "level",
+            "read_focused_text",
+            "ocr_fallback",
+            "listen_to_speech",
+            "personal_timing",
+            "grounded_checks",
+            "grounded_model",
+        )
         values = {key: params[key] for key in (*keys, "muted_kinds") if key in params}
         if values:
             result = await self._handle_update_config({"section": "live", "values": values}, None)
@@ -8519,9 +8575,15 @@ class PilotServer:
                     "ocr_fallback",
                     "listen_to_speech",
                     "personal_timing",
+                    "grounded_checks",
                 }:
                     if not isinstance(v, bool):
                         return {"status": "error", "message": f"live.{k} must be a boolean"}
+                if section == "live" and k == "grounded_model":
+                    from pilot.config import _OLLAMA_MODEL_NAME
+
+                    if not isinstance(v, str) or not _OLLAMA_MODEL_NAME.fullmatch(v.strip()):
+                        return {"status": "error", "message": "live.grounded_model must be an Ollama model name"}
                 if section == "live" and k == "level" and v not in ("quiet", "balanced", "proactive"):
                     return {"status": "error", "message": "live.level must be quiet, balanced or proactive"}
                 if section == "live" and k == "muted_kinds":

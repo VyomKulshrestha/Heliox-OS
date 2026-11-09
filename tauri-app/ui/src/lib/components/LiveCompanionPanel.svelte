@@ -29,6 +29,8 @@
       ocr_fallback: false,
       listen_to_speech: true,
       personal_timing: true,
+      grounded_checks: false,
+      grounded_model: "qwen3.5:4b",
       muted_kinds: [],
     },
   );
@@ -182,6 +184,18 @@
         onchange={(e) => save({ ocr_fallback: (e.currentTarget as HTMLInputElement).checked })}
       />
       <span>Read the screen when no text field is readable (for errors only; uses more CPU).</span>
+    </label>
+    <label class="check">
+      <input
+        type="checkbox"
+        checked={cfg.grounded_checks === true}
+        onchange={(e) => save({ grounded_checks: (e.currentTarget as HTMLInputElement).checked })}
+      />
+      <span
+        >Check what you write against your own calendar, to-dos and reminders: a plan on top of a meeting, or the wrong
+        day for something you have booked. Clashes and named events are checked by Heliox itself;
+        {cfg.grounded_model || "qwen3.5:4b"} in Ollama, on this computer, helps with paraphrases if it is installed.</span
+      >
     </label>
   </div>
 

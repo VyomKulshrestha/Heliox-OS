@@ -251,11 +251,23 @@ class CalendarAgent(BaseAgent):
     async def _handle_list_events(self, action: Action, payload: dict[str, Any]) -> ActionResult:
         import json
 
+        parsed_events, sources, warnings = await self.collect_events(payload.get("calendar_id"))
+        if not sources:
+            error = "; ".join(warnings) or "No local .ics files are configured and CalDAV is disabled"
+            return ActionResult(action=action, success=False, error=error)
+        return ActionResult(
+            action=action,
+            success=True,
+            output=json.dumps({"events": parsed_events, "sources": sources, "warnings": warnings}),
+        )
+
+    async def collect_events(self, calendar_id: str | None = None) -> tuple[list[dict[str, Any]], list[str], list[str]]:
+        """Every event in the local .ics files and, when it is set up, the CalDAV calendar. Read-only."""
         parsed_events, sources, warnings = self._read_local_calendars(list(self._config.calendar.ics_files))
         if self._config.calendar.enabled:
             try:
                 client = await self._get_caldav_client()
-                calendar = self._select_calendar(client, payload.get("calendar_id"))
+                calendar = self._select_calendar(client, calendar_id)
                 calendar_name = str(getattr(calendar, "name", ""))
                 sources.append(f"caldav:{calendar_name}")
                 for event in calendar.events():
@@ -273,15 +285,7 @@ class CalendarAgent(BaseAgent):
                 warning = f"CalDAV: {exc}"
                 warnings.append(warning)
                 logger.warning("Failed to list remote calendar events: %s", exc)
-
-        if not sources:
-            error = "; ".join(warnings) or "No local .ics files are configured and CalDAV is disabled"
-            return ActionResult(action=action, success=False, error=error)
-        return ActionResult(
-            action=action,
-            success=True,
-            output=json.dumps({"events": parsed_events, "sources": sources, "warnings": warnings}),
-        )
+        return parsed_events, sources, warnings
 
     async def _handle_delete_event(self, action: Action, payload: dict[str, Any]) -> ActionResult:
         event_uid = str(payload.get("event_uid") or "").strip()

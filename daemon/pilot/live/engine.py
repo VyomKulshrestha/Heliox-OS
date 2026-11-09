@@ -25,7 +25,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-from pilot.live.detectors import KINDS, SPEECH_KINDS, URGENT, Correction, TextContext, detect
+from pilot.live.detectors import KINDS, MODEL_KINDS, SPEECH_KINDS, URGENT, Correction, TextContext, detect
 from pilot.live.policy import (
     DEFAULT_LEVEL,
     DROP,
@@ -51,6 +51,8 @@ VISIBLE_TTL_SECONDS = 600.0  # a card left alone this long is withdrawn and coun
 RECENT_LIMIT = 20
 REPLY_WINDOW_SECONDS = 90.0  # how long "why?", "thanks" or "fix it" refer to the last correction
 OCR_KINDS = ("error_on_screen",)  # a whole-screen OCR is too noisy for anything finer
+GROUNDED_PAUSE_SECONDS = 1.0  # typing stopped this long: worth asking the local model about the last sentence
+GROUNDED_EVERY_SECONDS = 5.0  # and at most this often, so a laptop CPU is not kept busy
 
 
 @dataclass(frozen=True)
@@ -112,6 +114,7 @@ class LiveCompanion:
         on_disable: Callable[[], Awaitable[None]] | None = None,
         relevance_path: Path | None = None,
         timing_path: Path | None = None,
+        grounded: Any = None,
         clock: Callable[[], float] = time.monotonic,
         today: Callable[[], date] = date.today,
     ) -> None:
@@ -130,6 +133,10 @@ class LiveCompanion:
         self._today = today
         self.relevance = Relevance(relevance_path)
         self.timing = PersonalTiming(timing_path)
+        self.grounded = grounded  # pilot.live.grounded.GroundedChecker, or None
+        self._grounded_task: asyncio.Task[None] | None = None
+        self._grounded_hash = ""
+        self._last_grounded_at = float("-inf")
 
         self._task: asyncio.Task[None] | None = None
         self._paused = False
@@ -165,6 +172,8 @@ class LiveCompanion:
         await self._withdraw_all("off")
         self._pending.clear()
         self.timing.flush()
+        if self._grounded_task is not None:
+            self._grounded_task.cancel()
 
     def set_paused(self, paused: bool) -> None:
         self._paused = paused
@@ -220,6 +229,7 @@ class LiveCompanion:
         if now - self._last_perceive >= PERCEIVE_EVERY_SECONDS:
             self._last_perceive = now
             await self._perceive(now)
+            self._maybe_ground(now)
 
         self._expire(now)
         await self._deliver_due(now)
@@ -255,6 +265,8 @@ class LiveCompanion:
             for item in [*self._pending.values(), *self._visible.values()]:
                 if item.source == "speech" or item.window != obs.window:
                     continue
+                if item.correction.kind in MODEL_KINDS and item.correction.evidence in obs.text:
+                    found.add(item.correction.key)
                 if item.correction.key in found:
                     item.missing_since = None
                 elif item.missing_since is None:
@@ -297,6 +309,47 @@ class LiveCompanion:
         kinds = tuple(kind for kind in self._kinds() if kind in SPEECH_KINDS)
         for correction in detect(text, self._context(None, "speech"), kinds=kinds):
             self._note(correction, "speech", "speech", now)
+        if self._grounding() and "personal_fact" in self._kinds():
+            # What they asked for, against their calendar and lists, while the planner gets going.
+            asyncio.ensure_future(self._ground(text, "speech", "speech"))
+
+    # ── corrections a local model finds in the person's own data (pilot.live.grounded) ──
+
+    def _grounding(self) -> bool:
+        return self.grounded is not None and bool(getattr(self._config(), "grounded_checks", False))
+
+    def _maybe_ground(self, now: float) -> None:
+        obs = self._last_obs
+        if not self._grounding() or obs is None or obs.source != "focused_field" or self._user_speaking():
+            return
+        if self._grounded_task is not None and not self._grounded_task.done():
+            return
+        if (
+            now - self._last_text_change < GROUNDED_PAUSE_SECONDS
+            or now - self._last_grounded_at < GROUNDED_EVERY_SECONDS
+        ):
+            return
+        if self._last_hash == self._grounded_hash:
+            return  # already checked this text
+        self._grounded_hash = self._last_hash
+        self._last_grounded_at = now
+        self._grounded_task = asyncio.create_task(self._ground(obs.text, obs.source, obs.window))
+
+    async def _ground(self, text: str, source: str, window: str) -> None:
+        try:
+            found = await self.grounded.check(text)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.debug("Grounded check failed", exc_info=True)
+            return
+        obs = self._last_obs
+        for correction in found:
+            if source != "speech":
+                # The answer took a while: only raise it if the words it quotes are still on screen.
+                if obs is None or obs.window != window or correction.evidence not in obs.text:
+                    continue
+            self._note(correction, source, window, self._clock())
 
     def _gone(self, item: Pending, now: float) -> bool:
         return item.missing_since is not None and now - item.missing_since > STALE_AFTER_SECONDS
@@ -506,6 +559,7 @@ class LiveCompanion:
             "relevance": self.relevance.snapshot(),
             "muted_kinds": list(getattr(cfg, "muted_kinds", []) or []),
             "personal_timing": self._personal_timing(),
+            "grounded": {"enabled": self._grounding(), **(self.grounded.stats() if self.grounded else {})},
             "timing": self.timing.snapshot(LEVELS.get(getattr(cfg, "level", ""), LEVELS[DEFAULT_LEVEL]).pause_seconds),
         }
 

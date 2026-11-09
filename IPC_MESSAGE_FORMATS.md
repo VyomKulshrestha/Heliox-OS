@@ -549,9 +549,13 @@ Every 200 ms it decides, per correction it has noticed, whether to wait, show a 
   personal_timing, timing}`. `user_state` is `typing`, `paused`, `speaking`, `away` or `off`. `timing` is what the
   personal timing model (`pilot.live.timing`) has learned: `{mid_sentence_seconds, boundary_seconds,
   default_seconds, learned_from, cut_offs, well_timed}`, where `learned_from` counts the mid-sentence pauses seen.
+  `grounded` reports the checks against the person's own data (`pilot.live.grounded`): `{enabled, checks,
+  model_calls, found, rejected, last_verdict, error}`, where `error` is the last local-model failure, if any.
 - `live_set` takes any of `enabled`, `paused` (this session only), `level` (`quiet`, `balanced`, `proactive`),
-  `read_focused_text`, `ocr_fallback`, `listen_to_speech`, `personal_timing`, `muted_kinds`, and `reset_timing:
-  true` (forget the learned pauses), and returns `live_status`.
+  `read_focused_text`, `ocr_fallback`, `listen_to_speech`, `personal_timing`, `grounded_checks`, `grounded_model`
+  (an Ollama model name), `muted_kinds`, and `reset_timing: true` (forget the learned pauses), and returns
+  `live_status`. Corrections from grounded checks arrive as ordinary `live_interjection` cards with kind
+  `personal_fact`.
 - `live_feedback {id, verdict}` with `helpful`, `dismissed`, `used_fix` or `mute` (mutes that kind) ->
   `{status, kind, relevance}`. Feedback moves the per-kind relevance that decides whether a kind is spoken,
   shown or held back.

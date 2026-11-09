@@ -68,6 +68,7 @@ v0.16.0 adds a to-do list, "tell me when" watchers, repeating reminders and remi
 | Learned risk model   | 25,200 training, 5,400 calibration, and 5,400 temporal-validation samples; 5/5 direction invariants | Covers 12 coarse disk/process action transitions; deterministic policy remains authoritative |
 | Async responsiveness | 65 heartbeats during a real one-second CPU monitor; 16.618 ms maximum heartbeat interval      | Windows timer granularity and host load apply; this is not UI or hardware-input latency        |
 | Assistance co-adaptation | 3/3 policy agency audits passed on two simulated tuning families, five simulated people per family | In-sample simulation only; the adaptive engine does not beat the plain interface for every family; no human accuracy claim |
+| Live companion, own data | 29 sentences against a fixed week of calendar, to-dos and reminders: code alone 11/13 contradictions caught, 0 false alarms; with qwen3.5:4b in Ollama 12/13, 0 false alarms, 2.07 s median per model call on a laptop CPU (9 November 2026) | Authored sentences and one synthetic week; [raw results](docs/evidence/live-grounded-eval-2026-11-09.json) |
 | Live companion timing | [Live Bench](docs/LIVE_BENCH.md), three typing personas: personal timing 45/45 catches, 0 false alarms, 1 cut-in; fixed 1.2 s rules 45/45, 2 false alarms, 19 cut-ins (9 November 2026) | 25 scripted scenarios and simulated people, not recordings of real sessions |
 | Plugins              | 6 manifests in the generated public catalog                                                   | Marketplace and local plugins remain capability-constrained                                    |
 | CI                   | Python, frontend, visual, Rust, marketplace, and installer gates                              | CI does not prove camera, microphone, speaker, EEG, or human accuracy                          |
@@ -388,6 +389,8 @@ read_focused_text = true     # the field you're typing in (Windows); never passw
 listen_to_speech = true      # check what you say to Heliox, too
 ocr_fallback = false         # read the screen for errors when no field is readable
 personal_timing = true       # learn how long you pause mid-sentence, so it waits for a real break
+grounded_checks = false      # check what you write against your own calendar, to-dos and reminders
+grounded_model = "qwen3.5:4b"  # the local Ollama model that links paraphrases; code does the rest
 
 [co_adaptation]
 enabled = false              # the selection study; also needs a consent record per participant

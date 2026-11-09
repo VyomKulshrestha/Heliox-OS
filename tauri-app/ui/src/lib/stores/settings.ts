@@ -83,6 +83,8 @@ export interface PilotSettings {
     ocr_fallback: boolean;
     listen_to_speech: boolean;
     personal_timing?: boolean;
+    grounded_checks?: boolean;
+    grounded_model?: string;
     muted_kinds: string[];
   };
   typed_decision: {
@@ -224,6 +226,8 @@ const defaultSettings: PilotSettings = {
     ocr_fallback: false,
     listen_to_speech: true,
     personal_timing: true,
+    grounded_checks: false,
+    grounded_model: "qwen3.5:4b",
     muted_kinds: [],
   },
   typed_decision: {

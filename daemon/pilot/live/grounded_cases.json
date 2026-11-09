@@ -1,0 +1,49 @@
+{
+  "today": "2026-11-09",
+  "events": [
+    {"summary": "Dentist", "start": "2026-11-12T15:00:00", "end": "2026-11-12T16:00:00"},
+    {"summary": "Design review with Sam", "start": "2026-11-10T11:00:00", "end": "2026-11-10T12:00:00"},
+    {"summary": "Flight to Berlin", "start": "2026-11-13T07:30:00", "end": "2026-11-13T10:00:00"},
+    {"summary": "Team offsite", "start": "2026-11-18"},
+    {"summary": "1:1 with Priya", "start": "2026-11-16T14:00:00", "end": "2026-11-16T14:30:00"}
+  ],
+  "todos": [
+    {"text": "Send the Q4 report to Priya", "due": "2026-11-11"},
+    {"text": "Renew passport", "due": "2026-11-20"}
+  ],
+  "reminders": [
+    {"text": "Call the plumber", "due": "2026-11-10T17:00:00"}
+  ],
+  "cases": [
+    {"text": "Sure, Thursday at 3pm works for me, see you then.", "expect": "event:0", "why": "double-booked over the dentist"},
+    {"text": "Can we do coffee on Tuesday at 11:30?", "expect": "event:1", "why": "double-booked over the design review"},
+    {"text": "Let's meet on 18 November at 10am to plan the launch.", "expect": "event:3", "why": "the offsite is all day"},
+    {"text": "The design review is on Thursday, right?", "expect": "event:1", "why": "it is on Tuesday"},
+    {"text": "I'll send the Q4 report to Priya by Friday.", "expect": "todo:0", "why": "the to-do says Wednesday"},
+    {"text": "My flight to Berlin is on Saturday morning.", "expect": "event:2", "why": "the flight is on Friday"},
+    {"text": "Note to self: dentist on Wednesday afternoon.", "expect": "event:0", "why": "the dentist is on Thursday"},
+    {"text": "See you at the offsite on Thursday 19 November!", "expect": "event:3", "why": "the offsite is on the 18th"},
+    {"text": "I need to call the plumber on Wednesday.", "expect": "reminder:0", "why": "the reminder is for Tuesday"},
+    {"text": "Looking forward to the review on Wednesday.", "expect": "event:1", "why": "a vague reference: the review is on Tuesday"},
+    {"text": "Is our 1:1 still on for Tuesday the 17th?", "expect": "event:4", "why": "a vague reference: the 1:1 is on Monday 16 November"},
+    {"text": "I'll be at the dental appointment on Friday.", "expect": "event:0", "why": "a paraphrase: the dentist is on Thursday"},
+    {"text": "Heading to the airport on Saturday for Berlin.", "expect": "event:2", "why": "a paraphrase: the flight is on Friday"},
+
+    {"text": "Sure, Thursday at 5pm works for me.", "expect": null, "why": "after the dentist"},
+    {"text": "The design review is on Tuesday at 11.", "expect": null, "why": "right"},
+    {"text": "I'll send the Q4 report to Priya by Wednesday.", "expect": null, "why": "right"},
+    {"text": "My flight to Berlin leaves Friday at 7:30.", "expect": null, "why": "right"},
+    {"text": "Let's grab lunch on Tuesday at 1pm.", "expect": null, "why": "free then"},
+    {"text": "The dentist on Thursday is at 3pm, so I'll leave early.", "expect": null, "why": "about the event, and right"},
+    {"text": "Thursday was a long day.", "expect": null, "why": "mentions a day, contradicts nothing"},
+    {"text": "I think the review went well.", "expect": null, "why": "no day: no check at all"},
+    {"text": "Can we push the offsite planning doc to Friday?", "expect": null, "why": "the doc's deadline, not the offsite's date"},
+    {"text": "Booked the dentist for next month.", "expect": null, "why": "no day: no check at all"},
+    {"text": "Remind me Wednesday to call the plumber again.", "expect": null, "why": "a new reminder, not a contradiction"},
+    {"text": "Renewing my passport on Friday 20 November.", "expect": null, "why": "right"},
+    {"text": "The review slides are due Thursday.", "expect": null, "why": "the slides, not the review"},
+    {"text": "Lunch with Sam on Wednesday?", "expect": null, "why": "a different meeting with the same person"},
+    {"text": "The offsite agenda goes out on Monday.", "expect": null, "why": "a document about the offsite"},
+    {"text": "Priya's birthday is on Friday.", "expect": null, "why": "mentions a contact, contradicts nothing"}
+  ]
+}

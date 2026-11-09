@@ -24,6 +24,7 @@ KINDS = (
     "error_on_screen",
     "missing_attachment",
     "repeated_word",
+    "personal_fact",  # pilot.live.grounded: a local model checks the text against the person's own data
 )
 
 KIND_LABELS = {
@@ -35,7 +36,10 @@ KIND_LABELS = {
     "error_on_screen": "Errors on screen, with the fix",
     "missing_attachment": "Mentioning an attachment",
     "repeated_word": "Doubled words",
+    "personal_fact": "Things that contradict your calendar, to-dos or contacts",
 }
+# Kinds found by a model rather than a rule: still there while their quoted evidence is in the text.
+MODEL_KINDS = frozenset({"personal_fact"})
 
 
 @dataclass(frozen=True)
@@ -722,7 +726,7 @@ def detect(text: str, ctx: TextContext, *, kinds: tuple[str, ...] = KINDS) -> li
     allowed = SPEECH_KINDS if ctx.source == "speech" else kinds
     results: list[Correction] = []
     for kind in kinds:
-        if kind not in allowed:
+        if kind not in allowed or kind not in DETECTORS:
             continue
         try:
             results.extend(DETECTORS[kind](text, ctx))

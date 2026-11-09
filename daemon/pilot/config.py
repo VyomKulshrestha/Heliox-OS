@@ -472,6 +472,10 @@ class TimelineConfig:
     excluded_apps: list[str] = field(default_factory=_default_timeline_excluded_apps)
 
 
+# An Ollama model name such as "qwen3.5:4b" or "library/llama3.2:3b-instruct-q4_K_M".
+_OLLAMA_MODEL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,80}(?::[A-Za-z0-9._-]{1,40})?")
+
+
 @dataclass
 class LiveConfig:
     """Heliox Live (see pilot.live): the always-on companion that notices mistakes as you work and says so.
@@ -487,6 +491,11 @@ class LiveConfig:
     listen_to_speech: bool = True
     # Learn how long this person pauses mid-sentence, and wait for a real break (pilot.live.timing).
     personal_timing: bool = True
+    # Check what they write against their own calendar, to-dos and reminders (pilot.live.grounded). Off by
+    # default; clashes and named events are checked in code, and grounded_model (in the local Ollama) links
+    # paraphrases. If the model is missing, the code checks still run.
+    grounded_checks: bool = False
+    grounded_model: str = "qwen3.5:4b"
     muted_kinds: list[str] = field(default_factory=list)
 
 
@@ -1142,6 +1151,8 @@ def _validate_config_types(raw: dict) -> None:
             "ocr_fallback": bool,
             "listen_to_speech": bool,
             "personal_timing": bool,
+            "grounded_checks": bool,
+            "grounded_model": str,
             "muted_kinds": list,
         },
         "supervision": {
@@ -1499,8 +1510,18 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
 
     if "live" in raw and isinstance(raw["live"], dict):
         l_raw = raw["live"]
-        for key in ("enabled", "read_focused_text", "ocr_fallback", "listen_to_speech", "personal_timing"):
+        for key in (
+            "enabled",
+            "read_focused_text",
+            "ocr_fallback",
+            "listen_to_speech",
+            "personal_timing",
+            "grounded_checks",
+        ):
             setattr(config.live, key, bool(l_raw.get(key, getattr(config.live, key))))
+        model = l_raw.get("grounded_model")
+        if isinstance(model, str) and _OLLAMA_MODEL_NAME.fullmatch(model.strip()):
+            config.live.grounded_model = model.strip()
         if l_raw.get("level") in ("quiet", "balanced", "proactive"):
             config.live.level = str(l_raw["level"])
         if isinstance(l_raw.get("muted_kinds"), list):

@@ -60,4 +60,14 @@ describe("LiveCompanionPanel timing", () => {
     await fireEvent.click(screen.getByRole("checkbox", { name: /pause in the middle of a sentence/ }));
     expect(mocks.updateSectionDetailed).toHaveBeenCalledWith("live", { personal_timing: false });
   });
+
+  it("offers checks against the person's own calendar, off until they choose it", async () => {
+    mocks.call.mockResolvedValue({ status: "ok", kinds: [], timing: learned });
+    render(LiveCompanionPanel);
+    const box = screen.getByRole("checkbox", { name: /your own calendar, to-dos and reminders/ }) as HTMLInputElement;
+    expect(box.checked).toBe(false);
+    expect(box.closest("label")?.textContent).toContain("qwen3.5:4b in Ollama, on this computer");
+    await fireEvent.click(box);
+    expect(mocks.updateSectionDetailed).toHaveBeenCalledWith("live", { grounded_checks: true });
+  });
 });
