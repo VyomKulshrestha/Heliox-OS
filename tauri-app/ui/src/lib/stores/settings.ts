@@ -76,6 +76,14 @@ export interface PilotSettings {
   suggestions: {
     enabled: boolean;
   };
+  live: {
+    enabled: boolean;
+    level: "quiet" | "balanced" | "proactive";
+    read_focused_text: boolean;
+    ocr_fallback: boolean;
+    listen_to_speech: boolean;
+    muted_kinds: string[];
+  };
   typed_decision: {
     enabled: boolean;
     artifact_dir: string;
@@ -206,6 +214,14 @@ const defaultSettings: PilotSettings = {
   suggestions: {
     enabled: false,
   },
+  live: {
+    enabled: false,
+    level: "balanced",
+    read_focused_text: true,
+    ocr_fallback: false,
+    listen_to_speech: true,
+    muted_kinds: [],
+  },
   typed_decision: {
     enabled: false,
     artifact_dir: "",
@@ -272,6 +288,7 @@ function mergeSettings(current: PilotSettings, incoming: Partial<PilotSettings>)
     brief: { ...current.brief, ...incoming.brief },
     clipboard: { ...current.clipboard, ...incoming.clipboard },
     suggestions: { ...current.suggestions, ...incoming.suggestions },
+    live: { ...current.live, ...incoming.live },
     typed_decision: { ...current.typed_decision, ...incoming.typed_decision },
     network: { ...current.network, ...incoming.network },
     calendar: { ...current.calendar, ...incoming.calendar },

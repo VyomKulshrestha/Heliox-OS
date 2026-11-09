@@ -186,6 +186,9 @@ vi.mock("./lib/components/PluginsTab.svelte", () => harness.stubModule("PluginsT
 vi.mock("./lib/components/GitConflictResolver.svelte", () => harness.stubModule("GitConflictResolver"));
 vi.mock("./lib/components/ScrollToBottom.svelte", () => harness.stubModule("ScrollToBottom"));
 vi.mock("./lib/components/ConnectionBadge.svelte", () => harness.stubModule("ConnectionBadge"));
+vi.mock("./lib/components/LivePresence.svelte", () => harness.stubModule("LivePresence"));
+vi.mock("./lib/components/LiveCards.svelte", () => harness.stubModule("LiveCards"));
+vi.mock("./lib/stores/live", () => ({ live: { subscribe: vi.fn(() => () => {}), load: vi.fn(async () => {}) } }));
 vi.mock("./lib/components/HeaderMiniMonitor.svelte", () => harness.stubModule("HeaderMiniMonitor"));
 vi.mock("./lib/components/CommandHistory.svelte", () => harness.stubModule("CommandHistory"));
 vi.mock("./lib/components/ChatSessionControls.svelte", () => harness.stubModule("ChatSessionControls"));

@@ -43,6 +43,9 @@
   import { shouldFollowLatest } from "./lib/utils/scrollPolicy";
   import { selectActiveModal } from "./lib/utils/modalPriority";
   import ConnectionBadge from "./lib/components/ConnectionBadge.svelte";
+  import LivePresence from "./lib/components/LivePresence.svelte";
+  import LiveCards from "./lib/components/LiveCards.svelte";
+  import { live } from "./lib/stores/live";
   import HeaderMiniMonitor from "./lib/components/HeaderMiniMonitor.svelte";
   import CommandHistory from "./lib/components/CommandHistory.svelte";
   import ChatSessionControls from "./lib/components/ChatSessionControls.svelte";
@@ -94,6 +97,7 @@
     if (connected && !previousDaemonConnection) {
       daemonConnectionEpoch += 1;
       void coadaptation.load();
+      void live.load();
     }
     previousDaemonConnection = connected;
   });
@@ -340,6 +344,7 @@
     <div class="titlebar-right">
       <ChatSessionControls onactivate={() => (activeTab = "chat")} />
       <HeaderMiniMonitor />
+      <LivePresence />
       <ConnectionBadge />
       <AmbientHUD />
     </div>
@@ -610,6 +615,7 @@
   </div>
   <!-- Particle Burst Overlay -->
   <ParticleBurst bind:this={particleBurst} />
+  <LiveCards />
 </main>
 {#snippet copyControl(msg: Message)}
   <button class="copy-button" type="button" aria-label="Copy message" title="Copy" onclick={() => copyMessage(msg)}>

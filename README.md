@@ -378,6 +378,13 @@ history = false              # remember recent copies in memory for "what did I 
 [suggestions]
 enabled = false              # offer one gentle, code-computed nudge now and then; never acts
 
+[live]
+enabled = false              # always-on companion: notices slips as you type or speak, says so at your pause
+level = "balanced"           # "quiet", "balanced" or "proactive"
+read_focused_text = true     # the field you're typing in (Windows); never password fields
+listen_to_speech = true      # check what you say to Heliox, too
+ocr_fallback = false         # read the screen for errors when no field is readable
+
 [co_adaptation]
 enabled = false              # the selection study; also needs a consent record per participant
 adaptive_enabled = false     # learned choices from the second session; also needs the adaptive_assistance purpose

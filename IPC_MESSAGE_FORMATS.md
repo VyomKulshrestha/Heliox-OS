@@ -12,7 +12,7 @@ The Heliox OS UI and daemon communicate over a local WebSocket using the [JSON-R
 | Request timeout | 5 minutes |
 | Reconnect interval | 3 seconds (auto-reconnect on close) |
 
-The daemon currently registers **315 WebSocket RPC methods**. That is the API
+The daemon currently registers **319 WebSocket RPC methods**. That is the API
 surface count, not the action catalog: Heliox exposes **162 action
 types** through the guarded planner/executor system. This document names every
 registered RPC method; grouped tables are used where several methods share one
@@ -539,6 +539,27 @@ than a minute is logged (`{"started_at", "ended_at", "seconds", "reason"}`, kept
 `{"status": "ok", "today": {"seconds", "sessions"}, "this_week": {"seconds", "sessions"},
 "recent": [<up to 20 sessions, newest first>]}`. "How long did I focus this week" and
 "how many focus sessions today" work by voice and in chat.
+
+#### `live_status` / `live_set` / `live_feedback` / `live_explain` (Heliox Live, `[live]`)
+The always-on companion (`pilot.live`). Off by default; `[live] enabled` or "be my live companion" turns it on.
+Every 200 ms it decides, per correction it has noticed, whether to wait, show a card, speak, or let it go.
+
+- `live_status` -> `{status, enabled, paused, running, level, watching, source, user_state, visible: [...],
+  recent: [...], relevance: {kind: 0..1}, muted_kinds, kinds: [{kind, label}], reads_focused_text}`. `user_state`
+  is `typing`, `paused`, `speaking`, `away` or `off`.
+- `live_set` takes any of `enabled`, `paused` (this session only), `level` (`quiet`, `balanced`, `proactive`),
+  `read_focused_text`, `ocr_fallback`, `listen_to_speech`, `muted_kinds`, and returns `live_status`.
+- `live_feedback {id, verdict}` with `helpful`, `dismissed`, `used_fix` or `mute` (mutes that kind) ->
+  `{status, kind, relevance}`. Feedback moves the per-kind relevance that decides whether a kind is spoken,
+  shown or held back.
+- `live_explain {id?}` -> `{status, text}`: the correction, its detail and its fix, for "why?".
+
+Notifications: `live_interjection {id, kind, title, message, detail, evidence, fix, fix_kind, urgency, spoken,
+source, app}`, where `fix_kind` is `replace` (corrected text), `command` (a safer command) or `ask` (a request to
+hand to the planner); `live_interjection_withdrawn {id, reason}` with `fixed` (the evidence left the window it
+was found in), `expired`, `off` or a feedback verdict; and `live_state {enabled, paused, watching, user_state}`
+on change. The text Heliox reads never appears in a notification: only the short evidence span a card quotes,
+with keys redacted to their first and last four characters.
 
 #### `suggestion_now` (and `[suggestions]`, no RPC for the loop)
 One proactive suggestion computed on demand from the local stores:

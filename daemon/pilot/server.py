@@ -391,6 +391,11 @@ VOICE_CLIPBOARD_SETTING = re.compile(r"^(?:please )?turn (?P<state>on|off) (?:th
 VOICE_SUGGESTIONS_SETTING = re.compile(
     r"^(?:please )?turn (?P<state>on|off) (?:proactive )?suggestions$|^(?:please )?(?:start|stop) suggesting things$"
 )
+VOICE_LIVE_SETTING = re.compile(
+    r"^(?:please )?turn (?P<state>on|off) (?:the |my )?(?:live companion|live mode|always on mode)$"
+    r"|^(?:please )?(?P<on>be my live companion|watch over me|start correcting me|correct me as i work)$"
+    r"|^(?:please )?(?P<off>stop correcting me|stop interrupting me|stop watching me)$"
+)
 VOICE_BRIEF_TIME_SETTING = re.compile(
     r"^(?:please )?send (?:me )?(?:a |the |my )?daily brief (?:every day )?at (?P<hour>\d{1,2})(?: (?P<minute>\d{2}))?"
     r"(?: (?P<meridiem>am|pm))?$"
@@ -971,6 +976,9 @@ class PilotServer:
         self._goals: Any = None
         self._companion: Any = None
         self._suggestions: Any = None
+        self._live: Any = None
+        self._live_reader: Any = None
+        self._live_last_ocr = 0.0
         self._queued_execute_requests: deque[tuple[str, str, dict[str, Any]]] = deque()
         self._queued_submission_lock = asyncio.Lock()
         self._queued_execute_worker: asyncio.Task[None] | None = None
@@ -1286,6 +1294,24 @@ class PilotServer:
             deliver=self._deliver_suggestion,
         )
         self._suggestions.start()
+        from pilot.live.engine import LiveCompanion
+        from pilot.live.focused_text import FocusedTextReader
+
+        self._live_reader = FocusedTextReader()
+        self._live = LiveCompanion(
+            settings=lambda: self.config.live,
+            observe=self._live_observe,
+            emit=self._broadcast_notification,
+            speak=self._live_speak,
+            user_speaking=lambda: bool(self._voice_listener is not None and self._voice_listener.user_is_speaking),
+            heliox_speaking=lambda: bool(self._speech_coordinator.status().get("active")),
+            focus_active=lambda: bool(self._focus is not None and self._focus.active),
+            people=lambda: self._user_profile.people_by_relation() if self._user_profile is not None else {},
+            mute_kind=self._live_mute_kind,
+            on_disable=self._live_reader.close,
+            relevance_path=DATA_DIR / "live_relevance.json",
+        )
+        await self._live.start()
         from pilot.workflows.workspaces import WorkspaceStore
 
         self._workspaces = WorkspaceStore(DATA_DIR / "workspaces.json")
@@ -1735,7 +1761,7 @@ class PilotServer:
                 cognitive_engine=self._cognitive_engine,
                 screen_vision=self._screen_vision,
                 hook=self._supervision_hook,
-                broadcast_fn=self._broadcast_notification,
+                broadcast_fn=self._supervision_broadcast,
             )
             self._background.register(
                 BackgroundTask(
@@ -1883,6 +1909,10 @@ class PilotServer:
             "companion_set": self._handle_companion_set,
             "companion_reset": self._handle_companion_reset,
             "suggestion_now": self._handle_suggestion_now,
+            "live_status": self._handle_live_status,
+            "live_set": self._handle_live_set,
+            "live_feedback": self._handle_live_feedback,
+            "live_explain": self._handle_live_explain,
             "workspace_save": self._handle_workspace_save,
             "workspace_delete": self._handle_workspace_delete,
             "receipts_search": self._handle_receipts_search,
@@ -6234,6 +6264,7 @@ class PilotServer:
             companion.RESET_REQUEST,
             suggestions.ASK_REQUEST,
             VOICE_SUGGESTIONS_SETTING,
+            VOICE_LIVE_SETTING,
             focus_log.HISTORY_REQUEST,
             generators.PASSWORD_REQUEST,
             generators.COIN_REQUEST,
@@ -6366,6 +6397,7 @@ class PilotServer:
             return None
 
         handlers = (
+            self._live_reply,
             self._help_request,
             self._say_again_request,
             self._profile_request,
@@ -6602,6 +6634,121 @@ class PilotServer:
         await self._speak_companion_text(
             pick["text"], channel=SpeechChannel.PROACTIVE_SUGGESTION, dedupe_key=f"suggestion:{pick['key']}"
         )
+
+    # ── Heliox Live ─────────────────────────────────────────────────────────────────────────────────────────────
+
+    async def _live_observe(self) -> Any:
+        """One look at what the person is typing, for the live layer. The text never leaves this process."""
+        from pilot.agents.screen_vision import _get_active_window
+        from pilot.live.detectors import _PASSWORD_MANAGERS
+        from pilot.live.engine import Observation
+        from pilot.workflows.manual_workflow_hook import _is_heliox_window_title
+
+        cfg = self.config.live
+        app, title = await asyncio.to_thread(_get_active_window)
+        if not app and not title:
+            return None
+        where = f"{app} {title}".casefold()
+        excluded = [name.casefold() for name in self.config.timeline.excluded_apps if name.strip()]
+        if (
+            _is_heliox_window_title(title)
+            or any(name in where for name in _PASSWORD_MANAGERS)
+            or any(name in where for name in excluded)
+        ):
+            return None  # Heliox's own window, password managers, and apps the person excluded are never read
+        if cfg.read_focused_text and self._live_reader is not None:
+            focused = await self._live_reader.read()
+            if focused is not None and not focused.password and focused.text.strip():
+                return Observation(text=focused.text, app=app, title=title, source="focused_field")
+        if cfg.ocr_fallback and time.monotonic() - self._live_last_ocr >= 5.0:
+            self._live_last_ocr = time.monotonic()
+            from pilot.system.vision import screen_ocr
+
+            try:
+                text = await screen_ocr()
+            except Exception:
+                text = ""
+            if text.strip():
+                return Observation(text=text[-6000:], app=app, title=title, source="screen_ocr")
+        return None
+
+    async def _live_speak(self, text: str, urgent: bool) -> None:
+        channel = SpeechChannel.LIVE_CORRECTION if urgent else SpeechChannel.PROACTIVE_SUGGESTION
+        try:
+            await self._speak_companion_text(text, channel=channel, dedupe_key=f"live:{text}")
+        except Exception:
+            logger.debug("Live correction speech failed", exc_info=True)
+
+    async def _live_mute_kind(self, kind: str) -> None:
+        muted = sorted({*self.config.live.muted_kinds, kind})
+        await self._handle_update_config({"section": "live", "values": {"muted_kinds": muted}}, None)
+        await self._broadcast_notification("config_updated", {"method": "live", "section": "live"})
+
+    async def _supervision_broadcast(self, method: str, params: dict[str, Any]) -> None:
+        """With the live companion on, supervision's risk warnings arrive as live cards and speech, not a dialog."""
+        if method == "supervision_risk_warning" and self.config.live.enabled and self._live is not None:
+            await self._live.notice_risk(str(params.get("pattern", "")), str(params.get("source", "")))
+            return
+        await self._broadcast_notification(method, params)
+
+    async def _live_reply(self, text: str) -> str | None:
+        """ "Thanks", "not now", "why?" and "fix it" right after a live correction."""
+        if self._live is None:
+            return None
+        from pilot.workflows.routines import normalize_phrase
+
+        answer = await self._live.handle_reply(normalize_phrase(text))
+        if answer is None:
+            return None
+        if answer.delegate:
+            # The background model does the work, through the same path and approvals as a typed request.
+            asyncio.create_task(self._live_delegate(answer.delegate))
+        return answer.reply
+
+    async def _live_delegate(self, request: str) -> None:
+        try:
+            await self._voice_command_dispatch(request)
+        except Exception:
+            logger.debug("Live hand-off failed", exc_info=True)
+
+    async def _handle_live_status(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        from pilot.live.detectors import KIND_LABELS
+
+        if self._live is None:
+            return {"status": "error", "message": "The live companion is not ready yet."}
+        status = self._live.status()
+        status["kinds"] = [{"kind": kind, "label": label} for kind, label in KIND_LABELS.items()]
+        status["reads_focused_text"] = bool(self._live_reader is not None and self._live_reader.available)
+        return status
+
+    async def _handle_live_set(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        if self._live is None:
+            return {"status": "error", "message": "The live companion is not ready yet."}
+        if "paused" in params:
+            self._live.set_paused(bool(params["paused"]))
+        values = {
+            key: params[key]
+            for key in ("enabled", "level", "read_focused_text", "ocr_fallback", "listen_to_speech", "muted_kinds")
+            if key in params
+        }
+        if values:
+            result = await self._handle_update_config({"section": "live", "values": values}, None)
+            if result.get("status") != "ok":
+                return result
+            await self._broadcast_notification("config_updated", {"method": "live", "section": "live"})
+        return await self._handle_live_status({}, ws)
+
+    async def _handle_live_feedback(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        verdict = str(params.get("verdict", ""))
+        if self._live is None or verdict not in ("helpful", "dismissed", "used_fix", "mute"):
+            return {"status": "error", "message": "verdict must be helpful, dismissed, used_fix or mute"}
+        return await self._live.feedback(str(params.get("id", "")), verdict)
+
+    async def _handle_live_explain(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+        if self._live is None:
+            return {"status": "error", "message": "The live companion is not ready yet."}
+        text = self._live.explain(str(params.get("id", "")))
+        return {"status": "ok" if text else "error", "text": text}
 
     async def _suggestion_request(self, text: str) -> str | None:
         """ "What should I do now?", "any suggestions?" — one suggestion from the local stores."""
@@ -6983,6 +7130,15 @@ class PilotServer:
                 "Okay, I'll offer a suggestion now and then, held while you focus."
                 if on
                 else "Okay, I'll keep suggestions to when you ask.",
+            )
+        elif live := VOICE_LIVE_SETTING.match(normalized):
+            on = live.group("on") is not None or live.group("state") == "on"
+            change = (
+                "live",
+                {"enabled": on},
+                "Okay, I'm with you. I'll point out slips as you work, at your pauses, and stay quiet while you talk."
+                if on
+                else 'Okay, I\'ll stay quiet. Say "be my live companion" when you want me back.',
             )
         if change is None:
             return None
@@ -8355,6 +8511,16 @@ class PilotServer:
                     return {"status": "error", "message": "clipboard.history must be a boolean"}
                 if section == "suggestions" and k == "enabled" and not isinstance(v, bool):
                     return {"status": "error", "message": "suggestions.enabled must be a boolean"}
+                if section == "live" and k in {"enabled", "read_focused_text", "ocr_fallback", "listen_to_speech"}:
+                    if not isinstance(v, bool):
+                        return {"status": "error", "message": f"live.{k} must be a boolean"}
+                if section == "live" and k == "level" and v not in ("quiet", "balanced", "proactive"):
+                    return {"status": "error", "message": "live.level must be quiet, balanced or proactive"}
+                if section == "live" and k == "muted_kinds":
+                    from pilot.live.detectors import KINDS
+
+                    if not isinstance(v, list) or not all(isinstance(item, str) and item in KINDS for item in v):
+                        return {"status": "error", "message": "live.muted_kinds must list known correction kinds"}
                 if section == "brief" and k in {"enabled", "speak"} and not isinstance(v, bool):
                     return {"status": "error", "message": f"brief.{k} must be a boolean"}
                 if section == "brief" and k == "time":
@@ -11791,6 +11957,10 @@ def handle_tool(tool_name, params):
             await self._clipboard_history.stop()
         if self._suggestions is not None:
             await self._suggestions.stop()
+        if self._live is not None:
+            await self._live.stop()
+        if self._live_reader is not None:
+            await self._live_reader.close()
         if self._focus_guard is not None:
             await self._focus_guard.stop()
         if self._app_reminders is not None:
@@ -12601,6 +12771,9 @@ def handle_tool(tool_name, params):
     async def _voice_command_dispatch(self, command_text: str) -> None:
         """Run voice through the same safe interaction path as typed input."""
         logger.info("Voice command received: '%s'", command_text)
+        if self._live is not None:
+            # The live layer hears what the person says to Heliox too, and answers a slip at the end of the turn.
+            self._live.offer_speech(command_text)
 
         if self.config.voice.barge_in_enabled and self._speech_coordinator.status()["active"]:
             await self._speech_coordinator.stop_all()

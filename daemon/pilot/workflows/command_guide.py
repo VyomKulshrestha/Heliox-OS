@@ -23,6 +23,11 @@ GUIDE: list[dict[str, Any]] = [
         "examples": ["what should I do now", "any suggestions", "turn on suggestions"],
     },
     {
+        "group": "Live companion",
+        "about": "Always on: notices slips as you type or speak and says so at your pause. Never acts on its own.",
+        "examples": ["be my live companion", "stop correcting me", "turn off the live companion"],
+    },
+    {
         "group": "Your assistant",
         "about": "Name Heliox and shape its tone; the tone carries into both quick replies and the model's voice.",
         "examples": [

@@ -14,6 +14,7 @@ class SpeechChannel(StrEnum):
     EMERGENCY_STOP = "emergency_stop"
     USER_SPEECH = "user_speech"
     APPROVAL_RISK = "approval_risk"
+    LIVE_CORRECTION = "live_correction"
     TASK_FAILURE = "task_failure"
     FINAL_ANSWER = "final_answer"
     TASK_NARRATION = "task_narration"
@@ -25,6 +26,7 @@ SPEECH_PRIORITY: dict[SpeechChannel, int] = {
     SpeechChannel.EMERGENCY_STOP: 700,
     SpeechChannel.USER_SPEECH: 600,
     SpeechChannel.APPROVAL_RISK: 500,
+    SpeechChannel.LIVE_CORRECTION: 450,
     SpeechChannel.TASK_FAILURE: 400,
     SpeechChannel.FINAL_ANSWER: 350,
     SpeechChannel.TASK_NARRATION: 300,

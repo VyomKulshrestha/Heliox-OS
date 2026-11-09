@@ -36,6 +36,11 @@ STORES: dict[str, tuple[str, str, str]] = {
     "snippets": ("Snippets", "snippets.json", "Named texts you saved to copy again."),
     "profile": ("About you", "user_profile.json", "What you told Heliox to remember about you."),
     "goals": ("Goals", "goals.json", "Your goals, their updates and next steps."),
+    "live": (
+        "Live companion",
+        "live_relevance.json",
+        "Which kinds of correction you found useful, so Heliox speaks up less about the ones you wave away.",
+    ),
     "habits": ("Habits", "habits.json", "When you logged each habit."),
     "focus_history": ("Focus history", "focus_history.json", "When each focus session started and ended."),
     "todos": ("To-do list", "todos.json", "Things on your list, done or not."),

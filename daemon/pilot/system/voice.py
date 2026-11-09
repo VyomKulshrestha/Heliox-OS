@@ -1123,6 +1123,8 @@ class _ContinuousRecorder:
         self.peak_frame_rms = 0.0
         self.last_above_threshold_at = 0.0
         self.utterances_captured = 0
+        # True between the endpointer confirming speech and the utterance ending (read by the live layer).
+        self.user_is_speaking = False
         self.capture_backend = ""
 
     def _make_endpointer(self) -> UtteranceEndpointer:
@@ -1416,9 +1418,11 @@ class _ContinuousRecorder:
             try:
                 frame = await asyncio.wait_for(queue.get(), timeout=remaining)
             except asyncio.TimeoutError:
+                self.user_is_speaking = False
                 return None
 
             if frame is _RECORDER_STOP:
+                self.user_is_speaking = False
                 return None
 
             event = endpointer.push(frame_rms(frame))
@@ -1431,11 +1435,13 @@ class _ContinuousRecorder:
             if event == EndpointEvent.STARTED:
                 captured = preroll + [frame]
                 preroll = []
+                self.user_is_speaking = True
                 continue
 
             if event in (EndpointEvent.ENDED, EndpointEvent.MAX_DURATION):
                 captured.append(frame)
                 self.utterances_captured += 1
+                self.user_is_speaking = False
                 return _write_wav(captured, self.sample_rate)
 
             if not endpointer.is_speaking:
@@ -1563,6 +1569,11 @@ class ContinuousVoiceListener:
 
     def resume_wake_free_commands(self) -> None:
         self._wake_free_suppression_depth = max(0, self._wake_free_suppression_depth - 1)
+
+    @property
+    def user_is_speaking(self) -> bool:
+        """Whether the person is mid-utterance right now, from the continuous VAD."""
+        return bool(self._running and getattr(self._recorder, "user_is_speaking", False))
 
     async def start(self) -> str:
         if self._running:

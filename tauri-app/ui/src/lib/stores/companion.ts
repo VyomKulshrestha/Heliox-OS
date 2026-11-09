@@ -5,6 +5,7 @@ export type CompanionChannel =
   | "emergency_stop"
   | "user_speech"
   | "approval_risk"
+  | "live_correction"
   | "task_failure"
   | "final_answer"
   | "task_narration"
@@ -46,6 +47,7 @@ export const COMPANION_PRIORITY: Record<CompanionChannel, number> = {
   emergency_stop: 700,
   user_speech: 600,
   approval_risk: 500,
+  live_correction: 450,
   task_failure: 400,
   final_answer: 350,
   task_narration: 300,

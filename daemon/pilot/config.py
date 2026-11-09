@@ -467,6 +467,22 @@ class TimelineConfig:
 
 
 @dataclass
+class LiveConfig:
+    """Heliox Live (see pilot.live): the always-on companion that notices mistakes as you work and says so.
+    Off by default. When on, it reads the text field you are typing in (never a password field), listens to
+    what you say to Heliox, and points out specific slips: a weekday that doesn't match its date, a wrong sum,
+    a risky command before you press Enter, a key pasted into a chat. Everything stays on this computer and in
+    memory; it never acts on its own."""
+
+    enabled: bool = False
+    level: str = "balanced"  # "quiet", "balanced" or "proactive"
+    read_focused_text: bool = True
+    ocr_fallback: bool = False  # read the screen when no text field is readable; heavier, so off by default
+    listen_to_speech: bool = True
+    muted_kinds: list[str] = field(default_factory=list)
+
+
+@dataclass
 class SuggestionsConfig:
     """Proactive suggestions (see pilot.workflows.suggestions). Off by default. When on,
     Heliox offers one gentle suggestion now and then, computed in code from your goals,
@@ -725,6 +741,7 @@ class PilotConfig:
     brief: BriefConfig = field(default_factory=BriefConfig)
     clipboard: ClipboardConfig = field(default_factory=ClipboardConfig)
     suggestions: SuggestionsConfig = field(default_factory=SuggestionsConfig)
+    live: LiveConfig = field(default_factory=LiveConfig)
     supervision: SupervisionConfig = field(default_factory=SupervisionConfig)
     co_adaptation: CoAdaptationConfig = field(default_factory=CoAdaptationConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
@@ -1108,6 +1125,14 @@ def _validate_config_types(raw: dict) -> None:
         "suggestions": {
             "enabled": bool,
         },
+        "live": {
+            "enabled": bool,
+            "level": str,
+            "read_focused_text": bool,
+            "ocr_fallback": bool,
+            "listen_to_speech": bool,
+            "muted_kinds": list,
+        },
         "supervision": {
             "enabled": bool,
             "keyboard_mouse_hook_enabled": bool,
@@ -1460,6 +1485,17 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
 
     if "suggestions" in raw and isinstance(raw["suggestions"], dict):
         config.suggestions.enabled = bool(raw["suggestions"].get("enabled", config.suggestions.enabled))
+
+    if "live" in raw and isinstance(raw["live"], dict):
+        l_raw = raw["live"]
+        for key in ("enabled", "read_focused_text", "ocr_fallback", "listen_to_speech"):
+            setattr(config.live, key, bool(l_raw.get(key, getattr(config.live, key))))
+        if l_raw.get("level") in ("quiet", "balanced", "proactive"):
+            config.live.level = str(l_raw["level"])
+        if isinstance(l_raw.get("muted_kinds"), list):
+            from pilot.live.detectors import KINDS
+
+            config.live.muted_kinds = [str(k) for k in l_raw["muted_kinds"] if str(k) in KINDS]
 
     if "supervision" in raw and isinstance(raw["supervision"], dict):
         s_raw = raw["supervision"]

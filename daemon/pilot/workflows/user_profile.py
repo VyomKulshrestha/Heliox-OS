@@ -258,6 +258,15 @@ class UserProfile:
         self._save({"call_me": "", "style": {}, "_mirror": {}, **{key: [] for key in _LISTS}})
         return removed
 
+    def people_by_relation(self) -> dict[str, str]:
+        """Relation -> name, for relations the person named exactly one person for (the live layer checks these)."""
+        names: dict[str, set[str]] = {}
+        for item in self._load()["people"]:
+            relation, name = str(item.get("relation") or ""), str(item.get("name") or "")
+            if relation and name:
+                names.setdefault(relation, set()).add(name)
+        return {relation: next(iter(found)) for relation, found in names.items() if len(found) == 1}
+
     def list(self) -> list[dict[str, Any]]:
         """A flat view for Your data: one row per stored thing."""
         profile = self._load()
