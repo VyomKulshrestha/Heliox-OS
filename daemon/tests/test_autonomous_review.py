@@ -101,7 +101,24 @@ async def _ready(engine) -> GnomonReviewer:
         if reviewer.status()["state"] != "loading":
             break
         await asyncio.sleep(0.01)
+    engine.calls.clear()  # drop the warm-up call so tests see only their own questions
     return reviewer
+
+
+async def test_loading_runs_one_warm_up_question_before_gnomon_is_ready():
+    engine = _FakeEngine()
+    reviewer = GnomonReviewer(lambda: engine)
+    reviewer.warm()
+    for _ in range(100):
+        if reviewer.status()["state"] == "ready":
+            break
+        await asyncio.sleep(0.01)
+    assert engine.calls == [(gnomon_reviewer.SCOPE_QUESTION, gnomon_reviewer.WARM_UP_STATE)]
+
+    failing = _FakeEngine()
+    failing.score = lambda *args: (_ for _ in ()).throw(RuntimeError("CUDA warm-up failed"))
+    still_ready = await _ready(failing)
+    assert still_ready.status()["state"] == "ready"  # a failed warm-up costs speed, not availability
 
 
 async def test_gnomon_is_loaded_in_the_background_and_skipped_until_ready():

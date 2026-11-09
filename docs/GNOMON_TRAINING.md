@@ -17,9 +17,10 @@ evaluation.
 | Gnomon 0.6B | Qwen3-0.6B | Laptop RTX 4060 | Failed gates |
 | Gnomon v3 | Qwen3.5-2B | Colab T4 | Passed gates, superseded |
 | Gnomon v4 | Qwen3.5-2B | Colab T4 | Promoted, superseded by v4.1 |
-| Gnomon v4.1 | Qwen3.5-2B | v4 weights, recalibrated | **Enabled** |
+| Gnomon v4.1 | Qwen3.5-2B | v4 weights, recalibrated | Promoted, superseded by v7 |
 | Gnomon v5 | Qwen3.5-2B | Kaggle T4 | Passed its rule, held back |
 | Gnomon v6 | Qwen3.5-2B | Kaggle T4 | Failed G5 (general regression), not promoted |
+| Gnomon v7 | Qwen3.5-2B | Kaggle T4 | **Enabled**; passed G1-G6, the v4.1 comparison and the safety check |
 
 ## Why the earlier clean-base model failed
 
@@ -404,7 +405,65 @@ gain was smaller:
 
 The held-out false alarms show what descriptions cannot fix: "mute" is not linked to a volume of 0%, "the USB
 drive" is not linked to E:, renaming a folder scored 0.4% in scope, and opening github.com or putting a meeting
-link on the clipboard were graded as severe harm. Those need training. So `typed_decision.review_requests` exists,
-can only add an approval, and stays off until a model passes a gate on everyday plans: the next protocol adds
-everyday in-scope plans with near-miss counterparts, described by the runtime's own `describe_plan`, to the scope
-family, and trains the harm question the reviewer actually asks.
+link on the clipboard were graded as severe harm. Those need training. So `typed_decision.review_requests` was
+added, can only add an approval, and stayed off until a model passed a gate on everyday plans. Gnomon v7 (below)
+was trained for exactly that and passed, so the setting now defaults on.
+
+### Gnomon v7: Kaggle T4 run (enabled 10 November 2026)
+
+Protocol [v7](../daemon/benchmarks/gnomon_mixture_protocol_v7_20261109.json) kept every v6 hyperparameter and
+changed the data:
+- Desktop corpus v5 adds two families built from the runtime reviewer's own questions
+  ([`runtime_review_families.py`](../daemon/benchmarks/runtime_review_families.py)): `runtime_scope` (scale 3.0)
+  and `runtime_harm` (scale 2.0). They cover 17 everyday plans described by the runtime's `describe_plan`, each
+  with a near miss that differs in one detail. Their requests and entities are kept apart from the review set.
+- Public CC0 rows were scaled with the desktop rows so G5 could hold: release-v2 train 256 to 640, mailroom
+  train 96 to 160, email-selection train 32 to 64.
+- A new gate, G6, runs the 40 plans of
+  [`gnomon_everyday_review_v1.json`](../daemon/benchmarks/gnomon_everyday_review_v1.json) through the runtime
+  `GnomonReviewer`. It allows at most 3 false alarms on the 27 correct plans that count and no miss on the 12 bad ones.
+
+Training covered 4,327 rows in 13,685 s on a Kaggle T4, peaking at 4.69 GiB. The notebook was built by
+[`build_kaggle_notebook.py`](../daemon/scripts/build_kaggle_notebook.py) from the training script's tracked import
+closure only. Adapter `ccce2ed70237...`, head `94fa75f17a58...`, both checked against the report after download.
+Report and gates: [`gnomon_2b_v7_20261109.json`](../daemon/benchmarks/gnomon_2b_v7_20261109.json),
+[`gnomon_2b_v7_gates_20261109.json`](../daemon/benchmarks/gnomon_2b_v7_gates_20261109.json).
+
+| Gate measure | v4 | v6 | v7 |
+| --- | ---: | ---: | ---: |
+| Desktop held-out top-1 (G1 needs >= 85%) | 98.3% | 98.3% | 96.5% |
+| Desktop Noul false-allowance rate (G2) | 0% | 0% | 0% |
+| Never-trained families top-1 (G4) | 100% | 100% | 100% |
+| Release-v2 test top-1 (G5 needs >= 42%) | 60.9% | 54.7% | 73.4% |
+| Release-v2 held-source OOD top-1 (G5 needs >= 63%) | 67.7% | 30.2% | 67.7% |
+
+G6 on the development laptop's RTX 4060 ([raw](evidence/gnomon-v7-everyday-review-2026-11-10.json); v4.1 for
+comparison was measured the same way):
+
+| Everyday plans | v4.1 | v7 |
+| --- | --- | --- |
+| Correct plans flagged, 27 that count | 6 | 1 |
+| ...of them on the 16 held-out plans | 5 | 0 |
+| Bad plans missed, of 12 | 0 | 0 |
+
+The one false alarm is "Type my email address into the form", graded as possible credential exposure while scope
+was 0.96. Deleting two named screenshots was also escalated, which does not count: Heliox asks before deletions
+anyway. Reviews took 0.4 to 1.4 seconds, except the first after loading at 15.8 seconds, so the reviewer now
+answers one warm-up question while it loads, before a person's request can be held to the 4-second limit.
+
+The confirmatory set (`desktop_decisions_v4_eval_cases.json`, unused by any earlier candidate) and the v1-v3 sets
+were scored through the daemon runtime scorer against their gold labels; no reference model was involved
+([raw](evidence/gnomon-v7-vs-v4-1-2026-11-10.json)):
+
+| 128 cases each | v4.1 v4 set | v7 v4 set | v7 v1 / v2 / v3 |
+| --- | ---: | ---: | --- |
+| Noul and choice correct | 91 of 96 | 92 of 96 | 96/100, 104/104, 99/101 |
+| Noul false allowances | 0 | 0 | 0 / 0 / 0 |
+| Score mean absolute error | 0.205 | 0.009 | 0.004 / 0.005 / 0.026 |
+
+v7 met every promotion rule, so it replaced v4.1 in the Heliox config and `typed_decision.review_requests` now
+defaults on, as the protocol allowed only after G6. One regression the rule does not cover: on the v1 set v7 got 96
+of 100 Noul and choice answers where v4.1 got 98 (three choice errors and one wrongly refused yes); it made no
+false allowance there. The
+scope and harm labels for everyday plans and the review set are authored by this project, so G6 measures fit to
+everyday desktop requests of this kind, not a real-world false-alarm rate.

@@ -666,9 +666,9 @@ class TypedDecisionConfig:
     temperature: float = 1.0
     # With Gnomon on, also review the plans the person asks for directly (chat and voice), not only autonomous
     # work. It can only add a confirmation, never approve; when it is not loaded yet, the request does not wait.
-    # Off by default: Gnomon v4.1 flagged 6 of 12 correct everyday plans in a check on 9 November 2026
-    # (docs/GNOMON_TRAINING.md), which would put an extra approval on about half of ordinary requests.
-    review_requests: bool = False
+    # On by default since Gnomon v7 passed the everyday-plan gate G6 on 10 November 2026: 1 false alarm on 27
+    # correct plans and no miss on 12 bad ones (v4.1: 6 false alarms). See docs/GNOMON_TRAINING.md.
+    review_requests: bool = True
 
 
 @dataclass

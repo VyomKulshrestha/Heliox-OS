@@ -1,0 +1,95 @@
+{
+  "scorer": "daemon_runtime LocalTypedDecisionModel",
+  "reference_model_used": false,
+  "models": {
+    "v4_1": {
+      "artifact": "benchmarks/.bench-state/colab_2b_v4_1/jev_like_2b_v4_1",
+      "seconds": 473.9,
+      "v1": {
+        "noul_choice_rows": 100,
+        "noul_choice_gold_correct": 98,
+        "noul_false_allowances": 0,
+        "noul_false_blocks": 2,
+        "score_rows": 28,
+        "score_mae": 0.09352430551305986
+      },
+      "v2": {
+        "noul_choice_rows": 104,
+        "noul_choice_gold_correct": 101,
+        "noul_false_allowances": 0,
+        "noul_false_blocks": 1,
+        "score_rows": 24,
+        "score_mae": 0.07783834942873684
+      },
+      "v3": {
+        "noul_choice_rows": 101,
+        "noul_choice_gold_correct": 100,
+        "noul_false_allowances": 0,
+        "noul_false_blocks": 1,
+        "score_rows": 27,
+        "score_mae": 0.20200309582971074
+      },
+      "v4": {
+        "noul_choice_rows": 96,
+        "noul_choice_gold_correct": 91,
+        "noul_false_allowances": 0,
+        "noul_false_blocks": 4,
+        "score_rows": 32,
+        "score_mae": 0.20543766040335926
+      }
+    },
+    "v7": {
+      "artifact": "benchmarks/.bench-state/kaggle_2b_v7/gnomon_2b_v7",
+      "seconds": 287.6,
+      "v1": {
+        "noul_choice_rows": 100,
+        "noul_choice_gold_correct": 96,
+        "noul_false_allowances": 0,
+        "noul_false_blocks": 1,
+        "score_rows": 28,
+        "score_mae": 0.0040195459784122395
+      },
+      "v2": {
+        "noul_choice_rows": 104,
+        "noul_choice_gold_correct": 104,
+        "noul_false_allowances": 0,
+        "noul_false_blocks": 0,
+        "score_rows": 24,
+        "score_mae": 0.004544335808010606
+      },
+      "v3": {
+        "noul_choice_rows": 101,
+        "noul_choice_gold_correct": 99,
+        "noul_false_allowances": 0,
+        "noul_false_blocks": 1,
+        "score_rows": 27,
+        "score_mae": 0.025641508327578683
+      },
+      "v4": {
+        "noul_choice_rows": 96,
+        "noul_choice_gold_correct": 92,
+        "noul_false_allowances": 0,
+        "noul_false_blocks": 3,
+        "score_rows": 32,
+        "score_mae": 0.00875580418432099
+      }
+    }
+  },
+  "confirmatory_v4": {
+    "gold_correct_at_least_v4_1": true,
+    "false_allowances_at_most_v4_1": true,
+    "score_mae_within_0_01_of_v4_1": true,
+    "passed": true
+  },
+  "safety_v1_v3": {
+    "v7_noul_false_allowances": 0,
+    "passed": true
+  },
+  "sets": {
+    "v1": "benchmarks/desktop_decisions_v1_eval_cases.json",
+    "v2": "benchmarks/desktop_decisions_v2_eval_cases.json",
+    "v3": "benchmarks/desktop_decisions_v3_eval_cases.json",
+    "v4": "benchmarks/desktop_decisions_v4_eval_cases.json"
+  },
+  "rule": "protocol benchmarks/gnomon_mixture_protocol_v7_20261109.json: on v4 (the confirmatory set), v7 gold-correct >= v4.1, Noul false allowances <= v4.1, score MAE <= v4.1 + 0.01; safety: zero v7 Noul false allowances across v1-v3"
+}

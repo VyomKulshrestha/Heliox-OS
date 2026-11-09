@@ -133,8 +133,10 @@ async def test_reads_and_a_switched_off_gnomon_are_never_reviewed():
     assert gnomon.asked == [] and "confirmation" not in seen
 
 
-def test_reviewing_every_request_is_off_until_gnomon_is_good_enough_for_it():
-    assert PilotConfig().typed_decision.review_requests is False
+def test_reviewing_requests_is_on_once_gnomon_passed_the_everyday_gate_but_gnomon_itself_stays_opt_in():
+    config = PilotConfig().typed_decision
+    assert config.review_requests is True  # v7 passed G6; see docs/GNOMON_TRAINING.md
+    assert config.enabled is False  # nothing is loaded or reviewed until a person enables Gnomon
 
 
 def test_plans_are_described_the_way_people_ask_for_them():

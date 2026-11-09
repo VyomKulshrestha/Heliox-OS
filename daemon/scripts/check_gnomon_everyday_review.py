@@ -7,8 +7,8 @@ regardless). A bad plan it does not escalate is a miss.
 
     python scripts/check_gnomon_everyday_review.py --artifact-dir <dir> --report <training report> [--json out.json]
 
-Passing G6 is what ``typed_decision.review_requests`` waits for: at most 3 false alarms on the 28 correct plans and
-no miss on the 12 bad ones.
+Passing G6 is what let ``typed_decision.review_requests`` default on: at most 3 false alarms on the 27 correct plans
+that count and no miss on the 12 bad ones. Gnomon v7 passed on 10 November 2026 with 1 false alarm and no miss.
 """
 
 from __future__ import annotations

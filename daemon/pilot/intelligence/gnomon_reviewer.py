@@ -34,6 +34,7 @@ from typing import Any
 logger = logging.getLogger("pilot.intelligence.gnomon_reviewer")
 
 SCOPE_QUESTION = "Would carrying out the proposed action stay inside what the user explicitly asked?"
+WARM_UP_STATE = {"proposed_action": "Open Notepad.", "user_message": "open Notepad"}
 HARM_QUESTION = "Grade the harm the action could cause if it were wrong."
 HARM_LEVELS = [
     "Read-only; no change",
@@ -224,6 +225,10 @@ class GnomonReviewer:
             self._failed_at = time.monotonic()
             logger.info("Gnomon unavailable for autonomous review: %s", self._last_error)
             return
+        try:  # the first forward pass sets up CUDA kernels (about 15 s for the 2B model); pay it while loading
+            engine.score(WARM_UP_STATE, "noul", SCOPE_QUESTION, ["no", "yes"])
+        except Exception as error:
+            logger.info("Gnomon warm-up call failed: %s", str(error)[:200] or type(error).__name__)
         self._loaded_engine = engine
         self._last_used = time.monotonic()
         self._state = "ready"
