@@ -8,6 +8,8 @@ dataset and backbone, runs the training command and zips the output for download
 
     python scripts/build_kaggle_notebook.py --name gnomon_2b_v7 --output <scratch>/gnomon_2b_v7.ipynb -- <train args>
 
+The builder adds --output-dir /kaggle/working/<name>_out and --report itself; pass neither.
+
 Kaggle: Code -> New notebook -> File -> Import notebook; Session options: GPU T4 x2, Internet on; Save Version ->
 Save & Run All (Commit). The output zip appears under the version's Output tab.
 """
@@ -119,6 +121,16 @@ def notebook(name: str, train_args: list[str], payload: bytes) -> dict:
     from benchmarks.general_decision import DATASET, DATASET_REVISION
     from pilot.intelligence.typed_decision import PINNED_BACKBONES
 
+    owned = sorted({"--output-dir", "--report"} & {arg.split("=", 1)[0] for arg in train_args})
+    if owned:
+        raise SystemExit(f"The builder sets {owned} itself; leave them out of the training arguments")
+    # Set here rather than passed in: Git Bash rewrites a POSIX argument such as /kaggle/working/x into
+    # C:/Program Files/Git/kaggle/working/x before Python sees it, which on Kaggle becomes a relative path.
+    out_dir = f"/kaggle/working/{name}_out"
+    train_args = [*train_args, "--output-dir", out_dir, "--report", f"{out_dir}/{name}.json"]
+    mangled = [arg for arg in train_args if ":/" in arg or ":\\" in arg]
+    if mangled:
+        raise SystemExit(f"Windows paths cannot run on Kaggle: {mangled}")
     encoded = base64.b64encode(payload).decode("ascii")
     command = " ".join(shlex.quote(arg) for arg in ["python", "scripts/train_general_decision.py", *train_args])
     configs = ["release-v2-redistributable", "email-selection-control-v1", "mailroom-control-v1"]

@@ -73,3 +73,16 @@ def test_the_kaggle_bundle_is_tracked_code_only():
     assert not set(files) & build_kaggle_notebook._excluded()
     assert not any("/.bench-state/" in name for name in files)
     assert "daemon/benchmarks/runtime_review_families.py" in files
+
+
+def test_the_notebook_owns_its_kaggle_output_paths():
+    book = build_kaggle_notebook.notebook("run", ["--lr", "1e-4"], b"")
+    train_cell = book["cells"][3]["source"]
+    assert "--output-dir /kaggle/working/run_out --report /kaggle/working/run_out/run.json" in train_cell
+    assert "'/kaggle/working', 'run_out'" in book["cells"][4]["source"]
+    for bad in (["--output-dir", "/x"], ["--report=/x.json"], ["--cache", "C:/Program Files/Git/kaggle/x"]):
+        try:
+            build_kaggle_notebook.notebook("run", bad, b"")
+        except SystemExit:
+            continue
+        raise AssertionError(f"accepted {bad}")
