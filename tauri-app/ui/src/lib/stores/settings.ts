@@ -82,6 +82,7 @@ export interface PilotSettings {
     read_focused_text: boolean;
     ocr_fallback: boolean;
     listen_to_speech: boolean;
+    personal_timing?: boolean;
     muted_kinds: string[];
   };
   typed_decision: {
@@ -222,6 +223,7 @@ const defaultSettings: PilotSettings = {
     read_focused_text: true,
     ocr_fallback: false,
     listen_to_speech: true,
+    personal_timing: true,
     muted_kinds: [],
   },
   typed_decision: {

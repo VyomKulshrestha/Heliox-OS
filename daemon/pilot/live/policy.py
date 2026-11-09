@@ -60,6 +60,8 @@ class Activity:
     visible_cards: int = 0
     last_spoken_at: float = float("-inf")
     last_shown_at: float = float("-inf")
+    # The pause this person needs before a non-urgent correction (pilot.live.timing); None uses the level's.
+    personal_pause: float | None = None
 
 
 @dataclass
@@ -75,6 +77,8 @@ class Pending:
     delivered_at: float = 0.0
     # Set when a detection pass over the same window no longer finds the evidence.
     missing_since: float | None = None
+    # Seconds from delivery to the next keystroke in the same window: short and unused means it interrupted.
+    resumed_after: float | None = None
 
 
 def decide(item: Pending, act: Activity, level: Level, relevance: float, muted: frozenset[str]) -> str:
@@ -97,6 +101,8 @@ def decide(item: Pending, act: Activity, level: Level, relevance: float, muted: 
         speak = urgent or (correction.urgency in level.speak and relevance >= MIN_RELEVANCE_TO_SPEAK)
         return SPEAK if speak else SHOW
     needed_pause = URGENT_PAUSE_SECONDS if urgent else level.pause_seconds
+    if not urgent and act.personal_pause is not None:
+        needed_pause = act.personal_pause
     if correction.trailing and not urgent:
         needed_pause = max(needed_pause * TRAILING_PAUSE_FACTOR, TRAILING_MIN_PAUSE_SECONDS)
     if act.now - act.last_text_change < needed_pause:

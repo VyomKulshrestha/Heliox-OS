@@ -37,6 +37,7 @@ from pilot.live.policy import (
     Relevance,
     decide,
 )
+from pilot.live.timing import PersonalTiming, at_boundary
 
 logger = logging.getLogger("pilot.live.engine")
 
@@ -110,6 +111,7 @@ class LiveCompanion:
         mute_kind: Callable[[str], Awaitable[None]] | None = None,
         on_disable: Callable[[], Awaitable[None]] | None = None,
         relevance_path: Path | None = None,
+        timing_path: Path | None = None,
         clock: Callable[[], float] = time.monotonic,
         today: Callable[[], date] = date.today,
     ) -> None:
@@ -127,6 +129,7 @@ class LiveCompanion:
         self._clock = clock
         self._today = today
         self.relevance = Relevance(relevance_path)
+        self.timing = PersonalTiming(timing_path)
 
         self._task: asyncio.Task[None] | None = None
         self._paused = False
@@ -135,6 +138,7 @@ class LiveCompanion:
         self._recent: deque[dict[str, Any]] = deque(maxlen=RECENT_LIMIT)
         self._last_obs: Observation | None = None
         self._last_hash = ""
+        self._last_text = ""
         self._last_text_change = float("-inf")
         self._last_perceive = float("-inf")
         self._last_detect = float("-inf")
@@ -160,6 +164,7 @@ class LiveCompanion:
                 await task
         await self._withdraw_all("off")
         self._pending.clear()
+        self.timing.flush()
 
     def set_paused(self, paused: bool) -> None:
         self._paused = paused
@@ -178,6 +183,9 @@ class LiveCompanion:
 
     def _config(self) -> Any:
         return self._settings()
+
+    def _personal_timing(self) -> bool:
+        return bool(getattr(self._config(), "personal_timing", True))
 
     def _kinds(self) -> tuple[str, ...]:
         muted = set(getattr(self._config(), "muted_kinds", []) or [])
@@ -226,10 +234,14 @@ class LiveCompanion:
             self._last_obs = None
             return
         digest = hashlib.sha1(obs.text.encode("utf-8", errors="ignore")).hexdigest()
-        changed = digest != self._last_hash or (self._last_obs is None or obs.window != self._last_obs.window)
+        same_window = self._last_obs is not None and obs.window == self._last_obs.window
+        changed = digest != self._last_hash or not same_window
         if changed:
+            if same_window:
+                self._typed_on(obs.window, now)
             self._last_hash = digest
             self._last_text_change = now
+            self._last_text = obs.text
         self._last_obs = obs
         if changed or now - self._last_detect >= REDETECT_EVERY_SECONDS:
             self._last_detect = now
@@ -248,6 +260,18 @@ class LiveCompanion:
                 elif item.missing_since is None:
                     item.missing_since = now
 
+    def _typed_on(self, window: str, now: float) -> None:
+        """The person typed again in the same window: learn how long they paused, and whether a card cut in."""
+        if self._personal_timing():
+            self.timing.observe_pause(now - self._last_text_change, mid_sentence=not at_boundary(self._last_text))
+        for item in self._visible.values():
+            if item.window == window and item.resumed_after is None:
+                item.resumed_after = now - item.delivered_at
+
+    def _outcome(self, item: Pending | None, verdict: str) -> None:
+        if item is not None and item.source != "speech" and self._personal_timing():
+            self.timing.record_outcome(verdict, item.resumed_after)
+
     def _note(self, correction: Correction, source: str, window: str, now: float) -> None:
         if any(item.correction.key == correction.key for item in self._visible.values()):
             for item in self._visible.values():
@@ -259,6 +283,8 @@ class LiveCompanion:
         existing = self._pending.get(correction.key)
         if existing:
             existing.last_seen = now
+            # Keep the latest reading: a slip first seen at the end of the text stops trailing once they type on.
+            existing.correction = correction
             return
         self._pending[correction.key] = Pending(correction, source, now, now, window=window)
 
@@ -304,16 +330,19 @@ class LiveCompanion:
                 reason = "expired"
             else:
                 continue
+            self._outcome(item, reason)
             self._visible.pop(correction_id, None)
             asyncio.ensure_future(self._emit("live_interjection_withdrawn", {"id": correction_id, "reason": reason}))
 
-    async def _deliver_due(self, now: float) -> None:
+    def _verdicts(self, now: float, spoken_at: float, shown_at: float) -> list[tuple[str, Pending, str]]:
         cfg = self._config()
         level = LEVELS.get(getattr(cfg, "level", DEFAULT_LEVEL), LEVELS[DEFAULT_LEVEL])
         muted = frozenset(getattr(cfg, "muted_kinds", []) or [])
+        personal_pause = (
+            self.timing.pause_for(self._last_text, level.pause_seconds) if self._personal_timing() else None
+        )
         order = {URGENT: 0}
-        said: list[str] = []
-        urgent_said = False
+        verdicts = []
         for key, item in sorted(self._pending.items(), key=lambda kv: order.get(kv[1].correction.urgency, 1)):
             act = Activity(
                 now=now,
@@ -321,11 +350,28 @@ class LiveCompanion:
                 user_speaking=self._user_speaking(),
                 heliox_speaking=self._heliox_speaking(),
                 focus_active=self._focus_active(),
-                visible_cards=len(self._visible),
-                last_spoken_at=self._last_spoken_at,
-                last_shown_at=self._last_shown_at,
+                visible_cards=len(self._visible) + sum(v in (SHOW, SPEAK) for _, _, v in verdicts),
+                # Everything due at this pause goes out together as one interruption, so the rate limits
+                # compare against the turn before this one.
+                last_spoken_at=spoken_at,
+                last_shown_at=shown_at,
+                personal_pause=personal_pause,
             )
-            verdict = decide(item, act, level, self.relevance.score(item.correction.kind), muted)
+            verdicts.append((key, item, decide(item, act, level, self.relevance.score(item.correction.kind), muted)))
+        return verdicts
+
+    async def _deliver_due(self, now: float) -> None:
+        spoken_at, shown_at = self._last_spoken_at, self._last_shown_at
+        verdicts = self._verdicts(now, spoken_at, shown_at)
+        typed = any(v in (SHOW, SPEAK) and item.source not in ("speech", "notice") for _, item, v in verdicts)
+        if typed and self._last_perceive < now:
+            # Look again before speaking up: the text is read every 0.6 s, so they may have started typing since.
+            self._last_perceive = now
+            await self._perceive(now)
+            verdicts = self._verdicts(now, spoken_at, shown_at)
+        said: list[str] = []
+        urgent_said = False
+        for key, item, verdict in verdicts:
             if verdict == DROP:
                 del self._pending[key]
             elif verdict in (SHOW, SPEAK):
@@ -394,6 +440,7 @@ class LiveCompanion:
                 await self._mute_kind(entry["kind"])
         else:
             self.relevance.update(entry["kind"], verdict)
+        self._outcome(self._visible.get(correction_id), verdict)
         if correction_id in self._visible:
             self._visible.pop(correction_id, None)
             await self._emit("live_interjection_withdrawn", {"id": correction_id, "reason": verdict})
@@ -458,7 +505,16 @@ class LiveCompanion:
             "recent": [{k: v for k, v in entry.items() if k not in ("key", "at")} for entry in list(self._recent)[-8:]],
             "relevance": self.relevance.snapshot(),
             "muted_kinds": list(getattr(cfg, "muted_kinds", []) or []),
+            "personal_timing": self._personal_timing(),
+            "timing": self.timing.snapshot(LEVELS.get(getattr(cfg, "level", ""), LEVELS[DEFAULT_LEVEL]).pause_seconds),
         }
+
+    def forget(self, what: str) -> None:
+        """Drop learned state from memory after its file was deleted (Your data)."""
+        if what == "live":
+            self.relevance.counts = {}
+        elif what == "live_timing":
+            self.timing.forget()
 
     async def _publish_state(self, now: float) -> None:
         cfg = self._config()

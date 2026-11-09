@@ -68,6 +68,7 @@ v0.16.0 adds a to-do list, "tell me when" watchers, repeating reminders and remi
 | Learned risk model   | 25,200 training, 5,400 calibration, and 5,400 temporal-validation samples; 5/5 direction invariants | Covers 12 coarse disk/process action transitions; deterministic policy remains authoritative |
 | Async responsiveness | 65 heartbeats during a real one-second CPU monitor; 16.618 ms maximum heartbeat interval      | Windows timer granularity and host load apply; this is not UI or hardware-input latency        |
 | Assistance co-adaptation | 3/3 policy agency audits passed on two simulated tuning families, five simulated people per family | In-sample simulation only; the adaptive engine does not beat the plain interface for every family; no human accuracy claim |
+| Live companion timing | [Live Bench](docs/LIVE_BENCH.md), three typing personas: personal timing 45/45 catches, 0 false alarms, 1 cut-in; fixed 1.2 s rules 45/45, 2 false alarms, 19 cut-ins (9 November 2026) | 25 scripted scenarios and simulated people, not recordings of real sessions |
 | Plugins              | 6 manifests in the generated public catalog                                                   | Marketplace and local plugins remain capability-constrained                                    |
 | CI                   | Python, frontend, visual, Rust, marketplace, and installer gates                              | CI does not prove camera, microphone, speaker, EEG, or human accuracy                          |
 | Windows signing      | SignPath test-policy workflow signs and verifies EXE, MSI, and embedded application artifacts | The production certificate is pending; current public installers are not yet production-signed |
@@ -386,6 +387,7 @@ level = "balanced"           # "quiet", "balanced" or "proactive"
 read_focused_text = true     # the field you're typing in (Windows); never password fields
 listen_to_speech = true      # check what you say to Heliox, too
 ocr_fallback = false         # read the screen for errors when no field is readable
+personal_timing = true       # learn how long you pause mid-sentence, so it waits for a real break
 
 [co_adaptation]
 enabled = false              # the selection study; also needs a consent record per participant
@@ -465,6 +467,7 @@ Open a [bug report](https://github.com/VyomKulshrestha/Heliox-OS/issues/new/choo
 - [Neural intent research controls](docs/NEURAL_INTENT.md)
 - [Intelligence evaluation and research map](docs/INTELLIGENCE_EVALUATION.md)
 - [Assistance co-adaptation: model, consent and evidence](docs/COADAPTATION.md)
+- [Heliox Live Bench: when the live companion speaks up, measured](docs/LIVE_BENCH.md)
 - [Opt-in recorded workflows and local visual samples](docs/RECORDED_WORKFLOWS.md)
 - [Gnomon typed-decision model: training, gates and results](docs/GNOMON_TRAINING.md)
 - [Public decision-corpus adaptation log](docs/PUBLIC_CORPUS_ADAPTATION.md)

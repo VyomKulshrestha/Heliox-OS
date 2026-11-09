@@ -41,6 +41,11 @@ STORES: dict[str, tuple[str, str, str]] = {
         "live_relevance.json",
         "Which kinds of correction you found useful, so Heliox speaks up less about the ones you wave away.",
     ),
+    "live_timing": (
+        "Live companion timing",
+        "live_timing.json",
+        "How long you pause mid-sentence (numbers only, no text), so Heliox waits for a real break.",
+    ),
     "habits": ("Habits", "habits.json", "When you logged each habit."),
     "focus_history": ("Focus history", "focus_history.json", "When each focus session started and ended."),
     "todos": ("To-do list", "todos.json", "Things on your list, done or not."),

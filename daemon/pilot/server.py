@@ -1310,6 +1310,7 @@ class PilotServer:
             mute_kind=self._live_mute_kind,
             on_disable=self._live_reader.close,
             relevance_path=DATA_DIR / "live_relevance.json",
+            timing_path=DATA_DIR / "live_timing.json",
         )
         await self._live.start()
         from pilot.workflows.workspaces import WorkspaceStore
@@ -6726,11 +6727,10 @@ class PilotServer:
             return {"status": "error", "message": "The live companion is not ready yet."}
         if "paused" in params:
             self._live.set_paused(bool(params["paused"]))
-        values = {
-            key: params[key]
-            for key in ("enabled", "level", "read_focused_text", "ocr_fallback", "listen_to_speech", "muted_kinds")
-            if key in params
-        }
+        if params.get("reset_timing") is True:
+            self._live.timing.reset()
+        keys = ("enabled", "level", "read_focused_text", "ocr_fallback", "listen_to_speech", "personal_timing")
+        values = {key: params[key] for key in (*keys, "muted_kinds") if key in params}
         if values:
             result = await self._handle_update_config({"section": "live", "values": values}, None)
             if result.get("status") != "ok":
@@ -7315,6 +7315,8 @@ class PilotServer:
             await self._undo_journal.clear()
         else:
             await asyncio.to_thread(clear_store, DATA_DIR, key)
+            if key in ("live", "live_timing") and self._live is not None:
+                self._live.forget(key)  # or the next update would write the old numbers back
         return await self._handle_privacy_inventory({}, ws)
 
     async def _handle_timeline_forget(self, params: dict[str, Any], ws: ServerConnection) -> dict:
@@ -8511,7 +8513,13 @@ class PilotServer:
                     return {"status": "error", "message": "clipboard.history must be a boolean"}
                 if section == "suggestions" and k == "enabled" and not isinstance(v, bool):
                     return {"status": "error", "message": "suggestions.enabled must be a boolean"}
-                if section == "live" and k in {"enabled", "read_focused_text", "ocr_fallback", "listen_to_speech"}:
+                if section == "live" and k in {
+                    "enabled",
+                    "read_focused_text",
+                    "ocr_fallback",
+                    "listen_to_speech",
+                    "personal_timing",
+                }:
                     if not isinstance(v, bool):
                         return {"status": "error", "message": f"live.{k} must be a boolean"}
                 if section == "live" and k == "level" and v not in ("quiet", "balanced", "proactive"):

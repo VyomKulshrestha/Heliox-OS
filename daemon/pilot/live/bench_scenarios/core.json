@@ -1,0 +1,305 @@
+[
+  {
+    "name": "email: weekday that doesn't match the date, mid-sentence",
+    "app": "OUTLOOK.EXE",
+    "title": "RE: Q4 review - Message (HTML)",
+    "expect": ["weekday_date"],
+    "steps": [
+      {"type": "Hi Sam, can we move the review to Tuesday, 14 November at 3pm so that"},
+      {"pause": "think"},
+      {"type": " the whole team can join?"},
+      {"pause": "done"}
+    ]
+  },
+  {
+    "name": "chat: offsite on the wrong weekday",
+    "app": "slack.exe",
+    "title": "#team - Slack",
+    "expect": ["weekday_date"],
+    "steps": [
+      {"type": "Heads up, the offsite is on Thursday, 20 November and"},
+      {"pause": "think"},
+      {"type": " we leave the office at 9."},
+      {"pause": "done"}
+    ]
+  },
+  {
+    "name": "notes: wrong product in a budget line",
+    "app": "notepad.exe",
+    "title": "budget.txt - Notepad",
+    "expect": ["arithmetic"],
+    "steps": [
+      {"type": "Chairs: 12 x 15 = 170 for the new room, and"},
+      {"pause": "think"},
+      {"type": " the rest goes to catering."},
+      {"pause": "done"}
+    ]
+  },
+  {
+    "name": "document: wrong percentage",
+    "app": "WINWORD.EXE",
+    "title": "Pricing.docx - Word",
+    "expect": ["arithmetic"],
+    "steps": [
+      {"type": "The launch discount is 20% of 150 = 35, which"},
+      {"pause": "think"},
+      {"type": " we can still afford this quarter."},
+      {"pause": "done"}
+    ]
+  },
+  {
+    "name": "email: the wrong name for the manager",
+    "app": "chrome.exe",
+    "title": "Gmail - Compose",
+    "people": {"manager": "Priya"},
+    "expect": ["profile_fact"],
+    "steps": [
+      {"type": "I will send my manager Sarah the numbers once"},
+      {"pause": "think"},
+      {"type": " the report is ready."},
+      {"pause": "done"}
+    ]
+  },
+  {
+    "name": "notes: a doubled word",
+    "app": "notepad.exe",
+    "title": "launch.txt - Notepad",
+    "expect": ["repeated_word"],
+    "steps": [
+      {"type": "I think the the launch plan looks solid and"},
+      {"pause": "think"},
+      {"type": " we can ship it next week."},
+      {"pause": "done"}
+    ]
+  },
+  {
+    "name": "email: mentions an attachment",
+    "app": "chrome.exe",
+    "title": "Gmail - Compose - New message",
+    "expect": ["missing_attachment"],
+    "steps": [
+      {"type": "Hi all, please find attached the slides from"},
+      {"pause": "think"},
+      {"type": " this morning's session."},
+      {"pause": "done"}
+    ]
+  },
+  {
+    "name": "two slips in one paragraph",
+    "app": "WINWORD.EXE",
+    "title": "Plan.docx - Word",
+    "expect": ["weekday_date", "arithmetic"],
+    "steps": [
+      {"type": "Kickoff is Wednesday, 3 December. We need 8 x 6 = 54 seats and"},
+      {"pause": "think"},
+      {"type": " a projector for the main room."},
+      {"pause": "done"}
+    ]
+  },
+  {
+    "name": "terminal: force push, caught before Enter",
+    "app": "WindowsTerminal.exe",
+    "title": "PowerShell",
+    "start_text": "PS C:\\repo> ",
+    "expect": ["risky_command"],
+    "steps": [
+      {"type": "git push origin main --force"},
+      {"pause": 1.5, "label": "ready"},
+      {"send": true},
+      {"pause": 1.0, "label": "idle"}
+    ]
+  },
+  {
+    "name": "terminal: delete everything in a table",
+    "app": "dbeaver.exe",
+    "title": "DBeaver - SQL Editor",
+    "expect": ["risky_command"],
+    "steps": [
+      {"type": "DELETE FROM users;"},
+      {"pause": 1.5, "label": "ready"},
+      {"send": true},
+      {"pause": 1.0, "label": "idle"}
+    ]
+  },
+  {
+    "name": "chat: an API key pasted into a channel",
+    "app": "slack.exe",
+    "title": "#general - Slack",
+    "expect": ["secret_in_text"],
+    "steps": [
+      {"type": "here is the key for staging "},
+      {"paste": "sk-proj-Zx81mQe4Lr90TuVb27NcPk55aWdY"},
+      {"pause": 1.5, "label": "ready"},
+      {"send": true},
+      {"pause": 1.0, "label": "idle"}
+    ]
+  },
+  {
+    "name": "terminal: an error with a known fix",
+    "app": "WindowsTerminal.exe",
+    "title": "PowerShell",
+    "expect": ["error_on_screen"],
+    "steps": [
+      {"paste": "PS C:\\app> python main.py\nTraceback (most recent call last):\n  File \"main.py\", line 1, in <module>\nModuleNotFoundError: No module named 'cv2'\nPS C:\\app> "},
+      {"pause": 9.0, "label": "done"}
+    ]
+  },
+  {
+    "name": "speech: lunch on the wrong weekday",
+    "app": "",
+    "title": "",
+    "expect": ["weekday_date"],
+    "steps": [
+      {"say": "book lunch with Sam on Tuesday 14 November", "seconds": 2.6},
+      {"pause": 4.0, "label": "done"}
+    ]
+  },
+  {
+    "name": "speech: the wrong name for the manager",
+    "app": "",
+    "title": "",
+    "people": {"manager": "Priya"},
+    "expect": ["profile_fact"],
+    "steps": [
+      {"say": "remind me to call my manager Maria at five", "seconds": 2.8},
+      {"pause": 4.0, "label": "done"}
+    ]
+  },
+  {
+    "name": "decoy: the right weekday",
+    "app": "OUTLOOK.EXE",
+    "title": "Lunch - Message (HTML)",
+    "expect": [],
+    "steps": [
+      {"type": "See you Monday, 16 November at"},
+      {"pause": "think"},
+      {"type": " the usual place."},
+      {"pause": "done"}
+    ]
+  },
+  {
+    "name": "decoy: abbreviated and right",
+    "app": "slack.exe",
+    "title": "#planning - Slack",
+    "expect": [],
+    "steps": [
+      {"type": "Tue Nov 17 works for"},
+      {"pause": "think"},
+      {"type": " everyone on the list."},
+      {"pause": "done"}
+    ]
+  },
+  {
+    "name": "decoy: sums that are right",
+    "app": "notepad.exe",
+    "title": "check.txt - Notepad",
+    "expect": [],
+    "steps": [
+      {"type": "So 2 + 2 = 4 and 10 / 4 = 2.5, which means"},
+      {"pause": "think"},
+      {"type": " the totals check out."},
+      {"pause": "done"}
+    ]
+  },
+  {
+    "name": "decoy: code is not a claim",
+    "app": "Code.exe",
+    "title": "main.py - Visual Studio Code",
+    "expect": [],
+    "steps": [
+      {"type": "total = 5 + 3 = 9  # placeholder until"},
+      {"pause": "think"},
+      {"type": " the real numbers land"},
+      {"pause": "done"}
+    ]
+  },
+  {
+    "name": "decoy: a safe delete",
+    "app": "WindowsTerminal.exe",
+    "title": "bash",
+    "start_text": "$ ",
+    "expect": [],
+    "steps": [
+      {"type": "rm -rf /tmp/build"},
+      {"pause": 1.5, "label": "ready"},
+      {"send": true},
+      {"pause": 1.0, "label": "idle"}
+    ]
+  },
+  {
+    "name": "decoy: the safer force push",
+    "app": "WindowsTerminal.exe",
+    "title": "PowerShell",
+    "start_text": "PS C:\\repo> ",
+    "expect": [],
+    "steps": [
+      {"type": "git push origin feature --force-with-lease"},
+      {"pause": 1.5, "label": "ready"},
+      {"send": true},
+      {"pause": 1.0, "label": "idle"}
+    ]
+  },
+  {
+    "name": "decoy: the right manager",
+    "app": "chrome.exe",
+    "title": "Gmail - Compose",
+    "people": {"manager": "Priya"},
+    "expect": [],
+    "steps": [
+      {"type": "Lunch with my manager Priya and"},
+      {"pause": "think"},
+      {"type": " the new hire on Friday."},
+      {"pause": "done"}
+    ]
+  },
+  {
+    "name": "decoy: a repeat that is grammar",
+    "app": "notepad.exe",
+    "title": "retro.txt - Notepad",
+    "expect": [],
+    "steps": [
+      {"type": "Honestly I had had enough of"},
+      {"pause": "think"},
+      {"type": " the old release process."},
+      {"pause": "done"}
+    ]
+  },
+  {
+    "name": "decoy: a doubled word that is only half typed",
+    "app": "notepad.exe",
+    "title": "talk.txt - Notepad",
+    "expect": [],
+    "steps": [
+      {"type": "The talk covers the the"},
+      {"pause": "think"},
+      {"type": "me of local-first software."},
+      {"pause": "done"}
+    ]
+  },
+  {
+    "name": "decoy: the person fixes the date themselves",
+    "app": "OUTLOOK.EXE",
+    "title": "Retro - Message (HTML)",
+    "expect": [],
+    "steps": [
+      {"type": "Can we do the retro on Tuesday, 25 November with"},
+      {"pause": "think"},
+      {"replace": ["25 November", "24 November"]},
+      {"type": " everyone who worked on the launch?"},
+      {"pause": "done"}
+    ]
+  },
+  {
+    "name": "decoy: the person corrects the sum themselves",
+    "app": "notepad.exe",
+    "title": "seats.txt - Notepad",
+    "expect": [],
+    "steps": [
+      {"type": "Seats: 9 x 7 = 56 plus"},
+      {"pause": "think"},
+      {"replace": ["= 56", "= 63"]},
+      {"type": " four for guests."},
+      {"pause": "done"}
+    ]
+  }
+]

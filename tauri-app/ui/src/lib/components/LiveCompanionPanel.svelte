@@ -5,8 +5,18 @@
   import { settings } from "../stores/settings";
 
   type Kind = { kind: string; label: string };
+  type Timing = {
+    mid_sentence_seconds: number;
+    boundary_seconds: number;
+    default_seconds: number;
+    learned_from: number;
+    cut_offs: number;
+    well_timed: number;
+  };
+  type Status = { status: string; kinds?: Kind[]; reads_focused_text?: boolean; timing?: Timing };
 
   let kinds = $state<Kind[]>([]);
+  let timing = $state<Timing | null>(null);
   let readsFocusedText = $state(true);
   let error = $state("");
   let saving = $state(false);
@@ -18,9 +28,28 @@
       read_focused_text: true,
       ocr_fallback: false,
       listen_to_speech: true,
+      personal_timing: true,
       muted_kinds: [],
     },
   );
+  let learnsTiming = $derived(cfg.personal_timing !== false);
+
+  function timingSummary(t: Timing): string {
+    if (!t.learned_from) return `Still learning how you type. Until then it waits the usual ${t.default_seconds} s.`;
+    const pauses = t.learned_from === 1 ? "1 pause" : `${t.learned_from} pauses`;
+    let text = `Mid-sentence it now waits ${t.mid_sentence_seconds} s before speaking up, learned from ${pauses}.`;
+    if (t.cut_offs) text += ` It cut in on you ${t.cut_offs === 1 ? "once" : `${t.cut_offs} times`} and waits longer since.`;
+    return text;
+  }
+
+  async function resetTiming() {
+    try {
+      const status = await call<Status>("live_set", { reset_timing: true });
+      if (status.status === "ok") timing = status.timing ?? null;
+    } catch {
+      error = "Couldn't reset the timing. Is the daemon running?";
+    }
+  }
 
   const LEVELS = [
     { value: "quiet", label: "Quiet", hint: "Speaks only for risky things; the rest are cards." },
@@ -45,10 +74,11 @@
 
   onMount(async () => {
     try {
-      const status = await call<{ status: string; kinds?: Kind[]; reads_focused_text?: boolean }>("live_status");
+      const status = await call<Status>("live_status");
       if (status.status === "ok") {
         kinds = status.kinds ?? [];
         readsFocusedText = status.reads_focused_text !== false;
+        timing = status.timing ?? null;
       }
     } catch {
       /* shown without the per-kind list until the daemon answers */
@@ -101,6 +131,29 @@
   </div>
 
   <div class="block">
+    <span class="block-label">Your timing</span>
+    <label class="check">
+      <input
+        type="checkbox"
+        checked={learnsTiming}
+        onchange={(e) => save({ personal_timing: (e.currentTarget as HTMLInputElement).checked })}
+      />
+      <span
+        >Learn how long you pause in the middle of a sentence, so it waits for a real break instead of cutting in while
+        you think. Risky commands still get flagged at the first short pause.</span
+      >
+    </label>
+    {#if timing && learnsTiming}
+      <div class="timing" data-testid="live-timing">
+        <span>{timingSummary(timing)}</span>
+        {#if timing.learned_from || timing.cut_offs}
+          <button class="text-button" onclick={resetTiming}>Start over</button>
+        {/if}
+      </div>
+    {/if}
+  </div>
+
+  <div class="block">
     <span class="block-label">What it may notice</span>
     <label class="check">
       <input
@@ -150,8 +203,9 @@
   {/if}
 
   <p class="privacy">
-    What it reads stays on this computer and in memory. Only which kinds of correction you found useful is kept, so it
-    speaks up less about the ones you wave away; clear it in Your data.
+    What it reads stays on this computer and in memory. Two things are kept: which kinds of correction you found useful,
+    so it speaks up less about the ones you wave away, and how long your pauses last (numbers, never text). Clear either
+    in Your data.
   </p>
 </section>
 
@@ -265,6 +319,36 @@
     flex: none;
     margin-top: 2px;
     accent-color: var(--accent);
+  }
+
+  .timing {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 12px;
+    padding-left: 25px;
+    font-size: var(--text-xs);
+    color: var(--text-secondary);
+  }
+
+  .text-button {
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--accent);
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .text-button:hover {
+    text-decoration: underline;
+  }
+
+  .text-button:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 2px;
   }
 
   .kinds {

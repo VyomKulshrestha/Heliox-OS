@@ -1,0 +1,1024 @@
+[
+  {
+    "policy": "rules",
+    "persona": "quick",
+    "expected": 15,
+    "catches": 15,
+    "missed": 0,
+    "false_alarms": 0,
+    "cut_offs": 0,
+    "deliveries": 15,
+    "precision": 1.0,
+    "recall": 1.0,
+    "cut_off_rate": 0.0,
+    "median_wait_seconds": 1.51,
+    "learned_mid_sentence_seconds": 1.2,
+    "details": [
+      {
+        "scenario": "email: weekday that doesn't match the date, mid-sentence",
+        "kind": "weekday_date",
+        "at": 14.0,
+        "label": "done",
+        "expected": true,
+        "wait": 1.51,
+        "spoken": true,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "chat: offsite on the wrong weekday",
+        "kind": "weekday_date",
+        "at": 12.2,
+        "label": "done",
+        "expected": true,
+        "wait": 1.52,
+        "spoken": false,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "notes: wrong product in a budget line",
+        "kind": "arithmetic",
+        "at": 11.0,
+        "label": "done",
+        "expected": true,
+        "wait": 1.28,
+        "spoken": false,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "document: wrong percentage",
+        "kind": "arithmetic",
+        "at": 12.4,
+        "label": "done",
+        "expected": true,
+        "wait": 1.7,
+        "spoken": false,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "email: the wrong name for the manager",
+        "kind": "profile_fact",
+        "at": 10.2,
+        "label": "done",
+        "expected": true,
+        "wait": 1.13,
+        "spoken": false,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "notes: a doubled word",
+        "kind": "repeated_word",
+        "at": 11.0,
+        "label": "done",
+        "expected": true,
+        "wait": 1.64,
+        "spoken": false,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "email: mentions an attachment",
+        "kind": "missing_attachment",
+        "at": 11.0,
+        "label": "done",
+        "expected": true,
+        "wait": 1.77,
+        "spoken": false,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "two slips in one paragraph",
+        "kind": "weekday_date",
+        "at": 14.0,
+        "label": "done",
+        "expected": true,
+        "wait": 1.54,
+        "spoken": true,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "two slips in one paragraph",
+        "kind": "arithmetic",
+        "at": 14.0,
+        "label": "done",
+        "expected": true,
+        "wait": 1.54,
+        "spoken": true,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "terminal: force push, caught before Enter",
+        "kind": "risky_command",
+        "at": 4.6,
+        "label": "ready",
+        "expected": true,
+        "wait": 1.1,
+        "spoken": true,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "terminal: delete everything in a table",
+        "kind": "risky_command",
+        "at": 3.0,
+        "label": "ready",
+        "expected": true,
+        "wait": 0.75,
+        "spoken": true,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "chat: an API key pasted into a channel",
+        "kind": "secret_in_text",
+        "at": 4.4,
+        "label": "ready",
+        "expected": true,
+        "wait": 0.7,
+        "spoken": true,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "terminal: an error with a known fix",
+        "kind": "error_on_screen",
+        "at": 5.6,
+        "label": "done",
+        "expected": true,
+        "wait": 5.4,
+        "spoken": false,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "speech: lunch on the wrong weekday",
+        "kind": "weekday_date",
+        "at": 3.0,
+        "label": "done",
+        "expected": true,
+        "wait": 0.4,
+        "spoken": true,
+        "source": "speech"
+      },
+      {
+        "scenario": "speech: the wrong name for the manager",
+        "kind": "profile_fact",
+        "at": 3.4,
+        "label": "done",
+        "expected": true,
+        "wait": 0.6,
+        "spoken": true,
+        "source": "speech"
+      }
+    ]
+  },
+  {
+    "policy": "rules",
+    "persona": "steady",
+    "expected": 15,
+    "catches": 15,
+    "missed": 0,
+    "false_alarms": 0,
+    "cut_offs": 8,
+    "deliveries": 15,
+    "precision": 1.0,
+    "recall": 1.0,
+    "cut_off_rate": 0.533,
+    "median_wait_seconds": 0.91,
+    "learned_mid_sentence_seconds": 1.2,
+    "details": [
+      {
+        "scenario": "email: weekday that doesn't match the date, mid-sentence",
+        "kind": "weekday_date",
+        "at": 14.0,
+        "label": "think",
+        "expected": true,
+        "wait": null,
+        "spoken": true,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "chat: offsite on the wrong weekday",
+        "kind": "weekday_date",
+        "at": 11.0,
+        "label": "think",
+        "expected": true,
+        "wait": null,
+        "spoken": false,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "notes: wrong product in a budget line",
+        "kind": "arithmetic",
+        "at": 9.4,
+        "label": "think",
+        "expected": true,
+        "wait": null,
+        "spoken": false,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "document: wrong percentage",
+        "kind": "arithmetic",
+        "at": 9.6,
+        "label": "think",
+        "expected": true,
+        "wait": null,
+        "spoken": false,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "email: the wrong name for the manager",
+        "kind": "profile_fact",
+        "at": 9.4,
+        "label": "think",
+        "expected": true,
+        "wait": null,
+        "spoken": false,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "notes: a doubled word",
+        "kind": "repeated_word",
+        "at": 15.2,
+        "label": "done",
+        "expected": true,
+        "wait": 1.12,
+        "spoken": false,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "email: mentions an attachment",
+        "kind": "missing_attachment",
+        "at": 9.4,
+        "label": "think",
+        "expected": true,
+        "wait": null,
+        "spoken": false,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "two slips in one paragraph",
+        "kind": "weekday_date",
+        "at": 12.6,
+        "label": "think",
+        "expected": true,
+        "wait": null,
+        "spoken": false,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "two slips in one paragraph",
+        "kind": "arithmetic",
+        "at": 12.6,
+        "label": "think",
+        "expected": true,
+        "wait": null,
+        "spoken": false,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "terminal: force push, caught before Enter",
+        "kind": "risky_command",
+        "at": 6.0,
+        "label": "ready",
+        "expected": true,
+        "wait": 0.91,
+        "spoken": true,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "terminal: delete everything in a table",
+        "kind": "risky_command",
+        "at": 4.4,
+        "label": "ready",
+        "expected": true,
+        "wait": 1.13,
+        "spoken": true,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "chat: an API key pasted into a channel",
+        "kind": "secret_in_text",
+        "at": 6.0,
+        "label": "ready",
+        "expected": true,
+        "wait": 0.71,
+        "spoken": true,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "terminal: an error with a known fix",
+        "kind": "error_on_screen",
+        "at": 5.8,
+        "label": "done",
+        "expected": true,
+        "wait": 5.6,
+        "spoken": false,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "speech: lunch on the wrong weekday",
+        "kind": "weekday_date",
+        "at": 3.0,
+        "label": "done",
+        "expected": true,
+        "wait": 0.4,
+        "spoken": false,
+        "source": "speech"
+      },
+      {
+        "scenario": "speech: the wrong name for the manager",
+        "kind": "profile_fact",
+        "at": 3.4,
+        "label": "done",
+        "expected": true,
+        "wait": 0.6,
+        "spoken": true,
+        "source": "speech"
+      }
+    ]
+  },
+  {
+    "policy": "rules",
+    "persona": "thinker",
+    "expected": 15,
+    "catches": 15,
+    "missed": 0,
+    "false_alarms": 2,
+    "cut_offs": 11,
+    "deliveries": 17,
+    "precision": 0.882,
+    "recall": 1.0,
+    "cut_off_rate": 0.647,
+    "median_wait_seconds": 0.75,
+    "learned_mid_sentence_seconds": 1.2,
+    "details": [
+      {
+        "scenario": "email: weekday that doesn't match the date, mid-sentence",
+        "kind": "weekday_date",
+        "at": 18.4,
+        "label": "think",
+        "expected": true,
+        "wait": null,
+        "spoken": true,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "chat: offsite on the wrong weekday",
+        "kind": "weekday_date",
+        "at": 14.6,
+        "label": "think",
+        "expected": true,
+        "wait": null,
+        "spoken": false,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "notes: wrong product in a budget line",
+        "kind": "arithmetic",
+        "at": 12.4,
+        "label": "think",
+        "expected": true,
+        "wait": null,
+        "spoken": false,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "document: wrong percentage",
+        "kind": "arithmetic",
+        "at": 12.4,
+        "label": "think",
+        "expected": true,
+        "wait": null,
+        "spoken": false,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "email: the wrong name for the manager",
+        "kind": "profile_fact",
+        "at": 12.6,
+        "label": "think",
+        "expected": true,
+        "wait": null,
+        "spoken": true,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "notes: a doubled word",
+        "kind": "repeated_word",
+        "at": 11.8,
+        "label": "think",
+        "expected": true,
+        "wait": null,
+        "spoken": false,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "email: mentions an attachment",
+        "kind": "missing_attachment",
+        "at": 12.4,
+        "label": "think",
+        "expected": true,
+        "wait": null,
+        "spoken": false,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "two slips in one paragraph",
+        "kind": "weekday_date",
+        "at": 17.0,
+        "label": "think",
+        "expected": true,
+        "wait": null,
+        "spoken": false,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "two slips in one paragraph",
+        "kind": "arithmetic",
+        "at": 17.0,
+        "label": "think",
+        "expected": true,
+        "wait": null,
+        "spoken": false,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "terminal: force push, caught before Enter",
+        "kind": "risky_command",
+        "at": 7.6,
+        "label": "ready",
+        "expected": true,
+        "wait": 0.6,
+        "spoken": true,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "terminal: delete everything in a table",
+        "kind": "risky_command",
+        "at": 5.4,
+        "label": "ready",
+        "expected": true,
+        "wait": 0.9,
+        "spoken": true,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "chat: an API key pasted into a channel",
+        "kind": "secret_in_text",
+        "at": 8.2,
+        "label": "ready",
+        "expected": true,
+        "wait": 1.0,
+        "spoken": true,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "terminal: an error with a known fix",
+        "kind": "error_on_screen",
+        "at": 5.8,
+        "label": "done",
+        "expected": true,
+        "wait": 5.6,
+        "spoken": false,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "speech: lunch on the wrong weekday",
+        "kind": "weekday_date",
+        "at": 3.2,
+        "label": "done",
+        "expected": true,
+        "wait": 0.6,
+        "spoken": false,
+        "source": "speech"
+      },
+      {
+        "scenario": "speech: the wrong name for the manager",
+        "kind": "profile_fact",
+        "at": 3.4,
+        "label": "done",
+        "expected": true,
+        "wait": 0.6,
+        "spoken": true,
+        "source": "speech"
+      },
+      {
+        "scenario": "decoy: the person fixes the date themselves",
+        "kind": "weekday_date",
+        "at": 13.4,
+        "label": "think",
+        "expected": false,
+        "wait": null,
+        "spoken": false,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "decoy: the person corrects the sum themselves",
+        "kind": "arithmetic",
+        "at": 7.2,
+        "label": "think",
+        "expected": false,
+        "wait": null,
+        "spoken": false,
+        "source": "focused_field"
+      }
+    ]
+  },
+  {
+    "policy": "personal",
+    "persona": "quick",
+    "expected": 15,
+    "catches": 15,
+    "missed": 0,
+    "false_alarms": 0,
+    "cut_offs": 0,
+    "deliveries": 15,
+    "precision": 1.0,
+    "recall": 1.0,
+    "cut_off_rate": 0.0,
+    "median_wait_seconds": 1.34,
+    "learned_mid_sentence_seconds": 1.49,
+    "details": [
+      {
+        "scenario": "email: weekday that doesn't match the date, mid-sentence",
+        "kind": "weekday_date",
+        "at": 14.0,
+        "label": "done",
+        "expected": true,
+        "wait": 1.51,
+        "spoken": true,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "chat: offsite on the wrong weekday",
+        "kind": "weekday_date",
+        "at": 12.2,
+        "label": "done",
+        "expected": true,
+        "wait": 1.52,
+        "spoken": false,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "notes: wrong product in a budget line",
+        "kind": "arithmetic",
+        "at": 10.8,
+        "label": "done",
+        "expected": true,
+        "wait": 1.08,
+        "spoken": false,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "document: wrong percentage",
+        "kind": "arithmetic",
+        "at": 12.4,
+        "label": "done",
+        "expected": true,
+        "wait": 1.7,
+        "spoken": false,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "email: the wrong name for the manager",
+        "kind": "profile_fact",
+        "at": 10.2,
+        "label": "done",
+        "expected": true,
+        "wait": 1.13,
+        "spoken": false,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "notes: a doubled word",
+        "kind": "repeated_word",
+        "at": 11.0,
+        "label": "done",
+        "expected": true,
+        "wait": 1.64,
+        "spoken": false,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "email: mentions an attachment",
+        "kind": "missing_attachment",
+        "at": 11.0,
+        "label": "done",
+        "expected": true,
+        "wait": 1.77,
+        "spoken": false,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "two slips in one paragraph",
+        "kind": "weekday_date",
+        "at": 13.8,
+        "label": "done",
+        "expected": true,
+        "wait": 1.34,
+        "spoken": true,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "two slips in one paragraph",
+        "kind": "arithmetic",
+        "at": 13.8,
+        "label": "done",
+        "expected": true,
+        "wait": 1.34,
+        "spoken": true,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "terminal: force push, caught before Enter",
+        "kind": "risky_command",
+        "at": 4.6,
+        "label": "ready",
+        "expected": true,
+        "wait": 1.1,
+        "spoken": true,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "terminal: delete everything in a table",
+        "kind": "risky_command",
+        "at": 3.0,
+        "label": "ready",
+        "expected": true,
+        "wait": 0.75,
+        "spoken": true,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "chat: an API key pasted into a channel",
+        "kind": "secret_in_text",
+        "at": 4.4,
+        "label": "ready",
+        "expected": true,
+        "wait": 0.7,
+        "spoken": true,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "terminal: an error with a known fix",
+        "kind": "error_on_screen",
+        "at": 5.6,
+        "label": "done",
+        "expected": true,
+        "wait": 5.4,
+        "spoken": false,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "speech: lunch on the wrong weekday",
+        "kind": "weekday_date",
+        "at": 3.0,
+        "label": "done",
+        "expected": true,
+        "wait": 0.4,
+        "spoken": true,
+        "source": "speech"
+      },
+      {
+        "scenario": "speech: the wrong name for the manager",
+        "kind": "profile_fact",
+        "at": 3.4,
+        "label": "done",
+        "expected": true,
+        "wait": 0.6,
+        "spoken": true,
+        "source": "speech"
+      }
+    ]
+  },
+  {
+    "policy": "personal",
+    "persona": "steady",
+    "expected": 15,
+    "catches": 15,
+    "missed": 0,
+    "false_alarms": 0,
+    "cut_offs": 0,
+    "deliveries": 15,
+    "precision": 1.0,
+    "recall": 1.0,
+    "cut_off_rate": 0.0,
+    "median_wait_seconds": 1.32,
+    "learned_mid_sentence_seconds": 1.75,
+    "details": [
+      {
+        "scenario": "email: weekday that doesn't match the date, mid-sentence",
+        "kind": "weekday_date",
+        "at": 20.0,
+        "label": "done",
+        "expected": true,
+        "wait": 1.33,
+        "spoken": true,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "chat: offsite on the wrong weekday",
+        "kind": "weekday_date",
+        "at": 17.8,
+        "label": "done",
+        "expected": true,
+        "wait": 1.74,
+        "spoken": false,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "notes: wrong product in a budget line",
+        "kind": "arithmetic",
+        "at": 16.0,
+        "label": "done",
+        "expected": true,
+        "wait": 1.57,
+        "spoken": false,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "document: wrong percentage",
+        "kind": "arithmetic",
+        "at": 17.0,
+        "label": "done",
+        "expected": true,
+        "wait": 1.18,
+        "spoken": false,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "email: the wrong name for the manager",
+        "kind": "profile_fact",
+        "at": 15.0,
+        "label": "done",
+        "expected": true,
+        "wait": 1.18,
+        "spoken": false,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "notes: a doubled word",
+        "kind": "repeated_word",
+        "at": 15.4,
+        "label": "done",
+        "expected": true,
+        "wait": 1.32,
+        "spoken": false,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "email: mentions an attachment",
+        "kind": "missing_attachment",
+        "at": 16.0,
+        "label": "done",
+        "expected": true,
+        "wait": 1.77,
+        "spoken": false,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "two slips in one paragraph",
+        "kind": "weekday_date",
+        "at": 20.0,
+        "label": "done",
+        "expected": true,
+        "wait": 1.71,
+        "spoken": true,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "two slips in one paragraph",
+        "kind": "arithmetic",
+        "at": 20.0,
+        "label": "done",
+        "expected": true,
+        "wait": 1.71,
+        "spoken": true,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "terminal: force push, caught before Enter",
+        "kind": "risky_command",
+        "at": 6.0,
+        "label": "ready",
+        "expected": true,
+        "wait": 0.91,
+        "spoken": true,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "terminal: delete everything in a table",
+        "kind": "risky_command",
+        "at": 4.4,
+        "label": "ready",
+        "expected": true,
+        "wait": 1.13,
+        "spoken": true,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "chat: an API key pasted into a channel",
+        "kind": "secret_in_text",
+        "at": 6.0,
+        "label": "ready",
+        "expected": true,
+        "wait": 0.71,
+        "spoken": true,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "terminal: an error with a known fix",
+        "kind": "error_on_screen",
+        "at": 5.8,
+        "label": "done",
+        "expected": true,
+        "wait": 5.6,
+        "spoken": false,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "speech: lunch on the wrong weekday",
+        "kind": "weekday_date",
+        "at": 3.0,
+        "label": "done",
+        "expected": true,
+        "wait": 0.4,
+        "spoken": true,
+        "source": "speech"
+      },
+      {
+        "scenario": "speech: the wrong name for the manager",
+        "kind": "profile_fact",
+        "at": 3.4,
+        "label": "done",
+        "expected": true,
+        "wait": 0.6,
+        "spoken": true,
+        "source": "speech"
+      }
+    ]
+  },
+  {
+    "policy": "personal",
+    "persona": "thinker",
+    "expected": 15,
+    "catches": 15,
+    "missed": 0,
+    "false_alarms": 0,
+    "cut_offs": 1,
+    "deliveries": 15,
+    "precision": 1.0,
+    "recall": 1.0,
+    "cut_off_rate": 0.067,
+    "median_wait_seconds": 1.49,
+    "learned_mid_sentence_seconds": 3.21,
+    "details": [
+      {
+        "scenario": "email: weekday that doesn't match the date, mid-sentence",
+        "kind": "weekday_date",
+        "at": 27.4,
+        "label": "done",
+        "expected": true,
+        "wait": 1.41,
+        "spoken": true,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "chat: offsite on the wrong weekday",
+        "kind": "weekday_date",
+        "at": 23.6,
+        "label": "done",
+        "expected": true,
+        "wait": 1.71,
+        "spoken": false,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "notes: wrong product in a budget line",
+        "kind": "arithmetic",
+        "at": 21.4,
+        "label": "done",
+        "expected": true,
+        "wait": 1.52,
+        "spoken": false,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "document: wrong percentage",
+        "kind": "arithmetic",
+        "at": 23.6,
+        "label": "done",
+        "expected": true,
+        "wait": 1.48,
+        "spoken": false,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "email: the wrong name for the manager",
+        "kind": "profile_fact",
+        "at": 14.4,
+        "label": "think",
+        "expected": true,
+        "wait": null,
+        "spoken": true,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "notes: a doubled word",
+        "kind": "repeated_word",
+        "at": 21.6,
+        "label": "done",
+        "expected": true,
+        "wait": 1.64,
+        "spoken": false,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "email: mentions an attachment",
+        "kind": "missing_attachment",
+        "at": 21.6,
+        "label": "done",
+        "expected": true,
+        "wait": 1.55,
+        "spoken": false,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "two slips in one paragraph",
+        "kind": "weekday_date",
+        "at": 27.6,
+        "label": "done",
+        "expected": true,
+        "wait": 1.5,
+        "spoken": false,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "two slips in one paragraph",
+        "kind": "arithmetic",
+        "at": 27.6,
+        "label": "done",
+        "expected": true,
+        "wait": 1.5,
+        "spoken": false,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "terminal: force push, caught before Enter",
+        "kind": "risky_command",
+        "at": 7.6,
+        "label": "ready",
+        "expected": true,
+        "wait": 0.6,
+        "spoken": true,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "terminal: delete everything in a table",
+        "kind": "risky_command",
+        "at": 5.4,
+        "label": "ready",
+        "expected": true,
+        "wait": 0.9,
+        "spoken": true,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "chat: an API key pasted into a channel",
+        "kind": "secret_in_text",
+        "at": 8.2,
+        "label": "ready",
+        "expected": true,
+        "wait": 1.0,
+        "spoken": true,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "terminal: an error with a known fix",
+        "kind": "error_on_screen",
+        "at": 5.8,
+        "label": "done",
+        "expected": true,
+        "wait": 5.6,
+        "spoken": false,
+        "source": "focused_field"
+      },
+      {
+        "scenario": "speech: lunch on the wrong weekday",
+        "kind": "weekday_date",
+        "at": 3.2,
+        "label": "done",
+        "expected": true,
+        "wait": 0.6,
+        "spoken": true,
+        "source": "speech"
+      },
+      {
+        "scenario": "speech: the wrong name for the manager",
+        "kind": "profile_fact",
+        "at": 3.4,
+        "label": "done",
+        "expected": true,
+        "wait": 0.6,
+        "spoken": true,
+        "source": "speech"
+      }
+    ]
+  }
+]

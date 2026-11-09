@@ -485,6 +485,8 @@ class LiveConfig:
     read_focused_text: bool = True
     ocr_fallback: bool = False  # read the screen when no text field is readable; heavier, so off by default
     listen_to_speech: bool = True
+    # Learn how long this person pauses mid-sentence, and wait for a real break (pilot.live.timing).
+    personal_timing: bool = True
     muted_kinds: list[str] = field(default_factory=list)
 
 
@@ -1139,6 +1141,7 @@ def _validate_config_types(raw: dict) -> None:
             "read_focused_text": bool,
             "ocr_fallback": bool,
             "listen_to_speech": bool,
+            "personal_timing": bool,
             "muted_kinds": list,
         },
         "supervision": {
@@ -1496,7 +1499,7 @@ def _merge_config(config: PilotConfig, raw: dict[str, Any]) -> PilotConfig:
 
     if "live" in raw and isinstance(raw["live"], dict):
         l_raw = raw["live"]
-        for key in ("enabled", "read_focused_text", "ocr_fallback", "listen_to_speech"):
+        for key in ("enabled", "read_focused_text", "ocr_fallback", "listen_to_speech", "personal_timing"):
             setattr(config.live, key, bool(l_raw.get(key, getattr(config.live, key))))
         if l_raw.get("level") in ("quiet", "balanced", "proactive"):
             config.live.level = str(l_raw["level"])
