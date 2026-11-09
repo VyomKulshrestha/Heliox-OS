@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from types import SimpleNamespace
 
 import pytest
@@ -303,3 +303,15 @@ async def test_disabled_or_paused_does_nothing_and_stop_withdraws(tmp_path):
     await live.stop()
     assert ("live_interjection_withdrawn", {"id": card["id"], "reason": "off"}) in events
     assert live.status()["enabled"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("hour,expected", [(4, 0), (5, 1)])
+async def test_engine_passes_its_own_hour_to_the_relative_day_rule(tmp_path, hour, expected):
+    text = ["Standup is tomorrow, Thursday at 9."]  # the engine's day is Monday, so tomorrow is Tuesday
+    live, clock, events, _, _, _ = build(tmp_path, text, wallclock=lambda: datetime(2026, 11, 9, hour, 30))
+    await run_for(live, clock, 8)
+    await settle()
+    assert live._context(None, "focused_field").hour == hour
+    cards = [p for e, p in events if e == "live_interjection" and p["kind"] == "weekday_date"]
+    assert len(cards) == expected

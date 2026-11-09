@@ -177,3 +177,54 @@ def test_classify_resource_shortage():
     assert oom is not None and oom.resource == "graphics memory" and oom.required_bytes is None
     assert classify_resource_shortage(RuntimeError("CUDA is required for this opt-in local research model")) is None
     assert classify_resource_shortage(FileNotFoundError("Missing local model artifact")) is None
+
+
+CUDA_STICKY = (
+    "CUDA error: unknown error ... Sticky error detected ... Returning 999 (CUDA_ERROR_UNKNOWN) from cuMemGetInfo"
+)
+
+
+@pytest.mark.parametrize(
+    "message",
+    [CUDA_STICKY, "CUDA error: device-side assert triggered", "CUDA error: an illegal memory access was encountered"],
+)
+async def test_driver_error_does_not_retry_and_says_so(monkeypatch, message):
+    monkeypatch.setattr(gnomon_reviewer, "RETRY_AFTER_FAILURE_SECONDS", 0.0)
+    engine = _Engine(message)
+    reviewer = await _failed(engine)
+    status = reviewer.status()
+    assert status["reason"] == "The graphics driver reported an error while loading. Restart Heliox to try again."
+    assert status["last_error"] == message[:300]
+    assert status["retrying"] is False and status["waiting_for"] is None
+
+    reviewer.warm()
+    await asyncio.sleep(TICK * 10)
+    assert engine.loads == 1 and reviewer.status()["state"] == "unavailable"
+    await reviewer.close()
+
+
+async def test_memory_shortage_still_retries(free_memory):
+    engine = _Engine(VRAM_ERROR)
+    reviewer = await _failed(engine)
+    assert await _until(lambda: reviewer.status()["retrying"])
+    engine.fail = False
+    free_memory["ram"], free_memory["gpu"] = 6.0, 8.0
+    assert await _until(lambda: reviewer.status()["state"] == "ready")
+    assert engine.loads == 2
+    await reviewer.close()
+
+
+async def test_ordinary_failure_cools_down_then_retries(monkeypatch):
+    engine = _Engine("model files are missing")
+    reviewer = await _failed(engine)
+    assert reviewer.status()["reason"].startswith("Could not load")
+    reviewer.warm()
+    await asyncio.sleep(TICK * 3)
+    assert engine.loads == 1  # still cooling down
+
+    monkeypatch.setattr(gnomon_reviewer, "RETRY_AFTER_FAILURE_SECONDS", 0.0)
+    engine.fail = False
+    reviewer.warm()
+    assert await _until(lambda: reviewer.status()["state"] == "ready")
+    assert engine.loads == 2
+    await reviewer.close()

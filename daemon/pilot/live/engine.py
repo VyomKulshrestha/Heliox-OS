@@ -258,6 +258,7 @@ class LiveCompanion:
     def _context(self, obs: Observation | None, source: str) -> TextContext:
         return TextContext(
             today=self._today(),
+            hour=self._wallclock().hour,
             app=obs.app if obs else "",
             title=obs.title if obs else "",
             source=source,

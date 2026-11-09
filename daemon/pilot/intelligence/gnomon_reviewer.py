@@ -110,6 +110,23 @@ def classify_resource_shortage(error: BaseException) -> ResourceShortage | None:
     return None
 
 
+# Messages that mean the CUDA context itself is broken. Nothing recovers it inside this process.
+_DRIVER_ERROR_MARKERS = (
+    "cuda error: unknown error",
+    "cuda_error_unknown",
+    "sticky error",
+    "device-side assert",
+    "cuda error: an illegal memory access",
+)
+DRIVER_ERROR_REASON = "The graphics driver reported an error while loading. Restart Heliox to try again."
+
+
+def is_driver_error(error: BaseException) -> bool:
+    """True when a load failure says the CUDA context is unrecoverable (not a memory shortage)."""
+    lowered = str(error).lower()
+    return any(marker in lowered for marker in _DRIVER_ERROR_MARKERS)
+
+
 def _free_host_memory() -> int | None:
     try:
         import psutil
@@ -264,6 +281,7 @@ class GnomonReviewer:
         self._resource_failures = 0  # load attempts in a row that failed for lack of memory
         self._resource_task: asyncio.Task[None] | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._driver_error = False  # the CUDA context is broken; only a restart helps
         self._closed = False
 
     # -- lifecycle -------------------------------------------------------
@@ -295,6 +313,8 @@ class GnomonReviewer:
                 "free_gb": round(shortage.free_bytes / GIB, 1) if shortage.free_bytes is not None else None,
             }
             status["retrying"] = retrying
+        elif state == "unavailable" and self._driver_error:
+            status["reason"] = DRIVER_ERROR_REASON
         elif state == "unavailable":
             status["reason"] = f"Could not load: {self._last_error}" if self._last_error else "Could not load."
         return status
@@ -304,6 +324,8 @@ class GnomonReviewer:
         if self._state in {"loading", "ready"}:
             return
         if self._state == "unavailable":
+            if self._driver_error:
+                return  # a broken graphics driver context cannot recover inside this process
             if self._resource_task is not None and not self._resource_task.done():
                 return  # the memory watch owns retries while memory is short
             if time.monotonic() - self._failed_at < RETRY_AFTER_FAILURE_SECONDS:
@@ -335,6 +357,7 @@ class GnomonReviewer:
             else:
                 self._resource_failures = 0
             self._shortage = shortage
+            self._driver_error = shortage is None and is_driver_error(error)
             self._last_error = str(error)[:300] or type(error).__name__
             self._failed_at = time.monotonic()
             self._state = "unavailable"
@@ -349,6 +372,7 @@ class GnomonReviewer:
         self._loaded_engine = engine
         self._last_used = time.monotonic()
         self._shortage = None
+        self._driver_error = False
         self._resource_failures = 0
         self._last_error = ""
         self._state = "ready"
