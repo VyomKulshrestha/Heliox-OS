@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -19,9 +20,8 @@ logger = logging.getLogger("pilot.models.budget_tracker")
 # (input_usd, output_usd) per 1 000 tokens
 COST_PER_1K_TOKENS: dict[str, tuple[float, float]] = {
     "openai": (0.005, 0.015),
-    # Claude Opus 5.5 ($4/$20 per million tokens, the default model). Other
-    # Claude models are priced per provider here too, so Sonnet 5.5 ($2/$10)
-    # is over-estimated, which is the safe direction for a budget gate.
+    # Fallback only: Claude Opus 5.5 ($4/$20 per million tokens). Calls that
+    # report usage are priced per model by claude_cost_usd instead.
     "claude": (0.004, 0.020),
     "gemini": (0.000075, 0.0003),
     # OpenRouter prices vary by selected/routed model. Until usage-cost
@@ -38,6 +38,92 @@ COST_PER_1K_TOKENS: dict[str, tuple[float, float]] = {
     "local": (0.0, 0.0),
 }
 
+
+@dataclass(frozen=True)
+class ClaudePrice:
+    """USD per million tokens for one Claude model."""
+
+    input: float
+    output: float
+    # None means "use the default 0.1x of the input rate".
+    cache_read: float | None = None
+    # Beyond this many prompt tokens a higher (input, output) rate applies.
+    long_prompt_threshold: int = 0
+    long_input: float = 0.0
+    long_output: float = 0.0
+
+
+# Source: the claude-api skill model table (cached 2026-11-03), Anthropic
+# first-party API rates. Cache reads use the table value where it states one
+# (Opus 5.5 $0.20, Sonnet 5.5 $0.10, Fable 5.2 $0.20) and 0.1x input otherwise,
+# which overstates rather than understates. Cache writes are billed at 1.25x
+# input (5 minute TTL, the only TTL Heliox requests).
+CLAUDE_MODEL_PRICES: dict[str, ClaudePrice] = {
+    "claude-fable-5-2": ClaudePrice(8.0, 40.0, 0.20),
+    "claude-mythos-5-2": ClaudePrice(8.0, 40.0, 0.20),
+    "claude-fable-5-1": ClaudePrice(10.0, 50.0),
+    "claude-mythos-5-1": ClaudePrice(10.0, 50.0),
+    "claude-fable-5": ClaudePrice(10.0, 50.0),
+    "claude-opus-5-5": ClaudePrice(4.0, 20.0, 0.20),
+    "claude-opus-5": ClaudePrice(5.0, 25.0),
+    "claude-opus-4-8": ClaudePrice(5.0, 25.0),
+    "claude-opus-4-7": ClaudePrice(5.0, 25.0),
+    "claude-opus-4-6": ClaudePrice(5.0, 25.0),
+    "claude-sonnet-5-5": ClaudePrice(2.0, 10.0, 0.10),
+    "claude-sonnet-5": ClaudePrice(2.0, 10.0),
+    "claude-sonnet-4-6": ClaudePrice(3.0, 15.0),
+    # Haiku 5.5: $0.10/$0.50 up to 100K prompt tokens, $0.50/$2.50 beyond.
+    "claude-haiku-5-5": ClaudePrice(0.10, 0.50, None, 100_000, 0.50, 2.50),
+    "claude-haiku-4-5": ClaudePrice(1.0, 5.0),
+}
+
+# An unknown Claude model is billed at the most expensive known rate so the
+# cap errs on the safe side.
+CLAUDE_UNKNOWN_MODEL_PRICE = max(CLAUDE_MODEL_PRICES.values(), key=lambda p: (p.output, p.input))
+
+CLAUDE_CACHE_WRITE_MULTIPLIER = 1.25
+_DATED_SUFFIX = re.compile(r"^-\d{8}$")
+
+
+def claude_price_for(model: str) -> tuple[ClaudePrice, bool]:
+    """Return (price, known). Accepts a dated snapshot suffix like -20260401."""
+    key = (model or "").strip().lower()
+    price = CLAUDE_MODEL_PRICES.get(key)
+    if price is not None:
+        return price, True
+    for known, candidate in CLAUDE_MODEL_PRICES.items():
+        if key.startswith(known) and _DATED_SUFFIX.match(key[len(known) :]):
+            return candidate, True
+    return CLAUDE_UNKNOWN_MODEL_PRICE, False
+
+
+def claude_cost_usd(
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    cache_read_tokens: int = 0,
+    cache_creation_tokens: int = 0,
+) -> float:
+    """Dollar cost of one Messages API call from the usage Anthropic reported.
+
+    `output_tokens` already includes thinking tokens. The three input fields
+    are disjoint in the API's usage object, so they are summed, not subtracted.
+    """
+    price, _ = claude_price_for(model)
+    in_rate, out_rate = price.input, price.output
+    prompt_total = input_tokens + cache_read_tokens + cache_creation_tokens
+    long_prompt = bool(price.long_prompt_threshold) and prompt_total > price.long_prompt_threshold
+    if long_prompt:
+        in_rate, out_rate = price.long_input, price.long_output
+    read_rate = in_rate * 0.1 if (long_prompt or price.cache_read is None) else price.cache_read
+    return (
+        input_tokens * in_rate
+        + output_tokens * out_rate
+        + cache_read_tokens * read_rate
+        + cache_creation_tokens * in_rate * CLAUDE_CACHE_WRITE_MULTIPLIER
+    ) / 1_000_000.0
+
+
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS token_usage (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -48,6 +134,9 @@ CREATE TABLE IF NOT EXISTS token_usage (
     input_tokens  INTEGER NOT NULL DEFAULT 0,
     output_tokens INTEGER NOT NULL DEFAULT 0,
     cost_usd      REAL NOT NULL DEFAULT 0.0,
+    cache_read_tokens     INTEGER NOT NULL DEFAULT 0,
+    cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+    usage_source  TEXT NOT NULL DEFAULT 'estimate',
     task_id       TEXT,
     agent_id      TEXT
 );
@@ -60,6 +149,11 @@ CREATE INDEX IF NOT EXISTS idx_token_usage_task ON token_usage(task_id);
 # support IF NOT EXISTS on ADD COLUMN and the column may already be there.
 TASK_ID_MIGRATION_SQL = "ALTER TABLE token_usage ADD COLUMN task_id TEXT"
 AGENT_ID_MIGRATION_SQL = "ALTER TABLE token_usage ADD COLUMN agent_id TEXT"
+USAGE_COLUMN_MIGRATIONS = (
+    "ALTER TABLE token_usage ADD COLUMN cache_read_tokens INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE token_usage ADD COLUMN cache_creation_tokens INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE token_usage ADD COLUMN usage_source TEXT NOT NULL DEFAULT 'estimate'",
+)
 
 
 class BudgetExceededError(RuntimeError):
@@ -157,6 +251,12 @@ class BudgetTracker:
             except Exception as exc:
                 if "duplicate column" not in str(exc).lower():
                     logger.warning("agent_id column migration: %s", exc)
+            for migration in USAGE_COLUMN_MIGRATIONS:
+                try:
+                    await db.execute(migration)
+                except Exception as exc:
+                    if "duplicate column" not in str(exc).lower():
+                        logger.warning("usage column migration: %s", exc)
             await db.commit()
         self._monthly_cost = await self._load_monthly_cost()
         self._cost_month: str = _current_month()
@@ -277,14 +377,16 @@ class BudgetTracker:
             raise TaskBudgetExceededError(
                 f"Task {task_id} exceeded token budget "
                 f"({task.tokens_used} >= {task.token_cap}). "
-                f"Increase max_tokens_per_task or split the task."
+                "No more model calls will be made for this task. "
+                "Increase max_tokens_per_task or split the task."
             )
         if task.usd_cap > 0 and task.usd_spent >= task.usd_cap:
             task.exceeded = True
             raise TaskBudgetExceededError(
                 f"Task {task_id} exceeded USD budget "
-                f"(${task.usd_spent:.4f} >= ${task.usd_cap:.4f}). "
-                f"Increase max_usd_per_task or split the task."
+                f"(${task.usd_spent:.4f} spent, per-task limit ${task.usd_cap:.4f}). "
+                "No more model calls will be made for this task. "
+                "Increase max_usd_per_task or split the task."
             )
         agent_id = current_agent_id.get()
         if agent_id:
@@ -339,8 +441,15 @@ class BudgetTracker:
         model: str,
         input_tokens: int,
         output_tokens: int,
+        *,
+        cache_read_tokens: int = 0,
+        cache_creation_tokens: int = 0,
+        usage_source: str = "estimate",
     ) -> None:
         """Persist one call's token usage and update in-memory totals.
+
+        `usage_source` is "reported" when the numbers came from the provider's
+        own usage object and "estimate" when they were guessed from text length.
 
         Reads the active task_id from the contextvar; if a task is in flight,
         the call's tokens and cost are also added to the in-memory TaskBudget
@@ -348,7 +457,11 @@ class BudgetTracker:
         """
         if not self._pool:
             return
-        cost = _estimate_cost(provider, input_tokens, output_tokens)
+        if provider == "claude":
+            cost = claude_cost_usd(model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens)
+        else:
+            cost = _estimate_cost(provider, input_tokens, output_tokens)
+        call_tokens = input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens
         now = datetime.now(UTC).isoformat()
         month = _current_month()
         task_id = current_task_id.get()
@@ -359,8 +472,9 @@ class BudgetTracker:
                 await db.execute(
                     """INSERT INTO token_usage
                        (timestamp, month, provider, model, input_tokens,
-                        output_tokens, cost_usd, task_id, agent_id)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        output_tokens, cost_usd, task_id, agent_id,
+                        cache_read_tokens, cache_creation_tokens, usage_source)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         now,
                         month,
@@ -371,6 +485,9 @@ class BudgetTracker:
                         cost,
                         task_id,
                         agent_id,
+                        cache_read_tokens,
+                        cache_creation_tokens,
+                        usage_source,
                     ),
                 )
                 await db.commit()
@@ -385,10 +502,10 @@ class BudgetTracker:
             # Update per-task running totals if a task is active and tracked
             if task_id and task_id in self._tasks:
                 task = self._tasks[task_id]
-                task.tokens_used += input_tokens + output_tokens
+                task.tokens_used += call_tokens
                 task.usd_spent += cost
             if task_id and agent_id and (task_id, agent_id) in self._agent_tasks:
-                self._agent_tasks[(task_id, agent_id)].tokens_used += input_tokens + output_tokens
+                self._agent_tasks[(task_id, agent_id)].tokens_used += call_tokens
 
     async def get_stats(self) -> dict:
         """Return current-month usage summary."""

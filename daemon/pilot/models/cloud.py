@@ -11,6 +11,8 @@ import asyncio
 import hashlib
 import logging
 import re
+from contextvars import ContextVar, Token
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -82,6 +84,102 @@ INVALID_KEY_COOLDOWN_SECONDS = 3600.0
 TRANSIENT_KEY_COOLDOWN_SECONDS = 15.0
 _SECRET_VALUE = re.compile(r"(?i)(?P<prefix>(?:[?&](?:key|api[_-]?key|token)|authorization)\s*[=:]\s*)[^&\s]+")
 _GOOGLE_API_KEY = re.compile(r"\bAIza[0-9A-Za-z_-]{20,}\b")
+
+
+@dataclass
+class CloudCallUsage:
+    """Usage for one HTTP response the provider billed (a 200).
+
+    `reported` is False when the response carried no usable usage object; the
+    caller then falls back to a length-based estimate for that call.
+    """
+
+    provider: str
+    model: str
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_creation_tokens: int = 0
+    reported: bool = False
+
+
+@dataclass
+class UsageCapture:
+    """Collects provider usage for the cloud calls made inside one router.generate()."""
+
+    calls: list[CloudCallUsage] = field(default_factory=list)
+    attempted: bool = False
+
+
+_usage_capture: ContextVar[UsageCapture | None] = ContextVar("cloud_usage_capture", default=None)
+
+
+def begin_usage_capture() -> tuple[UsageCapture, Token]:
+    capture = UsageCapture()
+    return capture, _usage_capture.set(capture)
+
+
+def end_usage_capture(token: Token) -> None:
+    _usage_capture.reset(token)
+
+
+def _int(value: Any) -> int:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
+
+
+def _note_billed_call(provider: str, model: str, data: Any, parse) -> None:
+    """Record one billed response on the active capture, if any.
+
+    Runs before the text is validated, so a response Heliox later rejects
+    (refusal, empty text) is still counted. Never raises.
+    """
+    capture = _usage_capture.get()
+    if capture is None:
+        return
+    try:
+        usage = parse(data) if isinstance(data, dict) else None
+    except Exception:  # malformed usage must not break the call
+        usage = None
+    if usage is None:
+        capture.calls.append(CloudCallUsage(provider, model))
+    else:
+        capture.calls.append(CloudCallUsage(provider, model, reported=True, **usage))
+
+
+def _anthropic_usage(data: dict[str, Any]) -> dict[str, int] | None:
+    usage = data.get("usage")
+    if not isinstance(usage, dict) or "input_tokens" not in usage or "output_tokens" not in usage:
+        return None
+    return {
+        "input_tokens": _int(usage.get("input_tokens")),
+        # output_tokens already includes thinking tokens.
+        "output_tokens": _int(usage.get("output_tokens")),
+        "cache_read_tokens": _int(usage.get("cache_read_input_tokens")),
+        "cache_creation_tokens": _int(usage.get("cache_creation_input_tokens")),
+    }
+
+
+def _openai_usage(data: dict[str, Any]) -> dict[str, int] | None:
+    usage = data.get("usage")
+    if not isinstance(usage, dict) or "prompt_tokens" not in usage or "completion_tokens" not in usage:
+        return None
+    # completion_tokens includes reasoning tokens; prompt_tokens includes
+    # cached tokens (priced at the full input rate, which overstates).
+    return {
+        "input_tokens": _int(usage.get("prompt_tokens")),
+        "output_tokens": _int(usage.get("completion_tokens")),
+    }
+
+
+def _gemini_usage(data: dict[str, Any]) -> dict[str, int] | None:
+    usage = data.get("usageMetadata")
+    if not isinstance(usage, dict) or "promptTokenCount" not in usage:
+        return None
+    # Gemini bills thinking tokens as output but reports them separately.
+    return {
+        "input_tokens": _int(usage.get("promptTokenCount")),
+        "output_tokens": _int(usage.get("candidatesTokenCount")) + _int(usage.get("thoughtsTokenCount")),
+    }
 
 
 def safe_provider_error(error: Exception, provider: str) -> str:
@@ -243,6 +341,9 @@ class CloudClient:
         if not api_keys:
             raise RuntimeError(f"No API key configured for {provider}")
 
+        capture = _usage_capture.get()
+        if capture is not None:
+            capture.attempted = True
         api_keys = self._prefer_healthy_keys(api_keys)
         has_backups = len(api_keys) > 1
         last_error = None
@@ -377,6 +478,7 @@ class CloudClient:
                 resp.raise_for_status()
 
             data = resp.json()
+            _note_billed_call("gemini", model, data, _gemini_usage)
             candidates = data.get("candidates", [])
             if not candidates:
                 raise RuntimeError(f"Gemini returned no candidates: {data}")
@@ -446,6 +548,7 @@ class CloudClient:
 
             resp.raise_for_status()
             data = resp.json()
+            _note_billed_call(provider, model, data, _openai_usage)
             return data["choices"][0]["message"]["content"]
 
         raise RuntimeError(f"Failed after {MAX_RETRIES} retries due to rate limiting")
@@ -502,7 +605,10 @@ class CloudClient:
                 continue
 
             resp.raise_for_status()
-            return _parse_anthropic_response(resp.json())
+            data = resp.json()
+            # Anthropic billed this response; count it before the text is judged.
+            _note_billed_call("claude", model, data, _anthropic_usage)
+            return _parse_anthropic_response(data)
 
         raise RuntimeError(f"Failed after {MAX_RETRIES} retries due to rate limiting")
 

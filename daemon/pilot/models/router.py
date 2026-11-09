@@ -10,7 +10,13 @@ from typing import TYPE_CHECKING, Any
 from pilot.config import DATA_DIR
 from pilot.db.redis_adapter import RedisCacheAdapter
 from pilot.models.cache import LLMCache
-from pilot.models.cloud import CloudClient, safe_provider_error
+from pilot.models.cloud import (
+    CloudClient,
+    UsageCapture,
+    begin_usage_capture,
+    end_usage_capture,
+    safe_provider_error,
+)
 from pilot.models.ollama import OllamaClient
 from pilot.models.rate_limiter import TokenBucketRateLimiter
 from pilot.models.subscription_cli import SubscriptionCLIClient
@@ -123,18 +129,34 @@ class ModelRouter:
             # Per-task cumulative cap (new)
             self._budget_tracker.check_task_budget()
 
-        result = await self._generate_with_cache(
-            prompt,
-            system=system,
-            json_mode=json_mode,
-            temperature=temperature,
-            stream_callback=stream_callback,
-        )
+        capture, capture_token = begin_usage_capture()
+        try:
+            result = await self._generate_with_cache(
+                prompt,
+                system=system,
+                json_mode=json_mode,
+                temperature=temperature,
+                stream_callback=stream_callback,
+            )
+        except BaseException:
+            # A response the provider billed still costs money even when the
+            # call as a whole fails afterwards (refusal, empty text, timeout
+            # on a later retry). Record it, then let the error propagate.
+            end_usage_capture(capture_token)
+            if self._budget_tracker:
+                await self._record_billed_cloud_calls(capture, in_tokens_estimate, "")
+            raise
+        end_usage_capture(capture_token)
         subscription_usage = (
             self._subscription.consume_request_usage() if self._config.model.provider == "subscription" else None
         )
 
-        if self._budget_tracker:
+        if self._budget_tracker and capture.calls:
+            await self._record_billed_cloud_calls(capture, in_tokens_estimate, result)
+        elif self._budget_tracker and self._config.model.provider == "cloud" and not capture.attempted:
+            # Exact cache hit: no request reached the provider, nothing billed.
+            pass
+        elif self._budget_tracker:
             out_tokens = len(result) // 4
             usage_input_tokens = in_tokens_estimate
             if self._config.model.provider == "subscription":
@@ -166,6 +188,39 @@ class ModelRouter:
             )
 
         return result
+
+    async def _record_billed_cloud_calls(
+        self,
+        capture: UsageCapture,
+        in_tokens_estimate: int,
+        result: str,
+    ) -> None:
+        """Record every response the cloud provider billed during one generate().
+
+        Calls with a provider usage object are recorded exactly (thinking and
+        cache tokens included). A billed response without usage falls back to
+        the length-based estimate. Calls that failed before a 200 are absent.
+        """
+        assert self._budget_tracker is not None
+        last = len(capture.calls) - 1
+        for index, call in enumerate(capture.calls):
+            if call.reported:
+                await self._budget_tracker.record_usage(
+                    call.provider,
+                    call.model,
+                    call.input_tokens,
+                    call.output_tokens,
+                    cache_read_tokens=call.cache_read_tokens,
+                    cache_creation_tokens=call.cache_creation_tokens,
+                    usage_source="reported",
+                )
+            else:
+                await self._budget_tracker.record_usage(
+                    call.provider,
+                    call.model,
+                    in_tokens_estimate,
+                    len(result) // 4 if index == last else 0,
+                )
 
     async def _generate_with_cache(
         self,
