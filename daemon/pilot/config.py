@@ -147,7 +147,8 @@ class ServerConfig:
 class VoiceConfig:
     language: str = "auto"  # auto detect or manual language code
     # Faster-Whisper is preferred for substantially lower local latency and
-    # memory use. "auto" retains the proven OpenAI Whisper fallback.
+    # memory use. "auto" retains the proven OpenAI Whisper fallback. "streaming" decodes while you speak
+    # (sherpa-onnx, English only, pilot.system.streaming_asr) and falls back to Whisper when it has no text.
     transcription_engine: str = "auto"
     whisper_model: str = "small"
     # Stable "host API::device name" identifier returned by
@@ -164,6 +165,11 @@ class VoiceConfig:
     # 1+ second dead-air penalty that makes always-listening control feel laggy.
     vad_silence_ms: float = 450.0
     vad_max_utterance_seconds: float = 20.0
+    # Semantic end of turn (pilot.system.turn_detector, Pipecat Smart Turn v3.2, about 8.7 MB, CPU). After 200 ms
+    # of silence the model says whether the sentence sounds finished: finished ends the turn at once, unfinished
+    # keeps listening for up to turn_hold_ms so a pause to think is not cut off. "silence" uses vad_silence_ms only.
+    turn_detection: str = "smart_turn"  # "smart_turn" | "silence"
+    turn_hold_ms: float = 2500.0
     # Interrupt Heliox's own TTS playback the instant the user starts
     # talking, instead of waiting for it to finish. A pure responsiveness/
     # UX improvement (doesn't expand what the system can do, unlike e.g.
@@ -1039,6 +1045,8 @@ def _validate_config_types(raw: dict) -> None:
             "vad_adaptive_threshold_enabled": bool,
             "vad_silence_ms": (int, float),
             "vad_max_utterance_seconds": (int, float),
+            "turn_detection": str,
+            "turn_hold_ms": (int, float),
             "barge_in_enabled": bool,
             "continuous_conversation_enabled": bool,
             "follow_up_window_seconds": (int, float),

@@ -112,6 +112,8 @@ voice = [
     "sounddevice>=0.4",
     "soundcard>=0.4.3; sys_platform == 'win32'",
     "faster-whisper>=1.1,<2",
+    # Streaming recognition (Apache-2.0); its English model downloads on first use. See pilot.system.streaming_asr.
+    "sherpa-onnx>=2.0,<3",
     "openai-whisper>=20231117",
 ]
 

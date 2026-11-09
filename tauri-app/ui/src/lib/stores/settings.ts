@@ -126,7 +126,9 @@ export interface PilotSettings {
   };
   voice: {
     input_device: string;
-    transcription_engine: "auto" | "faster_whisper" | "openai_whisper";
+    transcription_engine: "auto" | "faster_whisper" | "openai_whisper" | "streaming";
+    turn_detection?: "smart_turn" | "silence";
+    turn_hold_ms?: number;
     whisper_model: "tiny" | "base" | "small" | "medium" | "turbo";
     language: string;
     tts_engine: string;

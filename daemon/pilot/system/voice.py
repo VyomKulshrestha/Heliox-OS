@@ -924,12 +924,16 @@ def _get_whisper_model(model_name: str) -> Any:
     return _whisper_model_cache[model_name]
 
 
+# Set when CUDA is visible but its libraries are not (a GPU without the CUDA 12 runtime): CPU from then on.
+_faster_whisper_cuda_unusable = False
+
+
 def _faster_whisper_runtime() -> tuple[str, str]:
     """Choose a conservative local compute mode for Faster-Whisper."""
     try:
         import ctranslate2
 
-        if ctranslate2.get_cuda_device_count() > 0:
+        if not _faster_whisper_cuda_unusable and ctranslate2.get_cuda_device_count() > 0:
             return "cuda", "float16"
     except (ImportError, RuntimeError):
         pass
@@ -971,8 +975,26 @@ async def _transcribe_faster_whisper(
         }
         if language != "auto":
             kwargs["language"] = language
-        segments, info = model.transcribe(audio_path, **kwargs)
-        text = " ".join(segment.text.strip() for segment in segments if segment.text.strip())
+        # Decode the WAV here and hand faster-whisper the samples. Given a path it decodes through PyAV, whose
+        # 19.x release dropped an argument faster-whisper 1.2 still passes, so every local transcription failed
+        # and fell back to the much slower OpenAI Whisper.
+        audio = _load_pcm_wav_for_whisper(audio_path)
+        if audio is not None:
+            audio = _normalize_voice_audio(_band_limit_voice_audio(audio))
+        try:
+            segments, info = model.transcribe(audio if audio is not None else audio_path, **kwargs)
+            text = " ".join(segment.text.strip() for segment in segments if segment.text.strip())
+        except RuntimeError as error:
+            # A visible GPU without cuBLAS/cuDNN fails only when the first segment encodes: switch to the CPU
+            # build for the rest of the session and transcribe this utterance again.
+            if not any(name in str(error).lower() for name in ("cublas", "cudnn", "cuda")):
+                raise
+            global _faster_whisper_cuda_unusable
+            _faster_whisper_cuda_unusable = True
+            logger.warning("Faster-Whisper cannot use the GPU (%s); using the CPU", str(error)[:120])
+            model = _get_faster_whisper_model(model_name)
+            segments, info = model.transcribe(audio if audio is not None else audio_path, **kwargs)
+            text = " ".join(segment.text.strip() for segment in segments if segment.text.strip())
         detected_language = getattr(info, "language", None)
         return {
             "text": text.strip(),
@@ -1126,6 +1148,19 @@ class _ContinuousRecorder:
         # True between the endpointer confirming speech and the utterance ending (read by the live layer).
         self.user_is_speaking = False
         self.capture_backend = ""
+        # Semantic turn-taking (pilot.system.turn_detector): asked after a short silence whether the person is
+        # done. Done ends the turn at once; not done keeps listening for up to turn_hold_frames of silence.
+        self.turn_detector: Any = None
+        self.turn_check_frames = 4  # 200 ms
+        self.turn_recheck_frames = 12  # ask again every 600 ms of continued silence
+        self.turn_hold_frames = 50  # 2.5 s
+        self.turn_threshold = 0.5
+        self.on_hold: Any = None  # called once per utterance when the person pauses mid-thought
+        # Streaming recognition (pilot.system.streaming_asr) sees each frame as it is captured.
+        self.stream_sink: Any = None
+        self.last_turn_probability: float | None = None
+        self.last_endpoint_reason = ""
+        self.last_endpoint_ms = 0.0
 
     def _make_endpointer(self) -> UtteranceEndpointer:
         return UtteranceEndpointer(
@@ -1410,6 +1445,8 @@ class _ContinuousRecorder:
         # start_frames) doesn't clip the first syllable that triggered it.
         preroll: list[Any] = []
         captured: list[Any] = []
+        held = False
+        silence_frames_used = endpointer.silence_frames
 
         while True:
             remaining = None if deadline is None else deadline - asyncio.get_event_loop().time()
@@ -1436,12 +1473,20 @@ class _ContinuousRecorder:
                 captured = preroll + [frame]
                 preroll = []
                 self.user_is_speaking = True
+                held = False
+                silence_frames_used = endpointer.silence_frames
+                if self.stream_sink is not None:
+                    self.stream_sink.begin(captured)
                 continue
 
             if event in (EndpointEvent.ENDED, EndpointEvent.MAX_DURATION):
                 captured.append(frame)
+                if self.stream_sink is not None:
+                    self.stream_sink.feed(frame)
                 self.utterances_captured += 1
                 self.user_is_speaking = False
+                self.last_endpoint_reason = "silence" if event == EndpointEvent.ENDED else "max_duration"
+                self.last_endpoint_ms = silence_frames_used * self.frame_ms
                 return _write_wav(captured, self.sample_rate)
 
             if not endpointer.is_speaking:
@@ -1452,6 +1497,38 @@ class _ContinuousRecorder:
                 continue
 
             captured.append(frame)
+            if self.stream_sink is not None:
+                self.stream_sink.feed(frame)
+
+            if self.turn_detector is not None and self._turn_check_due(endpointer.trailing_silence):
+                import numpy as np
+
+                silence = endpointer.trailing_silence
+                probability = await asyncio.to_thread(self.turn_detector.probability, np.concatenate(captured))
+                if probability is not None:
+                    self.last_turn_probability = probability
+                    if probability >= self.turn_threshold:
+                        # The sentence sounds finished: answer now instead of waiting out the silence.
+                        endpointer.reset()
+                        self.utterances_captured += 1
+                        self.user_is_speaking = False
+                        self.last_endpoint_reason = "smart_turn"
+                        self.last_endpoint_ms = silence * self.frame_ms
+                        return _write_wav(captured, self.sample_rate)
+                    # Mid-thought: give them time instead of cutting them off.
+                    endpointer.silence_frames = max(endpointer.silence_frames, self.turn_hold_frames)
+                    silence_frames_used = endpointer.silence_frames
+                    if not held and self.on_hold is not None:
+                        held = True
+                        try:
+                            self.on_hold()
+                        except Exception:
+                            logger.debug("Turn hold callback failed", exc_info=True)
+
+    def _turn_check_due(self, silence: int) -> bool:
+        if silence < self.turn_check_frames:
+            return False
+        return (silence - self.turn_check_frames) % max(1, self.turn_recheck_frames) == 0
 
 
 def _write_wav(frames: list[Any], sample_rate: int) -> str:
@@ -1482,6 +1559,8 @@ class ContinuousVoiceListener:
         on_status: Any | None = None,
         workflow_control: Any | None = None,
         config: PilotConfig | None = None,
+        on_partial: Any | None = None,
+        on_turn_hold: Any | None = None,
     ) -> None:
         self.wake_words = wake_words or [
             "hey heliox",
@@ -1491,6 +1570,14 @@ class ContinuousVoiceListener:
 
         self._on_command = on_command
         self._on_status = on_status
+        # Async callables: a live caption of the words so far (streaming engine), and "still listening" when the
+        # person pauses mid-thought (Smart Turn says the sentence isn't finished).
+        self._on_partial = on_partial
+        self._on_turn_hold = on_turn_hold
+        self._turn_detector: Any = None
+        self._streaming: Any = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self.last_transcription_engine = "whisper"
         # Optional async callable(command_text) -> bool, checked before normal
         # command dispatch — lets a paused/waiting VoiceGestureWorkflow claim
         # a "continue"/"cancel" utterance instead of it being planned as a
@@ -1611,12 +1698,69 @@ class ContinuousVoiceListener:
             return "Continuous voice listener started. Speak naturally; the wake phrase is optional."
         return f"Voice listener started. Say '{self.wake_words[0]}' to activate."
 
+    def _schedule(self, callback: Any, *args: Any) -> None:
+        """Run an async callback on the listener's loop, from any thread."""
+        loop = self._loop
+        if callback is None or loop is None or loop.is_closed():
+            return
+        loop.call_soon_threadsafe(lambda: asyncio.ensure_future(callback(*args)))
+
+    def _configure_turn_taking(self) -> Any:
+        """Point the recorder at the turn detector and streaming recognizer the settings ask for.
+
+        Returns the streaming transcriber for this utterance, or None to use Whisper."""
+        voice = self.config.voice
+        recorder = self._recorder
+        if self._loop is None:
+            self._loop = asyncio.get_running_loop()
+        smart = getattr(voice, "turn_detection", "smart_turn") == "smart_turn"
+        wants_streaming = voice.transcription_engine == "streaming"
+        if (smart and self._turn_detector is None) or (wants_streaming and self._streaming is None):
+            # Turned on while listening: load in the background and use the plain path until it is ready.
+            asyncio.ensure_future(self._warm_turn_taking())
+        recorder.turn_detector = (
+            self._turn_detector if smart and self._turn_detector is not None and self._turn_detector.ready else None
+        )
+        recorder.turn_hold_frames = max(1, int(getattr(voice, "turn_hold_ms", 2500.0) / recorder.frame_ms))
+        recorder.on_hold = (lambda: self._schedule(self._on_turn_hold)) if self._on_turn_hold else None
+        streaming = self._streaming if voice.transcription_engine == "streaming" else None
+        if streaming is not None and streaming.ready:
+            streaming.on_partial = (lambda text: self._schedule(self._on_partial, text)) if self._on_partial else None
+            recorder.stream_sink = streaming
+            return streaming
+        recorder.stream_sink = None
+        return None
+
+    async def _warm_turn_taking(self) -> None:
+        """Load Smart Turn and, when chosen, the streaming recognizer before the first utterance."""
+        from pilot.system.streaming_asr import StreamingTranscriber
+        from pilot.system.turn_detector import SmartTurnDetector
+
+        self._loop = asyncio.get_running_loop()
+        voice = self.config.voice
+        if getattr(voice, "turn_detection", "smart_turn") == "smart_turn":
+            if self._turn_detector is None:
+                self._turn_detector = SmartTurnDetector()
+            if not self._turn_detector.ready:
+                await asyncio.to_thread(self._turn_detector.load)
+        if voice.transcription_engine == "streaming":
+            if self._streaming is None:
+                self._streaming = StreamingTranscriber()
+            if not self._streaming.ready:
+                await asyncio.to_thread(self._streaming.load)
+
     async def _warm_transcriber(self) -> None:
         """Load the configured local recognizer before the first utterance."""
 
         started = time.perf_counter()
         try:
-            if self.config.voice.transcription_engine in {"auto", "faster_whisper"}:
+            await self._warm_turn_taking()
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            logger.info("Turn-taking models unavailable: %s", error)
+        try:
+            if self.config.voice.transcription_engine in {"auto", "faster_whisper", "streaming"}:
                 await asyncio.to_thread(_get_faster_whisper_model, self.config.voice.whisper_model)
             else:
                 await asyncio.to_thread(_get_whisper_model, self.config.voice.whisper_model)
@@ -1903,7 +2047,10 @@ class ContinuousVoiceListener:
                 audio_path,
                 self.config.voice.language,
                 self.config.voice.whisper_model,
-                self.config.voice.transcription_engine,
+                # The streaming engine falls back to the automatic Whisper path when it has no text.
+                "auto"
+                if self.config.voice.transcription_engine == "streaming"
+                else self.config.voice.transcription_engine,
             )
 
             self.last_detected_language = result["language"]
@@ -1935,7 +2082,9 @@ class ContinuousVoiceListener:
         for the command that follows a detected wake word.
         """
         try:
+            streaming = None
             if self._recorder.is_active:
+                streaming = self._configure_turn_taking()
                 audio_path = await self._recorder.record_utterance(timeout=timeout)
                 if not audio_path:
                     return ""
@@ -1943,7 +2092,10 @@ class ContinuousVoiceListener:
                 audio_path = await _record_audio(duration)
 
             started = time.perf_counter()
-            transcript = await self._transcribe_path(audio_path)
+            transcript = await streaming.finish() if streaming is not None else ""
+            self.last_transcription_engine = "streaming" if transcript else "whisper"
+            if not transcript:
+                transcript = await self._transcribe_path(audio_path)
             self.last_transcription_ms = (time.perf_counter() - started) * 1000
             logger.info(
                 "Voice transcription completed (duration_ms=%.0f, characters=%d)",
@@ -1969,6 +2121,15 @@ class ContinuousVoiceListener:
             "configured_language": self.config.voice.language,
             "transcription_engine": self.config.voice.transcription_engine,
             "whisper_model": self.config.voice.whisper_model,
+            "turn_detection": getattr(self.config.voice, "turn_detection", "smart_turn"),
+            "turn_detector_ready": bool(self._turn_detector is not None and self._turn_detector.ready),
+            "turn_detector_error": self._turn_detector.error if self._turn_detector is not None else "",
+            "streaming_ready": bool(self._streaming is not None and self._streaming.ready),
+            "streaming_error": self._streaming.error if self._streaming is not None else "",
+            "last_transcription_engine": self.last_transcription_engine,
+            "last_turn_probability": self._recorder.last_turn_probability,
+            "last_endpoint_reason": self._recorder.last_endpoint_reason,
+            "last_endpoint_ms": self._recorder.last_endpoint_ms,
             "vad_recorder_active": self._recorder.is_active,
             "input_device": self._recorder.input_device,
             "input_device_name": self._recorder.input_device_name,

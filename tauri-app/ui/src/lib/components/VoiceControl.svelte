@@ -220,10 +220,38 @@
     }
   }
 
+  // A live caption while the person talks (streaming engine), and "still listening" when they pause mid-thought.
+  let holding = $state(false);
+  let captionTimer: ReturnType<typeof setTimeout> | null = null;
+  function showCaption(text: string) {
+    interimTranscript = text;
+    if (captionTimer) clearTimeout(captionTimer);
+    captionTimer = setTimeout(() => {
+      interimTranscript = "";
+      holding = false;
+    }, 4000);
+  }
+
   const voiceStatusHandler = (method: string, params: unknown) => {
-    if (method !== "voice_status") return;
     const payload = (params ?? {}) as Record<string, unknown>;
+    if (method === "voice_partial") {
+      holding = false;
+      showCaption(String(payload.text ?? ""));
+      return;
+    }
+    if (method === "voice_command") {
+      holding = false;
+      interimTranscript = "";
+      return;
+    }
+    if (method !== "voice_status") return;
     const status = String(payload.status ?? "");
+    if (status === "holding") {
+      holding = true;
+      showCaption(interimTranscript);
+      pulseIntensity = 0.5;
+      return;
+    }
     if (status === "wake_detected" || status === "follow_up_detected") {
       companion.humanSpeechStarted();
       companion.humanSpeechEnded();
@@ -262,6 +290,7 @@
 
   onNotification(voiceStatusHandler);
   onDestroy(() => {
+    if (captionTimer) clearTimeout(captionTimer);
     offNotification(voiceStatusHandler);
     window.removeEventListener("heliox:voice-command-request", handleVoiceCommandRequest);
     if (listenerHealthTimer) clearInterval(listenerHealthTimer);
@@ -450,13 +479,16 @@
   {/if}
 
   <!-- Transcript Preview -->
-  {#if interimTranscript || transcript}
-    <div class="transcript-preview">
+  {#if interimTranscript || transcript || holding}
+    <div class="transcript-preview" aria-live="polite">
       {#if transcript}
         <span class="final">{transcript}</span>
       {/if}
       {#if interimTranscript}
         <span class="interim">{interimTranscript}</span>
+      {/if}
+      {#if holding}
+        <span class="holding">Still listening…</span>
       {/if}
     </div>
   {/if}
@@ -467,6 +499,11 @@
 </div>
 
 <style>
+  .holding {
+    margin-left: 6px;
+    font-size: var(--text-xs);
+    color: var(--accent);
+  }
   @media (max-width: 880px) {
     .wake-label {
       display: none;

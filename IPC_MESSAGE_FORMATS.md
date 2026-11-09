@@ -1814,7 +1814,10 @@ Stop the voice listener.
 Return voice listener statistics.
 
 **Params:** `{}`
-**Result:** stats dict.
+**Result:** stats dict. Turn-taking fields: `turn_detection` (`smart_turn` or `silence`), `turn_detector_ready`,
+`turn_detector_error`, `last_turn_probability` (Smart Turn's last "the sentence is finished" probability),
+`last_endpoint_reason` (`smart_turn`, `silence` or `max_duration`), `last_endpoint_ms` (the silence that ended
+the last turn), `streaming_ready`, `streaming_error` and `last_transcription_engine` (`streaming` or `whisper`).
 
 #### `voice_recognition_test`
 Capture one utterance and return its transcript without executing it. If
@@ -3451,6 +3454,12 @@ Voice listener lifecycle updates.
 - `"listening"` — no command followed the wake word in the same utterance; waiting for a follow-up (`message` is a user-facing prompt).
 - `"timeout"` — no follow-up command was heard within the wait window (`message` is a user-facing note).
 - `"interrupted"` — the user started talking while Heliox was still speaking its response, so playback was cut off (barge-in — see `pilot.system.voice.speak_interruptible`). Only fires when `config.voice.barge_in_enabled` is on and the continuous VAD recorder is active.
+- `"holding"` — the person paused mid-sentence and Smart Turn judged the sentence unfinished, so Heliox keeps listening (up to `voice.turn_hold_ms`) instead of answering. Sent once per utterance.
+
+### `voice_partial`
+A live caption while the person is still talking, from the streaming recognizer (`voice.transcription_engine =
+"streaming"`), at most four times a second: `{ "text": "Open chrome and" }`. The final text arrives as the usual
+`voice_command`.
 
 ---
 

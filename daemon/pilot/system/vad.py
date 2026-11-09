@@ -148,6 +148,11 @@ class UtteranceEndpointer:
             return EndpointEvent.MAX_DURATION
         return EndpointEvent.NONE
 
+    @property
+    def trailing_silence(self) -> int:
+        """Frames of silence since the person last made a sound, while an utterance is open."""
+        return self._below_count if self.is_speaking else 0
+
     def reset(self) -> None:
         self.is_speaking = False
         self._above_count = 0

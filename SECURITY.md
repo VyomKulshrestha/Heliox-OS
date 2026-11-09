@@ -631,6 +631,23 @@ fallback and is suppressed when daemon speech already owns the utterance.
 
 ---
 
+## 🎙️ Smart Turn and streaming recognition (CPU turn-taking)
+
+**What this is.** Two small local models that make conversation feel two-way on a laptop CPU, the cheap path to what full-duplex interaction models do in one large model.
+
+- **Smart Turn v3.2** (`pilot.system.turn_detector`, Pipecat, BSD-2-Clause, about 8.7 MB, int8 ONNX). After 200 ms of silence the listener asks it whether the sentence sounds finished, from the last 8 seconds of audio (about 50 ms of CPU). Finished ends the turn at once, instead of waiting out `vad_silence_ms`; unfinished keeps listening for up to `turn_hold_ms` (2.5 s), so a pause to think is not cut off, and the UI shows "Still listening". On by default (`voice.turn_detection = "smart_turn"`); `"silence"` restores plain endpointing.
+- **Streaming recognition** (`pilot.system.streaming_asr`, sherpa-onnx, Apache-2.0, English streaming Zipformer, int8, about 73 MB). Decodes on one worker thread while the person speaks, so the text is ready the moment the turn ends and a live caption appears as they talk. Opt-in (`voice.transcription_engine = "streaming"`) because the model is English-only; Whisper remains the default and the automatic fallback whenever the streamed text is empty.
+
+**Measured on the development laptop's CPU** (6.6 s of speech, one run, not a benchmark): streaming recognition decoded it in 0.37 s as it played and had the final text 1 ms after the audio ended; Faster-Whisper `small` (CPU, int8) needed about 2.7 s after the audio ended. Smart Turn returned 0.93 "finished" for the full sentence and 0.02 for the same audio cut off mid-sentence.
+
+**Two Faster-Whisper faults fixed on the way.** Faster-Whisper 1.2 decodes a file path through PyAV, and PyAV 19 removed an argument it still passes, so every local transcription failed and silently fell back to the much slower OpenAI Whisper. The listener now decodes the WAV itself and passes samples. And on a machine with an NVIDIA GPU but without the CUDA 12 runtime, CTranslate2 chose CUDA and failed at the first encode; the first such failure now switches Faster-Whisper to the CPU (int8) for the session and retries the utterance.
+
+**Local only.** Both models download once from Hugging Face on first use and then run offline; audio never leaves the machine. If a download or load fails, the listener keeps working with silence endpointing and Whisper.
+
+**Known limits, stated plainly.** This is turn-taking around models, not a token-level full-duplex model: Heliox still cannot speak and listen in the same model step. Smart Turn sometimes reads a natural phrase boundary as the end of a turn (in testing, "After early nightfall" scored as finished). The streaming model understands English only and writes without punctuation.
+
+---
+
 ## 🔊 Kokoro and Kyutai Pocket TTS (local daemon-side voices)
 
 **What this is.** `pilot.system.kokoro_tts` is the default engine behind `pilot.system.voice.speak()` (`config.voice.tts_engine`, default `"kokoro_tts"`), with `pilot.system.pocket_tts` available as a selectable alternative. Both replace platform-native TTS (Windows SAPI via PowerShell, macOS `say`, Linux `espeak`) when available, while the platform voice remains the automatic fallback. Pocket TTS came out of the same research that flagged Kyutai's Moshi above: Moshi itself has since been superseded for production use by a cascaded stack (Unmute, Kyutai STT/TTS, Pocket TTS), and — critically — every piece of that stack *except* Pocket TTS requires a 16GB+ VRAM GPU on Linux/WSL, a poor fit for a general Windows/Mac/Linux desktop app. Pocket TTS (100M params) is the one piece that's genuinely CPU-only and cross-platform, reported by Kyutai at ~6x real-time generation using 2 CPU cores.

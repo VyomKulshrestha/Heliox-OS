@@ -348,7 +348,9 @@ gaze_tracking_enabled = false
 enabled = false
 
 [voice]
-transcription_engine = "auto"
+transcription_engine = "auto"   # "streaming" decodes while you speak (English, live captions, instant text)
+turn_detection = "smart_turn"   # answers when your sentence sounds finished, waits when you pause to think
+turn_hold_ms = 2500
 whisper_model = "small"
 language = "auto"
 tts_engine = "kokoro_tts"

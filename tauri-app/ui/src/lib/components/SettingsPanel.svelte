@@ -1908,6 +1908,27 @@
         <option value="auto">Automatic (recommended)</option>
         <option value="faster_whisper">Faster-Whisper only</option>
         <option value="openai_whisper">OpenAI Whisper only</option>
+        <option value="streaming">Streaming (English, fastest, live captions)</option>
+      </select>
+    </div>
+
+    <div class="setting-row">
+      <div class="setting-info">
+        <span class="setting-label">End of turn</span>
+        <span class="setting-desc"
+          >Smart listens to how your sentence ends: it answers as soon as you finish and waits while you pause to think.
+          Silence only waits out a fixed pause.</span
+        >
+      </div>
+      <select
+        class="input-md"
+        name="turn_detection"
+        value={$settings.voice?.turn_detection ?? "smart_turn"}
+        onchange={updateSpeechRecognition}
+        disabled={speechSaving}
+      >
+        <option value="smart_turn">Smart (recommended)</option>
+        <option value="silence">Silence only</option>
       </select>
     </div>
 

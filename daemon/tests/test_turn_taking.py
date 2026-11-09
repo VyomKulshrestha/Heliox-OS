@@ -1,0 +1,295 @@
+"""Duplex voice on the CPU: Smart Turn endpointing, streaming transcription and live captions.
+
+Every model here is a stand-in, so nothing downloads in CI; the last test exercises the real ones when
+HELIOX_REAL_VOICE_MODELS=1.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+
+import numpy as np
+import pytest
+
+from pilot.config import PilotConfig
+from pilot.system import streaming_asr
+from pilot.system.streaming_asr import StreamingTranscriber, tidy
+from pilot.system.turn_detector import SmartTurnDetector, window
+from pilot.system.voice import ContinuousVoiceListener, _ContinuousRecorder
+
+
+def loud(size: int = 800) -> np.ndarray:
+    return np.full(size, 10000, dtype=np.int16)
+
+
+def quiet(size: int = 800) -> np.ndarray:
+    return np.zeros(size, dtype=np.int16)
+
+
+async def feed(queue: asyncio.Queue, frames: list[np.ndarray]) -> None:
+    for frame in frames:
+        await asyncio.sleep(0.005)
+        queue.put_nowait(frame)
+
+
+class FakeDetector:
+    def __init__(self, answers: list[float]) -> None:
+        self.answers = list(answers)
+        self.calls = 0
+
+    def probability(self, audio: np.ndarray) -> float:
+        self.calls += 1
+        return self.answers.pop(0) if self.answers else self.answers_last
+
+    @property
+    def answers_last(self) -> float:
+        return 0.0
+
+
+def recorder(**overrides) -> _ContinuousRecorder:
+    rec = _ContinuousRecorder(start_frames=2, silence_frames=9, **overrides)
+    rec._queue = asyncio.Queue()
+    return rec
+
+
+# ── Smart Turn ──
+
+
+def test_window_keeps_the_last_eight_seconds_padded_at_the_front():
+    short = window(np.full(16000, 16384, dtype=np.int16))
+    assert short.shape == (128000,) and short[0] == 0 and short[-1] == pytest.approx(0.5)
+    long = window(np.arange(16000 * 10, dtype=np.float32))
+    assert long.shape == (128000,) and long[0] == 16000 * 2
+
+
+def test_features_match_the_reference_shape_and_probability_needs_a_model():
+    pytest.importorskip("faster_whisper")
+    detector = SmartTurnDetector()
+    assert detector.features(np.zeros(8000, dtype=np.int16)).shape == (1, 80, 800)
+    assert detector.probability(np.zeros(8000, dtype=np.int16)) is None  # not loaded yet: plain endpointing
+
+
+def test_a_failed_load_is_reported_not_raised(tmp_path):
+    detector = SmartTurnDetector(model_path=str(tmp_path / "missing.onnx"))
+    assert detector.load() is False and detector.error
+
+
+@pytest.mark.asyncio
+async def test_a_finished_sentence_ends_the_turn_after_200_ms_not_the_full_silence():
+    rec = recorder()
+    rec.turn_detector = FakeDetector([0.93])
+    frames = [loud()] * 6 + [quiet()] * 12
+    feeder = asyncio.create_task(feed(rec._queue, frames))
+    path = await rec.record_utterance(timeout=3)
+    feeder.cancel()
+    assert path and rec.last_endpoint_reason == "smart_turn"
+    assert rec.last_endpoint_ms == 200 and rec.turn_detector.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_a_pause_mid_thought_holds_the_turn_and_says_so_once():
+    held = []
+    rec = recorder()
+    rec.turn_detector = FakeDetector([0.05, 0.05, 0.05])
+    rec.turn_hold_frames = 30  # 1.5 s
+    rec.on_hold = lambda: held.append(True)
+    # 0.75 s of silence would end a plain turn (9 frames); here the person resumes after 1 s and then finishes.
+    frames = [loud()] * 6 + [quiet()] * 20 + [loud()] * 4 + [quiet()] * 35
+    feeder = asyncio.create_task(feed(rec._queue, frames))
+    path = await rec.record_utterance(timeout=5)
+    feeder.cancel()
+    assert path and rec.last_endpoint_reason == "silence" and rec.last_endpoint_ms == 1500
+    assert held == [True]
+
+
+@pytest.mark.asyncio
+async def test_without_a_detector_the_plain_silence_endpoint_is_unchanged():
+    rec = recorder()
+    frames = [loud()] * 6 + [quiet()] * 12
+    feeder = asyncio.create_task(feed(rec._queue, frames))
+    assert await rec.record_utterance(timeout=3)
+    feeder.cancel()
+    assert rec.last_endpoint_reason == "silence" and rec.last_endpoint_ms == 450
+
+
+# ── streaming recognition ──
+
+
+class FakeStream:
+    def __init__(self) -> None:
+        self.samples = 0
+        self.finished = False
+
+    def accept_waveform(self, rate, samples) -> None:
+        self.samples += len(samples)
+
+    def input_finished(self) -> None:
+        self.finished = True
+
+
+class FakeRecognizer:
+    """Hears one word per 0.25 s of audio."""
+
+    words = ["OPEN", "CHROME", "AND", "I'M", "DONE"]
+
+    def create_stream(self) -> FakeStream:
+        return FakeStream()
+
+    def is_ready(self, stream) -> bool:
+        return False
+
+    def decode_stream(self, stream) -> None:
+        pass
+
+    def get_result(self, stream) -> str:
+        return " ".join(self.words[: min(len(self.words), stream.samples // 4000)])
+
+
+def test_tidy_reads_like_a_sentence():
+    assert tidy("OPEN CHROME AND I'M DONE") == "Open chrome and I'm done"
+    assert tidy("  ") == ""
+
+
+@pytest.mark.asyncio
+async def test_streaming_text_is_ready_when_the_turn_ends_and_partials_flow(monkeypatch):
+    monkeypatch.setattr(streaming_asr, "PARTIAL_EVERY_SECONDS", 0.0)
+    transcriber = StreamingTranscriber(recognizer=FakeRecognizer())
+    partials: list[str] = []
+    transcriber.on_partial = partials.append
+    transcriber.begin([loud()])
+    for _ in range(24):
+        transcriber.feed(loud())
+    text = await transcriber.finish()
+    assert text == "Open chrome and I'm done"
+    assert partials[0] == "Open" and partials[-1] == "Open chrome and I'm done"
+
+
+@pytest.mark.asyncio
+async def test_an_unready_transcriber_returns_nothing_so_whisper_runs():
+    transcriber = StreamingTranscriber()
+    transcriber.begin([loud()])
+    assert await transcriber.finish() == ""
+
+
+@pytest.mark.asyncio
+async def test_listener_uses_streamed_text_and_skips_whisper(monkeypatch):
+    config = PilotConfig()
+    config.voice.transcription_engine = "streaming"
+    config.voice.turn_detection = "silence"
+    captions: list[str] = []
+
+    async def on_partial(text: str) -> None:
+        captions.append(text)
+
+    listener = ContinuousVoiceListener(config=config, on_partial=on_partial)
+    listener._streaming = StreamingTranscriber(recognizer=FakeRecognizer())
+    monkeypatch.setattr(streaming_asr, "PARTIAL_EVERY_SECONDS", 0.0)
+    listener._recorder._queue = asyncio.Queue()
+    listener._recorder._stream = object()  # is_active
+
+    async def whisper(path: str) -> str:
+        raise AssertionError("Whisper should not run when streaming has the text")
+
+    listener._transcribe_path = whisper
+    frames = [loud()] * 20 + [quiet()] * 12
+    feeder = asyncio.create_task(feed(listener._recorder._queue, frames))
+    text = await listener._record_and_transcribe(timeout=3)
+    feeder.cancel()
+    await asyncio.sleep(0.05)
+    assert text == "Open chrome and I'm done"
+    assert listener.last_transcription_engine == "streaming"
+    assert captions and captions[-1].startswith("Open")
+
+
+def test_settings_validate_the_new_voice_fields():
+    from unittest.mock import MagicMock
+
+    from pilot.server import PilotServer
+
+    config = PilotConfig()
+    config.save = MagicMock()
+    server = PilotServer(config)
+
+    async def update(values):
+        return await server._handle_update_config({"section": "voice", "values": values}, None)
+
+    assert asyncio.run(update({"transcription_engine": "streaming"}))["status"] == "ok"
+    assert asyncio.run(update({"transcription_engine": "magic"}))["status"] == "error"
+    assert asyncio.run(update({"turn_detection": "silence", "turn_hold_ms": 3000}))["status"] == "ok"
+    assert asyncio.run(update({"turn_hold_ms": 50}))["status"] == "error"
+
+
+@pytest.mark.skipif(os.environ.get("HELIOX_REAL_VOICE_MODELS") != "1", reason="downloads ~80 MB of models")
+def test_real_models_agree_on_a_finished_and_an_unfinished_sentence():
+    import wave
+
+    from huggingface_hub import hf_hub_download
+
+    wav = hf_hub_download(streaming_asr.REPO, "test_wavs/0.wav")
+    with wave.open(wav) as w:
+        audio = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16)
+    detector = SmartTurnDetector()
+    assert detector.load()
+    assert detector.probability(np.concatenate([audio, np.zeros(3200, np.int16)])) > 0.5
+    assert detector.probability(audio[: 4 * 16000]) < 0.5
+
+
+# ── the Whisper path these build on ──
+
+
+def _wav(tmp_path) -> str:
+    import wave
+
+    path = tmp_path / "turn.wav"
+    with wave.open(str(path), "w") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(16000)
+        w.writeframes((np.sin(np.linspace(0, 400, 16000)) * 8000).astype(np.int16).tobytes())
+    return str(path)
+
+
+class _Segment:
+    text = " open chrome"
+
+
+@pytest.mark.asyncio
+async def test_faster_whisper_gets_decoded_samples_not_a_path(tmp_path, monkeypatch):
+    from pilot.system import voice
+
+    seen = []
+
+    class Model:
+        def transcribe(self, audio, **kwargs):
+            seen.append(audio)
+            return [_Segment()], type("Info", (), {"language": "en"})()
+
+    monkeypatch.setattr(voice, "_get_faster_whisper_model", lambda name: Model())
+    result = await voice._transcribe_faster_whisper(_wav(tmp_path), "en", "small")
+    assert result["text"] == "open chrome"
+    assert isinstance(seen[0], np.ndarray)  # PyAV is never asked to decode the file
+
+
+@pytest.mark.asyncio
+async def test_a_gpu_without_cuda_libraries_falls_back_to_the_cpu(tmp_path, monkeypatch):
+    from pilot.system import voice
+
+    monkeypatch.setattr(voice, "_faster_whisper_cuda_unusable", False)
+    built = []
+
+    class Broken:
+        def transcribe(self, audio, **kwargs):
+            raise RuntimeError("Library cublas64_12.dll is not found or cannot be loaded")
+
+    class Cpu:
+        def transcribe(self, audio, **kwargs):
+            return [_Segment()], type("Info", (), {"language": "en"})()
+
+    def model(name):
+        built.append(voice._faster_whisper_cuda_unusable)
+        return Cpu() if voice._faster_whisper_cuda_unusable else Broken()
+
+    monkeypatch.setattr(voice, "_get_faster_whisper_model", model)
+    result = await voice._transcribe_faster_whisper(_wav(tmp_path), "en", "small")
+    assert result["text"] == "open chrome" and built == [False, True]

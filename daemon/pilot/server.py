@@ -8595,6 +8595,17 @@ class PilotServer:
                         "status": "error",
                         "message": "vision.gaze_tracking_enabled must be a boolean",
                     }
+                if section == "voice" and k == "transcription_engine":
+                    if v not in {"auto", "faster_whisper", "openai_whisper", "streaming"}:
+                        return {
+                            "status": "error",
+                            "message": "voice.transcription_engine must be auto, faster_whisper, openai_whisper or streaming",
+                        }
+                if section == "voice" and k == "turn_detection" and v not in {"smart_turn", "silence"}:
+                    return {"status": "error", "message": "voice.turn_detection must be smart_turn or silence"}
+                if section == "voice" and k == "turn_hold_ms":
+                    if not isinstance(v, (int, float)) or isinstance(v, bool) or not 500 <= v <= 8000:
+                        return {"status": "error", "message": "voice.turn_hold_ms must be from 500 to 8000"}
                 if section == "voice" and k == "tts_engine":
                     if v not in {"kokoro_tts", "pocket_tts", "os_native"}:
                         return {
@@ -12768,6 +12779,14 @@ def handle_tool(tool_name, params):
                 stopped += 1
         return stopped
 
+    async def _voice_partial(self, text: str) -> None:
+        """A live caption of the words so far, while the person is still talking (streaming engine)."""
+        await self._broadcast_notification("voice_partial", {"text": text})
+
+    async def _voice_turn_hold(self) -> None:
+        """The person paused mid-thought; Heliox keeps listening instead of answering."""
+        await self._broadcast_notification("voice_status", {"status": "holding", "message": "Still listening"})
+
     async def _voice_command_dispatch(self, command_text: str) -> None:
         """Run voice through the same safe interaction path as typed input."""
         logger.info("Voice command received: '%s'", command_text)
@@ -13121,6 +13140,8 @@ def handle_tool(tool_name, params):
             on_status=self._voice_status_broadcast,
             workflow_control=self._voice_workflow_control_dispatch,
             config=self.config,
+            on_partial=self._voice_partial,
+            on_turn_hold=self._voice_turn_hold,
         )
         self._voice_listener = replacement
         result = await replacement.start()
@@ -13153,6 +13174,8 @@ def handle_tool(tool_name, params):
             on_status=self._voice_status_broadcast,
             workflow_control=self._voice_workflow_control_dispatch,
             config=self.config,
+            on_partial=self._voice_partial,
+            on_turn_hold=self._voice_turn_hold,
         )
         result = await self._voice_listener.start()
         if not self._voice_listener.is_running:
