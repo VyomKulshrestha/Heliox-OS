@@ -160,6 +160,39 @@ describe("companion settings result handling", () => {
     expect(screen.queryByText("✓ Saved")).toBeNull();
   });
 
+  it("shows a paused line when supervision cannot read the screen, and nothing otherwise", async () => {
+    const status = (screen_reading: unknown) => ({
+      status: "ok",
+      enabled: true,
+      keyboard_mouse_hook_enabled: false,
+      cognitive_coaching_enabled: true,
+      risk_pattern_detection_enabled: true,
+      hook_healthy: false,
+      screen_reading,
+    });
+    daemonMocks.call.mockImplementation((method: string) => {
+      if (method === "supervision_status") {
+        return Promise.resolve(status({ available: false, reason: "tesseract not found", retry_in_seconds: 240 }));
+      }
+      throw new Error(`unexpected method: ${method}`);
+    });
+    const first = render(SupervisionPanel);
+    const line = await screen.findByText(/Screen checks are paused/);
+    expect(line.textContent).toContain("tesseract not found");
+    expect(line.textContent).toContain("about 4 minutes");
+    first.unmount();
+
+    daemonMocks.call.mockImplementation((method: string) => {
+      if (method === "supervision_status") {
+        return Promise.resolve(status({ available: true, reason: "", retry_in_seconds: null }));
+      }
+      throw new Error(`unexpected method: ${method}`);
+    });
+    render(SupervisionPanel);
+    await screen.findByRole("button", { name: "Toggle cognitive coaching" });
+    expect(screen.queryByText(/Screen checks are paused/)).toBeNull();
+  });
+
   it("disables narration controls when status was not acknowledged", async () => {
     daemonMocks.call.mockImplementation((method: string) => {
       if (method === "narration_status") return Promise.resolve({ enabled: true });

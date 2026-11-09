@@ -85,16 +85,24 @@ async def _capture_screenshot_bytes(
 # ──────────────────────────────────────────────────────────────────────
 
 
+class OCRUnavailableError(RuntimeError):
+    """No fast OCR engine worked and the caller did not allow the slow fallback."""
+
+
 async def screen_ocr(
     region: tuple[int, int, int, int] | None = None,
     language: str = "eng",
+    allow_slow_fallback: bool = True,
 ) -> str:
     """Extract ALL text from the screen (or a region) using OCR.
 
     region: (left, top, width, height) or None for full screen.
     Returns all detected text.
 
-    Tries platform-native OCR first, then EasyOCR, then Tesseract.
+    Tries platform-native OCR first, then Tesseract, then EasyOCR, then
+    pytesseract. With allow_slow_fallback=False only the native engine and the
+    Tesseract CLI run (a periodic caller must not start a 20 second CPU job on
+    every tick); if neither works, OCRUnavailableError is raised.
     """
     img_bytes = await _capture_screenshot_bytes(region)
     errors: list[str] = []
@@ -126,9 +134,14 @@ async def screen_ocr(
         if result and result.strip():
             logger.info("OCR succeeded via tesseract CLI")
             return result
+        if not allow_slow_fallback:
+            return result
     except Exception as e:
         errors.append(f"Tesseract CLI: {e}")
         logger.debug("Tesseract CLI failed: %s", e)
+
+    if not allow_slow_fallback:
+        raise OCRUnavailableError("; ".join(errors) or "no fast OCR engine available")
 
     # ── EasyOCR (CPU; see _easyocr_reader) ───────────────────────────
     try:

@@ -8,6 +8,8 @@ fake-broadcast/fake-config fixture shape.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 import pilot.agents.user_supervision as user_supervision_module
@@ -325,3 +327,108 @@ class TestAdvisoryBroadcastsNeverLeakRawContent:
         )
         await engine.on_risk_pattern_detected("destructive_sql", "ocr")  # must not raise
         await engine.on_cognitive_checkin(CognitiveSnapshot().to_dict())  # must not raise
+
+
+class TestScreenReadingHealth:
+    @pytest.mark.asyncio
+    async def test_supervision_asks_for_fast_engines_only(self):
+        engine, _, _ = _engine(keyboard_mouse_hook_enabled=False, cognitive_coaching_enabled=False)
+        seen: list[dict] = []
+
+        async def _ocr(*args, **kwargs) -> str:
+            seen.append(kwargs)
+            return ""
+
+        user_supervision_module.screen_ocr = _ocr
+        await engine.tick()
+        assert seen == [{"allow_slow_fallback": False}]
+
+    @pytest.mark.asyncio
+    async def test_failing_engine_skips_tick_and_reports_once(self):
+        engine, broadcast, _ = _engine(
+            keyboard_mouse_hook_enabled=False, cognitive_coaching_enabled=False, ocr_interval_seconds=0
+        )
+        calls = 0
+
+        async def _failing(*args, **kwargs) -> str:
+            nonlocal calls
+            calls += 1
+            raise RuntimeError("Windows native OCR: boom")
+
+        user_supervision_module.screen_ocr = _failing
+        for _ in range(3):
+            engine._ocr_retry_at = 0.0  # ignore backoff so every tick tries again
+            result = await engine.tick()
+            assert result["signals"] == []
+        assert calls == 3
+        notices = [c for c in broadcast.calls if c[0] == "supervision_screen_reading_unavailable"]
+        assert len(notices) == 1
+        assert "boom" in notices[0][1]["reason"]
+        assert engine.screen_reading_error
+
+    @pytest.mark.asyncio
+    async def test_repeated_failure_backs_off(self):
+        engine, _, _ = _engine(
+            keyboard_mouse_hook_enabled=False, cognitive_coaching_enabled=False, ocr_interval_seconds=0.01
+        )
+        calls = 0
+
+        async def _failing(*args, **kwargs) -> str:
+            nonlocal calls
+            calls += 1
+            raise RuntimeError("down")
+
+        user_supervision_module.screen_ocr = _failing
+        await engine.tick()
+        await asyncio.sleep(0.05)
+        await engine.tick()  # still inside the backoff window
+        assert calls == 1
+
+    @pytest.mark.asyncio
+    async def test_recovery_clears_error_and_rearms_notice(self):
+        engine, broadcast, _ = _engine(
+            keyboard_mouse_hook_enabled=False, cognitive_coaching_enabled=False, ocr_interval_seconds=0
+        )
+
+        async def _failing(*args, **kwargs) -> str:
+            raise RuntimeError("down")
+
+        async def _ok(*args, **kwargs) -> str:
+            return ""
+
+        user_supervision_module.screen_ocr = _failing
+        await engine.tick()
+        user_supervision_module.screen_ocr = _ok
+        engine._ocr_retry_at = 0.0
+        await engine.tick()
+        assert engine.screen_reading_error is None
+        user_supervision_module.screen_ocr = _failing
+        engine._ocr_retry_at = 0.0
+        await engine.tick()
+        notices = [c for c in broadcast.calls if c[0] == "supervision_screen_reading_unavailable"]
+        assert len(notices) == 2
+
+    @pytest.mark.asyncio
+    async def test_no_overlapping_ocr_jobs(self):
+        engine, _, _ = _engine(
+            keyboard_mouse_hook_enabled=False, cognitive_coaching_enabled=False, ocr_interval_seconds=0
+        )
+        running = 0
+        peak = 0
+        release = asyncio.Event()
+
+        async def _slow(*args, **kwargs) -> str:
+            nonlocal running, peak
+            running += 1
+            peak = max(peak, running)
+            await release.wait()
+            running -= 1
+            return ""
+
+        user_supervision_module.screen_ocr = _slow
+        first = asyncio.create_task(engine.tick())
+        await asyncio.sleep(0.01)
+        await engine.tick()  # second tick while the first read is still running
+        release.set()
+        await first
+        assert peak == 1

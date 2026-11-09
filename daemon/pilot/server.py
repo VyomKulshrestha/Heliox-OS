@@ -10424,8 +10424,15 @@ class PilotServer:
         """
         cfg = self.config.supervision
         hook_healthy = getattr(self, "_supervision_hook", None)
+        engine = getattr(self, "_supervision", None)
+        screen_reading = (
+            engine.screen_reading_status()
+            if engine is not None
+            else {"available": True, "reason": "", "retry_in_seconds": None}
+        )
         return {
             "status": "ok",
+            "screen_reading": screen_reading,
             "enabled": cfg.enabled,
             "keyboard_mouse_hook_enabled": cfg.keyboard_mouse_hook_enabled,
             "cognitive_coaching_enabled": cfg.cognitive_coaching_enabled,

@@ -54,6 +54,22 @@ async def test_status_reports_config_defaults():
 
 
 @pytest.mark.asyncio
+async def test_status_reports_screen_reading_state():
+    server = PilotServer(PilotConfig())
+    result = await server._handle_supervision_status({}, ws=None)
+    assert result["screen_reading"] == {"available": True, "reason": "", "retry_in_seconds": None}
+
+    class _Engine:
+        def screen_reading_status(self):
+            return {"available": False, "reason": "no engine", "retry_in_seconds": 120}
+
+    server._supervision = _Engine()
+    result = await server._handle_supervision_status({}, ws=None)
+    assert result["screen_reading"] == {"available": False, "reason": "no engine", "retry_in_seconds": 120}
+    assert result["hook_healthy"] is False
+
+
+@pytest.mark.asyncio
 async def test_status_without_background_or_hook_initialized_is_safe():
     """Mirrors how a freshly-constructed PilotServer (before initialize())
     has neither _background nor _supervision_hook set -- must not raise."""

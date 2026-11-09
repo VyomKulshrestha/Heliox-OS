@@ -39,6 +39,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("pilot.agents.user_supervision")
 
+# One OCR read may take this long before it counts as a failure.
+_OCR_TIMEOUT_SECONDS = 30.0
+# After repeated failures the retry gap doubles, up to this many seconds.
+_OCR_BACKOFF_MAX_SECONDS = 600.0
+
 
 class UserSupervisionEngine:
     """`BackgroundTask.action_fn`/`on_trigger` pair (see agents/background.py)
@@ -63,6 +68,13 @@ class UserSupervisionEngine:
         self._last_ocr_check = 0.0
         # cooldown key ("risk:<pattern>" or "coaching") -> last-fired time.
         self._cooldowns: dict[str, float] = {}
+        # Screen reading health. The periodic read only uses the fast engines
+        # (native OS OCR, Tesseract); EasyOCR takes ~20 s of CPU per read.
+        self._ocr_running = False
+        self._ocr_failures = 0
+        self._ocr_retry_at = 0.0
+        self._ocr_unavailable_reported = False
+        self.screen_reading_error: str | None = None
 
     def _cfg(self) -> SupervisionConfig:
         return self._config.supervision
@@ -82,6 +94,8 @@ class UserSupervisionEngine:
     def _due_for_ocr(self) -> bool:
         cfg = self._cfg()
         now = time.time()
+        if self._ocr_running or now < self._ocr_retry_at:
+            return False
         if now - self._last_ocr_check < cfg.ocr_interval_seconds:
             return False
         self._last_ocr_check = now
@@ -122,11 +136,10 @@ class UserSupervisionEngine:
 
     async def _ocr_signals(self, cfg: SupervisionConfig) -> list[dict[str, Any]]:
         signals: list[dict[str, Any]] = []
-        try:
-            ocr_text = await screen_ocr()
-        except Exception:
-            logger.debug("screen_ocr failed during a supervision tick", exc_info=True)
-            ocr_text = ""
+        ocr_text = await self._read_screen()
+        if ocr_text is None:
+            # No fast engine worked: skip this tick's OCR-based checks.
+            return signals
         snippet = ocr_text[: cfg.ocr_snippet_max_chars]
 
         state = self._screen_vision.get_context().current()
@@ -146,6 +159,58 @@ class UserSupervisionEngine:
                 signals.append({"kind": "cognitive", "snapshot": snap.to_dict()})
 
         return signals
+
+    def screen_reading_status(self) -> dict[str, Any]:
+        """For the status RPC: whether the periodic screen read is working, and why not."""
+        if self.screen_reading_error is None:
+            return {"available": True, "reason": "", "retry_in_seconds": None}
+        return {
+            "available": False,
+            "reason": self.screen_reading_error,
+            "retry_in_seconds": max(0, round(self._ocr_retry_at - time.time())),
+        }
+
+    async def _read_screen(self) -> str | None:
+        """OCR with the fast engines only. Returns None when screen reading failed."""
+        self._ocr_running = True
+        try:
+            text = await asyncio.wait_for(screen_ocr(allow_slow_fallback=False), timeout=_OCR_TIMEOUT_SECONDS)
+        except asyncio.CancelledError:
+            raise
+        except asyncio.TimeoutError:
+            await self._ocr_failed(f"a read took longer than {int(_OCR_TIMEOUT_SECONDS)} seconds")
+            return None
+        except Exception as exc:
+            await self._ocr_failed(str(exc) or exc.__class__.__name__)
+            return None
+        finally:
+            self._ocr_running = False
+        self._ocr_failures = 0
+        self._ocr_retry_at = 0.0
+        self._ocr_unavailable_reported = False
+        self.screen_reading_error = None
+        return text
+
+    async def _ocr_failed(self, reason: str) -> None:
+        self._ocr_failures += 1
+        delay = min(max(self._cfg().ocr_interval_seconds, 1.0) * (2**self._ocr_failures), _OCR_BACKOFF_MAX_SECONDS)
+        self._ocr_retry_at = time.time() + delay
+        self.screen_reading_error = reason
+        logger.warning("Supervision screen reading failed (%s); next try in %.0f s", reason, delay)
+        if self._ocr_unavailable_reported:
+            return
+        self._ocr_unavailable_reported = True
+        if self._broadcast_fn:
+            await self._broadcast_fn(
+                "supervision_screen_reading_unavailable",
+                {
+                    "message": (
+                        "Supervision can't read your screen right now, so it is skipping screen checks. "
+                        f"Reason: {reason}"
+                    ),
+                    "reason": reason,
+                },
+            )
 
     # ── BackgroundTask.on_trigger ──
 

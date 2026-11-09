@@ -19,6 +19,11 @@
   let cognitiveCoachingEnabled = $state(true);
   let riskPatternDetectionEnabled = $state(true);
   let hookHealthy = $state(false);
+  let screenReading = $state<{ available: boolean; reason: string; retry_in_seconds: number | null }>({
+    available: true,
+    reason: "",
+    retry_in_seconds: null,
+  });
   let loading = $state(true);
   let statusAvailable = $state(false);
   let saving = $state(false);
@@ -58,6 +63,7 @@
         cognitive_coaching_enabled: boolean;
         risk_pattern_detection_enabled: boolean;
         hook_healthy: boolean;
+        screen_reading?: { available: boolean; reason: string; retry_in_seconds: number | null };
       };
       requireOkResult(result, "Supervision status is unavailable.");
       enabled = result.enabled ?? false;
@@ -65,6 +71,7 @@
       cognitiveCoachingEnabled = result.cognitive_coaching_enabled ?? true;
       riskPatternDetectionEnabled = result.risk_pattern_detection_enabled ?? true;
       hookHealthy = result.hook_healthy ?? false;
+      screenReading = result.screen_reading ?? { available: true, reason: "", retry_in_seconds: null };
       savedValues = formValues();
       statusAvailable = true;
       error = "";
@@ -104,6 +111,13 @@
     }
   }
 
+  const retryMinutes = $derived(Math.max(1, Math.round((screenReading.retry_in_seconds ?? 60) / 60)));
+
+  const pausedMessage = $derived(
+    `Screen checks are paused: Heliox can't read the screen right now. ${screenReading.reason}. ` +
+      `It will try again in about ${retryMinutes} ${retryMinutes === 1 ? "minute" : "minutes"}.`,
+  );
+
   function toggleHook() {
     if (!keyboardMouseHookEnabled && !hookWarningUnderstood) return;
     keyboardMouseHookEnabled = !keyboardMouseHookEnabled;
@@ -135,6 +149,11 @@
     {/if}
     {#if error}
       <p class="panel-error" role="alert">{error}</p>
+    {/if}
+    {#if enabled && !screenReading.available}
+      <p class="supervision-hook-warning screen-reading-paused" role="status">
+        {pausedMessage}
+      </p>
     {/if}
     {#if enabled}
       <div class="setting-row">
@@ -344,6 +363,10 @@
     font-size: 11px;
     line-height: 1.5;
     color: var(--warning);
+  }
+
+  .screen-reading-paused {
+    margin: 10px 14px 0;
   }
 
   .hook-understood {
