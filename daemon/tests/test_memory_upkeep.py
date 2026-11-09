@@ -13,7 +13,6 @@ from pilot.memory.links import expand_query
 from pilot.memory.store import MemoryStore
 from pilot.memory.temporal import TemporalMemoryStore
 
-
 # ── consolidation ──
 
 
