@@ -98,7 +98,8 @@ jobs:
 
   approval-regression:
     name: Same-WebSocket Approval Regression
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest moved to 26.04, where this Playwright release cannot install Chromium.
+    runs-on: ubuntu-24.04
 
     steps:
       - uses: actions/checkout@v7
@@ -145,7 +146,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # Pinned to the image the Linux baselines were rendered on; ubuntu-latest (26.04) has no Playwright Chromium.
+        os: [ubuntu-24.04, windows-latest, macos-latest]
     defaults:
       run:
         working-directory: tauri-app/ui
