@@ -130,24 +130,54 @@ def _unquote(token: str) -> str:
 
 
 def _label(path: str) -> str:
+    """Last path component for a reason, splitting on both \\ and / so a
+    Windows path reads the same on every platform."""
     stripped = path.rstrip("\\/")
-    return os.path.basename(stripped) or path
+    return re.split(r"[\\/]", stripped)[-1] if stripped else path
 
 
-def _shell_created_files(text: str, working_directory: str | None) -> list[tuple[str, int]]:
-    """Files whose exact size the shell text states: `fsutil file createnew
-    <path> <bytes>` and `fallocate -l <size> <path>`. Both allocate real
-    space. `truncate -s` is not counted (it makes sparse files) and `dd` is
-    not counted (its size depends on bs, count and the input)."""
+# Paths in actions are paths on the machine the daemon runs on, so they are
+# read with that platform's rules (ntpath on Windows, posixpath elsewhere).
+# Tests pass the other flavour explicitly to check both on any OS.
+_PATH_FLAVOUR: Any = os.path
+
+
+def _shell_created_files(
+    text: str,
+    working_directory: str | None,
+    flavour: Any = None,
+) -> list[tuple[str, int]]:
+    """Files whose exact size the shell text states, for commands that exist
+    on the platform: `fsutil file createnew <path> <bytes>` on Windows and
+    `fallocate -l <size> <path>` elsewhere. Both allocate real space. A path
+    that is not a real path for the platform (a `C:\\...` path under
+    posixpath) is never resolved, and a relative path is joined to the
+    command's working directory when that is absolute, or to the daemon's
+    own when the command names none and the flavour is the running one.
+    `truncate -s` is not counted (it makes sparse files) and `dd` is not
+    counted (its size depends on bs, count and the input)."""
+    flavour = flavour or _PATH_FLAVOUR
+    windows = flavour.__name__ == "ntpath"
     created: list[tuple[str, int]] = []
-    for match in _FSUTIL_CREATENEW.finditer(text):
-        created.append((_unquote(match.group(1)), int(match.group(2))))
-    for match in _FALLOCATE_LENGTH.finditer(text):
-        number, unit, suffix, token = match.groups()
-        base = 1000 if suffix == "B" else 1024
-        created.append((_unquote(token), int(number) * base ** _UNIT_POWER.get(unit or "", 0)))
-    base_dir = working_directory or os.getcwd()
-    return [(path if os.path.isabs(path) else os.path.join(base_dir, path), size) for path, size in created]
+    if windows:
+        for match in _FSUTIL_CREATENEW.finditer(text):
+            created.append((_unquote(match.group(1)), int(match.group(2))))
+    else:
+        for match in _FALLOCATE_LENGTH.finditer(text):
+            number, unit, suffix, token = match.groups()
+            base = 1000 if suffix == "B" else 1024
+            created.append((_unquote(token), int(number) * base ** _UNIT_POWER.get(unit or "", 0)))
+    resolved: list[tuple[str, int]] = []
+    for path, size in created:
+        if not flavour.isabs(path):
+            if working_directory and flavour.isabs(working_directory):
+                path = flavour.join(working_directory, path)
+            elif not working_directory and flavour is os.path:
+                path = flavour.join(os.getcwd(), path)
+            else:
+                continue
+        resolved.append((path, size))
+    return resolved
 
 
 def _scan_budget_seconds() -> float:

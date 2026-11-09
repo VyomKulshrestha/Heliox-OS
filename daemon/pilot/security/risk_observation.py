@@ -142,24 +142,33 @@ class VolumeUsage:
     total: int
 
 
+# A Windows reparse point whose tag has this bit set is a "name surrogate":
+# it points at another place in the namespace (symlinks, junctions, volume
+# mount points). Cloud-file and dedup placeholders do not set it and hold
+# their data in place, so walking into them stays inside the tree.
+_REPARSE_TAG_NAME_SURROGATE = 0x20000000
+
+
+def _is_link_stat(st: os.stat_result) -> bool:
+    """True when a stat taken WITHOUT following links describes a symlink,
+    junction or other redirecting reparse point. Works the same on every
+    Python version: it reads st_file_attributes and st_reparse_tag, which
+    Windows has provided since 3.8, rather than DirEntry.is_junction()
+    (3.12+). A reparse point with no readable tag counts as a link, so the
+    walk under-counts instead of leaving the tree."""
+    if stat_module.S_ISLNK(st.st_mode):
+        return True
+    attributes = getattr(st, "st_file_attributes", 0)
+    if not attributes & getattr(stat_module, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400):
+        return False
+    tag = getattr(st, "st_reparse_tag", 0)
+    return not tag or bool(tag & _REPARSE_TAG_NAME_SURROGATE)
+
+
 def _is_link(entry: os.DirEntry[str]) -> bool:
     if entry.is_symlink():
         return True
-    is_junction = getattr(entry, "is_junction", None)  # Python 3.12+
-    if is_junction is not None:
-        return bool(is_junction())
-    # Python 3.11 on Windows: treat any reparse-point directory as a link.
-    # That over-skips (for example cloud-synced folders), which only makes
-    # the result an honest lower bound instead of following a junction.
-    if entry.is_dir(follow_symlinks=False):
-        attributes = getattr(entry.stat(follow_symlinks=False), "st_file_attributes", 0)
-        return bool(attributes & getattr(stat_module, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
-    return False
-
-
-def _path_is_junction(path: str) -> bool:
-    is_junction = getattr(os.path, "isjunction", None)  # Python 3.12+
-    return bool(is_junction is not None and is_junction(path))
+    return _is_link_stat(entry.stat(follow_symlinks=False))
 
 
 def measure_tree_size(
@@ -180,7 +189,7 @@ def measure_tree_size(
     try:
         root = os.path.abspath(os.path.expanduser(path))
         st = os.lstat(root)
-        if stat_module.S_ISLNK(st.st_mode) or _path_is_junction(root):
+        if _is_link_stat(st):
             # The copy would follow the link to somewhere outside this
             # tree; we do not, so nothing about its size is known.
             return TreeSize(bytes=0, entries=0, complete=False)

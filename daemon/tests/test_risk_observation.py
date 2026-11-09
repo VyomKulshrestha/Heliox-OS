@@ -1,3 +1,5 @@
+import pytest
+
 from pilot.security.risk_observation import capture_os_snapshot
 
 
@@ -106,30 +108,63 @@ def test_tree_scan_does_not_open_files(tmp_path, monkeypatch):
     assert measure_tree_size(str(root), deadline=_far_future()).bytes == 40
 
 
-def _make_dir_link(link, target):
+def _make_dir_link(kind, link, target):
+    """Create the link kind if this platform and account allow it, else skip."""
     import os
     import sys
 
-    if sys.platform == "win32":
+    import pytest
+
+    if kind == "junction":
+        if sys.platform != "win32":
+            pytest.skip("directory junctions exist only on Windows")
         import _winapi
 
         _winapi.CreateJunction(str(target), str(link))
-    else:
+        return
+    try:
         os.symlink(target, link, target_is_directory=True)
+    except (OSError, NotImplementedError) as error:
+        pytest.skip(f"symlinks not permitted here: {error}")
 
 
-def test_tree_scan_does_not_follow_links_out_of_the_tree(tmp_path):
+@pytest.mark.parametrize("kind", ["symlink", "junction"])
+def test_tree_scan_does_not_follow_links_out_of_the_tree(tmp_path, kind):
     from pilot.security.risk_observation import measure_tree_size
 
     outside = _tree(tmp_path / "outside", 5, 10_000)
     root = _tree(tmp_path / "t", 1, 100)
-    _make_dir_link(root / "link", outside)
+    _make_dir_link(kind, root / "link", outside)
     size = measure_tree_size(str(root), deadline=_far_future())
     assert size.bytes == 200
     assert size.complete is False  # the copy may follow the link; only a lower bound is known
 
     rooted_at_link = measure_tree_size(str(root / "link"), deadline=_far_future())
     assert (rooted_at_link.bytes, rooted_at_link.complete) == (0, False)
+
+
+@pytest.mark.parametrize(
+    ("attributes", "tag", "is_link"),
+    [
+        (0x10, None, False),  # plain directory
+        (0x10 | 0x400, 0xA0000003, True),  # junction / mount point
+        (0x10 | 0x400, 0xA000000C, True),  # symlink reparse point
+        (0x10 | 0x400, 0x9000701A, False),  # cloud-files placeholder keeps its data in place
+        (0x10 | 0x400, 0, True),  # reparse point with no readable tag: assume a link
+    ],
+)
+def test_reparse_points_are_classified_without_python_3_12_apis(attributes, tag, is_link):
+    """Python 3.11 has no DirEntry.is_junction(); the scan reads the stat
+    attributes instead, which every supported version provides on Windows."""
+    import stat
+    from types import SimpleNamespace
+
+    from pilot.security.risk_observation import _is_link_stat
+
+    fake = SimpleNamespace(st_mode=stat.S_IFDIR, st_file_attributes=attributes)
+    if tag is not None:
+        fake.st_reparse_tag = tag
+    assert _is_link_stat(fake) is is_link
 
 
 def test_volume_of_uses_nearest_existing_parent(tmp_path):
@@ -139,4 +174,6 @@ def test_volume_of_uses_nearest_existing_parent(tmp_path):
     assert volume is not None
     assert volume.total > 0
     assert 0 <= volume.used <= volume.total
-    assert volume == volume_of(str(tmp_path))
+    parent = volume_of(str(tmp_path))
+    # Used bytes move as other programs write, so compare identity only.
+    assert (volume.key, volume.root, volume.total) == (parent.key, parent.root, parent.total)

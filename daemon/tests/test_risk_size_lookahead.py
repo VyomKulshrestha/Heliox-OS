@@ -2,15 +2,25 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+import ntpath
+import posixpath
+import sys
 
 import pytest
 
-from pilot.actions import Action, ActionPlan, ActionType, EmptyParams, FileParams, ShellScriptParams
+from pilot.actions import (
+    Action,
+    ActionPlan,
+    ActionType,
+    EmptyParams,
+    FileParams,
+    ShellCommandParams,
+    ShellScriptParams,
+)
 from pilot.agents.destructive_critic import HEURISTIC_RISK_THRESHOLD, assess_plan_risk, heuristic_risk
 from pilot.config import PilotConfig
 from pilot.security import risk_gate as risk_gate_module
-from pilot.security.risk_gate import UNMEASURED_SIZE_RISK, RiskGate, _shell_created_files
+from pilot.security.risk_gate import UNMEASURED_SIZE_RISK, RiskGate, _label, _shell_created_files
 from pilot.security.risk_observation import OsSnapshot, TreeSize, VolumeUsage
 from pilot.security.risk_safety import DISK_USAGE_RISK_WEIGHT
 
@@ -216,27 +226,82 @@ def test_move_within_one_volume_adds_nothing(monkeypatch, tmp_path):
     assert risk == 0.0
 
 
-def test_fsutil_createnew_size_is_read_from_the_script(monkeypatch):
-    gate = _gate(monkeypatch, fraction=0.722, total=953 * GIB)
-    action = Action(
+def _fsutil_action(path: str = "C:\\big.bin", size: int = 300_000_000_000) -> Action:
+    return Action(
         action_type=ActionType.SHELL_SCRIPT,
         target="powershell",
-        parameters=ShellScriptParams(script="fsutil file createnew C:\\big.bin 300000000000"),
+        parameters=ShellScriptParams(script=f"fsutil file createnew {path} {size}"),
+    )
+
+
+@pytest.mark.parametrize("flavour", [ntpath, posixpath], ids=["windows-paths", "posix-paths"])
+def test_fsutil_counts_only_where_windows_paths_are_local(monkeypatch, flavour):
+    """fsutil is a Windows tool and C:\\big.bin is only a local path there.
+    Both flavours run on every OS by passing the path rules explicitly."""
+    monkeypatch.setattr(risk_gate_module, "_PATH_FLAVOUR", flavour)
+    gate = _gate(monkeypatch, fraction=0.722, total=953 * GIB)
+    risk, reasons = gate.evaluate_plan(_plan(_fsutil_action()), PilotConfig())
+    if flavour is ntpath:
+        assert risk == pytest.approx(DISK_USAGE_RISK_WEIGHT)
+        assert reasons == ["creating big.bin (about 279 GB) needs more than the 265 GB free on C:"]
+    else:
+        assert risk == 0.0
+        assert reasons == []
+
+
+def test_fsutil_on_the_running_platform(monkeypatch):
+    gate = _gate(monkeypatch, fraction=0.722, total=953 * GIB)
+    risk, _ = gate.evaluate_plan(_plan(_fsutil_action()), PilotConfig())
+    assert risk == (pytest.approx(DISK_USAGE_RISK_WEIGHT) if sys.platform == "win32" else 0.0)
+
+
+def test_fallocate_counts_under_posix_paths(monkeypatch):
+    monkeypatch.setattr(risk_gate_module, "_PATH_FLAVOUR", posixpath)
+    gate = _gate(monkeypatch, fraction=0.722, total=953 * GIB)
+    action = Action(
+        action_type=ActionType.SHELL_COMMAND,
+        target="bash",
+        parameters=ShellCommandParams(command="fallocate -l 300G /srv/big.img"),
     )
     risk, reasons = gate.evaluate_plan(_plan(action), PilotConfig())
     assert risk == pytest.approx(DISK_USAGE_RISK_WEIGHT)
-    assert reasons == ["creating big.bin (about 279 GB) needs more than the 265 GB free on C:"]
+    assert reasons == ["creating big.img (about 300 GB) needs more than the 265 GB free on C:"]
 
 
-def test_shell_size_parsing_is_exact():
-    assert _shell_created_files('fsutil file createnew "D:\\a b.bin" 1048576', None) == [("D:\\a b.bin", 1048576)]
-    parsed = _shell_created_files("fallocate -l 10G /x; fallocate -l 10GB /y; fallocate --length 3MiB /z", None)
-    assert [(Path(path).name, size) for path, size in parsed] == [
-        ("x", 10 * GIB),
-        ("y", 10 * 1000**3),
-        ("z", 3 * 1024**2),
-    ]
-    assert _shell_created_files("truncate -s 10G /x; dd if=/dev/zero of=/y bs=1M count=10", None) == []
+def test_shell_size_parsing_windows_flavour():
+    parse = _shell_created_files
+    assert parse('fsutil file createnew "D:\\a b.bin" 1048576', None, ntpath) == [("D:\\a b.bin", 1048576)]
+    assert parse("fsutil file createnew big.bin 10", "C:\\work", ntpath) == [("C:\\work\\big.bin", 10)]
+    # A relative path under a working directory that is not absolute is not guessed.
+    assert parse("fsutil file createnew big.bin 10", "relative", ntpath) == []
+    assert parse("fallocate -l 10G C:\\x", None, ntpath) == []  # not a Windows command
+
+
+def test_shell_size_parsing_posix_flavour():
+    parse = _shell_created_files
+    parsed = parse("fallocate -l 10G /x; fallocate -l 10GB /y; fallocate --length 3MiB /z", None, posixpath)
+    assert parsed == [("/x", 10 * GIB), ("/y", 10 * 1000**3), ("/z", 3 * 1024**2)]
+    assert parse("fallocate -l 1K data.bin", "/w", posixpath) == [("/w/data.bin", KIB)]
+    # A Windows drive path is not a POSIX path, and fsutil does not exist there.
+    assert parse('fsutil file createnew "D:\\a b.bin" 1048576', None, posixpath) == []
+    assert parse("fallocate -l 1K data.bin", "C:\\work", posixpath) == []
+    assert parse("truncate -s 10G /x; dd if=/dev/zero of=/y bs=1M count=10", None, posixpath) == []
+
+
+@pytest.mark.parametrize(
+    ("path", "label"),
+    [
+        ("C:\\Users\\marcu\\Videos", "Videos"),
+        ("C:\\Users\\marcu\\Videos\\", "Videos"),
+        ("/home/runner/Videos/", "Videos"),
+        ("D:/mixed\\sep/photos", "photos"),
+        ("C:\\", "C:"),
+        ("/", "/"),
+        ("big.bin", "big.bin"),
+    ],
+)
+def test_reason_labels_use_the_last_component_for_both_separators(path, label):
+    assert _label(path) == label
 
 
 def test_size_lookahead_only_adds_caution(monkeypatch, tmp_path):
