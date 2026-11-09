@@ -835,6 +835,10 @@ class PlanHistoryStore:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+GNOMON_WARM_AFTER_SECONDS = 45.0  # after start-up, so the daemon is answering before the model loads
+GNOMON_REQUEST_TIMEOUT = 4.0  # a review of a request never holds it up longer than this
+
+
 class PilotServer:
     """Main daemon server managing WebSocket connections and agent dispatch."""
 
@@ -1656,8 +1660,11 @@ class PilotServer:
             from pilot.intelligence.gnomon_reviewer import GnomonReviewer
             from pilot.workflows.autonomous_jobs import AutonomousJobStore
 
-            # Gnomon loads in the background when a job starts and only ever adds caution.
+            # Gnomon loads in the background and only ever adds caution. With it switched on, it is loaded
+            # shortly after start-up, so reviewing a request never waits on the load.
             self._gnomon_reviewer = GnomonReviewer(self._typed_decision_model)
+            if self.config.typed_decision.enabled and self.config.typed_decision.review_requests:
+                asyncio.get_running_loop().call_later(GNOMON_WARM_AFTER_SECONDS, self._gnomon_reviewer.warm)
 
             self._autonomous = AutonomousExecutor(
                 planner=self._planner,
@@ -3850,9 +3857,17 @@ class PilotServer:
                 await ws.send(_notification("critic_verdict", critic_verdict_payload))
 
             mcp_requires_visible_approval = str(params.get("source") or "").strip().lower() == "mcp"
+            gnomon_interrupt, gnomon_reasons = False, []
+            if not dry_run:
+                gnomon_interrupt, gnomon_reasons, gnomon_review = await self._gnomon_review_request(
+                    user_input, plan, review_screen_context
+                )
+                if gnomon_review:
+                    await ws.send(_notification("gnomon_review", {"plan_id": plan_id, **gnomon_review}))
             needs_confirm = (
                 self._permission_checker.plan_requires_confirmation(plan)
                 or world_model_interrupt
+                or gnomon_interrupt
                 or mcp_requires_visible_approval
             ) and not dry_run
             partially_approved = False
@@ -3879,6 +3894,8 @@ class PilotServer:
                             if world_model_interrupt and risk_assessment.model_version == "evaluation-error"
                             else "World model predicted a risky outcome — execution is paused..."
                             if world_model_interrupt
+                            else "Gnomon flagged this plan — awaiting your approval..."
+                            if gnomon_interrupt
                             else "Dangerous action detected — awaiting user approval..."
                         ),
                         parent_id=confirm_phase,
@@ -3898,13 +3915,16 @@ class PilotServer:
                         "A local MCP client proposed this task. Heliox requires visible user approval "
                         "for every MCP action before execution."
                     )
+                if gnomon_interrupt:
+                    gnomon_reason = " ".join(gnomon_reasons) or "Gnomon asked to check this plan with you first."
+                    world_model_reason = f"{world_model_reason} {gnomon_reason}".strip()
                 confirmed, approved_indices, required_indices = await self._wait_for_confirmation(
                     plan_id,
                     plan,
                     ws,
                     reason=world_model_reason,
                     risk_assessment=risk_assessment.to_dict() if world_model_interrupt else None,
-                    force_all_actions=world_model_interrupt or mcp_requires_visible_approval,
+                    force_all_actions=world_model_interrupt or gnomon_interrupt or mcp_requires_visible_approval,
                 )
 
                 if emit:
@@ -9942,6 +9962,33 @@ class PilotServer:
         )
         if self.config.gateway.risk_gate_enabled:
             await self._broadcast_notification("world_model_assessment", {"plan_id": plan_id, **payload})
+
+    async def _gnomon_review_request(
+        self, user_input: str, plan: Any, untrusted_context: str
+    ) -> tuple[bool, list[str], dict[str, Any]]:
+        """Gnomon's check of a plan the person asked for directly: scope, harm and instructions injected by
+        screen or tool text. It can only add a confirmation. Not loaded yet, slow or failing: no check, no wait."""
+        reviewer = self._gnomon_reviewer
+        settings = self.config.typed_decision
+        if reviewer is None or not settings.enabled or not getattr(settings, "review_requests", True):
+            return False, [], {}
+        from pilot.agents.autonomous_review import changes_state
+
+        if not changes_state(plan):
+            return False, [], {}  # only reads: nothing for Gnomon to weigh
+        try:
+            verdict = await asyncio.wait_for(
+                reviewer.review_plan(user_input, plan, untrusted_context or ""), timeout=GNOMON_REQUEST_TIMEOUT
+            )
+        except TimeoutError:
+            logger.info("Gnomon took too long to review this request; continuing without it")
+            return False, [], {"state": "timed_out", "execution_authority": False}
+        except Exception:
+            logger.warning("Gnomon request review failed", exc_info=True)
+            return False, [], {}
+        if verdict is None:  # still loading (it was asked to load) or unavailable
+            return False, [], {"state": reviewer.status()["state"], "execution_authority": False}
+        return bool(verdict.escalate), list(verdict.reasons), {**verdict.to_dict(), "state": "reviewed"}
 
     async def _handle_autonomy_review_status(self, params: dict, ws: ServerConnection) -> dict:
         """Whether the world model and Gnomon are taking part in autonomous decisions right now."""

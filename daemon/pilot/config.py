@@ -664,6 +664,11 @@ class TypedDecisionConfig:
     model_id: str = "Qwen/Qwen3-0.6B"
     max_length: int = 2048
     temperature: float = 1.0
+    # With Gnomon on, also review the plans the person asks for directly (chat and voice), not only autonomous
+    # work. It can only add a confirmation, never approve; when it is not loaded yet, the request does not wait.
+    # Off by default: Gnomon v4.1 flagged 6 of 12 correct everyday plans in a check on 9 November 2026
+    # (docs/GNOMON_TRAINING.md), which would put an extra approval on about half of ordinary requests.
+    review_requests: bool = False
 
 
 @dataclass
@@ -1258,6 +1263,7 @@ def _validate_config_types(raw: dict) -> None:
             "model_id": str,
             "max_length": int,
             "temperature": (int, float),
+            "review_requests": bool,
         },
         "proxy": {
             "http": str,

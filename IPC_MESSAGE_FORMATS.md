@@ -1933,6 +1933,11 @@ Whether the world model and Gnomon take part in autonomous decisions right now.
 "gnomon": { "state": "cold" | "loading" | "ready" | "unavailable" | "disabled",
 "last_error": "", "execution_authority": false } }`.
 
+With `typed_decision.review_requests` on, a plan the person asked for directly
+also gets Gnomon's review before execution, sent as `gnomon_review` with
+`plan_id`, `state` (`reviewed`, `loading`, `cold`, `unavailable` or
+`timed_out`), and, when reviewed, `escalate`, `reasons` and `scores`.
+
 Before each autonomous round the world model scores the plan and, when it is
 loaded, Gnomon reviews plans that change something. Either can only add an
 approval requirement. Each review is broadcast as `world_model_assessment`

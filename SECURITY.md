@@ -491,6 +491,16 @@ GPU, 2.5 GiB of free RAM), answers in about 0.2-0.6 seconds and unloads after
 ten idle minutes. When it is off, loading, out of memory or slow, Heliox decides
 on its deterministic rules, the world model and the person's approval alone.
 
+**Plans the person asks for directly** can get the same review with
+`typed_decision.review_requests = true`: a plan that changes something is
+checked within 4 seconds, and only when Gnomon is already loaded (it then loads
+45 seconds after start-up), so a request never waits on it. It can only add an
+approval, whose prompt says why. It is **off by default** because the current
+Gnomon is too strict for it: on 9 November 2026, v4.1 flagged 6 of 12 correct
+everyday plans (a volume change, two file moves, closing an app, typing an
+email address, deleting two screenshots) while catching 3 of 4 bad ones. See
+[Gnomon training](docs/GNOMON_TRAINING.md).
+
 **Known scope limits, stated plainly.** Lookahead simulates the submitted plan's actions in order; it does not invent repetitions absent from the plan. The learned disk/process-count predictions are trained on 36,000 rows from a single machine's sandbox, not validated across diverse hardware/filesystems. Treat learned refinement as approximate; the deterministic parallel prediction is deliberately retained as the safety floor.
 
 ---
