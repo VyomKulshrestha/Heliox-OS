@@ -38,7 +38,8 @@
     if (!t.learned_from) return `Still learning how you type. Until then it waits the usual ${t.default_seconds} s.`;
     const pauses = t.learned_from === 1 ? "1 pause" : `${t.learned_from} pauses`;
     let text = `Mid-sentence it now waits ${t.mid_sentence_seconds} s before speaking up, learned from ${pauses}.`;
-    if (t.cut_offs) text += ` It cut in on you ${t.cut_offs === 1 ? "once" : `${t.cut_offs} times`} and waits longer since.`;
+    if (t.cut_offs)
+      text += ` It cut in on you ${t.cut_offs === 1 ? "once" : `${t.cut_offs} times`} and waits longer since.`;
     return text;
   }
 
