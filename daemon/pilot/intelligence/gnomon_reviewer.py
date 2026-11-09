@@ -28,6 +28,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import PureWindowsPath
 from typing import Any
 
 logger = logging.getLogger("pilot.intelligence.gnomon_reviewer")
@@ -126,8 +127,14 @@ def describe_action(action: Any) -> str:
     if kind == "file_delete":
         return f"Delete {value('path') or target}"
     if kind in {"file_move", "file_copy"}:
+        source, destination = value("path") or target, value("destination")
+        src, dst = PureWindowsPath(source.replace("/", "\\")), PureWindowsPath(destination.replace("/", "\\"))
+        if kind == "file_move" and destination and src.parent == dst.parent:
+            return f"Rename {src.name} to {dst.name} in the same folder ({src.parent})"
         verb = "Move" if kind == "file_move" else "Copy"
-        return f"{verb} {value('path') or target} to {value('destination')}"
+        if destination and src.name == dst.name:
+            return f"{verb} the file {src.name} from {src.parent} into the folder {dst.parent}"
+        return f"{verb} {source} to {destination}"
     if kind == "file_write":
         return f"Write to {value('path') or target}: {_clip(value('content'), 160)}"
     if kind in {"open_url", "browser_navigate"}:
@@ -138,7 +145,20 @@ def describe_action(action: Any) -> str:
         text = (value("summary") + " " + value("body")).strip() or target
         return f"Show a desktop notification on this computer's screen reading '{_clip(text, 160)}'"
     if kind == "volume_set":
-        return f"Set this computer's volume to {value('level') or target}"
+        return f"Set this computer's volume to {value('level') or target}%"
+    if kind == "brightness_set":
+        return f"Set this screen's brightness to {value('level') or target}%"
+    if kind == "clipboard_write":
+        # The text matters: a password on the clipboard and an address on the clipboard are not the same plan.
+        return f"Put '{_clip(value('text'), 160)}' on the clipboard"
+    if kind == "process_kill":
+        return f"Close {value('name') or target} by ending its process"
+    if kind == "window_close":
+        return f"Close the {value('title') or target} window"
+    if kind == "package_install":
+        return f"Install the {value('name') or target} package"
+    if kind == "download_file":
+        return f"Download {target} to {value('destination') or 'the Downloads folder'}"
     label = kind.replace("_", " ")
     return f"{label.capitalize()} {target}".strip()
 

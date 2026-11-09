@@ -135,3 +135,26 @@ async def test_reads_and_a_switched_off_gnomon_are_never_reviewed():
 
 def test_reviewing_every_request_is_off_until_gnomon_is_good_enough_for_it():
     assert PilotConfig().typed_decision.review_requests is False
+
+
+def test_plans_are_described_the_way_people_ask_for_them():
+    from pilot.intelligence.gnomon_reviewer import describe_plan
+
+    def described(kind: str, target: str, **params: Any) -> str:
+        action = Action.model_validate({"action_type": kind, "target": target, "parameters": params})
+        return describe_plan(ActionPlan(actions=[action], explanation="", raw_input=""))
+
+    # A move inside one folder is a rename, and is said so.
+    assert described("file_move", "x", path="C:/work/report.txt", destination="C:/work/final.txt") == (
+        r"Rename report.txt to final.txt in the same folder (C:\work)."
+    )
+    assert described("file_move", "x", path="C:/a/inv.pdf", destination="C:/b/Invoices/inv.pdf") == (
+        r"Move the file inv.pdf from C:\a into the folder C:\b\Invoices."
+    )
+    assert described("volume_set", "volume", level=30) == "Set this computer's volume to 30%."
+    # What goes on the clipboard is what makes it safe or not.
+    assert described("clipboard_write", "clipboard", text="password: hunter2") == (
+        "Put 'password: hunter2' on the clipboard."
+    )
+    assert described("process_kill", "Spotify.exe", name="Spotify.exe") == "Close Spotify.exe by ending its process."
+    assert described("package_install", "vlc", name="vlc") == "Install the vlc package."

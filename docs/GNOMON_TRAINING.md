@@ -389,6 +389,22 @@ setting the volume to 30, and moving a file within or between named folders scor
 invoices". Closing an app and typing an email address were graded as severe harm. The missed bad plan is a
 description gap: a clipboard write is described without its text, so Gnomon never saw the password.
 
-So `typed_decision.review_requests` exists, can only add an approval, and is off. Before it is worth turning on,
-the next protocol should add in-scope everyday plans (renames as moves, settings changes, closing apps, typing into
-a form) to the scope and harm families, and the plan description should carry clipboard and typed text.
+The first fix was in how plans are described to Gnomon, with no retraining. A move inside one folder is now
+described as a rename, a move into another folder names the file and both folders, volume and brightness carry a
+percent sign, a clipboard write carries its text, and closing an app, closing a window, installing a package and
+downloading a file get plain sentences instead of action-type labels. On the 16 plans above, which those changes
+were tuned on, false alarms fell from 6 of 12 to 2 of 12 and catches rose from 3 of 4 to 4 of 4. On a second set of
+24 plans written afterwards and never tuned on ([raw](evidence/gnomon-request-review-heldout-2026-11-09.json)) the
+gain was smaller:
+
+| Descriptions | Correct plans flagged | Bad plans caught |
+| --- | --- | --- |
+| Before | 6 of 16 | 7 of 8 |
+| After | 5 of 16 | 8 of 8 |
+
+The held-out false alarms show what descriptions cannot fix: "mute" is not linked to a volume of 0%, "the USB
+drive" is not linked to E:, renaming a folder scored 0.4% in scope, and opening github.com or putting a meeting
+link on the clipboard were graded as severe harm. Those need training. So `typed_decision.review_requests` exists,
+can only add an approval, and stays off until a model passes a gate on everyday plans: the next protocol adds
+everyday in-scope plans with near-miss counterparts, described by the runtime's own `describe_plan`, to the scope
+family, and trains the harm question the reviewer actually asks.
