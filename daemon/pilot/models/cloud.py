@@ -40,7 +40,7 @@ PROVIDER_ENDPOINTS = {
 DEFAULT_MODELS = {
     "openai": "gpt-4o",
     "gemini": "gemini-2.5-flash",
-    "claude": "claude-sonnet-4-20250514",
+    "claude": "claude-opus-5-5",
     "openrouter": "openrouter/auto",
     "meta": "muse-spark-1.1",
 }
@@ -50,6 +50,25 @@ PROVIDER_DISPLAY_NAMES = {
 }
 
 MAX_RETRIES = 3
+# Non-streaming ceiling for Claude. Current models always think, and thinking
+# tokens count against max_tokens, so 4096 truncated plans before any text.
+CLAUDE_MAX_TOKENS = 16000
+# Claude Opus 5.5 defaults to "medium" effort. Planning calls run under the
+# 35 second generation budget below, so ask for less thinking.
+CLAUDE_EFFORT = "low"
+# Model ID prefixes where `output_config.effort` is rejected (claude-api skill
+# thinking/effort table: Sonnet 4.5, Haiku 4.5 and older models). Anything
+# else, including unknown or future claude-* IDs, is treated as current.
+CLAUDE_NO_EFFORT_PREFIXES = (
+    "claude-3",
+    "claude-haiku-4",
+    "claude-sonnet-4-0",
+    "claude-sonnet-4-2",
+    "claude-sonnet-4-5",
+    "claude-opus-4-0",
+    "claude-opus-4-1",
+    "claude-opus-4-2",
+)
 RETRY_BACKOFF_BASE = 3.0  # seconds
 # Planning requests carry Heliox's structured action contract and can take
 # longer than short conversational turns even on a healthy provider.  The
@@ -136,6 +155,33 @@ def _is_api_key_error(error: Exception) -> bool:
 
 def _is_transient_transport_error(error: Exception) -> bool:
     return isinstance(error, TimeoutError | httpx.TimeoutException | httpx.TransportError)
+
+
+def claude_supports_effort(model: str) -> bool:
+    return not model.lower().startswith(CLAUDE_NO_EFFORT_PREFIXES)
+
+
+def _parse_anthropic_response(data: dict[str, Any]) -> str:
+    """Return the text of a Messages API response or raise a clear error.
+
+    Responses can start with a thinking block, so text blocks are selected
+    by type. A refusal arrives as HTTP 200 and must be checked first.
+    """
+    stop_reason = data.get("stop_reason")
+    blocks = data.get("content") or []
+    text = "".join(b.get("text", "") for b in blocks if isinstance(b, dict) and b.get("type") == "text")
+    if stop_reason == "refusal":
+        details = data.get("stop_details") or {}
+        category = details.get("category")
+        suffix = f" (category: {category})" if category else ""
+        raise RuntimeError(f"Claude declined this request{suffix}")
+    if stop_reason == "max_tokens":
+        if not text:
+            raise RuntimeError("Claude stopped at max_tokens before producing any text")
+        logger.warning("Claude response truncated at max_tokens")
+    if not text:
+        raise RuntimeError(f"Claude returned no text (stop_reason={stop_reason})")
+    return text
 
 
 class CloudClient:
@@ -428,12 +474,16 @@ class CloudClient:
         else:
             messages = [{"role": "user", "content": prompt}]
 
+        # No temperature/top_p/top_k: current Claude models reject any
+        # non-default sampling parameter with HTTP 400, so the caller's
+        # temperature is intentionally ignored for this provider.
         payload: dict = {
             "model": model,
-            "max_tokens": 4096,
-            "temperature": temperature,
+            "max_tokens": CLAUDE_MAX_TOKENS,
             "messages": messages,
         }
+        if claude_supports_effort(model):
+            payload["output_config"] = {"effort": CLAUDE_EFFORT}
         if system_content:
             payload["system"] = system_content
 
@@ -452,8 +502,7 @@ class CloudClient:
                 continue
 
             resp.raise_for_status()
-            data = resp.json()
-            return data["content"][0]["text"]
+            return _parse_anthropic_response(resp.json())
 
         raise RuntimeError(f"Failed after {MAX_RETRIES} retries due to rate limiting")
 

@@ -19,7 +19,10 @@ logger = logging.getLogger("pilot.models.budget_tracker")
 # (input_usd, output_usd) per 1 000 tokens
 COST_PER_1K_TOKENS: dict[str, tuple[float, float]] = {
     "openai": (0.005, 0.015),
-    "claude": (0.003, 0.015),
+    # Claude Opus 5.5 ($4/$20 per million tokens, the default model). Other
+    # Claude models are priced per provider here too, so Sonnet 5.5 ($2/$10)
+    # is over-estimated, which is the safe direction for a budget gate.
+    "claude": (0.004, 0.020),
     "gemini": (0.000075, 0.0003),
     # OpenRouter prices vary by selected/routed model. Until usage-cost
     # metadata is plumbed through the response contract, use a non-zero
