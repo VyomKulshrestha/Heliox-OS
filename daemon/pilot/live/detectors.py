@@ -26,6 +26,7 @@ KINDS = (
     "repeated_word",
     "personal_fact",  # pilot.live.grounded: a local model checks the text against the person's own data
     "community_catch",  # pilot.live.catches: rules from catch packs that passed the precision gate
+    "stuck",  # pilot.live.stuck: offers help when the person seems stuck (not a detector over one text)
 )
 
 KIND_LABELS = {
@@ -39,6 +40,7 @@ KIND_LABELS = {
     "repeated_word": "Doubled words",
     "personal_fact": "Things that contradict your calendar, to-dos or contacts",
     "community_catch": "Catches from catch packs",
+    "stuck": "Offers to help when you seem stuck",
 }
 # Kinds found by a model rather than a rule: still there while their quoted evidence is in the text.
 MODEL_KINDS = frozenset({"personal_fact"})

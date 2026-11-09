@@ -172,7 +172,7 @@ def validate(scenario: dict[str, Any], where: str = "") -> None:
     steps = scenario.get("steps")
     if not isinstance(steps, list) or not steps:
         raise ValueError(f"{where}: {name}: needs steps")
-    allowed = {"type", "pause", "replace", "paste", "send", "say", "label", "seconds"}
+    allowed = {"type", "pause", "replace", "paste", "send", "say", "label", "seconds", "switch", "text", "delete"}
     for step in steps:
         if not isinstance(step, dict) or not set(step) <= allowed:
             raise ValueError(f"{where}: {name}: bad step {step!r}")
@@ -201,6 +201,15 @@ def expand(scenario: dict[str, Any], persona: Persona, rng: random.Random) -> li
         elif "send" in raw:
             script.append(Step(t, t + 0.4, "idle", "send", seconds=0.4))
             seconds = 0.4
+        elif "delete" in raw:
+            # Backspacing: twice typing speed, one character at a time.
+            count = int(raw["delete"])
+            seconds = count / (persona.chars_per_second * 2)
+            script.append(Step(t, t + seconds, "typing", "delete", seconds=seconds, text="x" * count))
+        elif "switch" in raw:
+            # Another window comes to the front: {"switch": "app|title", "text": "what its field holds"}.
+            script.append(Step(t, t + 0.6, "idle", "switch", text=raw["switch"], old=raw.get("text", ""), seconds=0.6))
+            seconds = 0.6
         elif "say" in raw:
             seconds = float(raw.get("seconds", 2.5))
             script.append(Step(t, t + seconds, "speaking", "say", text=raw["say"], seconds=seconds))
@@ -238,12 +247,21 @@ class Session:
         self.script = script
         self.start = start
         self.end = start + script[-1].until
-        self.doc = scenario.get("start_text", "")
+        self.window = f"{scenario['app']}|{scenario['title']}"
+        self.docs: dict[str, str] = {self.window: scenario.get("start_text", "")}
         self.index = 0
         self.typed = 0  # characters of the current typing step already in the document
         self._edit_at = -1
         self.reactions: list[tuple[float, dict[str, Any]]] = []
         self.said: list[str] = []
+
+    @property
+    def doc(self) -> str:
+        return self.docs[self.window]
+
+    @doc.setter
+    def doc(self, text: str) -> None:
+        self.docs[self.window] = text
 
     def step_at(self, now: float) -> Step:
         rel = now - self.start
@@ -268,6 +286,13 @@ class Session:
                     self.typed = count
                 if self.typed < len(step.text):
                     break
+            elif step.kind == "delete":
+                count = min(len(step.text), int((rel - step.at) * len(step.text) / max(step.seconds, 1e-6)) + 1)
+                if count > self.typed:
+                    self.doc = self.doc[: max(0, len(self.doc) - (count - self.typed))]
+                    self.typed = count
+                if self.typed < len(step.text):
+                    break
             elif step.kind == "paste":
                 self.doc += step.text
             elif step.kind == "replace":
@@ -284,6 +309,9 @@ class Session:
                     self.doc = self.doc[: self._edit_at] + step.text + self.doc[self._edit_at :]
             elif step.kind == "send":
                 self.doc = ""
+            elif step.kind == "switch":
+                self.window = step.text
+                self.docs.setdefault(self.window, step.old)
             elif step.kind == "say":
                 if rel < step.until:
                     break
@@ -340,8 +368,8 @@ async def run(
         session = state["session"]
         if session is None:
             return None
-        scenario = session.scenario
-        return Observation(text=session.doc, app=scenario["app"], title=scenario["title"], source="focused_field")
+        app, _, title = session.window.partition("|")
+        return Observation(text=session.doc, app=app, title=title, source="focused_field")
 
     async def emit(event: str, payload: dict[str, Any]) -> None:
         if event == "live_interjection":

@@ -1,0 +1,96 @@
+[
+  {
+    "name": "stuck: rewriting the same sentence",
+    "app": "WINWORD.EXE",
+    "title": "Pitch.docx - Word",
+    "expect": ["stuck"],
+    "steps": [
+      {"type": "We help small teams ship faster because our tool removes the busywork."},
+      {"pause": "think"},
+      {"delete": 40},
+      {"type": " we automate the boring parts of a release."},
+      {"pause": "think"},
+      {"delete": 40},
+      {"type": " nobody likes doing setup twice."},
+      {"pause": "think"},
+      {"delete": 34},
+      {"pause": "done"},
+      {"pause": 6.0, "label": "done"}
+    ]
+  },
+  {
+    "name": "stuck: copying between two windows by hand",
+    "app": "EXCEL.EXE",
+    "title": "Budget.xlsx - Excel",
+    "expect": ["stuck"],
+    "steps": [
+      {"switch": "chrome.exe|Supplier prices - Chrome", "text": "Supplier prices for Q1"},
+      {"pause": 2.0, "label": "idle"},
+      {"switch": "EXCEL.EXE|Budget.xlsx - Excel"},
+      {"pause": 2.0, "label": "idle"},
+      {"switch": "chrome.exe|Supplier prices - Chrome"},
+      {"pause": 2.0, "label": "idle"},
+      {"switch": "EXCEL.EXE|Budget.xlsx - Excel"},
+      {"pause": 2.0, "label": "idle"},
+      {"switch": "chrome.exe|Supplier prices - Chrome"},
+      {"pause": 2.0, "label": "idle"},
+      {"switch": "EXCEL.EXE|Budget.xlsx - Excel"},
+      {"pause": 2.0, "label": "idle"},
+      {"switch": "chrome.exe|Supplier prices - Chrome"},
+      {"pause": 2.0, "label": "idle"},
+      {"switch": "EXCEL.EXE|Budget.xlsx - Excel"},
+      {"pause": 2.0, "label": "idle"},
+      {"switch": "chrome.exe|Supplier prices - Chrome"},
+      {"pause": 2.0, "label": "idle"},
+      {"switch": "EXCEL.EXE|Budget.xlsx - Excel"},
+      {"pause": 6.0, "label": "done"}
+    ]
+  },
+  {
+    "name": "stuck: the same error three times",
+    "app": "WindowsTerminal.exe",
+    "title": "PowerShell",
+    "expect": ["error_on_screen", "stuck"],
+    "steps": [
+      {"paste": "PS C:\\vision> python train.py\nModuleNotFoundError: No module named 'yaml'\nPS C:\\vision> "},
+      {"pause": 1.0, "label": "done"},
+      {"type": "python train.py"},
+      {"paste": "\nModuleNotFoundError: No module named 'yaml'\nPS C:\\vision> "},
+      {"pause": 1.0, "label": "done"},
+      {"type": "python3 train.py"},
+      {"paste": "\nModuleNotFoundError: No module named 'yaml'\nPS C:\\vision> "},
+      {"pause": 9.0, "label": "done"}
+    ]
+  },
+  {
+    "name": "decoy: one cut while drafting",
+    "app": "WINWORD.EXE",
+    "title": "Report.docx - Word",
+    "expect": [],
+    "steps": [
+      {"type": "The quarter went well overall. Revenue grew in every region we track closely."},
+      {"pause": "think"},
+      {"delete": 30},
+      {"type": " we sell in, led by the north."},
+      {"pause": "done"}
+    ]
+  },
+  {
+    "name": "decoy: checking another window twice",
+    "app": "OUTLOOK.EXE",
+    "title": "Order - Message (HTML)",
+    "expect": [],
+    "steps": [
+      {"type": "Hi Ana, the order number is"},
+      {"switch": "chrome.exe|Orders - Chrome", "text": "Order 4471"},
+      {"pause": 2.0, "label": "idle"},
+      {"switch": "OUTLOOK.EXE|Order - Message (HTML)"},
+      {"type": " 4471 and it ships"},
+      {"switch": "chrome.exe|Orders - Chrome"},
+      {"pause": 2.0, "label": "idle"},
+      {"switch": "OUTLOOK.EXE|Order - Message (HTML)"},
+      {"type": " on Friday."},
+      {"pause": "done"}
+    ]
+  }
+]

@@ -37,6 +37,8 @@ from pilot.live.policy import (
     Relevance,
     decide,
 )
+from pilot.live.stuck import KIND as STUCK
+from pilot.live.stuck import StuckWatcher
 from pilot.live.timing import PersonalTiming, at_boundary
 
 logger = logging.getLogger("pilot.live.engine")
@@ -133,6 +135,7 @@ class LiveCompanion:
         self._today = today
         self.relevance = Relevance(relevance_path)
         self.timing = PersonalTiming(timing_path)
+        self.stuck = StuckWatcher(clock)
         self.grounded = grounded  # pilot.live.grounded.GroundedChecker, or None
         self._grounded_task: asyncio.Task[None] | None = None
         self._grounded_hash = ""
@@ -253,6 +256,9 @@ class LiveCompanion:
             self._last_text_change = now
             self._last_text = obs.text
         self._last_obs = obs
+        if obs.source == "focused_field" and STUCK in self._kinds():
+            for offer in self.stuck.observe(obs.text, obs.window, self._context(obs, obs.source), now):
+                self._note(offer, obs.source, obs.window, now)
         if changed or now - self._last_detect >= REDETECT_EVERY_SECONDS:
             self._last_detect = now
             kinds = self._kinds()
@@ -263,8 +269,8 @@ class LiveCompanion:
                 found.add(correction.key)
                 self._note(correction, obs.source, obs.window, now)
             for item in [*self._pending.values(), *self._visible.values()]:
-                if item.source == "speech" or item.window != obs.window:
-                    continue
+                if item.source == "speech" or item.window != obs.window or item.correction.kind == STUCK:
+                    continue  # an offer of help is not about text that can be fixed away
                 if item.correction.kind in MODEL_KINDS and item.correction.evidence in obs.text:
                     found.add(item.correction.key)
                 if item.correction.key in found:

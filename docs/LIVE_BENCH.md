@@ -51,25 +51,27 @@ as well as the first guess.
 
 ## Results, 9 November 2026
 
-25 scenarios: 14 with slips (15 expected catches: weekdays, sums, a wrong name, a doubled word, an attachment, a
-force push, a `DELETE` without `WHERE`, a pasted API key, an error with a fix, two spoken slips) and 11 decoys (a
-correct date, correct sums, code, safe commands, grammar that looks like a doubled word, a half-typed word, and
-two slips the person fixes themselves). Level: Balanced. Raw output with every delivery:
-[`docs/evidence/live-bench-2026-11-09.json`](evidence/live-bench-2026-11-09.json).
+30 scenarios in two packs. `core.json` has 14 with slips (15 expected catches: weekdays, sums, a wrong name, a
+doubled word, an attachment, a force push, a `DELETE` without `WHERE`, a pasted API key, an error with a fix, two
+spoken slips) and 11 decoys (a correct date, correct sums, code, safe commands, grammar that looks like a doubled
+word, a half-typed word, and two slips the person fixes themselves). `stuck.json` has 3 moments of being stuck
+(rewriting the same sentence three times, copying between two windows by hand, the same error three times) and 2
+look-alikes (one cut while drafting, checking another window twice). Level: Balanced. Raw output with every
+delivery: [`docs/evidence/live-bench-2026-11-09.json`](evidence/live-bench-2026-11-09.json).
 
 | Policy | Persona | Caught | False | Cut-offs | Precision | Recall | Wait s |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| fixed rules | quick | 15/15 | 0 | 0 | 1.00 | 1.00 | 1.51 |
-| fixed rules | steady | 15/15 | 0 | 8 | 1.00 | 1.00 | 0.91 |
-| fixed rules | thinker | 15/15 | 2 | 11 | 0.88 | 1.00 | 0.75 |
-| personal timing | quick | 15/15 | 0 | 0 | 1.00 | 1.00 | 1.34 |
-| personal timing | steady | 15/15 | 0 | 0 | 1.00 | 1.00 | 1.32 |
-| personal timing | thinker | 15/15 | 0 | 1 | 1.00 | 1.00 | 1.49 |
+| fixed rules | quick | 19/19 | 0 | 0 | 1.00 | 1.00 | 1.33 |
+| fixed rules | steady | 19/19 | 0 | 8 | 1.00 | 1.00 | 1.13 |
+| fixed rules | thinker | 19/19 | 2 | 11 | 0.90 | 1.00 | 1.02 |
+| personal timing | quick | 19/19 | 0 | 0 | 1.00 | 1.00 | 1.51 |
+| personal timing | steady | 19/19 | 0 | 0 | 1.00 | 1.00 | 1.57 |
+| personal timing | thinker | 19/19 | 0 | 1 | 1.00 | 1.00 | 1.51 |
 
 Fixed rules wait 1.2 s after typing stops. That is fine for someone who pauses for under a second, and it
-interrupts anyone who stops longer to find the next word: 8 of 15 catches cut in on the steady typist and 11 of
-15 on the thinker, and the thinker was told about two slips they were in the middle of fixing. Personal timing
-learned a mid-sentence wait of 1.5 s, 1.75 s and 3.2 s for the three personas, kept every catch, and cut in once.
+interrupts anyone who stops longer to find the next word: 8 of 19 deliveries cut in on the steady typist and 11 of
+21 on the thinker, and the thinker was told about two slips they were in the middle of fixing. Personal timing
+learned a mid-sentence wait of 1.6 s, 1.75 s and 3.0 s for the three personas, kept every catch, and cut in once.
 The low wait for fixed rules on the slower personas is not a win: most of their catches arrived as cut-offs, which
 the wait column excludes.
 
@@ -118,6 +120,8 @@ is a list of scenarios:
 | `{"pause": 1.5, "label": "ready"}` | A fixed pause; `label` is `think` (a cut-off if interrupted), `done`, `ready` or `idle` |
 | `{"send": true}` | Enter: the field is cleared, and anything delivered later is too late |
 | `{"say": "text", "seconds": 2.5}` | The person talks to Heliox; at the end the sentence is checked like a spoken command |
+| `{"delete": 30}` | Backspacing 30 characters, at twice the persona's typing speed |
+| `{"switch": "app\|title", "text": "..."}` | Another window comes to the front; `text` is what its field holds the first time |
 
 `expect` lists the correction kinds that should be delivered (see `KINDS` in `pilot/live/detectors.py`); an
 empty list makes the scenario a decoy, where any delivery is a false alarm. `today` defaults to 9 November 2026
