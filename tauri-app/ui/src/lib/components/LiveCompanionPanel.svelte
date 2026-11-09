@@ -13,10 +13,25 @@
     cut_offs: number;
     well_timed: number;
   };
-  type Status = { status: string; kinds?: Kind[]; reads_focused_text?: boolean; timing?: Timing };
+  type Pack = {
+    name: string;
+    ok: boolean;
+    problems: string[];
+    admitted: number;
+    held_back: { id: string; problems: string[] }[];
+  };
+  type Catches = { packs: Pack[]; rules: number; held_back: number };
+  type Status = {
+    status: string;
+    kinds?: Kind[];
+    reads_focused_text?: boolean;
+    timing?: Timing;
+    catches?: Catches;
+  };
 
   let kinds = $state<Kind[]>([]);
   let timing = $state<Timing | null>(null);
+  let catches = $state<Catches | null>(null);
   let readsFocusedText = $state(true);
   let error = $state("");
   let saving = $state(false);
@@ -43,6 +58,18 @@
     if (t.cut_offs)
       text += ` It cut in on you ${t.cut_offs === 1 ? "once" : `${t.cut_offs} times`} and waits longer since.`;
     return text;
+  }
+
+  function catchSummary(c: Catches): string {
+    const packs = c.packs.length === 1 ? "1 catch pack" : `${c.packs.length} catch packs`;
+    const held = c.held_back ? `; ${c.held_back} held back` : "";
+    return `${c.rules} rules from ${packs} passed the precision check${held}.`;
+  }
+
+  function heldBack(pack: Pack): string {
+    const first = pack.held_back[0];
+    const why = pack.problems[0] ?? (first ? `${first.id}: ${first.problems[0] ?? ""}` : "");
+    return `${pack.name || "a pack"}, ${why}`;
   }
 
   async function resetTiming() {
@@ -82,6 +109,7 @@
         kinds = status.kinds ?? [];
         readsFocusedText = status.reads_focused_text !== false;
         timing = status.timing ?? null;
+        catches = status.catches ?? null;
       }
     } catch {
       /* shown without the per-kind list until the daemon answers */
@@ -214,6 +242,14 @@
           </label>
         {/each}
       </div>
+      {#if catches && catches.packs.length}
+        <div class="packs" data-testid="live-catch-packs">
+          <span>{catchSummary(catches)}</span>
+          {#each catches.packs.filter((pack) => !pack.ok) as pack (pack.name + pack.problems.join())}
+            <span class="held">Held back: {heldBack(pack)}</span>
+          {/each}
+        </div>
+      {/if}
     </div>
   {/if}
 
@@ -364,6 +400,17 @@
     outline: 2px solid var(--accent);
     outline-offset: 2px;
     border-radius: 2px;
+  }
+
+  .packs {
+    display: grid;
+    gap: 3px;
+    font-size: var(--text-xs);
+    color: var(--text-secondary);
+  }
+
+  .packs .held {
+    color: var(--text-tertiary, var(--text-secondary));
   }
 
   .kinds {

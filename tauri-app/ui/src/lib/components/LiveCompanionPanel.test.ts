@@ -61,6 +61,32 @@ describe("LiveCompanionPanel timing", () => {
     expect(mocks.updateSectionDetailed).toHaveBeenCalledWith("live", { personal_timing: false });
   });
 
+  it("says how many catch-pack rules passed the precision check and why one was held back", async () => {
+    mocks.call.mockResolvedValue({
+      status: "ok",
+      kinds: [{ kind: "community_catch", label: "Catches from catch packs" }],
+      timing: learned,
+      catches: {
+        rules: 15,
+        held_back: 1,
+        packs: [
+          { name: "writing-idioms", ok: true, problems: [], admitted: 10, held_back: [] },
+          {
+            name: "mine",
+            ok: false,
+            problems: [],
+            admitted: 0,
+            held_back: [{ id: "too-eager", problems: ["fires on 3 ordinary line(s)"] }],
+          },
+        ],
+      },
+    });
+    render(LiveCompanionPanel);
+    const packs = await screen.findByTestId("live-catch-packs");
+    expect(packs.textContent).toContain("15 rules from 2 catch packs passed the precision check; 1 held back.");
+    expect(packs.textContent).toContain("Held back: mine, too-eager: fires on 3 ordinary line(s)");
+  });
+
   it("offers checks against the person's own calendar, off until they choose it", async () => {
     mocks.call.mockResolvedValue({ status: "ok", kinds: [], timing: learned });
     render(LiveCompanionPanel);

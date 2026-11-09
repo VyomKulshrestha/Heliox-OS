@@ -471,6 +471,7 @@ Open a [bug report](https://github.com/VyomKulshrestha/Heliox-OS/issues/new/choo
 - [Intelligence evaluation and research map](docs/INTELLIGENCE_EVALUATION.md)
 - [Assistance co-adaptation: model, consent and evidence](docs/COADAPTATION.md)
 - [Heliox Live Bench: when the live companion speaks up, measured](docs/LIVE_BENCH.md)
+- [Catch packs: teach Heliox Live new slips, through a precision gate](docs/LIVE_CATCHES.md)
 - [Opt-in recorded workflows and local visual samples](docs/RECORDED_WORKFLOWS.md)
 - [Gnomon typed-decision model: training, gates and results](docs/GNOMON_TRAINING.md)
 - [Public decision-corpus adaptation log](docs/PUBLIC_CORPUS_ADAPTATION.md)

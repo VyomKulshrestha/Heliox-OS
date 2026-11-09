@@ -1,0 +1,128 @@
+{
+  "name": "writing-idioms",
+  "title": "Misheard idioms and phrases",
+  "author": "Heliox",
+  "license": "Apache-2.0",
+  "rules": [
+    {
+      "id": "modal-of",
+      "where": ["prose"],
+      "pattern": "\\b(could|should|would|must|might)\\s+of\\b(?!\\s+(?:course|which|whom|its|the|a|an|those|these|them)\\b)",
+      "flags": "i",
+      "title": "\"{1} of\" is \"{1} have\"",
+      "message": "\"{0}\" is how it sounds; it is written \"{1} have\".",
+      "fix": "{1} have",
+      "urgency": "low",
+      "positives": ["I could of told you that yesterday.", "You should of asked first.", "We would of shipped it on time."],
+      "decoys": ["Most of what we could, of course, was done.", "I could have told you.", "The view would of the two be better?"]
+    },
+    {
+      "id": "intensive-purposes",
+      "where": ["prose"],
+      "pattern": "\\bfor all intensive purposes\\b",
+      "flags": "i",
+      "title": "\"for all intents and purposes\"",
+      "message": "The phrase is \"for all intents and purposes\".",
+      "fix": "for all intents and purposes",
+      "urgency": "low",
+      "positives": ["For all intensive purposes the launch is done.", "It is, for all intensive purposes, finished.", "for all intensive purposes we agree"],
+      "decoys": ["For all intents and purposes the launch is done.", "The intensive purposes of the course were clear.", "for all purposes, intensive or not"]
+    },
+    {
+      "id": "per-say",
+      "where": ["prose"],
+      "pattern": "\\bper say\\b",
+      "flags": "i",
+      "title": "\"per se\"",
+      "message": "\"Per se\" is Latin, spelled \"per se\".",
+      "fix": "per se",
+      "urgency": "low",
+      "positives": ["It is not a bug per say, more a gap.", "Not wrong per say.", "I don't mind the delay per say."],
+      "decoys": ["It is not a bug per se.", "The fee is ten dollars per, say, month.", "What do you say per item?"]
+    },
+    {
+      "id": "one-in-the-same",
+      "where": ["prose"],
+      "pattern": "\\b((?:are|were|is|was|be|been)\\s+(?:(?:basically|really|essentially|just)\\s+)?)one in the same\\b",
+      "flags": "i",
+      "title": "\"one and the same\"",
+      "message": "The phrase is \"one and the same\".",
+      "fix": "{1}one and the same",
+      "urgency": "low",
+      "positives": ["The two teams are one in the same.", "They are basically one in the same.", "Those bugs were one in the same."],
+      "decoys": ["The two teams are one and the same.", "Put one in the same folder as the other.", "Is it one in the same row?"]
+    },
+    {
+      "id": "case-and-point",
+      "where": ["prose"],
+      "pattern": "\\bcase and point\\b",
+      "flags": "i",
+      "title": "\"case in point\"",
+      "message": "The phrase is \"case in point\".",
+      "fix": "case in point",
+      "urgency": "low",
+      "positives": ["Case and point: the last release.", "That outage is a case and point.", "a perfect case and point"],
+      "decoys": ["Case in point: the last release.", "Every case and every point was reviewed.", "the case, and its point, were clear"]
+    },
+    {
+      "id": "sneak-peak",
+      "where": ["prose"],
+      "pattern": "\\bsneak peak(s?)\\b",
+      "flags": "i",
+      "title": "\"sneak peek\"",
+      "message": "A quick look is a \"peek\"; a \"peak\" is a summit.",
+      "fix": "sneak peek{1}",
+      "urgency": "low",
+      "positives": ["Here is a sneak peak of the new design.", "Want a sneak peak?", "Two sneak peaks this week."],
+      "decoys": ["Here is a sneak peek of the new design.", "Traffic hit its peak at noon.", "We had to sneak past the peak hours."]
+    },
+    {
+      "id": "free-reign",
+      "where": ["prose"],
+      "pattern": "\\bfree reign\\b",
+      "flags": "i",
+      "title": "\"free rein\"",
+      "message": "The idiom comes from riding: \"free rein\".",
+      "fix": "free rein",
+      "urgency": "low",
+      "positives": ["She has free reign over the roadmap.", "Give them free reign.", "We had free reign on the design."],
+      "decoys": ["She has free rein over the roadmap.", "His reign was free of scandal.", "a free and fair reign"]
+    },
+    {
+      "id": "baited-breath",
+      "where": ["prose"],
+      "pattern": "\\bbaited breath\\b",
+      "flags": "i",
+      "title": "\"bated breath\"",
+      "message": "\"Bated\" means held back: \"bated breath\".",
+      "fix": "bated breath",
+      "urgency": "low",
+      "positives": ["We waited with baited breath.", "I'm waiting with baited breath for the results.", "baited breath all week"],
+      "decoys": ["We waited with bated breath.", "The hook was baited before dawn.", "Take a breath before you answer."]
+    },
+    {
+      "id": "peak-interest",
+      "where": ["prose"],
+      "pattern": "\\bpeak(ed|s)?\\s+(my|your|his|her|their|our)\\s+interest\\b",
+      "flags": "i",
+      "title": "\"pique\" your interest",
+      "message": "To stir interest is to \"pique\" it.",
+      "fix": "pique{1} {2} interest",
+      "urgency": "low",
+      "positives": ["That talk peaked my interest.", "It might peak your interest.", "The demo peaks their interest every time."],
+      "decoys": ["That talk piqued my interest.", "Interest rates peaked in May.", "At its peak, my interest was high."]
+    },
+    {
+      "id": "deep-seeded",
+      "where": ["prose"],
+      "pattern": "\\bdeep[- ]seeded\\b",
+      "flags": "i",
+      "title": "\"deep-seated\"",
+      "message": "Something firmly rooted is \"deep-seated\".",
+      "fix": "deep-seated",
+      "urgency": "low",
+      "positives": ["It is a deep-seeded fear.", "a deep seeded problem in the team", "Their doubts are deep-seeded."],
+      "decoys": ["It is a deep-seated fear.", "We seeded the deep end of the database.", "The tray was seeded deep in the soil."]
+    }
+  ]
+}

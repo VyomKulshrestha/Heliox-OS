@@ -551,6 +551,8 @@ Every 200 ms it decides, per correction it has noticed, whether to wait, show a 
   default_seconds, learned_from, cut_offs, well_timed}`, where `learned_from` counts the mid-sentence pauses seen.
   `grounded` reports the checks against the person's own data (`pilot.live.grounded`): `{enabled, checks,
   model_calls, found, rejected, last_verdict, error}`, where `error` is the last local-model failure, if any.
+  `catches` lists the installed catch packs (`pilot.live.catches`, see `docs/LIVE_CATCHES.md`): `{packs: [{name,
+  path, ok, problems, admitted, held_back: [{id, problems}]}], rules, held_back}`.
 - `live_set` takes any of `enabled`, `paused` (this session only), `level` (`quiet`, `balanced`, `proactive`),
   `read_focused_text`, `ocr_fallback`, `listen_to_speech`, `personal_timing`, `grounded_checks`, `grounded_model`
   (an Ollama model name), `muted_kinds`, and `reset_timing: true` (forget the learned pauses), and returns

@@ -1301,6 +1301,9 @@ class PilotServer:
         from pilot.live.focused_text import FocusedTextReader
 
         self._live_reader = FocusedTextReader()
+        from pilot.live.catches import BUILT_IN_DIR, CatchBook, install
+
+        install(CatchBook([BUILT_IN_DIR, DATA_DIR / "live_catches"]))
         self._live = LiveCompanion(
             settings=lambda: self.config.live,
             observe=self._live_observe,
@@ -6767,6 +6770,9 @@ class PilotServer:
         status = self._live.status()
         status["kinds"] = [{"kind": kind, "label": label} for kind, label in KIND_LABELS.items()]
         status["reads_focused_text"] = bool(self._live_reader is not None and self._live_reader.available)
+        from pilot.live.catches import book
+
+        status["catches"] = await asyncio.to_thread(book().summary)
         return status
 
     async def _handle_live_set(self, params: dict[str, Any], ws: ServerConnection) -> dict:

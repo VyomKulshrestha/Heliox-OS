@@ -25,6 +25,7 @@ KINDS = (
     "missing_attachment",
     "repeated_word",
     "personal_fact",  # pilot.live.grounded: a local model checks the text against the person's own data
+    "community_catch",  # pilot.live.catches: rules from catch packs that passed the precision gate
 )
 
 KIND_LABELS = {
@@ -37,6 +38,7 @@ KIND_LABELS = {
     "missing_attachment": "Mentioning an attachment",
     "repeated_word": "Doubled words",
     "personal_fact": "Things that contradict your calendar, to-dos or contacts",
+    "community_catch": "Catches from catch packs",
 }
 # Kinds found by a model rather than a rule: still there while their quoted evidence is in the text.
 MODEL_KINDS = frozenset({"personal_fact"})
@@ -704,7 +706,14 @@ def repeated_word(text: str, ctx: TextContext) -> list[Correction]:
     return []
 
 
+def community_catch(text: str, ctx: TextContext) -> list[Correction]:
+    from pilot.live.catches import community_catch as find  # imports this module, so it loads late
+
+    return find(text, ctx)
+
+
 DETECTORS = {
+    "community_catch": community_catch,
     "risky_command": risky_command,
     "secret_in_text": secret_in_text,
     "weekday_date": weekday_date,
