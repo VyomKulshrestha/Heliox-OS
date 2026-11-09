@@ -69,6 +69,7 @@ def test_the_gate_counts_false_alarms_and_misses_and_spares_asked_for_deletions(
 def test_the_kaggle_bundle_is_tracked_code_only():
     payload, files = build_kaggle_notebook.bundle()
     assert files and all(name.endswith(".py") or name in build_kaggle_notebook.EXTRA_FILES for name in files)
+    assert "daemon/scripts/train_general_decision.py" in files and len(payload) < 700_000
     assert not set(files) & build_kaggle_notebook._excluded()
     assert not any("/.bench-state/" in name for name in files)
     assert "daemon/benchmarks/runtime_review_families.py" in files

@@ -1,8 +1,9 @@
 """Build a self-contained Kaggle notebook that trains one Gnomon candidate from this repository's tracked code.
 
-The notebook carries a zip of tracked files only (``git ls-files``), so nothing kept local-only through
+The notebook carries a zip of the training script's own import closure (every repo module it can import, found by
+reading the code), limited to tracked files (``git ls-files``), so nothing kept local-only through
 ``.git/info/exclude`` (reference-model outputs and anything derived from them) can travel with it; the build fails
-if any such path would be included. On Kaggle it installs the pinned libraries, downloads the pinned public CC0
+if any such path would be included. Kaggle caps a notebook's source at 1 MB, which the closure fits. On Kaggle it installs the pinned libraries, downloads the pinned public CC0
 dataset and backbone, runs the training command and zips the output for download.
 
     python scripts/build_kaggle_notebook.py --name gnomon_2b_v7 --output <scratch>/gnomon_2b_v7.ipynb -- <train args>
@@ -14,6 +15,7 @@ Save & Run All (Commit). The output zip appears under the version's Output tab.
 from __future__ import annotations
 
 import argparse
+import ast
 import base64
 import io
 import json
@@ -24,12 +26,13 @@ import zipfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
-INCLUDE_PREFIXES = ("daemon/pilot/", "daemon/scripts/", "daemon/benchmarks/")
-INCLUDE_SUFFIXES = (".py",)
+DAEMON = REPO / "daemon"
+TRAIN_SCRIPT = DAEMON / "scripts" / "train_general_decision.py"
+PACKAGES = ("pilot", "benchmarks", "scripts")
 # Code only, plus the frozen protocol: benchmark result files (some hold reference-model comparison answers) never
 # travel into a training environment, even though training does not read them.
 EXTRA_FILES = ("daemon/benchmarks/gnomon_mixture_protocol_v7_20261109.json",)
-MAX_FILE_BYTES = 1_500_000  # large benchmark result files are not needed to train
+MAX_NOTEBOOK_BYTES = 1_000_000
 LIBRARIES = "transformers==5.10.2 peft==0.19.1 accelerate==1.13.0 bitsandbytes pyarrow huggingface_hub"
 
 
@@ -44,20 +47,59 @@ def _excluded() -> set[str]:
     }
 
 
+def _module_file(name: str) -> Path | None:
+    parts = name.split(".")
+    if parts[0] not in PACKAGES:
+        return None
+    base = DAEMON.joinpath(*parts)
+    if base.with_suffix(".py").is_file():
+        return base.with_suffix(".py")
+    return base / "__init__.py" if (base / "__init__.py").is_file() else None
+
+
+def _imported_names(path: Path) -> set[str]:
+    rel = path.relative_to(DAEMON).with_suffix("").parts
+    package = list(rel[:-1]) if rel[-1] != "__init__" else list(rel[:-1])
+    names: set[str] = set()
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"), filename=str(path))):
+        if isinstance(node, ast.Import):
+            names.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            base = package[: len(package) - (node.level - 1)] if node.level > 1 else package
+            module = ".".join([*base, node.module] if node.module else base) if node.level else (node.module or "")
+            names.add(module)
+            names.update(f"{module}.{alias.name}" for alias in node.names)
+    return names
+
+
+def import_closure(start: Path = TRAIN_SCRIPT) -> set[str]:
+    """Every pilot/benchmarks/scripts module the script can import, at any depth, as repo-relative paths."""
+    seen: set[Path] = set()
+    todo = [start]
+    while todo:
+        path = todo.pop()
+        if path in seen:
+            continue
+        seen.add(path)
+        for name in _imported_names(path):
+            parts = name.split(".")
+            for i in range(1, len(parts) + 1):  # each parent package's __init__ runs too
+                found = _module_file(".".join(parts[:i]))
+                if found is not None and found not in seen:
+                    todo.append(found)
+    return {path.relative_to(REPO).as_posix() for path in seen}
+
+
 def bundle() -> tuple[bytes, list[str]]:
-    tracked = subprocess.run(["git", "ls-files"], cwd=REPO, capture_output=True, text=True, check=True).stdout.split(
-        "\n"
+    tracked = set(
+        subprocess.run(["git", "ls-files"], cwd=REPO, capture_output=True, text=True, check=True).stdout.split()
     )
     excluded = _excluded()
-    chosen = [
-        name
-        for name in tracked
-        if name.startswith(INCLUDE_PREFIXES)
-        and (name.endswith(INCLUDE_SUFFIXES) or name in EXTRA_FILES)
-        and "/.bench-state/" not in name
-        and (REPO / name).is_file()
-        and (REPO / name).stat().st_size <= MAX_FILE_BYTES
-    ]
+    wanted = import_closure() | set(EXTRA_FILES)
+    untracked = sorted(wanted - tracked)
+    if untracked:
+        raise SystemExit(f"Commit these first; only tracked files are bundled: {untracked}")
+    chosen = sorted(wanted)
     leaked = sorted(set(chosen) & excluded)
     if leaked:
         raise SystemExit(f"Refusing to bundle local-only files: {leaked}")
@@ -136,7 +178,10 @@ def main(argv: list[str] | None = None) -> int:
     train_args = args.train_args[1:] if args.train_args[:1] == ["--"] else args.train_args
     payload, files = bundle()
     book = notebook(args.name, train_args, payload)
-    args.output.write_text(json.dumps(book), encoding="utf-8")
+    text = json.dumps(book)
+    if len(text.encode("utf-8")) >= MAX_NOTEBOOK_BYTES:
+        raise SystemExit(f"The notebook is {len(text) / 1e6:.2f} MB; Kaggle accepts less than 1 MB")
+    args.output.write_text(text, encoding="utf-8")
     print(f"{args.output}: {len(files)} files, bundle {len(payload) / 1e6:.1f} MB")
     return 0
 
