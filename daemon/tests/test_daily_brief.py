@@ -84,7 +84,9 @@ async def test_overview_combines_receipts_timeline_and_undo(tmp_path):
     overview = await today_overview(receipts=receipts, timeline=timeline, undo_journal=undo)
 
     assert [task["request"] for task in overview["tasks"]] == ["tidy downloads"]
-    assert overview["usage"]["apps"][0]["app"] == "Code"
+    assert (
+        overview["usage"]["apps"][0]["app"] == "VS Code"
+    )  # shown by the name people use; the stored span keeps "Code"
     assert [row["task_key"] for row in overview["undoable"]] == ["t1"]
     assert overview["brief"].startswith('Today Heliox ran 1 task; the latest was "tidy downloads".')
 
