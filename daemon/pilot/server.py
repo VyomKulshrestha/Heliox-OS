@@ -387,6 +387,8 @@ PHONE_READ_ONLY_ACTIONS = (
     "system_health_review",
     "system_info",
 )
+# "Got it" and "okay okay" stop Heliox's voice and nothing else: said after an answer they only acknowledge it.
+VOICE_SOFT_STOPS = frozenset({"got it", "okay got it", "okay okay", "ok ok"})
 STOP_ACK_SECONDS = 15.0  # a stop said this soon after the person cut Heliox off is about that cut
 VOICE_STOP_PHRASES = frozenset(
     {
@@ -408,6 +410,12 @@ VOICE_STOP_PHRASES = frozenset(
         "wait a second",
         "one second",
         "one sec",
+        "that s enough",
+        "okay that s enough",
+        "ok that s enough",
+        "alright that s enough",
+        "enough",
+        "stop there",
     }
 )
 # Spoken or typed undo only opens the preview: undoing still needs a click on its Undo button.
@@ -13365,6 +13373,17 @@ def handle_tool(tool_name, params):
             await self._speak_voice_response(
                 message, channel=SpeechChannel.TASK_NARRATION, dedupe_key=f"voice-undo:{uuid.uuid4()}"
             )
+            return
+
+        if normalized_command in VOICE_SOFT_STOPS:
+            # Heliox's voice was already stopped above; acknowledge only when the person had cut it off.
+            if time.monotonic() - self._voice_cut_off_at < STOP_ACK_SECONDS:
+                await self._broadcast_notification(
+                    "voice_result", {"command": command_text, "status": "answered", "message": "Okay, stopped."}
+                )
+                await self._speak_voice_response(
+                    "Okay, stopped.", channel=SpeechChannel.TASK_NARRATION, dedupe_key=f"voice-stop:{uuid.uuid4()}"
+                )
             return
 
         if not self._interactive_request_active and normalized_command in VOICE_STOP_PHRASES:

@@ -87,7 +87,11 @@ def looks_like_conversation_turn(text: str) -> bool:
     normalized = " ".join(text.casefold().replace(",", " ").strip(" \t.:;!?-").split())
     if not normalized:
         return False
-    if _looks_like_autonomous_voice_intent(normalized) or _CONVERSATION_TURN_START.match(normalized):
+    if (
+        _looks_like_autonomous_voice_intent(normalized)
+        or _CONVERSATION_TURN_START.match(normalized)
+        or normalized in STOP_TALKING_PHRASES
+    ):
         return True
     return len(normalized.split()) <= _SHORT_REPLY_WORDS and bool(_SHORT_REPLY_START.match(normalized))
 
@@ -96,6 +100,27 @@ def looks_like_conversation_turn(text: str) -> bool:
 _SAFE_FAST_PHRASES = frozenset(
     {"no", "nope", "stop", "stop it", "cancel", "wait", "wait stop", "wait wait", "hold on", "no stop", "never mind"}
 )
+# Ordinary ways to tell Heliox to stop talking, as whole utterances only ("that's enough for the backup folder,
+# now zip it" is a request, not a stop).
+STOP_TALKING_PHRASES = frozenset(
+    {
+        "that's enough",
+        "okay that's enough",
+        "ok that's enough",
+        "enough",
+        "got it",
+        "okay okay",
+        "ok ok",
+        "okay got it",
+        "stop there",
+        "hold on",
+        "alright that's enough",
+    }
+)
+
+
+def is_stop_talking(text: str) -> bool:
+    return " ".join(text.casefold().replace(",", " ").strip(" \t.:;!?-").split()) in STOP_TALKING_PHRASES
 
 
 def is_safe_fast_phrase(text: str) -> bool:
@@ -147,20 +172,19 @@ def should_act_on_follow_up(text: str, *, question_open: bool = False) -> bool:
 
 
 SHORT_CUT_OFF_SECONDS = 1.6  # "Wait, stop." is about a second of voice; a sentence said over Heliox is longer
-SHORT_CUT_OFF_WORDS = 4
 
 
-def is_cut_off_stop(text: str, voiced_seconds: float | None) -> bool:
-    """A very short utterance that cut Heliox off and is not a reply or request: take it as "stop".
+def is_cut_off_stop(voiced_seconds: float | None) -> bool:
+    """Speech that began while Heliox was talking and holds at most SHORT_CUT_OFF_SECONDS of voice is "stop".
 
-    On the owner's desk microphone "Wait, stop." said over Heliox came out as "Bruins go home" (streaming), "Very
-    discovered." (Parakeet) and "Visual Studio Code." (Whisper); at 19:58 the same cue came out as "PowerShell".
-    Heliox has already stopped talking; acknowledging that is right, and sending the words anywhere else is not.
-    A longer sentence said over Heliox is heard as what it is.
+    Whatever the recognisers make of it. Said over Heliox's voice, "Wait, stop." came out as "PowerShell",
+    "Brutes gold", "Bruins go home", "Very discovered.", "Good score.", "Visual Studio Code." and "Where we store
+    home" in four rehearsals: at this length the words cannot be trusted, and nothing a person means as a request
+    fits in a second and a half said over someone else. Heliox has already stopped talking; it acknowledges, and the
+    words go nowhere (with an approval waiting, "Stop" denies it, as a spoken "No" would). A longer utterance said
+    over Heliox is heard as what it is.
     """
-    if voiced_seconds is None or voiced_seconds > SHORT_CUT_OFF_SECONDS:
-        return False
-    return len(re.findall(r"[A-Za-z0-9']+", text)) <= SHORT_CUT_OFF_WORDS and not should_act_on_follow_up(text)
+    return voiced_seconds is not None and voiced_seconds <= SHORT_CUT_OFF_SECONDS
 
 
 def is_short_decision(text: str) -> bool:
@@ -1657,6 +1681,7 @@ class _ContinuousRecorder:
             return None
 
         self.speech_started_at = None
+        self.last_voiced_seconds = None
         if not keep_backlog:
             await self._drain_stale_frames(queue)
         endpointer = self._make_endpointer()
@@ -1986,6 +2011,20 @@ class ContinuousVoiceListener:
         started = getattr(self._recorder, "speech_started_at", None)
         return time.monotonic() < until or (isinstance(started, float) and until > 0 and started <= until)
 
+    def _cutting_off(self, final: bool = False) -> bool:
+        """The utterance began while Heliox was talking (not after the button) and is still, or ended, short enough
+        to be a cut-off: its words are not shown as what the person said."""
+        if not self._addressed() or self._button_until:
+            return False
+        if final:
+            return self._is_short_cut_off()
+        started = getattr(self._recorder, "speech_started_at", None)
+        return not isinstance(started, float) or time.monotonic() - started <= SHORT_CUT_OFF_SECONDS
+
+    def _caption(self, text: str) -> None:
+        if self._on_partial and not self._cutting_off():
+            self._schedule(self._on_partial, text)
+
     def _is_short_cut_off(self) -> bool:
         voiced = getattr(self._recorder, "last_voiced_seconds", None)
         return isinstance(voiced, float) and voiced <= SHORT_CUT_OFF_SECONDS
@@ -2098,7 +2137,7 @@ class ContinuousVoiceListener:
         recorder.on_hold = (lambda: self._schedule(self._on_turn_hold)) if self._on_turn_hold else None
         streaming = self._streaming if voice.transcription_engine == "streaming" else None
         if streaming is not None and streaming.ready:
-            streaming.on_partial = (lambda text: self._schedule(self._on_partial, text)) if self._on_partial else None
+            streaming.on_partial = self._caption if self._on_partial else None
             recorder.stream_sink = streaming
             recorder.complete_hint = lambda: is_short_decision(streaming.partial())
             return streaming
@@ -2352,13 +2391,13 @@ class ContinuousVoiceListener:
                     continue
 
                 voiced = getattr(self._recorder, "last_voiced_seconds", None)
-                if (
-                    interruption == "barge_in"
-                    and not wake_detected
-                    and is_cut_off_stop(transcript, voiced if isinstance(voiced, float) else None)
-                ):
-                    logger.info("A short cut-off over Heliox (%r) is taken as stop", transcript.strip())
+                cut_off = interruption == "barge_in" and is_cut_off_stop(voiced if isinstance(voiced, float) else None)
+                if cut_off:
+                    # Not shown or kept as the person's words: they are not what was said.
+                    logger.info("A short cut-off over Heliox (heard as %r) is taken as stop", transcript.strip())
                     command_text = "Stop"
+                    wake_detected = False
+                    conversational_follow_up = True
                 elif conversational_follow_up and not wake_detected and conversation and not by_button:
                     if not should_act_on_follow_up(transcript, question_open=self.question_open):
                         # Said while talking with Heliox, but not to it as a request: Live may check it.
@@ -2414,8 +2453,9 @@ class ContinuousVoiceListener:
                                 else "wake_detected"
                             ),
                             {
-                                "transcript": transcript,
+                                "transcript": "" if cut_off else transcript,
                                 "wake_free": conversational_follow_up and not wake_detected,
+                                "cut_off": cut_off,
                             },
                         )
                     except Exception:
@@ -2615,7 +2655,12 @@ class ContinuousVoiceListener:
 
             started = time.perf_counter()
             heard = await streaming.finish() if streaming is not None else ""
-            if heard and is_safe_fast_phrase(heard):
+            if self._cutting_off(final=True):
+                # A short cut-off over Heliox is a stop whatever it says (is_cut_off_stop): no recogniser is waited
+                # for, and the streaming guess is kept only for the log.
+                transcript = heard or "(cut off)"
+                self.last_transcription_engine = "none"
+            elif heard and is_safe_fast_phrase(heard):
                 # "No", "Stop", "Wait": safe to act on from the fast recogniser (they only stop or deny).
                 transcript = heard
                 self.last_transcription_engine = "streaming"
@@ -2628,7 +2673,7 @@ class ContinuousVoiceListener:
                 if not transcript and heard and not self._final_pass_available():
                     transcript = heard
                     self.last_transcription_engine = "streaming"
-                if transcript and heard and self._on_partial:
+                if transcript and heard and self._on_partial and not self._cutting_off(final=True):
                     self._schedule(self._on_partial, transcript)  # the caption shows the words acted on
             self.last_transcription_ms = (time.perf_counter() - started) * 1000
             logger.info(

@@ -218,9 +218,17 @@ async def test_talking_over_heliox_stops_its_voice_but_only_a_reply_runs():
     assert dispatched == [] and overheard == ["PowerShell"]
 
 
-# 21:19 rehearsal, desk microphone: "Wait, stop." said over Heliox, about a second of voice, as each recogniser
-# wrote it. Heliox had already stopped talking.
-CUT_OFF_READINGS = ["Brutes gold", "Bruins go home", "Very discovered.", "Visual Studio Code.", "PowerShell"]
+# "Wait, stop." said over Heliox, about a second of voice, as the recognisers wrote it in four rehearsals (19:58,
+# 21:19 and 22:04). Heliox had already stopped talking.
+CUT_OFF_READINGS = [
+    "Brutes gold",
+    "Bruins go home",
+    "Very discovered.",
+    "Good score.",
+    "Visual Studio Code.",
+    "Where we store home",
+    "PowerShell",
+]
 
 
 @pytest.mark.asyncio
@@ -229,8 +237,37 @@ async def test_a_short_unreadable_cut_off_over_heliox_is_taken_as_stop(heard):
     listener, run = make_listener([heard], suppressed=True)
     listener.note_interruption()
     listener._recorder.last_voiced_seconds = 1.0
+    statuses = []
+
+    async def status(name, data):
+        statuses.append((name, data))
+
+    listener._on_status = status
     dispatched, overheard = await run()
     assert dispatched == ["Stop"] and overheard == []  # acknowledged by the stop path; nothing goes to Live
+    shown = [data for name, data in statuses if name == "follow_up_detected"]
+    assert shown == [{"transcript": "", "wake_free": True, "cut_off": True}]  # the misheard words are not shown
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("heard", CUT_OFF_READINGS)
+async def test_a_cut_off_stops_and_is_acknowledged_without_reaching_the_planner_or_the_chat(heard):
+    import time
+
+    server = PilotServer(PilotConfig())
+    server._broadcast_notification = AsyncMock()
+    server._speak_voice_response = AsyncMock()
+    server._handle_execute = AsyncMock()
+    server._voice_cut_off_at = time.monotonic() - 1.0
+    listener, run = make_listener([heard], suppressed=True)
+    listener._on_command = server._voice_command_dispatch
+    listener.note_interruption()
+    listener._recorder.last_voiced_seconds = 1.1
+    await run()
+    server._handle_execute.assert_not_awaited()
+    assert server._speak_voice_response.await_args.args[0] == "Okay, stopped."
+    sent = [call.args[0] for call in server._broadcast_notification.await_args_list]
+    assert "voice_command" not in sent  # the event that adds a user turn to the chat
 
 
 @pytest.mark.asyncio
@@ -246,7 +283,7 @@ async def test_a_sentence_said_over_heliox_is_still_heard_as_what_it_is():
     request, run_request = make_listener(["Open my mail"], suppressed=True)
     request.note_interruption()
     request._recorder.last_voiced_seconds = 0.9
-    assert await run_request() == (["Open my mail"], [])  # short, but a request: it runs as said
+    assert await run_request() == (["Stop"], [])  # a second said over Heliox is a stop, whatever it reads as
     quiet, run_quiet = make_listener(["Very discovered."], follow_up=30)
     quiet._recorder.last_voiced_seconds = 1.0  # the same words without cutting Heliox off are not a stop
     assert await run_quiet() == ([], ["Very discovered."])
@@ -255,10 +292,70 @@ async def test_a_sentence_said_over_heliox_is_still_heard_as_what_it_is():
 def test_only_a_short_unreadable_utterance_is_a_cut_off_stop():
     from pilot.system.voice import is_cut_off_stop
 
-    assert is_cut_off_stop("Very discovered.", 1.0)
-    assert not is_cut_off_stop("Very discovered.", 2.0)
-    assert not is_cut_off_stop("Very discovered.", None)
-    assert not is_cut_off_stop("Wait, stop.", 1.0)  # readable: it goes through as itself
+    assert is_cut_off_stop(1.0) and is_cut_off_stop(1.6)
+    assert not is_cut_off_stop(2.0) and not is_cut_off_stop(None)
+
+
+def test_while_a_cut_off_is_still_short_its_words_are_not_captioned():
+    import time
+
+    listener = ContinuousVoiceListener(wake_words=["hey heliox"], on_partial=AsyncMock(), config=PilotConfig())
+    listener.note_interruption()
+    listener._recorder.speech_started_at = time.monotonic() - 0.5
+    assert listener._cutting_off()
+    listener._recorder.speech_started_at = time.monotonic() - 2.5  # a sentence now: its words are shown
+    assert not listener._cutting_off()
+    listener.note_interruption(by_button=True)
+    listener._recorder.speech_started_at = time.monotonic() - 0.5
+    assert not listener._cutting_off()  # after the button the words are what the person said
+
+
+@pytest.mark.parametrize("said", ["That's enough.", "Okay, that's enough", "Enough", "Stop there", "Hold on"])
+def test_ordinary_ways_to_stop_heliox_are_replies(said):
+    assert looks_like_conversation_turn(said)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("said", ["That's enough.", "Okay, that's enough", "Enough", "Stop there"])
+async def test_ordinary_ways_to_stop_heliox_stop_it_without_planning(said):
+    server = PilotServer(PilotConfig())
+    server._broadcast_notification = AsyncMock()
+    server._speak_voice_response = AsyncMock()
+    server._handle_execute = AsyncMock()
+    await server._voice_command_dispatch(said)
+    server._handle_execute.assert_not_awaited()
+    assert server._broadcast_notification.await_args.args[1]["message"] == "Okay, stopped."
+
+
+@pytest.mark.asyncio
+async def test_got_it_stops_the_voice_but_never_background_work():
+    import time
+
+    server = PilotServer(PilotConfig())
+    server._broadcast_notification = AsyncMock()
+    server._speak_voice_response = AsyncMock()
+    server._handle_execute = AsyncMock()
+    server._stop_background_jobs = AsyncMock(return_value=2)
+    await server._voice_command_dispatch("Got it.")  # after an answer: only an acknowledgement
+    server._handle_execute.assert_not_awaited()
+    server._stop_background_jobs.assert_not_awaited()
+    server._speak_voice_response.assert_not_awaited()
+    server._voice_cut_off_at = time.monotonic() - 1.0
+    await server._voice_command_dispatch("Okay, okay")  # over Heliox: acknowledged
+    assert server._speak_voice_response.await_args.args[0] == "Okay, stopped."
+    server._stop_background_jobs.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_request_that_starts_like_a_stop_is_still_a_request():
+    server = PilotServer(PilotConfig())
+    server._broadcast_notification = AsyncMock()
+    server._speak_voice_response = AsyncMock()
+    server._stop_background_jobs = AsyncMock(return_value=0)
+    server._handle_execute = AsyncMock(return_value={"status": "success", "message": "Zipped."})
+    await server._voice_command_dispatch("That's enough for the backup folder, now zip it")
+    server._stop_background_jobs.assert_not_awaited()
+    server._handle_execute.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -626,3 +723,20 @@ async def test_a_take_starts_a_clean_voice_conversation():
     server._memory.start_conversation.assert_awaited_once_with("voice")
     listener.clear_follow_up_window.assert_called_once_with()
     listener.end_interruption.assert_called_once_with()
+
+
+@pytest.mark.asyncio
+async def test_a_cut_off_waits_for_no_recogniser():
+    listener = ContinuousVoiceListener(wake_words=["hey heliox"], config=PilotConfig())
+    listener.config.voice.transcription_engine = "whisper"
+    listener._recorder._soundcard_recorder = object()  # the stream is "open"
+
+    async def record(**_kwargs):
+        listener._recorder.last_voiced_seconds = 0.9
+        return "utterance.wav"
+
+    listener._recorder.record_utterance = record
+    listener._transcribe_path = AsyncMock(return_value="Where we store home")
+    listener.note_interruption()
+    assert await listener._record_and_transcribe(duration=3, timeout=None, keep_backlog=True) == "(cut off)"
+    listener._transcribe_path.assert_not_awaited()
