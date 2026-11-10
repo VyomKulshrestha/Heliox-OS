@@ -92,6 +92,40 @@ def looks_like_conversation_turn(text: str) -> bool:
     return len(normalized.split()) <= _SHORT_REPLY_WORDS and bool(_SHORT_REPLY_START.match(normalized))
 
 
+# Words that are safe to act on from the fast, less accurate recogniser: they can only stop Heliox or deny.
+_SAFE_FAST_PHRASES = frozenset(
+    {"no", "nope", "stop", "stop it", "cancel", "wait", "wait stop", "wait wait", "hold on", "no stop", "never mind"}
+)
+
+
+def is_safe_fast_phrase(text: str) -> bool:
+    """A whole utterance that only stops or denies, so a mishearing costs nothing ("No.", "Wait, stop")."""
+    return " ".join(text.casefold().replace(",", " ").strip(" \t.:;!?-").split()) in _SAFE_FAST_PHRASES
+
+
+# Whisper fills silence and noise with phrases from its training data, or with the vocabulary prompt itself.
+_HALLUCINATIONS = frozenset(
+    {"thank you", "thanks for watching", "thank you for watching", "you", "bye", "thank you so much"}
+)
+NO_SPEECH_LIMIT = 0.5  # real speech in the rehearsal scored 0.03 to 0.14; noise read as words scored 0.63 to 0.77
+
+
+def looks_hallucinated(text: str) -> bool:
+    """Text Whisper produces from noise: a stock sign-off, or one word over and over ("Google, Google, Google")."""
+    words = re.findall(r"[a-z']+", text.casefold())
+    if not words or " ".join(words) in _HALLUCINATIONS:
+        return bool(words)
+    if any(leak in " ".join(words) for leak in ("command vocabulary", "proper names")):
+        return True  # the vocabulary prompt read back
+    # The same word or short phrase four times in a row ("Google, Google…", "Good morning. Good morning…").
+    for size in (1, 2, 3):
+        for start in range(len(words) - 4 * size + 1):
+            unit = words[start : start + size]
+            if all(words[start + k * size : start + (k + 1) * size] == unit for k in range(1, 4)):
+                return True
+    return False
+
+
 def is_short_decision(text: str) -> bool:
     """ "No", "Yes", "Stop": complete answers, however short."""
     return " ".join(text.casefold().strip(" \t,.:;!?-").split()) in _AUTONOMOUS_SHORT_DECISIONS
@@ -100,7 +134,10 @@ def is_short_decision(text: str) -> bool:
 # How "Hey Heliox" comes out of a recogniser that has never heard the name: "Hay heliog", "Hey helioch's",
 # "Heliocs". Matched on sound at the very start of an utterance: a greeting-like word, then a word that starts
 # like "heli" and is short. "Hello", "Hillary", "Healy" and "helicopter" do not match.
-_WAKE_LEAD = frozenset({"hey", "hay", "hi", "hei", "heh", "eh", "ay", "a", "oh", "okay", "ok"})
+# "Here Heliox", "Dear Heliox" and "Hello Heliox" are how Whisper wrote the owner's "Hey Heliox" through a headset.
+_WAKE_LEAD = frozenset(
+    {"hey", "hay", "hi", "hei", "heh", "eh", "ay", "a", "oh", "okay", "ok", "here", "hear", "dear", "hello"}
+)
 _WAKE_NAME = re.compile(r"^h[ei]l{1,2}[iy][a-z]{0,5}$")
 _WAKE_NAME_ALONE = re.compile(r"^hel{1,2}io[a-z]{0,3}$")
 _WORD = re.compile(r"[A-Za-z]+(?:'[A-Za-z]+)?")
@@ -1053,12 +1090,28 @@ def _get_faster_whisper_model(model_name: str) -> Any:
     device, compute_type = _faster_whisper_runtime()
     cache_key = (model_name, device, compute_type)
     if cache_key not in _faster_whisper_model_cache:
+        options: dict[str, Any] = {}
+        if device == "cpu":
+            # Measured on the rehearsal recording: 8 threads take base from 2.2 s to 1.1 s for a 6 s sentence.
+            options["cpu_threads"] = max(1, min(8, os.cpu_count() or 4))
         _faster_whisper_model_cache[cache_key] = WhisperModel(
             model_name,
             device=device,
             compute_type=compute_type,
+            **options,
         )
     return _faster_whisper_model_cache[cache_key]
+
+
+def _speech_text(segments: Any) -> str:
+    """The text of the segments Whisper heard as speech; noise read as words is dropped."""
+    kept = [
+        segment.text.strip()
+        for segment in segments
+        if segment.text.strip() and float(getattr(segment, "no_speech_prob", 0.0) or 0.0) <= NO_SPEECH_LIMIT
+    ]
+    text = " ".join(kept)
+    return "" if looks_hallucinated(text) else text
 
 
 async def _transcribe_faster_whisper(
@@ -1075,7 +1128,10 @@ async def _transcribe_faster_whisper(
             "temperature": 0,
             "condition_on_previous_text": False,
             "initial_prompt": _VOICE_TRANSCRIPTION_PROMPT,
-            "hotwords": _VOICE_TRANSCRIPTION_PROMPT,
+            # Measured on a real voice through a Bluetooth headset: without timestamps and without the prompt
+            # repeated as hotwords, "Monday the 12th of November" was heard right and the pass took 0.7 to 0.8 s
+            # instead of 1.0 s; with hotwords it heard "mildly the 12th".
+            "without_timestamps": True,
             # Endpointing already isolated the utterance. A second VAD can
             # remove short commands such as "stop" or "close".
             "vad_filter": False,
@@ -1090,7 +1146,7 @@ async def _transcribe_faster_whisper(
             audio = _normalize_voice_audio(_band_limit_voice_audio(audio))
         try:
             segments, info = model.transcribe(audio if audio is not None else audio_path, **kwargs)
-            text = " ".join(segment.text.strip() for segment in segments if segment.text.strip())
+            text = _speech_text(segments)
         except RuntimeError as error:
             # A visible GPU without cuBLAS/cuDNN fails only when the first segment encodes: switch to the CPU
             # build for the rest of the session and transcribe this utterance again.
@@ -1101,7 +1157,7 @@ async def _transcribe_faster_whisper(
             logger.warning("Faster-Whisper cannot use the GPU (%s); using the CPU", str(error)[:120])
             model = _get_faster_whisper_model(model_name)
             segments, info = model.transcribe(audio if audio is not None else audio_path, **kwargs)
-            text = " ".join(segment.text.strip() for segment in segments if segment.text.strip())
+            text = _speech_text(segments)
         detected_language = getattr(info, "language", None)
         return {
             "text": text.strip(),
@@ -1260,10 +1316,14 @@ class _ContinuousRecorder:
         # Semantic turn-taking (pilot.system.turn_detector): asked after a short silence whether the person is
         # done. Done ends the turn at once; not done keeps listening for up to turn_hold_frames of silence.
         self.turn_detector: Any = None
-        self.turn_check_frames = 4  # 200 ms
+        # 400 ms: on a Bluetooth hands-free microphone the owner paused 250 to 350 ms between words (the link sends
+        # digital silence), and Smart Turn, asked after 200 ms, ended the turn at every one of those pauses.
+        self.turn_check_frames = 8
         self.turn_recheck_frames = 12  # ask again every 600 ms of continued silence
         self.turn_hold_frames = 50  # 2.5 s
-        self.turn_threshold = 0.5
+        # 0.85, not 0.5: on the owner's headset Smart Turn gave 0.71 to 0.83 at mid-sentence pauses ("...the launch call
+        # is Monday | the twelfth of November") and 0.94 to 0.98 at the real ends of their sentences.
+        self.turn_threshold = 0.85
         self.on_hold: Any = None  # called once per utterance when the person pauses mid-thought
         # Callable() -> bool: the words so far are a complete short answer, so a short pause ends the turn.
         self.complete_hint: Any = None
@@ -1367,7 +1427,10 @@ class _ContinuousRecorder:
         self.frames_received += 1
         self.last_frame_rms = signal_rms
         self.peak_frame_rms = max(self.peak_frame_rms, signal_rms)
-        if self.adaptive_threshold_enabled:
+        if self.adaptive_threshold_enabled and not self.user_is_speaking:
+            # Learn the room from the gaps, not from the person: a quiet headset voice that fills most of the
+            # window otherwise lifts the "noise floor" above its own softer words, and the sentence is cut into
+            # pieces (measured on a Bluetooth hands-free microphone).
             self._adaptive_threshold.observe(signal_rms)
         if signal_rms >= self.effective_energy_threshold:
             self.last_above_threshold_at = time.time()
@@ -1806,6 +1869,12 @@ class ContinuousVoiceListener:
         """The person talked over Heliox: what they are saying is for Heliox, wake word or not."""
         self._interrupted_until = time.monotonic() + seconds
 
+    def _final_pass_available(self) -> bool:
+        """Whether a local Whisper is installed to check the fast recogniser's words."""
+        import importlib.util
+
+        return any(importlib.util.find_spec(name) for name in ("faster_whisper", "whisper"))
+
     def _take_interruption(self) -> bool:
         interrupted = time.monotonic() < self._interrupted_until
         self._interrupted_until = 0.0
@@ -2031,7 +2100,9 @@ class ContinuousVoiceListener:
                 # it waits for the next actual utterance instead of polling
                 # a blind fixed window every cycle.
                 capture_generation = self._wake_free_suppression_generation
-                transcript = await self._record_and_transcribe(duration=3, timeout=None)
+                # Keep what was said while the last utterance was being transcribed: the accurate pass takes
+                # about a second, and a turn that ended at a pause ("Hey Heliox, ...") is usually still going.
+                transcript = await self._record_and_transcribe(duration=3, timeout=None, keep_backlog=True)
 
                 if not transcript or transcript.strip() == "No speech detected":
                     await asyncio.sleep(0.2)
@@ -2067,17 +2138,17 @@ class ContinuousVoiceListener:
                 )
 
                 interrupted = self._take_interruption()
-                for wake in self.wake_words:
+                # The whole leading phrase first ("Here Heliox, remind me…" leaves "remind me…", not "Here , remind").
+                heard_as = loose_wake_prefix(transcript)
+                if heard_as:
+                    wake_detected = True
+                    command_text = transcript[len(heard_as) :].strip(" \t,.:;!?-")
+                    logger.info("Wake phrase recognised: '%s'", heard_as)
+                for wake in () if wake_detected else self.wake_words:
                     if wake in transcript_lower:
                         wake_detected = True
                         command_text = _remove_phrase_case_insensitive(transcript, wake)
                         break
-                if not wake_detected:
-                    heard_as = loose_wake_prefix(transcript)
-                    if heard_as:
-                        wake_detected = True
-                        command_text = transcript[len(heard_as) :].strip(" \t,.:;!?-")
-                        logger.info("Wake phrase recognised by sound: '%s'", heard_as)
 
                 if wake_detected:
                     # A real hit confirms any near-miss variant that was
@@ -2193,7 +2264,7 @@ class ContinuousVoiceListener:
                         except Exception:
                             pass
 
-                    command_text = await self._record_and_transcribe(duration=8, timeout=8.0)
+                    command_text = await self._record_and_transcribe(duration=8, timeout=8.0, keep_backlog=True)
 
                     if not command_text or command_text.strip() == "No speech detected":
                         if self._on_status:
@@ -2317,10 +2388,22 @@ class ContinuousVoiceListener:
                 audio_path = await _record_audio(duration)
 
             started = time.perf_counter()
-            transcript = await streaming.finish() if streaming is not None else ""
-            self.last_transcription_engine = "streaming" if transcript else "whisper"
-            if not transcript:
+            heard = await streaming.finish() if streaming is not None else ""
+            if heard and is_safe_fast_phrase(heard):
+                # "No", "Stop", "Wait": safe to act on from the fast recogniser (they only stop or deny).
+                transcript = heard
+                self.last_transcription_engine = "streaming"
+            else:
+                # Everything else is acted on only in the accurate pass's words. The fast recogniser is for the
+                # live caption and turn-taking: on a real voice through a Bluetooth headset it heard "Hey Heliox,
+                # remind me that the launch call is Monday..." as "Do you know my way down the lawn spot...".
                 transcript = await self._transcribe_path(audio_path)
+                self.last_transcription_engine = "whisper"
+                if not transcript and heard and not self._final_pass_available():
+                    transcript = heard
+                    self.last_transcription_engine = "streaming"
+                if transcript and heard and self._on_partial:
+                    self._schedule(self._on_partial, transcript)  # the caption shows the words acted on
             self.last_transcription_ms = (time.perf_counter() - started) * 1000
             logger.info(
                 "Voice transcription completed (duration_ms=%.0f, characters=%d)",

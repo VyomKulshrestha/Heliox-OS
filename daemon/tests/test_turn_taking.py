@@ -76,7 +76,7 @@ def test_a_failed_load_is_reported_not_raised(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_a_finished_sentence_ends_the_turn_after_200_ms_not_the_full_silence():
+async def test_a_finished_sentence_ends_the_turn_after_400_ms_not_the_full_silence():
     rec = recorder()
     rec.turn_detector = FakeDetector([0.93])
     frames = [loud()] * 6 + [quiet()] * 12
@@ -84,7 +84,8 @@ async def test_a_finished_sentence_ends_the_turn_after_200_ms_not_the_full_silen
     path = await rec.record_utterance(timeout=3)
     feeder.cancel()
     assert path and rec.last_endpoint_reason == "smart_turn"
-    assert rec.last_endpoint_ms == 200 and rec.turn_detector.calls == 1
+    # Asked after 400 ms, not 200: real pauses between words on a hands-free headset last 250 to 350 ms.
+    assert rec.last_endpoint_ms == 400 and rec.turn_detector.calls == 1
 
 
 @pytest.mark.asyncio
@@ -175,7 +176,7 @@ async def test_an_unready_transcriber_returns_nothing_so_whisper_runs():
 
 
 @pytest.mark.asyncio
-async def test_listener_uses_streamed_text_and_skips_whisper(monkeypatch):
+async def test_streamed_text_is_the_caption_and_the_final_pass_gives_the_words(monkeypatch):
     config = PilotConfig()
     config.voice.transcription_engine = "streaming"
     config.voice.turn_detection = "silence"
@@ -184,24 +185,40 @@ async def test_listener_uses_streamed_text_and_skips_whisper(monkeypatch):
     async def on_partial(text: str) -> None:
         captions.append(text)
 
-    listener = ContinuousVoiceListener(config=config, on_partial=on_partial)
-    listener._streaming = StreamingTranscriber(recognizer=FakeRecognizer())
-    monkeypatch.setattr(streaming_asr, "PARTIAL_EVERY_SECONDS", 0.0)
-    listener._recorder._queue = asyncio.Queue()
-    listener._recorder._stream = object()  # is_active
-
     async def whisper(path: str) -> str:
-        raise AssertionError("Whisper should not run when streaming has the text")
+        return "Open Chrome, and I'm done."
 
-    listener._transcribe_path = whisper
+    def build():
+        listener = ContinuousVoiceListener(config=config, on_partial=on_partial)
+        listener._streaming = StreamingTranscriber(recognizer=FakeRecognizer())
+        listener._recorder._queue = asyncio.Queue()
+        listener._recorder._stream = object()  # is_active
+        listener._transcribe_path = whisper
+        return listener
+
+    monkeypatch.setattr(streaming_asr, "PARTIAL_EVERY_SECONDS", 0.0)
+    listener = build()
     frames = [loud()] * 20 + [quiet()] * 12
     feeder = asyncio.create_task(feed(listener._recorder._queue, frames))
     text = await listener._record_and_transcribe(timeout=3)
     feeder.cancel()
     await asyncio.sleep(0.05)
-    assert text == "Open chrome and I'm done"
+    assert text == "Open Chrome, and I'm done."  # the accurate pass's words are the ones acted on
+    assert listener.last_transcription_engine == "whisper"
+    assert captions[0].startswith("Open") and captions[-1] == "Open Chrome, and I'm done."  # caption corrected
+
+    # With no local Whisper installed, the streamed words are all there is.
+    monkeypatch.setattr(ContinuousVoiceListener, "_final_pass_available", lambda self: False)
+
+    async def nothing(path: str) -> str:
+        return ""
+
+    listener = build()
+    listener._transcribe_path = nothing
+    feeder = asyncio.create_task(feed(listener._recorder._queue, frames))
+    assert await listener._record_and_transcribe(timeout=3) == "Open chrome and I'm done"
+    feeder.cancel()
     assert listener.last_transcription_engine == "streaming"
-    assert captions and captions[-1].startswith("Open")
 
 
 def test_settings_validate_the_new_voice_fields():

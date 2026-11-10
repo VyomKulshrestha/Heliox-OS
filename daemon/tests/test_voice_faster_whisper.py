@@ -27,7 +27,10 @@ def test_faster_whisper_model_is_cached_by_runtime():
         second = voice._get_faster_whisper_model("base")
 
     assert first is second
-    model_type.assert_called_once_with("base", device="cpu", compute_type="int8")
+    model_type.assert_called_once()
+    args, kwargs = model_type.call_args
+    assert args == ("base",) and kwargs["device"] == "cpu" and kwargs["compute_type"] == "int8"
+    assert 1 <= kwargs["cpu_threads"] <= 8  # measured: 8 threads halve the pass on a 6 s sentence
 
 
 @pytest.mark.asyncio
@@ -47,7 +50,8 @@ async def test_faster_whisper_uses_command_aware_deterministic_decoding():
     assert kwargs["temperature"] == 0
     assert kwargs["condition_on_previous_text"] is False
     assert kwargs["vad_filter"] is False
-    assert kwargs["hotwords"] == voice._VOICE_TRANSCRIPTION_PROMPT
+    assert kwargs["initial_prompt"] == voice._VOICE_TRANSCRIPTION_PROMPT
+    assert kwargs["without_timestamps"] is True and "hotwords" not in kwargs
     assert "language" not in kwargs
 
 
