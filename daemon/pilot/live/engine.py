@@ -52,6 +52,7 @@ from pilot.live.policy import (
 from pilot.live.stuck import KIND as STUCK
 from pilot.live.stuck import StuckWatcher
 from pilot.live.timing import PersonalTiming, at_boundary
+from pilot.system.app_names import app_label
 
 logger = logging.getLogger("pilot.live.engine")
 
@@ -667,7 +668,7 @@ class LiveCompanion:
             "urgency": correction.urgency,
             "spoken": spoken,
             "source": item.source,
-            "app": "" if item.source == "notice" else item.window.split("|", 1)[0],
+            "app": "" if item.source == "notice" else app_label(item.window.split("|", 1)[0]),
         }
         self._recent.append({**payload, "key": correction.key, "at": now})
         self._last_shown_at = now
@@ -762,7 +763,7 @@ class LiveCompanion:
             "paused": self._paused,
             "running": self.running,
             "level": getattr(cfg, "level", DEFAULT_LEVEL),
-            "watching": self._last_obs.app if self._last_obs else "",
+            "watching": app_label(self._last_obs.app) if self._last_obs else "",
             "source": self._last_obs.source if self._last_obs else "",
             "user_state": self._user_state(now),
             "visible": [entry for entry in self._recent if entry["id"] in self._visible],
@@ -786,7 +787,7 @@ class LiveCompanion:
         state = {
             "enabled": bool(getattr(cfg, "enabled", False)),
             "paused": self._paused,
-            "watching": self._last_obs.app if self._last_obs and getattr(cfg, "enabled", False) else "",
+            "watching": app_label(self._last_obs.app) if self._last_obs and getattr(cfg, "enabled", False) else "",
             "user_state": self._user_state(now) if getattr(cfg, "enabled", False) else "off",
         }
         if state != self._state:

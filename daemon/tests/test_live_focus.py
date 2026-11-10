@@ -108,7 +108,7 @@ async def test_page_text_with_focus_is_read_as_reading_not_writing(tmp_path):
         obs[0] = Observation(text=shorter, editable=False, **CLAUDE)
         await run_for(live, clock, 3)
     assert cards(events) == []
-    assert live.status()["watching"] == "claude.exe"
+    assert live.status()["watching"] == "Claude"  # the label people use, not "claude.exe"
 
 
 @pytest.mark.asyncio
@@ -346,3 +346,13 @@ async def test_a_card_retires_when_its_window_is_closed_but_not_when_it_loses_fo
         await asyncio.sleep(0)
     assert ("live_interjection_withdrawn", {"id": card["id"], "reason": "closed"}) in events
     assert live.relevance.score("weekday_date") == pytest.approx(live.relevance.score("never_seen_kind"))
+
+
+@pytest.mark.asyncio
+async def test_a_card_names_the_app_the_way_people_do(tmp_path):
+    term = {"app": "WindowsTerminal", "title": "PowerShell", "source": "focused_field", "field": "5"}
+    obs: list[Observation | None] = [Observation(text=r"PS C:\launch> git push --force origin main", **term)]
+    live, clock, events, _ = build(tmp_path, obs)
+    await run_for(live, clock, 3)
+    [card] = cards(events)
+    assert card["app"] == "Windows Terminal" and live.status()["watching"] == "Windows Terminal"

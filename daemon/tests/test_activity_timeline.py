@@ -74,7 +74,7 @@ def test_answers_what_was_i_working_on(timeline):
 
     answer = timeline.answer("What was I working on this morning?", now=NOON)
 
-    assert answer.startswith("This morning you used Code for 40 min")
+    assert answer.startswith("This morning you used VS Code for 40 min")
     assert '"server.py - Heliox"' in answer and "Chrome for 15 min" in answer
 
 
@@ -159,7 +159,7 @@ async def test_voice_question_is_answered_without_planning(tmp_path):
     await server._voice_command_dispatch("what was I working on in the last hour")
 
     method, payload = server._broadcast_notification.await_args.args
-    assert method == "voice_result" and payload["message"].startswith("In the last hour you used Code")
+    assert method == "voice_result" and payload["message"].startswith("In the last hour you used VS Code")
     server._speak_voice_response.assert_awaited_once()
 
 

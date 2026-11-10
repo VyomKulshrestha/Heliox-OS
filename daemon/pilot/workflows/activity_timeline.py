@@ -24,6 +24,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from pilot.system.app_names import app_label
+
 # Gaps longer than this end a span (screen off, machine asleep, an excluded window).
 MAX_GAP_SECONDS = 120.0
 # The open span's end is written at most this often; it is always written when the span closes.
@@ -259,7 +261,7 @@ class ActivityTimeline:
             if seconds <= 0:
                 continue
             total += seconds
-            entry = apps.setdefault(span["app"] or "Unknown app", {"seconds": 0.0, "titles": {}})
+            entry = apps.setdefault(app_label(span["app"]) or "Unknown app", {"seconds": 0.0, "titles": {}})
             entry["seconds"] += seconds
             entry["titles"][span["title"]] = entry["titles"].get(span["title"], 0.0) + seconds
         ranked = sorted(apps.items(), key=lambda item: item[1]["seconds"], reverse=True)

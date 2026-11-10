@@ -23,6 +23,7 @@ from collections import deque
 from dataclasses import dataclass, field
 
 from pilot.live.detectors import LOW, Correction, TextContext, error_on_screen
+from pilot.system.app_names import app_label
 
 KIND = "stuck"
 DELETED_CHARS = 15
@@ -45,11 +46,7 @@ class _Field:
 
 
 def _app_name(window: str) -> str:
-    app = window.split("|", 1)[0]
-    app = re.sub(r"\.exe$", "", app, flags=re.IGNORECASE)
-    return {"winword": "Word", "excel": "Excel", "chrome": "Chrome", "msedge": "Edge", "outlook": "Outlook"}.get(
-        app.casefold(), app or "that window"
-    )
+    return app_label(window.split("|", 1)[0]) or "that window"
 
 
 def _last_sentence(text: str) -> str:
