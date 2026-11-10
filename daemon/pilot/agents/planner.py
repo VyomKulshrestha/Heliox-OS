@@ -13,7 +13,7 @@ import json
 import logging
 import os
 import sys
-from pathlib import PurePath
+from pathlib import PurePath, PurePosixPath, PureWindowsPath
 from typing import TYPE_CHECKING
 
 from pilot.actions import (
@@ -464,11 +464,19 @@ def _feeds_next_step(actions: list[Action], index: int) -> bool:
     return False
 
 
+def _path_flavour() -> type[PurePath]:
+    """The path rules for paths in a plan: those of the machine the daemon runs on."""
+    return PureWindowsPath if os.name == "nt" else PurePosixPath
+
+
 def _strictly_inside(path: str, folder: str, flavour: type[PurePath] | None = None) -> bool:
-    """True when ``path`` lies inside ``folder`` (not equal to it), for paths as the model wrote them."""
+    """True when ``path`` lies inside ``folder`` (not equal to it), compared by ``flavour``'s rules.
+
+    The post-processor passes no flavour and gets the running machine's rules (``_path_flavour``).
+    """
     if not path or not folder:
         return False
-    return is_strictly_inside(path, folder, flavour)
+    return is_strictly_inside(path, folder, flavour or _path_flavour())
 
 
 def _embedded_plan_object(text: str) -> dict[str, Any] | None:

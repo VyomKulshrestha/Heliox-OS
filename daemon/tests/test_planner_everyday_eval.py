@@ -11,8 +11,9 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 
 import pytest
 
-from benchmarks.planner_everyday import RULES, check_plan, load_cases, norm_path
+from benchmarks.planner_everyday import RULES, check_plan, load_cases, norm_path, path_flavour_for
 from pilot.actions import Action, ActionType, FileParams
+from pilot.agents import planner as planner_module
 from pilot.agents.multi_agent import AgentRole, MultiAgentRouter
 from pilot.agents.planner import SYSTEM_PROMPT, Planner, _expand_text_edits, _strictly_inside
 
@@ -168,9 +169,25 @@ def test_read_only_extra_steps_pass_only_where_looking_first_is_allowed():
     assert _check("a05_rename_post", [look, move]).rules["types"] is False
 
 
-def test_paths_compare_without_case_or_separator_differences():
-    assert norm_path("C:\\Users\\Me\\Desktop\\") == norm_path("c:/users/me/desktop")
-    assert norm_path("/home/me/Desktop") == "/home/me/desktop"
+def test_paths_compare_by_the_rules_of_the_system_they_were_made_for():
+    assert path_flavour_for(WIN_HOME) is PureWindowsPath
+    assert path_flavour_for(POSIX_HOME) is PurePosixPath
+    # Windows: separators and case do not matter.
+    windows = PureWindowsPath
+    assert norm_path("C:\\Users\\Me\\Desktop\\", windows) == norm_path("c:/users/me/desktop", windows)
+    # POSIX: case matters and a backslash is part of a name.
+    posix = PurePosixPath
+    assert norm_path("/home/me/Desktop/", posix) == "/home/me/Desktop"
+    assert norm_path("/home/me/Desktop", posix) != norm_path("/home/me/desktop", posix)
+    assert norm_path("/home/me/a\\b", posix) == "/home/me/a\\b"
+
+
+def test_a_posix_plan_is_checked_with_case_sensitive_paths():
+    launch = POSIX_HOME + "/Desktop/launch"
+    right = _step("file_move", path=launch + "/post-final.md", destination=launch + "/post-v17.md")
+    wrong_case = _step("file_move", path=launch + "/POST-FINAL.md", destination=launch + "/post-v17.md")
+    assert _check("a05_rename_post", [right], home=POSIX_HOME).passed
+    assert _check("a05_rename_post", [wrong_case], home=POSIX_HOME).rules["params"] is False
 
 
 # --- planner rules this eval measures -------------------------------------------------------------
@@ -250,10 +267,20 @@ def _file(kind: ActionType, path: str, content: str | None = None, use_previous_
     )
 
 
-def test_the_read_of_a_file_that_is_then_written_back_is_kept():
+# The post-processor compares paths by the rules of the machine the daemon runs on. Each test runs
+# under both rules, with paths written for that system, so Windows and POSIX are covered on any OS.
+FLAVOURS = [
+    pytest.param(PureWindowsPath, "C:\\Users\\me\\Desktop", "\\", id="windows"),
+    pytest.param(PurePosixPath, "/home/me/Desktop", "/", id="posix"),
+]
+
+
+@pytest.mark.parametrize(("flavour", "desktop", "sep"), FLAVOURS)
+def test_the_read_of_a_file_that_is_then_written_back_is_kept(monkeypatch, flavour, desktop, sep):
     # Seen on 10 November 2026: the planner returned read, code, write, read; the post-processor dropped
     # the first read because a later write had the same path, so the append would have lost the file.
-    path = "C:\\Users\\me\\Desktop\\launch\\checklist.txt"
+    monkeypatch.setattr(planner_module, "_path_flavour", lambda: flavour)
+    path = sep.join([desktop, "launch", "checklist.txt"])
     actions = [
         _file(ActionType.FILE_READ, path),
         _file(ActionType.FILE_WRITE, path, "{PREV_OUTPUT}\nship it", use_previous_output=True),
@@ -262,14 +289,23 @@ def test_the_read_of_a_file_that_is_then_written_back_is_kept():
     assert [a.action_type for a in kept] == [ActionType.FILE_READ, ActionType.FILE_WRITE]
 
 
-def test_a_leading_read_of_a_folder_a_later_step_writes_into_is_still_dropped():
-    folder = "C:\\Users\\me\\Desktop\\report"
+@pytest.mark.parametrize(("flavour", "desktop", "sep"), FLAVOURS)
+def test_a_leading_read_of_a_folder_a_later_step_writes_into_is_still_dropped(monkeypatch, flavour, desktop, sep):
+    monkeypatch.setattr(planner_module, "_path_flavour", lambda: flavour)
+    folder = sep.join([desktop, "report"])
     actions = [
         _file(ActionType.FILE_READ, folder),
-        _file(ActionType.FILE_WRITE, folder + "\\summary.txt", "done"),
+        _file(ActionType.FILE_WRITE, folder + sep + "summary.txt", "done"),
     ]
     kept = Planner.__new__(Planner)._postprocess_actions(actions)
     assert [a.action_type for a in kept] == [ActionType.FILE_WRITE]
+
+
+def test_the_post_processor_uses_the_running_systems_path_rules():
+    import os
+
+    expected = PureWindowsPath if os.name == "nt" else PurePosixPath
+    assert planner_module._path_flavour() is expected
 
 
 @pytest.mark.parametrize(

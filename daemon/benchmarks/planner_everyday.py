@@ -28,7 +28,7 @@ import os
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePath, PurePosixPath, PureWindowsPath
 from typing import Any
 
 RULES = ("types", "params", "order", "max_steps", "no_code", "undo")
@@ -114,11 +114,23 @@ def expand_home(value: str, home: str | None = None) -> str:
     return value.replace("{home}", home)
 
 
-def norm_path(value: Any) -> str:
-    """Lower-case, forward slashes, no trailing slash: for comparing paths as text."""
+def path_flavour_for(home: str) -> type[PurePath]:
+    """The path rules a plan's paths follow, judged from the home folder they were made for."""
+    return PureWindowsPath if re.match(r"^[A-Za-z]:[\\/]", home) or "\\" in home else PurePosixPath
+
+
+def norm_path(value: Any, flavour: type[PurePath] | None = None) -> str:
+    """A path as comparable text under ``flavour``'s rules (default: this machine's home folder's).
+
+    Windows: forward slashes and no case. POSIX: as written, since case matters and a backslash is
+    an ordinary character. Neither keeps a trailing slash.
+    """
+    flavour = flavour or path_flavour_for(str(Path.home()))
     text = str(value or "").strip().strip("\"'")
     text = os.path.expanduser(text) if text.startswith("~") else text
-    return text.replace("\\", "/").rstrip("/").lower()
+    if flavour is PureWindowsPath:
+        return text.replace("\\", "/").rstrip("/").lower()
+    return text.rstrip("/") if text != "/" else text
 
 
 # --- turning a plan into plain step dicts ---------------------------------------------------------
@@ -216,10 +228,13 @@ def _match_value(value: Any, spec: Any, step: dict[str, Any], home: str) -> bool
             elif value != expected:
                 return False
         elif op == "endswith":
-            if value is None or not norm_path(value).endswith(norm_path(expand_home(expected, home))):
+            flavour = path_flavour_for(home)
+            wanted = norm_path(expand_home(expected, home), flavour)
+            if value is None or not norm_path(value, flavour).endswith(wanted):
                 return False
         elif op == "path":  # the exact path, after expanding {home}
-            if value is None or norm_path(value) != norm_path(expand_home(expected, home)):
+            flavour = path_flavour_for(home)
+            if value is None or norm_path(value, flavour) != norm_path(expand_home(expected, home), flavour):
                 return False
         elif op == "contains":
             words = expected if isinstance(expected, list) else [expected]
@@ -242,7 +257,8 @@ def _match_value(value: Any, spec: Any, step: dict[str, Any], home: str) -> bool
             other = _param(step, expected)
             if value is None or other is None:
                 return False
-            if norm_path(value).rsplit("/", 1)[0] != norm_path(other).rsplit("/", 1)[0]:
+            flavour = path_flavour_for(home)
+            if norm_path(value, flavour).rsplit("/", 1)[0] != norm_path(other, flavour).rsplit("/", 1)[0]:
                 return False
         elif op == "has_placeholder":
             if bool(_PLACEHOLDER.search(str(value or ""))) is not bool(expected):
