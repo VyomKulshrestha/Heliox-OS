@@ -146,7 +146,7 @@
   },
   "confirm": {
     "title": "Confirmation Required",
-    "body": "The following actions require your approval before execution. Uncheck any you don't want to run — the rest will be skipped.",
+    "body": "These actions need your approval before they run. Untick any you want to skip, and the rest will run.",
     "deny": "Deny",
     "approve": "Approve & Execute",
     "submitting": "Sending decision...",

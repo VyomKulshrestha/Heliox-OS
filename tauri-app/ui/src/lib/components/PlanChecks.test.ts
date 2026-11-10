@@ -521,3 +521,53 @@ describe("PlanChecks Gnomon notes", () => {
     expect(group?.textContent?.split("Scope not reviewed").length).toBe(2);
   });
 });
+
+describe("ConfirmDialog copy", () => {
+  const actions: PlanAction[] = [
+    {
+      index: 0,
+      action_type: "file_copy",
+      target: "C:\\launch",
+      parameters: {},
+      requires_root: false,
+      destructive: false,
+    },
+  ];
+
+  it("asks in two plain sentences and says untick", () => {
+    const { container } = render(ConfirmDialog, { actions, onconfirm: () => {}, ondeny: () => {} });
+    const body = container.querySelector(".confirm-body")?.textContent?.trim();
+    expect(body).toBe(
+      "These actions need your approval before they run. Untick any you want to skip, and the rest will run.",
+    );
+    expect(body).not.toMatch(/\u2014|uncheck/i);
+  });
+
+  it("names the world model's sources in plain words and keeps the ids in the title", () => {
+    const { container } = render(ConfirmDialog, {
+      actions,
+      onconfirm: () => {},
+      ondeny: () => {},
+      reason: "Deleting launch/drafts is hard to reverse.",
+      riskAssessment: {
+        world_model_score: 0.6,
+        prediction_sources: [
+          "learned_calibrated",
+          "permission_tier",
+          "rule",
+          "structured_rules",
+          "learned",
+          "new_source",
+        ],
+      },
+    });
+    const line = container.querySelector(".world-model-warning small");
+    expect(line?.textContent?.trim()).toBe(
+      "Based on: the learned risk model, the permission level, built-in risk rules, what each action is known to do, new_source",
+    );
+    expect(line?.getAttribute("title")).toBe(
+      "Sources: learned_calibrated, permission_tier, rule, structured_rules, learned, new_source",
+    );
+    expect(container.textContent).not.toContain("learned_calibrated +");
+  });
+});

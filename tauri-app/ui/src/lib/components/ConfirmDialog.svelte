@@ -56,6 +56,30 @@
   );
   let criticWarns = $derived(criticRaised(checks?.critic));
 
+  /** Plain words for the world model's source ids; an id not listed here is shown as it is. */
+  const SOURCE_WORDS: Record<string, string> = {
+    learned: "the learned risk model",
+    learned_calibrated: "the learned risk model",
+    rule: "built-in risk rules",
+    structured_rules: "what each action is known to do",
+    permission_tier: "the permission level",
+    reversibility: "whether it can be undone",
+    size_estimate: "measured file sizes",
+    execution_history: "how past runs went",
+    verified_online_transition: "checked past outcomes",
+    risk_transition: "the risk model",
+    ui_jepa: "the screen model",
+    evaluation_error: "a failed assessment",
+  };
+  let predictionSourceIds = $derived(
+    Array.isArray(riskAssessment?.prediction_sources) ? riskAssessment.prediction_sources.map(String) : [],
+  );
+  let predictionBasis = $derived(
+    predictionSourceIds.length
+      ? [...new Set(predictionSourceIds.map((id) => SOURCE_WORDS[id] ?? id))].join(", ")
+      : "the world model",
+  );
+
   $effect(() => {
     if (approved.length !== actions.length) {
       approved = actions.map(() => true);
@@ -196,10 +220,8 @@
           {Math.round(Number(riskAssessment.world_model_score ?? 0) * 100)}% predicted risk
         </strong>
         <span>{reason}</span>
-        <small>
-          Prediction: {Array.isArray(riskAssessment.prediction_sources)
-            ? riskAssessment.prediction_sources.join(" + ")
-            : "world model"}
+        <small title={predictionSourceIds.length ? `Sources: ${predictionSourceIds.join(", ")}` : undefined}>
+          Based on: {predictionBasis}
         </small>
       </div>
     {/if}
