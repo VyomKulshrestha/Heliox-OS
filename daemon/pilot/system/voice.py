@@ -1737,6 +1737,17 @@ class _ContinuousRecorder:
         return (silence - self.turn_check_frames) % max(1, self.turn_recheck_frames) == 0
 
 
+# How much of an utterance Whisper reads for the wake decision. The whole of it: on the owner's headset, reading
+# only the first 2 s found "Heliox" in 20 of 30 tries against 30 of 30 for the whole sentence (fixed boundaries).
+WAKE_OPENING_SECONDS = 30.0
+
+
+def _to_int16(samples: Any) -> Any:
+    import numpy as np
+
+    return (np.clip(np.asarray(samples, dtype=np.float32), -1.0, 1.0) * 32767).astype(np.int16)
+
+
 def _write_wav(frames: list[Any], sample_rate: int) -> str:
     import numpy as np
 
@@ -1787,6 +1798,9 @@ class ContinuousVoiceListener:
         # Callable() -> bool, set by the server: a task the person started is running or an approval is waiting.
         self.task_open: Any = None
         self._interrupted_until = 0.0
+        # The call app the person is in a call with ("" when none), kept up to date while listening.
+        self.in_call = ""
+        self._call_watch_task: asyncio.Task[None] | None = None
         self._turn_detector: Any = None
         self._streaming: Any = None
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -1899,8 +1913,15 @@ class ContinuousVoiceListener:
 
         return any(importlib.util.find_spec(name) for name in ("faster_whisper", "whisper"))
 
+    def _addressed(self) -> bool:
+        """Whether this utterance was addressed by an interruption or the microphone button: it is still inside
+        the window, or it started inside it (a sentence begun at 9 s of a 10 s window ends after it)."""
+        until = self._interrupted_until
+        started = getattr(self._recorder, "speech_started_at", None)
+        return time.monotonic() < until or (isinstance(started, float) and until > 0 and started <= until)
+
     def _take_interruption(self) -> bool:
-        interrupted = time.monotonic() < self._interrupted_until
+        interrupted = self._addressed()
         self._interrupted_until = 0.0
         return interrupted
 
@@ -1967,6 +1988,7 @@ class ContinuousVoiceListener:
 
         self._task = asyncio.create_task(self._listen_loop())
         self._transcriber_warmup_task = asyncio.create_task(self._warm_transcriber())
+        self._call_watch_task = asyncio.create_task(self._watch_calls())
 
         logger.info(
             "Continuous voice listener started (wake words: %s, vad_recorder=%s)",
@@ -2031,6 +2053,31 @@ class ContinuousVoiceListener:
             if not self._streaming.ready:
                 await asyncio.to_thread(self._streaming.load)
 
+    async def _watch_calls(self, every_seconds: float = 2.0) -> None:
+        """Keep ``in_call`` current and say so in the voice bar when it changes."""
+        from pilot.system.call_detection import current_call
+
+        while self._running:
+            app = ""
+            if getattr(self.config.voice, "quiet_in_calls", True):
+                try:
+                    app = await asyncio.to_thread(current_call)
+                except Exception:
+                    logger.debug("Call detection failed", exc_info=True)
+            if app != self.in_call:
+                self.in_call = app
+                if app:
+                    logger.info("In a call (%s): Heliox stays quiet and does not take speech as addressed to it", app)
+                if self._on_status:
+                    try:
+                        if app:
+                            await self._on_status("in_call", {"app": app, "message": "Quiet while you're in a call"})
+                        else:
+                            await self._on_status("call_ended", {})
+                    except Exception:
+                        logger.debug("Call status callback failed", exc_info=True)
+            await asyncio.sleep(every_seconds)
+
     async def _warm_transcriber(self) -> None:
         """Load the configured local recognizer before the first utterance."""
 
@@ -2088,6 +2135,11 @@ class ContinuousVoiceListener:
             except asyncio.CancelledError:
                 pass
 
+        if self._call_watch_task and not self._call_watch_task.done():
+            self._call_watch_task.cancel()
+            await asyncio.gather(self._call_watch_task, return_exceptions=True)
+        self._call_watch_task = None
+
         if self._transcriber_warmup_task and not self._transcriber_warmup_task.done():
             self._transcriber_warmup_task.cancel()
             await asyncio.gather(self._transcriber_warmup_task, return_exceptions=True)
@@ -2138,6 +2190,13 @@ class ContinuousVoiceListener:
                 self.last_transcript = transcript.strip()
                 self.transcripts_received += 1
                 transcript_lower = transcript.lower().strip()
+
+                if self.in_call and not (self._diagnostic_waiter and not self._diagnostic_waiter.done()):
+                    # In a call, what is said is for the people in the call: not a command, not for Live, and
+                    # not even a wake phrase, which nothing shows to be safe from meeting speech.
+                    logger.debug("Ignored speech during a call (%s)", self.in_call)
+                    self._interrupted_until = 0.0
+                    continue
 
                 if self._diagnostic_waiter and not self._diagnostic_waiter.done():
                     self._diagnostic_waiter.set_result(
@@ -2383,24 +2442,31 @@ class ContinuousVoiceListener:
 
                 samples = _normalize_voice_audio(samples)
                 self.last_transcription_engine = "parakeet"
-                if self.conversation_open() or time.monotonic() < self._interrupted_until:
-                    # No wake phrase is needed mid-conversation: Parakeet alone (about 0.7 s). A word or two is
-                    # checked by Whisper, which drops noise that Parakeet reads as "Okay." or "Wait.".
-                    said = await asyncio.to_thread(parakeet.transcribe, samples)
-                    if len(said.split()) > 2 and looks_like_conversation_turn(said):
-                        return said
-                    if len(said.split()) > 2:
-                        # Not a reply as Parakeet wrote it: often "Hey Heliox, …" it misheard ("Here he works.
-                        # What can I say?"). Whisper decides whether it began with the wake phrase.
-                        heard = await self._transcribe_whisper_text(audio_path)
-                        return merge_wake(heard, said, loose_wake_prefix)
-                    heard = await self._transcribe_whisper_text(audio_path) if said else ""
-                    return merge_wake(heard, said, loose_wake_prefix) if heard else ""
-                # Parakeet for the words, Whisper alongside it for the wake phrase it cannot hear.
-                heard, said = await asyncio.gather(
-                    self._transcribe_whisper_text(audio_path), asyncio.to_thread(parakeet.transcribe, samples)
-                )
-                return merge_wake(heard, said, loose_wake_prefix) if (said or heard) else ""
+                # Whisper reads the utterance for the wake phrase at the same moment Parakeet reads it for the
+                # words: the two run side by side instead of one after the other.
+                opening = _write_wav([_to_int16(samples[: int(WAKE_OPENING_SECONDS * 16000)])], 16000)
+                wake_check = asyncio.ensure_future(self._transcribe_whisper_text(opening))
+                wake_check.add_done_callback(lambda task: task.cancelled() or task.exception())
+                said = await asyncio.to_thread(parakeet.transcribe, samples)
+                addressed = self._addressed()  # the microphone button, or talking over Heliox
+                in_conversation = addressed or self.conversation_open()
+                if addressed and len(said.split()) > 2:
+                    # The person said this to Heliox on purpose: no wake phrase to look for, nothing to wait for.
+                    wake_check.cancel()
+                    return said
+                if in_conversation and len(said.split()) > 2 and looks_like_conversation_turn(said):
+                    # Mid-conversation a reply needs no wake phrase: answer from Parakeet without waiting.
+                    wake_check.cancel()
+                    return said
+                if in_conversation and len(said.split()) > 2 and self._on_overheard:
+                    # While Whisper decides whether this began with the wake phrase, Live can already check the
+                    # words ("…Monday, the twelfth of November"): a correction does not depend on the wake phrase,
+                    # and Live never acts, it only speaks up. The same sentence offered again later is not repeated.
+                    self._schedule(self._on_overheard, said)
+                heard = await wake_check
+                if not said and not heard:
+                    return ""
+                return merge_wake(heard, said, loose_wake_prefix)
         return await self._transcribe_whisper_text(audio_path)
 
     async def _transcribe_whisper_text(self, audio_path: str) -> str:

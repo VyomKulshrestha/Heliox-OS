@@ -486,6 +486,10 @@ class LiveCompanion:
         if self._grounding() and "personal_fact" in self._kinds():
             # What they asked for, against their calendar and lists, while the planner gets going.
             asyncio.ensure_future(self._ground(text, "speech", "speech"))
+        if any(item.source == "speech" for item in self._pending.values()):
+            # Say it now rather than at the next tick: the person has just finished speaking.
+            with contextlib.suppress(RuntimeError):
+                asyncio.get_running_loop().create_task(self._deliver_due(self._clock()))
 
     # ── corrections a local model finds in the person's own data (pilot.live.grounded) ──
 

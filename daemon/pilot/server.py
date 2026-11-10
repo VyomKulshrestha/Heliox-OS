@@ -2109,6 +2109,7 @@ class PilotServer:
             "voice_listener_start": self._handle_voice_listener_start,
             "voice_listener_stop": self._handle_voice_listener_stop,
             "voice_listener_stats": self._handle_voice_listener_stats,
+            "voice_listen_now": self._handle_voice_listen_now,
             "voice_recognition_test": self._handle_voice_recognition_test,
             "interaction_status": self._handle_interaction_status,
             "list_audio_input_devices": self._handle_list_audio_input_devices,
@@ -13101,6 +13102,10 @@ def handle_tool(tool_name, params):
         recorder = None
         listener = self._voice_listener if self._voice_listener and self._voice_listener.is_running else None
         resolved = SpeechChannel(str(channel))
+        call = getattr(listener, "in_call", "") if listener else ""
+        if isinstance(call, str) and call and getattr(self.config.voice, "quiet_in_calls", True):
+            # The person is in a call: Heliox says nothing into it (cards still appear on screen).
+            return SpeechOutcome("suppressed", resolved, f"Quiet during a {call} call")
         if listener and resolved is not SpeechChannel.EMERGENCY_STOP:
             # Never start over the person: answers, corrections and narration wait for the end of their sentence.
             waited = await listener.wait_for_floor()
@@ -13228,6 +13233,19 @@ def handle_tool(tool_name, params):
     async def _voice_turn_hold(self) -> None:
         """The person paused mid-thought; Heliox keeps listening instead of answering."""
         await self._broadcast_notification("voice_status", {"status": "holding", "message": "Still listening"})
+
+    async def _handle_voice_listen_now(self, params: dict, ws: ServerConnection) -> dict:
+        """The microphone button while always-listening is on: the next sentence is for Heliox, no wake phrase.
+
+        For a microphone where the wake phrase is not recognised reliably (a Bluetooth headset in hands-free
+        mode), pressing the button and speaking does what "Hey Heliox, …" does.
+        """
+        listener = self._voice_listener if self._voice_listener and self._voice_listener.is_running else None
+        if listener is None:
+            return {"status": "error", "message": "Voice listening is off."}
+        listener.note_interruption(seconds=float(params.get("seconds", 10.0) or 10.0))
+        await self._broadcast_notification("voice_status", {"status": "listening", "message": "I'm listening..."})
+        return {"status": "listening"}
 
     def _voice_task_open(self) -> bool:
         """A task the person started is running or an approval waits: their replies need no wake word."""

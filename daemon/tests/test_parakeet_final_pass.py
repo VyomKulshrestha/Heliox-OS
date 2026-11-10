@@ -130,14 +130,78 @@ def test_loading_needs_sherpa_only_when_the_model_is_used(tmp_path, monkeypatch)
 async def test_mid_conversation_parakeet_runs_alone_and_whisper_checks_a_lone_word(
     tmp_path, monkeypatch, said, whisper_heard, expected, whisper_runs
 ):
+    import asyncio
+    import time
+
     import numpy as np
 
     item = listener(tmp_path, "parakeet", with_model=True)
-    item._transcribe_whisper_text = AsyncMock(return_value=whisper_heard)
+
+    async def slow_whisper(_path):  # the wake check runs beside Parakeet; a reply must not wait for it
+        await asyncio.sleep(0.5)
+        return whisper_heard
+
+    item._transcribe_whisper_text = slow_whisper
     fake = MagicMock()
     fake.transcribe.return_value = said
     monkeypatch.setattr(item, "_parakeet", lambda: fake)
     monkeypatch.setattr("pilot.system.voice._load_pcm_wav_for_whisper", lambda _path: np.zeros(16000, np.float32))
     item.arm_follow_up_window(30)
+    started = time.perf_counter()
     assert await item._transcribe_path("utterance.wav") == expected
-    assert item._transcribe_whisper_text.await_count == (1 if whisper_runs else 0)
+    waited = time.perf_counter() - started
+    assert (waited >= 0.45) == whisper_runs  # Whisper's answer was waited for only when it decides something
+
+
+@pytest.mark.asyncio
+async def test_mid_conversation_live_gets_parakeets_words_before_whisper_answers(tmp_path, monkeypatch):
+    import asyncio
+
+    import numpy as np
+
+    item = listener(tmp_path, "parakeet", with_model=True)
+    item._loop = asyncio.get_running_loop()
+    offered: list[tuple[float, str]] = []
+    whisper_done: list[float] = []
+
+    async def overheard(text):
+        offered.append((asyncio.get_running_loop().time(), text))
+
+    async def slow_whisper(_path):
+        await asyncio.sleep(0.3)
+        whisper_done.append(asyncio.get_running_loop().time())
+        return WHISPER
+
+    item._on_overheard = overheard
+    item._transcribe_whisper_text = slow_whisper
+    fake = MagicMock()
+    fake.transcribe.return_value = PARAKEET  # "Dear Yorks remind me…": not a reply as written
+    monkeypatch.setattr(item, "_parakeet", lambda: fake)
+    monkeypatch.setattr("pilot.system.voice._load_pcm_wav_for_whisper", lambda _path: np.zeros(16000, np.float32))
+    item.arm_follow_up_window(30)
+    await item._transcribe_path("utterance.wav")
+    assert offered and offered[0][1] == PARAKEET and offered[0][0] < whisper_done[0]
+
+
+@pytest.mark.asyncio
+async def test_after_the_microphone_button_parakeets_words_are_used_without_waiting(tmp_path, monkeypatch):
+    import asyncio
+    import time
+
+    import numpy as np
+
+    item = listener(tmp_path, "parakeet", with_model=True)
+
+    async def slow_whisper(_path):
+        await asyncio.sleep(0.5)
+        return WHISPER
+
+    item._transcribe_whisper_text = slow_whisper
+    fake = MagicMock()
+    fake.transcribe.return_value = PARAKEET
+    monkeypatch.setattr(item, "_parakeet", lambda: fake)
+    monkeypatch.setattr("pilot.system.voice._load_pcm_wav_for_whisper", lambda _path: np.zeros(16000, np.float32))
+    item.note_interruption()
+    started = time.perf_counter()
+    assert await item._transcribe_path("utterance.wav") == PARAKEET
+    assert time.perf_counter() - started < 0.4

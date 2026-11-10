@@ -140,6 +140,12 @@
   }
 
   function toggleListening() {
+    if (wakeWordActive) {
+      // Always-listening is on: the button means "my next sentence is for you", no wake phrase needed.
+      void call("voice_listen_now").catch(() => {});
+      pulseIntensity = 0.6;
+      return;
+    }
     if (isListening) {
       stopListening();
     } else {
@@ -224,6 +230,7 @@
   let holding = $state(false);
   // The local voice is loading (up to ~25 s from cold): say a spoken reply is coming instead of going silent.
   let preparingVoice = $state("");
+  let inCall = $state("");
   let preparingTimer: ReturnType<typeof setTimeout> | null = null;
   let captionTimer: ReturnType<typeof setTimeout> | null = null;
   function showCaption(text: string) {
@@ -253,6 +260,14 @@
       preparingVoice = String(payload.message ?? "") || "Getting my voice ready…";
       if (preparingTimer) clearTimeout(preparingTimer);
       preparingTimer = setTimeout(() => (preparingVoice = ""), 90000);
+      return;
+    }
+    if (status === "in_call") {
+      inCall = String(payload.message ?? "") || "Quiet while you're in a call";
+      return;
+    }
+    if (status === "call_ended") {
+      inCall = "";
       return;
     }
     if (status === "voice_ready" || status === "voice_unavailable") {
@@ -436,11 +451,11 @@
   <button
     class="voice-btn"
     class:listening={isListening && !wakeWordActive}
-    class:disabled={!pushToTalkEnabled || wakeWordActive}
+    class:disabled={!pushToTalkEnabled && !wakeWordActive}
     onclick={toggleListening}
-    disabled={!pushToTalkEnabled || wakeWordActive}
-    title={isListening ? "Stop listening" : "Push to talk"}
-    aria-label={isListening ? "Stop listening" : "Push to talk"}
+    disabled={!pushToTalkEnabled && !wakeWordActive}
+    title={wakeWordActive ? "Talk to Heliox now" : isListening ? "Stop listening" : "Push to talk"}
+    aria-label={wakeWordActive ? "Talk to Heliox now" : isListening ? "Stop listening" : "Push to talk"}
   >
     <div class="pulse-ring" style="--intensity: {pulseIntensity}"></div>
     <svg class="mic-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -493,7 +508,7 @@
   {/if}
 
   <!-- Transcript Preview -->
-  {#if interimTranscript || transcript || holding || preparingVoice}
+  {#if interimTranscript || transcript || holding || preparingVoice || inCall}
     <div class="transcript-preview" aria-live="polite">
       {#if transcript}
         <span class="final">{transcript}</span>
@@ -506,6 +521,9 @@
       {/if}
       {#if preparingVoice}
         <span class="holding">{preparingVoice}</span>
+      {/if}
+      {#if inCall}
+        <span class="holding">{inCall}</span>
       {/if}
     </div>
   {/if}

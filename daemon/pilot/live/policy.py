@@ -37,7 +37,9 @@ LEVELS = {
 DEFAULT_LEVEL = "balanced"
 
 URGENT_PAUSE_SECONDS = 0.6  # long enough to not cut into a word, short enough to land before Enter
-SPEECH_SETTLE_SECONDS = 0.3  # after the person stops talking
+# A spoken sentence reaches Live only after the listener has decided the person's turn is over, so it is already
+# the pause: no extra wait (it was 0.3 s, plus up to one 0.2 s tick).
+SPEECH_SETTLE_SECONDS = 0.0
 TRAILING_PAUSE_FACTOR = 2.5  # the mistake is the last thing typed: they may be mid-number or mid-word
 TRAILING_MIN_PAUSE_SECONDS = 3.0
 # At most this much longer than the person's own pause: a learned pause is already long enough to cover a half-typed

@@ -463,3 +463,37 @@ async def test_a_replaced_line_takes_its_barge_in_watcher_with_it(monkeypatch):
     with pytest.raises(asyncio.CancelledError):
         await line
     assert Watcher.cancelled
+
+
+@pytest.mark.asyncio
+async def test_the_microphone_button_makes_the_next_sentence_for_heliox_without_the_wake_phrase():
+    server = PilotServer(PilotConfig())
+    server._broadcast_notification = AsyncMock()
+    assert (await server._handle_voice_listen_now({}, None))["status"] == "error"  # listening is off
+    listener = MagicMock()
+    listener.is_running = True
+    server._voice_listener = listener
+    assert await server._handle_voice_listen_now({}, None) == {"status": "listening"}
+    listener.note_interruption.assert_called_once_with(seconds=10.0)
+    server._broadcast_notification.assert_awaited_with(
+        "voice_status", {"status": "listening", "message": "I'm listening..."}
+    )
+
+
+@pytest.mark.asyncio
+async def test_after_the_button_any_sentence_is_taken_as_a_command():
+    listener, run = make_listener(["the launch call is Monday the twelfth of November"])
+    listener.note_interruption()
+    dispatched, _ = await run()
+    assert dispatched == ["the launch call is Monday the twelfth of November"]
+
+
+@pytest.mark.asyncio
+async def test_a_sentence_begun_inside_the_button_window_counts_even_if_it_ends_after_it():
+    import time
+
+    listener, run = make_listener(["remind me that the launch call is Monday"])
+    listener._interrupted_until = time.monotonic() - 1.0  # the window has just closed
+    listener._recorder.speech_started_at = time.monotonic() - 3.0  # but the sentence began inside it
+    dispatched, _ = await run()
+    assert dispatched == ["remind me that the launch call is Monday"]

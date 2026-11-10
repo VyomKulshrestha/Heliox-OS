@@ -12,7 +12,7 @@ The Heliox OS UI and daemon communicate over a local WebSocket using the [JSON-R
 | Request timeout | 5 minutes |
 | Reconnect interval | 3 seconds (auto-reconnect on close) |
 
-The daemon currently registers **319 WebSocket RPC methods**. That is the API
+The daemon currently registers **320 WebSocket RPC methods**. That is the API
 surface count, not the action catalog: Heliox exposes **162 action
 types** through the guarded planner/executor system. This document names every
 registered RPC method; grouped tables are used where several methods share one
@@ -1827,7 +1827,17 @@ Return voice listener statistics.
 **Result:** stats dict. Turn-taking fields: `turn_detection` (`smart_turn` or `silence`), `turn_detector_ready`,
 `turn_detector_error`, `last_turn_probability` (Smart Turn's last "the sentence is finished" probability),
 `last_endpoint_reason` (`smart_turn`, `silence` or `max_duration`), `last_endpoint_ms` (the silence that ended
-the last turn), `streaming_ready`, `streaming_error` and `last_transcription_engine` (`streaming` or `whisper`).
+the last turn), `streaming_ready`, `streaming_error` and `last_transcription_engine` (`streaming`, `whisper` or
+`parakeet`). `final_pass` is the recogniser whose words are acted on (`whisper` or `parakeet`), and
+`final_pass_notice` says why Parakeet is not in use when `voice.final_pass` asks for it.
+
+#### `voice_listen_now`
+The microphone button while always-listening is on: the next sentence (within `seconds`, default 10) is taken
+as addressed to Heliox without the wake phrase, as if the person had said "Hey Heliox". Broadcasts
+`voice_status` `{ "status": "listening" }`.
+
+**Params:** `{ "seconds"?: number }`
+**Result:** `{ "status": "listening" }`, or `{ "status": "error", "message": "Voice listening is off." }`
 
 #### `voice_recognition_test`
 Capture one utterance and return its transcript without executing it. If
@@ -3628,6 +3638,8 @@ Voice listener lifecycle updates.
 - `"listening"` — no command followed the wake word in the same utterance; waiting for a follow-up (`message` is a user-facing prompt).
 - `"timeout"` — no follow-up command was heard within the wait window (`message` is a user-facing note).
 - `"interrupted"` — the user started talking while Heliox was still speaking its response, so playback was cut off (barge-in — see `pilot.system.voice.speak_interruptible`). Only fires when `config.voice.barge_in_enabled` is on and the continuous VAD recorder is active.
+- `"in_call"` — the person is in a call (`app` names it; Windows only): Heliox says nothing and takes no speech as addressed to it until `"call_ended"`. `message` is the voice bar text, "Quiet while you're in a call". Off with `voice.quiet_in_calls = false`.
+- `"call_ended"` — the call is over; listening and speech are back to normal.
 - `"holding"` — the person paused mid-sentence and Smart Turn judged the sentence unfinished, so Heliox keeps listening (up to `voice.turn_hold_ms`) instead of answering. Sent once per utterance.
 
 ### `voice_partial`

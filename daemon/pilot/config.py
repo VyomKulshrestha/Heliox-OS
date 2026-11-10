@@ -174,6 +174,9 @@ class VoiceConfig:
     # Bluetooth headset kept "Monday, the twelfth of November" where Whisper base did not, in about 0.7 s; Whisper
     # still runs beside it for the wake phrase. Without the model files it falls back to "whisper".
     final_pass: str = "whisper"  # "whisper" | "parakeet"
+    # While the person is in a call (Teams, Zoom, Meet, WhatsApp, Slack, ...; pilot.system.call_detection),
+    # Heliox does not speak and does not take what is said as addressed to it. Windows only for now.
+    quiet_in_calls: bool = True
     parakeet_model_dir: str = ""  # "" = <Heliox data>/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8
     turn_hold_ms: float = 2500.0
     # Interrupt Heliox's own TTS playback the instant the user starts
@@ -1076,6 +1079,7 @@ def _validate_config_types(raw: dict) -> None:
             "vad_max_utterance_seconds": (int, float),
             "turn_detection": str,
             "final_pass": str,
+            "quiet_in_calls": bool,
             "parakeet_model_dir": str,
             "turn_hold_ms": (int, float),
             "barge_in_enabled": bool,
