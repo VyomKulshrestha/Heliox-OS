@@ -8921,6 +8921,8 @@ class PilotServer:
                             "status": "error",
                             "message": "voice.transcription_engine must be auto, faster_whisper, openai_whisper or streaming",
                         }
+                if section == "voice" and k == "final_pass" and v not in {"whisper", "parakeet"}:
+                    return {"status": "error", "message": "voice.final_pass must be whisper or parakeet"}
                 if section == "voice" and k == "turn_detection" and v not in {"smart_turn", "silence"}:
                     return {"status": "error", "message": "voice.turn_detection must be smart_turn or silence"}
                 if section == "voice" and k == "turn_hold_ms":

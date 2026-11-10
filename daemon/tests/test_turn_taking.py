@@ -326,3 +326,23 @@ async def test_the_last_words_get_a_moment_of_silence_to_be_decoded():
     await transcriber.finish()
     tail = streams[0].tail
     assert len(tail) == int(streaming_asr.SAMPLE_RATE * streaming_asr.TAIL_SECONDS) and not tail.any()
+
+
+@pytest.mark.asyncio
+async def test_a_wait_that_began_before_the_room_was_learned_hears_a_quiet_voice():
+    # The headset in hands-free mode: near-silence, then a voice at about 0.01, below the 0.02 starting default.
+    rec = recorder(energy_threshold=0.02)
+    quiet_voice = np.full(800, 330, dtype=np.int16)  # rms about 0.01
+    near_silence = np.full(800, 20, dtype=np.int16)
+    frames = [near_silence] * 30 + [quiet_voice] * 8 + [quiet()] * 12
+    rec._loop = asyncio.get_running_loop()
+
+    async def publish():  # through the recorder, so it learns the room as the microphone thread would
+        for frame in frames:
+            await asyncio.sleep(0.005)
+            rec._publish_audio_block(frame)
+
+    feeder = asyncio.create_task(publish())
+    path = await rec.record_utterance(timeout=3)
+    feeder.cancel()
+    assert path, "the quiet voice was heard once the threshold followed the room"

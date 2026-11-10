@@ -1642,6 +1642,10 @@ class _ContinuousRecorder:
                 self.user_is_speaking = False
                 return None
 
+            if not endpointer.is_speaking:
+                # Follow the room while waiting. A wait that began before the threshold had learned the room kept
+                # the 0.02 default, and a quiet headset voice (0.01) waited unheard behind it.
+                endpointer.energy_threshold = self.effective_energy_threshold
             event = endpointer.push(frame_rms(frame))
 
             # Check event states before is_speaking: push() already called
@@ -1869,6 +1873,26 @@ class ContinuousVoiceListener:
         """The person talked over Heliox: what they are saying is for Heliox, wake word or not."""
         self._interrupted_until = time.monotonic() + seconds
 
+    def _final_pass_status(self) -> dict[str, Any]:
+        """Which recogniser's words are acted on, and why Parakeet is not in use when it was chosen."""
+        chosen = getattr(self.config.voice, "final_pass", "whisper")
+        if chosen != "parakeet":
+            return {"final_pass": chosen, "final_pass_notice": ""}
+        from pilot.config import DATA_DIR
+        from pilot.system.parakeet_asr import missing_files, model_dir
+
+        folder = model_dir(getattr(self.config.voice, "parakeet_model_dir", ""), DATA_DIR)
+        missing = missing_files(folder)
+        if missing:
+            return {
+                "final_pass": "whisper",
+                "final_pass_notice": f"Parakeet model not found in {folder} (missing {', '.join(missing)}); "
+                "using Whisper.",
+            }
+        loaded = getattr(self, "_parakeet_transcriber", None)
+        error = getattr(loaded, "error", "") if loaded is not None else ""
+        return {"final_pass": "whisper" if error else "parakeet", "final_pass_notice": error}
+
     def _final_pass_available(self) -> bool:
         """Whether a local Whisper is installed to check the fast recogniser's words."""
         import importlib.util
@@ -2022,6 +2046,9 @@ class ContinuousVoiceListener:
                 await asyncio.to_thread(_get_faster_whisper_model, self.config.voice.whisper_model)
             else:
                 await asyncio.to_thread(_get_whisper_model, self.config.voice.whisper_model)
+            parakeet = self._parakeet()
+            if parakeet is not None:
+                await asyncio.to_thread(parakeet.load)  # about 4 s; otherwise the first sentence pays for it
             logger.info(
                 "Voice recognizer warmup completed (model=%s, duration_ms=%.0f)",
                 self.config.voice.whisper_model,
@@ -2330,8 +2357,53 @@ class ContinuousVoiceListener:
                 command_text[:80],
             )
 
+    def _parakeet(self) -> Any:
+        """The Parakeet final pass when it is chosen and its files are present, else None (Whisper is used)."""
+        if getattr(self.config.voice, "final_pass", "whisper") != "parakeet":
+            return None
+        from pilot.config import DATA_DIR
+        from pilot.system.parakeet_asr import ParakeetTranscriber, model_dir
+
+        folder = model_dir(getattr(self.config.voice, "parakeet_model_dir", ""), DATA_DIR)
+        current = getattr(self, "_parakeet_transcriber", None)
+        if current is None or current.folder != folder:
+            current = ParakeetTranscriber(folder)
+            self._parakeet_transcriber = current
+            if not current.available:
+                logger.warning("voice.final_pass is parakeet but its model is missing; using Whisper (%s)", folder)
+        return current if current.available else None
+
     async def _transcribe_path(self, audio_path: str) -> str:
         """Transcribes an already-recorded WAV file with multilingual support."""
+        parakeet = self._parakeet()
+        if parakeet is not None:
+            samples = _load_pcm_wav_for_whisper(audio_path)
+            if samples is not None:
+                from pilot.system.parakeet_asr import merge_wake
+
+                samples = _normalize_voice_audio(samples)
+                self.last_transcription_engine = "parakeet"
+                if self.conversation_open() or time.monotonic() < self._interrupted_until:
+                    # No wake phrase is needed mid-conversation: Parakeet alone (about 0.7 s). A word or two is
+                    # checked by Whisper, which drops noise that Parakeet reads as "Okay." or "Wait.".
+                    said = await asyncio.to_thread(parakeet.transcribe, samples)
+                    if len(said.split()) > 2 and looks_like_conversation_turn(said):
+                        return said
+                    if len(said.split()) > 2:
+                        # Not a reply as Parakeet wrote it: often "Hey Heliox, …" it misheard ("Here he works.
+                        # What can I say?"). Whisper decides whether it began with the wake phrase.
+                        heard = await self._transcribe_whisper_text(audio_path)
+                        return merge_wake(heard, said, loose_wake_prefix)
+                    heard = await self._transcribe_whisper_text(audio_path) if said else ""
+                    return merge_wake(heard, said, loose_wake_prefix) if heard else ""
+                # Parakeet for the words, Whisper alongside it for the wake phrase it cannot hear.
+                heard, said = await asyncio.gather(
+                    self._transcribe_whisper_text(audio_path), asyncio.to_thread(parakeet.transcribe, samples)
+                )
+                return merge_wake(heard, said, loose_wake_prefix) if (said or heard) else ""
+        return await self._transcribe_whisper_text(audio_path)
+
+    async def _transcribe_whisper_text(self, audio_path: str) -> str:
         try:
             result = await _transcribe_speech(
                 audio_path,
@@ -2397,8 +2469,8 @@ class ContinuousVoiceListener:
                 # Everything else is acted on only in the accurate pass's words. The fast recogniser is for the
                 # live caption and turn-taking: on a real voice through a Bluetooth headset it heard "Hey Heliox,
                 # remind me that the launch call is Monday..." as "Do you know my way down the lawn spot...".
+                self.last_transcription_engine = "whisper"  # _transcribe_path says "parakeet" when it used it
                 transcript = await self._transcribe_path(audio_path)
-                self.last_transcription_engine = "whisper"
                 if not transcript and heard and not self._final_pass_available():
                     transcript = heard
                     self.last_transcription_engine = "streaming"
@@ -2428,6 +2500,7 @@ class ContinuousVoiceListener:
             "language": self.last_detected_language,
             "configured_language": self.config.voice.language,
             "transcription_engine": self.config.voice.transcription_engine,
+            **self._final_pass_status(),
             "whisper_model": self.config.voice.whisper_model,
             "turn_detection": getattr(self.config.voice, "turn_detection", "smart_turn"),
             "turn_detector_ready": bool(self._turn_detector is not None and self._turn_detector.ready),
