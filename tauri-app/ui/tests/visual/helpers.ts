@@ -569,6 +569,15 @@ export async function freezeAnimations(page: Page): Promise<void> {
       .particle-canvas {
         display: none !important;
       }
+      /* The chat background canvas is drawn once, but Chromium only sometimes gives it a compositing layer
+         (an accelerated 2D canvas does, a canvas it keeps on the CPU does not). When it has one, the text above
+         it is painted into its own transparent layer with grayscale antialiasing; when it has none, that text
+         goes into the opaque root layer with ClearType (LCD) antialiasing, and every glyph in the chat panel
+         changes colour at its edges. A Windows CI run flipped to LCD text once this way. A layer on the
+         background's container makes the first case the only case, which is what the baselines show. */
+      .neural-bg {
+        will-change: transform;
+      }
     `,
   });
 }
