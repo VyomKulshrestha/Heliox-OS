@@ -6,7 +6,7 @@ Each test pins one general rule found by rehearsing such a job against the real 
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -88,6 +88,38 @@ def test_only_explicit_existing_folders_inside_home_are_listed(home):
     assert request_folders.candidate_folders(f"zip {home}") == []  # the home folder itself is too broad
     named = request_folders.candidate_folders(f"zip {home / 'Desktop' / 'launch'} now")
     assert named == [home / "Desktop" / "launch"]
+
+
+def test_absolute_paths_of_every_system_are_found_in_a_request():
+    # Pure text: the same answers on Windows, macOS and Linux.
+    found = request_folders.absolute_paths_in
+    assert found("zip /home/me/Desktop/launch now") == ["/home/me/Desktop/launch"]
+    assert found("zip /Users/me/Desktop/launch.") == ["/Users/me/Desktop/launch"]
+    assert found("zip C:\\Users\\me\\Desktop\\launch now") == ["C:\\Users\\me\\Desktop\\launch"]
+    assert found("zip C:/Users/me/launch and ~/notes") == ["C:/Users/me/launch", "~/notes"]
+    # Not paths: a slash inside a word, a URL, the inner parts of another path, a bare slash.
+    assert found("copy and/or move https://example.com/a / done") == []
+    assert found("open C:\\a\\b") == ["C:\\a\\b"]
+
+
+@pytest.mark.parametrize(
+    ("flavour", "path", "home", "inside"),
+    [
+        (PurePosixPath, "/home/me/Desktop/launch", "/home/me", True),
+        (PurePosixPath, "/home/me", "/home/me", False),
+        (PurePosixPath, "/home/me/", "/home/me", False),
+        (PurePosixPath, "/home/meow/x", "/home/me", False),  # a sibling that shares a prefix
+        (PurePosixPath, "/home/Me/x", "/home/me", False),  # POSIX names are case-sensitive
+        (PurePosixPath, "/", "/home/me", False),
+        (PureWindowsPath, "C:\\Users\\me\\Desktop\\launch", "C:\\Users\\me", True),
+        (PureWindowsPath, "c:\\users\\ME\\Desktop", "C:\\Users\\me", True),  # Windows ignores case
+        (PureWindowsPath, "C:\\Users\\me", "C:\\Users\\me", False),
+        (PureWindowsPath, "C:\\Users\\meow\\x", "C:\\Users\\me", False),
+        (PureWindowsPath, "D:\\Users\\me\\x", "C:\\Users\\me", False),
+    ],
+)
+def test_only_paths_strictly_inside_home_count_on_either_system(flavour, path, home, inside):
+    assert request_folders.is_strictly_inside(path, home, flavour) is inside
 
 
 def test_heliox_private_folders_are_never_listed(home, monkeypatch):

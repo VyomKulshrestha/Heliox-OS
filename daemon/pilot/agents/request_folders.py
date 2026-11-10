@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import os
 import re
-from pathlib import Path
+from pathlib import Path, PurePath, PurePosixPath, PureWindowsPath
 
 MAX_FOLDERS = 3
 MAX_LINES = 80
@@ -34,7 +34,17 @@ KNOWN_FOLDERS = {
     "videos": "Videos",
 }
 
-_ABSOLUTE = re.compile(r"(?<![\w])([A-Za-z]:[\\/][^\s\"'<>|?*,;]*|~[\\/][^\s\"'<>|?*,;]*)")
+# An absolute path written in a request: a Windows drive path (C:\... or C:/...), a home path
+# (~/... or ~\...) or a POSIX path (/...). All three are recognised on every system. A POSIX path
+# must not start inside a word, a URL or another path ("and/or", "https://x", "a/b").
+_PATH_CHARS = r"[^\s\"'<>|?*,;]"
+_ABSOLUTE = re.compile(
+    r"(?<![\w:/\\.~-])("
+    r"[A-Za-z]:[\\/]" + _PATH_CHARS + r"*"
+    r"|~[\\/]" + _PATH_CHARS + r"*"
+    r"|/(?![/\s])" + _PATH_CHARS + r"+"
+    r")"
+)
 _NAMED = re.compile(
     r"\b(?:my|the|a|our)?\s*(?P<name>[\w.-]+(?: [\w.-]+){0,2}?)\s+folder\s+(?:on|in|under)\s+(?:my|the)\s+"
     r"(?P<where>" + "|".join(KNOWN_FOLDERS) + r")\b",
@@ -47,10 +57,27 @@ def _home() -> Path:
     return Path(os.path.expanduser("~"))
 
 
+def absolute_paths_in(request: str) -> list[str]:
+    """The absolute paths written in ``request``, as typed and in order. Reads nothing from disk."""
+    return [match.group(1).rstrip(".:") for match in _ABSOLUTE.finditer(request)]
+
+
+def is_strictly_inside(path: str, home: str, flavour: type[PurePath] | None = None) -> bool:
+    """True when ``path`` lies below ``home`` (never ``home`` itself), compared part by part.
+
+    ``flavour`` is ``PureWindowsPath`` or ``PurePosixPath`` (default: this system's). Windows
+    paths compare without case, POSIX paths with case. Pass paths that are already resolved.
+    """
+    flavour = flavour or (PureWindowsPath if os.name == "nt" else PurePosixPath)
+    inner, outer = flavour(path).parts, flavour(home).parts
+    if flavour is PureWindowsPath:
+        inner = tuple(part.casefold() for part in inner)
+        outer = tuple(part.casefold() for part in outer)
+    return len(inner) > len(outer) and inner[: len(outer)] == outer
+
+
 def _inside_home(path: Path) -> bool:
-    home = os.path.normcase(os.path.realpath(_home()))
-    resolved = os.path.normcase(os.path.realpath(path))
-    return resolved != home and resolved.startswith(home.rstrip("\\/") + os.sep)
+    return is_strictly_inside(os.path.realpath(path), os.path.realpath(_home()))
 
 
 def _allowed(path: Path) -> bool:
@@ -72,8 +99,7 @@ def candidate_folders(request: str) -> list[Path]:
         if _allowed(path) and all(os.path.normcase(str(path)) != os.path.normcase(str(p)) for p in found):
             found.append(path)
 
-    for match in _ABSOLUTE.finditer(request):
-        raw = match.group(1).rstrip(".:")
+    for raw in absolute_paths_in(request):
         add(Path(os.path.expanduser(raw)))
     for match in _NAMED.finditer(request):
         base = _home() / KNOWN_FOLDERS[match.group("where").lower()]
