@@ -37,6 +37,8 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 
+from pilot.task_request import readable_request
+
 logger = logging.getLogger("pilot.workflows.task_receipts")
 
 RECEIPT_FORMAT = "heliox-task-receipt/1"
@@ -344,7 +346,9 @@ class TaskReceipts:
             "finished_at": receipt["finished_at"],
             "status": receipt["status"],
             "summary": receipt["summary"][:200],
-            "request": receipt["request"][:200],
+            # Shown to people: a receipt signed before the request split holds the planner's revision prompt.
+            # The signed receipt itself is never changed.
+            "request": readable_request(receipt["request"])[:200],
             "source": receipt["source"],
             "action_count": len(receipt["actions"]),
             "signed": bool(envelope.get("signature")),

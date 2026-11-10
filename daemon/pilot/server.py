@@ -104,6 +104,7 @@ from pilot.system.companion_speech import (
     SpeechOutcome,
 )
 from pilot.system.interaction import InteractionPhase, InteractionRuntime, acknowledgement_for
+from pilot.task_request import ATTACHED_CONTEXT_MARKER, TaskRequest, readable_request
 from pilot.workflows.durable_tasks import (
     ApprovalStatus,
     DurableTaskStore,
@@ -801,7 +802,8 @@ class PlanHistoryStore:
             )
 
         rows = await cursor.fetchall()
-        return [dict(row) for row in rows]
+        # Plans recorded before the request split hold the planner's revision prompt as raw_input.
+        return [{**dict(row), "raw_input": readable_request(row["raw_input"])} for row in rows]
 
     async def get_detail(self, plan_id: str) -> dict[str, Any] | None:
         """Return the full record for a single plan_id, with JSON blobs parsed.
@@ -824,6 +826,7 @@ class PlanHistoryStore:
             return None
 
         record = dict(row)
+        record["raw_input"] = readable_request(record.get("raw_input") or "")
         # Parse stored JSON blobs back into Python objects for the caller
         for field_name in ("plan_json", "critic_verdict_json", "results_json", "verification_json"):
             raw = record.get(field_name)
@@ -3072,7 +3075,11 @@ class PilotServer:
             self._active_experience_context = ExperienceContext()
 
     async def _handle_execute_inner(
-        self, params: dict[str, Any], ws: ServerConnection, *, review_inputs: tuple[str, str, int] | None = None
+        self,
+        params: dict[str, Any],
+        ws: ServerConnection,
+        *,
+        review_inputs: tuple[TaskRequest, str] | None = None,
     ) -> dict:
         """Agentic pipeline: plan -> execute -> verify -> [retry on failure].
 
@@ -3080,9 +3087,10 @@ class PilotServer:
         up to MAX_RETRIES times. Confirmation gates pause for user approval on
         Tier 2+ actions.
 
-        ``review_inputs`` (internal, set only by a revision) is what Gnomon reviews against: the person's original
-        request, the attached file text, and how many live corrections followed. A revision's ``input`` is a
-        planner prompt with Heliox's own headings and instructions, not the person's words.
+        ``review_inputs`` (internal, set only by a revision): the person's request with the corrections they made
+        (``TaskRequest``) and the attached file text. A revision's ``input`` is a planner prompt with Heliox's own
+        headings and instructions, not the person's words, so it is never stored or shown as the request: every
+        record and display below uses ``request_text`` (``TaskRequest.display()``).
         """
         # A voice shortcut or "do that again" becomes an ordinary request with the normal approvals.
         expansion = await self._expand_request(str(params.get("input") or ""))
@@ -3095,14 +3103,16 @@ class PilotServer:
         interaction_source = str(params.get("source") or "interactive").strip().lower()
         revision_count = int(params.get("_companion_revision_count", 0))
         auto_revision_count = int(params.get("_companion_auto_revision_count", 0))
-        # Gnomon reviews against the person's words; attached file text is content it must not mistake for them.
-        review_request, review_attachments, review_corrections = review_inputs or (
-            str(user_input),
+        # The person's words and corrections, apart from any planner prompt; attached file text is content.
+        task_request, review_attachments = review_inputs or (
+            TaskRequest(str(user_input)),
             "\n\n".join(
                 f"[Attached File: {item.get('name', 'unknown')}]\n{item.get('content', '')}" for item in attachments
             ),
-            0,
         )
+        review_request = task_request.words
+        review_corrections = len(task_request.corrections)
+        request_text = task_request.display()  # what is stored and shown as this task's request
 
         if attachments:
             formatted_attachments = []
@@ -3150,7 +3160,7 @@ class PilotServer:
 
         def _record_memory(plan: Any, results: list[Any], verification: Any | None = None) -> Any:
             return self._memory.record(
-                user_input,
+                request_text,
                 plan,
                 results,
                 session_id=chat_session_id,
@@ -3224,7 +3234,7 @@ class PilotServer:
                 if self._task_receipts is not None:
                     receipt = await self._task_receipts.finalize(
                         context.task_id or last_plan_id or "",
-                        request=str(params.get("input", "")),
+                        request=request_text,
                         status=status,
                         summary=payload["summary"],
                         source=str(params.get("source") or "text"),
@@ -3359,7 +3369,10 @@ class PilotServer:
                 },
                 ws,
                 # Gnomon reviews against the person's original words; see REVIEWED_AGAINST_ORIGINAL.
-                review_inputs=(review_request, review_attachments, review_corrections + 1),
+                review_inputs=(
+                    task_request.with_corrections(correction, [line.removeprefix("- ") for line in completed_lines]),
+                    review_attachments,
+                ),
             )
 
         async def _restart_from_companion_review(review: Any) -> dict:
@@ -3421,7 +3434,7 @@ class PilotServer:
                 },
                 ws,
                 # The companion's feedback is Heliox's, not the person's: the review inputs stay as they were.
-                review_inputs=(review_request, review_attachments, review_corrections),
+                review_inputs=(task_request, review_attachments),
             )
 
         async def _phase_cancelled(phase: str, completed_results: list[Any] | None = None) -> dict:
@@ -3451,7 +3464,7 @@ class PilotServer:
             idempotency_key=(f"task:{context.task_id}:intent:{revision_count}:{auto_revision_count}"),
             source="interactive",
             payload={
-                "input": user_input,
+                "input": request_text,
                 "attachment_count": len(attachments),
                 "revision_count": revision_count,
                 "auto_revision_count": auto_revision_count,
@@ -3473,7 +3486,7 @@ class PilotServer:
         if emit:
             mem_phase = await emit.phase_start("memory_recall", MEMORY_SEARCH_STARTED)
 
-        improvement_ctx = await self._reflector.get_improvement_context(user_input)
+        improvement_ctx = await self._reflector.get_improvement_context(request_text)
         if self._strategy_evolution is not None:
             promoted_strategy = await self._strategy_evolution.get_active_text("planner.primary")
             if promoted_strategy:
@@ -3698,7 +3711,7 @@ class PilotServer:
             self._active_plan_id = plan_id
             await _record_planned_experience(plan, plan_id, attempt)
             if self._checkpoint_store:
-                await self._checkpoint_store.start_plan(plan_id, user_input, plan)
+                await self._checkpoint_store.start_plan(plan_id, request_text, plan)
 
             if emit:
                 await emit.phase_complete(
@@ -3810,18 +3823,23 @@ class PilotServer:
                     "Destructive/irreversible actions detected — running independent safety review...",
                     parent_id=critic_phase,
                 )
+            # The critic and the companion read the person's words and what they said since, not the planner's
+            # revision prompt; attached files reach them as before.
+            reviewer_request = task_request.for_reviewers() + (
+                ATTACHED_CONTEXT_MARKER + review_attachments if review_attachments else ""
+            )
             reviews: list[tuple[str, str, Any]] = []
             if run_companion and companion_review is None:
                 reviews.append(
                     (
                         "companion",
                         "double-check",
-                        functools.partial(self._companion_plan_review, user_input, plan, review_screen_context),
+                        functools.partial(self._companion_plan_review, reviewer_request, plan, review_screen_context),
                     )
                 )
             if run_critic:
                 reviews.append(
-                    ("critic", "safety review", functools.partial(self._critic_plan_review, user_input, plan))
+                    ("critic", "safety review", functools.partial(self._critic_plan_review, reviewer_request, plan))
                 )
             if not dry_run:
                 review_context = "\n\n".join(part for part in (review_attachments, review_screen_context) if part)
@@ -3907,7 +3925,7 @@ class PilotServer:
                     self._spawn_history_task(
                         self._record_plan_history(
                             plan_id=plan_id,
-                            raw_input=user_input,
+                            raw_input=request_text,
                             plan=plan,
                             critic_verdict=critic_verdict_payload,
                             confirmation_decision="blocked_by_critic",
@@ -4061,7 +4079,7 @@ class PilotServer:
                     self._spawn_history_task(
                         self._record_plan_history(
                             plan_id=plan_id,
-                            raw_input=user_input,
+                            raw_input=request_text,
                             plan=plan,
                             critic_verdict=critic_verdict_payload,
                             confirmation_decision="denied",
@@ -4100,7 +4118,7 @@ class PilotServer:
                     if self._checkpoint_store and (
                         self._durable_tasks is None or await self._durable_tasks.get_approval(plan_id) is None
                     ):
-                        await self._checkpoint_store.start_plan(plan_id, user_input, plan)
+                        await self._checkpoint_store.start_plan(plan_id, request_text, plan)
             elif not dry_run:
                 if emit:
                     skip_phase = await emit.phase_start("confirmation", "confirmation_skipped")
@@ -4256,7 +4274,7 @@ class PilotServer:
                 self._spawn_history_task(
                     self._record_plan_history(
                         plan_id=plan_id,
-                        raw_input=user_input,
+                        raw_input=request_text,
                         plan=plan,
                         critic_verdict=critic_verdict_payload,
                         confirmation_decision=approved_decision if needs_confirm else "skipped",
@@ -4415,7 +4433,7 @@ class PilotServer:
                     await self._checkpoint_store.mark_status(plan_id, "complete")
                 self._spawn_post_execution_task(
                     self._reflector.reflect(
-                        user_input,
+                        request_text,
                         plan,
                         results,
                         verification,
@@ -4437,7 +4455,7 @@ class PilotServer:
                 self._spawn_history_task(
                     self._record_plan_history(
                         plan_id=plan_id,
-                        raw_input=user_input,
+                        raw_input=request_text,
                         plan=plan,
                         critic_verdict=critic_verdict_payload,
                         confirmation_decision=approved_decision if needs_confirm else ("n/a" if dry_run else "skipped"),
@@ -4451,7 +4469,7 @@ class PilotServer:
 
                 message = success_message(plan, results, verification, dry_run=dry_run)
                 self._recent_companion_context_by_session[chat_session_id] = (
-                    f"Previous request: {_sanitize_summary(user_input, limit=300)}\n"
+                    f"Previous request: {_sanitize_summary(request_text, limit=300)}\n"
                     f"Execution result: {_sanitize_summary(message, limit=700)}"
                 )
                 await _emit_task_complete("success", message)
@@ -4464,7 +4482,7 @@ class PilotServer:
                     and exact_labeled_finding_count(plan) is None
                 ):
                     self._spawn_companion_follow_up(
-                        user_input=user_input,
+                        user_input=request_text,
                         plan=plan,
                         results=results,
                         verification=verification,
@@ -4545,7 +4563,7 @@ class PilotServer:
         if not dry_run and last_verification is not None and results:
             self._spawn_post_execution_task(
                 self._reflector.reflect(
-                    user_input,
+                    request_text,
                     plan,
                     results,
                     last_verification,
@@ -4568,7 +4586,7 @@ class PilotServer:
         self._spawn_history_task(
             self._record_plan_history(
                 plan_id=last_plan_id,
-                raw_input=user_input,
+                raw_input=request_text,
                 plan=plan,
                 critic_verdict=critic_verdict_payload,
                 confirmation_decision=approved_decision if needs_confirm else "skipped",

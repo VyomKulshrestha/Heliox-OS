@@ -32,6 +32,7 @@ from pilot.memory.temporal import (
     TemporalMemoryStore,
 )
 from pilot.models.router import ModelRouter
+from pilot.task_request import readable_request
 
 PROFILE_TOKENS = 400  # what the person told Heliox about themselves, at most, in every context
 PROFILE_RANK_BY_QUERY = True  # over budget, keep the profile lines that match the request (pilot.memory.tune)
@@ -720,7 +721,9 @@ class MemoryStore:
             {
                 "id": r[0],
                 "timestamp": r[1],
-                "user_input": r[2],
+                # Entries written before the request split hold the planner's revision prompt; show the
+                # person's words and corrections instead (the stored row is not rewritten).
+                "user_input": readable_request(r[2]),
                 "success": bool(r[3]),
                 "explanation": r[4],
             }
