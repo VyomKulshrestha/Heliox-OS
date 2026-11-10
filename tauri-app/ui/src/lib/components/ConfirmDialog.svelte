@@ -56,6 +56,27 @@
   );
   let criticWarns = $derived(criticRaised(checks?.critic));
 
+  // Only the middle scrolls; the footer with the buttons stays in view. `moreBelow` draws the hairline and fade that
+  // say the rows continue under the footer.
+  let scrollEl: HTMLDivElement | undefined = $state();
+  let moreBelow = $state(false);
+
+  function updateMoreBelow() {
+    if (!scrollEl) return;
+    moreBelow = scrollEl.scrollTop + scrollEl.clientHeight < scrollEl.scrollHeight - 1;
+  }
+
+  $effect(() => {
+    const element = scrollEl;
+    if (!element) return;
+    updateMoreBelow();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(updateMoreBelow);
+    observer.observe(element);
+    for (const child of Array.from(element.children)) observer.observe(child);
+    return () => observer.disconnect();
+  });
+
   /** Plain words for the world model's source ids; an id not listed here is shown as it is. */
   const SOURCE_WORDS: Record<string, string> = {
     learned: "the learned risk model",
@@ -209,116 +230,120 @@
       <span id={titleId}>{$_("confirm.title")}</span>
     </div>
 
-    <p class="confirm-body">
-      {$_("confirm.body")}
-    </p>
+    <div class="confirm-scroll" class:more-below={moreBelow} bind:this={scrollEl} onscroll={updateMoreBelow}>
+      <p class="confirm-body">
+        {$_("confirm.body")}
+      </p>
 
-    {#if riskAssessment}
-      <div class="world-model-warning" role="alert">
-        <strong>
-          World model interruption ·
-          {Math.round(Number(riskAssessment.world_model_score ?? 0) * 100)}% predicted risk
-        </strong>
-        <span>{reason}</span>
-        <small title={predictionSourceIds.length ? `Sources: ${predictionSourceIds.join(", ")}` : undefined}>
-          Based on: {predictionBasis}
-        </small>
-      </div>
-    {/if}
+      {#if riskAssessment}
+        <div class="world-model-warning" role="alert">
+          <strong>
+            World model interruption ·
+            {Math.round(Number(riskAssessment.world_model_score ?? 0) * 100)}% predicted risk
+          </strong>
+          <span>{reason}</span>
+          <small title={predictionSourceIds.length ? `Sources: ${predictionSourceIds.join(", ")}` : undefined}>
+            Based on: {predictionBasis}
+          </small>
+        </div>
+      {/if}
 
-    {#if reason && !riskAssessment}
-      <p class="confirm-reason">{reason}</p>
-    {/if}
+      {#if reason && !riskAssessment}
+        <p class="confirm-reason">{reason}</p>
+      {/if}
 
-    {#if gnomon && gnomon.escalate}
-      <div class="gnomon-review" role="note">
-        <strong>Gnomon review</strong>
-        {#each Array.isArray(gnomon.reasons) ? gnomon.reasons : [] as line}
-          <span>{line}</span>
-        {/each}
-        <small>Advisory: Gnomon can ask for approval but never grants it.</small>
-      </div>
-    {/if}
-
-    <!-- Lines the blocks above already show are left out; for a direct request Gnomon's reasons are in the reason. -->
-    <PlanChecks
-      {checks}
-      hideWorldModel={Boolean(riskAssessment)}
-      hideGnomon={Boolean(gnomon?.escalate || checks?.gnomon?.escalate)}
-      stepsShownElsewhere={stepsWithFindings}
-      compact
-    />
-
-    <ul class="confirm-list">
-      {#each actions as action, i}
-        <li>
-          <div class="confirm-row">
-            <label class="confirm-checkbox">
-              <input
-                type="checkbox"
-                checked={approved[i]}
-                disabled={submitting}
-                aria-describedby={stepFindings[i]?.length ? `${titleId}-review-${i}` : undefined}
-                onchange={() => toggle(i)}
-              />
-            </label>
-            <strong>{action.action_type}</strong> on
-            <code>{action.target}</code>
-            {#if action.requires_root}
-              <span class="root-tag">{$_("tier.root")}</span>
-            {/if}
-            {#if action.destructive}
-              <span class="destructive-tag">{$_("tier.destructive")}</span>
-            {/if}
-            {#if action.irreversible}
-              <span class="irreversible-tag">{$_("tier.irreversible")}</span>
-            {/if}
-            {#if action.undo?.kind === "undoable"}
-              <span class="undo-tag can-undo" title={action.undo.reason}>{$_("undo.badge_undoable")}</span>
-            {:else if action.undo?.kind === "not_undoable"}
-              <span class="undo-tag" title={action.undo.reason}>{$_("undo.badge_not_undoable")}</span>
-            {/if}
-          </div>
-          {#if stepFindings[i]?.length}
-            <ul class="step-review" class:warns={criticWarns} id={`${titleId}-review-${i}`}>
-              {#each stepFindings[i] as finding, j (j)}
-                <li>
-                  <ShieldAlert size={12} aria-hidden="true" />
-                  <span><span class="step-review-name">Safety review:</span> {finding.text}</span>
-                </li>
-              {/each}
-            </ul>
-          {/if}
-          {#each describeAction(action) as detail (detail.label)}
-            <div class="action-detail">
-              <span class="detail-label">{detail.label}</span>
-              {#if detail.code}<pre>{detail.value}</pre>{:else}<span class="detail-value">{detail.value}</span>{/if}
-            </div>
+      {#if gnomon && gnomon.escalate}
+        <div class="gnomon-review" role="note">
+          <strong>Gnomon review</strong>
+          {#each Array.isArray(gnomon.reasons) ? gnomon.reasons : [] as line}
+            <span>{line}</span>
           {/each}
-        </li>
-      {/each}
-    </ul>
+          <small>Advisory: Gnomon can ask for approval but never grants it.</small>
+        </div>
+      {/if}
 
-    {#if error}
-      <p class="confirm-error" role="alert">{error}</p>
-    {/if}
+      <!-- Lines the blocks above already show are left out; for a direct request Gnomon's reasons are in the reason. -->
+      <PlanChecks
+        {checks}
+        hideWorldModel={Boolean(riskAssessment)}
+        hideGnomon={Boolean(gnomon?.escalate || checks?.gnomon?.escalate)}
+        stepsShownElsewhere={stepsWithFindings}
+        compact
+      />
 
-    <div class="confirm-actions">
-      <button
-        class="btn-deny"
-        title={$_("confirm.deny")}
-        disabled={submitting}
-        bind:this={denyButton}
-        onclick={handleDeny}>{$_("confirm.deny")}</button
-      >
-      <button
-        class="btn-confirm"
-        title={$_("confirm.approve")}
-        disabled={!anyApproved || submitting}
-        onclick={handleConfirm}
-      >
-        {submitting ? $_("confirm.submitting") : $_("confirm.approve")}
-      </button>
+      <ul class="confirm-list">
+        {#each actions as action, i}
+          <li>
+            <div class="confirm-row">
+              <label class="confirm-checkbox">
+                <input
+                  type="checkbox"
+                  checked={approved[i]}
+                  disabled={submitting}
+                  aria-describedby={stepFindings[i]?.length ? `${titleId}-review-${i}` : undefined}
+                  onchange={() => toggle(i)}
+                />
+              </label>
+              <strong>{action.action_type}</strong> on
+              <code>{action.target}</code>
+              {#if action.requires_root}
+                <span class="root-tag">{$_("tier.root")}</span>
+              {/if}
+              {#if action.destructive}
+                <span class="destructive-tag">{$_("tier.destructive")}</span>
+              {/if}
+              {#if action.irreversible}
+                <span class="irreversible-tag">{$_("tier.irreversible")}</span>
+              {/if}
+              {#if action.undo?.kind === "undoable"}
+                <span class="undo-tag can-undo" title={action.undo.reason}>{$_("undo.badge_undoable")}</span>
+              {:else if action.undo?.kind === "not_undoable"}
+                <span class="undo-tag" title={action.undo.reason}>{$_("undo.badge_not_undoable")}</span>
+              {/if}
+            </div>
+            {#if stepFindings[i]?.length}
+              <ul class="step-review" class:warns={criticWarns} id={`${titleId}-review-${i}`}>
+                {#each stepFindings[i] as finding, j (j)}
+                  <li>
+                    <ShieldAlert size={12} aria-hidden="true" />
+                    <span><span class="step-review-name">Safety review:</span> {finding.text}</span>
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+            {#each describeAction(action) as detail (detail.label)}
+              <div class="action-detail">
+                <span class="detail-label">{detail.label}</span>
+                {#if detail.code}<pre>{detail.value}</pre>{:else}<span class="detail-value">{detail.value}</span>{/if}
+              </div>
+            {/each}
+          </li>
+        {/each}
+      </ul>
+    </div>
+
+    <div class="confirm-footer" class:divided={moreBelow}>
+      {#if error}
+        <p class="confirm-error" role="alert">{error}</p>
+      {/if}
+
+      <div class="confirm-actions">
+        <button
+          class="btn-deny"
+          title={$_("confirm.deny")}
+          disabled={submitting}
+          bind:this={denyButton}
+          onclick={handleDeny}>{$_("confirm.deny")}</button
+        >
+        <button
+          class="btn-confirm"
+          title={$_("confirm.approve")}
+          disabled={!anyApproved || submitting}
+          onclick={handleConfirm}
+        >
+          {submitting ? $_("confirm.submitting") : $_("confirm.approve")}
+        </button>
+      </div>
     </div>
   </div>
 </div>
@@ -339,12 +364,40 @@
     background: var(--bg-secondary);
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
-    padding: 24px;
     max-width: 560px;
-    max-height: calc(100vh - 48px);
-    overflow-y: auto;
+    max-height: min(100%, calc(100vh - 48px));
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
     width: 100%;
     box-shadow: var(--shadow);
+  }
+
+  .confirm-header {
+    flex: none;
+    padding: 24px 24px 0;
+  }
+
+  .confirm-scroll {
+    flex: 0 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 0 24px;
+  }
+
+  /* The rows continue under the footer: fade the last visible line out (alpha only, no new colour). */
+  .confirm-scroll.more-below {
+    mask-image: linear-gradient(to bottom, black calc(100% - 24px), transparent);
+  }
+
+  .confirm-footer {
+    flex: none;
+    padding: 12px 24px 24px;
+    border-top: 1px solid transparent;
+  }
+
+  .confirm-footer.divided {
+    border-top-color: var(--border);
   }
 
   .confirm-header {
@@ -371,7 +424,7 @@
   .confirm-list {
     list-style: none;
     padding: 0;
-    margin-bottom: 20px;
+    margin-bottom: 8px;
   }
 
   .confirm-list li {
@@ -522,7 +575,7 @@
   }
 
   .confirm-error {
-    margin: -8px 0 16px;
+    margin: 0 0 12px;
     padding: 8px 10px;
     border-radius: var(--radius-sm);
     background: var(--danger-bg);

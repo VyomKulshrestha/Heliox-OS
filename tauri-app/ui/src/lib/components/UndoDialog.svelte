@@ -35,6 +35,27 @@
     }
   }
 
+  // Only the middle scrolls; the footer with the buttons stays in view. `moreBelow` draws the hairline and fade that
+  // say the rows continue under the footer.
+  let scrollEl: HTMLDivElement | undefined = $state();
+  let moreBelow = $state(false);
+
+  function updateMoreBelow() {
+    if (!scrollEl) return;
+    moreBelow = scrollEl.scrollTop + scrollEl.clientHeight < scrollEl.scrollHeight - 1;
+  }
+
+  $effect(() => {
+    const element = scrollEl;
+    if (!element) return;
+    updateMoreBelow();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(updateMoreBelow);
+    observer.observe(element);
+    for (const child of Array.from(element.children)) observer.observe(child);
+    return () => observer.disconnect();
+  });
+
   function lineClass(line: string): string {
     if (line.startsWith("+++") || line.startsWith("---")) return "meta";
     if (line.startsWith("+")) return "added";
@@ -51,79 +72,85 @@
       <span id="undo-title">{$_("undo.title")}</span>
     </div>
 
-    <p class="confirm-body">{$_("undo.intro")}</p>
-    {#if remaining > 0}
-      <p class="confirm-body" data-testid="undo-remaining">{$_("undo.remaining", { values: { count: remaining } })}</p>
-    {/if}
+    <div class="confirm-scroll" class:more-below={moreBelow} bind:this={scrollEl} onscroll={updateMoreBelow}>
+      <p class="confirm-body">{$_("undo.intro")}</p>
+      {#if remaining > 0}
+        <p class="confirm-body" data-testid="undo-remaining">
+          {$_("undo.remaining", { values: { count: remaining } })}
+        </p>
+      {/if}
 
-    {#if ready.length}
-      <h4>{$_("undo.will_undo")}</h4>
-      <ul class="undo-list" data-testid="undo-ready">
-        {#each ready as item (item.seq)}
-          <li>
-            <span class="item-text">{item.description}</span>
-            {#if item.target}<code>{item.target}</code>{/if}
-          </li>
-        {/each}
-      </ul>
-    {:else}
-      <p class="confirm-body">{$_("undo.nothing_ready")}</p>
-    {/if}
+      {#if ready.length}
+        <h4>{$_("undo.will_undo")}</h4>
+        <ul class="undo-list" data-testid="undo-ready">
+          {#each ready as item (item.seq)}
+            <li>
+              <span class="item-text">{item.description}</span>
+              {#if item.target}<code>{item.target}</code>{/if}
+            </li>
+          {/each}
+        </ul>
+      {:else}
+        <p class="confirm-body">{$_("undo.nothing_ready")}</p>
+      {/if}
 
-    {#if leftAlone.length}
-      <h4>{$_("undo.left_alone")}</h4>
-      <ul class="undo-list muted" data-testid="undo-left-alone">
-        {#each leftAlone as item (item.seq)}
-          <li>
-            <span class="item-text">{item.description}</span>
-            {#if item.target}<code>{item.target}</code>{/if}
-          </li>
-        {/each}
-      </ul>
-    {/if}
+      {#if leftAlone.length}
+        <h4>{$_("undo.left_alone")}</h4>
+        <ul class="undo-list muted" data-testid="undo-left-alone">
+          {#each leftAlone as item (item.seq)}
+            <li>
+              <span class="item-text">{item.description}</span>
+              {#if item.target}<code>{item.target}</code>{/if}
+            </li>
+          {/each}
+        </ul>
+      {/if}
 
-    {#if changes === null}
-      <button class="btn-link" type="button" onclick={showChanges}>{$_("undo.show_changes")}</button>
-    {:else if changes.length === 0}
-      <p class="confirm-body">{$_("undo.no_file_changes")}</p>
-    {:else}
-      <div class="changes" data-testid="undo-changes">
-        {#each changes as change (change.seq)}
-          <div class="change">
-            <code>{change.path}</code>
-            {#if change.diff}
-              <pre>{#each change.diff.split("\n") as line, index (index)}<span class={lineClass(line)}>{line}</span
-                  >{"\n"}{/each}</pre>
-            {:else}
-              <small>{change.note}</small>
-            {/if}
-          </div>
-        {/each}
+      {#if changes === null}
+        <button class="btn-link" type="button" onclick={showChanges}>{$_("undo.show_changes")}</button>
+      {:else if changes.length === 0}
+        <p class="confirm-body">{$_("undo.no_file_changes")}</p>
+      {:else}
+        <div class="changes" data-testid="undo-changes">
+          {#each changes as change (change.seq)}
+            <div class="change">
+              <code>{change.path}</code>
+              {#if change.diff}
+                <pre>{#each change.diff.split("\n") as line, index (index)}<span class={lineClass(line)}>{line}</span
+                    >{"\n"}{/each}</pre>
+              {:else}
+                <small>{change.note}</small>
+              {/if}
+            </div>
+          {/each}
+        </div>
+      {/if}
+      {#if changesError}<p class="confirm-error">{changesError}</p>{/if}
+
+      {#if preview.not_undoable.length}
+        <h4>{$_("undo.cannot_undo")}</h4>
+        <ul class="undo-list muted" data-testid="undo-not-undoable">
+          {#each preview.not_undoable as item, i (i)}
+            <li>
+              <span class="item-text"><strong>{item.type}</strong> {item.reason}</span>
+              {#if item.target}<code>{item.target}</code>{/if}
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    </div>
+
+    <div class="confirm-footer" class:divided={moreBelow}>
+      {#if error}
+        <p class="confirm-error" role="alert">{error}</p>
+      {/if}
+
+      <div class="confirm-actions">
+        <button class="btn-deny" disabled={submitting} onclick={oncancel}>{$_("undo.cancel")}</button>
+        <button class="btn-confirm" disabled={submitting || ready.length === 0} onclick={onconfirm}>
+          {submitting ? $_("undo.working") : $_("undo.confirm")}
+        </button>
       </div>
-    {/if}
-    {#if changesError}<p class="confirm-error">{changesError}</p>{/if}
-
-    {#if preview.not_undoable.length}
-      <h4>{$_("undo.cannot_undo")}</h4>
-      <ul class="undo-list muted" data-testid="undo-not-undoable">
-        {#each preview.not_undoable as item, i (i)}
-          <li>
-            <span class="item-text"><strong>{item.type}</strong> {item.reason}</span>
-            {#if item.target}<code>{item.target}</code>{/if}
-          </li>
-        {/each}
-      </ul>
-    {/if}
-
-    {#if error}
-      <p class="confirm-error" role="alert">{error}</p>
-    {/if}
-
-    <div class="confirm-actions">
-      <button class="btn-deny" disabled={submitting} onclick={oncancel}>{$_("undo.cancel")}</button>
-      <button class="btn-confirm" disabled={submitting || ready.length === 0} onclick={onconfirm}>
-        {submitting ? $_("undo.working") : $_("undo.confirm")}
-      </button>
     </div>
   </div>
 </div>
@@ -144,12 +171,40 @@
     background: var(--bg-secondary);
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
-    padding: 24px;
     max-width: 520px;
     width: 100%;
     max-height: 100%;
-    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
     box-shadow: var(--shadow);
+  }
+
+  .confirm-header {
+    flex: none;
+    padding: 24px 24px 0;
+  }
+
+  .confirm-scroll {
+    flex: 0 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 0 24px;
+  }
+
+  /* The rows continue under the footer: fade the last visible line out (alpha only, no new colour). */
+  .confirm-scroll.more-below {
+    mask-image: linear-gradient(to bottom, black calc(100% - 24px), transparent);
+  }
+
+  .confirm-footer {
+    flex: none;
+    padding: 12px 24px 24px;
+    border-top: 1px solid transparent;
+  }
+
+  .confirm-footer.divided {
+    border-top-color: var(--border);
   }
 
   .confirm-header {

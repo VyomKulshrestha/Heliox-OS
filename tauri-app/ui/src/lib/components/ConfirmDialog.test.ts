@@ -306,3 +306,38 @@ describe("ConfirmDialog undo labels", () => {
     expect(screen.getByText("Can't undo").getAttribute("title")).toBe("Heliox cannot take it back.");
   });
 });
+
+describe("ConfirmDialog footer", () => {
+  const rows = Array.from({ length: 8 }, (_, index) => ({
+    index,
+    action_type: "file_delete",
+    target: `C:\launch\item-${index}`,
+    parameters: {},
+    requires_root: false,
+    destructive: true,
+  }));
+
+  it("keeps the buttons outside the scrolling rows, in tab order after them", async () => {
+    const { container } = render(ConfirmDialog, { actions: rows, onconfirm: () => {}, ondeny: () => {} });
+    const scroll = container.querySelector(".confirm-scroll");
+    const footer = container.querySelector(".confirm-footer");
+    expect(scroll?.querySelectorAll("input[type=checkbox]")).toHaveLength(8);
+    expect(scroll?.querySelector("button.btn-deny, button.btn-confirm")).toBeNull();
+    expect(footer?.querySelectorAll("button")).toHaveLength(2);
+    const order = Array.from(container.querySelectorAll("input, button"));
+    expect(order.indexOf(footer!.querySelector(".btn-deny")!)).toBeGreaterThan(
+      order.indexOf(scroll!.querySelectorAll("input")[7]),
+    );
+  });
+
+  it("disables both footer buttons while a decision or correction is in flight", () => {
+    const { container } = render(ConfirmDialog, {
+      actions: rows,
+      submitting: true,
+      onconfirm: () => {},
+      ondeny: () => {},
+    });
+    const buttons = Array.from(container.querySelectorAll<HTMLButtonElement>(".confirm-footer button"));
+    expect(buttons.map((button) => button.disabled)).toEqual([true, true]);
+  });
+});
