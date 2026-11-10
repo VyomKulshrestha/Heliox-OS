@@ -141,7 +141,13 @@ async def test_spoken_denial_through_voice_dispatch_uses_the_voice_deny_channel(
     assert await waiter == (False, set(), {0, 1})
     payload = await _resolved_payload(ledger)
     assert (payload["input_channel"], payload["resolution_path"]) == ("voice_deny", "voice_deny")
-    assert server._broadcast_notification.await_args.args[1]["message"] == "Okay, I won't run that."
+    broadcasts = [(call.args[0], call.args[1]) for call in server._broadcast_notification.await_args_list]
+    reply = ("voice_result", {"command": "No.", "status": "answered", "message": "Okay, I won't run that.",
+                              "plan_id": "plan-1"})  # fmt: skip
+    closed = ("confirmation_closed", {"plan_id": "plan-1", "resolution": "voice_deny"})
+    assert reply in broadcasts and closed in broadcasts
+    # The dialog closes before Heliox says it will not run the plan.
+    assert broadcasts.index(closed) < broadcasts.index(reply)
 
 
 @pytest.mark.asyncio

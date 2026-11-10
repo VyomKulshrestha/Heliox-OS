@@ -3303,6 +3303,26 @@ The UI should present an approval dialog and call `confirm` with the `plan_id`.
 
 ---
 
+### `confirmation_closed`
+Broadcast when the daemon stops waiting on a pending approval, however it ended: the dialog's own
+`confirm`, a denial by voice or typed text, a live correction or Stop that withdrew it, the
+five-minute timeout, an approval whose reply never reached the UI, or shutdown. Every window that
+shows the approval for `plan_id` closes it; a dialog for any other `plan_id` stays open. A
+correction's revised plan asks again with a new `plan_id` and its own `confirm_required`.
+
+```json
+{ "plan_id": "a3b2c1f5", "resolution": "interject_correction" }
+```
+
+`resolution` is the daemon's resolution path, for example `"confirm_rpc"`, `"interject_correction"`,
+`"interject_deny"`, `"abort"`, `"timeout"`, `"unacknowledged"` or `"shutdown"`. It is informational;
+the UI keys only on `plan_id`. A denial by voice or typed text, a correction and Stop send their
+own reply (`voice_result`, the `interject` or `abort` result) only after this notification, waiting
+at most one second for it. A wait cancelled outright (the request itself was cancelled) sends
+nothing; that request's `execute` reply ends the task instead.
+
+---
+
 ### `critic_verdict`
 Sent when a Tier 4 (root-critical), Tier 3 (destructive), or irreversible-flagged plan was reviewed by the secondary LLM safety critic — broadcast before the `confirm_required` gate. A `BLOCK` verdict aborts the plan entirely (the `execute` response is `{"status": "blocked_by_critic", ...}` and no `confirm_required`/execution ever fires); `WARN`/`APPROVE` fall through to the normal confirmation gate.
 

@@ -562,6 +562,25 @@ function estimateTokens(text: string): number {
 }
 
 // 2. Custom store creation managing real-time core states
+/** The approval fields of a closed dialog. */
+const NO_APPROVAL = {
+  confirmRequired: false,
+  confirmPlanId: "",
+  confirmActions: [] as PlanAction[],
+  confirmReason: "",
+  confirmRiskAssessment: null,
+  confirmGnomon: null,
+  confirmSubmitting: false,
+  confirmError: "",
+  confirmBackground: false,
+};
+
+/** Replies to a correction or Stop after which the daemon no longer waits on the interactive approval. */
+const WITHDRAWING_STATUSES = new Set(["revising", "aborted", "denied"]);
+
+export const CONNECTION_LOST_APPROVAL_MESSAGE =
+  "Lost the connection to Heliox, so the approval dialog was closed. Nothing in it was approved.";
+
 /** Approval fields to keep when the interactive task resets: a background approval stays visible. */
 function backgroundApproval(s: SessionState): Partial<SessionState> {
   if (!s.confirmBackground || !s.confirmRequired) return { confirmBackground: false };
@@ -1208,6 +1227,14 @@ function createSession() {
         }));
         break;
 
+      case "confirmation_closed": {
+        // The daemon stopped waiting on this approval (answered, withdrawn by a correction or Stop, timed out).
+        // Keyed on the plan: a close for any other approval leaves the open dialog alone.
+        const planId = String(p.plan_id ?? "");
+        update((s) => (planId && s.confirmRequired && s.confirmPlanId === planId ? { ...s, ...NO_APPROVAL } : s));
+        break;
+      }
+
       case "companion_interjection":
         update((s) => ({
           ...s,
@@ -1307,9 +1334,35 @@ function createSession() {
   });
 
   onConnectionState((connected) => {
-    update((s) => ({ ...s, daemonConnected: connected }));
+    update((s) => {
+      if (connected || !s.confirmRequired) return { ...s, daemonConnected: connected };
+      // A dialog nobody can answer must not stay clickable. A task still waiting after the reconnect shows it again.
+      return {
+        ...s,
+        ...NO_APPROVAL,
+        daemonConnected: connected,
+        messages: [
+          ...s.messages,
+          { type: "system" as MessageType, text: CONNECTION_LOST_APPROVAL_MESSAGE, timestamp: Date.now() },
+        ],
+      };
+    });
     if (connected) void resumeDurableTask();
   });
+
+  /** Make the interactive dialog unanswerable while a correction or Stop that may withdraw it is in flight. */
+  function holdApproval(): string {
+    const s = get({ subscribe });
+    if (!s.confirmRequired || s.confirmBackground || s.confirmSubmitting || !s.confirmPlanId) return "";
+    update((state) => ({ ...state, confirmSubmitting: true }));
+    return s.confirmPlanId;
+  }
+
+  /** Give the dialog back when the daemon kept the approval open (it closes on `confirmation_closed` otherwise). */
+  function releaseApproval(planId: string) {
+    if (!planId) return;
+    update((s) => (s.confirmRequired && s.confirmPlanId === planId ? { ...s, confirmSubmitting: false } : s));
+  }
 
   async function init() {
     await connect();
@@ -1519,11 +1572,14 @@ function createSession() {
         messages: [...s.messages, { type: "user", text: input || "Attached in-task message", timestamp: Date.now() }],
       }));
 
+      const held = inTaskMode === "ask" ? "" : holdApproval();
       try {
         const result = (await call("interject", { input: inTaskInput, mode: inTaskMode })) as {
           status: string;
           message?: string;
         };
+        // A withdrawn approval stays unanswerable until `confirmation_closed` (or the task's end) closes it.
+        if (!WITHDRAWING_STATUSES.has(result.status)) releaseApproval(held);
         const approvalNote = interjectApprovalMessage(result.status);
         if (result.status === "answered") {
           update((s) => ({
@@ -1553,6 +1609,7 @@ function createSession() {
           );
         }
       } catch (err) {
+        releaseApproval(held);
         update((s) => ({ ...s, phase: previousPhase }));
         addErrorMessage(`Live correction failed: ${String(err instanceof Error ? err.message : err)}`);
       }
@@ -2044,8 +2101,10 @@ function createSession() {
   }
 
   async function abort() {
+    const held = holdApproval();
     try {
       const res = (await call("abort")) as { status?: string; message?: string };
+      if (res.status !== "aborted") releaseApproval(held);
       if (res.status === "no_active_execution") {
         addSystemMessage("Nothing to stop.");
       } else if (res.status !== "aborted") {
@@ -2055,6 +2114,7 @@ function createSession() {
       // own with status "cancelled" (handled above), which clears loading --
       // no state update needed here.
     } catch (err) {
+      releaseApproval(held);
       addErrorMessage(`Stop failed: ${String(err instanceof Error ? err.message : err)}`);
     }
   }

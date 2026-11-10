@@ -203,6 +203,8 @@ def _co_adaptation_config_dict(config: Any) -> dict[str, Any]:
 
 
 CONFIRM_TIMEOUT_SECONDS = 300
+# How long a denial waits for the dialog to close before it answers anyway.
+CONFIRM_CLOSE_WAIT_SECONDS = 1.0
 # The authority channel that answered a confirmation, recorded in APPROVAL_RESOLVED. It never says whether a
 # pointer or a keyboard pressed the dialog's button.
 CONFIRM_INPUT_CHANNELS = ("dialog", "gesture", "voice_deny", "internal", "unknown")
@@ -576,6 +578,13 @@ class PendingConfirmation:
     # The interactive task that raised this confirmation when it is not the task's own plan approval (a narrator
     # interrupt during a step), so typed or spoken text during that task can answer it like the plan approval.
     task_id: str = ""
+    # True when the waiter is _consume_confirmation, which broadcasts confirmation_closed and then sets ``closed``,
+    # so a denial can wait for the dialog to close before Heliox answers. Narrator, self-healing and
+    # threat-containment confirmations have their own notifications and never set it.
+    announces_close: bool = False
+    closed: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
+    # The task that will consume this confirmation; a denial made from inside it must not wait on itself.
+    waiter_task: asyncio.Task[Any] | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True)
@@ -5562,7 +5571,9 @@ class PilotServer:
             # it, and nothing here can approve it.
             return False, set(), set(range(len(plan.actions)))
 
-        pending = PendingConfirmation(plan_id=plan_id, event=asyncio.Event())
+        pending = PendingConfirmation(
+            plan_id=plan_id, event=asyncio.Event(), announces_close=True, waiter_task=asyncio.current_task()
+        )
         self._pending_confirms[plan_id] = pending
 
         confirm_indices = (
@@ -5720,17 +5731,39 @@ class PilotServer:
                 else:
                     unanswered = ""
                 expired = bool(unanswered)
-                return _ConfirmationDecision(
+                decision = _ConfirmationDecision(
                     confirmed=pending.confirmed and not expired,
                     approved_indices=None if pending.approved_indices is None else set(pending.approved_indices),
                     expired=expired,
                     input_channel="internal" if expired else pending.input_channel,
                     resolution_path=unanswered or pending.resolution_path or "confirm_rpc",
                 )
+            # Every window showing this approval closes it now, however it was answered (a correction, Stop,
+            # voice, the timeout), so nothing can be clicked on a plan that no longer waits.
+            try:
+                await self._broadcast_notification(
+                    "confirmation_closed",
+                    {"plan_id": pending.plan_id, "resolution": decision.resolution_path},
+                )
+            except Exception:
+                logger.warning("Could not announce that approval %s closed", pending.plan_id, exc_info=True)
+            return decision
         finally:
+            pending.closed.set()
             # A cancelled wait must not leave the entry registered.
             if self._pending_confirms.get(pending.plan_id) is pending:
                 self._pending_confirms.pop(pending.plan_id, None)
+
+    @staticmethod
+    async def _confirmation_closed(pending: PendingConfirmation) -> None:
+        """Wait, briefly, until the dialog for a denied confirmation was told to close, so the reply to a spoken
+        or typed denial, a correction or Stop never arrives while the dialog still shows Approve."""
+        if not pending.announces_close or pending.waiter_task is asyncio.current_task():
+            return
+        try:
+            await asyncio.wait_for(pending.closed.wait(), timeout=CONFIRM_CLOSE_WAIT_SECONDS)
+        except TimeoutError:
+            logger.warning("Approval %s was denied but its dialog did not close in time", pending.plan_id)
 
     async def _handle_confirm(self, params: dict[str, Any], ws: ServerConnection) -> dict:
         """Resolve a pending confirmation request from the UI.
@@ -5832,10 +5865,13 @@ class PilotServer:
             # Direct/internal callers have no JSON-RPC acknowledgement to
             # deliver. Socket RPCs are released by _process_request only after
             # their response is written, closing the UI acknowledgement race.
-            if pending.resolved_by_task not in pending.rpc_tasks:
+            released = pending.resolved_by_task not in pending.rpc_tasks
+            if released:
                 pending.acknowledged = True
                 pending.event.set()
-            return {"status": "ok", "confirmed": decision}
+        if released and not decision:
+            await self._confirmation_closed(pending)
+        return {"status": "ok", "confirmed": decision}
 
     async def _resolve_pending_denied(
         self,
@@ -5869,6 +5905,7 @@ class PilotServer:
                 await self._close_durable_approval(plan_id, ApprovalStatus.DENIED)
             finally:
                 pending.event.set()
+        await self._confirmation_closed(pending)
         return True
 
     async def _close_durable_approval(self, plan_id: str, status: ApprovalStatus) -> None:
@@ -9994,7 +10031,9 @@ class PilotServer:
             else "An autonomous task reached an action that requires explicit approval."
         )
 
-        pending = PendingConfirmation(plan_id=plan_id, event=asyncio.Event(), plan=plan)
+        pending = PendingConfirmation(
+            plan_id=plan_id, event=asyncio.Event(), plan=plan, announces_close=True, waiter_task=asyncio.current_task()
+        )
         pending.required_indices = frozenset(required)
         self._pending_confirms[plan_id] = pending
         try:
