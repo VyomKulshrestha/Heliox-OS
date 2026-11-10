@@ -97,6 +97,23 @@ describe("Live companion UI", () => {
     await waitFor(() => expect(screen.getByText("Copied")).toBeTruthy());
   });
 
+  it("says each card's urgency in words, with no side stripe", async () => {
+    render(LiveCards);
+    emit("live_interjection", card({ id: "u", urgency: "urgent", title: "That deletes your repo" }));
+    emit("live_interjection", card({ id: "n", urgency: "normal", title: "14 November is a Saturday" }));
+    emit("live_interjection", card({ id: "l", urgency: "low", title: "A doubled word" }));
+    await tick();
+    const titles = screen.getAllByTestId("live-card").map((element) => element.querySelector(".title")?.textContent);
+    expect(titles).toEqual([
+      "Urgent: That deletes your repo",
+      "Worth a look: 14 November is a Saturday",
+      "Minor: A doubled word",
+    ]);
+    const urgent = screen.getAllByTestId("live-card")[0];
+    expect(urgent.getAttribute("role")).toBe("alert");
+    expect(urgent.querySelector(".title .sr-only")?.textContent?.trim()).toBe("Urgent:");
+  });
+
   it("acknowledges a fix the person made, then lets the card go", async () => {
     vi.useFakeTimers();
     render(LiveCards);

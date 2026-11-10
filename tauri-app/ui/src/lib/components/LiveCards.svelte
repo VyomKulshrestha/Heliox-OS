@@ -9,6 +9,13 @@
     return "Copy fix";
   }
 
+  /** Said before the title for screen readers; sighted readers get the icon's shape and colour. */
+  const URGENCY_WORDS: Record<LiveCard["urgency"], string> = {
+    urgent: "Urgent:",
+    normal: "Worth a look:",
+    low: "Minor:",
+  };
+
   function useFix(card: LiveCard) {
     if (card.fix_kind === "ask") void live.askHeliox(card);
     else void live.copyFix(card);
@@ -32,7 +39,9 @@
                 size={15}
               />{:else}<Lightbulb size={15} />{/if}
           </span>
-          <strong class="title">{card.title}</strong>
+          <strong class="title"
+            ><span class="sr-only">{`${URGENCY_WORDS[card.urgency] ?? ""} `}</span>{card.title}</strong
+          >
           {#if note}<span class="note">{note}</span>{/if}
           <button
             type="button"
@@ -90,19 +99,15 @@
     pointer-events: auto;
     background: var(--bg-elevated);
     border: 1px solid var(--border-strong);
-    border-left: 3px solid var(--accent);
     border-radius: var(--radius-md);
     box-shadow: var(--shadow);
     animation: arrive var(--dur-slow) var(--ease-out) both;
     transition: opacity var(--dur) ease;
   }
 
+  /* Urgency shows in the header icon (shape and colour) and, for urgent cards, a 1 px danger edge. */
   .live-card.urgent {
-    border-left-color: var(--danger);
-  }
-
-  .live-card.low {
-    border-left-color: var(--border-strong);
+    border-color: var(--danger);
   }
 
   .live-card.done {
