@@ -7,6 +7,7 @@ import asyncio
 import contextlib
 import copy
 import csv
+import functools
 import json
 import logging
 import math
@@ -3441,7 +3442,8 @@ class PilotServer:
         # A single interaction state replaces the removed ReAct event graph.
         # The guarded planning, approval, action, and verification flow below
         # remains authoritative, but internal thoughts are not serialized.
-        emit = None
+        # None in the daemon (internal thoughts are not serialized); a test may attach a recorder as _reasoning_trace.
+        emit = getattr(self, "_reasoning_trace", None)
 
         context = get_experience_context()
         await self._append_experience(
@@ -3724,55 +3726,14 @@ class PilotServer:
                 )
             )
 
-            if self.config.narration.proactive_review_enabled and self._execution_companion and not dry_run:
-                await ws.send(_notification("status", {"phase": "companion reviewing plan"}))
-                companion_review = self._deterministic_companion_review(plan, user_input)
-                if companion_review is not None:
-                    companion_review = _dc_replace(companion_review, status="local")
-                if companion_review is None:
-                    try:
-                        companion_review = await self._await_execution_tracked(
-                            self._execution_companion.review(user_input, plan, screen_context=review_screen_context)
-                        )
-                    except asyncio.CancelledError:
-                        return await _phase_cancelled("companion review")
-
-                review_payload = {
-                    "plan_id": plan_id,
-                    **companion_review.to_dict(),
-                    "revision": auto_revision_count,
-                }
-                await ws.send(_notification("companion_plan_review", review_payload))
-
-                if cancel_event.is_set():
-                    # Stop or a correction landed as the review finished; this plan is dropped, not acted on.
-                    return await _phase_cancelled("companion review")
-
-                if companion_review.should_stop:
-                    message = f"Interactive companion stopped this plan: {companion_review.reason}"
-                    await self._broadcast_notification(
-                        "companion_plan_intervention",
-                        {**review_payload, "decision": "STOP", "reason": message},
-                    )
-                    if self._checkpoint_store:
-                        await self._checkpoint_store.mark_status(plan_id, "blocked_by_companion")
-                    await _emit_task_complete("blocked_by_companion", message)
-                    return {
-                        "status": "blocked_by_companion",
-                        "message": message,
-                        "companion_review": companion_review.to_dict(),
-                        "results": [],
-                    }
-
-                if companion_review.should_revise:
-                    return await _restart_from_companion_review(companion_review)
-
-                if companion_review.decision == "WARN":
-                    await self._broadcast_notification(
-                        "companion_plan_intervention",
-                        review_payload,
-                    )
-
+            # ── Plan reviews ──
+            # The world model runs first: it is local, takes a fraction of a second, and decides whether the safety
+            # critic is needed. The companion's intent check, the critic and Gnomon then run at the same time: none
+            # reads another's result, so the person waits for the slowest instead of the sum (10 November 2026:
+            # companion 5 s + critic 8 s + Gnomon 3.5 s in a row). Their results are applied afterwards in the
+            # order they used to run, so every rule holds as before: a companion STOP or REVISE comes first, a
+            # critic BLOCK still blocks, the world model and Gnomon can only add an approval, and a Stop or a
+            # correction during the reviews cancels all of them together.
             from pilot.actions import PermissionTier
             from pilot.agents.destructive_critic import (
                 HEURISTIC_RISK_THRESHOLD,
@@ -3827,26 +3788,103 @@ class PilotServer:
             elif plan_has_tier3 and not (plan_has_tier4 or risk_score >= HEURISTIC_RISK_THRESHOLD):
                 critic_skipped_reason = "low_risk_heuristic"
 
-            if needs_critic_review and self._destructive_critic and not dry_run:
-                critic_phase = ""
-                await ws.send(_notification("status", {"phase": "critic review"}))
-                if emit:
-                    critic_phase = await emit.phase_start(
-                        "critic_review",
-                        CRITIC_REVIEW_STARTED,
-                        {"plan_id": plan_id, "action_count": len(plan.actions)},
+            companion_review: Any = None
+            run_companion = bool(
+                self.config.narration.proactive_review_enabled and self._execution_companion and not dry_run
+            )
+            if run_companion:
+                companion_review = self._deterministic_companion_review(plan, user_input)
+                if companion_review is not None:
+                    companion_review = _dc_replace(companion_review, status="local")
+            run_critic = bool(needs_critic_review and self._destructive_critic and not dry_run)
+            critic_phase = ""
+            if run_critic and emit:
+                # Opened before the reviews start, so the trace shows the critic starting; its later thoughts hang here.
+                critic_phase = await emit.phase_start(
+                    "critic_review",
+                    CRITIC_REVIEW_STARTED,
+                    {"plan_id": plan_id, "action_count": len(plan.actions)},
+                )
+                await emit.thought(
+                    "critic_review",
+                    "Destructive/irreversible actions detected — running independent safety review...",
+                    parent_id=critic_phase,
+                )
+            reviews: list[tuple[str, str, Any]] = []
+            if run_companion and companion_review is None:
+                reviews.append(
+                    (
+                        "companion",
+                        "double-check",
+                        functools.partial(self._companion_plan_review, user_input, plan, review_screen_context),
                     )
-                    await emit.thought(
-                        "critic_review",
-                        "Destructive/irreversible actions detected — running independent safety review...",
-                        parent_id=critic_phase,
+                )
+            if run_critic:
+                reviews.append(
+                    ("critic", "safety review", functools.partial(self._critic_plan_review, user_input, plan))
+                )
+            if not dry_run:
+                review_context = "\n\n".join(part for part in (review_attachments, review_screen_context) if part)
+                reviews.append(
+                    (
+                        "gnomon",
+                        "Gnomon",
+                        functools.partial(
+                            self._timed_gnomon_review, review_request, plan, review_context, review_corrections
+                        ),
+                    )
+                )
+
+            try:
+                review_results = await self._await_execution_tracked(self._run_plan_reviews(ws, cancel_event, reviews))
+            except asyncio.CancelledError:
+                return await _phase_cancelled("plan review")
+            for outcome in review_results.values():
+                if isinstance(outcome, asyncio.CancelledError):
+                    return await _phase_cancelled("plan review")
+                if isinstance(outcome, BaseException):
+                    # The same error the reviewer would have raised when the reviews ran one after another.
+                    raise outcome
+            if cancel_event.is_set():
+                # Stop or a correction landed as the reviews finished; this plan is dropped, not acted on.
+                return await _phase_cancelled("plan review")
+
+            if run_companion:
+                companion_review = review_results.get("companion", companion_review)
+                review_payload = {
+                    "plan_id": plan_id,
+                    **companion_review.to_dict(),
+                    "revision": auto_revision_count,
+                }
+                await ws.send(_notification("companion_plan_review", review_payload))
+
+                if companion_review.should_stop:
+                    message = f"Interactive companion stopped this plan: {companion_review.reason}"
+                    await self._broadcast_notification(
+                        "companion_plan_intervention",
+                        {**review_payload, "decision": "STOP", "reason": message},
+                    )
+                    if self._checkpoint_store:
+                        await self._checkpoint_store.mark_status(plan_id, "blocked_by_companion")
+                    await _emit_task_complete("blocked_by_companion", message)
+                    return {
+                        "status": "blocked_by_companion",
+                        "message": message,
+                        "companion_review": companion_review.to_dict(),
+                        "results": [],
+                    }
+
+                if companion_review.should_revise:
+                    return await _restart_from_companion_review(companion_review)
+
+                if companion_review.decision == "WARN":
+                    await self._broadcast_notification(
+                        "companion_plan_intervention",
+                        review_payload,
                     )
 
-                try:
-                    verdict = await self._await_execution_tracked(self._destructive_critic.review(user_input, plan))
-                except asyncio.CancelledError:
-                    return await _phase_cancelled("safety review")
-                verdict = constrain_verdict_to_plan_authority(plan, verdict)
+            if run_critic:
+                verdict = constrain_verdict_to_plan_authority(plan, review_results["critic"])
                 critic_verdict_payload = verdict.to_dict()
                 critic_verdict_payload["world_model"] = risk_assessment.to_dict()
                 await ws.send(_notification("critic_verdict", {"plan_id": plan_id, **critic_verdict_payload}))
@@ -3928,16 +3966,8 @@ class PilotServer:
 
             mcp_requires_visible_approval = str(params.get("source") or "").strip().lower() == "mcp"
             gnomon_interrupt, gnomon_reasons = False, []
-            if not dry_run:
-                gnomon_started = time.monotonic()
-                gnomon_interrupt, gnomon_reasons, gnomon_review = await self._gnomon_review_request(
-                    review_request,
-                    plan,
-                    "\n\n".join(part for part in (review_attachments, review_screen_context) if part),
-                    corrections=review_corrections,
-                )
-                if gnomon_review.get("state") == "reviewed":
-                    gnomon_review["review_seconds"] = round(time.monotonic() - gnomon_started, 2)
+            if "gnomon" in review_results:
+                gnomon_interrupt, gnomon_reasons, gnomon_review = review_results["gnomon"]
                 if gnomon_review:
                     await ws.send(_notification("gnomon_review", {"plan_id": plan_id, **gnomon_review}))
             needs_confirm = (
@@ -10088,6 +10118,53 @@ class PilotServer:
         )
         if self.config.gateway.risk_gate_enabled:
             await self._broadcast_notification("world_model_assessment", {"plan_id": plan_id, **payload})
+
+    async def _run_plan_reviews(
+        self, ws: Any, cancel_event: asyncio.Event, reviews: list[tuple[str, str, Any]]
+    ) -> dict[str, Any]:
+        """Run independent plan reviews at the same time; return each one's result (or exception) by key.
+
+        ``reviews`` holds ``(key, label, start)``; ``start(others_running)`` returns the review coroutine, where
+        ``others_running()`` says whether any other review is still running. The status line names the reviews
+        still running, so it stays true as each one finishes. One review failing neither cancels nor discards
+        the others; cancelling this coroutine (Stop or a correction) cancels them all.
+        """
+        running = {key: label for key, label, _start in reviews}
+
+        async def show() -> None:
+            if running and not cancel_event.is_set():
+                names = ", ".join(running.values())
+                await ws.send(_notification("status", {"phase": f"reviewing plan ({names})"}))
+
+        async def one(key: str, start: Any) -> Any:
+            try:
+                return await start(lambda: bool(running.keys() - {key}))
+            finally:
+                running.pop(key, None)
+                if running:
+                    await show()
+
+        await show()
+        outcomes = await asyncio.gather(*(one(key, start) for key, _label, start in reviews), return_exceptions=True)
+        return {key: outcome for (key, _label, _start), outcome in zip(reviews, outcomes, strict=True)}
+
+    async def _companion_plan_review(self, user_input: str, plan: Any, screen_context: str, others_running: Any) -> Any:
+        """The companion's intent check; while other reviews still run its model may take longer than its limit."""
+        return await self._execution_companion.review(
+            user_input, plan, screen_context=screen_context, others_running=others_running
+        )
+
+    async def _critic_plan_review(self, user_input: str, plan: Any, _others_running: Any) -> Any:
+        return await self._destructive_critic.review(user_input, plan)
+
+    async def _timed_gnomon_review(
+        self, request: str, plan: Any, untrusted_context: str, corrections: int, _others_running: Any
+    ) -> tuple[bool, list[str], dict[str, Any]]:
+        started = time.monotonic()
+        result = await self._gnomon_review_request(request, plan, untrusted_context, corrections=corrections)
+        if result[2].get("state") == "reviewed":
+            result[2]["review_seconds"] = round(time.monotonic() - started, 2)
+        return result
 
     async def _gnomon_review_request(
         self, user_input: str, plan: Any, untrusted_context: str, *, corrections: int = 0

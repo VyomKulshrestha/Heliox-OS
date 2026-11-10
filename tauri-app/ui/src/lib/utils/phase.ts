@@ -28,6 +28,8 @@ const RULES: Rule[] = [
   [/^companion revising plan \((\d+)\/(\d+)\)$/, "Revising the plan, $1 of $2", 1],
   [/^revising plan \(revision (\d+)\)$/, "Revising the plan, revision $1", 1],
   [/^critic review$/, "Reviewing the plan for risks", 1],
+  // The daemon names the reviews still running, e.g. "reviewing plan (double-check, safety review, Gnomon)".
+  [/^reviewing plan \((.+)\)$/, "Reviewing the plan: $1", 1],
   [/^(awaiting[ _]approval|awaiting visible approval)$/, "Waiting for your approval", 1, true],
   [
     /^(revising after your correction|applying your correction|correcting|sending live correction)$/,
@@ -70,7 +72,10 @@ export function describePhase(raw: string | null | undefined): PhaseView {
   if (!phase) return { label: "Thinking", stage: 0, waitingOnYou: false };
   const key = phase.toLowerCase();
   for (const [pattern, label, stage, waitingOnYou] of RULES) {
-    const match = key.match(pattern);
+    // Matched without case, so a name such as "Gnomon" keeps its capital in the label.
+    const match = phase.match(
+      new RegExp(pattern.source, pattern.flags.includes("i") ? pattern.flags : `${pattern.flags}i`),
+    );
     if (match) {
       return {
         label: label.replace(/\$(\d)/g, (_, n: string) => match[Number(n)] ?? ""),

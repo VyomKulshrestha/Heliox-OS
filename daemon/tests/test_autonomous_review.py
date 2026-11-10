@@ -105,7 +105,7 @@ async def _ready(engine) -> GnomonReviewer:
     return reviewer
 
 
-async def test_loading_runs_one_warm_up_question_before_gnomon_is_ready():
+async def test_loading_asks_each_review_question_once_before_gnomon_is_ready():
     engine = _FakeEngine()
     reviewer = GnomonReviewer(lambda: engine)
     reviewer.warm()
@@ -113,7 +113,14 @@ async def test_loading_runs_one_warm_up_question_before_gnomon_is_ready():
         if reviewer.status()["state"] == "ready":
             break
         await asyncio.sleep(0.01)
-    assert engine.calls == [(gnomon_reviewer.SCOPE_QUESTION, gnomon_reviewer.WARM_UP_STATE)]
+    # Scope, harm (four answers scored together) and a long untrusted-content question: each shape is slow once.
+    assert [question for question, _ in engine.calls] == [
+        gnomon_reviewer.SCOPE_QUESTION,
+        gnomon_reviewer.HARM_QUESTION,
+        gnomon_reviewer.UNTRUSTED_QUESTION,
+    ]
+    assert engine.calls[0][1] == gnomon_reviewer.WARM_UP_STATE
+    assert len(engine.calls[2][1]["observed_text"]) == 1500
 
     failing = _FakeEngine()
     failing.score = lambda *args: (_ for _ in ()).throw(RuntimeError("CUDA warm-up failed"))

@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
+import math
 import re
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
@@ -104,11 +106,32 @@ class CloudCallUsage:
 
 
 @dataclass
+class AbandonedCall:
+    """A request Heliox sent and then stopped waiting for (a timeout or a cancel). The provider has no response to
+    report usage in, but it may still bill the request, so the budget records this estimate instead."""
+
+    provider: str
+    model: str
+    input_tokens: int
+    output_tokens: int
+    seconds: float
+
+
+# An abandoned request is billed for its input (estimated at four characters per token of the JSON body, which counts
+# the system prompt and overstates a little) and for any output generated before the cancel. Output is bounded by how
+# long the request was open: no model Heliox calls streams faster than this, so the estimate errs high, never low,
+# and it never exceeds the request's own output limit.
+ABANDONED_OUTPUT_TOKENS_PER_SECOND = 100
+_CHARS_PER_TOKEN = 4
+
+
+@dataclass
 class UsageCapture:
     """Collects provider usage for the cloud calls made inside one router.generate()."""
 
     calls: list[CloudCallUsage] = field(default_factory=list)
     attempted: bool = False
+    abandoned: list[AbandonedCall] = field(default_factory=list)
 
 
 _usage_capture: ContextVar[UsageCapture | None] = ContextVar("cloud_usage_capture", default=None)
@@ -144,6 +167,27 @@ def _note_billed_call(provider: str, model: str, data: Any, parse) -> None:
         capture.calls.append(CloudCallUsage(provider, model))
     else:
         capture.calls.append(CloudCallUsage(provider, model, reported=True, **usage))
+
+
+def _output_limit(payload: dict[str, Any]) -> int | None:
+    limit = payload.get("max_tokens") or payload.get("max_completion_tokens")
+    if limit is None and isinstance(payload.get("generationConfig"), dict):
+        limit = payload["generationConfig"].get("maxOutputTokens")
+    return limit if isinstance(limit, int) and limit > 0 else None
+
+
+def estimate_abandoned_call(provider: str, model: str, payload: dict[str, Any], seconds: float) -> AbandonedCall:
+    """Input from the request body; output bounded by the seconds the request was open and its output limit."""
+    try:
+        body = json.dumps(payload, ensure_ascii=False)
+    except (TypeError, ValueError):
+        body = str(payload)
+    input_tokens = math.ceil(len(body) / _CHARS_PER_TOKEN)
+    output_tokens = math.ceil(max(0.0, seconds) * ABANDONED_OUTPUT_TOKENS_PER_SECOND)
+    limit = _output_limit(payload)
+    if limit is not None:
+        output_tokens = min(output_tokens, limit)
+    return AbandonedCall(provider, model, input_tokens, output_tokens, round(max(0.0, seconds), 2))
 
 
 def _anthropic_usage(data: dict[str, Any]) -> dict[str, int] | None:
@@ -453,11 +497,7 @@ class CloudClient:
             payload["generationConfig"]["responseMimeType"] = "application/json"
 
         for attempt in range(max_retries + 1):
-            resp = await self._client.post(
-                endpoint,
-                json=payload,
-                headers={"Content-Type": "application/json"},
-            )
+            resp = await self._post("gemini", model, endpoint, payload, {"Content-Type": "application/json"})
 
             if resp.status_code == 429:
                 if attempt < max_retries:
@@ -529,7 +569,7 @@ class CloudClient:
             headers["X-Title"] = "Heliox OS"
 
         for attempt in range(MAX_RETRIES + 1):
-            resp = await self._client.post(endpoint, json=payload, headers=headers)
+            resp = await self._post(provider, model, endpoint, payload, headers)
 
             if resp.status_code == 429:
                 if attempt < MAX_RETRIES:
@@ -552,6 +592,24 @@ class CloudClient:
             return data["choices"][0]["message"]["content"]
 
         raise RuntimeError(f"Failed after {MAX_RETRIES} retries due to rate limiting")
+
+    async def _post(
+        self, provider: str, model: str, url: str, payload: dict[str, Any], headers: dict[str, str]
+    ) -> httpx.Response:
+        """POST one generation request. A request abandoned while open (a timeout or a cancel) is noted on the
+        active usage capture with an estimate, because the provider may bill it although no usage comes back.
+        A connect or pool timeout is not noted: that request never reached the provider."""
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        try:
+            return await self._client.post(url, json=payload, headers=headers)
+        except (httpx.ConnectTimeout, httpx.PoolTimeout):
+            raise
+        except (asyncio.CancelledError, TimeoutError, httpx.TimeoutException):
+            capture = _usage_capture.get()
+            if capture is not None:
+                capture.abandoned.append(estimate_abandoned_call(provider, model, payload, loop.time() - started))
+            raise
 
     async def _call_anthropic(
         self,
@@ -591,7 +649,7 @@ class CloudClient:
             payload["system"] = system_content
 
         for attempt in range(MAX_RETRIES + 1):
-            resp = await self._client.post(PROVIDER_ENDPOINTS["claude"], json=payload, headers=headers)
+            resp = await self._post("claude", model, PROVIDER_ENDPOINTS["claude"], payload, headers)
 
             if resp.status_code == 429 and attempt < MAX_RETRIES:
                 wait = RETRY_BACKOFF_BASE * (2**attempt)

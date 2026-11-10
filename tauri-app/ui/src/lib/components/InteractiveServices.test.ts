@@ -53,6 +53,23 @@ describe("InteractiveServices", () => {
     expect(screen.getByText(reason).getAttribute("title")).toBe(reason);
   });
 
+  it("does not call a plan review that timed out a check", async () => {
+    const { onNotification } = await import("../api/daemon");
+    daemonMocks.call.mockImplementation(async (method: string) => {
+      if (method === "narration_status") return { enabled: true, proactive_review_enabled: true };
+      if (method === "risk_gate_status") return { enabled: true, weights_loaded: true };
+      return { gnomon: { state: "disabled" } };
+    });
+    render(InteractiveServices, { onconfigure: vi.fn() });
+    await screen.findByRole("button", { name: /services on/ });
+    const handler = vi.mocked(onNotification).mock.calls.at(-1)?.[0] as (method: string, params: unknown) => void;
+
+    handler("companion_plan_review", { decision: "CONTINUE", status: "unavailable", reviewed: false });
+    expect(await screen.findByText("Last review: did not finish")).toBeTruthy();
+    handler("companion_plan_review", { decision: "WARN", status: "reviewed", reviewed: true });
+    expect(await screen.findByText("Last review: WARN")).toBeTruthy();
+  });
+
   it("says when the daemon cannot be reached", async () => {
     daemonMocks.call.mockRejectedValue(new Error("offline"));
     render(InteractiveServices, { onconfigure: vi.fn() });

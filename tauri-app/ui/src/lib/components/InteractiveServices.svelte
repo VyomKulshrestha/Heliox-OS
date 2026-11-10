@@ -70,7 +70,9 @@
         gnomon = { ...gnomon, state: "ready" };
       }
     } else if (method === "companion_plan_review") {
-      lastCompanionDecision = String(payload.decision ?? "").toUpperCase();
+      // A review that timed out or was skipped reports CONTINUE; it judged nothing, so say it did not finish.
+      lastCompanionDecision =
+        payload.reviewed === false ? "did not finish" : String(payload.decision ?? "").toUpperCase();
     }
   }
 

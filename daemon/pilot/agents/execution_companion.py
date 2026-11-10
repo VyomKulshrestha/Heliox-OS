@@ -36,6 +36,11 @@ MAX_FOLLOW_UP_SUGGESTIONS = 2
 # then skipped for a while instead of being paid for and thrown away on every task.
 SLOW_PROVIDER_TIMEOUT_STREAK = 2
 SLOW_PROVIDER_SKIP_SECONDS = 600.0
+# While the safety critic or Gnomon is still reviewing the same plan, the companion's model call may run past its own
+# limit up to this ceiling: the person is waiting for those reviews anyway. On 10 November 2026 the cloud planner
+# model answered the critic in 6.6-10.3 s, so a 5 s limit alone ended every companion review "unavailable".
+SHARED_WAIT_CEILING_SECONDS = 20.0
+SHARED_WAIT_POLL_SECONDS = 0.1
 
 _SYSTEM_PROMPT = """\
 You are Heliox's independent Interactive Execution Companion.
@@ -154,8 +159,64 @@ class ExecutionCompanion:
         self._timeout_streak = 0
         self._skip_until = 0.0
 
-    async def review(self, user_input: str, plan: ActionPlan, *, screen_context: str = "") -> CompanionReview:
-        if self._clock() < self._skip_until:
+    def _model_name(self) -> str:
+        """Which model the review calls, for the log ("cloud claude-opus-5-5")."""
+        try:
+            model = self._model.get_config().model
+        except Exception:
+            return "the configured model"
+        if model.provider == "cloud":
+            return f"cloud {model.cloud_model or model.cloud_provider}"
+        if model.provider == "subscription":
+            return f"subscription {model.subscription_model or model.subscription_provider}"
+        return f"{model.provider} {model.ollama_model}".strip()
+
+    def _failure_reason(self, exc: BaseException, elapsed: float) -> str:
+        if isinstance(exc, TimeoutError):
+            return (
+                f"{self._model_name()} did not answer within {elapsed:.1f} s "
+                f"(limit {self._timeout_seconds:g} s, longer only while other plan reviews were still running)"
+            )
+        return f"{type(exc).__name__}: {str(exc)[:200] or 'no message'} after {elapsed:.1f} s"
+
+    async def _generate_within_limit(self, prompt: str, others_running: Callable[[], bool] | None) -> str:
+        """The model call, given its own limit or, while other reviews of the same plan still run, up to
+        ``SHARED_WAIT_CEILING_SECONDS``: the person waits for those anyway, so waiting with them costs nothing."""
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        task = asyncio.ensure_future(self._model.generate(prompt, system=_SYSTEM_PROMPT, json_mode=True))
+        try:
+            while True:
+                elapsed = loop.time() - started
+                limit = self._timeout_seconds
+                if others_running is not None and self._timeout_streak:
+                    # The last review ran out of time: this one only rides along with the other reviews and never
+                    # holds the person up after they finish (10 November: +1.8 s on a revised plan otherwise).
+                    limit = 0.0
+                if others_running is not None and others_running():
+                    limit = max(limit, SHARED_WAIT_CEILING_SECONDS)
+                if elapsed >= limit:
+                    raise TimeoutError
+                done, _ = await asyncio.wait({task}, timeout=min(SHARED_WAIT_POLL_SECONDS, limit - elapsed))
+                if done:
+                    return task.result()
+        finally:
+            if not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)  # the call is abandoned before this returns
+
+    async def review(
+        self,
+        user_input: str,
+        plan: ActionPlan,
+        *,
+        screen_context: str = "",
+        others_running: Callable[[], bool] | None = None,
+    ) -> CompanionReview:
+        """Review a plan. ``others_running`` says whether other reviews of this plan are still running; while
+        they are, the model gets more time than its own limit (see ``_generate_within_limit``)."""
+        riding_along_with_nothing = others_running is not None and self._timeout_streak and not others_running()
+        if self._clock() < self._skip_until or riding_along_with_nothing:
             logger.info("Interactive companion review skipped: recent reviews timed out")
             skipped = CompanionReview(
                 decision="CONTINUE",
@@ -171,10 +232,7 @@ class ExecutionCompanion:
         raw = ""
         started = self._clock()
         try:
-            raw = await asyncio.wait_for(
-                self._model.generate(prompt, system=_SYSTEM_PROMPT, json_mode=True),
-                timeout=self._timeout_seconds,
-            )
+            raw = await self._generate_within_limit(prompt, others_running)
             latency = round(self._clock() - started, 2)
             self._timeout_streak = 0
             self._skip_until = 0.0
@@ -185,7 +243,8 @@ class ExecutionCompanion:
             # not pretend to have reviewed or silently block harmless work.
             # A review cancelled by Stop or a correction is a CancelledError, not an Exception, so it never
             # lands here and is not counted against the provider.
-            logger.warning("Interactive companion review unavailable: %s", exc)
+            elapsed = self._clock() - started
+            logger.warning("Interactive companion review unavailable: %s", self._failure_reason(exc, elapsed))
             if isinstance(exc, TimeoutError):
                 self._timeout_streak += 1
                 if self._timeout_streak >= SLOW_PROVIDER_TIMEOUT_STREAK:

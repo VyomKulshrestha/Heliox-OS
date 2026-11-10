@@ -19,6 +19,15 @@ describe("describePhase", () => {
     expect(describePhase("retrying failed actions (attempt 3)").label).toBe("Retrying failed steps, attempt 3");
   });
 
+  it("names the plan reviews still running, keeping their capitals", () => {
+    expect(describePhase("reviewing plan (double-check, safety review, Gnomon)")).toEqual({
+      label: "Reviewing the plan: double-check, safety review, Gnomon",
+      stage: 1,
+      waitingOnYou: false,
+    });
+    expect(describePhase("reviewing plan (Gnomon)").label).toBe("Reviewing the plan: Gnomon");
+  });
+
   it("flags phases that wait on the person", () => {
     expect(describePhase("awaiting visible approval")).toMatchObject({
       label: "Waiting for your approval",

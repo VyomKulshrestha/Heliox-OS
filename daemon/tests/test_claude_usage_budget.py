@@ -5,6 +5,7 @@ Every call goes through a mocked HTTP transport; nothing here reaches the networ
 
 from __future__ import annotations
 
+import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -339,3 +340,77 @@ async def test_monthly_cap_trips_on_real_numbers(tmp_path):
         await h.router.generate(PROMPT)
     assert len(h.calls) == 2
     await h.tracker.close()
+
+
+# ---------------------------------------------------------------- abandoned requests
+
+
+class _Started(list):
+    """Request bodies the mock provider received; ``sent`` is set once the first arrives."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.sent = asyncio.Event()
+
+
+def _hanging(started: _Started):
+    async def handler(request: httpx.Request) -> httpx.Response:
+        started.append(json.loads(request.content))
+        started.sent.set()
+        await asyncio.Event().wait()  # the provider is still working when Heliox stops waiting
+        raise AssertionError("unreachable")
+
+    return handler
+
+
+@pytest.mark.asyncio
+async def test_a_request_cancelled_while_open_is_recorded_as_an_estimate(tmp_path):
+    started = _Started()
+    h = await _harness(tmp_path, _hanging(started))
+    task = asyncio.create_task(h.router.generate(PROMPT, system="Review the plan."))
+    await asyncio.wait_for(started.sent.wait(), timeout=5)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    [(provider, model, input_tokens, output_tokens, _, _, cost, source)] = await _rows(h.tracker)
+    body = json.dumps(started[0], ensure_ascii=False)
+    assert (provider, model, source) == ("claude", "claude-opus-5-5", "abandoned_estimate")
+    assert input_tokens == -(-len(body) // 4)  # the whole request body, system prompt included
+    assert output_tokens <= 1  # open for well under a hundredth of a second
+    assert cost > 0
+
+
+@pytest.mark.asyncio
+async def test_a_request_that_times_out_is_recorded_with_output_bounded_by_its_open_time(tmp_path):
+    started = _Started()
+    h = await _harness(tmp_path, _hanging(started))
+    loop = asyncio.get_running_loop()
+    begin = loop.time()
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(h.router.generate(PROMPT), timeout=0.3)
+    waited = loop.time() - begin
+
+    [row] = await _rows(h.tracker)
+    assert row[7] == "abandoned_estimate"
+    assert 20 <= row[3] <= -(-waited * cloud_module.ABANDONED_OUTPUT_TOKENS_PER_SECOND // 1) + 1
+
+
+@pytest.mark.asyncio
+async def test_a_request_that_never_connected_is_not_billed(tmp_path):
+    def refuse(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectTimeout("no route", request=request)
+
+    h = await _harness(tmp_path, refuse)
+    with pytest.raises(RuntimeError):
+        await h.router.generate(PROMPT)
+    assert await _rows(h.tracker) == []
+
+
+def test_the_output_estimate_never_exceeds_the_requests_own_limit():
+    payload = {"model": "claude-opus-5-5", "max_tokens": 500, "messages": [{"role": "user", "content": "x" * 400}]}
+    call = cloud_module.estimate_abandoned_call("claude", "claude-opus-5-5", payload, 60.0)
+    assert call.output_tokens == 500  # 60 s at 100 tokens a second would be 6,000
+    assert call.input_tokens == -(-len(json.dumps(payload)) // 4)
+    gemini = {"contents": [], "generationConfig": {"maxOutputTokens": 64}}
+    assert cloud_module.estimate_abandoned_call("gemini", "g", gemini, 5.0).output_tokens == 64

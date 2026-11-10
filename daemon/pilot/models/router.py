@@ -151,7 +151,7 @@ class ModelRouter:
             self._subscription.consume_request_usage() if self._config.model.provider == "subscription" else None
         )
 
-        if self._budget_tracker and capture.calls:
+        if self._budget_tracker and (capture.calls or capture.abandoned):
             await self._record_billed_cloud_calls(capture, in_tokens_estimate, result)
         elif self._budget_tracker and self._config.model.provider == "cloud" and not capture.attempted:
             # Exact cache hit: no request reached the provider, nothing billed.
@@ -199,7 +199,10 @@ class ModelRouter:
 
         Calls with a provider usage object are recorded exactly (thinking and
         cache tokens included). A billed response without usage falls back to
-        the length-based estimate. Calls that failed before a 200 are absent.
+        the length-based estimate. Calls that failed before a 200 are absent,
+        except requests Heliox abandoned while they were open (a timeout or a
+        cancel): the provider may still bill those, so each is recorded from
+        ``cloud.estimate_abandoned_call`` with ``usage_source="abandoned_estimate"``.
         """
         assert self._budget_tracker is not None
         last = len(capture.calls) - 1
@@ -221,6 +224,21 @@ class ModelRouter:
                     in_tokens_estimate,
                     len(result) // 4 if index == last else 0,
                 )
+        for abandoned in capture.abandoned:
+            logger.info(
+                "Recording an estimate for an abandoned %s request after %.1f s: %d input, up to %d output tokens",
+                abandoned.model,
+                abandoned.seconds,
+                abandoned.input_tokens,
+                abandoned.output_tokens,
+            )
+            await self._budget_tracker.record_usage(
+                abandoned.provider,
+                abandoned.model,
+                abandoned.input_tokens,
+                abandoned.output_tokens,
+                usage_source="abandoned_estimate",
+            )
 
     async def _generate_with_cache(
         self,

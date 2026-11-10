@@ -1355,7 +1355,7 @@ async def test_proactive_companion_revises_plan_before_any_action_runs():
             self.calls = 0
             self.contexts = []
 
-        async def review(self, user_input, plan, *, screen_context=""):
+        async def review(self, user_input, plan, *, screen_context="", others_running=None):
             self.calls += 1
             self.contexts.append(screen_context)
             if self.calls == 1:
@@ -1474,7 +1474,7 @@ async def test_mismatched_local_plan_revises_to_one_approved_truthful_result(
             )
 
     class _Companion:
-        async def review(self, user_input, plan, *, screen_context=""):
+        async def review(self, user_input, plan, *, screen_context="", others_running=None):
             return CompanionReview(decision="CONTINUE", reason="Corrected plan matches the request.")
 
     server = _server_ready_for_handle_execute(_Executor(), plans[0])
@@ -1525,7 +1525,7 @@ async def test_companion_revision_preserves_mcp_approval_boundary():
         def __init__(self):
             self.calls = 0
 
-        async def review(self, user_input, plan, *, screen_context=""):
+        async def review(self, user_input, plan, *, screen_context="", others_running=None):
             self.calls += 1
             if self.calls == 1:
                 return CompanionReview(
@@ -1551,3 +1551,233 @@ async def test_companion_revision_preserves_mcp_approval_boundary():
     requests = [json.loads(message) for message in ws.sent if '"method": "confirm_required"' in message]
     assert len(requests) == 1
     assert "local MCP client" in requests[0]["params"]["reason"]
+
+
+class _ReviewRecorder:
+    """Companion, critic and Gnomon fakes that each take ``delay`` seconds and record when they ran."""
+
+    def __init__(self, delay: float, *, critic_verdict: str = "WARN", gnomon_escalates: bool = False):
+        self.delay = delay
+        self.critic_verdict = critic_verdict
+        self.gnomon_escalates = gnomon_escalates
+        self.spans: dict[str, tuple[float, float]] = {}
+        self.cancelled: set[str] = set()
+        self.started = asyncio.Event()
+        self.companion_others: list[bool] = []
+
+    async def _run(self, name: str):
+        loop = asyncio.get_running_loop()
+        begin = loop.time()
+        self.started.set()
+        try:
+            await asyncio.sleep(self.delay)
+        except asyncio.CancelledError:
+            self.cancelled.add(name)
+            raise
+        self.spans[name] = (begin, loop.time())
+
+    def companion(self):
+        recorder = self
+
+        class _Companion:
+            async def review(self, user_input, plan, *, screen_context="", others_running=None):
+                await recorder._run("companion")
+                recorder.companion_others.append(bool(others_running and others_running()))
+                return CompanionReview(decision="CONTINUE", reason="Matches the request.")
+
+        return _Companion()
+
+    def critic(self):
+        recorder = self
+
+        class _Critic:
+            async def review(self, user_input, plan):
+                await recorder._run("critic")
+                return CriticVerdict(
+                    verdict=recorder.critic_verdict, risk_score=0.9, recommendation="Check the shutdown first."
+                )
+
+        return _Critic()
+
+    def gnomon(self):
+        from pilot.intelligence.gnomon_reviewer import GnomonVerdict
+
+        recorder = self
+
+        class _Gnomon:
+            async def review_plan(self, goal, plan, untrusted_context="", **options):
+                await recorder._run("gnomon")
+                reasons = ["Gnomon graded the harm if wrong as: severe."] if recorder.gnomon_escalates else []
+                return GnomonVerdict(escalate=recorder.gnomon_escalates, reasons=reasons, scores={"severe_harm": 0.9})
+
+            def status(self):
+                return {"state": "ready", "execution_authority": False}
+
+            def warm(self):
+                return None
+
+        return _Gnomon()
+
+
+def _server_with_reviews(recorder: _ReviewRecorder, executor) -> PilotServer:
+    plan = ActionPlan(
+        actions=[Action(action_type=ActionType.POWER_SHUTDOWN, target="system", parameters=PowerParams())],
+        explanation="Shut down the computer.",
+    )
+    server = _server_ready_for_handle_execute(executor, plan)
+    server.config.narration.proactive_review_enabled = True
+    server.config.typed_decision.enabled = True
+    server.config.typed_decision.review_requests = True
+    server._execution_companion = recorder.companion()
+    server._destructive_critic = recorder.critic()
+    server._gnomon_reviewer = recorder.gnomon()
+    return server
+
+
+@pytest.mark.asyncio
+async def test_plan_reviews_run_at_the_same_time_and_every_result_still_counts():
+    class _ExecutorThatMustNotRun:
+        async def execute(self, plan, **kwargs):
+            raise AssertionError("the person declined, so nothing runs")
+
+    recorder = _ReviewRecorder(0.3, gnomon_escalates=True)
+    server = _server_with_reviews(recorder, _ExecutorThatMustNotRun())
+    seen: dict = {}
+
+    async def decline(plan_id, plan, ws, **kwargs):
+        seen.update(kwargs)
+        return False, set(), set()
+
+    server._wait_for_confirmation = decline
+    ws = _FakeWs()
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+
+    result = await server._handle_execute({"input": "shut down the computer"}, ws)
+
+    elapsed = loop.time() - started
+    assert set(recorder.spans) == {"companion", "critic", "gnomon"}
+    # In a row they would take 0.9 s; together, about the slowest one.
+    assert elapsed < 0.75, f"plan reviews ran one after another ({elapsed:.2f} s)"
+    starts = sorted(begin for begin, _end in recorder.spans.values())
+    assert starts[-1] - starts[0] < 0.1
+    # Gnomon's escalation and the critic's warning both reached the approval, and the person's "no" stands.
+    assert "Gnomon graded the harm" in seen["reason"] and seen["force_all_actions"] is True
+    assert result["status"] != "success"
+    methods = [json.loads(message).get("method") for message in ws.sent]
+    assert {"companion_plan_review", "critic_verdict", "gnomon_review"} <= set(methods)
+    phases = [json.loads(m)["params"]["phase"] for m in ws.sent if json.loads(m).get("method") == "status"]
+    assert "reviewing plan (double-check, safety review, Gnomon)" in phases
+
+
+@pytest.mark.asyncio
+async def test_a_critic_block_still_blocks_when_the_reviews_run_together():
+    class _ExecutorThatMustNotRun:
+        async def execute(self, plan, **kwargs):
+            raise AssertionError("a critic-blocked plan must not reach the executor")
+
+    recorder = _ReviewRecorder(0.05, critic_verdict="BLOCK")
+    server = _server_with_reviews(recorder, _ExecutorThatMustNotRun())
+
+    result = await server._handle_execute({"input": "shut down the computer"}, _FakeWs())
+
+    assert result["status"] == "blocked_by_critic"
+    assert set(recorder.spans) == {"companion", "critic", "gnomon"}
+
+
+@pytest.mark.asyncio
+async def test_stop_during_the_plan_reviews_cancels_all_of_them():
+    class _ExecutorThatMustNotRun:
+        async def execute(self, plan, **kwargs):
+            raise AssertionError("a stopped plan must not reach the executor")
+
+    recorder = _ReviewRecorder(30.0)
+    server = _server_with_reviews(recorder, _ExecutorThatMustNotRun())
+    running = asyncio.create_task(server._handle_execute({"input": "shut down the computer"}, _FakeWs()))
+    await asyncio.wait_for(recorder.started.wait(), timeout=2)
+    await asyncio.sleep(0.05)  # all three are in flight
+
+    with patch("pilot.system.pty_session.PtySessionManager.interrupt_all"):
+        stop_response = await server._handle_interject({"input": "stop"}, MagicMock())
+    result = await asyncio.wait_for(running, timeout=2)
+
+    assert stop_response["status"] == "aborted"
+    assert result["status"] == "cancelled"
+    assert result["message"] == "Execution stopped by user during plan review."
+    assert recorder.cancelled == {"companion", "critic", "gnomon"}
+    assert recorder.spans == {}
+
+
+class _TraceRecorder:
+    """Stands in for the reasoning-trace emitter; every event is recorded in order with its parent."""
+
+    def __init__(self, timeline: list):
+        self.timeline = timeline
+        self.count = 0
+
+    def _record(self, kind, phase, *args, parent_id=None, **kwargs):
+        self.count += 1
+        event_id = f"{kind}-{self.count}"
+        self.timeline.append({"id": event_id, "kind": kind, "phase": phase, "args": args, "parent": parent_id})
+        return event_id
+
+    async def phase_start(self, phase, event, data=None, **kwargs):
+        return self._record("phase_start", phase, event, **kwargs)
+
+    async def phase_complete(self, phase, event, data=None, parent_id=None, **kwargs):
+        return self._record("phase_complete", phase, event, parent_id=parent_id)
+
+    async def phase_error(self, phase, event, message="", parent_id=None, **kwargs):
+        return self._record("phase_error", phase, event, parent_id=parent_id)
+
+    async def thought(self, phase, text, parent_id=None, **kwargs):
+        return self._record("thought", phase, text, parent_id=parent_id)
+
+    async def data_event(self, phase, event, data=None, parent_id=None, **kwargs):
+        return self._record("data_event", phase, event, parent_id=parent_id)
+
+    async def decision(self, phase, *args, parent_id=None, **kwargs):
+        return self._record("decision", phase, *args, parent_id=parent_id)
+
+    async def metric(self, phase, *args, parent_id=None, **kwargs):
+        return self._record("metric", phase, *args, parent_id=parent_id)
+
+    async def progress(self, phase, *args, parent_id=None, **kwargs):
+        return self._record("progress", phase, *args, parent_id=parent_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("critic_verdict", ["WARN", "BLOCK"])
+async def test_the_critic_review_is_traced_from_its_start_and_its_thoughts_have_a_parent(critic_verdict):
+    from pilot.reasoning.events import CRITIC_REVIEW_STARTED
+
+    class _ExecutorThatMustNotRun:
+        async def execute(self, plan, **kwargs):
+            raise AssertionError("declined or blocked: nothing runs")
+
+    timeline: list = []
+    recorder = _ReviewRecorder(0.05, critic_verdict=critic_verdict)
+    server = _server_with_reviews(recorder, _ExecutorThatMustNotRun())
+    original_critic = server._destructive_critic
+
+    class _MarkingCritic:
+        async def review(self, user_input, plan):
+            timeline.append({"kind": "critic_review_ran"})
+            return await original_critic.review(user_input, plan)
+
+    server._destructive_critic = _MarkingCritic()
+    server._reasoning_trace = _TraceRecorder(timeline)
+
+    async def decline(plan_id, plan, ws, **kwargs):
+        return False, set(), set()
+
+    server._wait_for_confirmation = decline
+    await server._handle_execute({"input": "shut down the computer"}, _FakeWs())
+
+    starts = [e for e in timeline if e["kind"] == "phase_start" and e.get("phase") == "critic_review"]
+    assert len(starts) == 1 and starts[0]["args"][0] == CRITIC_REVIEW_STARTED
+    ran = next(i for i, e in enumerate(timeline) if e["kind"] == "critic_review_ran")
+    assert timeline.index(starts[0]) < ran  # the trace shows the critic starting, not only finishing
+    critic_events = [e for e in timeline if e.get("phase") == "critic_review" and e["kind"] != "phase_start"]
+    assert critic_events, "the critic's thoughts and its outcome are traced"
+    assert all(e["parent"] == starts[0]["id"] for e in critic_events), critic_events

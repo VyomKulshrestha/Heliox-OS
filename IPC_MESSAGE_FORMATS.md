@@ -3167,12 +3167,19 @@ Current pipeline stage during `execute`.
 ```
 
 Common `phase` values are `"receiving input"`, `"recalling memory"`,
-`"routing agents"`, `"planning"`, `"companion reviewing plan"`,
-`"companion revising plan (...)"`, `"critic review"`, `"executing"`,
+`"routing agents"`, `"planning"`, `"reviewing plan (...)"`,
+`"companion revising plan (...)"`, `"executing"`,
 `"verifying"`, `"re-planning (attempt ...)"`,
 `"retrying — previous attempt failed"`, `"revising after your correction"`,
 `"resuming"`, and `"aborted"`. Clients must tolerate new human-readable
 phase strings and use `interaction_state.phase` for stable state-machine logic.
+
+Since 10 November 2026 the plan reviews run at the same time: after the world model, the companion's intent check
+("double-check"), the safety critic ("safety review", when the plan needs it) and Gnomon start together, and
+`"reviewing plan (double-check, safety review, Gnomon)"` names the ones still running; it is sent again, shorter,
+as each finishes. Their results (`companion_plan_review`, `critic_verdict`, `gnomon_review`) are sent once all have
+finished, in that order. Stop or a correction during the reviews cancels all of them ("Execution stopped by user
+during plan review."). The older `"companion reviewing plan"` and `"critic review"` phases are no longer sent.
 
 ---
 
@@ -3996,9 +4003,10 @@ UI                                          Daemon
 │                                               │  (LLM generates plan)
 │◄── notification: plan_preview {plan_id, actions, explanation}
 │                                               │
-│◄── notification: status {phase: "critic review"}
-│                                               │  (Tier 3+/irreversible plan;
-│                                               │   low-risk Tier 3 skips this)
+│◄── notification: status {phase: "reviewing plan (safety review, Gnomon)"}
+│                                               │  (reviews run together; the critic
+│                                               │   only for Tier 3+/irreversible plans,
+│                                               │   low-risk Tier 3 skips it)
 │◄── notification: critic_verdict {verdict, risk_score, ...}
 │         (BLOCK aborts here — execute response is "blocked_by_critic")
 │                                               │

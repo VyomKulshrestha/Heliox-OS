@@ -355,3 +355,68 @@ async def test_follow_up_never_suggests_more_work_after_failed_verification():
     )
 
     assert follow_up is None
+
+
+class _SlowModel:
+    """Answers after ``delay`` seconds, like a cloud model that is slower than the companion's own limit."""
+
+    def __init__(self, delay: float) -> None:
+        self.delay = delay
+        self.cancelled = 0
+
+    async def generate(self, prompt: str, **kwargs):
+        try:
+            await asyncio.sleep(self.delay)
+        except asyncio.CancelledError:
+            self.cancelled += 1
+            raise
+        return '{"decision": "CONTINUE", "reason": "Matches the request.", "planner_feedback": ""}'
+
+
+@pytest.mark.asyncio
+async def test_the_companion_may_finish_while_other_reviews_of_the_plan_still_run():
+    companion = ExecutionCompanion(_SlowModel(1.3), timeout_seconds=1.0)
+    loop = asyncio.get_running_loop()
+    others_until = loop.time() + 2.0  # the critic is still reviewing for 2 s
+
+    review = await companion.review("Show the OS version.", _plan(), others_running=lambda: loop.time() < others_until)
+
+    assert review.status == "reviewed" and review.decision == "CONTINUE"
+
+
+@pytest.mark.asyncio
+async def test_the_companion_stops_waiting_when_the_other_reviews_are_done_and_says_why(caplog):
+    model = _SlowModel(5.0)
+    companion = ExecutionCompanion(model, timeout_seconds=1.0)
+    loop = asyncio.get_running_loop()
+    others_until = loop.time() + 0.3
+    started = loop.time()
+
+    with caplog.at_level("WARNING", logger="pilot.agents.execution_companion"):
+        review = await companion.review(
+            "Show the OS version.", _plan(), others_running=lambda: loop.time() < others_until
+        )
+
+    assert review.status == "unavailable" and review.reviewed is False
+    assert 0.95 <= loop.time() - started < 1.5  # its own limit, not the 20 s ceiling
+    assert model.cancelled == 1
+    message = caplog.records[-1].getMessage()
+    assert "did not answer within 1.0 s" in message and "limit 1 s" in message
+
+
+@pytest.mark.asyncio
+async def test_after_a_timeout_the_companion_only_rides_along_with_the_other_reviews():
+    model = _SlowModel(5.0)
+    companion = ExecutionCompanion(model, timeout_seconds=1.0)
+    loop = asyncio.get_running_loop()
+    first = await companion.review("Show the OS version.", _plan(), others_running=lambda: False)
+    assert first.status == "unavailable"  # its own 1 s limit
+
+    others_until = loop.time() + 0.3
+    started = loop.time()
+    second = await companion.review("Show the OS version.", _plan(), others_running=lambda: loop.time() < others_until)
+    assert second.status == "unavailable"
+    assert loop.time() - started < 0.6  # stopped when the others finished, not 1 s later
+
+    third = await companion.review("Show the OS version.", _plan(), others_running=lambda: False)
+    assert third.status == "skipped_slow"  # nothing to ride along with: no call at all
