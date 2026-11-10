@@ -213,8 +213,52 @@ async def test_talking_over_heliox_stops_its_voice_but_only_a_reply_runs():
     # 19:58 rehearsal: the person talked over Heliox and "PowerShell" was planned as a new task.
     listener, run = make_listener(["PowerShell", "Wait, stop."], suppressed=True)
     listener.note_interruption()
+    listener._recorder.last_voiced_seconds = 2.4  # long enough to be a sentence, not a cut-off
     dispatched, overheard = await run()
     assert dispatched == [] and overheard == ["PowerShell"]
+
+
+# 21:19 rehearsal, desk microphone: "Wait, stop." said over Heliox, about a second of voice, as each recogniser
+# wrote it. Heliox had already stopped talking.
+CUT_OFF_READINGS = ["Brutes gold", "Bruins go home", "Very discovered.", "Visual Studio Code.", "PowerShell"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("heard", CUT_OFF_READINGS)
+async def test_a_short_unreadable_cut_off_over_heliox_is_taken_as_stop(heard):
+    listener, run = make_listener([heard], suppressed=True)
+    listener.note_interruption()
+    listener._recorder.last_voiced_seconds = 1.0
+    dispatched, overheard = await run()
+    assert dispatched == ["Stop"] and overheard == []  # acknowledged by the stop path; nothing goes to Live
+
+
+@pytest.mark.asyncio
+async def test_a_sentence_said_over_heliox_is_still_heard_as_what_it_is():
+    listener, run = make_listener(["Can you also add the budget figures from March to that"], suppressed=True)
+    listener.note_interruption()
+    listener._recorder.last_voiced_seconds = 2.8
+    assert await run() == (["Can you also add the budget figures from March to that"], [])
+    aside, run_aside = make_listener(["the meeting moved to Thursday afternoon"], suppressed=True)
+    aside.note_interruption()
+    aside._recorder.last_voiced_seconds = 2.2
+    assert await run_aside() == ([], ["the meeting moved to Thursday afternoon"])  # not a stop: Live hears it
+    request, run_request = make_listener(["Open my mail"], suppressed=True)
+    request.note_interruption()
+    request._recorder.last_voiced_seconds = 0.9
+    assert await run_request() == (["Open my mail"], [])  # short, but a request: it runs as said
+    quiet, run_quiet = make_listener(["Very discovered."], follow_up=30)
+    quiet._recorder.last_voiced_seconds = 1.0  # the same words without cutting Heliox off are not a stop
+    assert await run_quiet() == ([], ["Very discovered."])
+
+
+def test_only_a_short_unreadable_utterance_is_a_cut_off_stop():
+    from pilot.system.voice import is_cut_off_stop
+
+    assert is_cut_off_stop("Very discovered.", 1.0)
+    assert not is_cut_off_stop("Very discovered.", 2.0)
+    assert not is_cut_off_stop("Very discovered.", None)
+    assert not is_cut_off_stop("Wait, stop.", 1.0)  # readable: it goes through as itself
 
 
 @pytest.mark.asyncio
@@ -464,6 +508,8 @@ async def test_a_one_word_answer_ends_the_turn_after_400_ms_instead_of_the_2_s_h
         rec._queue.put_nowait(frame)
     assert await rec.record_utterance(timeout=1.0, keep_backlog=True)
     assert rec.last_endpoint_reason == "short_answer" and rec.last_endpoint_ms == 400  # the first check, here
+    # 6 frames of voice at 50 ms, less the frame that confirmed the start: no pre-roll, no trailing silence.
+    assert rec.last_voiced_seconds == pytest.approx(0.25, abs=0.06)
 
 
 @pytest.mark.asyncio

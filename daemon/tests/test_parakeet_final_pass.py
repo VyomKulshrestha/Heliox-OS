@@ -102,6 +102,8 @@ async def test_with_the_model_parakeet_runs_beside_whisper(tmp_path, monkeypatch
     assert text.endswith("Monday, the twelfth of November at ten.") and text.startswith("Here Heliox")
     assert item.last_transcription_engine == "parakeet"
     item._transcribe_whisper_text.assert_awaited_once()
+    # English, not detected: detection read the owner's "Hey Heliox, what can I say?" as Dutch on a desk microphone.
+    assert item._transcribe_whisper_text.await_args.kwargs == {"language": "en"}
 
 
 def test_loading_needs_sherpa_only_when_the_model_is_used(tmp_path, monkeypatch):
@@ -137,7 +139,7 @@ async def test_mid_conversation_parakeet_runs_alone_and_whisper_checks_a_lone_wo
 
     item = listener(tmp_path, "parakeet", with_model=True)
 
-    async def slow_whisper(_path):  # the wake check runs beside Parakeet; a reply must not wait for it
+    async def slow_whisper(_path, **_kwargs):  # the wake check runs beside Parakeet; a reply must not wait for it
         await asyncio.sleep(0.5)
         return whisper_heard
 
@@ -167,7 +169,7 @@ async def test_mid_conversation_live_gets_parakeets_words_before_whisper_answers
     async def overheard(text):
         offered.append((asyncio.get_running_loop().time(), text))
 
-    async def slow_whisper(_path):
+    async def slow_whisper(_path, **_kwargs):
         await asyncio.sleep(0.3)
         whisper_done.append(asyncio.get_running_loop().time())
         return WHISPER
@@ -192,7 +194,7 @@ async def test_after_the_microphone_button_parakeets_words_are_used_without_wait
 
     item = listener(tmp_path, "parakeet", with_model=True)
 
-    async def slow_whisper(_path):
+    async def slow_whisper(_path, **_kwargs):
         await asyncio.sleep(0.5)
         return WHISPER
 

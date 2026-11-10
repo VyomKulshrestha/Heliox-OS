@@ -146,6 +146,23 @@ def should_act_on_follow_up(text: str, *, question_open: bool = False) -> bool:
     return question_open and 0 < len(words) <= REPLY_TO_QUESTION_WORDS
 
 
+SHORT_CUT_OFF_SECONDS = 1.6  # "Wait, stop." is about a second of voice; a sentence said over Heliox is longer
+SHORT_CUT_OFF_WORDS = 4
+
+
+def is_cut_off_stop(text: str, voiced_seconds: float | None) -> bool:
+    """A very short utterance that cut Heliox off and is not a reply or request: take it as "stop".
+
+    On the owner's desk microphone "Wait, stop." said over Heliox came out as "Bruins go home" (streaming), "Very
+    discovered." (Parakeet) and "Visual Studio Code." (Whisper); at 19:58 the same cue came out as "PowerShell".
+    Heliox has already stopped talking; acknowledging that is right, and sending the words anywhere else is not.
+    A longer sentence said over Heliox is heard as what it is.
+    """
+    if voiced_seconds is None or voiced_seconds > SHORT_CUT_OFF_SECONDS:
+        return False
+    return len(re.findall(r"[A-Za-z0-9']+", text)) <= SHORT_CUT_OFF_WORDS and not should_act_on_follow_up(text)
+
+
 def is_short_decision(text: str) -> bool:
     """ "No", "Yes", "Stop": complete answers, however short."""
     return " ".join(text.casefold().strip(" \t,.:;!?-").split()) in _AUTONOMOUS_SHORT_DECISIONS
@@ -1355,6 +1372,9 @@ class _ContinuousRecorder:
         self.last_turn_probability: float | None = None
         self.last_endpoint_reason = ""
         self.last_endpoint_ms = 0.0
+        # Seconds of voice in the last utterance: from the confirmed start to the end, without the pre-roll or the
+        # trailing silence that ended it. None until an utterance has been captured.
+        self.last_voiced_seconds: float | None = None
 
     def _make_endpointer(self) -> UtteranceEndpointer:
         return UtteranceEndpointer(
@@ -1645,6 +1665,7 @@ class _ContinuousRecorder:
         # start_frames) doesn't clip the first syllable that triggered it.
         preroll: list[Any] = []
         captured: list[Any] = []
+        lead = 0
         held = False
         silence_frames_used = endpointer.silence_frames
 
@@ -1675,6 +1696,7 @@ class _ContinuousRecorder:
             # preroll buffer instead of appending it and returning.
             if event == EndpointEvent.STARTED:
                 captured = preroll + [frame]
+                lead = len(preroll)
                 preroll = []
                 self.user_is_speaking = True
                 self.speech_started_at = time.monotonic()
@@ -1697,6 +1719,7 @@ class _ContinuousRecorder:
                 self.user_is_speaking = False
                 self.last_endpoint_reason = "silence" if event == EndpointEvent.ENDED else "max_duration"
                 self.last_endpoint_ms = silence_frames_used * self.frame_ms
+                self._note_voiced(len(captured) - lead)
                 return _write_wav(captured, self.sample_rate)
 
             if not endpointer.is_speaking:
@@ -1724,6 +1747,7 @@ class _ContinuousRecorder:
                 self.utterances_captured += 1
                 self.user_is_speaking = False
                 self.last_endpoint_reason = "short_answer"
+                self._note_voiced(len(captured) - lead)
                 return _write_wav(captured, self.sample_rate)
 
             if self.turn_detector is not None and self._turn_check_due(endpointer.trailing_silence):
@@ -1740,6 +1764,7 @@ class _ContinuousRecorder:
                         self.user_is_speaking = False
                         self.last_endpoint_reason = "smart_turn"
                         self.last_endpoint_ms = silence * self.frame_ms
+                        self._note_voiced(len(captured) - lead)
                         return _write_wav(captured, self.sample_rate)
                     # Mid-thought: give them time instead of cutting them off.
                     endpointer.silence_frames = max(endpointer.silence_frames, self.turn_hold_frames)
@@ -1750,6 +1775,9 @@ class _ContinuousRecorder:
                             self.on_hold()
                         except Exception:
                             logger.debug("Turn hold callback failed", exc_info=True)
+
+    def _note_voiced(self, frames: int) -> None:
+        self.last_voiced_seconds = max(0.0, (frames * self.frame_ms - self.last_endpoint_ms) / 1000.0)
 
     def _turn_check_due(self, silence: int) -> bool:
         if silence < self.turn_check_frames:
@@ -1957,6 +1985,10 @@ class ContinuousVoiceListener:
         until = self._interrupted_until
         started = getattr(self._recorder, "speech_started_at", None)
         return time.monotonic() < until or (isinstance(started, float) and until > 0 and started <= until)
+
+    def _is_short_cut_off(self) -> bool:
+        voiced = getattr(self._recorder, "last_voiced_seconds", None)
+        return isinstance(voiced, float) and voiced <= SHORT_CUT_OFF_SECONDS
 
     def _take_interruption(self) -> str:
         """ "button", "barge_in" or "" for the utterance just heard; the window closes either way."""
@@ -2319,7 +2351,15 @@ class ContinuousVoiceListener:
                     await asyncio.sleep(0.1)
                     continue
 
-                if conversational_follow_up and not wake_detected and conversation and not by_button:
+                voiced = getattr(self._recorder, "last_voiced_seconds", None)
+                if (
+                    interruption == "barge_in"
+                    and not wake_detected
+                    and is_cut_off_stop(transcript, voiced if isinstance(voiced, float) else None)
+                ):
+                    logger.info("A short cut-off over Heliox (%r) is taken as stop", transcript.strip())
+                    command_text = "Stop"
+                elif conversational_follow_up and not wake_detected and conversation and not by_button:
                     if not should_act_on_follow_up(transcript, question_open=self.question_open):
                         # Said while talking with Heliox, but not to it as a request: Live may check it.
                         logger.debug("Overheard in an open conversation: '%s'", transcript_lower)
@@ -2486,13 +2526,20 @@ class ContinuousVoiceListener:
                 # Whisper reads the utterance for the wake phrase at the same moment Parakeet reads it for the
                 # words: the two run side by side instead of one after the other.
                 opening = _write_wav([_to_int16(samples[: int(WAKE_OPENING_SECONDS * 16000)])], 16000)
-                wake_check = asyncio.ensure_future(self._transcribe_whisper_text(opening))
+                # English, not detected: on the owner's desk microphone automatic detection read "Hey Heliox, what
+                # can I say?" as Dutch ("Heliox.com, nice video.") in 2 of 5 cuts, and English hit 9 of 9, twice as
+                # fast. Parakeet, whose words are used, is English-only anyway.
+                wake_check = asyncio.ensure_future(self._transcribe_whisper_text(opening, language="en"))
                 wake_check.add_done_callback(lambda task: task.cancelled() or task.exception())
                 said = await asyncio.to_thread(parakeet.transcribe, samples)
                 addressed = self._addressed()  # the microphone button, or talking over Heliox
                 in_conversation = addressed or self.conversation_open()
                 if addressed and self._button_until and len(said.split()) > 2:
                     # The button was pressed for this sentence: no wake phrase to look for, nothing to wait for.
+                    wake_check.cancel()
+                    return said
+                if addressed and self._is_short_cut_off():
+                    # A word or two said over Heliox: what it does next does not depend on a wake phrase.
                     wake_check.cancel()
                     return said
                 if in_conversation and len(said.split()) > 2 and looks_like_conversation_turn(said):
@@ -2510,11 +2557,11 @@ class ContinuousVoiceListener:
                 return merge_wake(heard, said, loose_wake_prefix)
         return await self._transcribe_whisper_text(audio_path)
 
-    async def _transcribe_whisper_text(self, audio_path: str) -> str:
+    async def _transcribe_whisper_text(self, audio_path: str, language: str | None = None) -> str:
         try:
             result = await _transcribe_speech(
                 audio_path,
-                self.config.voice.language,
+                language or self.config.voice.language,
                 self.config.voice.whisper_model,
                 # The streaming engine falls back to the automatic Whisper path when it has no text.
                 "auto"
