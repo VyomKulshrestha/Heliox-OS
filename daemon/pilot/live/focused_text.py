@@ -125,6 +125,34 @@ class FocusedText:
     field: str = ""  # UI Automation runtime id: a new id means a different field, even in the same window
 
 
+def window_handle(field: str) -> int | None:
+    """The window a field lives in, from its UI Automation runtime id, or None when the id does not say.
+
+    An element hosted in a window has a runtime id that starts with 42 and the window handle ("42.30540886" for
+    Notepad's editor, "42.88540834.4.7.4.212" for a text box inside a browser's render window).
+    """
+    parts = field.split(".")
+    if len(parts) < 2 or parts[0] != "42":
+        return None
+    try:
+        handle = int(parts[1])
+    except ValueError:
+        return None
+    return handle % 2**32 or None  # UI Automation prints the handle as a signed 32-bit number
+
+
+def window_exists(handle: int) -> bool:
+    """Whether a window is still open (minimised or in the background counts). True where it cannot be checked."""
+    if os.name != "nt":
+        return True
+    try:
+        import ctypes
+
+        return bool(ctypes.windll.user32.IsWindow(ctypes.c_void_p(handle)))  # type: ignore[attr-defined]
+    except Exception:
+        return True
+
+
 def parse_reply(data: dict[str, Any]) -> FocusedText | None:
     """The helper's answer for one read. Text is kept only for a writable, non-password element."""
     if not data.get("ok"):

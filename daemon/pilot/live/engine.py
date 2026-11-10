@@ -25,6 +25,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
+from pilot.live import focused_text
 from pilot.live.commitments import KIND as COMMITMENT
 from pilot.live.commitments import find_commitments
 from pilot.live.detectors import (
@@ -62,6 +63,7 @@ SPEECH_TTL_SECONDS = 10.0
 PENDING_TTL_SECONDS = 90.0
 VISIBLE_TTL_SECONDS = 600.0  # a card left alone this long is withdrawn and counts as mildly unwelcome
 RECENT_LIMIT = 20
+WINDOW_CHECK_SECONDS = 1.0  # how often cards look for the window they were typed in
 REPLY_WINDOW_SECONDS = 90.0  # how long "why?", "thanks" or "fix it" refer to the last correction
 OCR_KINDS = ("error_on_screen",)  # a whole-screen OCR is too noisy for anything finer
 # Offers that stay up when their text leaves the field: a promise matters most once the message is sent.
@@ -200,6 +202,7 @@ class LiveCompanion:
         today: Callable[[], date] = date.today,
         wallclock: Callable[[], datetime] = datetime.now,
         reminders: Callable[[], list[dict[str, Any]]] = list,
+        window_exists: Callable[[int], bool] = focused_text.window_exists,
     ) -> None:
         self._settings = settings
         self._observe = observe
@@ -216,6 +219,7 @@ class LiveCompanion:
         self._today = today
         self._wallclock = wallclock
         self._reminders = reminders
+        self._window_exists = window_exists
         self.relevance = Relevance(relevance_path)
         self.timing = PersonalTiming(timing_path)
         self.stuck = StuckWatcher(clock)
@@ -235,6 +239,7 @@ class LiveCompanion:
         self._last_text_change = float("-inf")
         self._last_perceive = float("-inf")
         self._last_detect = float("-inf")
+        self._last_window_check = float("-inf")
         self._last_spoken_at = float("-inf")
         self._last_shown_at = float("-inf")
         self._state: dict[str, Any] = {}
@@ -553,7 +558,26 @@ class LiveCompanion:
         )
         self._note(correction, "notice", "notice", now)
 
+    def _closed(self, item: Pending) -> bool:
+        """The window the slip was typed in has been closed: there is nothing left for the person to fix."""
+        if item.source != "focused_field" or "|#" not in item.window:
+            return False
+        handle = focused_text.window_handle(item.window.split("|#", 1)[1])
+        return handle is not None and not self._window_exists(handle)
+
     def _expire(self, now: float) -> None:
+        if now - self._last_window_check >= WINDOW_CHECK_SECONDS:
+            self._last_window_check = now
+            for key, item in list(self._pending.items()):
+                if self._closed(item):
+                    del self._pending[key]
+            for correction_id, item in list(self._visible.items()):
+                if self._closed(item):
+                    # Neither fixed nor ignored: the document or message went away, so relevance learns nothing.
+                    self._visible.pop(correction_id, None)
+                    asyncio.ensure_future(
+                        self._emit("live_interjection_withdrawn", {"id": correction_id, "reason": "closed"})
+                    )
         for key, item in list(self._pending.items()):
             ttl = SPEECH_TTL_SECONDS if item.source == "speech" else PENDING_TTL_SECONDS
             if self._gone(item, now) or now - item.first_seen > ttl:

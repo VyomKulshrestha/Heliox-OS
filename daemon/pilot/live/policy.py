@@ -40,6 +40,9 @@ URGENT_PAUSE_SECONDS = 0.6  # long enough to not cut into a word, short enough t
 SPEECH_SETTLE_SECONDS = 0.3  # after the person stops talking
 TRAILING_PAUSE_FACTOR = 2.5  # the mistake is the last thing typed: they may be mid-number or mid-word
 TRAILING_MIN_PAUSE_SECONDS = 3.0
+# At most this much longer than the person's own pause: a learned pause is already long enough to cover a half-typed
+# number, and stretching a 5 s pause by the factor kept a finished line waiting 15 s.
+TRAILING_MAX_EXTRA_SECONDS = 3.0
 MIN_RELEVANCE_TO_SPEAK = 0.5
 MIN_RELEVANCE_TO_SHOW = 0.2
 MAX_VISIBLE_CARDS = 3
@@ -104,7 +107,8 @@ def decide(item: Pending, act: Activity, level: Level, relevance: float, muted: 
     if not urgent and act.personal_pause is not None:
         needed_pause = act.personal_pause
     if correction.trailing and not urgent:
-        needed_pause = max(needed_pause * TRAILING_PAUSE_FACTOR, TRAILING_MIN_PAUSE_SECONDS)
+        stretched = min(needed_pause * TRAILING_PAUSE_FACTOR, needed_pause + TRAILING_MAX_EXTRA_SECONDS)
+        needed_pause = max(stretched, TRAILING_MIN_PAUSE_SECONDS)
     if act.now - act.last_text_change < needed_pause:
         return WAIT
     if act.now - item.first_seen < MIN_DWELL_SECONDS.get(correction.kind, 0.0):

@@ -60,7 +60,7 @@ class Clock:
         return self.t
 
 
-def build(tmp_path, obs: list[Observation | None], **settings_kw):
+def build(tmp_path, obs: list[Observation | None], window_exists=lambda handle: True, **settings_kw):
     clock = Clock()
     events: list[tuple[str, dict]] = []
     settings = SimpleNamespace(enabled=True, level="balanced", listen_to_speech=True, muted_kinds=[], **settings_kw)
@@ -82,6 +82,7 @@ def build(tmp_path, obs: list[Observation | None], **settings_kw):
         relevance_path=tmp_path / "rel.json",
         clock=clock,
         today=lambda: MONDAY,
+        window_exists=window_exists,
     )
     return live, clock, events, settings
 
@@ -304,3 +305,44 @@ def test_explain_says_plainly_when_there_is_nothing_to_explain(tmp_path):
     live, _, _, _ = build(tmp_path, [None])
     assert live.explain() == "Nothing to explain: Live hasn't raised anything in the last minute and a half."
     assert live.explain("abc") == "That correction is no longer available."
+
+
+# ── a card whose window was closed ──
+
+
+def test_window_handle_reads_the_window_from_a_runtime_id():
+    from pilot.live.focused_text import window_handle
+
+    assert window_handle("42.30540886") == 30540886
+    assert window_handle("42.88540834.4.7.4.212") == 88540834
+    assert window_handle("42.-5") == 2**32 - 5  # printed as a signed number
+    assert window_handle("7.1234") is None  # not hosted in a window
+    assert window_handle("42") is None and window_handle("") is None and window_handle("42.x") is None
+    assert window_handle("42.0") is None
+
+
+def test_window_exists_cannot_say_no_off_windows(monkeypatch):
+    from pilot.live import focused_text
+
+    monkeypatch.setattr(focused_text.os, "name", "posix")
+    assert focused_text.window_exists(1234) is True
+
+
+@pytest.mark.asyncio
+async def test_a_card_retires_when_its_window_is_closed_but_not_when_it_loses_focus(tmp_path):
+    open_windows = {30540886}
+    obs: list[Observation | None] = [Observation(text="hello", field="9", **CLAUDE)]
+    live, clock, events, _ = build(tmp_path, obs, window_exists=lambda handle: handle in open_windows)
+    await run_for(live, clock, 2)
+    await type_out(live, clock, obs, "Invoice due 31 November")
+    await run_for(live, clock, 15)
+    [card] = cards(events)
+    obs[0] = Observation(text="hello", field="9", **CLAUDE)  # focus moves away; Notepad is still open
+    await run_for(live, clock, 20)
+    assert not [p for e, p in events if e == "live_interjection_withdrawn"]
+    open_windows.clear()  # closed without saving
+    await run_for(live, clock, 2)
+    for _ in range(3):
+        await asyncio.sleep(0)
+    assert ("live_interjection_withdrawn", {"id": card["id"], "reason": "closed"}) in events
+    assert live.relevance.score("weekday_date") == pytest.approx(live.relevance.score("never_seen_kind"))

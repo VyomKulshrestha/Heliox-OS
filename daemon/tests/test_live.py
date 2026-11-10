@@ -314,3 +314,16 @@ async def test_engine_passes_its_own_hour_to_the_relative_day_rule(tmp_path, hou
     assert live._context(None, "focused_field").hour == hour
     cards = [p for e, p in events if e == "live_interjection" and p["kind"] == "weekday_date"]
     assert len(cards) == expected
+
+
+def test_a_trailing_slip_waits_longer_but_not_a_multiple_of_a_long_learned_pause():
+    item = pending("Invoice due 31 November")  # the slip is the last thing typed
+    assert item.correction.trailing
+    level = LEVELS["balanced"]
+    # The level's own pause: 1.2 s stretched to the 3 s floor, as before.
+    assert decide(item, Activity(now=10.0, last_text_change=7.1), level, 0.67, frozenset()) == WAIT
+    assert decide(item, Activity(now=10.0, last_text_change=6.9), level, 0.67, frozenset()) != WAIT
+    # A learned 4.9 s pause gets 3 s more (7.9 s), not 2.5 times (12.3 s).
+    slow = {"personal_pause": 4.9}
+    assert decide(item, Activity(now=20.0, last_text_change=12.2, **slow), level, 0.67, frozenset()) == WAIT
+    assert decide(item, Activity(now=20.0, last_text_change=12.0, **slow), level, 0.67, frozenset()) != WAIT
