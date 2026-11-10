@@ -344,8 +344,27 @@ VOICE_DENIALS = frozenset(
         "cancel that",
         "reject",
         "reject it",
+        "stop",
+        "stop it",
+        "cancel",
+        "cancel it",
+        "wait stop",
+        "no stop",
+        "no don t",
+        "no dont",
+        "not that",
     }
 )
+
+
+def _mentions_approval(normalized: str) -> bool:
+    """A sentence that contains a go-ahead ("no problem, go ahead", "yes but later"). While an approval waits, it
+    is answered like a spoken approval: Heliox points to the dialog. It is never a denial, because only a denial
+    phrase on its own denies, and it never approves."""
+    padded = f" {normalized} "
+    return any(f" {phrase} " in padded for phrase in VOICE_APPROVAL_ATTEMPTS)
+
+
 # What a phone request may do when it starts without anyone at the computer: status and
 # names only. File contents, the clipboard, email, the screen, environment variables and
 # the registry stay out, and nothing that opens or changes anything is allowed.
@@ -380,6 +399,14 @@ VOICE_STOP_PHRASES = frozenset(
         "cancel all tasks",
         "never mind",
         "nevermind",
+        # Said over Heliox to make it stop talking: it stops and listens, and nothing is planned.
+        "wait",
+        "wait wait",
+        "wait stop",
+        "hold on",
+        "wait a second",
+        "one second",
+        "one sec",
     }
 )
 # Spoken or typed undo only opens the preview: undoing still needs a click on its Undo button.
@@ -1052,6 +1079,13 @@ class PilotServer:
         if self._tts_warmup_task and not self._tts_warmup_task.done():
             self._tts_warmup_task.cancel()
         self._tts_warmup_task = None
+        from pilot.system.local_tts_worker import configure_local_voice
+
+        # While the local voice loads, the UI shows "Getting my voice ready…" (voice_status voice_loading).
+        configure_local_voice(
+            self.config.voice,
+            on_status=lambda status, data: self._broadcast_notification("voice_status", {"status": status, **data}),
+        )
         if self.config.voice.tts_engine in {"kokoro_tts", "pocket_tts"}:
             logger.info(
                 "%s model isolated in an on-demand speech worker",
@@ -9068,7 +9102,9 @@ class PilotServer:
                     "message": f"Voice setting was not applied: {exc}",
                 }
 
-        if section == "voice" and ({"tts_engine", "tts_voice"} & values.keys()):
+        if section == "voice" and (
+            {"tts_engine", "tts_voice", "tts_keep_loaded_seconds", "tts_device"} & values.keys()
+        ):
             self._start_tts_warmup()
 
         if section == "screen_vision" and "capture_interval_seconds" in values and self._screen_vision:
@@ -13062,6 +13098,18 @@ def handle_tool(tool_name, params):
         # coroutines race for the same audio frames and lose corrections.
         recorder = None
         listener = self._voice_listener if self._voice_listener and self._voice_listener.is_running else None
+        resolved = SpeechChannel(str(channel))
+        if listener and resolved is not SpeechChannel.EMERGENCY_STOP:
+            # Never start over the person: answers, corrections and narration wait for the end of their sentence.
+            waited = await listener.wait_for_floor()
+            if waited >= 0.05:
+                logger.info("Waited %.1f s for the person to finish before speaking", waited)
+        if listener and self.config.voice.barge_in_enabled:
+            # The watcher reads the listener's voice-activity flags rather than its audio, so the interrupting
+            # utterance is still heard in full; see BargeInWatcher for how it tells the person from Heliox's echo.
+            from pilot.system.voice import BargeInWatcher, default_output_name, echo_free_output
+
+            recorder = BargeInWatcher(listener, echo_free=echo_free_output(default_output_name()))
         if listener:
             listener.suppress_wake_free_commands()
         try:
@@ -13074,6 +13122,13 @@ def handle_tool(tool_name, params):
         finally:
             if listener:
                 listener.resume_wake_free_commands()
+        if (
+            listener
+            and outcome.status in ("spoken", "interrupted")
+            and resolved is not SpeechChannel.BACKGROUND_INSIGHT
+        ):
+            # Heliox just spoke to the person: a reply without the wake word is part of the conversation.
+            listener.arm_follow_up_window()
         if outcome.status == "interrupted":
             await self._broadcast_notification("voice_status", {"status": "interrupted"})
         return outcome
@@ -13163,11 +13218,23 @@ def handle_tool(tool_name, params):
 
     async def _voice_partial(self, text: str) -> None:
         """A live caption of the words so far, while the person is still talking (streaming engine)."""
+        from pilot.system.local_tts_worker import prewarm_local_voice
+
+        prewarm_local_voice(self.config.voice)  # load the voice while they talk, so the reply is not silent
         await self._broadcast_notification("voice_partial", {"text": text})
 
     async def _voice_turn_hold(self) -> None:
         """The person paused mid-thought; Heliox keeps listening instead of answering."""
         await self._broadcast_notification("voice_status", {"status": "holding", "message": "Still listening"})
+
+    def _voice_task_open(self) -> bool:
+        """A task the person started is running or an approval waits: their replies need no wake word."""
+        return bool(self._interactive_request_active or self._pending_confirms)
+
+    async def _voice_overheard(self, text: str) -> None:
+        """Said during an open conversation but not as a request (a promise, a date): Live checks it, nothing runs."""
+        if self._live is not None:
+            self._live.offer_speech(text)
 
     async def _voice_command_dispatch(self, command_text: str) -> None:
         """Run voice through the same safe interaction path as typed input."""
@@ -13191,8 +13258,19 @@ def handle_tool(tool_name, params):
             else next(reversed(self._pending_confirms), "")
         )
         pending_approval = self._pending_confirms.get(pending_plan_id) if pending_plan_id else None
-        if pending_approval is not None and normalized_command in VOICE_APPROVAL_ATTEMPTS:
-            message = "For safety, approve this request in the visible Heliox confirmation dialog."
+        if pending_approval is not None and (
+            normalized_command in VOICE_APPROVAL_ATTEMPTS
+            or (normalized_command not in VOICE_DENIALS and _mentions_approval(normalized_command))
+        ):
+            # Said the way a person would, and shorter the second time for the same approval.
+            refusals = getattr(self, "_voice_approval_refusals", {})
+            self._voice_approval_refusals = refusals
+            refusals[pending_plan_id] = refusals.get(pending_plan_id, 0) + 1
+            message = (
+                "I can't approve that by voice. Press Approve on the screen if you want it."
+                if refusals[pending_plan_id] == 1
+                else "Press Approve on the screen."
+            )
             await self._broadcast_notification(
                 "voice_result",
                 {
@@ -13205,7 +13283,7 @@ def handle_tool(tool_name, params):
             await self._speak_voice_response(
                 message,
                 channel=SpeechChannel.APPROVAL_RISK,
-                dedupe_key=f"voice-approval-boundary:{pending_plan_id}",
+                dedupe_key=f"voice-approval-boundary:{pending_plan_id}:{refusals[pending_plan_id]}",
             )
             return
         if pending_approval is not None and normalized_command in VOICE_DENIALS:
@@ -13489,6 +13567,10 @@ def handle_tool(tool_name, params):
             status: The voice listener status.
             data: Additional status data.
         """
+        if status in {"wake_detected", "follow_up_detected"}:
+            from pilot.system.local_tts_worker import prewarm_local_voice
+
+            prewarm_local_voice(self.config.voice)  # load the voice now, so the reply is not silent
         await self._broadcast_notification("voice_status", {"status": status, **data})
         phase_map = {
             "wake_detected": InteractionPhase.UNDERSTANDING,
@@ -13524,7 +13606,9 @@ def handle_tool(tool_name, params):
             config=self.config,
             on_partial=self._voice_partial,
             on_turn_hold=self._voice_turn_hold,
+            on_overheard=self._voice_overheard,
         )
+        replacement.task_open = self._voice_task_open
         self._voice_listener = replacement
         result = await replacement.start()
         if not replacement.is_running:
@@ -13558,7 +13642,9 @@ def handle_tool(tool_name, params):
             config=self.config,
             on_partial=self._voice_partial,
             on_turn_hold=self._voice_turn_hold,
+            on_overheard=self._voice_overheard,
         )
+        self._voice_listener.task_open = self._voice_task_open
         result = await self._voice_listener.start()
         if not self._voice_listener.is_running:
             self._voice_listener = None

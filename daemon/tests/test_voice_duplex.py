@@ -127,7 +127,8 @@ async def test_listener_accepts_one_wake_free_follow_up_inside_conversation_wind
     await asyncio.gather(*tuple(listener._command_tasks))
 
     assert received == ["Click on Launch on the website"]
-    assert listener.follow_up_remaining_seconds == 0
+    # The conversation stays open for the rest of its window, so the next reply needs no wake word either.
+    assert listener.follow_up_remaining_seconds > 25
 
 
 @pytest.mark.asyncio
@@ -297,6 +298,7 @@ async def test_companion_speech_suppresses_its_own_wake_free_transcription():
     server = PilotServer(PilotConfig())
     listener = MagicMock()
     listener.is_running = True
+    listener.wait_for_floor = AsyncMock(return_value=0.0)
     server._voice_listener = listener
     outcome = MagicMock(status="spoken")
     server._speech_coordinator = MagicMock()

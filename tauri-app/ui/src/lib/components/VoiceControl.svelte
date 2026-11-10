@@ -222,6 +222,9 @@
 
   // A live caption while the person talks (streaming engine), and "still listening" when they pause mid-thought.
   let holding = $state(false);
+  // The local voice is loading (up to ~25 s from cold): say a spoken reply is coming instead of going silent.
+  let preparingVoice = $state("");
+  let preparingTimer: ReturnType<typeof setTimeout> | null = null;
   let captionTimer: ReturnType<typeof setTimeout> | null = null;
   function showCaption(text: string) {
     interimTranscript = text;
@@ -246,6 +249,16 @@
     }
     if (method !== "voice_status") return;
     const status = String(payload.status ?? "");
+    if (status === "voice_loading") {
+      preparingVoice = String(payload.message ?? "") || "Getting my voice ready…";
+      if (preparingTimer) clearTimeout(preparingTimer);
+      preparingTimer = setTimeout(() => (preparingVoice = ""), 90000);
+      return;
+    }
+    if (status === "voice_ready" || status === "voice_unavailable") {
+      preparingVoice = "";
+      return;
+    }
     if (status === "holding") {
       holding = true;
       showCaption(interimTranscript);
@@ -291,6 +304,7 @@
   onNotification(voiceStatusHandler);
   onDestroy(() => {
     if (captionTimer) clearTimeout(captionTimer);
+    if (preparingTimer) clearTimeout(preparingTimer);
     offNotification(voiceStatusHandler);
     window.removeEventListener("heliox:voice-command-request", handleVoiceCommandRequest);
     if (listenerHealthTimer) clearInterval(listenerHealthTimer);
@@ -479,7 +493,7 @@
   {/if}
 
   <!-- Transcript Preview -->
-  {#if interimTranscript || transcript || holding}
+  {#if interimTranscript || transcript || holding || preparingVoice}
     <div class="transcript-preview" aria-live="polite">
       {#if transcript}
         <span class="final">{transcript}</span>
@@ -489,6 +503,9 @@
       {/if}
       {#if holding}
         <span class="holding">Still listening…</span>
+      {/if}
+      {#if preparingVoice}
+        <span class="holding">{preparingVoice}</span>
       {/if}
     </div>
   {/if}

@@ -140,7 +140,16 @@ class CompanionSpeechCoordinator:
             await self._queue.put((-request.priority, request.request_id, request))
             self._ensure_worker()
 
-        return await future
+        try:
+            return await future
+        except asyncio.CancelledError:
+            # The caller no longer wants this said (a quick answer replaced "Opening it now."): drop it from the
+            # queue, or stop it if it is already playing, so it is not heard after the answer.
+            future.cancel()
+            if self._current is request and self._current_speech is not None and not self._current_speech.done():
+                self._cancel_reasons[request.request_id] = "cancelled"
+                self._current_speech.cancel()
+            raise
 
     async def stop_all(self) -> int:
         """Cancel current speech and resolve every queued caller."""
@@ -198,6 +207,14 @@ class CompanionSpeechCoordinator:
                 _priority, _sequence, request = await self._queue.get()
             except asyncio.CancelledError:
                 raise
+            if request.future.done():  # withdrawn by its caller while it waited
+                self._pending_keys.discard(request.key)
+                self._queue.task_done()
+                async with self._lock:
+                    if self._closing or self._queue.empty():
+                        self._worker = None
+                        return
+                continue
             self._current = request
             self._current_speech = asyncio.create_task(self._speaker(request.text, request.recorder))
             outcome = SpeechOutcome(

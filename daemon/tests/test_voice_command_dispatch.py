@@ -234,7 +234,10 @@ async def test_voice_cannot_approve_a_pending_visible_confirmation():
     assert result["status"] == "approval_required"
     assert result["plan_id"] == "plan-visible"
     server._speak_voice_response.assert_awaited_once_with(
-        "For safety, approve this request in the visible Heliox confirmation dialog.",
+        "I can't approve that by voice. Press Approve on the screen if you want it.",
         channel=SpeechChannel.APPROVAL_RISK,
-        dedupe_key="voice-approval-boundary:plan-visible",
+        dedupe_key="voice-approval-boundary:plan-visible:1",
     )
+    await server._voice_command_dispatch("Approve")  # asked again: shorter, not the same sentence twice
+    assert server._speak_voice_response.await_args.args[0] == "Press Approve on the screen."
+    assert pending.confirmed is False

@@ -47,4 +47,15 @@ describe("VoiceControl live captions", () => {
     await tick();
     expect(screen.queryByText("Open chrome and search for flights")).toBeNull();
   });
+
+  it("says the voice is getting ready while it loads, and stops saying so once it speaks", async () => {
+    render(VoiceControl);
+    emit("voice_status", { status: "voice_loading", message: "Getting my voice ready…" });
+    await tick();
+    expect(screen.getByText("Getting my voice ready…")).toBeTruthy();
+
+    emit("voice_status", { status: "voice_ready" });
+    await tick();
+    expect(screen.queryByText("Getting my voice ready…")).toBeNull();
+  });
 });

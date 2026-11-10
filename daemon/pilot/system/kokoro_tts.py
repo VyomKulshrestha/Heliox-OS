@@ -8,12 +8,60 @@ Model inference and playback stay off the asyncio event loop.
 from __future__ import annotations
 
 import asyncio
+import os
+import sys
 import threading
 from typing import Any
 
 SAMPLE_RATE = 24000
+REPO_ID = "hexgrad/Kokoro-82M"
+_WEIGHT_FILES = ("config.json", "kokoro-v1_0.pth")
 _pipeline_cache: dict[str, Any] = {}
 _pipeline_lock = threading.Lock()
+_device = "auto"
+_offline_by_us = False
+
+
+def configure(*, device: str = "auto") -> None:
+    """Choose where the model runs: "auto" (CUDA when present), "cpu" or "cuda"."""
+    global _device
+    _device = device if device in {"auto", "cpu", "cuda"} else "auto"
+
+
+def use_cached_weights_offline(voice: str) -> bool:
+    """Skip Hugging Face's network checks when the weights and voice are already on disk.
+
+    Each hf_hub_download call otherwise asks the Hub whether a newer file exists; on this machine that added about
+    1.4 s to every cold start. Must run before the model loads. Returns whether offline mode is now on.
+    """
+    if os.environ.get("HF_HUB_OFFLINE"):
+        return True
+    try:
+        from huggingface_hub import constants, try_to_load_from_cache
+    except ImportError:
+        return False
+    files = [*_WEIGHT_FILES, f"voices/{voice}.pt"] if voice else list(_WEIGHT_FILES)
+    if not all(isinstance(try_to_load_from_cache(REPO_ID, name), str) for name in files):
+        return False
+    global _offline_by_us
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    constants.HF_HUB_OFFLINE = True
+    _offline_by_us = True
+    return True
+
+
+def _allow_fetching_missing_voice(voice: str) -> None:
+    """A voice picked after the worker went offline is fetched once, as it was before offline mode."""
+    global _offline_by_us
+    if not _offline_by_us:
+        return
+    from huggingface_hub import constants, try_to_load_from_cache
+
+    if isinstance(try_to_load_from_cache(REPO_ID, f"voices/{voice}.pt"), str):
+        return
+    os.environ.pop("HF_HUB_OFFLINE", None)
+    constants.HF_HUB_OFFLINE = False
+    _offline_by_us = False
 
 
 def _get_pipeline(language: str = "a") -> Any:
@@ -21,10 +69,15 @@ def _get_pipeline(language: str = "a") -> Any:
         if language not in _pipeline_cache:
             from kokoro import KPipeline
 
-            _pipeline_cache[language] = KPipeline(
-                lang_code=language,
-                repo_id="hexgrad/Kokoro-82M",
-            )
+            if _device == "auto":
+                try:
+                    _pipeline_cache[language] = KPipeline(lang_code=language, repo_id=REPO_ID)
+                except RuntimeError as exc:
+                    # A broken GPU driver should cost speed, not the voice.
+                    print(f"Kokoro could not use the GPU ({exc}); loading on the CPU", file=sys.stderr)
+                    _pipeline_cache[language] = KPipeline(lang_code=language, repo_id=REPO_ID, device="cpu")
+            else:
+                _pipeline_cache[language] = KPipeline(lang_code=language, repo_id=REPO_ID, device=_device)
         return _pipeline_cache[language]
 
 
@@ -37,6 +90,7 @@ def _generate(text: str, voice: str) -> tuple[Any, int]:
     import numpy as np
 
     pipeline = _get_pipeline()
+    _allow_fetching_missing_voice(voice)
     chunks = [
         _to_numpy(audio)
         for _graphemes, _phonemes, audio in pipeline(
@@ -49,6 +103,14 @@ def _generate(text: str, voice: str) -> tuple[Any, int]:
     if not chunks:
         raise RuntimeError("Kokoro produced no audio")
     return np.concatenate(chunks), SAMPLE_RATE
+
+
+def prepare(voice: str) -> None:
+    """Load weights and the voice, then make one throwaway sentence so the first real one is warm (worker side)."""
+    use_cached_weights_offline(voice)
+    _get_pipeline()
+    if voice:
+        _generate("Okay.", voice)
 
 
 async def warmup(_voice: str) -> None:

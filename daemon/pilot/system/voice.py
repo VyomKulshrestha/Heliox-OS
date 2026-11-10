@@ -7,6 +7,7 @@ system TTS or edge-tts, and optional wake word detection.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -69,6 +70,161 @@ def _prepare_spoken_text(text: str) -> str:
     return re.sub(r"\bheliox\b", _HELIOX_PRONUNCIATION, text, flags=re.IGNORECASE)
 
 
+# What a person says back to Heliox in an open conversation: corrections, decisions and short replies. Anything
+# else said while the conversation is open is overheard (Live may check it) but never becomes a command.
+_CONVERSATION_TURN_START = re.compile(
+    r"^(?:skip|don'?t|do\s+not|wait|hold\s+on|no|nope|not\s+(?:that|now|this|yet)|instead|actually|undo|stop|"
+    r"cancel|never\s*mind|what\s+about)\b",
+    re.IGNORECASE,
+)
+# Acknowledgements count only as a whole short reply: "Okay, thanks" is to Heliox, "okay so anyway…" is not.
+_SHORT_REPLY_START = re.compile(r"^(?:yes|yeah|yep|sure|okay|ok|thanks|thank\s+you|great|perfect)\b", re.IGNORECASE)
+_SHORT_REPLY_WORDS = 3
+
+
+def looks_like_conversation_turn(text: str) -> bool:
+    """A command, or a reply a person gives Heliox mid-conversation ("Skip the backup.", "Wait, stop", "No")."""
+    normalized = " ".join(text.casefold().replace(",", " ").strip(" \t.:;!?-").split())
+    if not normalized:
+        return False
+    if _looks_like_autonomous_voice_intent(normalized) or _CONVERSATION_TURN_START.match(normalized):
+        return True
+    return len(normalized.split()) <= _SHORT_REPLY_WORDS and bool(_SHORT_REPLY_START.match(normalized))
+
+
+def is_short_decision(text: str) -> bool:
+    """ "No", "Yes", "Stop": complete answers, however short."""
+    return " ".join(text.casefold().strip(" \t,.:;!?-").split()) in _AUTONOMOUS_SHORT_DECISIONS
+
+
+# How "Hey Heliox" comes out of a recogniser that has never heard the name: "Hay heliog", "Hey helioch's",
+# "Heliocs". Matched on sound at the very start of an utterance: a greeting-like word, then a word that starts
+# like "heli" and is short. "Hello", "Hillary", "Healy" and "helicopter" do not match.
+_WAKE_LEAD = frozenset({"hey", "hay", "hi", "hei", "heh", "eh", "ay", "a", "oh", "okay", "ok"})
+_WAKE_NAME = re.compile(r"^h[ei]l{1,2}[iy][a-z]{0,5}$")
+_WAKE_NAME_ALONE = re.compile(r"^hel{1,2}io[a-z]{0,3}$")
+_WORD = re.compile(r"[A-Za-z]+(?:'[A-Za-z]+)?")
+
+
+def loose_wake_prefix(transcript: str) -> str:
+    """The leading words that sound like the wake phrase, as they appear in ``transcript``; "" when none."""
+    words = list(_WORD.finditer(transcript[:60]))
+    if not words:
+        return ""
+
+    def name_like(match: re.Match[str], pattern: re.Pattern[str]) -> bool:
+        token = match.group(0).casefold()
+        token = token[:-2] if token.endswith("'s") else token
+        return bool(pattern.match(token))
+
+    first = words[0]
+    if first.group(0).casefold() in _WAKE_LEAD and len(words) > 1 and name_like(words[1], _WAKE_NAME):
+        return transcript[: words[1].end()]
+    if name_like(first, _WAKE_NAME_ALONE):
+        return transcript[: first.end()]
+    return ""
+
+
+_ECHO_FREE_OUTPUTS = ("headphone", "headset", "earphone", "earbud", "airpods", "buds", "hands-free", "handsfree")
+
+
+def echo_free_output(device_name: str) -> bool:
+    """Whether Heliox's voice goes to the person's ears only (a headset), so the microphone cannot hear it."""
+    name = device_name.casefold()
+    return any(word in name for word in _ECHO_FREE_OUTPUTS)
+
+
+def default_output_name() -> str:
+    """The name of the device Heliox's voice plays on, or "" when it cannot be read."""
+    try:
+        import soundcard as sc
+
+        speaker = sc.default_speaker()
+        return str(speaker.name) if speaker is not None else ""
+    except Exception:
+        return ""
+
+
+class BargeInGate:
+    """Decides, from the listener's voice-activity state, that the person has started talking over Heliox.
+
+    Pure and clock-driven so it can be tested. With a headset Heliox cannot hear itself, so voice activity that
+    lasts ``hold_seconds`` is the person (a cough or a click is shorter). With open speakers the microphone also
+    hears Heliox, so it needs voice activity that lasts longer and is clearly louder than what the microphone
+    picked up while Heliox was talking before it (``echo_factor`` times that level).
+    """
+
+    def __init__(
+        self,
+        *,
+        echo_free: bool,
+        hold_seconds: float = 0.25,
+        open_hold_seconds: float = 0.4,
+        echo_factor: float = 2.5,
+        baseline_seconds: float = 0.5,
+    ) -> None:
+        self.echo_free = echo_free
+        self.hold = hold_seconds if echo_free else open_hold_seconds
+        self.echo_factor = echo_factor
+        self.baseline_seconds = baseline_seconds
+        self._started: float | None = None
+        self._first: float | None = None
+        self._samples: list[tuple[float, float]] = []  # (when, microphone level) while Heliox talks
+
+    def push(self, now: float, speaking: bool, level: float) -> bool:
+        if self._first is None:
+            self._first = now
+        self._samples.append((now, level))
+        del self._samples[:-400]
+        if not speaking:
+            self._started = None
+            return False
+        if self._started is None:
+            self._started = now
+        if now - self._started < self.hold:
+            return False
+        if self.echo_free:
+            return True
+        before = [lvl for when, lvl in self._samples if when < self._started]
+        if not before or self._started - self._first < self.baseline_seconds:
+            return False  # no idea yet how loud Heliox itself is in the microphone
+        during = sorted(lvl for when, lvl in self._samples if when >= self._started)
+        echo = sorted(before)[len(before) // 2]
+        return during[len(during) // 2] >= self.echo_factor * max(echo, 1e-4)
+
+
+class BargeInWatcher:
+    """Stops Heliox when the person talks over it, from the listener's own voice-activity state.
+
+    It reads flags the listener keeps up to date and never takes audio frames, so it cannot race the listener for
+    the utterance (which is then heard and transcribed as usual). Shaped like a recorder for speak_interruptible.
+    """
+
+    POLL_SECONDS = 0.02
+
+    def __init__(self, listener: Any, *, echo_free: bool, clock: Any = time.monotonic) -> None:
+        self.listener = listener
+        self.gate = BargeInGate(echo_free=echo_free)
+        self.clock = clock
+        self.detected_at: float | None = None
+
+    @property
+    def is_active(self) -> bool:
+        return bool(self.listener.is_running and self.listener._recorder.is_active)
+
+    async def wait_for_speech_start(self, timeout: float | None = None) -> bool:
+        deadline = None if timeout is None else self.clock() + timeout
+        recorder = self.listener._recorder
+        while deadline is None or self.clock() < deadline:
+            if self.gate.push(self.clock(), self.listener.user_is_speaking, float(recorder.last_frame_rms)):
+                self.detected_at = self.clock()
+                self.listener.note_interruption()
+                logger.info("The person started talking over Heliox; stopping speech")
+                return True
+            await asyncio.sleep(self.POLL_SECONDS)
+        return False
+
+
 def _looks_like_autonomous_voice_intent(text: str) -> bool:
     """Reject ambient fragments while preserving natural hands-free intent."""
     normalized = " ".join(text.casefold().strip(" \t,.:;!?-").split())
@@ -93,116 +249,100 @@ def _remove_phrase_case_insensitive(text: str, phrase: str) -> str:
 # same pop/cancel idiom VoiceGestureWorkflowEngine._active_tasks uses per
 # workflow_id, just with a single slot instead of a dict.
 _current_speech_task: asyncio.Task[str] | None = None
-_local_tts_process: subprocess.Popen[bytes] | None = None
-_local_tts_engine: str | None = None
-_local_tts_idle_task: asyncio.Task[None] | None = None
-_LOCAL_TTS_IDLE_SECONDS = 10.0
+
+
+# The local voice (Kokoro/Pocket) runs in a worker process whose lifecycle lives in local_tts_worker: it stays
+# loaded while a conversation is plausible, starts when the person is heard, and speaks sentence by sentence.
+FADE_SECONDS = 0.008  # a cut-off voice ramps down this fast: no click, and nothing left to drain
+
+
+class _Playback:
+    """Plays one buffer through its own output stream, so a cut-off can fade and abort instead of draining.
+
+    ``sd.stop()`` waits for audio already queued in the device to play out (175 to 200 ms measured); aborting
+    the stream drops it at once (5 to 10 ms). The callback ramps the voice down over FADE_SECONDS first.
+    """
+
+    def __init__(self, audio: Any, sample_rate: int) -> None:
+        import numpy as np
+
+        self.audio = np.asarray(audio, dtype=np.float32)
+        if self.audio.ndim == 1:
+            self.audio = self.audio[:, None]
+        self.sample_rate = sample_rate
+        self.position = 0
+        self.fade_left: int | None = None
+        self.finished = threading.Event()
+        self.faded = threading.Event()
+        self.stream: Any = None
+
+    def callback(self, outdata: Any, frames: int, _time: Any, _status: Any) -> None:
+        chunk = self.audio[self.position : self.position + frames]
+        self.position += len(chunk)
+        outdata[: len(chunk)] = chunk
+        outdata[len(chunk) :] = 0
+        if self.fade_left is not None:
+            outdata[:] = fade_block(outdata, self.fade_left, int(self.sample_rate * FADE_SECONDS))
+            self.fade_left = max(0, self.fade_left - frames)
+            if self.fade_left == 0:
+                self.faded.set()
+        if self.position >= len(self.audio) and not self.finished.is_set():
+            self.finished.set()
+
+    def play(self) -> None:
+        import sounddevice as sd
+
+        self.stream = sd.OutputStream(
+            samplerate=self.sample_rate, channels=self.audio.shape[1], dtype="float32", callback=self.callback
+        )
+        with self.stream:
+            self.finished.wait()
+            if self.fade_left is None:
+                # Let the last block reach the speaker before closing the stream.
+                time.sleep(max(0.0, float(getattr(self.stream, "latency", 0.0) or 0.0)))
+
+    def cut(self) -> None:
+        """Fade out and drop whatever is still buffered."""
+        self.fade_left = int(self.sample_rate * FADE_SECONDS)
+        self.faded.wait(0.05)
+        stream = self.stream
+        if stream is not None:
+            with contextlib.suppress(Exception):
+                stream.abort()
+        self.finished.set()
+
+
+def fade_block(block: Any, fade_left: int, fade_total: int) -> Any:
+    """``block`` with the remaining ``fade_left`` samples of a linear fade-out applied, silence after it."""
+    import numpy as np
+
+    out = np.array(block, dtype=np.float32, copy=True)
+    frames = len(out)
+    if fade_total <= 0 or fade_left <= 0:
+        out[:] = 0
+        return out
+    start = fade_left / fade_total
+    ramp = np.clip(start - np.arange(frames, dtype=np.float32) / fade_total, 0.0, 1.0)
+    return out * ramp[:, None] if out.ndim == 2 else out * ramp
 
 
 async def _play_local_tts_file(path: Path) -> None:
-    """Play a synthesized WAV without importing the model runtime."""
+    """Play a synthesized WAV without importing the model runtime. Cancelling it (barge-in) cuts it at once."""
+    import soundfile
 
-    def _play() -> None:
-        import sounddevice as sd
-        import soundfile
-
-        audio, sample_rate = soundfile.read(path, dtype="float32")
-        sd.play(audio, sample_rate)
-        sd.wait()
-
+    audio, sample_rate = await asyncio.to_thread(soundfile.read, path, dtype="float32")
+    playback = _Playback(audio, sample_rate)
     try:
-        await asyncio.to_thread(_play)
+        await asyncio.to_thread(playback.play)
     except asyncio.CancelledError:
-        import sounddevice as sd
-
-        sd.stop()
+        await asyncio.to_thread(playback.cut)
         raise
 
 
-async def _shutdown_local_tts_worker(process: subprocess.Popen[bytes] | None = None) -> None:
-    global _local_tts_process, _local_tts_engine, _local_tts_idle_task
-    worker = process or _local_tts_process
-    idle_task = _local_tts_idle_task
-    _local_tts_idle_task = None
-    if idle_task is not None and idle_task is not asyncio.current_task() and not idle_task.done():
-        idle_task.cancel()
-    if worker is None:
-        return
-    if worker is _local_tts_process:
-        _local_tts_process = None
-        _local_tts_engine = None
+async def _shutdown_local_tts_worker() -> None:
+    from pilot.system.local_tts_worker import manager
 
-    def _close() -> None:
-        try:
-            if worker.poll() is None:
-                if worker.stdin is not None:
-                    try:
-                        worker.stdin.close()
-                    except (BrokenPipeError, OSError):
-                        pass
-                try:
-                    worker.wait(timeout=2.0)
-                except subprocess.TimeoutExpired:
-                    worker.terminate()
-                    try:
-                        worker.wait(timeout=2.0)
-                    except subprocess.TimeoutExpired:
-                        worker.kill()
-                        worker.wait()
-        finally:
-            if worker.stdin is not None and not worker.stdin.closed:
-                try:
-                    worker.stdin.close()
-                except (BrokenPipeError, OSError):
-                    pass
-            if worker.stdout is not None:
-                worker.stdout.close()
-
-    await asyncio.to_thread(_close)
-
-
-async def _expire_local_tts_worker(process: subprocess.Popen[bytes]) -> None:
-    await asyncio.sleep(_LOCAL_TTS_IDLE_SECONDS)
-    if process is _local_tts_process:
-        await _shutdown_local_tts_worker(process)
-
-
-def _schedule_local_tts_worker_expiry(process: subprocess.Popen[bytes]) -> None:
-    global _local_tts_idle_task
-    if _local_tts_idle_task is not None and not _local_tts_idle_task.done():
-        _local_tts_idle_task.cancel()
-    _local_tts_idle_task = asyncio.create_task(_expire_local_tts_worker(process))
-
-
-async def _get_local_tts_worker(engine: str) -> subprocess.Popen[bytes]:
-    global _local_tts_process, _local_tts_engine, _local_tts_idle_task
-    if _local_tts_idle_task is not None and not _local_tts_idle_task.done():
-        _local_tts_idle_task.cancel()
-    _local_tts_idle_task = None
-    if _local_tts_process is not None and _local_tts_process.poll() is None and _local_tts_engine == engine:
-        return _local_tts_process
-    await _shutdown_local_tts_worker()
-
-    creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-    command = [sys.executable, "-m", "pilot.system.local_tts_worker", "--engine", engine, "--serve"]
-    _local_tts_process = await asyncio.to_thread(
-        subprocess.Popen,
-        command,
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        creationflags=creationflags,
-    )
-    _local_tts_engine = engine
-    return _local_tts_process
-
-
-def _exchange_local_tts_request(process: subprocess.Popen[bytes], request: dict[str, str]) -> bytes:
-    if process.stdin is None or process.stdout is None:
-        raise RuntimeError("Local TTS worker streams are unavailable")
-    process.stdin.write((json.dumps(request) + "\n").encode("utf-8"))
-    process.stdin.flush()
-    return process.stdout.readline()
+    await manager().shutdown()
 
 
 async def _run_local_tts_worker(
@@ -211,47 +351,10 @@ async def _run_local_tts_worker(
     voice: str,
     output_file: str | None,
 ) -> None:
-    """Synthesize heavy local voices outside the long-lived daemon process."""
-    if engine not in {"kokoro_tts", "pocket_tts"}:
-        raise ValueError(f"Unsupported local TTS engine: {engine}")
-    if len(text) > 20_000:
-        raise ValueError("Speech text exceeds the 20,000 character limit")
+    """Speak (or write) with a heavy local voice, outside the long-lived daemon process."""
+    from pilot.system.local_tts_worker import manager
 
-    with tempfile.TemporaryDirectory(prefix="heliox-tts-") as temp_dir:
-        request_path = Path(temp_dir) / "request.txt"
-        request_path.write_text(text, encoding="utf-8")
-        target_path = Path(output_file) if output_file else Path(temp_dir) / "speech.wav"
-        process = await _get_local_tts_worker(engine)
-        request = {
-            "text_file": str(request_path),
-            "voice": voice,
-            "output_file": str(target_path),
-        }
-        try:
-            response_line = await asyncio.to_thread(_exchange_local_tts_request, process, request)
-        except asyncio.CancelledError:
-            await _shutdown_local_tts_worker(process)
-            raise
-        if not response_line:
-            await _shutdown_local_tts_worker(process)
-            raise RuntimeError(f"{engine} worker exited before returning audio")
-        try:
-            response = json.loads(response_line)
-        except json.JSONDecodeError as exc:
-            await _shutdown_local_tts_worker(process)
-            raise RuntimeError(f"{engine} worker returned an invalid response") from exc
-        if response.get("status") != "ok":
-            await _shutdown_local_tts_worker(process)
-            reason = str(response.get("error") or "unknown synthesis failure")[-500:]
-            raise RuntimeError(f"{engine} worker failed: {reason}")
-        if not target_path.is_file() or target_path.stat().st_size == 0:
-            await _shutdown_local_tts_worker(process)
-            raise RuntimeError(f"{engine} worker produced no audio")
-        try:
-            if output_file is None:
-                await _play_local_tts_file(target_path)
-        finally:
-            _schedule_local_tts_worker_expiry(process)
+    await manager().speak(engine, text, voice, output_file, play=_play_local_tts_file)
 
 
 # ── Text-to-Speech ───────────────────────────────────────────────────
@@ -344,7 +447,8 @@ async def _speak_impl(
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            logger.warning("Kokoro TTS failed (%s), falling back to OS-native TTS", e, exc_info=True)
+            if not getattr(e, "already_logged", False):
+                logger.warning("Kokoro TTS failed (%s), falling back to OS-native TTS", e, exc_info=True)
 
     if config.voice.tts_engine == "pocket_tts":
         try:
@@ -360,7 +464,8 @@ async def _speak_impl(
             # do not fall back to them mid-interruption.
             raise
         except Exception as e:
-            logger.warning("Pocket TTS failed (%s), falling back to OS-native TTS", e, exc_info=True)
+            if not getattr(e, "already_logged", False):
+                logger.warning("Pocket TTS failed (%s), falling back to OS-native TTS", e, exc_info=True)
             # falls through to the platform dispatch below
 
     if CURRENT_PLATFORM == Platform.WINDOWS:
@@ -393,23 +498,19 @@ async def speak_interruptible(
 
     speak_task = asyncio.create_task(speak(text, **speak_kwargs))
     watch_task = asyncio.create_task(recorder.wait_for_speech_start(timeout=None))
-
-    done, _pending = await asyncio.wait({speak_task, watch_task}, return_when=asyncio.FIRST_COMPLETED)
-
-    if watch_task in done:
-        speak_task.cancel()
-        try:
-            await speak_task
-        except asyncio.CancelledError:
-            pass
-        return True
-
-    watch_task.cancel()
     try:
-        await watch_task
-    except asyncio.CancelledError:
-        pass
-    return False
+        done, _pending = await asyncio.wait({speak_task, watch_task}, return_when=asyncio.FIRST_COMPLETED)
+        return watch_task in done
+    finally:
+        # Whatever ended this (the line finished, the person talked over it, or a more urgent line replaced
+        # it), neither the voice nor the watcher may outlive it: a stray watcher would treat the person's next
+        # sentence as an interruption.
+        for task in (speak_task, watch_task):
+            if not task.done():
+                task.cancel()
+        for task in (speak_task, watch_task):
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
 
 
 async def _tts_windows(
@@ -1147,6 +1248,8 @@ class _ContinuousRecorder:
         self.utterances_captured = 0
         # True between the endpointer confirming speech and the utterance ending (read by the live layer).
         self.user_is_speaking = False
+        # When the current or last utterance's speech was confirmed (time.monotonic()); None before any.
+        self.speech_started_at: float | None = None
         self.capture_backend = ""
         # Semantic turn-taking (pilot.system.turn_detector): asked after a short silence whether the person is
         # done. Done ends the turn at once; not done keeps listening for up to turn_hold_frames of silence.
@@ -1156,6 +1259,11 @@ class _ContinuousRecorder:
         self.turn_hold_frames = 50  # 2.5 s
         self.turn_threshold = 0.5
         self.on_hold: Any = None  # called once per utterance when the person pauses mid-thought
+        # Callable() -> bool: the words so far are a complete short answer, so a short pause ends the turn.
+        self.complete_hint: Any = None
+        self.short_answer_frames = 8  # 400 ms
+        # Called when speech starts: the listener picks up a recogniser that finished loading while it waited.
+        self.on_speech_start: Any = None
         # Streaming recognition (pilot.system.streaming_asr) sees each frame as it is captured.
         self.stream_sink: Any = None
         self.last_turn_probability: float | None = None
@@ -1430,15 +1538,18 @@ class _ContinuousRecorder:
             if endpointer.push(frame_rms(frame)) == EndpointEvent.STARTED:
                 return True
 
-    async def record_utterance(self, timeout: float | None = None) -> str | None:
+    async def record_utterance(self, timeout: float | None = None, keep_backlog: bool = False) -> str | None:
         """Waits for a full utterance (speech start through endpoint) and
         returns the path to a WAV file containing it, or None if nothing
-        was captured before `timeout`."""
+        was captured before `timeout`. ``keep_backlog`` keeps frames that
+        arrived before the call instead of starting from now."""
         queue = self._queue
         if queue is None:
             return None
 
-        await self._drain_stale_frames(queue)
+        self.speech_started_at = None
+        if not keep_backlog:
+            await self._drain_stale_frames(queue)
         endpointer = self._make_endpointer()
         deadline = None if timeout is None else asyncio.get_event_loop().time() + timeout
         # Small pre-roll so the moment speech is CONFIRMED (after
@@ -1473,6 +1584,12 @@ class _ContinuousRecorder:
                 captured = preroll + [frame]
                 preroll = []
                 self.user_is_speaking = True
+                self.speech_started_at = time.monotonic()
+                if self.on_speech_start is not None and self.stream_sink is None:
+                    try:
+                        self.on_speech_start()
+                    except Exception:
+                        logger.debug("Speech-start setup failed", exc_info=True)
                 held = False
                 silence_frames_used = endpointer.silence_frames
                 if self.stream_sink is not None:
@@ -1499,6 +1616,22 @@ class _ContinuousRecorder:
             captured.append(frame)
             if self.stream_sink is not None:
                 self.stream_sink.feed(frame)
+
+            if (
+                self.complete_hint is not None
+                # From 400 ms of quiet, checked each frame for another 400 ms: the recogniser's words lag the audio.
+                and self.short_answer_frames <= endpointer.trailing_silence <= 2 * self.short_answer_frames
+                and self.complete_hint()
+            ):
+                # A one-word answer ("No.", "Stop.") sounds unfinished to Smart Turn, which would hold the turn for
+                # 2 s. The words say it is complete; 400 ms of quiet shows nothing more is coming ("No problem,
+                # go ahead" carries on well before that, and its full text is then judged as a whole).
+                self.last_endpoint_ms = endpointer.trailing_silence * self.frame_ms
+                endpointer.reset()
+                self.utterances_captured += 1
+                self.user_is_speaking = False
+                self.last_endpoint_reason = "short_answer"
+                return _write_wav(captured, self.sample_rate)
 
             if self.turn_detector is not None and self._turn_check_due(endpointer.trailing_silence):
                 import numpy as np
@@ -1561,6 +1694,7 @@ class ContinuousVoiceListener:
         config: PilotConfig | None = None,
         on_partial: Any | None = None,
         on_turn_hold: Any | None = None,
+        on_overheard: Any | None = None,
     ) -> None:
         self.wake_words = wake_words or [
             "hey heliox",
@@ -1574,6 +1708,12 @@ class ContinuousVoiceListener:
         # person pauses mid-thought (Smart Turn says the sentence isn't finished).
         self._on_partial = on_partial
         self._on_turn_hold = on_turn_hold
+        # Async callable(text): something said while a conversation is open that is not addressed to Heliox as a
+        # command (a promise, a date). The server lets Live check it; it never becomes a task.
+        self._on_overheard = on_overheard
+        # Callable() -> bool, set by the server: a task the person started is running or an approval is waiting.
+        self.task_open: Any = None
+        self._interrupted_until = 0.0
         self._turn_detector: Any = None
         self._streaming: Any = None
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -1592,6 +1732,7 @@ class ContinuousVoiceListener:
         self._follow_up_until = 0.0
         self._wake_free_suppression_depth = 0
         self._wake_free_suppression_generation = 0
+        self._heliox_quiet_since = 0.0
         self._sample_rate = 16000
 
         # The daemon passes its live config instance so Settings changes take
@@ -1644,6 +1785,39 @@ class ContinuousVoiceListener:
     def clear_follow_up_window(self) -> None:
         self._follow_up_until = 0.0
 
+    def conversation_open(self) -> bool:
+        """The person is talking with Heliox: it spoke to them in the last follow-up window (30 s by default), or a
+        task they started is running, or an approval is waiting. Only then do replies without the wake word count;
+        the rest of the time other speech in the room is not addressed to Heliox."""
+        if self.follow_up_remaining_seconds > 0:
+            return True
+        try:
+            return bool(self.task_open and self.task_open())
+        except Exception:
+            return False
+
+    def note_interruption(self, seconds: float = 12.0) -> None:
+        """The person talked over Heliox: what they are saying is for Heliox, wake word or not."""
+        self._interrupted_until = time.monotonic() + seconds
+
+    def _take_interruption(self) -> bool:
+        interrupted = time.monotonic() < self._interrupted_until
+        self._interrupted_until = 0.0
+        return interrupted
+
+    async def wait_for_floor(self, max_seconds: float = 8.0, quiet_seconds: float = 0.35) -> float:
+        """Wait while the person is still talking, so Heliox does not start over them. Returns seconds waited.
+
+        Talking means mid-utterance, or voice in the microphone in the last ``quiet_seconds``: the end of a turn
+        can come at a short pause ("...the twelfth of November | at ten"), and the tail is still theirs."""
+        started = time.monotonic()
+        while time.monotonic() - started < max_seconds:
+            recent = time.time() - float(getattr(self._recorder, "last_above_threshold_at", 0.0) or 0.0)
+            if not self.user_is_speaking and recent >= quiet_seconds:
+                break
+            await asyncio.sleep(0.05)
+        return time.monotonic() - started
+
     def suppress_wake_free_commands(self) -> None:
         """Block wake-free routing while Heliox is speaking.
 
@@ -1656,6 +1830,13 @@ class ContinuousVoiceListener:
 
     def resume_wake_free_commands(self) -> None:
         self._wake_free_suppression_depth = max(0, self._wake_free_suppression_depth - 1)
+        if self._wake_free_suppression_depth == 0:
+            self._heliox_quiet_since = time.monotonic()
+
+    def _began_after_heliox_spoke(self) -> bool:
+        """The utterance's speech started once Heliox had stopped talking, so it is the person, not its echo."""
+        started = getattr(self._recorder, "speech_started_at", None)
+        return isinstance(started, float) and started >= self._heliox_quiet_since
 
     @property
     def user_is_speaking(self) -> bool:
@@ -1727,8 +1908,10 @@ class ContinuousVoiceListener:
         if streaming is not None and streaming.ready:
             streaming.on_partial = (lambda text: self._schedule(self._on_partial, text)) if self._on_partial else None
             recorder.stream_sink = streaming
+            recorder.complete_hint = lambda: is_short_decision(streaming.partial())
             return streaming
         recorder.stream_sink = None
+        recorder.complete_hint = None
         return None
 
     async def _warm_turn_taking(self) -> None:
@@ -1867,19 +2050,28 @@ class ContinuousVoiceListener:
 
                 wake_detected = False
                 command_text = transcript.strip()
-                wake_free_allowed = (
-                    self._wake_free_suppression_depth == 0
-                    and capture_generation == self._wake_free_suppression_generation
+                wake_free_allowed = self._wake_free_suppression_depth == 0 and (
+                    capture_generation == self._wake_free_suppression_generation
+                    # The wait for this utterance began before Heliox spoke, but the person only started
+                    # talking after it finished: a reply, not an echo.
+                    or self._began_after_heliox_spoke()
                 )
                 conversational_follow_up = wake_free_allowed and (
                     self.config.voice.continuous_conversation_enabled or self.follow_up_remaining_seconds > 0
                 )
 
+                interrupted = self._take_interruption()
                 for wake in self.wake_words:
                     if wake in transcript_lower:
                         wake_detected = True
                         command_text = _remove_phrase_case_insensitive(transcript, wake)
                         break
+                if not wake_detected:
+                    heard_as = loose_wake_prefix(transcript)
+                    if heard_as:
+                        wake_detected = True
+                        command_text = transcript[len(heard_as) :].strip(" \t,.:;!?-")
+                        logger.info("Wake phrase recognised by sound: '%s'", heard_as)
 
                 if wake_detected:
                     # A real hit confirms any near-miss variant that was
@@ -1916,13 +2108,29 @@ class ContinuousVoiceListener:
 
                 self._wake_calibrator.tick()
 
+                conversation = interrupted or (wake_free_allowed and self.conversation_open())
+                conversational_follow_up = conversational_follow_up or conversation
+
                 if not wake_detected and not conversational_follow_up:
                     await asyncio.sleep(0.1)
                     continue
 
-                if conversational_follow_up and not wake_detected:
-                    if self.config.voice.continuous_conversation_enabled and not _looks_like_autonomous_voice_intent(
-                        transcript_lower
+                if conversational_follow_up and not wake_detected and conversation and not interrupted:
+                    if not looks_like_conversation_turn(transcript):
+                        # Said while talking with Heliox, but not to it as a request: Live may check it.
+                        logger.debug("Overheard in an open conversation: '%s'", transcript_lower)
+                        if self._on_overheard:
+                            try:
+                                await self._on_overheard(transcript.strip())
+                            except Exception:
+                                logger.debug("Overheard-speech callback failed", exc_info=True)
+                        continue
+                    command_text = transcript.strip(" \t,.:;!?-")
+                    logger.info("Conversational reply detected: '%s'", command_text)
+                elif conversational_follow_up and not wake_detected and not interrupted:
+                    # With no conversation open, only a request counts: a bare "No" or "Yes" is someone else's.
+                    if self.config.voice.continuous_conversation_enabled and (
+                        not _looks_like_autonomous_voice_intent(transcript_lower) or is_short_decision(transcript_lower)
                     ):
                         logger.debug("Ignored ambient non-command speech: '%s'", transcript_lower)
                         if self._on_status:
@@ -1939,6 +2147,11 @@ class ContinuousVoiceListener:
                     self.clear_follow_up_window()
                     command_text = transcript.strip(" \t,.:;!?-")
                     logger.info("Conversational voice follow-up detected: '%s'", command_text)
+                elif conversational_follow_up and not wake_detected:
+                    # What the person said over Heliox. The window stays open for the rest of the conversation,
+                    # so "No" after "Skip the backup" still counts.
+                    command_text = transcript.strip(" \t,.:;!?-")
+                    logger.info("Conversational reply detected: '%s'", command_text)
 
                 logger.info(
                     "%s Command: '%s'",
@@ -1964,7 +2177,7 @@ class ContinuousVoiceListener:
                     except Exception:
                         pass
 
-                if not command_text or len(command_text) < 3:
+                if not command_text or (len(command_text) < 3 and not is_short_decision(command_text)):
                     if self._on_status:
                         try:
                             await self._on_status(
@@ -2069,6 +2282,7 @@ class ContinuousVoiceListener:
         self,
         duration: int = 3,
         timeout: float | None = None,
+        keep_backlog: bool = False,
     ) -> str:
         """Records one utterance and transcribes it with multilingual support.
 
@@ -2085,9 +2299,14 @@ class ContinuousVoiceListener:
             streaming = None
             if self._recorder.is_active:
                 streaming = self._configure_turn_taking()
-                audio_path = await self._recorder.record_utterance(timeout=timeout)
+                # The first utterance after start is often waited for before the recognisers finish loading;
+                # they are picked up when the person starts talking.
+                self._recorder.on_speech_start = self._configure_turn_taking
+                audio_path = await self._recorder.record_utterance(timeout=timeout, keep_backlog=keep_backlog)
                 if not audio_path:
                     return ""
+                if streaming is None and self._recorder.stream_sink is not None:
+                    streaming = self._recorder.stream_sink
             else:
                 audio_path = await _record_audio(duration)
 

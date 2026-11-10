@@ -1,13 +1,17 @@
+"""The local-voice worker seen through voice.py: one reusable process, sentence-by-sentence playback, barge-in."""
+
 from __future__ import annotations
 
 import asyncio
+import io
 import json
+import threading
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from pilot.system import voice
+from pilot.system import local_tts_worker, voice
 
 
 class _FakeStdin:
@@ -29,9 +33,13 @@ class _FakeStdout:
     def __init__(self, worker: _SuccessfulWorker) -> None:
         self.worker = worker
         self.closed = False
+        self.requests: list[dict] = []
 
     def readline(self) -> bytes:
         request = json.loads(self.worker.stdin.payload)
+        self.requests.append(request)
+        if request.get("op") == "load":
+            return b'{"status":"ok","op":"load"}\n'
         Path(request["output_file"]).write_bytes(b"RIFF-test-audio")
         return b'{"status":"ok"}\n'
 
@@ -53,25 +61,19 @@ class _SuccessfulWorker:
         return self.returncode
 
 
-class _CancelledStdout:
-    def readline(self) -> bytes:
-        raise asyncio.CancelledError
-
-    def close(self) -> None:
-        return None
-
-
-class _CancelledWorker(_SuccessfulWorker):
-    def __init__(self) -> None:
-        super().__init__()
-        self.stdout = _CancelledStdout()
+def _spoken(worker: _SuccessfulWorker) -> list[str]:
+    return [
+        Path(r["text_file"]).read_text(encoding="utf-8") if Path(r["text_file"]).exists() else "?"
+        for r in worker.stdout.requests
+        if "text_file" in r
+    ]
 
 
 @pytest.fixture(autouse=True)
-def _reset_worker_state() -> None:
-    voice._local_tts_process = None
-    voice._local_tts_engine = None
-    voice._local_tts_idle_task = None
+def _fresh_manager(monkeypatch: pytest.MonkeyPatch) -> local_tts_worker.LocalTTSWorkerManager:
+    fresh = local_tts_worker.LocalTTSWorkerManager()
+    monkeypatch.setattr(local_tts_worker, "_manager", fresh)
+    return fresh
 
 
 @pytest.mark.asyncio
@@ -89,24 +91,113 @@ async def test_local_tts_inference_runs_in_isolated_reusable_worker() -> None:
     command = spawn.call_args.args[0]
     assert command[1:3] == ["-m", "pilot.system.local_tts_worker"]
     assert command[-3:] == ["--engine", "kokoro_tts", "--serve"]
+    assert command[command.index("--device") + 1] == "auto"
     spawn.assert_called_once()
+    assert worker.stdout.requests[0] == {"op": "load", "voice": "af_heart"}  # cold: load first, then speak
     assert play.await_count == 2
     assert worker.stdin.closed is True
 
 
 @pytest.mark.asyncio
-async def test_local_tts_cancellation_closes_worker() -> None:
-    worker = _CancelledWorker()
+async def test_a_long_reply_starts_playing_after_its_first_sentence() -> None:
+    worker = _SuccessfulWorker()
+    events: list[str] = []
+    original = worker.stdout.readline
+
+    def readline() -> bytes:
+        line = original()
+        request = worker.stdout.requests[-1]
+        if "text_file" in request:
+            events.append("made: " + Path(request["text_file"]).read_text(encoding="utf-8"))
+        return line
+
+    worker.stdout.readline = readline  # type: ignore[method-assign]
+
+    async def play(path: Path) -> None:
+        events.append("play")
+        await asyncio.sleep(0.05)
 
     with (
         patch.object(voice.subprocess, "Popen", return_value=worker),
-        pytest.raises(asyncio.CancelledError),
+        patch.object(voice, "_play_local_tts_file", new=play),
     ):
-        await voice._run_local_tts_worker("pocket_tts", "hello", "alba", None)
+        await voice._run_local_tts_worker("kokoro_tts", "First one. Second one! Third one?", "af_heart", None)
+        await voice._shutdown_local_tts_worker()
 
-    assert worker.stdin.closed is True
-    assert worker.returncode == 0
-    assert voice._local_tts_process is None
+    assert events.count("play") == 3
+    assert events.index("play") < events.index("made: Third one?")  # speaking began before the end was made
+    assert [e for e in events if e.startswith("made")] == ["made: First one.", "made: Second one!", "made: Third one?"]
+
+
+class _SlowStdout(_FakeStdout):
+    """Answers each speech request only when the test lets it, like a worker still synthesising."""
+
+    def __init__(self, worker: _SuccessfulWorker, release: list) -> None:
+        super().__init__(worker)
+        self.release = release
+        self.answered: list[str] = []
+
+    def readline(self) -> bytes:
+        request = json.loads(self.worker.stdin.payload)
+        if request.get("op") != "load":
+            self.answered.append(Path(request["text_file"]).read_text(encoding="utf-8"))  # read on arrival
+            gate = threading.Event()
+            self.release.append(gate)
+            gate.wait(5)
+        return super().readline()
+
+
+@pytest.mark.asyncio
+async def test_speech_cut_off_mid_synthesis_keeps_the_worker_warm_for_the_next_reply() -> None:
+    worker = _SuccessfulWorker()
+    gates: list = []
+    worker.stdout = _SlowStdout(worker, gates)
+    with (
+        patch.object(voice.subprocess, "Popen", return_value=worker) as spawn,
+        patch.object(voice, "_play_local_tts_file", new=AsyncMock()) as play,
+    ):
+        first = asyncio.ensure_future(voice._run_local_tts_worker("kokoro_tts", "a long answer", "af_heart", None))
+        while not gates:
+            await asyncio.sleep(0.01)
+        first.cancel()  # the person talked over Heliox while it was still synthesising
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        assert local_tts_worker.manager().process is worker and worker.returncode is None
+        second = asyncio.ensure_future(voice._run_local_tts_worker("kokoro_tts", "okay", "af_heart", None))
+        await asyncio.sleep(0.05)
+        gates[0].set()  # the worker finishes the abandoned request first, unheard
+        while len(gates) < 2:
+            await asyncio.sleep(0.01)
+        gates[1].set()
+        await second
+        await voice._shutdown_local_tts_worker()
+    spawn.assert_called_once()  # no cold start
+    assert worker.stdout.answered == ["a long answer", "okay"]
+    assert play.await_count == 1  # only the reply that was not cut off is played
+
+
+@pytest.mark.asyncio
+async def test_stopping_mid_reply_stops_playback_and_skips_the_remaining_sentences() -> None:
+    worker = _SuccessfulWorker()
+    playing = asyncio.Event()
+
+    async def play(path: Path) -> None:
+        playing.set()
+        await asyncio.sleep(30)  # cancelled by the stop
+
+    with (
+        patch.object(voice.subprocess, "Popen", return_value=worker),
+        patch.object(voice, "_play_local_tts_file", new=play),
+    ):
+        speech = asyncio.ensure_future(voice._run_local_tts_worker("kokoro_tts", "One. Two. Three.", "af_heart", None))
+        await asyncio.wait_for(playing.wait(), 5)
+        speech.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(speech, 1)
+        await asyncio.sleep(0.05)
+        assert local_tts_worker.manager().running
+        await voice._shutdown_local_tts_worker()
+    assert "Three." not in _spoken(worker)
 
 
 @pytest.mark.asyncio
@@ -118,10 +209,12 @@ async def test_local_tts_worker_preserves_requested_output_file(tmp_path: Path) 
         patch.object(voice.subprocess, "Popen", return_value=worker),
         patch.object(voice, "_play_local_tts_file", new=AsyncMock()) as play,
     ):
-        await voice._run_local_tts_worker("kokoro_tts", "hello", "af_heart", str(output))
+        await voice._run_local_tts_worker("kokoro_tts", "hello. There.", "af_heart", str(output))
         await voice._shutdown_local_tts_worker()
 
     assert output.read_bytes() == b"RIFF-test-audio"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["speech.wav"]  # nothing written beside it
+    assert _spoken(worker) == ["?"]  # one request for the whole text (its temp file is gone now)
     play.assert_not_awaited()
 
 
@@ -129,11 +222,36 @@ async def test_local_tts_worker_preserves_requested_output_file(tmp_path: Path) 
 async def test_local_tts_shutdown_closes_streams_after_worker_already_exited() -> None:
     worker = _SuccessfulWorker()
     worker.returncode = 1
-    voice._local_tts_process = worker
-    voice._local_tts_engine = "kokoro_tts"
+    manager = local_tts_worker.manager()
+    manager.process = worker
+    manager.engine = "kokoro_tts"
 
     await voice._shutdown_local_tts_worker()
 
     assert worker.stdin.closed is True
     assert worker.stdout.closed is True
-    assert voice._local_tts_process is None
+    assert manager.process is None
+
+
+def test_worker_answers_a_load_request_before_any_speech(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    loaded: list[tuple[str, str]] = []
+    monkeypatch.setattr(local_tts_worker, "_load", lambda engine, voice_name: loaded.append((engine, voice_name)))
+    monkeypatch.setattr(local_tts_worker.sys, "stdin", io.StringIO('{"op": "load", "voice": "alba"}\n'))
+
+    assert local_tts_worker._serve("pocket_tts") == 0
+
+    assert loaded == [("pocket_tts", "alba")]
+    assert json.loads(capsys.readouterr().out) == {"status": "ok", "op": "load"}
+
+
+def test_worker_reports_a_failed_load_without_exiting(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    def broken(engine: str, voice_name: str) -> None:
+        raise ModuleNotFoundError("No module named 'kokoro'")
+
+    monkeypatch.setattr(local_tts_worker, "_load", broken)
+    monkeypatch.setattr(local_tts_worker.sys, "stdin", io.StringIO('{"op": "load", "voice": "x"}\n'))
+
+    assert local_tts_worker._serve("pocket_tts") == 0
+
+    reply = json.loads(capsys.readouterr().out)
+    assert reply["status"] == "error" and "kokoro" in reply["error"]

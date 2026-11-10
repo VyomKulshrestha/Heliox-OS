@@ -125,3 +125,51 @@ async def test_idle_worker_retires_and_restarts_without_losing_speech() -> None:
     assert (await coordinator.speak("second")).status == "spoken"
     assert spoken == ["first", "second"]
     await coordinator.close()
+
+
+@pytest.mark.asyncio
+async def test_a_withdrawn_line_is_never_said_after_the_answer() -> None:
+    # "Opening it now." waits behind a spoken correction; the answer arrives and the acknowledgement is withdrawn.
+    release = asyncio.Event()
+    said: list[str] = []
+
+    async def speaker(text: str, recorder) -> bool:  # noqa: ARG001
+        said.append(text)
+        if text == "correction":
+            await release.wait()
+        return False
+
+    coordinator = CompanionSpeechCoordinator(speaker=speaker)
+    correction = asyncio.create_task(coordinator.speak("correction", channel="live_correction"))
+    await asyncio.sleep(0.01)
+    ack = asyncio.create_task(coordinator.speak("Opening it now.", channel="task_narration"))
+    await asyncio.sleep(0.01)
+    ack.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await ack
+    answer = asyncio.create_task(coordinator.speak("answer", channel="task_narration"))
+    release.set()
+    await correction
+    assert (await answer).status == "spoken"
+    assert said == ["correction", "answer"]
+    await coordinator.close()
+
+
+@pytest.mark.asyncio
+async def test_withdrawing_the_line_being_spoken_stops_it() -> None:
+    started = asyncio.Event()
+
+    async def speaker(text: str, recorder) -> bool:  # noqa: ARG001
+        started.set()
+        await asyncio.Event().wait()
+        return False
+
+    coordinator = CompanionSpeechCoordinator(speaker=speaker)
+    line = asyncio.create_task(coordinator.speak("Opening it now.", channel="task_narration"))
+    await started.wait()
+    line.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await line
+    await asyncio.sleep(0.01)
+    assert coordinator.status()["active"] is False
+    await coordinator.close()

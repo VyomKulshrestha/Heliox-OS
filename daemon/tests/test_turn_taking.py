@@ -123,9 +123,11 @@ class FakeStream:
 
     def accept_waveform(self, rate, samples) -> None:
         self.samples += len(samples)
+        self.last_chunk = samples
 
     def input_finished(self) -> None:
         self.finished = True
+        self.tail = self.last_chunk
 
 
 class FakeRecognizer:
@@ -293,3 +295,17 @@ async def test_a_gpu_without_cuda_libraries_falls_back_to_the_cpu(tmp_path, monk
     monkeypatch.setattr(voice, "_get_faster_whisper_model", model)
     result = await voice._transcribe_faster_whisper(_wav(tmp_path), "en", "small")
     assert result["text"] == "open chrome" and built == [False, True]
+
+
+@pytest.mark.asyncio
+async def test_the_last_words_get_a_moment_of_silence_to_be_decoded():
+    # Without it the streaming recogniser dropped "at ten" from "...the twelfth of November at ten".
+    recognizer = FakeRecognizer()
+    streams: list[FakeStream] = []
+    create = recognizer.create_stream
+    recognizer.create_stream = lambda: streams.append(create()) or streams[-1]
+    transcriber = StreamingTranscriber(recognizer=recognizer)
+    transcriber.begin([loud()])
+    await transcriber.finish()
+    tail = streams[0].tail
+    assert len(tail) == int(streaming_asr.SAMPLE_RATE * streaming_asr.TAIL_SECONDS) and not tail.any()

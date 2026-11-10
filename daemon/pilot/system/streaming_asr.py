@@ -34,6 +34,7 @@ FILES = {
 }
 SAMPLE_RATE = 16000
 PARTIAL_EVERY_SECONDS = 0.25
+TAIL_SECONDS = 0.5  # silence fed after the last frame so the final words are decoded
 
 
 def tidy(text: str) -> str:
@@ -154,6 +155,8 @@ class StreamingTranscriber:
                 elif kind == "finish":
                     text = ""
                     if self._stream is not None:
+                        # The recogniser needs a little silence after the last word to emit it ("...at ten").
+                        self._stream.accept_waveform(SAMPLE_RATE, np.zeros(int(SAMPLE_RATE * TAIL_SECONDS), np.float32))
                         self._stream.input_finished()
                         while self._recognizer.is_ready(self._stream):
                             self._recognizer.decode_stream(self._stream)
