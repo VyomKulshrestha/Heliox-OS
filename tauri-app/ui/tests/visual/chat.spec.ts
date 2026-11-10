@@ -177,7 +177,7 @@ test.describe("Chat Interface", () => {
     const dialog = page.locator(".confirm-dialog");
     await expect(dialog).toBeVisible();
     await expect(dialog.getByRole("alert")).toContainText("World model interruption · 80% predicted risk");
-    await expect(dialog.getByRole("alert")).toContainText("learned + rule");
+    await expect(dialog.getByRole("alert")).toContainText("Based on: the learned risk model, built-in risk rules");
     await expect(dialog.getByRole("alert")).toContainText("predicted disk usage 96% exceeds the safe threshold");
 
     await dialog.getByRole("button", { name: "Deny" }).click();
