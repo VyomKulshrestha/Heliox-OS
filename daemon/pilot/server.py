@@ -57,6 +57,7 @@ from pilot.intelligence.experience import (
     stable_action_idempotency_key,
 )
 from pilot.logger import ColorFormatter
+from pilot.plan_checks import world_model_summary
 from pilot.reasoning.events import (
     CONFIRMATION_APPROVED,
     CONFIRMATION_DENIED,
@@ -3661,6 +3662,7 @@ class PilotServer:
                         "actions": [a.model_dump() for a in plan.actions],
                         "explanation": plan.explanation,
                         "dry_run": dry_run,
+                        "world_model_enabled": bool(self.config.gateway.risk_gate_enabled),
                     },
                 )
             )
@@ -3745,6 +3747,7 @@ class PilotServer:
                         {
                             "plan_id": plan_id,
                             **risk_assessment.to_dict(),
+                            "summary": world_model_summary(risk_assessment.to_dict()),
                         },
                     )
                 )
@@ -3863,9 +3866,12 @@ class PilotServer:
             mcp_requires_visible_approval = str(params.get("source") or "").strip().lower() == "mcp"
             gnomon_interrupt, gnomon_reasons = False, []
             if not dry_run:
+                gnomon_started = time.monotonic()
                 gnomon_interrupt, gnomon_reasons, gnomon_review = await self._gnomon_review_request(
                     user_input, plan, review_screen_context
                 )
+                if gnomon_review.get("state") == "reviewed":
+                    gnomon_review["review_seconds"] = round(time.monotonic() - gnomon_started, 2)
                 if gnomon_review:
                     await ws.send(_notification("gnomon_review", {"plan_id": plan_id, **gnomon_review}))
             needs_confirm = (
@@ -9998,7 +10004,9 @@ class PilotServer:
             logger.warning("Gnomon request review failed", exc_info=True)
             return False, [], {}
         if verdict is None:  # still loading (it was asked to load) or unavailable
-            return False, [], {"state": reviewer.status()["state"], "execution_authority": False}
+            status = reviewer.status()
+            review = {"state": status["state"], "reason": status.get("reason", ""), "execution_authority": False}
+            return False, [], review
         return bool(verdict.escalate), list(verdict.reasons), {**verdict.to_dict(), "state": "reviewed"}
 
     async def _handle_autonomy_review_status(self, params: dict, ws: ServerConnection) -> dict:

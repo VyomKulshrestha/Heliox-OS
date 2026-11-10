@@ -265,6 +265,7 @@ describe("ConfirmDialog keyboard and selection safety", () => {
       "reason",
       "riskAssessment",
       "gnomon",
+      "checks",
       "submitting",
       "error",
     ]);

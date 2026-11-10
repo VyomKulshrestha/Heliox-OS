@@ -27,6 +27,7 @@
   import ParticleBurst from "./lib/components/ParticleBurst.svelte";
   import RunStatus from "./lib/components/RunStatus.svelte";
   import AgentRunCard from "./lib/components/AgentRunCard.svelte";
+  import PlanChecks from "./lib/components/PlanChecks.svelte";
   import VirtualList from "./lib/components/VirtualList.svelte";
   import PluginsTab from "./lib/components/PluginsTab.svelte";
   import GitConflictResolver from "./lib/components/GitConflictResolver.svelte";
@@ -364,6 +365,7 @@
               reason={$session.confirmReason}
               riskAssessment={$session.confirmRiskAssessment}
               gnomon={$session.confirmGnomon}
+              checks={$session.currentPlan?.plan_id === $session.confirmPlanId ? $session.currentPlan?.checks : null}
               submitting={$session.confirmSubmitting}
               error={$session.confirmError}
               onselectionchange={(indices) => session.setConfirmSelection($session.confirmPlanId, indices)}
@@ -711,6 +713,7 @@
                 </li>
               {/each}
             </ol>
+            <PlanChecks checks={msg.plan.checks} />
             {@render copyControl(msg)}
           </section>
         {:else if msg.type === "result"}

@@ -95,6 +95,50 @@ export interface Plan {
   explanation: string;
   actions: PlanAction[];
   dry_run?: boolean;
+  /** What the world model and Gnomon reported for this plan before it ran; absent parts were not sent. */
+  checks?: PlanChecks;
+}
+
+/** Machine values from the world model's evaluation; null when the model did not produce one. */
+export interface MachineState {
+  disk_usage_fraction: number | null;
+  process_count: number | null;
+}
+
+export interface MeasuredSize {
+  path_label: string;
+  size_text: string;
+  volume: string;
+  usage_before: number | null;
+  usage_after: number | null;
+}
+
+/** The daemon's `world_model_assessment.summary`, or `{ enabled: false }` when the gate is off. */
+export interface WorldModelCheck {
+  enabled: boolean;
+  unavailable?: boolean;
+  raised?: boolean;
+  score?: number;
+  reasons?: string[];
+  sources?: string[];
+  observed?: MachineState | null;
+  predicted?: MachineState | null;
+  measured_sizes?: MeasuredSize[];
+}
+
+/** The daemon's `gnomon_review` for a direct request. */
+export interface GnomonCheck {
+  state: string;
+  escalate?: boolean;
+  reasons?: string[];
+  scores?: Record<string, number>;
+  reason?: string;
+  review_seconds?: number;
+}
+
+export interface PlanChecks {
+  worldModel?: WorldModelCheck;
+  gnomon?: GnomonCheck;
 }
 
 export interface GitConflictBlock {
@@ -531,6 +575,20 @@ function createSession() {
     };
   }
 
+  /** Attach a world-model or Gnomon report to the plan card (and current plan) it was sent for. */
+  function withPlanChecks(s: SessionState, planId: string, patch: PlanChecks): SessionState {
+    if (!planId) return s;
+    const merge = (plan: Plan): Plan => ({ ...plan, checks: { ...plan.checks, ...patch } });
+    let found = false;
+    const messages = s.messages.map((message) => {
+      if (message.type !== "plan" || message.plan?.plan_id !== planId) return message;
+      found = true;
+      return { ...message, plan: merge(message.plan) };
+    });
+    const currentPlan = s.currentPlan?.plan_id === planId ? merge(s.currentPlan) : s.currentPlan;
+    return found || currentPlan !== s.currentPlan ? { ...s, messages, currentPlan } : s;
+  }
+
   // Background daemon message channel routing
   onNotification((method, params) => {
     const p = params as Record<string, unknown>;
@@ -760,6 +818,7 @@ function createSession() {
           explanation: String(p.explanation ?? ""),
           actions: (p.actions ?? []) as PlanAction[],
           dry_run: Boolean(p.dry_run),
+          ...(p.world_model_enabled === false ? { checks: { worldModel: { enabled: false } } } : {}),
         };
         const newLiveActions: LiveActionState[] = plan.actions.map((a, i) => ({
           index: i,
@@ -780,6 +839,21 @@ function createSession() {
             },
           ],
         }));
+        break;
+      }
+
+      case "world_model_assessment": {
+        // Autonomous rounds send no summary; the row shows only what the daemon summarised.
+        if (p.summary && typeof p.summary === "object") {
+          update((s) => withPlanChecks(s, String(p.plan_id ?? ""), { worldModel: p.summary as WorldModelCheck }));
+        }
+        break;
+      }
+
+      case "gnomon_review": {
+        if (typeof p.state === "string" && p.state) {
+          update((s) => withPlanChecks(s, String(p.plan_id ?? ""), { gnomon: p as unknown as GnomonCheck }));
+        }
         break;
       }
 

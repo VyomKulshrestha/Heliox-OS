@@ -1,5 +1,6 @@
 <script lang="ts">
-  import type { PlanAction } from "../stores/session";
+  import type { PlanAction, PlanChecks as PlanChecksData } from "../stores/session";
+  import PlanChecks from "./PlanChecks.svelte";
   import { describeAction } from "../utils/actionDetails";
   import { _ } from "svelte-i18n";
   import { onMount, tick, untrack } from "svelte";
@@ -13,6 +14,8 @@
     reason?: string;
     riskAssessment?: Record<string, unknown> | null;
     gnomon?: Record<string, unknown> | null;
+    /** What the world model and Gnomon reported for this plan; the dialog covers the plan card that shows it. */
+    checks?: PlanChecksData | null;
     submitting?: boolean;
     error?: string;
   }
@@ -25,6 +28,7 @@
     reason = "",
     riskAssessment = null,
     gnomon = null,
+    checks = null,
     submitting = false,
     error = "",
   }: Props = $props();
@@ -204,6 +208,13 @@
         <small>Advisory: Gnomon can ask for approval but never grants it.</small>
       </div>
     {/if}
+
+    <!-- Lines the blocks above already show are left out; for a direct request Gnomon's reasons are in the reason. -->
+    <PlanChecks
+      {checks}
+      hideWorldModel={Boolean(riskAssessment)}
+      hideGnomon={Boolean(gnomon?.escalate || checks?.gnomon?.escalate)}
+    />
 
     <ul class="confirm-list">
       {#each actions as action, i}
@@ -453,6 +464,10 @@
     font-size: 12px;
     line-height: 1.45;
     color: var(--text-primary);
+  }
+
+  .confirm-dialog :global(.plan-checks) {
+    margin-bottom: 14px;
   }
 
   .gnomon-review {
