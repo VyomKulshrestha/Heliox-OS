@@ -3316,9 +3316,9 @@ correction's revised plan asks again with a new `plan_id` and its own `confirm_r
 
 `resolution` is the daemon's resolution path, for example `"confirm_rpc"`, `"interject_correction"`,
 `"interject_deny"`, `"abort"`, `"timeout"`, `"unacknowledged"` or `"shutdown"`. It is informational;
-the UI keys only on `plan_id`. A denial by voice or typed text, a correction and Stop send their
-own reply (`voice_result`, the `interject` or `abort` result) only after this notification, waiting
-at most one second for it. A wait cancelled outright (the request itself was cancelled) sends
+the UI keys only on `plan_id`. A spoken denial's `voice_result` is sent only after this notification
+(waiting at most one second for it). The `interject` and `abort` replies do not wait: the UI keeps
+the dialog unanswerable from the moment it sends them until this notification closes it. A wait cancelled outright (the request itself was cancelled) sends
 nothing; that request's `execute` reply ends the task instead.
 
 ---

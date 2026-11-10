@@ -5756,13 +5756,21 @@ class PilotServer:
 
     @staticmethod
     async def _confirmation_closed(pending: PendingConfirmation) -> None:
-        """Wait, briefly, until the dialog for a denied confirmation was told to close, so the reply to a spoken
-        or typed denial, a correction or Stop never arrives while the dialog still shows Approve."""
+        """Wait, briefly, until the dialog for a denied confirmation was told to close, so the spoken reply to a
+        voice denial never arrives while the dialog still shows Approve.
+
+        Only ``_handle_confirm`` waits here. ``_resolve_pending_denied`` must not: its callers (a correction, Stop)
+        cancel the task's running step right after it returns, and a wait would let the waiter replan and start
+        the revised plan first, so the cancel would hit the revised plan. ``asyncio.wait`` keeps the bounded wait
+        the same on every Python version (``wait_for`` wraps the wait in a task before 3.12)."""
         if not pending.announces_close or pending.waiter_task is asyncio.current_task():
             return
+        closed = asyncio.ensure_future(pending.closed.wait())
         try:
-            await asyncio.wait_for(pending.closed.wait(), timeout=CONFIRM_CLOSE_WAIT_SECONDS)
-        except TimeoutError:
+            done, _ = await asyncio.wait({closed}, timeout=CONFIRM_CLOSE_WAIT_SECONDS)
+        finally:
+            closed.cancel()
+        if not done:
             logger.warning("Approval %s was denied but its dialog did not close in time", pending.plan_id)
 
     async def _handle_confirm(self, params: dict[str, Any], ws: ServerConnection) -> dict:
@@ -5905,7 +5913,7 @@ class PilotServer:
                 await self._close_durable_approval(plan_id, ApprovalStatus.DENIED)
             finally:
                 pending.event.set()
-        await self._confirmation_closed(pending)
+        # No wait for the dialog to close here (see _confirmation_closed): the caller acts on the old task first.
         return True
 
     async def _close_durable_approval(self, plan_id: str, status: ApprovalStatus) -> None:
