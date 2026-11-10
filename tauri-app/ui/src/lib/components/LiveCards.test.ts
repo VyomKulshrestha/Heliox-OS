@@ -122,6 +122,9 @@ describe("Live companion UI", () => {
     emit("live_interjection_withdrawn", { id: "c1", reason: "fixed" });
     await tick();
     expect(screen.getByText("Fixed")).toBeTruthy();
+    // Nothing left to copy once they fixed it; the other buttons stay.
+    expect(screen.queryByRole("button", { name: "Copy fix" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Thanks" })).toBeTruthy();
     vi.advanceTimersByTime(1500);
     await tick();
     expect(screen.queryByTestId("live-card")).toBeNull();

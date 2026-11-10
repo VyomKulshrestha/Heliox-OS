@@ -65,10 +65,10 @@ def test_a_recursive_delete_of_something_broad_is_urgent(line, title, evidence):
 
 def test_a_broad_powershell_delete_offers_the_whatif_version():
     [c] = terminal("PS C:\\Users\\me> Remove-Item -Recurse -Force C:\\Users\\me\\Documents")
-    assert c.message == "That deletes C:\\Users\\me\\Documents and everything in it. Nothing goes to the Recycle Bin."
+    assert c.message == "Nothing goes to the Recycle Bin."
     assert c.fix == "Remove-Item -Recurse -Force C:\\Users\\me\\Documents -WhatIf" and c.fix_kind == "command"
     [unix] = terminal("$ rm -rf ~/Documents")
-    assert unix.message == "That deletes ~/Documents and everything in it. rm has no undo." and unix.fix == ""
+    assert unix.message == "rm has no undo." and unix.fix == ""
 
 
 @pytest.mark.parametrize(
@@ -114,17 +114,17 @@ def test_a_delete_mentioned_mid_sentence_in_a_chat_is_not_a_command():
 @pytest.mark.parametrize(
     ("text", "title", "message"),
     [
-        ("Meeting on 31 November", "There's no 31 November", "November doesn't have a 31st."),
-        ("It's due on February 30", "There's no 30 February", "February doesn't have a 30th."),
-        ("Can we do the 31st of June?", "There's no 31 June", "June doesn't have a 31st."),
-        ("Payroll runs on Sept 31.", "There's no 31 September", "September doesn't have a 31st."),
-        ("Book it for 29 February", "There's no 29 February 2027", "2027 isn't a leap year, so February has no 29th."),
+        ("Meeting on 31 November", "There's no 31 November", "November has 30 days."),
+        ("It's due on February 30", "There's no 30 February", "February has 28 days."),
+        ("Can we do the 31st of June?", "There's no 31 June", "June has 30 days."),
+        ("Payroll runs on Sept 31.", "There's no 31 September", "September has 30 days."),
+        ("Book it for 29 February", "There's no 29 February 2027", "2027 isn't a leap year."),
         (
             "Launch is 29 February 2027",
             "There's no 29 February 2027",
-            "2027 isn't a leap year, so February has no 29th.",
+            "2027 isn't a leap year.",
         ),
-        ("Friday 29 February", "There's no 29 February 2027", "2027 isn't a leap year, so February has no 29th."),
+        ("Friday 29 February", "There's no 29 February 2027", "2027 isn't a leap year."),
     ],
 )
 def test_a_date_that_does_not_exist(text, title, message):
@@ -166,10 +166,10 @@ def test_impossible_dates_in_code_and_terminals_are_test_data():
 
 def test_a_weekday_next_to_a_numeric_date_that_reads_only_one_way():
     [c] = chat("Deadline is Thursday 11/11")
-    assert c.title == "11 November is a Wednesday" and c.message == "11 November is a Wednesday, not a Thursday."
+    assert c.title == "11 November is a Wednesday" and c.message == "You wrote Thursday."
     assert c.evidence == "Thursday 11/11" and c.fix == "Wednesday 11/11" and c.fix_kind == "replace"
     [later] = chat("Kickoff is Thursday 13/11.")
-    assert later.message == "13 November is a Friday, not a Thursday." and later.fix == "Friday 13/11"
+    assert later.message == "You wrote Thursday." and later.fix == "Friday 13/11"
     [year] = chat("Due Thursday 11/11/2026.")
     assert year.fix == "Wednesday 11/11/2026"
 
@@ -177,7 +177,7 @@ def test_a_weekday_next_to_a_numeric_date_that_reads_only_one_way():
 def test_a_numeric_date_that_misses_the_weekday_both_ways():
     [c] = chat("Tuesday 4/12 at 3")
     assert c.title == "4/12 isn't a Tuesday"
-    assert c.message == "4 December is a Friday and 12 April is a Monday, so 4/12 isn't a Tuesday either way."
+    assert c.message == "4 December is a Friday and 12 April is a Monday."
     assert c.fix == ""
 
 
@@ -221,7 +221,7 @@ def test_a_relative_day_with_the_wrong_weekday(text, title, fix):
 
 def test_a_wrong_tomorrow_says_when_the_named_day_is():
     [c] = chat("See you tomorrow, Thursday")
-    assert c.message == "Tomorrow is Wednesday, not Thursday."
+    assert c.message == "You wrote Thursday."
     assert c.detail == "The next Thursday is 12 November."
 
 
@@ -258,17 +258,17 @@ def test_after_midnight_tomorrow_still_means_the_day_after_sleep():
 @pytest.mark.parametrize(
     ("text", "title", "message", "fix"),
     [
-        ("Call at 25:00", "There's no 25:00", "A day ends at 23:59, so 25:00 isn't a time.", ""),
-        ("Let's start at 13:75.", "There's no 13:75", "An hour has 60 minutes, so 13:75 isn't a time.", ""),
-        ("Open until 24:30", "There's no 24:30", "A day ends at 23:59, so 24:30 isn't a time.", ""),
-        ("Meet at 14pm.", "14pm is 2pm", "14pm mixes the 24-hour and 12-hour clocks. 14:00 is 2pm.", "2pm"),
+        ("Call at 25:00", "There's no 25:00", "A day ends at 23:59.", ""),
+        ("Let's start at 13:75.", "There's no 13:75", "An hour has 60 minutes.", ""),
+        ("Open until 24:30", "There's no 24:30", "A day ends at 23:59.", ""),
+        ("Meet at 14pm.", "14pm is 2pm", "It mixes the 24-hour and 12-hour clocks.", "2pm"),
         (
             "Meet at 14:30pm",
             "14:30pm is 2:30pm",
-            "14:30pm mixes the 24-hour and 12-hour clocks. 14:30 is 2:30pm.",
+            "It mixes the 24-hour and 12-hour clocks.",
             "2:30pm",
         ),
-        ("Standup at 13am", "There's no 13am", "13am mixes the 24-hour and 12-hour clocks, so it isn't a time.", ""),
+        ("Standup at 13am", "There's no 13am", "It mixes the 24-hour and 12-hour clocks.", ""),
     ],
 )
 def test_a_clock_time_that_does_not_exist(text, title, message, fix):
@@ -352,11 +352,12 @@ def test_a_wrong_tomorrow_before_a_matching_date_blames_tomorrow_not_the_weekday
     tuesday = TextContext(today=date(2026, 11, 10), hour=12, app="Notepad", title="Notepad", source="focused_field")
     [c] = detect("Demo is tomorrow, Thursday 12 Nov", tuesday)
     assert c.title == "12 November isn't tomorrow"
-    assert c.message == "Tomorrow is Wednesday 11 November. Thursday 12 November is the day after tomorrow."
+    assert c.message == "Tomorrow is Wednesday 11 November."
+    assert c.detail == "Thursday 12 November is the day after tomorrow."
     # The old fix, "tomorrow, Wednesday", would have made the date wrong: drop the relative word instead.
-    assert (c.evidence, c.fix, c.detail) == ("tomorrow, Thursday", "Thursday", "")
+    assert (c.evidence, c.fix) == ("tomorrow, Thursday", "Thursday")
     [later] = detect("Demo is tomorrow, Thursday 19 Nov at 10", tuesday)
-    assert later.message.endswith("Thursday 19 November is in 9 days.")
+    assert later.detail == "Thursday 19 November is in 9 days."
     # A date that disagrees with its weekday keeps both ordinary cards.
     titles = sorted(c.title for c in detect("Demo is tomorrow, Thursday 13 Nov", tuesday))
     assert titles == ["13 November is a Friday", "Tomorrow is Wednesday"]

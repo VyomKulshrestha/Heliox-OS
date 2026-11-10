@@ -66,7 +66,7 @@ def test_flicking_between_two_windows_gets_one_offer_to_put_them_side_by_side():
     for i in range(10):
         found += watcher.observe("", excel if i % 2 else chrome, NOTES, now=i * 4.0)
     [offer] = found
-    assert offer.message == "You keep switching between Excel and Chrome. Want them side by side?"
+    assert (offer.title, offer.message) == ("Want Excel and Chrome side by side?", "You keep switching between them.")
     assert offer.fix == "Put the Excel window and the Chrome window side by side"
     # Once is enough for a while.
     assert not [o for i in range(10) for o in watcher.observe("", excel if i % 2 else chrome, NOTES, now=50 + i)]
@@ -85,7 +85,7 @@ def test_the_same_error_three_times_in_a_terminal_gets_an_offer_once():
     run = "PS C:\\app> python main.py\nModuleNotFoundError: No module named 'cv2'\n"
     assert watcher.observe(run * 2, "WindowsTerminal.exe|PowerShell", TERMINAL, now=0) == []
     [offer] = watcher.observe(run * 3, "WindowsTerminal.exe|PowerShell", TERMINAL, now=30)
-    assert offer.message == "That error has come up 3 times. Want me to look into it?"
+    assert offer.message == "It has come up 3 times."
     assert offer.fix == "Help me fix this error: ModuleNotFoundError: No module named 'cv2'"
     assert "pip install opencv-python" in offer.detail or offer.detail
     assert watcher.observe(run * 4, "WindowsTerminal.exe|PowerShell", TERMINAL, now=60) == []

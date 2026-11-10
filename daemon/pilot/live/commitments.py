@@ -155,8 +155,8 @@ def find_commitments(
             Correction(
                 kind=KIND,
                 key=f"{KIND}:{action.casefold()}:{deadline.date().isoformat()}",
-                title="Want a reminder for that?",
-                message=f"You said you'd {action} {promised}. Want a reminder {_when(moment, now)}?",
+                title=f"Want a reminder {_when(moment, now)}?",
+                message=f"You said you'd {action} {promised}.",
                 evidence=sentence[-120:],
                 fix=request,
                 fix_kind="ask",

@@ -194,7 +194,7 @@ def weekday_date(text: str, ctx: TextContext) -> list[Correction]:
                     kind="weekday_date",
                     key=f"weekday_date:{evidence.casefold()}",
                     title=f"{day} {month_name} is a {actual_name}",
-                    message=f"{day} {month_name} is a {actual_name}, not a {stated_name}.",
+                    message=f"You wrote {stated_name}.",
                     evidence=evidence,
                     detail=f"If you meant the {stated_name}, that's {nearest.day} {calendar.month_name[nearest.month]}.",
                     fix=corrected,
@@ -248,10 +248,12 @@ def _no_such_date(evidence: str, day: int, month: int, stated_year: int | None, 
     if month == 2 and day == 29:
         year = stated_year or _plausible_year(month, ctx.today)
         title = f"There's no 29 February {year}"
-        message = f"{year} isn't a leap year, so February has no 29th."
+        message = f"{year} isn't a leap year."
     else:
         title = f"There's no {day} {month_name}"
-        message = f"{month_name} doesn't have a {day}{_ordinal(day)}."
+        message = (
+            f"{month_name} has {calendar.monthrange(stated_year or _plausible_year(month, ctx.today), month)[1]} days."
+        )
     return Correction(
         kind="weekday_date",
         key=f"weekday_date:{evidence.casefold()}",
@@ -342,7 +344,7 @@ def _numeric_weekdays(text: str, ctx: TextContext) -> list[Correction]:
             found.append(
                 Correction(
                     title=f"{spoken} is a {actual_name}",
-                    message=f"{spoken} is a {actual_name}, not a {stated_name}.",
+                    message=f"You wrote {stated_name}.",
                     fix=evidence.replace(token, _match_case(actual_name, token), 1),
                     fix_kind="replace",
                     confidence=0.95,
@@ -356,7 +358,7 @@ def _numeric_weekdays(text: str, ctx: TextContext) -> list[Correction]:
                     title=f"{numeric} isn't a {stated_name}",
                     message=(
                         f"{first_name} is a {_DAYS[first.weekday()].title()} and {second_name} is a "
-                        f"{_DAYS[second.weekday()].title()}, so {numeric} isn't a {stated_name} either way."
+                        f"{_DAYS[second.weekday()].title()}."
                     ),
                     confidence=0.9,
                     **common,
@@ -454,11 +456,9 @@ def _relative_days(text: str, ctx: TextContext) -> list[Correction]:
                     kind="weekday_date",
                     key=f"weekday_date:{evidence.casefold()}",
                     title=f"{on} {'wasn' if rel == 'yesterday' else 'isn'}'t {rel}",
-                    message=(
-                        f"{rel.title()} {verb} {actual_name} {when.day} {calendar.month_name[when.month]}. "
-                        f"{stated_name} {on} is {_from_today(written, ctx.today)}."
-                    ),
+                    message=f"{rel.title()} {verb} {actual_name} {when.day} {calendar.month_name[when.month]}.",
                     evidence=evidence,
+                    detail=f"{stated_name} {on} is {_from_today(written, ctx.today)}.",
                     fix=evidence[start:end],
                     fix_kind="replace",
                     urgency=NORMAL,
@@ -472,7 +472,7 @@ def _relative_days(text: str, ctx: TextContext) -> list[Correction]:
                 kind="weekday_date",
                 key=f"weekday_date:{evidence.casefold()}",
                 title=f"{rel.title()} {verb} {actual_name}",
-                message=f"{rel.title()} {verb} {actual_name}, not {stated_name}.",
+                message=f"You wrote {stated_name}.",
                 evidence=evidence,
                 detail=detail,
                 fix=evidence[:start] + _match_case(actual_name, token) + evidence[end:],
@@ -520,7 +520,7 @@ def _clock_times(text: str) -> list[Correction]:
             found.append(
                 Correction(
                     title=f"{evidence} is {twelve}{gap}{spelled}",
-                    message=f"{evidence} mixes the 24-hour and 12-hour clocks. {hour}:{minutes or '00'} is {twelve}{gap}{spelled}.",
+                    message="It mixes the 24-hour and 12-hour clocks.",
                     fix=f"{twelve}{gap}{spelled}",
                     fix_kind="replace",
                     confidence=0.9,
@@ -531,7 +531,7 @@ def _clock_times(text: str) -> list[Correction]:
             found.append(
                 Correction(
                     title=f"There's no {evidence}",
-                    message=f"{evidence} mixes the 24-hour and 12-hour clocks, so it isn't a time.",
+                    message="It mixes the 24-hour and 12-hour clocks.",
                     confidence=0.9,
                     **common,
                 )
@@ -540,9 +540,9 @@ def _clock_times(text: str) -> list[Correction]:
         hour, minutes = int(match["h"]), int(match["mm"])
         shown = match["t"]
         if minutes >= 60:
-            message = f"An hour has 60 minutes, so {shown} isn't a time."
+            message = "An hour has 60 minutes."
         elif hour >= 25 or (hour == 24 and minutes > 0):
-            message = f"A day ends at 23:59, so {shown} isn't a time."
+            message = "A day ends at 23:59."
         else:
             continue
         found.append(
@@ -632,8 +632,8 @@ def arithmetic(text: str, ctx: TextContext) -> list[Correction]:
             Correction(
                 kind="arithmetic",
                 key=f"arithmetic:{evidence}",
-                title=f"That comes to {shown}",
-                message=f"{_fmt(a, _decimals(match['a']))} {symbol} {_fmt(b, _decimals(match['b']))} is {shown}, not {match['c']}.",
+                title=f"{_fmt(a, _decimals(match['a']))} {symbol} {_fmt(b, _decimals(match['b']))} is {shown}",
+                message=f"You wrote {match['c']}.",
                 evidence=evidence,
                 fix=evidence[: match.start("c") - match.start()] + shown,
                 fix_kind="replace",
@@ -655,8 +655,8 @@ def arithmetic(text: str, ctx: TextContext) -> list[Correction]:
             Correction(
                 kind="arithmetic",
                 key=f"arithmetic:{evidence}",
-                title=f"That comes to {shown}",
-                message=f"{match['p']}% of {match['base']} is {shown}, not {match['c']}.",
+                title=f"{match['p']}% of {match['base']} is {shown}",
+                message=f"You wrote {match['c']}.",
                 evidence=evidence,
                 fix=evidence[: match.start("c") - match.start()] + shown,
                 fix_kind="replace",
@@ -674,71 +674,71 @@ _RISKY: tuple[tuple[str, re.Pattern[str], str, str, str], ...] = (
     (
         "rm_root",
         re.compile(r"\brm\s+(?:-[a-z]*r[a-z]*f[a-z]*|-[a-z]*f[a-z]*r[a-z]*)\s+(?:--no-preserve-root\s+)?(?:/|~|/\*|\*)(?=\s|$)", re.I),
-        "That deletes everything there",
-        "That rm -rf targets the whole drive or your home folder, and there's no undo.",
+        "That deletes the whole drive or your home folder",
+        "rm -rf has no undo.",
         "",
     ),
     (
         "force_push",
         re.compile(r"\bgit\s+push\b[^\n]*?(?:\s--force(?!-with-lease)\b|\s-f\b)", re.I),
         "That can overwrite teammates' commits",
-        "A plain force-push can overwrite your teammates' commits. --force-with-lease refuses if the remote moved.",
+        "Use --force-with-lease, which stops if someone else pushed first.",
         "force_with_lease",
     ),
     (
         "reset_hard",
         re.compile(r"\bgit\s+reset\s+--hard\b", re.I),
         "That throws away your changes",
-        "git reset --hard throws away uncommitted changes. git stash would keep them.",
+        "git stash would keep them.",
         "",
     ),
     (
         "clean_fdx",
         re.compile(r"\bgit\s+clean\s+-[a-z]*f[a-z]*d[a-z]*x|\bgit\s+clean\s+-[a-z]*x[a-z]*f", re.I),
         "That deletes ignored files too",
-        "git clean -x also deletes ignored files, like your .env and build caches.",
+        "That includes your .env and build caches.",
         "",
     ),
     (
         "drop_table",
         re.compile(r"\bdrop\s+(?:table|database|schema)\s+(?!if\s+exists\s+\w+_tmp)\S+", re.I),
-        "That drops it for good",
-        "DROP removes the table and its data permanently. Make sure you have a backup.",
+        "That deletes it for good",
+        "Make sure you have a backup first.",
         "",
     ),
     (
         "delete_all_rows",
         re.compile(r"\bdelete\s+from\s+(?P<t>[\w.\"`\[\]]+)\s*;", re.I),
         "That deletes every row",
-        "That DELETE has no WHERE clause, so it removes every row in the table.",
+        "It has no WHERE clause.",
         "",
     ),
     (
         "update_all_rows",
         re.compile(r"\bupdate\s+[\w.\"`\[\]]+\s+set\s+(?:(?!\bwhere\b)[^;])*;", re.I),
         "That updates every row",
-        "That UPDATE has no WHERE clause, so it changes every row in the table.",
+        "It has no WHERE clause.",
         "",
     ),
     (
         "chmod_777",
         re.compile(r"\bchmod\s+(?:-R\s+)?777\b", re.I),
         "That makes it writable by anyone",
-        "chmod 777 lets every user on the machine change those files.",
+        "755 for folders or 644 for files is usually enough.",
         "",
     ),
     (
         "pipe_to_shell",
         re.compile(r"\b(?:curl|wget)\b[^\n|]*\|\s*(?:sudo\s+)?(?:ba|z)?sh\b|\biwr\b[^\n|]*\|\s*iex\b", re.I),
         "That runs a script you haven't read",
-        "Piping a download straight into a shell runs it before you can read it.",
+        "Download it first and read it before you run it.",
         "",
     ),
     (
         "format_drive",
         re.compile(r"\bformat\s+[a-z]:(?=\s|$)|\bmkfs(?:\.\w+)?\s+/dev/|\bdd\s+if=\S+\s+of=/dev/(?:sd|nvme|disk)", re.I),
         "That wipes a whole drive",
-        "That command erases an entire drive.",
+        "Check the drive it names before you press Enter.",
         "",
     ),
 )  # fmt: skip
@@ -858,10 +858,7 @@ def _broad_delete(line: str) -> Correction | None:
             if wildcard and not what.startswith("everything"):
                 what = "everything in " + what.replace("a whole ", "a ").replace("the whole ", "the ")
             tail = "Nothing goes to the Recycle Bin." if windows else "rm has no undo."
-            if wildcard:
-                message = f"That deletes {what}. {tail}"
-            else:
-                message = f"That deletes {shown} and everything in it. {tail}"
+            message = tail
             fix = ""
             if powershell and not segment.rstrip().endswith("-WhatIf"):
                 fix = line[start.start("cmd") : start.end() + len(segment)].rstrip() + " -WhatIf"
@@ -964,7 +961,7 @@ def secret_in_text(text: str, ctx: TextContext) -> list[Correction]:
                     kind="secret_in_text",
                     key=f"secret_in_text:{label}:{_redact(secret)}",
                     title=f"That looks like {label}",
-                    message=f"That looks like {label}. Anyone who reads this can use it.",
+                    message="Anyone who reads this can use it.",
                     evidence=_redact(secret),
                     detail="If it has been sent already, rotate it where it was issued.",
                     urgency=URGENT,
@@ -1003,7 +1000,7 @@ def profile_fact(text: str, ctx: TextContext) -> list[Correction]:
                     kind="profile_fact",
                     key=f"profile_fact:{relation}:{first.casefold()}",
                     title=f"Your {relation} is {known}",
-                    message=f"You told me your {relation} is {known}, not {first}.",
+                    message=f"You wrote {first}.",
                     evidence=_short(match.group(0)),
                     detail=f'If that has changed, say "my {relation} is {first}" and I\'ll update it.',
                     fix=match.group(0).replace(said, known),
@@ -1057,7 +1054,7 @@ def error_on_screen(text: str, ctx: TextContext) -> list[Correction]:
                     kind="error_on_screen",
                     key=f"error_on_screen:{evidence}",
                     title=f"{module} isn't installed",
-                    message=f"Python can't find {module}. Installing {package} should fix it.",
+                    message=f"Installing {package} should fix it.",
                     evidence=evidence,
                     fix=f"pip install {package}",
                     fix_kind="command",
@@ -1070,8 +1067,8 @@ def error_on_screen(text: str, ctx: TextContext) -> list[Correction]:
                     Correction(
                         kind="error_on_screen",
                         key=f"error_on_screen:{evidence}",
-                        title="A local import path is wrong",
-                        message=f"Node can't find {module}. Check the path and the file's extension.",
+                        title=f"Node can't find {module}",
+                        message="Check the path and the file's extension.",
                         evidence=evidence,
                     )
                 ]
@@ -1080,7 +1077,7 @@ def error_on_screen(text: str, ctx: TextContext) -> list[Correction]:
                     kind="error_on_screen",
                     key=f"error_on_screen:{evidence}",
                     title=f"{module} isn't installed",
-                    message=f"Node can't find {module}. Installing it should fix that.",
+                    message=f"Installing {module} should fix it.",
                     evidence=evidence,
                     fix=f"npm install {module}",
                     fix_kind="command",
@@ -1093,9 +1090,8 @@ def error_on_screen(text: str, ctx: TextContext) -> list[Correction]:
                     kind="error_on_screen",
                     key=f"error_on_screen:{evidence}",
                     title=f"Port {port} is already taken",
-                    message=f"Something else is already using port {port}.",
+                    message="Stop that program, or start this one on another port.",
                     evidence=evidence,
-                    detail="Stop that program, or start this one on another port.",
                     fix=f"Show me which program is using port {port}",
                     fix_kind="ask",
                 )
@@ -1106,8 +1102,8 @@ def error_on_screen(text: str, ctx: TextContext) -> list[Correction]:
                 Correction(
                     kind="error_on_screen",
                     key=f"error_on_screen:{evidence}",
-                    title=f"{cmd} isn't installed or isn't on PATH",
-                    message=f"The shell can't find {cmd}. It isn't installed, or its folder isn't on PATH.",
+                    title=f"The shell can't find {cmd}",
+                    message="Install it, or add its folder to PATH.",
                     evidence=evidence,
                     fix=f"Check whether {cmd} is installed on this computer",
                     fix_kind="ask",
@@ -1119,7 +1115,7 @@ def error_on_screen(text: str, ctx: TextContext) -> list[Correction]:
                     kind="error_on_screen",
                     key=f"error_on_screen:{evidence}",
                     title=f'There\'s no "{match["script"]}" script',
-                    message=f'package.json has no "{match["script"]}" script. npm run lists the ones it has.',
+                    message="npm run lists the scripts you have.",
                     evidence=evidence,
                     fix="npm run",
                     fix_kind="command",
@@ -1131,7 +1127,7 @@ def error_on_screen(text: str, ctx: TextContext) -> list[Correction]:
                     kind="error_on_screen",
                     key=f"error_on_screen:{evidence}",
                     title="This folder isn't a git repository",
-                    message="You're running git outside a repository. cd into the project, or run git init.",
+                    message="cd into the project, or run git init.",
                     evidence=evidence,
                 )
             ]
@@ -1142,7 +1138,7 @@ def error_on_screen(text: str, ctx: TextContext) -> list[Correction]:
                     kind="error_on_screen",
                     key=f"error_on_screen:{evidence}",
                     title=f"Syntax error in {file_name}, line {match['line']}",
-                    message=f"Python stopped at line {match['line']} of {file_name}: {match['msg'].strip()}.",
+                    message=f"Python says: {match['msg'].strip()}.",
                     evidence=evidence,
                 )
             ]
@@ -1168,7 +1164,7 @@ def missing_attachment(text: str, ctx: TextContext) -> list[Correction]:
             kind="missing_attachment",
             key=f"missing_attachment:{ctx.title.casefold()}",
             title="You mention an attachment",
-            message="You mention an attachment. Make sure it's attached before you send.",
+            message="Make sure it's attached before you send.",
             evidence=_short(match.group(0)),
             urgency=LOW,
             confidence=0.6,
@@ -1198,8 +1194,8 @@ def repeated_word(text: str, ctx: TextContext) -> list[Correction]:
         found[key] = Correction(
             kind="repeated_word",
             key=key,
-            title="A doubled word",
-            message=f'"{word} {word}" has the word twice.',
+            title=f'"{word}" is there twice',
+            message="Delete one of them.",
             evidence=match.group(0),
             fix=word,
             fix_kind="replace",

@@ -62,7 +62,10 @@ def test_questions_states_other_people_and_promises_without_a_deadline_are_left_
 
 def test_the_message_quotes_their_words_and_the_offer_skips_what_is_already_set_or_already_late():
     [card] = find_commitments("Sure. I'll send you the deck by Friday.", CHAT, MONDAY_11)
-    assert card.message == "You said you'd send them the deck by Friday. Want a reminder on Friday at 10am?"
+    assert (card.title, card.message) == (
+        "Want a reminder on Friday at 10am?",
+        "You said you'd send them the deck by Friday.",
+    )
     assert card.kind == "commitment" and card.fix_kind == "ask" and card.urgency == "low"
     assert offers("I'll send you the deck by Friday.", reminders=[{"text": "send the deck to Ana"}]) == []
     assert offers("I will review the PR by 11:30am.") == []  # the reminder would be due in the past

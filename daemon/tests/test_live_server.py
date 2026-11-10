@@ -73,7 +73,7 @@ async def test_rpcs_set_status_feedback_and_explain(tmp_path):
         await server._live.tick()
     sent = [call.args for call in server._broadcast_notification.await_args_list]
     [card] = [payload for method, payload in sent if method == "live_interjection"]
-    assert card["message"] == "14 November is a Saturday, not a Tuesday."
+    assert (card["title"], card["message"]) == ("14 November is a Saturday", "You wrote Tuesday.")
 
     explained = await server._handle_live_explain({"id": card["id"]}, MagicMock())
     assert "17 November" in explained["text"]
@@ -93,7 +93,7 @@ async def test_spoken_replies_follow_the_last_correction_and_fix_it_hands_off(tm
     for _ in range(50):
         clock[0] += 0.2
         await server._live.tick()
-    assert "port 3000" in await server._control_reply("why")
+    assert "Port 3000" in await server._control_reply("why")
     assert await server._control_reply("fix it") == "On it."
     import asyncio
 
@@ -131,7 +131,7 @@ async def test_supervision_risk_warnings_become_live_cards_when_live_is_on(tmp_p
             "supervision_risk_warning", {"pattern": "destructive_sql", "source": "keystroke"}
         )
         cards = await run(31)
-    assert len(cards) == 1 and cards[0]["urgency"] == "normal" and "permanently" in cards[0]["message"]
+    assert len(cards) == 1 and cards[0]["urgency"] == "normal" and "backup" in cards[0]["message"]
 
 
 @pytest.mark.asyncio

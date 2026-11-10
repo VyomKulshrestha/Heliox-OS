@@ -65,7 +65,7 @@
           <p class="explanation">{$live.explanations[card.id]}</p>
         {/if}
         <div class="actions">
-          {#if card.fix}
+          {#if card.fix && note !== "Fixed"}
             <button type="button" class="primary" onclick={() => useFix(card)}>{fixLabel(card)}</button>
           {/if}
           {#if card.detail && !$live.explanations[card.id]}

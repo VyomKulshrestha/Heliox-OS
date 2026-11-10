@@ -27,7 +27,7 @@ def kinds(text: str, **kw) -> list[str]:
 
 def test_weekday_date_names_the_real_day_and_offers_both_readings():
     [c] = detect("Let's meet on Tuesday, 14 November to review.", ctx(app="chrome", title="Gmail"))
-    assert c.message == "14 November is a Saturday, not a Tuesday."
+    assert (c.title, c.message) == ("14 November is a Saturday", "You wrote Tuesday.")
     assert c.fix == "Saturday, 14 November"
     assert "17 November" in c.detail  # the nearest Tuesday, if the date was the slip
     assert detect("Meeting Tue Nov 17 works", ctx()) == []
@@ -37,8 +37,8 @@ def test_weekday_date_names_the_real_day_and_offers_both_readings():
 
 def test_arithmetic_checks_sums_and_percentages_but_not_code():
     [c] = detect("The total is 12 x 15 = 170 so we order more", ctx(app="winword"))
-    assert c.message == "12 × 15 is 180, not 170." and c.fix == "12 x 15 = 180"
-    assert detect("20% of 150 = 35", ctx())[0].message == "20% of 150 is 30, not 35."
+    assert (c.title, c.message, c.fix) == ("12 × 15 is 180", "You wrote 170.", "12 x 15 = 180")
+    assert [(c.title, c.message) for c in detect("20% of 150 = 35", ctx())] == [("20% of 150 is 30", "You wrote 35.")]
     assert detect("2 + 2 = 4 and 10 / 4 = 2.5", ctx()) == []
     assert detect("total = 5 + 3", ctx(app="Code.exe", title="main.py - Visual Studio Code")) == []
 
@@ -73,7 +73,7 @@ def test_secrets_in_messages_are_redacted_and_ignored_where_they_belong():
 
 def test_profile_facts_only_for_people_you_have_one_of():
     [c] = detect("I will email my manager Sarah tomorrow", ctx())
-    assert c.message == "You told me your manager is Priya, not Sarah." and c.fix == "my manager Priya"
+    assert (c.title, c.message, c.fix) == ("Your manager is Priya", "You wrote Sarah.", "my manager Priya")
     assert detect("lunch with my manager Priya", ctx()) == []
     assert detect("drinks with my friend Alex", ctx()) == []  # you can have many friends
 
@@ -239,7 +239,7 @@ async def test_engine_waits_for_the_pause_speaks_once_and_withdraws_when_fixed(t
     await settle()
     cards = [p for e, p in events if e == "live_interjection"]
     assert len(cards) == 1 and cards[0]["kind"] == "arithmetic" and cards[0]["spoken"]
-    assert spoken == [("12 × 15 is 180, not 170.", False)]
+    assert spoken == [("12 × 15 is 180. You wrote 170.", False)]
 
     await run_for(live, clock, 5)  # the mistake is still there: never repeated
     assert len([e for e, _ in events if e == "live_interjection"]) == 1
@@ -262,9 +262,7 @@ async def test_engine_holds_still_while_the_person_talks_and_catches_what_they_s
     await run_for(live, clock, 1)
     await settle()
     # Both catches from one sentence come back as one reply, and both get a card.
-    assert spoken == [
-        ("14 November is a Saturday, not a Tuesday. You told me your manager is Priya, not Sarah.", False)
-    ]
+    assert spoken == [("14 November is a Saturday. You said Tuesday. Your manager is Priya. You said Sarah.", False)]
     assert sorted(p["kind"] for e, p in events if e == "live_interjection") == ["profile_fact", "weekday_date"]
 
 
@@ -277,7 +275,7 @@ async def test_replies_thanks_why_fix_and_mute(tmp_path):
     [card] = [p for e, p in events if e == "live_interjection"]
     assert card["kind"] == "error_on_screen"
     why = await live.handle_reply("why")
-    assert "port 3000" in why.reply
+    assert why.reply.startswith("Port 3000 is already taken. Stop that program")
     fix = await live.handle_reply("fix it")
     assert fix.delegate == "Show me which program is using port 3000"
     assert await live.handle_reply("what time is it") is None

@@ -10,7 +10,7 @@
       "pattern": "\\bkubectl\\s+delete\\s+(?:ns|namespaces?)\\b",
       "flags": "i",
       "title": "That deletes a whole namespace",
-      "message": "Deleting a namespace deletes everything in it: deployments, secrets, volumes claims. Check the context first.",
+      "message": "Everything in it goes too, so check your kubectl context first.",
       "urgency": "urgent",
       "positives": ["kubectl delete namespace staging", "kubectl delete ns payments", "$ kubectl delete namespaces old-team"],
       "decoys": ["kubectl get namespaces", "kubectl delete pod api-7f9c -n staging", "kubectl describe ns payments"]
@@ -21,7 +21,7 @@
       "pattern": "\\bterraform\\s+(?:apply\\s+-destroy|destroy)\\b(?![^\\n]*-target)",
       "flags": "i",
       "title": "That destroys every resource in the state",
-      "message": "terraform destroy without -target removes everything this state manages. Run terraform plan -destroy first.",
+      "message": "Run terraform plan -destroy first to see the list.",
       "urgency": "urgent",
       "positives": ["terraform destroy", "terraform destroy -auto-approve", "terraform apply -destroy"],
       "decoys": ["terraform destroy -target=aws_instance.web", "terraform plan -destroy", "terraform apply"]
@@ -32,7 +32,7 @@
       "pattern": "\\bdocker\\s+(?:system\\s+prune\\b[^\\n]*--volumes|volume\\s+prune\\b)",
       "flags": "i",
       "title": "That deletes Docker volumes",
-      "message": "Pruning volumes deletes the data in every volume no running container uses, databases included.",
+      "message": "Unused volumes go too, databases included.",
       "urgency": "urgent",
       "positives": ["docker system prune -a --volumes", "docker volume prune", "docker system prune --volumes -f"],
       "decoys": ["docker system prune", "docker volume ls", "docker image prune -a"]
@@ -43,7 +43,7 @@
       "pattern": "\\baws\\s+s3\\s+(?:rm\\s+s3://\\S+[^\\n]*--recursive|rb\\s+s3://\\S+[^\\n]*--force)",
       "flags": "i",
       "title": "That empties an S3 bucket",
-      "message": "That removes every object under the path, and S3 has no undo unless versioning is on.",
+      "message": "S3 has no undo unless versioning is on.",
       "urgency": "urgent",
       "positives": ["aws s3 rm s3://prod-assets --recursive", "aws s3 rb s3://old-logs --force", "aws s3 rm s3://backups/2026/ --recursive --quiet"],
       "decoys": ["aws s3 ls s3://prod-assets --recursive", "aws s3 rm s3://prod-assets/old.png", "aws s3 cp ./out s3://site --recursive"]
@@ -53,7 +53,7 @@
       "where": ["terminal"],
       "pattern": "\\bgit\\s+(?:branch\\s+-D\\s+(?:main|master)\\b|push\\s+\\S+\\s+(?:--delete\\s+|:)(?:main|master)\\b)",
       "title": "That deletes the main branch",
-      "message": "That deletes main. If you meant a feature branch, check the name.",
+      "message": "If you meant a feature branch, check the name.",
       "urgency": "urgent",
       "positives": ["git branch -D main", "git push origin --delete main", "git push origin :master"],
       "decoys": ["git branch -D feature/voice", "git push origin --delete old-branch", "git checkout main"]

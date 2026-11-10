@@ -141,6 +141,15 @@ def replaced(old: str, new: str) -> bool:
     return removed >= REPLACED_MIN_CHARS and removed * 2 > len(old)
 
 
+def say(title: str, message: str, source: str = "") -> str:
+    """A card read out as one reply: its title states the fact and its body adds what they wrote or what to do."""
+    if source == "speech":
+        message = message.replace("You wrote ", "You said ", 1)
+    if not title:
+        return message
+    return f"{title}{'' if title[-1] in '.?!' else '.'} {message}".strip()
+
+
 @dataclass(frozen=True)
 class LiveReply:
     reply: str
@@ -151,16 +160,16 @@ class LiveReply:
 _RISK_NOTICES = {
     "destructive_shell_command": (
         "That command could wipe a lot",
-        "The command you just typed could delete a lot of files, and there's no undo.",
+        "There's no undo.",
     ),
     "credential_exposure": (
         "That looks like a password or key",
         "What you just typed looks like a password or key. Make sure it isn't going somewhere other people can read.",
     ),
-    "destructive_sql": ("That SQL deletes data for good", "The SQL you just typed drops or deletes data permanently."),
+    "destructive_sql": ("That SQL deletes data for good", "Make sure you have a backup first."),
     "unauthorized_admin_command": (
         "That changes admin rights",
-        "The command you just typed changes administrator accounts or permissions.",
+        "Check it's the account you mean.",
     ),
 }
 
@@ -607,7 +616,7 @@ class LiveCompanion:
                 del self._pending[key]
                 await self._deliver(item, spoken=verdict == SPEAK, now=now)
                 if verdict == SPEAK:
-                    said.append(item.correction.message)
+                    said.append(say(item.correction.title, item.correction.message, item.source))
                     urgent_said = urgent_said or item.correction.urgency == URGENT
         if said:
             # Several catches in one turn are said as one reply, not as a queue of interruptions.
@@ -681,7 +690,7 @@ class LiveCompanion:
             if correction_id:
                 return "That correction is no longer available."
             return "Nothing to explain: Live hasn't raised anything in the last minute and a half."
-        parts = [entry["message"]]
+        parts = [say(entry["title"], entry["message"], entry.get("source", ""))]
         if entry.get("detail"):
             parts.append(entry["detail"])
         if entry.get("fix") and entry.get("fix_kind") in ("replace", "command"):
