@@ -1,0 +1,69 @@
+{
+  "load_and_warm_up_seconds": 33.3,
+  "gpu_before": "1095 MiB, 20 %",
+  "rows": [
+    {
+      "case": "one-part request",
+      "actions": 1,
+      "questions": 2,
+      "median_seconds": 0.97,
+      "max_seconds": 1.18
+    },
+    {
+      "case": "one-part request",
+      "actions": 3,
+      "questions": 2,
+      "median_seconds": 1.02,
+      "max_seconds": 1.07
+    },
+    {
+      "case": "one-part request",
+      "actions": 6,
+      "questions": 2,
+      "median_seconds": 1.07,
+      "max_seconds": 1.11
+    },
+    {
+      "case": "multi-part request",
+      "actions": 1,
+      "questions": 1,
+      "median_seconds": 0.68,
+      "max_seconds": 0.7
+    },
+    {
+      "case": "multi-part request",
+      "actions": 3,
+      "questions": 1,
+      "median_seconds": 0.69,
+      "max_seconds": 0.7
+    },
+    {
+      "case": "multi-part request",
+      "actions": 6,
+      "questions": 1,
+      "median_seconds": 0.72,
+      "max_seconds": 0.73
+    },
+    {
+      "case": "one-part request with tool output",
+      "actions": 1,
+      "questions": 3,
+      "median_seconds": 1.37,
+      "max_seconds": 1.43
+    },
+    {
+      "case": "one-part request with tool output",
+      "actions": 3,
+      "questions": 3,
+      "median_seconds": 1.42,
+      "max_seconds": 1.46
+    },
+    {
+      "case": "one-part request with tool output",
+      "actions": 6,
+      "questions": 3,
+      "median_seconds": 1.47,
+      "max_seconds": 1.49
+    }
+  ]
+}

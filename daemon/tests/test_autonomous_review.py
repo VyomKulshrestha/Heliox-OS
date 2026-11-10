@@ -229,8 +229,9 @@ class _FakeGnomon:
     def warm(self):
         pass
 
-    async def review_plan(self, goal, plan, untrusted_context=""):
+    async def review_plan(self, goal, plan, untrusted_context="", **options):
         self.calls += 1
+        self.options = options
         return self.verdict
 
 

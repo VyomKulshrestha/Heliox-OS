@@ -130,7 +130,11 @@ class AutonomousReviewer:
 
         if self._gnomon is not None and mutating:
             try:
-                verdict = await self._gnomon.review_plan(job.goal, plan, untrusted_context)
+                # With undo on, a file delete Heliox backs up is not graded as an irreversible deletion.
+                undo = getattr(self._config_getter(), "undo", None)
+                verdict = await self._gnomon.review_plan(
+                    job.goal, plan, untrusted_context, undo_enabled=bool(getattr(undo, "enabled", False))
+                )
             except Exception:
                 logger.warning("Gnomon plan review failed", exc_info=True)
                 verdict = None

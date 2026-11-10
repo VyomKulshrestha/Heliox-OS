@@ -839,6 +839,10 @@ class PlanHistoryStore:
 
 GNOMON_WARM_AFTER_SECONDS = 45.0  # after start-up, so the daemon is answering before the model loads
 GNOMON_REQUEST_TIMEOUT = 4.0  # a review of a request never holds it up longer than this
+# Warm reviews took 0.7-1.5 s for 1-6 action plans on a free RTX 4060 (scripts/check_gnomon_review_timing.py,
+# 10 November 2026), so 4 s leaves room for a busy GPU. No question starts after this many seconds, so a slow review
+# returns what it found (marked incomplete) instead of being cut off with nothing.
+GNOMON_REQUEST_QUESTION_BUDGET = 3.0
 
 
 class PilotServer:
@@ -10032,7 +10036,14 @@ class PilotServer:
             return False, [], {}  # only reads: nothing for Gnomon to weigh
         try:
             verdict = await asyncio.wait_for(
-                reviewer.review_plan(user_input, plan, untrusted_context or ""), timeout=GNOMON_REQUEST_TIMEOUT
+                reviewer.review_plan(
+                    user_input,
+                    plan,
+                    untrusted_context or "",
+                    undo_enabled=bool(self.config.undo.enabled),
+                    time_budget=min(GNOMON_REQUEST_QUESTION_BUDGET, GNOMON_REQUEST_TIMEOUT * 0.75),
+                ),
+                timeout=GNOMON_REQUEST_TIMEOUT,
             )
         except TimeoutError:
             logger.info("Gnomon took too long to review this request; continuing without it")

@@ -169,13 +169,21 @@ class GnomonVerdict:
     escalate: bool = False
     reasons: list[str] = field(default_factory=list)
     scores: dict[str, float] = field(default_factory=dict)
+    # What the person should know that is not a reason to ask: scope not reviewed, deletes kept by undo.
+    notes: list[str] = field(default_factory=list)
+    scope_reviewed: bool = True
+    # False when the time budget ran out before every question was asked; what was found still counts.
+    complete: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "model": "Gnomon",
             "escalate": self.escalate,
             "reasons": self.reasons,
+            "notes": self.notes,
             "scores": {key: round(value, 3) for key, value in self.scores.items()},
+            "scope_reviewed": self.scope_reviewed,
+            "complete": self.complete,
             "execution_authority": False,
         }
 
@@ -242,6 +250,8 @@ def describe_action(action: Any) -> str:
         return f"Close {value('name') or target} by ending its process"
     if kind == "window_close":
         return f"Close the {value('title') or target} window"
+    if kind in _WINDOW_VERBS:
+        return f"{_WINDOW_VERBS[kind]} the {value('title') or target} window"
     if kind == "package_install":
         return f"Install the {value('name') or target} package"
     if kind == "download_file":
@@ -252,6 +262,54 @@ def describe_action(action: Any) -> str:
 
 def describe_plan(plan: Any) -> str:
     return _clip("; then ".join(describe_action(action) for action in plan.actions) + ".", 900)
+
+
+# -- multi-part requests --------------------------------------------------------------------------
+#
+# Gnomon was trained on one action, or one group of like actions, against the one request it answers. For a
+# request with several parts ("put X in a new folder, delete the drafts and zip it") its scope answer is wrong
+# too often to show: whole plan against whole request, it flagged 6 of 12 correct held-out plans and all 5
+# launch-folder plans of 9 November 2026 (0.1-1% in scope); scored step by step against the matching part of
+# the request it still flagged 5 of 12 and missed a near miss the whole-plan question caught. So the scope
+# question is asked only for one-part requests, where gate G6 measured it, and a multi-part request is reported
+# as "scope not reviewed". Harm and untrusted-instruction checks still run. Numbers: docs/GNOMON_TRAINING.md,
+# "Multi-step plans" (10 November 2026).
+
+_REQUEST_VERBS = (
+    "add|archive|back up|clear|close|copy|create|delete|download|email|empty|get|install|make|maximize|minimize|"
+    "move|mute|open|post|put|quit|remove|rename|save|send|set|sort|tidy|turn|write|zip"
+)
+_SENTENCE_BREAK = re.compile(r"(?<=[.!?])\s+(?=[A-Z])|:\s+|;\s*")
+_PART_BREAK = re.compile(rf",\s*(?:and\s+|then\s+)?|\s+(?:and|then|and then)\s+(?=(?:{_REQUEST_VERBS})\b)", re.I)
+_WINDOW_VERBS = {"window_minimize": "Minimize", "window_maximize": "Maximize", "window_focus": "Switch to"}
+SCOPE_NOT_REVIEWED = (
+    "Scope not reviewed: your request has several parts, and Gnomon judges scope reliably only for one-part requests."
+)
+
+
+def request_parts(request: str) -> list[str]:
+    """The parts of a request, split at sentences, colons, semicolons, commas and 'and'/'then' before a
+    desktop verb ("... into launch-release, delete the drafts and zip it" has three). [request] for one part."""
+    parts: list[str] = []
+    for sentence in _SENTENCE_BREAK.split(request):
+        for piece in _PART_BREAK.split(sentence):
+            piece = piece.strip(" .,")
+            if len(piece.split()) >= 2 and piece not in parts:
+                parts.append(piece)
+    return parts if len(parts) > 1 else [request]
+
+
+def journal_undoable_delete(action: Any) -> bool:
+    """A file delete the undo journal backs up before it runs (the approval dialog shows the same badge).
+
+    Deciding this by rule rather than in the text Gnomon reads: Gnomon's harm family grades every delete as an
+    irreversible deletion, so a sentence about the backup would argue with its training. The rule cannot hide a
+    real loss: only Heliox's own file_delete qualifies, and only while undo is on; deletes by shell commands,
+    package removals, emails and other external actions keep their grade.
+    """
+    from pilot.workflows.undo_journal import undo_support
+
+    return action.action_type.value == "file_delete" and undo_support(action).kind == "undoable"
 
 
 class GnomonReviewer:
@@ -502,28 +560,61 @@ class GnomonReviewer:
         answer = await self._score(state, "noul", question, ["no", "yes"])
         return float(answer["yes_probability"]) if answer else None
 
-    async def review_plan(self, goal: str, plan: Any, untrusted_context: str = "") -> GnomonVerdict | None:
-        """Scope, harm and (when tool/screen output fed this step) untrusted-instruction checks."""
+    async def review_plan(
+        self,
+        goal: str,
+        plan: Any,
+        untrusted_context: str = "",
+        *,
+        undo_enabled: bool = False,
+        time_budget: float | None = None,
+    ) -> GnomonVerdict | None:
+        """Scope (one-part requests only), harm and (when tool/screen output fed this step) untrusted-instruction
+        checks.
+
+        ``undo_enabled``: Heliox's undo journal is on, so a file delete it backs up is not graded as an
+        irreversible deletion (``journal_undoable_delete``); the rest of the plan is still graded.
+        ``time_budget``: seconds; a question not started by then is skipped and the verdict is marked incomplete.
+        Whatever was found before still escalates.
+        """
         if self._state != "ready":
             self.warm()
             return None
+        deadline = time.monotonic() + time_budget if time_budget is not None else None
         proposed = describe_plan(plan)
         request = _clip(goal, 600)
         verdict = GnomonVerdict()
 
-        in_scope = await self._yes({"proposed_action": proposed, "user_message": request}, SCOPE_QUESTION)
-        if in_scope is not None:
-            verdict.scores["in_scope"] = in_scope
-            if in_scope < SCOPE_MIN_YES:
-                verdict.escalate = True
-                verdict.reasons.append(f"Gnomon judged this may go beyond what you asked ({in_scope:.0%} in scope).")
+        def out_of_time() -> bool:
+            if deadline is not None and time.monotonic() >= deadline:
+                verdict.complete = False
+            return not verdict.complete
 
-        local_only = all(action.action_type.value in LOCAL_ONLY_ACTIONS for action in plan.actions)
-        harm = (
-            None
-            if local_only
-            else await self._score({"proposed_action": proposed}, "score", HARM_QUESTION, HARM_LEVELS)
-        )
+        if len(request_parts(request)) > 1:
+            verdict.scope_reviewed = False
+            verdict.notes.append(SCOPE_NOT_REVIEWED)
+        elif not out_of_time():
+            in_scope = await self._yes({"proposed_action": proposed, "user_message": request}, SCOPE_QUESTION)
+            if in_scope is not None:
+                verdict.scores["in_scope"] = in_scope
+                if in_scope < SCOPE_MIN_YES:
+                    verdict.escalate = True
+                    verdict.reasons.append(
+                        f"Gnomon judged this may go beyond what you asked ({in_scope:.0%} in scope)."
+                    )
+
+        graded = [action for action in plan.actions if not (undo_enabled and journal_undoable_delete(action))]
+        kept = len(plan.actions) - len(graded)
+        if kept:
+            verdict.notes.append(
+                f"{kept} file delete{'s are' if kept > 1 else ' is'} backed up by Heliox's undo, so "
+                f"{'they were' if kept > 1 else 'it was'} not graded as irreversible."
+            )
+        harm = None
+        local_only = all(action.action_type.value in LOCAL_ONLY_ACTIONS for action in graded)
+        if graded and not local_only and not out_of_time():
+            harm_text = proposed if not kept else _clip("; then ".join(describe_action(a) for a in graded) + ".", 900)
+            harm = await self._score({"proposed_action": harm_text}, "score", HARM_QUESTION, HARM_LEVELS)
         if harm:
             probabilities = harm.get("probabilities") or {}
             severe = float(probabilities.get(HARM_LEVELS[2], 0.0)) + float(probabilities.get(HARM_LEVELS[3], 0.0))
@@ -532,7 +623,7 @@ class GnomonReviewer:
                 verdict.escalate = True
                 verdict.reasons.append(f"Gnomon graded the harm if wrong as: {harm.get('most_likely', 'severe')}.")
 
-        if untrusted_context.strip():
+        if untrusted_context.strip() and not out_of_time():
             permitted = await self._yes(
                 {
                     "content_source": "tool or screen output",
@@ -549,7 +640,11 @@ class GnomonReviewer:
                     verdict.reasons.append(
                         "Gnomon judged this follows instructions found in tool or screen content, not your request."
                     )
-        return verdict if verdict.scores else None
+        if not verdict.complete:
+            verdict.notes.append("Gnomon ran out of time before every check, so this review is incomplete.")
+        # None means Gnomon answered nothing. A plan whose scope was not reviewed still gets a verdict, so the
+        # person sees that note even when no other question applied.
+        return verdict if verdict.scores or not verdict.complete or not verdict.scope_reviewed else None
 
     async def review_completion(self, task: str, evidence: str, receipt: str, expected: str) -> GnomonVerdict | None:
         """Postcondition check before a completion claim is accepted."""

@@ -495,6 +495,18 @@ verified" answer sends the loop back to work. Gnomon never approves, never
 lowers a tier and never runs anything, and its responses keep
 `execution_authority: false`. Harm is not asked for actions that never leave
 the PC (notifications, opening apps, window, volume and brightness changes).
+With undo on, a `file_delete` the undo journal backs up is left out of the harm
+grade (a rule after the model, matching the approval dialog's undo badge), so
+it is not called an irreversible deletion; shell deletes, package removals and
+anything sent off the PC keep their grade, and deletes still need approval at
+their permission tier. For a request with several parts ("put X in a new
+folder, delete the drafts and zip it") the scope question is not asked and the
+review says "Scope not reviewed": on 10 November 2026 Gnomon v7 flagged 5 or 6
+of 12 correct held-out multi-step plans whichever way scope was asked, so its
+answer there is not worth acting on. Harm and untrusted-instruction checks still
+run. The cost: near misses only scope could catch (an extra delete, a copy to
+the wrong folder) are no longer flagged by Gnomon; extra deletes still need
+approval, wrong-folder moves and copies do not.
 Gnomon loads in the background when a job starts (about 30 seconds on a CUDA
 GPU, 2.5 GiB of free RAM), answers in about 0.2-0.6 seconds and unloads after
 ten idle minutes. When it is off, loading, out of memory or slow, Heliox decides
@@ -503,7 +515,9 @@ on its deterministic rules, the world model and the person's approval alone.
 **Plans the person asks for directly** get the same review while Gnomon is
 enabled (`typed_decision.review_requests`, on by default; set it to `false` to
 keep Gnomon to autonomous work). A plan that changes something is checked
-within 4 seconds, and only when Gnomon is already loaded (it then loads 45
+within 4 seconds (warm reviews of 1-6 action plans took 0.7-1.5 seconds; no
+question starts after 3 seconds, and what was found by then still counts), and
+only when Gnomon is already loaded (it then loads 45
 seconds after start-up and answers one warm-up question while loading), so a
 request never waits on it. It can only add an approval, whose prompt says why.
 The default changed on 10 November 2026, when Gnomon v7 passed an

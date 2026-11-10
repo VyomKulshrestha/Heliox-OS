@@ -1948,6 +1948,39 @@ with the plan's `job_id` and a `gnomon` object (`escalate`, `reasons`,
 `scores`), and an escalated approval's `confirm_required` carries `reason`,
 `risk_assessment` (when the world model asked) and `gnomon`.
 
+Since 10 November 2026 every Gnomon verdict (`gnomon_review` with `state: "reviewed"`, and the non-null
+`gnomon` object in `world_model_assessment` and `confirm_required`) also carries three fields. They are always
+present on a verdict and absent when there is none (`gnomon_review` in another state, or `gnomon: null`):
+
+- `notes` (array of strings): facts the person should see that are not reasons to ask. Empty when there are none.
+  "Scope not reviewed: ..." when the request has several parts; "N file deletes are backed up by Heliox's undo, so
+  they were not graded as irreversible." when the undo rule below applied; "Gnomon ran out of time before every
+  check, so this review is incomplete." when `complete` is false.
+- `scope_reviewed` (boolean): false when the request has several parts (split at sentences, colons, semicolons,
+  commas and "and"/"then" before a desktop verb). Gnomon's scope question is then not asked and `scores` has no
+  `in_scope`; harm and the untrusted-instruction check still run. True for one-part requests.
+- `complete` (boolean): false when the request review's question budget (3 s, inside the 4 s limit) ran out before
+  every check was asked. What was found still counts: an escalation stays an escalation, and an incomplete review
+  never grants anything. Autonomous jobs set no budget, so there it is always true.
+
+Harm grade and undo: with `undo.enabled` on, a `file_delete` that the undo journal backs up (the approval dialog's
+`undoable` badge) is left out of the plan text Gnomon grades for harm, so it is never reported as "Irreversible
+deletion". Every other action in the plan is still graded; deletes by shell commands, package removals and actions
+that leave the computer keep their grade. Deletes still need approval at their permission tier.
+
+Example, the launch-folder job's "delete old drafts" step (from
+`docs/evidence/gnomon-multistep-review-after-2026-11-10.json`):
+
+```json
+"gnomon": { "model": "Gnomon", "escalate": false, "reasons": [],
+  "notes": ["Scope not reviewed: your request has several parts, and Gnomon judges scope reliably only for one-part requests.",
+            "4 file deletes are backed up by Heliox's undo, so they were not graded as irreversible."],
+  "scores": { "severe_harm": 0.0 }, "scope_reviewed": false, "complete": true, "execution_authority": false }
+```
+
+No measured review ran out of time, so the evidence has no `complete: false` example; such a review looks like the
+one above with `"complete": false` and the time-out note last in `notes`.
+
 #### Scheduled runs
 
 A scheduled run is a goal Heliox works on by itself on a timetable, limited to

@@ -36,8 +36,11 @@ class FakeGnomon:
         self.delay = delay
         self.asked: list[tuple[str, str]] = []
 
-    async def review_plan(self, goal: str, plan: Any, untrusted_context: str = "") -> GnomonVerdict | None:
+    async def review_plan(
+        self, goal: str, plan: Any, untrusted_context: str = "", **options: Any
+    ) -> GnomonVerdict | None:
         self.asked.append((goal, untrusted_context))
+        self.options = options
         await asyncio.sleep(self.delay)
         return self.verdict
 
@@ -109,6 +112,8 @@ async def test_a_plan_gnomon_is_fine_with_runs_as_before():
     server = _server(_write_plan(), gnomon, seen)
     await server._handle_execute({"input": "save my note", "session_id": "s-1"}, _socket())
     assert gnomon.asked and "confirmation" not in seen and seen["ran"] == ["file_write", "notify"]
+    # Undo is on by default, so deletes it backs up are not graded irreversible; no question starts after 3 s.
+    assert gnomon.options == {"undo_enabled": True, "time_budget": 3.0}
 
 
 @pytest.mark.asyncio
