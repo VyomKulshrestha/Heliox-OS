@@ -1211,6 +1211,7 @@ class Planner:
                 history_entries = await self._memory.get_history(
                     limit=recent_limit + EARLIER_TURNS_LOOKED_AT,
                     session_id=session_id,
+                    current_conversation=True,
                 )
             history_entries.reverse()
             older, history_entries = history_entries[:-recent_limit], history_entries[-recent_limit:]

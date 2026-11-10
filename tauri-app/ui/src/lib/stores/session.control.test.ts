@@ -188,6 +188,8 @@ describe("session execution controls", () => {
     ]);
 
     expect(session.newChat()).toBe(true);
+    await Promise.resolve();
+    expect(daemonMocks.call).toHaveBeenCalledWith("voice_new_conversation", {});
     notify("queued_task_result", {
       task_id: "voice-next",
       session_id: originalChat,

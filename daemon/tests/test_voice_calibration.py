@@ -175,11 +175,14 @@ async def test_visible_listener_start_uses_live_server_config(monkeypatch):
     config = PilotConfig()
     server = PilotServer(config)
     monkeypatch.setattr("pilot.system.voice.ContinuousVoiceListener", _FakeListener)
+    prewarmed = []
+    monkeypatch.setattr("pilot.system.local_tts_worker.prewarm_local_voice", prewarmed.append)
 
     result = await server._handle_voice_listener_start({}, MagicMock())
 
     assert result["status"] == "started"
     assert captured["config"] is config
+    assert prewarmed == [config.voice]  # the local voice starts loading with listening
 
     config.adaptive_calibration.voice_wake_word_enabled = False
     assert server._voice_listener.config.adaptive_calibration.voice_wake_word_enabled is False

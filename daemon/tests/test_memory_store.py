@@ -232,6 +232,24 @@ class TestRecord:
         assert row[0] == "chat-123"
 
     @pytest.mark.asyncio
+    async def test_a_new_voice_conversation_hides_earlier_voice_turns_from_the_planner_only(
+        self, store, fake_plan, fake_results
+    ):
+        with patch("pilot.memory.store.asyncio.to_thread", new_callable=AsyncMock):
+            await store.record("Open, open, open, open", fake_plan, fake_results, session_id="voice")
+            await store.record("typed in the chat", fake_plan, fake_results, session_id="chat-1")
+            assert await store.start_conversation("voice") == 1
+            await store.record("what's on my to-do list", fake_plan, fake_results, session_id="voice")
+
+        current = await store.get_history(session_id="voice", current_conversation=True)
+        assert [entry["user_input"] for entry in current] == ["what's on my to-do list"]
+        everything = await store.get_history(session_id="voice")
+        assert len(everything) == 2  # nothing is deleted: the history view still shows both
+        assert len(await store.get_history(session_id="chat-1", current_conversation=True)) == 1
+        assert await store.start_conversation("voice") == 1
+        assert await store.get_history(session_id="voice", current_conversation=True) == []
+
+    @pytest.mark.asyncio
     async def test_record_success_flag_true(self, store, fake_plan, fake_results):
         """record() sets success=1 when all results succeed."""
         with patch("pilot.memory.store.asyncio.to_thread", new_callable=AsyncMock):

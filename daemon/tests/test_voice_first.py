@@ -120,6 +120,28 @@ async def test_a_paused_workflow_does_not_swallow_unrelated_commands(tmp_path):
     await _wait_until_terminal(engine, workflow.workflow_id)
 
 
+async def test_a_task_left_running_by_an_earlier_daemon_does_not_claim_new_speech(tmp_path):
+    # The 19:57 rehearsal: "Open, open, open, open" from the morning was still marked running after
+    # restarts, and "What can I say?" was folded into it as a correction and sent to the planner.
+    engine, workflow = await _running(tmp_path)
+    await engine.stop()  # the daemon exits; the row stays "running" with nothing driving it
+    later = _engine(tmp_path)
+    assert (await later._workflow_store.get(workflow.workflow_id)).state == WorkflowState.RUNNING.value
+
+    for sentence in ("What can I say?", "Use WordPad instead", "also save it", "what are you doing"):
+        assert await later.apply_instruction("voice", sentence) is None
+    row = await later._workflow_store.get(workflow.workflow_id)
+    assert "User live correction" not in row.goal
+    assert all("User live correction" not in step.description for step in row.steps)
+
+
+async def test_a_task_started_in_this_conversation_still_takes_corrections(tmp_path):
+    engine, workflow = await _running(tmp_path)
+    outcome = await engine.apply_instruction("voice", "Skip the backup.")
+    assert outcome.kind == "corrected"
+    await _cleanup(engine, workflow)
+
+
 async def test_a_failed_step_says_why_and_how_to_go_on(tmp_path):
     spoken = []
 

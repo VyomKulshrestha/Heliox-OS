@@ -201,7 +201,7 @@ async def test_after_the_microphone_button_parakeets_words_are_used_without_wait
     fake.transcribe.return_value = PARAKEET
     monkeypatch.setattr(item, "_parakeet", lambda: fake)
     monkeypatch.setattr("pilot.system.voice._load_pcm_wav_for_whisper", lambda _path: np.zeros(16000, np.float32))
-    item.note_interruption()
+    item.note_interruption(by_button=True)
     started = time.perf_counter()
     assert await item._transcribe_path("utterance.wav") == PARAKEET
     assert time.perf_counter() - started < 0.4

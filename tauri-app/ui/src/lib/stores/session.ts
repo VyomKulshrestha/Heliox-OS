@@ -2166,6 +2166,12 @@ function createSession() {
     chatSessions = [...chatSessions, chat];
     saveChatSessions(browserStorage, chatSessions, chat.id);
     set(stateForChat(current, chat));
+    // Spoken requests share one daemon conversation; a new chat starts that one afresh too.
+    if (isConnected()) {
+      void Promise.resolve()
+        .then(() => call("voice_new_conversation", {}))
+        .catch(() => undefined);
+    }
     return true;
   }
 

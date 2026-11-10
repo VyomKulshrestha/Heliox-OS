@@ -466,8 +466,8 @@ class VoiceGestureWorkflowEngine:
     async def apply_instruction(self, invocation_source: str, command_text: str) -> InstructionOutcome | None:
         """Decide what a mid-task utterance means and apply it, or return None to leave it alone.
 
-        A running workflow, or one waiting for a retry decision inside its short trigger
-        window, claims speech. A paused workflow claims only continue and cancel, so an
+        A workflow this process is running, or one waiting for a retry decision inside its
+        short trigger window, claims speech; a row orphaned by an earlier daemon does not. A paused workflow claims only continue and cancel, so an
         unrelated command half an hour later is not appended to it. Approval answers go
         to the approval flow. Status questions are answered without touching the work,
         pause phrases pause at the next step boundary, spoken additions amend the running
@@ -476,7 +476,7 @@ class VoiceGestureWorkflowEngine:
         phrase = " ".join(command_text.strip().lower().split()).rstrip(".!?")
         if not phrase or phrase in APPROVAL_WORDS:
             return None
-        workflow = await self._workflow_store.find_active_for_source(invocation_source)
+        workflow = await self._driven_workflow(invocation_source)
         if workflow is None:
             workflow = await self._workflow_store.find_pending_for_source(
                 invocation_source,
@@ -514,6 +514,29 @@ class VoiceGestureWorkflowEngine:
         if await self.correct(workflow.workflow_id, command_text) is None:
             return None
         return InstructionOutcome("corrected", "I updated the active task and I'm replanning now.")
+
+    async def _driven_workflow(self, invocation_source: str) -> VoiceGestureWorkflow | None:
+        """The newest task this process is running for the source, or None.
+
+        A row left "running" by an earlier daemon (nothing drives it any more) never claims
+        speech: the person cannot see it working and did not just start it, so a new sentence
+        is not folded into it. It stays listed for an explicit resume or cancel.
+        """
+        newest: VoiceGestureWorkflow | None = None
+        for workflow_id, task in list(self._active_tasks.items()):
+            if task.done():
+                continue
+            workflow = await self._workflow_store.get(workflow_id)
+            if (
+                workflow is None
+                or workflow.invocation_source != invocation_source
+                or workflow.state
+                not in {WorkflowState.PENDING.value, WorkflowState.DECOMPOSING.value, WorkflowState.RUNNING.value}
+            ):
+                continue
+            if newest is None or workflow.updated_at > newest.updated_at:
+                newest = workflow
+        return newest
 
     @staticmethod
     def _status_line(workflow: VoiceGestureWorkflow) -> str:

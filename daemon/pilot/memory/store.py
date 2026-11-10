@@ -54,6 +54,13 @@ CREATE TABLE IF NOT EXISTS action_history (
     explanation TEXT DEFAULT ''
 );
 
+-- Where each session's current conversation begins: the planner reads only the turns after it.
+CREATE TABLE IF NOT EXISTS conversation_starts (
+    session_id TEXT PRIMARY KEY,
+    after_id INTEGER NOT NULL,
+    started_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS user_preferences (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     key TEXT UNIQUE NOT NULL,
@@ -682,18 +689,60 @@ class MemoryStore:
             found.append({"lesson": document, "outcome": outcome})
         return found
 
+    async def start_conversation(self, session_id: str) -> int:
+        """Begin a fresh conversation for ``session_id``: the planner stops reading the turns before it.
+
+        Nothing is deleted; the earlier turns stay in the history view and in search. Returns how many
+        earlier turns of that session the planner will no longer see.
+        """
+        if not self._pool:
+            return 0
+        async with self._pool.write() as db:
+            cursor = await db.execute("SELECT COALESCE(MAX(id), 0) FROM action_history")
+            after_id = int((await cursor.fetchone())[0])
+            await cursor.close()
+            cursor = await db.execute(
+                """SELECT COUNT(*) FROM action_history WHERE session_id = ? AND id > COALESCE(
+                       (SELECT after_id FROM conversation_starts WHERE session_id = ?), 0)""",
+                (session_id, session_id),
+            )
+            hidden = int((await cursor.fetchone())[0])
+            await cursor.close()
+            await db.execute(
+                """INSERT INTO conversation_starts (session_id, after_id, started_at) VALUES (?, ?, ?)
+                   ON CONFLICT(session_id) DO UPDATE SET after_id = excluded.after_id,
+                   started_at = excluded.started_at""",
+                (session_id, after_id, datetime.now(UTC).isoformat()),
+            )
+            await db.commit()
+        return hidden
+
     async def get_history(
         self,
         *,
         limit: int = 50,
         offset: int = 0,
         session_id: str | None = None,
+        current_conversation: bool = False,
     ) -> list[dict[str, Any]]:
+        """Recent turns, newest first. ``current_conversation`` leaves out a session's turns from before its
+        latest :meth:`start_conversation`."""
         if not self._pool:
             return []
 
         async with self._pool.read() as db:
-            if session_id is None:
+            if session_id is not None and current_conversation:
+                cursor = await db.execute(
+                    """SELECT id, timestamp, user_input, success, explanation
+                       FROM action_history
+                       WHERE session_id = ? AND id > COALESCE(
+                           (SELECT after_id FROM conversation_starts WHERE session_id = ?), 0)
+                       ORDER BY id DESC
+                       LIMIT ?
+                       OFFSET ?""",
+                    (session_id, session_id, limit, offset),
+                )
+            elif session_id is None:
                 cursor = await db.execute(
                     """SELECT id, timestamp, user_input, success, explanation
                        FROM action_history

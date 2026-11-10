@@ -200,12 +200,66 @@ async def test_after_heliox_speaks_the_conversation_stays_open_for_several_repli
 
 @pytest.mark.asyncio
 async def test_what_the_person_said_over_heliox_is_heard_even_while_its_own_voice_is_ignored():
-    listener, run = make_listener(["the other one, the blue file"], suppressed=True)
+    listener, run = make_listener(["Wait, stop."], suppressed=True)
     listener.note_interruption()
     dispatched, _ = await run()
-    assert dispatched == ["the other one, the blue file"]
-    quiet, run_quiet = make_listener(["the other one, the blue file"], suppressed=True, follow_up=30)
+    assert dispatched == ["Wait, stop"]
+    quiet, run_quiet = make_listener(["Wait, stop."], suppressed=True, follow_up=30)
     assert await run_quiet() == ([], [])  # without an interruption, speech during Heliox's voice is its echo
+
+
+@pytest.mark.asyncio
+async def test_talking_over_heliox_stops_its_voice_but_only_a_reply_runs():
+    # 19:58 rehearsal: the person talked over Heliox and "PowerShell" was planned as a new task.
+    listener, run = make_listener(["PowerShell", "Wait, stop."], suppressed=True)
+    listener.note_interruption()
+    dispatched, overheard = await run()
+    assert dispatched == [] and overheard == ["PowerShell"]
+
+
+@pytest.mark.asyncio
+async def test_after_a_question_a_short_answer_is_a_reply_and_a_story_is_not():
+    listener, run = make_listener(["the other one, the blue file", "PowerShell"])
+    listener.arm_follow_up_window(30, asked=True)  # Heliox: "Which file should I open?"
+    dispatched, _ = await run()
+    assert dispatched == ["the other one, the blue file", "PowerShell"]
+    statement, run_statement = make_listener(["the other one, the blue file", "PowerShell"], follow_up=30)
+    assert await run_statement() == ([], ["the other one, the blue file", "PowerShell"])
+
+
+# What Heliox heard in the 19:53-19:58 rehearsal and in earlier takes, said without the wake phrase while a
+# conversation was open, and the film lines. Requests, stops, corrections and undo run; the rest only reaches Live.
+OPEN_CONVERSATION_LINES = [
+    ("PowerShell", False),
+    ("Open, open, open, open", False),
+    ("Copied", False),
+    ("Thanks for watching", False),
+    ("The invoice is due on the thirty-first of November.", False),
+    ("I'll send Priya the deck by Friday", False),
+    ("okay so anyway we went to lunch", False),
+    ("Wait, stop.", True),
+    ("Skip the backup.", True),
+    ("Undo that.", True),
+    ("No.", True),
+    ("Cancel", True),
+    ("Open my mail", True),
+]
+
+
+@pytest.mark.parametrize(("text", "acts"), OPEN_CONVERSATION_LINES)
+def test_what_runs_in_an_open_conversation(text, acts):
+    from pilot.system.voice import should_act_on_follow_up
+
+    assert should_act_on_follow_up(text) is acts
+
+
+@pytest.mark.asyncio
+async def test_in_an_open_conversation_only_replies_and_requests_run():
+    lines = [text for text, _ in OPEN_CONVERSATION_LINES]
+    _, run = make_listener(lines, follow_up=30)
+    dispatched, overheard = await run()
+    assert dispatched == [text.strip(" .") for text, acts in OPEN_CONVERSATION_LINES if acts]
+    assert overheard == [text for text, acts in OPEN_CONVERSATION_LINES if not acts]
 
 
 @pytest.mark.asyncio
@@ -254,7 +308,7 @@ async def test_heliox_waits_for_the_person_watches_for_barge_in_and_keeps_the_co
     listener.wait_for_floor.assert_awaited_once()
     recorder = server._speech_coordinator.speak.await_args.kwargs["recorder"]
     assert isinstance(recorder, BargeInWatcher) and recorder.listener is listener
-    listener.arm_follow_up_window.assert_called_once_with()
+    listener.arm_follow_up_window.assert_called_once_with(asked=False)
 
 
 @pytest.mark.asyncio
@@ -325,6 +379,21 @@ async def test_wait_said_to_heliox_stops_it_without_planning_anything(said):
     await server._voice_command_dispatch(said)
     server._handle_execute.assert_not_awaited()
     assert server._broadcast_notification.await_args.args[1]["message"] == "Okay, stopped."
+    server._speak_voice_response.assert_not_awaited()  # nothing was running or speaking: no need to say so
+
+
+@pytest.mark.asyncio
+async def test_wait_stop_said_over_heliox_is_acknowledged_aloud():
+    import time
+
+    server = PilotServer(PilotConfig())
+    server._broadcast_notification = AsyncMock()
+    server._speak_voice_response = AsyncMock()
+    server._handle_execute = AsyncMock()
+    server._voice_cut_off_at = time.monotonic() - 1.0  # the person just talked over Heliox
+    await server._voice_command_dispatch("Wait, stop.")
+    server._handle_execute.assert_not_awaited()
+    assert server._speak_voice_response.await_args.args[0] == "Okay, stopped."
 
 
 # ── replies right after Heliox speaks, and the words right after "Hey Heliox," ──
@@ -474,7 +543,7 @@ async def test_the_microphone_button_makes_the_next_sentence_for_heliox_without_
     listener.is_running = True
     server._voice_listener = listener
     assert await server._handle_voice_listen_now({}, None) == {"status": "listening"}
-    listener.note_interruption.assert_called_once_with(seconds=10.0)
+    listener.note_interruption.assert_called_once_with(seconds=10.0, by_button=True)
     server._broadcast_notification.assert_awaited_with(
         "voice_status", {"status": "listening", "message": "I'm listening..."}
     )
@@ -483,7 +552,7 @@ async def test_the_microphone_button_makes_the_next_sentence_for_heliox_without_
 @pytest.mark.asyncio
 async def test_after_the_button_any_sentence_is_taken_as_a_command():
     listener, run = make_listener(["the launch call is Monday the twelfth of November"])
-    listener.note_interruption()
+    listener.note_interruption(by_button=True)
     dispatched, _ = await run()
     assert dispatched == ["the launch call is Monday the twelfth of November"]
 
@@ -493,7 +562,21 @@ async def test_a_sentence_begun_inside_the_button_window_counts_even_if_it_ends_
     import time
 
     listener, run = make_listener(["remind me that the launch call is Monday"])
-    listener._interrupted_until = time.monotonic() - 1.0  # the window has just closed
+    listener._interrupted_until = listener._button_until = time.monotonic() - 1.0  # the window has just closed
     listener._recorder.speech_started_at = time.monotonic() - 3.0  # but the sentence began inside it
     dispatched, _ = await run()
     assert dispatched == ["remind me that the launch call is Monday"]
+
+
+@pytest.mark.asyncio
+async def test_a_take_starts_a_clean_voice_conversation():
+    server = PilotServer(PilotConfig())
+    server._memory = MagicMock()
+    server._memory.start_conversation = AsyncMock(return_value=6)
+    listener = MagicMock()
+    listener.is_running = True
+    server._voice_listener = listener
+    assert await server._handle_voice_new_conversation({}, None) == {"status": "ok", "earlier_turns": 6}
+    server._memory.start_conversation.assert_awaited_once_with("voice")
+    listener.clear_follow_up_window.assert_called_once_with()
+    listener.end_interruption.assert_called_once_with()

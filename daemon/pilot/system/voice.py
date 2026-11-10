@@ -126,6 +126,26 @@ def looks_hallucinated(text: str) -> bool:
     return False
 
 
+REPLY_TO_QUESTION_WORDS = 12  # an answer to "Which file?" is a name or a phrase, not a story
+
+
+def should_act_on_follow_up(text: str, *, question_open: bool = False) -> bool:
+    """Whether a sentence said without the wake word, in an open conversation or over Heliox's voice, is for
+    Heliox to act on.
+
+    It is when it stops or denies ("Wait, stop.", "No"), corrects or undoes ("Skip the backup.", "Undo that."), is
+    itself a clear request ("Open my mail"), or answers the question Heliox just asked ("Which file?" "The blue
+    one."). Anything else ("PowerShell" on its own, "The invoice is due on the thirty-first of November.") is
+    overheard: Live may check it, nothing runs, and it never enters the conversation the planner reads.
+    """
+    if looks_hallucinated(text):  # "Thanks for watching", "Open, open, open, open": noise read as words
+        return False
+    if looks_like_conversation_turn(text):
+        return True
+    words = re.findall(r"[A-Za-z0-9']+", text)
+    return question_open and 0 < len(words) <= REPLY_TO_QUESTION_WORDS
+
+
 def is_short_decision(text: str) -> bool:
     """ "No", "Yes", "Stop": complete answers, however short."""
     return " ".join(text.casefold().strip(" \t,.:;!?-").split()) in _AUTONOMOUS_SHORT_DECISIONS
@@ -1798,6 +1818,10 @@ class ContinuousVoiceListener:
         # Callable() -> bool, set by the server: a task the person started is running or an approval is waiting.
         self.task_open: Any = None
         self._interrupted_until = 0.0
+        # The microphone button addresses the next sentence whatever it says; talking over Heliox does not.
+        self._button_until = 0.0
+        # Heliox's last words to the person asked them something ("Which file?"): a short answer is a reply.
+        self._question_until = 0.0
         # The call app the person is in a call with ("" when none), kept up to date while listening.
         self.in_call = ""
         self._call_watch_task: asyncio.Task[None] | None = None
@@ -1858,7 +1882,7 @@ class ContinuousVoiceListener:
         """Seconds left in the bounded wake-free conversation turn."""
         return max(0.0, self._follow_up_until - time.monotonic())
 
-    def arm_follow_up_window(self, seconds: float | None = None) -> None:
+    def arm_follow_up_window(self, seconds: float | None = None, *, asked: bool = False) -> None:
         """Allow exactly the next utterance to omit the wake word briefly.
 
         The server calls this only after Heliox has finished speaking, which
@@ -1868,9 +1892,16 @@ class ContinuousVoiceListener:
         configured = self.config.voice.follow_up_window_seconds if seconds is None else seconds
         duration = max(0.0, min(float(configured), 120.0))
         self._follow_up_until = time.monotonic() + duration if duration else 0.0
+        self._question_until = self._follow_up_until if asked else 0.0
 
     def clear_follow_up_window(self) -> None:
         self._follow_up_until = 0.0
+        self._question_until = 0.0
+
+    @property
+    def question_open(self) -> bool:
+        """Heliox asked the person something and is still waiting for the answer."""
+        return time.monotonic() < self._question_until
 
     def conversation_open(self) -> bool:
         """The person is talking with Heliox: it spoke to them in the last follow-up window (30 s by default), or a
@@ -1883,9 +1914,16 @@ class ContinuousVoiceListener:
         except Exception:
             return False
 
-    def note_interruption(self, seconds: float = 12.0) -> None:
-        """The person talked over Heliox: what they are saying is for Heliox, wake word or not."""
+    def note_interruption(self, seconds: float = 12.0, *, by_button: bool = False) -> None:
+        """The person talked over Heliox, or pressed the microphone button. After the button the next sentence
+        is for Heliox whatever it says; talking over Heliox stops its voice, and what was said counts only when
+        it is a reply (see should_act_on_follow_up)."""
         self._interrupted_until = time.monotonic() + seconds
+        self._button_until = self._interrupted_until if by_button else 0.0
+
+    def end_interruption(self) -> None:
+        self._interrupted_until = 0.0
+        self._button_until = 0.0
 
     def _final_pass_status(self) -> dict[str, Any]:
         """Which recogniser's words are acted on, and why Parakeet is not in use when it was chosen."""
@@ -1920,10 +1958,11 @@ class ContinuousVoiceListener:
         started = getattr(self._recorder, "speech_started_at", None)
         return time.monotonic() < until or (isinstance(started, float) and until > 0 and started <= until)
 
-    def _take_interruption(self) -> bool:
-        interrupted = self._addressed()
-        self._interrupted_until = 0.0
-        return interrupted
+    def _take_interruption(self) -> str:
+        """ "button", "barge_in" or "" for the utterance just heard; the window closes either way."""
+        kind = ("button" if self._button_until else "barge_in") if self._addressed() else ""
+        self.end_interruption()
+        return kind
 
     async def wait_for_floor(self, max_seconds: float = 8.0, quiet_seconds: float = 0.35) -> float:
         """Wait while the person is still talking, so Heliox does not start over them. Returns seconds waited.
@@ -2195,7 +2234,7 @@ class ContinuousVoiceListener:
                     # In a call, what is said is for the people in the call: not a command, not for Live, and
                     # not even a wake phrase, which nothing shows to be safe from meeting speech.
                     logger.debug("Ignored speech during a call (%s)", self.in_call)
-                    self._interrupted_until = 0.0
+                    self.end_interruption()
                     continue
 
                 if self._diagnostic_waiter and not self._diagnostic_waiter.done():
@@ -2223,7 +2262,9 @@ class ContinuousVoiceListener:
                     self.config.voice.continuous_conversation_enabled or self.follow_up_remaining_seconds > 0
                 )
 
-                interrupted = self._take_interruption()
+                interruption = self._take_interruption()
+                by_button = interruption == "button"
+                interrupted = bool(interruption)
                 # The whole leading phrase first ("Here Heliox, remind me…" leaves "remind me…", not "Here , remind").
                 heard_as = loose_wake_prefix(transcript)
                 if heard_as:
@@ -2278,8 +2319,8 @@ class ContinuousVoiceListener:
                     await asyncio.sleep(0.1)
                     continue
 
-                if conversational_follow_up and not wake_detected and conversation and not interrupted:
-                    if not looks_like_conversation_turn(transcript):
+                if conversational_follow_up and not wake_detected and conversation and not by_button:
+                    if not should_act_on_follow_up(transcript, question_open=self.question_open):
                         # Said while talking with Heliox, but not to it as a request: Live may check it.
                         logger.debug("Overheard in an open conversation: '%s'", transcript_lower)
                         if self._on_overheard:
@@ -2311,10 +2352,10 @@ class ContinuousVoiceListener:
                     command_text = transcript.strip(" \t,.:;!?-")
                     logger.info("Conversational voice follow-up detected: '%s'", command_text)
                 elif conversational_follow_up and not wake_detected:
-                    # What the person said over Heliox. The window stays open for the rest of the conversation,
-                    # so "No" after "Skip the backup" still counts.
+                    # After the microphone button: whatever the person says is for Heliox. The window stays open
+                    # for the rest of the conversation, so "No" after "Skip the backup" still counts.
                     command_text = transcript.strip(" \t,.:;!?-")
-                    logger.info("Conversational reply detected: '%s'", command_text)
+                    logger.info("Addressed with the microphone button: '%s'", command_text)
 
                 logger.info(
                     "%s Command: '%s'",
@@ -2450,8 +2491,8 @@ class ContinuousVoiceListener:
                 said = await asyncio.to_thread(parakeet.transcribe, samples)
                 addressed = self._addressed()  # the microphone button, or talking over Heliox
                 in_conversation = addressed or self.conversation_open()
-                if addressed and len(said.split()) > 2:
-                    # The person said this to Heliox on purpose: no wake phrase to look for, nothing to wait for.
+                if addressed and self._button_until and len(said.split()) > 2:
+                    # The button was pressed for this sentence: no wake phrase to look for, nothing to wait for.
                     wake_check.cancel()
                     return said
                 if in_conversation and len(said.split()) > 2 and looks_like_conversation_turn(said):

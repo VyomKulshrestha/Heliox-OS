@@ -12,7 +12,7 @@ The Heliox OS UI and daemon communicate over a local WebSocket using the [JSON-R
 | Request timeout | 5 minutes |
 | Reconnect interval | 3 seconds (auto-reconnect on close) |
 
-The daemon currently registers **320 WebSocket RPC methods**. That is the API
+The daemon currently registers **321 WebSocket RPC methods**. That is the API
 surface count, not the action catalog: Heliox exposes **162 action
 types** through the guarded planner/executor system. This document names every
 registered RPC method; grouped tables are used where several methods share one
@@ -1838,6 +1838,15 @@ as addressed to Heliox without the wake phrase, as if the person had said "Hey H
 
 **Params:** `{ "seconds"?: number }`
 **Result:** `{ "status": "listening" }`, or `{ "status": "error", "message": "Voice listening is off." }`
+
+#### `voice_new_conversation`
+Start a clean spoken conversation. Voice requests use the session `voice`; after this call the planner reads
+only the voice turns that come after it (earlier turns stay in `get_history` and search). Also closes any open
+follow-up window or interruption, so the next sentence needs the wake phrase. The capture harness calls it at
+the start of every take.
+
+**Params:** `{}`
+**Result:** `{ "status": "ok", "earlier_turns": number }` (how many voice turns the planner no longer sees)
 
 #### `voice_recognition_test`
 Capture one utterance and return its transcript without executing it. If

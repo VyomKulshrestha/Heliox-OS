@@ -200,6 +200,7 @@ async def test_planner_bounds_memory_and_raw_history() -> None:
     assert memory.history_kwargs == {
         "limit": 6 + EARLIER_TURNS_LOOKED_AT,
         "session_id": "chat-42",
+        "current_conversation": True,  # turns before the session's latest "new conversation" are left out
     }
 
 

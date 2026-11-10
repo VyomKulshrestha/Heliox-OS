@@ -387,6 +387,7 @@ PHONE_READ_ONLY_ACTIONS = (
     "system_health_review",
     "system_info",
 )
+STOP_ACK_SECONDS = 15.0  # a stop said this soon after the person cut Heliox off is about that cut
 VOICE_STOP_PHRASES = frozenset(
     {
         "stop",
@@ -1007,6 +1008,8 @@ class PilotServer:
         self._focus: Any = None
         self._quiet_hours: Any = None
         self._last_spoken = ""
+        # When the person last cut Heliox's voice off: "Wait, stop." right after it is acknowledged aloud.
+        self._voice_cut_off_at = 0.0
         self._workspaces: Any = None
         self._notes: Any = None
         self._todos: Any = None
@@ -2110,6 +2113,7 @@ class PilotServer:
             "voice_listener_stop": self._handle_voice_listener_stop,
             "voice_listener_stats": self._handle_voice_listener_stats,
             "voice_listen_now": self._handle_voice_listen_now,
+            "voice_new_conversation": self._handle_voice_new_conversation,
             "voice_recognition_test": self._handle_voice_recognition_test,
             "interaction_status": self._handle_interaction_status,
             "list_audio_input_devices": self._handle_list_audio_input_devices,
@@ -13134,9 +13138,11 @@ def handle_tool(tool_name, params):
             and outcome.status in ("spoken", "interrupted")
             and resolved is not SpeechChannel.BACKGROUND_INSIGHT
         ):
-            # Heliox just spoke to the person: a reply without the wake word is part of the conversation.
-            listener.arm_follow_up_window()
+            # Heliox just spoke to the person: a reply without the wake word is part of the conversation, and
+            # after a question ("Which file?") a short answer is a reply even when it is only a name.
+            listener.arm_follow_up_window(asked=text.rstrip().endswith("?"))
         if outcome.status == "interrupted":
+            self._voice_cut_off_at = time.monotonic()
             await self._broadcast_notification("voice_status", {"status": "interrupted"})
         return outcome
 
@@ -13243,9 +13249,23 @@ def handle_tool(tool_name, params):
         listener = self._voice_listener if self._voice_listener and self._voice_listener.is_running else None
         if listener is None:
             return {"status": "error", "message": "Voice listening is off."}
-        listener.note_interruption(seconds=float(params.get("seconds", 10.0) or 10.0))
+        listener.note_interruption(seconds=float(params.get("seconds", 10.0) or 10.0), by_button=True)
         await self._broadcast_notification("voice_status", {"status": "listening", "message": "I'm listening..."})
         return {"status": "listening"}
+
+    async def _handle_voice_new_conversation(self, params: dict, ws: ServerConnection) -> dict:
+        """Start a clean spoken conversation: the planner stops reading earlier voice turns.
+
+        Earlier turns stay in the history view; only the context sent with the next voice request changes.
+        Any open follow-up window or interruption is closed, so the next sentence needs "Hey Heliox".
+        """
+        hidden = await self._memory.start_conversation("voice") if self._memory else 0
+        listener = self._voice_listener if self._voice_listener and self._voice_listener.is_running else None
+        if listener is not None:
+            listener.clear_follow_up_window()
+            listener.end_interruption()
+        logger.info("Started a new voice conversation (%d earlier turns set aside)", hidden)
+        return {"status": "ok", "earlier_turns": hidden}
 
     def _voice_task_open(self) -> bool:
         """A task the person started is running or an approval waits: their replies need no wake word."""
@@ -13356,7 +13376,8 @@ def handle_tool(tool_name, params):
             await self._broadcast_notification(
                 "voice_result", {"command": command_text, "status": "answered", "message": message}
             )
-            if stopped:
+            # Said over Heliox's voice, the stop has already happened; a short "Okay, stopped." confirms it was heard.
+            if stopped or time.monotonic() - self._voice_cut_off_at < STOP_ACK_SECONDS:
                 await self._speak_voice_response(
                     message, channel=SpeechChannel.TASK_NARRATION, dedupe_key=f"voice-stop:{uuid.uuid4()}"
                 )
@@ -13669,6 +13690,11 @@ def handle_tool(tool_name, params):
         if not self._voice_listener.is_running:
             self._voice_listener = None
             return {"status": "error", "message": result}
+        from pilot.system.local_tts_worker import prewarm_local_voice
+
+        # Loading the local voice can take most of a minute when memory is short; start it with listening, not
+        # at the first sentence, so the first answer is not held at "Getting my voice ready...".
+        prewarm_local_voice(self.config.voice)
         await self._interaction_runtime.transition(
             InteractionPhase.LISTENING,
             message="Listening for your wake word",
