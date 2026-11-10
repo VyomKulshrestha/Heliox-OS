@@ -3061,12 +3061,18 @@ class PilotServer:
             self._cancel_event = None
             self._active_experience_context = ExperienceContext()
 
-    async def _handle_execute_inner(self, params: dict[str, Any], ws: ServerConnection) -> dict:
+    async def _handle_execute_inner(
+        self, params: dict[str, Any], ws: ServerConnection, *, review_inputs: tuple[str, str, int] | None = None
+    ) -> dict:
         """Agentic pipeline: plan -> execute -> verify -> [retry on failure].
 
         If execution fails, the error is fed back to the planner for re-planning
         up to MAX_RETRIES times. Confirmation gates pause for user approval on
         Tier 2+ actions.
+
+        ``review_inputs`` (internal, set only by a revision) is what Gnomon reviews against: the person's original
+        request, the attached file text, and how many live corrections followed. A revision's ``input`` is a
+        planner prompt with Heliox's own headings and instructions, not the person's words.
         """
         # A voice shortcut or "do that again" becomes an ordinary request with the normal approvals.
         expansion = await self._expand_request(str(params.get("input") or ""))
@@ -3079,6 +3085,14 @@ class PilotServer:
         interaction_source = str(params.get("source") or "interactive").strip().lower()
         revision_count = int(params.get("_companion_revision_count", 0))
         auto_revision_count = int(params.get("_companion_auto_revision_count", 0))
+        # Gnomon reviews against the person's words; attached file text is content it must not mistake for them.
+        review_request, review_attachments, review_corrections = review_inputs or (
+            str(user_input),
+            "\n\n".join(
+                f"[Attached File: {item.get('name', 'unknown')}]\n{item.get('content', '')}" for item in attachments
+            ),
+            0,
+        )
 
         if attachments:
             formatted_attachments = []
@@ -3334,6 +3348,8 @@ class PilotServer:
                     "source": interaction_source,
                 },
                 ws,
+                # Gnomon reviews against the person's original words; see REVIEWED_AGAINST_ORIGINAL.
+                review_inputs=(review_request, review_attachments, review_corrections + 1),
             )
 
         async def _restart_from_companion_review(review: Any) -> dict:
@@ -3394,6 +3410,8 @@ class PilotServer:
                     "source": interaction_source,
                 },
                 ws,
+                # The companion's feedback is Heliox's, not the person's: the review inputs stay as they were.
+                review_inputs=(review_request, review_attachments, review_corrections),
             )
 
         async def _phase_cancelled(phase: str, completed_results: list[Any] | None = None) -> dict:
@@ -3904,7 +3922,10 @@ class PilotServer:
             if not dry_run:
                 gnomon_started = time.monotonic()
                 gnomon_interrupt, gnomon_reasons, gnomon_review = await self._gnomon_review_request(
-                    user_input, plan, review_screen_context
+                    review_request,
+                    plan,
+                    "\n\n".join(part for part in (review_attachments, review_screen_context) if part),
+                    corrections=review_corrections,
                 )
                 if gnomon_review.get("state") == "reviewed":
                     gnomon_review["review_seconds"] = round(time.monotonic() - gnomon_started, 2)
@@ -10022,7 +10043,7 @@ class PilotServer:
             await self._broadcast_notification("world_model_assessment", {"plan_id": plan_id, **payload})
 
     async def _gnomon_review_request(
-        self, user_input: str, plan: Any, untrusted_context: str
+        self, user_input: str, plan: Any, untrusted_context: str, *, corrections: int = 0
     ) -> tuple[bool, list[str], dict[str, Any]]:
         """Gnomon's check of a plan the person asked for directly: scope, harm and instructions injected by
         screen or tool text. It can only add a confirmation. Not loaded yet, slow or failing: no check, no wait."""
@@ -10055,6 +10076,10 @@ class PilotServer:
             status = reviewer.status()
             review = {"state": status["state"], "reason": status.get("reason", ""), "execution_authority": False}
             return False, [], review
+        if corrections:
+            from pilot.intelligence.gnomon_reviewer import REVIEWED_AGAINST_ORIGINAL
+
+            verdict.notes.append(REVIEWED_AGAINST_ORIGINAL)
         return bool(verdict.escalate), list(verdict.reasons), {**verdict.to_dict(), "state": "reviewed"}
 
     async def _handle_autonomy_review_status(self, params: dict, ws: ServerConnection) -> dict:

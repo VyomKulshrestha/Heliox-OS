@@ -299,6 +299,17 @@ def request_parts(request: str) -> list[str]:
     return parts if len(parts) > 1 else [request]
 
 
+# A live correction is never added to the request Gnomon reads. Measured with v7 on the 10 November launch-folder
+# revision: "<request> Correction: Skip the backup." made the untrusted-instruction check flag the revised plan
+# (0.5% permitted), and appending any correction cut a correct eval plan from 76% to 4%; the original request alone
+# gave 76% and left every planted-instruction plan flagged. A step that only a correction asked for is therefore
+# judged against the original request, which can add an approval but never removes one.
+REVIEWED_AGAINST_ORIGINAL = (
+    "Reviewed against your original request: Gnomon does not read corrections, so a step only your correction "
+    "asked for may be flagged."
+)
+
+
 def journal_undoable_delete(action: Any) -> bool:
     """A file delete the undo journal backs up before it runs (the approval dialog shows the same badge).
 
