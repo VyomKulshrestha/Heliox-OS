@@ -25,7 +25,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
-from pilot.live import focused_text
+from pilot.live import focused_text, spoken
 from pilot.live.commitments import KIND as COMMITMENT
 from pilot.live.commitments import find_commitments
 from pilot.live.detectors import (
@@ -471,8 +471,18 @@ class LiveCompanion:
             return
         now = self._clock()
         kinds = tuple(kind for kind in self._kinds() if kind in SPEECH_KINDS)
-        for correction in detect(text, self._context(None, "speech"), kinds=kinds):
+        ctx = self._context(None, "speech")
+        for correction in detect(text, ctx, kinds=kinds):
             self._note(correction, "speech", "speech", now)
+        if COMMITMENT in self._kinds():
+            # "I'll send Priya the deck by Friday", said to Heliox or while talking with it: offer the reminder.
+            try:
+                promises = find_commitments(text, ctx, self._wallclock(), self._reminders())
+            except Exception:
+                logger.debug("Spoken commitment check failed", exc_info=True)
+                promises = []
+            for promise in promises:
+                self._note(promise, "speech", "speech", now)
         if self._grounding() and "personal_fact" in self._kinds():
             # What they asked for, against their calendar and lists, while the planner gets going.
             asyncio.ensure_future(self._ground(text, "speech", "speech"))
@@ -502,6 +512,9 @@ class LiveCompanion:
         self._grounded_task = asyncio.create_task(self._ground(obs.text, obs.source, obs.field_key))
 
     async def _ground(self, text: str, source: str, window: str) -> None:
+        if source == "speech":
+            # The local model reads dates and numbers as written ("the twelfth of November" is "12 November").
+            text = spoken.to_written(text)
         try:
             found = await self.grounded.check(text)
         except asyncio.CancelledError:
@@ -642,7 +655,9 @@ class LiveCompanion:
                 await self._deliver(item, spoken=verdict == SPEAK, now=now)
                 if verdict == SPEAK:
                     said.append(say(item.correction.title, item.correction.message, item.source))
-                    urgent_said = urgent_said or item.correction.urgency == URGENT
+                    # An answer to what the person just said is part of the conversation: it goes out on the
+                    # correction channel, so Heliox's own "Opening it now." cannot talk over it.
+                    urgent_said = urgent_said or item.correction.urgency == URGENT or item.source == "speech"
         if said:
             # Several catches in one turn are said as one reply, not as a queue of interruptions.
             self._last_spoken_at = now
