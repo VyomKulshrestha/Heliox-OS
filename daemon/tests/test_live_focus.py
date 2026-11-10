@@ -3,6 +3,7 @@ matches of key-like text do not raise cards."""
 
 from __future__ import annotations
 
+import asyncio
 from datetime import date
 from types import SimpleNamespace
 
@@ -193,3 +194,113 @@ async def test_a_typed_risk_notice_respects_mutes_and_defers_to_the_field_card(t
     await live2.notice_risk("credential_exposure", "keystroke")  # the same thing, with no evidence
     await run_for(live2, clock2, 5)
     assert len(cards(events2)) == 1
+
+
+# ── editors that put the text in the window title (Windows 11 Notepad, VS Code's unsaved dot) ──
+
+NOTEPAD = {"app": "Notepad", "source": "focused_field", "field": "42.30540886"}
+
+
+def notepad(text: str) -> Observation:
+    # Windows 11 Notepad titles an untitled tab with its first line, so the title changes on every keystroke.
+    return Observation(text=text, title=f"*{text.splitlines()[0][:40]} - Notepad", **NOTEPAD)
+
+
+async def type_out(live, clock, obs, text: str, start: str = "", per_char: float = 0.12) -> None:
+    for i in range(len(start) + 1, len(text) + 1):
+        obs[0] = notepad(text[:i])
+        clock.t += per_char
+        await live.tick()
+
+
+@pytest.mark.asyncio
+async def test_a_slip_typed_where_the_title_follows_the_text_is_caught_and_its_fix_seen(tmp_path):
+    # Live first saw another field (the Heliox prompt box, say), so every later field gets a baseline.
+    obs: list[Observation | None] = [Observation(text="hello", field="9", **CLAUDE)]
+    live, clock, events, _ = build(tmp_path, obs)
+    await run_for(live, clock, 2)
+    obs[0] = None  # a new, empty Notepad window: nothing to read yet
+    await run_for(live, clock, 2)
+    await type_out(live, clock, obs, "Launch call is Monday 12 Nov at 10am")
+    await run_for(live, clock, 10)
+    [card] = cards(events)
+    assert card["title"] == "12 November is a Thursday" and card["app"] == "Notepad"
+    # They retype the weekday; the title changes with every key, and the card still sees its slip go.
+    for partial in ("Launch call is Monda 12 Nov at 10am", "Launch call is  12 Nov at 10am"):
+        obs[0] = notepad(partial)
+        await run_for(live, clock, 0.6)
+    for i in range(1, len("Thursday") + 1):
+        obs[0] = notepad(f"Launch call is {'Thursday'[:i]} 12 Nov at 10am")
+        await run_for(live, clock, 0.2)
+    await run_for(live, clock, 3)
+    for _ in range(3):
+        await asyncio.sleep(0)  # the withdrawal is sent from a task
+    assert ("live_interjection_withdrawn", {"id": card["id"], "reason": "fixed"}) in events
+    assert len(cards(events)) == 1
+
+
+@pytest.mark.asyncio
+async def test_text_already_there_stays_quiet_when_the_title_changes_as_they_type(tmp_path):
+    obs: list[Observation | None] = [Observation(text="hello", field="9", **CLAUDE)]
+    live, clock, events, _ = build(tmp_path, obs)
+    await run_for(live, clock, 2)
+    # An opened file that already says Monday 12 Nov, and Work Work; the person adds a line under it.
+    before = "Kickoff is Monday 12 Nov.\nWork Work is the heading.\n"
+    obs[0] = Observation(text=before, title="plan.txt - Notepad", **NOTEPAD)
+    await run_for(live, clock, 3)
+    await type_out(live, clock, obs, before + "Bring the slides.", start=before)
+    await run_for(live, clock, 10)
+    assert cards(events) == []
+
+
+@pytest.mark.asyncio
+async def test_another_tab_in_the_same_editor_control_is_not_the_persons_text(tmp_path):
+    obs: list[Observation | None] = [Observation(text="hello", field="9", **CLAUDE)]
+    live, clock, events, _ = build(tmp_path, obs)
+    await run_for(live, clock, 2)
+    await type_out(live, clock, obs, "Shopping list")
+    await run_for(live, clock, 2)
+    # A tab switch that keeps the same editor element: its whole text changes in one look.
+    obs[0] = Observation(text="Old notes: the the review is Monday 12 Nov", title="old.txt - Notepad", **NOTEPAD)
+    await run_for(live, clock, 10)
+    assert cards(events) == []
+
+
+@pytest.mark.asyncio
+async def test_a_cleared_field_typed_again_is_checked_even_when_empty_reads_never_arrive(tmp_path):
+    # The daemon passes no observation for an empty field, so "it was emptied" is never seen directly.
+    obs: list[Observation | None] = [Observation(text="hello", field="9", **CLAUDE)]
+    live, clock, events, _ = build(tmp_path, obs)
+    await run_for(live, clock, 2)
+    chat = {"app": "slack", "title": "Slack", "source": "focused_field", "field": "7"}
+    obs[0] = Observation(text="I think the the plan works", **chat)
+    await run_for(live, clock, 6)
+    assert cards(events) == []  # already there when focus arrived
+    obs[0] = None  # sent: the box is empty
+    await run_for(live, clock, 1)
+    message = "I think the the plan works"
+    for i in range(1, len(message) + 1):
+        obs[0] = Observation(text=message[:i], **chat)
+        clock.t += 0.12
+        await live.tick()
+    await run_for(live, clock, 8)
+    assert [c["kind"] for c in cards(events)] == ["repeated_word"]
+
+
+def test_replaced_tells_a_swap_from_an_edit():
+    from pilot.live.engine import replaced
+
+    assert not replaced("Launch call", "Launch call is M")  # typing
+    assert not replaced("Launch call is Monday 12 Nov", "Launch call is  12 Nov")  # deleting a word
+    assert not replaced("Launch call is Monday 12 Nov", "Launch call is Thursday 12 Nov")  # retyping it
+    assert not replaced("Hi Bob", "Hi Tom")  # short fields need at least a few characters gone
+    assert not replaced("A" * 300, "A" * 150)  # a long cut that leaves most of the text
+    assert replaced("I think the the plan works", "I t")  # sent, then typing again
+    assert replaced("Shopping list", "Old notes: the the review is Monday")  # another tab
+    assert not replaced("same", "same")
+
+
+def test_explain_says_plainly_when_there_is_nothing_to_explain(tmp_path):
+    live, _, _, _ = build(tmp_path, [None])
+    assert live.explain() == "Nothing to explain: Live hasn't raised anything in the last minute and a half."
+    assert live.explain("abc") == "That correction is no longer available."

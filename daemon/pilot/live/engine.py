@@ -83,6 +83,7 @@ OWN_WORDS_KINDS = frozenset(
     }
 )
 BASELINE_LIMIT = 64  # fields whose starting text is remembered, most recent first
+REPLACED_MIN_CHARS = 8  # see replaced(): the least text that has to go at once for a field to start over
 # Supervision notices: only keyboard-hook matches (what the person just typed) become cards, each rule at most once
 # an hour. An OCR match can be anywhere on screen and has no evidence the person could check.
 NOTICE_SOURCES = frozenset({"keystroke"})
@@ -108,11 +109,36 @@ class Observation:
 
     @property
     def field_key(self) -> str:
-        return f"{self.window}|{self.field}"
+        """Which text field this is, stable while the person types in it.
+
+        The UI Automation runtime id names the field; the window title does not, because many editors put the
+        text itself or an unsaved marker in the title (Windows 11 Notepad titles an untitled tab with its first
+        line, VS Code adds a dot on the first keystroke). Without a runtime id the title is all there is.
+        """
+        return f"{self.app}|#{self.field}" if self.field else f"{self.window}|"
 
 
 def _norm(text: str) -> str:
     return " ".join(text.split()).casefold()
+
+
+def replaced(old: str, new: str) -> bool:
+    """The field's text was swapped for other text rather than edited: a sent message, another tab, a new file.
+
+    Typing, deleting a word or retyping one keeps most of the old text around the change; here more than half of
+    it, and at least ``REPLACED_MIN_CHARS`` characters, went between two looks.
+    """
+    if old == new:
+        return False
+    limit = min(len(old), len(new))
+    prefix = 0
+    while prefix < limit and old[prefix] == new[prefix]:
+        prefix += 1
+    suffix = 0
+    while suffix < limit - prefix and old[-1 - suffix] == new[-1 - suffix]:
+        suffix += 1
+    removed = len(old) - prefix - suffix
+    return removed >= REPLACED_MIN_CHARS and removed * 2 > len(old)
 
 
 @dataclass(frozen=True)
@@ -205,6 +231,7 @@ class LiveCompanion:
         self._state: dict[str, Any] = {}
         # Each field's text when it was first seen, or after it was emptied (see OWN_WORDS_KINDS).
         self._baselines: OrderedDict[str, str] = OrderedDict()
+        self._field_text: OrderedDict[str, str] = OrderedDict()  # each field's text at the last look
         self._writing_seen = False  # a writable field has been seen since Live was turned on
         self._notices: dict[str, float] = {}  # supervision rule -> when it last raised a card
 
@@ -276,6 +303,7 @@ class LiveCompanion:
                 self._pending.clear()
                 self._last_obs = None
                 self._baselines.clear()
+                self._field_text.clear()
                 self._writing_seen = False
                 if self._on_disable:
                     with contextlib.suppress(Exception):
@@ -307,7 +335,7 @@ class LiveCompanion:
             if STUCK in self._kinds():
                 ctx = self._context(obs, obs.source)
                 for offer in self.stuck.observe("", obs.window, ctx, now, writing=False):
-                    self._note(offer, obs.source, obs.window, now)
+                    self._note(offer, obs.source, obs.field_key, now)
             self._last_obs = obs
             return
         digest = hashlib.sha1(obs.text.encode("utf-8", errors="ignore")).hexdigest()
@@ -316,7 +344,7 @@ class LiveCompanion:
         changed = digest != self._last_hash or not same_field
         if changed:
             if same_field:
-                self._typed_on(obs.window, now)
+                self._typed_on(obs.field_key, now)
             self._last_hash = digest
             self._last_text_change = now
             self._last_text = obs.text
@@ -325,7 +353,7 @@ class LiveCompanion:
         if obs.source == "focused_field" and STUCK in self._kinds():
             ctx = self._context(obs, obs.source)
             for offer in self.stuck.observe(obs.text, obs.window, ctx, now, field=obs.field):
-                self._note(offer, obs.source, obs.window, now)
+                self._note(offer, obs.source, obs.field_key, now)
         if changed or now - self._last_detect >= REDETECT_EVERY_SECONDS:
             self._last_detect = now
             kinds = self._kinds()
@@ -335,7 +363,7 @@ class LiveCompanion:
             for correction in detect(obs.text, self._context(obs, obs.source), kinds=kinds):
                 found.add(correction.key)
                 if not self._pre_existing(correction, obs):
-                    self._note(correction, obs.source, obs.window, now)
+                    self._note(correction, obs.source, obs.field_key, now)
             if COMMITMENT in kinds and obs.source == "focused_field":
                 try:
                     promises = find_commitments(
@@ -346,9 +374,9 @@ class LiveCompanion:
                     promises = []
                 for promise in promises:
                     if not self._pre_existing(promise, obs):
-                        self._note(promise, obs.source, obs.window, now)
+                        self._note(promise, obs.source, obs.field_key, now)
             for item in [*self._pending.values(), *self._visible.values()]:
-                if item.source == "speech" or item.window != obs.window or item.correction.kind in STICKY_KINDS:
+                if item.source == "speech" or item.window != obs.field_key or item.correction.kind in STICKY_KINDS:
                     continue  # an offer is not about text that can be fixed away
                 if item.correction.kind in MODEL_KINDS and item.correction.evidence in obs.text:
                     found.add(item.correction.key)
@@ -358,7 +386,8 @@ class LiveCompanion:
                     item.missing_since = now
 
     def _remember_baseline(self, obs: Observation) -> None:
-        """Keep the text a field held when focus moved into it; an emptied field (a sent message) starts over.
+        """Keep the text a field held when focus moved into it. A field that was emptied, or whose text was
+        swapped for other text (a sent message, another tab, another file), starts over from what it holds now.
 
         The first field seen after Live is turned on has no baseline: someone who turns Live on mid-draft wants
         that draft checked. Every field focus moves to after that keeps what it already held as its baseline.
@@ -366,12 +395,15 @@ class LiveCompanion:
         if obs.source != "focused_field":
             return
         key = obs.field_key
-        if key not in self._baselines or not obs.text.strip():
+        last = self._field_text.get(key)
+        if key not in self._baselines or not obs.text.strip() or (last is not None and replaced(last, obs.text)):
             self._baselines[key] = obs.text if self._writing_seen else ""
         self._writing_seen = True
-        self._baselines.move_to_end(key)
-        while len(self._baselines) > BASELINE_LIMIT:
-            self._baselines.popitem(last=False)
+        self._field_text[key] = obs.text
+        for store in (self._baselines, self._field_text):
+            store.move_to_end(key)
+            while len(store) > BASELINE_LIMIT:
+                store.popitem(last=False)
 
     def _pre_existing(self, correction: Correction, obs: Observation) -> bool:
         """The slip was already in the field before the person started editing it, so it is not theirs.
@@ -389,12 +421,12 @@ class LiveCompanion:
             return False
         return baseline.count(evidence) >= _norm(obs.text).count(evidence)
 
-    def _typed_on(self, window: str, now: float) -> None:
-        """The person typed again in the same window: learn how long they paused, and whether a card cut in."""
+    def _typed_on(self, place: str, now: float) -> None:
+        """The person typed again in the same field: learn how long they paused, and whether a card cut in."""
         if self._personal_timing():
             self.timing.observe_pause(now - self._last_text_change, mid_sentence=not at_boundary(self._last_text))
         for item in self._visible.values():
-            if item.window == window and item.resumed_after is None:
+            if item.window == place and item.resumed_after is None:
                 item.resumed_after = now - item.delivered_at
 
     def _outcome(self, item: Pending | None, verdict: str) -> None:
@@ -452,7 +484,7 @@ class LiveCompanion:
             return  # already checked this text
         self._grounded_hash = self._last_hash
         self._last_grounded_at = now
-        self._grounded_task = asyncio.create_task(self._ground(obs.text, obs.source, obs.window))
+        self._grounded_task = asyncio.create_task(self._ground(obs.text, obs.source, obs.field_key))
 
     async def _ground(self, text: str, source: str, window: str) -> None:
         try:
@@ -466,7 +498,7 @@ class LiveCompanion:
         for correction in found:
             if source != "speech":
                 # The answer took a while: only raise it if the words it quotes are still on screen.
-                if obs is None or obs.window != window or correction.evidence not in obs.text:
+                if obs is None or obs.field_key != window or correction.evidence not in obs.text:
                     continue
                 if self._pre_existing(correction, obs):
                     continue
@@ -646,7 +678,9 @@ class LiveCompanion:
     def explain(self, correction_id: str = "") -> str:
         entry = self._find(correction_id) if correction_id else self._latest(self._clock())
         if entry is None:
-            return ""
+            if correction_id:
+                return "That correction is no longer available."
+            return "Nothing to explain: Live hasn't raised anything in the last minute and a half."
         parts = [entry["message"]]
         if entry.get("detail"):
             parts.append(entry["detail"])

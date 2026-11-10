@@ -47,6 +47,7 @@ def test_risky_commands_are_urgent_and_carry_the_safer_command():
     [c] = detect("PS C:\\repo> git push origin main --force", ctx(app="WindowsTerminal", title="PowerShell"))
     assert c.urgency == "urgent" and c.fix == "git push origin main --force-with-lease"
     assert c.evidence == "git push origin main --force"
+    assert c.title == "That can overwrite teammates' commits"  # a sentence, like the other risky-command cards
     assert kinds("$ rm -rf /", app="WindowsTerminal", title="bash") == ["risky_command"]
     assert kinds("DELETE FROM users;", app="dbeaver") == ["risky_command"]
     for safe in ("$ rm -rf /tmp/build", "git push --force-with-lease", "DELETE FROM users WHERE id = 4;"):

@@ -98,3 +98,17 @@ def test_code_editors_are_left_alone():
     for t in range(0, 60, 5):
         found += watcher.observe(code if t % 10 else code[:10], "Code.exe|main.py", CODE, now=float(t))
     assert found == []
+
+
+def test_rewriting_counts_in_an_editor_whose_title_follows_the_text():
+    # Windows 11 Notepad titles an untitled tab with its first line: the field id, not the title, is the field.
+    watcher = StuckWatcher()
+    notepad = TextContext(today=MONDAY, app="Notepad", title="Notepad")
+    opening = "We help small teams ship faster because"
+    found = []
+    t = 0.0
+    for attempt in (" our tool removes the busywork.", " we automate the boring parts.", " nobody likes setup."):
+        for text in (opening + attempt, opening):
+            t += 5
+            found += watcher.observe(text, f"Notepad|*{text} - Notepad", notepad, now=t, field="42.7")
+    assert [offer.kind for offer in found] == ["stuck"]

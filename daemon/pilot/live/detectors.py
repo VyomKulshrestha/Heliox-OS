@@ -393,6 +393,29 @@ def _local_hour(ctx: TextContext) -> int:
     return datetime.now().hour if ctx.today == date.today() else 12
 
 
+def _dated(text: str, start: int, ctx: TextContext) -> date | None:
+    """The date written right after a weekday ("Thursday 12 Nov"), when it really is that weekday."""
+    for pattern in _DATE_PATTERNS:
+        match = pattern.match(text, start)
+        if match is None:
+            continue
+        day, month = int(match["d"]), _month_number(match["m"])
+        year = int(match["y"]) if match["y"] else _resolve_year(day, month, ctx.today)
+        if year is None or not 1 <= day <= calendar.monthrange(year, month)[1]:
+            return None
+        written = date(year, month, day)
+        return written if written.weekday() == _weekday_number(match["wd"]) else None
+    return None
+
+
+def _from_today(day: date, today: date) -> str:
+    days = (day - today).days
+    named = {-1: "yesterday", 0: "today", 1: "tomorrow", 2: "the day after tomorrow"}
+    if days in named:
+        return named[days]
+    return f"in {days} days" if days > 0 else f"{-days} days ago"
+
+
 def _relative_days(text: str, ctx: TextContext) -> list[Correction]:
     if _local_hour(ctx) < 5:
         return []  # at 1 a.m. "tomorrow" usually means after some sleep, not the calendar's tomorrow
@@ -421,6 +444,29 @@ def _relative_days(text: str, ctx: TextContext) -> list[Correction]:
         detail = (
             "" if rel == "yesterday" else f"The next {stated_name} is {meant.day} {calendar.month_name[meant.month]}."
         )
+        written = _dated(text, match.start(group), ctx)
+        if written is not None:
+            # "Tomorrow, Thursday 12 Nov" where 12 Nov is a Thursday: the day and date agree, "tomorrow" is the slip.
+            # Swapping in tomorrow's weekday would make the date wrong, so the fix drops the relative word.
+            on = f"{written.day} {calendar.month_name[written.month]}"
+            found.append(
+                Correction(
+                    kind="weekday_date",
+                    key=f"weekday_date:{evidence.casefold()}",
+                    title=f"{on} {'wasn' if rel == 'yesterday' else 'isn'}'t {rel}",
+                    message=(
+                        f"{rel.title()} {verb} {actual_name} {when.day} {calendar.month_name[when.month]}. "
+                        f"{stated_name} {on} is {_from_today(written, ctx.today)}."
+                    ),
+                    evidence=evidence,
+                    fix=evidence[start:end],
+                    fix_kind="replace",
+                    urgency=NORMAL,
+                    confidence=0.9,
+                    trailing=_at_end(text, match.end()),
+                )
+            )
+            continue
         found.append(
             Correction(
                 kind="weekday_date",
@@ -635,7 +681,7 @@ _RISKY: tuple[tuple[str, re.Pattern[str], str, str, str], ...] = (
     (
         "force_push",
         re.compile(r"\bgit\s+push\b[^\n]*?(?:\s--force(?!-with-lease)\b|\s-f\b)", re.I),
-        "A plain force-push",
+        "That can overwrite teammates' commits",
         "A plain force-push can overwrite your teammates' commits. --force-with-lease refuses if the remote moved.",
         "force_with_lease",
     ),

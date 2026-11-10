@@ -344,3 +344,19 @@ def test_api_keys_are_named_by_their_prefix():
 def test_sk_slugs_are_not_keys():
     assert chat("see sk-hynix-memory-prices-are-rising-again-2026") == []
     assert chat("the sk-learn tutorial covers pipelines") == []
+
+
+def test_a_wrong_tomorrow_before_a_matching_date_blames_tomorrow_not_the_weekday():
+    from pilot.live.detectors import TextContext, detect
+
+    tuesday = TextContext(today=date(2026, 11, 10), hour=12, app="Notepad", title="Notepad", source="focused_field")
+    [c] = detect("Demo is tomorrow, Thursday 12 Nov", tuesday)
+    assert c.title == "12 November isn't tomorrow"
+    assert c.message == "Tomorrow is Wednesday 11 November. Thursday 12 November is the day after tomorrow."
+    # The old fix, "tomorrow, Wednesday", would have made the date wrong: drop the relative word instead.
+    assert (c.evidence, c.fix, c.detail) == ("tomorrow, Thursday", "Thursday", "")
+    [later] = detect("Demo is tomorrow, Thursday 19 Nov at 10", tuesday)
+    assert later.message.endswith("Thursday 19 November is in 9 days.")
+    # A date that disagrees with its weekday keeps both ordinary cards.
+    titles = sorted(c.title for c in detect("Demo is tomorrow, Thursday 13 Nov", tuesday))
+    assert titles == ["13 November is a Friday", "Tomorrow is Wednesday"]

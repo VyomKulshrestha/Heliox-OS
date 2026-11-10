@@ -99,7 +99,9 @@ class StuckWatcher:
     # ── the three signs ──
 
     def _rewriting(self, text: str, window: str, now: float, field: str = "") -> list[Correction]:
-        state = self._fields.setdefault(f"{window}|{field}", _Field(peak=len(text), last=len(text)))
+        # The field, not the title: many editors put the text itself or an unsaved marker in the title.
+        place = f"{window.split('|', 1)[0]}|#{field}" if field else f"{window}|"
+        state = self._fields.setdefault(place, _Field(peak=len(text), last=len(text)))
         length = len(text)
         while state.rewrites and now - state.rewrites[0][0] > REWRITE_WINDOW_SECONDS:
             state.rewrites.popleft()
@@ -117,13 +119,13 @@ class StuckWatcher:
         if len(state.rewrites) < REWRITES or length - state.rewrites[0][1] > MAX_GROWTH_CHARS:
             return []
         sentence = _last_sentence(text)
-        if len(sentence) < 8 or not self._due("rewrite", window, now):
+        if len(sentence) < 8 or not self._due("rewrite", place, now):
             return []
         state.rewrites.clear()
         return [
             Correction(
                 kind=KIND,
-                key=f"{KIND}:rewrite:{window}:{int(now)}",
+                key=f"{KIND}:rewrite:{place}:{int(now)}",
                 title="Want another way to say it?",
                 message="You've rewritten this a few times. Want me to suggest a clearer way to say it?",
                 evidence=sentence[-80:],
