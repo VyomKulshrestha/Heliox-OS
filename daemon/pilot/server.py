@@ -19,6 +19,7 @@ import uuid
 import zipfile
 from collections import deque
 from dataclasses import dataclass, field
+from dataclasses import replace as _dc_replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -2550,6 +2551,10 @@ class PilotServer:
         """
         task = asyncio.ensure_future(execution)
         self._active_execution_task = task
+        if self._cancel_event is not None and self._cancel_event.is_set():
+            # A stop or correction landed before this phase was registered, so the interject/abort handler found
+            # nothing to cancel. Cancelling here means the model call or action never starts.
+            task.cancel()
         try:
             return await task
         finally:
@@ -3106,6 +3111,9 @@ class PilotServer:
         # ── Cancel Token (Issue #92): fresh event per execution session ──
         self._cancel_event = asyncio.Event()
         cancel_event = self._cancel_event
+        if self._live_correction:
+            # A correction that arrived while the previous revision was handing over has no event to set yet.
+            cancel_event.set()
 
         import time
 
@@ -3490,6 +3498,11 @@ class PilotServer:
             # ── Cancel Token: check before each planning attempt ──
             if cancel_event.is_set():
                 logger.info("Execution cancelled before attempt %d", attempt + 1)
+                if self._live_correction:
+                    # A correction that arrived before planning began replans; it is not a stop.
+                    revised = await _restart_with_live_correction()
+                    if revised is not None:
+                        return revised
                 message = "Execution was stopped before planning."
                 await _emit_task_complete("cancelled", message)
                 return {"status": "cancelled", "message": message}
@@ -3576,6 +3589,9 @@ class PilotServer:
                     except Exception:
                         logger.debug("Could not load learned persona context", exc_info=True)
 
+                if cancel_event.is_set():
+                    # Stop or correction arrived while the planning context was gathered: no planner call starts.
+                    return await _phase_cancelled("planning")
                 try:
                     planner_kwargs: dict[str, Any] = {
                         "error_context": error_context,
@@ -3680,6 +3696,8 @@ class PilotServer:
             if self.config.narration.proactive_review_enabled and self._execution_companion and not dry_run:
                 await ws.send(_notification("status", {"phase": "companion reviewing plan"}))
                 companion_review = self._deterministic_companion_review(plan, user_input)
+                if companion_review is not None:
+                    companion_review = _dc_replace(companion_review, status="local")
                 if companion_review is None:
                     try:
                         companion_review = await self._await_execution_tracked(
@@ -3694,6 +3712,10 @@ class PilotServer:
                     "revision": auto_revision_count,
                 }
                 await ws.send(_notification("companion_plan_review", review_payload))
+
+                if cancel_event.is_set():
+                    # Stop or a correction landed as the review finished; this plan is dropped, not acted on.
+                    return await _phase_cancelled("companion review")
 
                 if companion_review.should_stop:
                     message = f"Interactive companion stopped this plan: {companion_review.reason}"
@@ -5510,6 +5532,11 @@ class PilotServer:
             those the user approved (all of them for a plain approve/deny
             response, a subset for per-action granular approval).
         """
+        if self._cancel_event is not None and self._cancel_event.is_set():
+            # The person stopped or corrected the task after this plan was made. No approval is requested for
+            # it, and nothing here can approve it.
+            return False, set(), set(range(len(plan.actions)))
+
         pending = PendingConfirmation(plan_id=plan_id, event=asyncio.Event())
         self._pending_confirms[plan_id] = pending
 

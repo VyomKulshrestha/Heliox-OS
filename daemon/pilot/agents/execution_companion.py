@@ -19,8 +19,9 @@ import asyncio
 import json
 import logging
 import re
+import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -30,6 +31,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger("pilot.agents.execution_companion")
 
 MAX_FOLLOW_UP_SUGGESTIONS = 2
+
+# Two reviews in a row that ran out of time show the provider cannot answer inside the limit. The model call is
+# then skipped for a while instead of being paid for and thrown away on every task.
+SLOW_PROVIDER_TIMEOUT_STREAK = 2
+SLOW_PROVIDER_SKIP_SECONDS = 600.0
 
 _SYSTEM_PROMPT = """\
 You are Heliox's independent Interactive Execution Companion.
@@ -78,6 +84,15 @@ class CompanionReview:
     reason: str
     planner_feedback: str = ""
     issues: list[str] = field(default_factory=list)
+    # "reviewed": the model answered. "local": a deterministic check answered, no model. "unavailable": the
+    # model call failed or timed out. "skipped_slow": the call was not made because recent ones timed out.
+    status: str = "reviewed"
+    latency_seconds: float | None = field(default=None, compare=False)
+
+    @property
+    def reviewed(self) -> bool:
+        """True only when a model or a deterministic check actually judged this plan."""
+        return self.status in {"reviewed", "local"}
 
     @property
     def should_revise(self) -> bool:
@@ -93,6 +108,9 @@ class CompanionReview:
             "reason": self.reason,
             "planner_feedback": self.planner_feedback,
             "issues": list(self.issues),
+            "status": self.status,
+            "reviewed": self.reviewed,
+            "latency_seconds": self.latency_seconds,
         }
 
 
@@ -124,6 +142,7 @@ class ExecutionCompanion:
         timeout_seconds: float = 5.0,
         scope_advisor: Any | None = None,
         undo_enabled: Callable[[], bool] | None = None,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._model = model_router
         # Undo is only offered when the caller says the undo journal is on.
@@ -131,25 +150,52 @@ class ExecutionCompanion:
         self._timeout_seconds = max(1.0, min(30.0, timeout_seconds))
         # No bundled or unverified learned checkpoint is loaded by default.
         self._scope_advisor = scope_advisor
+        self._clock = clock
+        self._timeout_streak = 0
+        self._skip_until = 0.0
 
     async def review(self, user_input: str, plan: ActionPlan, *, screen_context: str = "") -> CompanionReview:
+        if self._clock() < self._skip_until:
+            logger.info("Interactive companion review skipped: recent reviews timed out")
+            skipped = CompanionReview(
+                decision="CONTINUE",
+                reason=(
+                    f"The model review was skipped because recent reviews did not finish within "
+                    f"{self._timeout_seconds:g} seconds; deterministic safety checks remain active."
+                ),
+                issues=["review_skipped_slow_provider"],
+                status="skipped_slow",
+            )
+            return self._add_local_scope_advisory(user_input, plan, skipped)
         prompt = self._format_prompt(user_input, plan, screen_context=screen_context)
         raw = ""
+        started = self._clock()
         try:
             raw = await asyncio.wait_for(
                 self._model.generate(prompt, system=_SYSTEM_PROMPT, json_mode=True),
                 timeout=self._timeout_seconds,
             )
-            return self._add_local_scope_advisory(user_input, plan, self._parse(raw))
+            latency = round(self._clock() - started, 2)
+            self._timeout_streak = 0
+            self._skip_until = 0.0
+            return self._add_local_scope_advisory(user_input, plan, replace(self._parse(raw), latency_seconds=latency))
         except Exception as exc:
             # Existing deterministic permission, risk, confirmation and
             # verification gates remain authoritative. A companion outage must
             # not pretend to have reviewed or silently block harmless work.
+            # A review cancelled by Stop or a correction is a CancelledError, not an Exception, so it never
+            # lands here and is not counted against the provider.
             logger.warning("Interactive companion review unavailable: %s", exc)
+            if isinstance(exc, TimeoutError):
+                self._timeout_streak += 1
+                if self._timeout_streak >= SLOW_PROVIDER_TIMEOUT_STREAK:
+                    self._skip_until = self._clock() + SLOW_PROVIDER_SKIP_SECONDS
             fallback = CompanionReview(
                 decision="CONTINUE",
                 reason="Interactive companion review was unavailable; deterministic safety checks remain active.",
                 issues=["review_unavailable"],
+                status="unavailable",
+                latency_seconds=round(self._clock() - started, 2),
             )
             return self._add_local_scope_advisory(user_input, plan, fallback)
 
@@ -173,16 +219,11 @@ class ExecutionCompanion:
                 return review
             if decision is not None and decision.in_scope_probability <= 0.12:
                 if review.decision == "WARN":
-                    return CompanionReview(
-                        decision="WARN",
-                        reason=review.reason,
-                        planner_feedback=review.planner_feedback,
-                        issues=[*review.issues, f"local_scope_advisory:{action_type}"],
-                    )
-                return CompanionReview(
+                    return replace(review, issues=[*review.issues, f"local_scope_advisory:{action_type}"])
+                return replace(
+                    review,
                     decision="WARN",
                     reason=f"Local scope check flagged {action_type} as possibly outside the request.",
-                    planner_feedback=review.planner_feedback,
                     issues=[*review.issues, f"local_scope_advisory:{action_type}"],
                 )
         return review
