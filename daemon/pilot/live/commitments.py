@@ -24,6 +24,7 @@ import re
 from datetime import date, datetime, time, timedelta
 from typing import Any
 
+from pilot.live import spoken as sp
 from pilot.live.detectors import LOW, Correction, TextContext
 from pilot.live.grounded import significant_words, stated_day, stated_time
 
@@ -32,7 +33,7 @@ MAX_ACTION_WORDS = 12
 SCAN_CHARS = 1500
 
 _PROMISE = re.compile(
-    r"\b(?:I'll|I will|I'm going to|I am going to|I can|let me|will do|I promise to|I'll make sure to|I'll try to)\s+",
+    r"\b(?:I['’]ll|I will|I'm going to|I am going to|I can|let me|will do|I promise to|I'll make sure to|I'll try to)\s+",
     re.IGNORECASE,
 )
 _SENTENCE = re.compile(r"[^.!?\n]+[.!?]?")
@@ -46,11 +47,29 @@ _DEADLINE = re.compile(
     rf"\d{{1,2}}(?::\d{{2}})?\s*(?:am|pm)|noon)\b.*$",
     re.IGNORECASE,
 )
+# "on the twelfth", "by the 12th": a day of the month with no month, only after a preposition and only when the
+# clause ends there or goes on to a time ("on the second floor" is not a deadline).
+_DEADLINE_THE = re.compile(
+    r"\s*\b(?:by|before|on|until|no later than)\s+the\s+\d{1,2}(?:st|nd|rd|th)\b"
+    r"(?=\s*$|\s*[,.;:!?]|\s+(?:at|and|so|then|morning|afternoon|evening|night|but|or|if)\b).*$",
+    re.IGNORECASE,
+)
+# A run-on sentence ("by Friday and then I'll call him tomorrow") ends the deadline where the next clause starts.
+_CLAUSE_BREAK = re.compile(r"\s+(?:and|then|but|so|also|because|since)\b", re.IGNORECASE)
 _NOT_A_TASK = re.compile(r"^(?:be|need|want|think|know|see if|probably|maybe|let you know if)\b", re.IGNORECASE)
 _END_OF_DAY = re.compile(r"\b(?:end of (?:the )?day|eod|cob|close of business)\b", re.IGNORECASE)
 _NEXT_WEEK = re.compile(r"\bnext week\b", re.IGNORECASE)
 _TONIGHT = re.compile(r"\btonight\b", re.IGNORECASE)
 _PRONOUNS = {"you": "them", "your": "their", "yours": "theirs"}
+
+
+def _find_deadline(after: str) -> tuple[int, str] | None:
+    """Where the deadline starts in what comes after the promise, and the phrase that states it."""
+    found = [m for m in (_DEADLINE.search(after), _DEADLINE_THE.search(after)) if m]
+    if not found:
+        return None
+    match = min(found, key=lambda m: m.start())
+    return match.start(), _CLAUSE_BREAK.split(match.group(0), maxsplit=1)[0]
 
 
 def deadline_of(phrase: str, today: date) -> tuple[datetime | None, bool]:
@@ -82,6 +101,24 @@ def remind_at(deadline: datetime, has_time: bool, now: datetime) -> datetime | N
 
 def _clock(moment: datetime) -> str:
     return moment.strftime("%I:%M%p").lstrip("0").lower().replace(":00", "")
+
+
+def _clock_said(moment: datetime) -> str:
+    hour = moment.hour % 12 or 12
+    return f"{sp.time_words(hour, moment.minute)} {'a m' if moment.hour < 12 else 'p m'}"
+
+
+def _when_said(moment: datetime, now: datetime) -> str:
+    """The same as ``_when``, worded to be read aloud."""
+    days = (moment.date() - now.date()).days
+    at = _clock_said(moment)
+    if days == 0:
+        return f"today at {at}"
+    if days == 1:
+        return f"tomorrow at {at}"
+    if days < 7:
+        return f"on {moment.strftime('%A')} at {at}"
+    return f"on {sp.date_words(moment.day, moment.strftime('%B'))} at {at}"
 
 
 def _when(moment: datetime, now: datetime) -> str:
@@ -119,35 +156,53 @@ def find_commitments(
     text: str, ctx: TextContext, now: datetime, reminders: list[dict[str, Any]] | None = None
 ) -> list[Correction]:
     """The latest promise with a deadline in the text, as an offer to set a reminder."""
-    if ctx.source != "focused_field" or ctx.is_terminal or ctx.is_code_editor:
+    if ctx.source not in ("focused_field", "speech") or ctx.is_terminal or ctx.is_code_editor:
         return []
+    speech = ctx.source == "speech"
+    # A transcript is read in its written form ("on the twelfth" is "on the 12th"), quoted in the words said.
+    norm = sp.normalise(text) if speech else None
+    read = norm.text if norm is not None else text
+    offset = max(0, len(read) - SCAN_CHARS)
+
+    def said(start: int, end: int) -> str:
+        return norm.said(start, end) if norm is not None else read[start:end]
+
     existing = [significant_words(str(r.get("text", ""))) for r in reminders or []]
     found: list[Correction] = []
-    for match in _SENTENCE.finditer(text[-SCAN_CHARS:]):
-        sentence = match.group(0).strip()
+    for match in _SENTENCE.finditer(read[offset:]):
+        raw = match.group(0)
+        sentence = raw.strip()
         if not sentence or sentence.endswith("?") or re.search(r"\bif I\b", sentence, re.IGNORECASE):
             continue
         promise = _PROMISE.search(sentence)
         if not promise:
             continue
+        begin = offset + match.start() + (len(raw) - len(raw.lstrip()))
+        origin = begin + promise.end()
         after = sentence[promise.end() :].rstrip(".! ")
         if _NOT_A_TASK.match(after) or re.match(r"know\b", after, re.IGNORECASE):
             continue
-        cut = _DEADLINE.search(after)
+        cut = _find_deadline(after)
         if not cut:
             continue
-        deadline, has_time = deadline_of(cut.group(0), now.date())
+        cut_start, phrase = cut
+        deadline, has_time = deadline_of(phrase, now.date())
         if deadline is None:
             continue
         moment = remind_at(deadline, has_time, now)
-        words = [_PRONOUNS.get(word.casefold(), word) for word in after[: cut.start()].strip(" ,;:-").split()]
+        action_text = said(origin, origin + cut_start) if speech else after[:cut_start]
+        words = [_PRONOUNS.get(word.casefold(), word) for word in action_text.strip(" ,;:-").split()]
         action = " ".join(words[:MAX_ACTION_WORDS])
         if moment is None or len(words) < 2:
             continue
         wanted = significant_words(action)
         if any(wanted and len(wanted & seen) * 2 >= len(wanted) for seen in existing):
             continue  # already in their reminders
-        promised = cut.group(0).strip(" ,.!")
+        promised = phrase.strip(" ,.!")
+        quoted = sentence[-120:]
+        if speech:
+            promised = said(origin + cut_start, origin + cut_start + len(phrase)).strip(" ,.!")
+            quoted = said(begin, begin + len(sentence))[-120:]
         request = _request(moment, action, now)
         if not _lands_at(request, moment, now):
             continue
@@ -155,9 +210,9 @@ def find_commitments(
             Correction(
                 kind=KIND,
                 key=f"{KIND}:{action.casefold()}:{deadline.date().isoformat()}",
-                title=f"Want a reminder {_when(moment, now)}?",
+                title=f"Want a reminder {_when_said(moment, now) if speech else _when(moment, now)}?",
                 message=f"You said you'd {action} {promised}.",
-                evidence=sentence[-120:],
+                evidence=quoted,
                 fix=request,
                 fix_kind="ask",
                 urgency=LOW,

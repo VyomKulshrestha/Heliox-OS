@@ -13,6 +13,8 @@ import re
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
 
+from pilot.live import spoken as sp
+
 URGENT, NORMAL, LOW = "urgent", "normal", "low"
 
 KINDS = (
@@ -76,6 +78,16 @@ class TextContext:
     # The local hour, for "today" and "tomorrow" (after midnight people still mean the day they are finishing).
     # None: the clock's hour when ``today`` is the real today, otherwise midday.
     hour: int | None = None
+    # What a speech recogniser's transcript was turned into (pilot.live.spoken); ``detect`` sets it for speech.
+    spoken: sp.Spoken | None = None
+
+    @property
+    def is_speech(self) -> bool:
+        return self.source == "speech"
+
+    def said(self, text: str, start: int, end: int) -> str:
+        """The words the person said for ``text[start:end]``, where ``text`` is what the detectors read."""
+        return self.spoken.said(start, end) if self.spoken is not None else text[start:end].strip()
 
     @property
     def where(self) -> str:
@@ -116,6 +128,20 @@ def _short(text: str, limit: int = 120) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
+def _cap(text: str) -> str:
+    return text[:1].upper() + text[1:]
+
+
+def _on(day: int, month: int, ctx: TextContext) -> str:
+    """A date as the card says it: "12 November" on screen, "the twelfth of November" aloud."""
+    name = calendar.month_name[month]
+    return sp.date_words(day, name) if ctx.is_speech else f"{day} {name}"
+
+
+def _wrote(ctx: TextContext) -> str:
+    return "said" if ctx.is_speech else "wrote"
+
+
 # ── Weekday that doesn't match its date ───────────────────────────────────────────────────────────────────────────
 
 _DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
@@ -133,7 +159,8 @@ _DATE_PATTERNS = (
     ),
     # "Tuesday, November 14, 2026", "Tue Nov 14"
     re.compile(
-        rf"\b{_DAY_RE}\.?,?\s+{_MONTH_RE}\.?\s+(?P<d>\d{{1,2}})(?:st|nd|rd|th)?\b(?:,?\s+(?P<y>\d{{4}}))?",
+        rf"\b{_DAY_RE}\.?,?\s+{_MONTH_RE}\.?\s+(?:the\s+)?(?P<d>\d{{1,2}})(?:st|nd|rd|th)?\b"
+        rf"(?:,?\s+(?P<y>\d{{4}}))?",
         re.IGNORECASE,
     ),
 )
@@ -193,10 +220,10 @@ def weekday_date(text: str, ctx: TextContext) -> list[Correction]:
                 Correction(
                     kind="weekday_date",
                     key=f"weekday_date:{evidence.casefold()}",
-                    title=f"{day} {month_name} is a {actual_name}",
-                    message=f"You wrote {stated_name}.",
+                    title=_cap(f"{_on(day, month, ctx)} is a {actual_name}"),
+                    message=f"You {_wrote(ctx)} {stated_name}.",
                     evidence=evidence,
-                    detail=f"If you meant the {stated_name}, that's {nearest.day} {calendar.month_name[nearest.month]}.",
+                    detail=f"If you meant {'' if ctx.is_speech else 'the '}{stated_name}, that's {_on(nearest.day, nearest.month, ctx)}.",
                     fix=corrected,
                     fix_kind="replace",
                     urgency=NORMAL,
@@ -209,7 +236,7 @@ def weekday_date(text: str, ctx: TextContext) -> list[Correction]:
     found.extend(_impossible_dates(text, ctx, seen))
     found.extend(_numeric_weekdays(text, ctx))
     found.extend(_relative_days(text, ctx))
-    found.extend(_clock_times(text))
+    found.extend(_clock_times(text, ctx))
     return found
 
 
@@ -245,20 +272,28 @@ def _plausible_year(month: int, today: date) -> int:
 
 def _no_such_date(evidence: str, day: int, month: int, stated_year: int | None, ctx: TextContext) -> Correction:
     month_name = calendar.month_name[month]
+    speech = ctx.is_speech
     if month == 2 and day == 29:
         year = stated_year or _plausible_year(month, ctx.today)
-        title = f"There's no 29 February {year}"
-        message = f"{year} isn't a leap year."
+        if speech:
+            title = f"There's no {sp.date_words(29, month_name, article=False)} {sp.year_words(year)}"
+            message = f"{sp.year_words(year)} isn't a leap year."
+        else:
+            title = f"There's no 29 February {year}"
+            message = f"{year} isn't a leap year."
     else:
-        title = f"There's no {day} {month_name}"
-        message = (
-            f"{month_name} has {calendar.monthrange(stated_year or _plausible_year(month, ctx.today), month)[1]} days."
-        )
+        days = calendar.monthrange(stated_year or _plausible_year(month, ctx.today), month)[1]
+        if speech:
+            title = f"There's no {sp.date_words(day, month_name, article=False)}"
+            message = f"{month_name} has {sp.cardinal_words(days)} days."
+        else:
+            title = f"There's no {day} {month_name}"
+            message = f"{month_name} has {days} days."
     return Correction(
         kind="weekday_date",
         key=f"weekday_date:{evidence.casefold()}",
         title=title,
-        message=message,
+        message=_cap(message),
         evidence=evidence,
         urgency=NORMAL,
     )
@@ -324,7 +359,7 @@ def _numeric_weekdays(text: str, ctx: TextContext) -> list[Correction]:
             year = stated_year or _resolve_year(day, month, ctx.today)
             if year is None or day > calendar.monthrange(year, month)[1]:
                 continue
-            readings[date(year, month, day)] = f"{day} {calendar.month_name[month]}"
+            readings[date(year, month, day)] = _on(day, month, ctx)
         stated = _weekday_number(token)
         if not readings or any(when.weekday() == stated for when in readings):
             continue
@@ -343,8 +378,8 @@ def _numeric_weekdays(text: str, ctx: TextContext) -> list[Correction]:
             actual_name = _DAYS[when.weekday()].title()
             found.append(
                 Correction(
-                    title=f"{spoken} is a {actual_name}",
-                    message=f"You wrote {stated_name}.",
+                    title=_cap(f"{spoken} is a {actual_name}"),
+                    message=f"You {_wrote(ctx)} {stated_name}.",
                     fix=evidence.replace(token, _match_case(actual_name, token), 1),
                     fix_kind="replace",
                     confidence=0.95,
@@ -355,8 +390,8 @@ def _numeric_weekdays(text: str, ctx: TextContext) -> list[Correction]:
             (first, first_name), (second, second_name) = sorted(readings.items())
             found.append(
                 Correction(
-                    title=f"{numeric} isn't a {stated_name}",
-                    message=(
+                    title=f"That date isn't a {stated_name}" if ctx.is_speech else f"{numeric} isn't a {stated_name}",
+                    message=_cap(
                         f"{first_name} is a {_DAYS[first.weekday()].title()} and {second_name} is a "
                         f"{_DAYS[second.weekday()].title()}."
                     ),
@@ -385,7 +420,8 @@ _RELATIVE_NOT_A_CLAIM_BEFORE = re.compile(
 )
 # After a comma or dash form, the weekday must end the phrase: "tomorrow, Thursday and Friday" is a list.
 _RELATIVE_END = re.compile(
-    r"^(?:\s*$|\s*[.!;:)]|,?\s+(?:at|@|from|morning|afternoon|evening|night|first thing|by)\b|\s+\d)", re.IGNORECASE
+    r"^(?:\s*$|\s*[.!;:)]|,?\s+(?:at|@|from|morning|afternoon|evening|night|first thing|by)\b|\s+(?:the\s+)?\d)",
+    re.IGNORECASE,
 )
 
 
@@ -410,12 +446,13 @@ def _dated(text: str, start: int, ctx: TextContext) -> date | None:
     return None
 
 
-def _from_today(day: date, today: date) -> str:
+def _from_today(day: date, today: date, speech: bool = False) -> str:
     days = (day - today).days
     named = {-1: "yesterday", 0: "today", 1: "tomorrow", 2: "the day after tomorrow"}
     if days in named:
         return named[days]
-    return f"in {days} days" if days > 0 else f"{-days} days ago"
+    count = sp.cardinal_words(abs(days)) if speech else str(abs(days))
+    return f"in {count} days" if days > 0 else f"{count} days ago"
 
 
 def _relative_days(text: str, ctx: TextContext) -> list[Correction]:
@@ -443,22 +480,20 @@ def _relative_days(text: str, ctx: TextContext) -> list[Correction]:
         evidence = match.group(0).strip()
         group = "wd" if match["wd"] else "wd2"
         start, end = match.start(group) - match.start(), match.end(group) - match.start()
-        detail = (
-            "" if rel == "yesterday" else f"The next {stated_name} is {meant.day} {calendar.month_name[meant.month]}."
-        )
+        detail = "" if rel == "yesterday" else f"The next {stated_name} is {_on(meant.day, meant.month, ctx)}."
         written = _dated(text, match.start(group), ctx)
         if written is not None:
             # "Tomorrow, Thursday 12 Nov" where 12 Nov is a Thursday: the day and date agree, "tomorrow" is the slip.
             # Swapping in tomorrow's weekday would make the date wrong, so the fix drops the relative word.
-            on = f"{written.day} {calendar.month_name[written.month]}"
+            on = _on(written.day, written.month, ctx)
             found.append(
                 Correction(
                     kind="weekday_date",
                     key=f"weekday_date:{evidence.casefold()}",
-                    title=f"{on} {'wasn' if rel == 'yesterday' else 'isn'}'t {rel}",
-                    message=f"{rel.title()} {verb} {actual_name} {when.day} {calendar.month_name[when.month]}.",
+                    title=_cap(f"{on} {'wasn' if rel == 'yesterday' else 'isn'}'t {rel}"),
+                    message=f"{rel.title()} {verb} {actual_name} {_on(when.day, when.month, ctx)}.",
                     evidence=evidence,
-                    detail=f"{stated_name} {on} is {_from_today(written, ctx.today)}.",
+                    detail=f"{stated_name} {on} is {_from_today(written, ctx.today, ctx.is_speech)}.",
                     fix=evidence[start:end],
                     fix_kind="replace",
                     urgency=NORMAL,
@@ -472,7 +507,7 @@ def _relative_days(text: str, ctx: TextContext) -> list[Correction]:
                 kind="weekday_date",
                 key=f"weekday_date:{evidence.casefold()}",
                 title=f"{rel.title()} {verb} {actual_name}",
-                message=f"You wrote {stated_name}.",
+                message=f"You {_wrote(ctx)} {stated_name}.",
                 evidence=evidence,
                 detail=detail,
                 fix=evidence[:start] + _match_case(actual_name, token) + evidence[end:],
@@ -500,7 +535,13 @@ _CLOCK = re.compile(
 )
 
 
-def _clock_times(text: str) -> list[Correction]:
+def _clock_times(text: str, ctx: TextContext) -> list[Correction]:
+    speech = ctx.is_speech
+    mixed_message = (
+        "It mixes the twenty-four hour and twelve hour clocks."
+        if speech
+        else "It mixes the 24-hour and 12-hour clocks."
+    )
     found: list[Correction] = []
     for match in _MIXED_CLOCK.finditer(text):
         hour = int(match["h"])
@@ -514,13 +555,19 @@ def _clock_times(text: str) -> list[Correction]:
             "urgency": NORMAL,
             "trailing": _at_end(text, match.end()),
         }
+        minute = int(minutes) if minutes else 0
+        said_ap = "p m" if spelled[:1].casefold() == "p" else "a m"
         if spelled[:1].casefold() == "p":
             twelve = f"{hour - 12}{':' + minutes if minutes else ''}"
             gap = " " if match["ap2"] else ""
             found.append(
                 Correction(
-                    title=f"{evidence} is {twelve}{gap}{spelled}",
-                    message="It mixes the 24-hour and 12-hour clocks.",
+                    title=(
+                        _cap(f"{sp.time_words(hour, minute)} {said_ap} is {sp.time_words(hour - 12, minute)} p m")
+                        if speech
+                        else f"{evidence} is {twelve}{gap}{spelled}"
+                    ),
+                    message=mixed_message,
                     fix=f"{twelve}{gap}{spelled}",
                     fix_kind="replace",
                     confidence=0.9,
@@ -530,8 +577,8 @@ def _clock_times(text: str) -> list[Correction]:
         else:
             found.append(
                 Correction(
-                    title=f"There's no {evidence}",
-                    message="It mixes the 24-hour and 12-hour clocks.",
+                    title=f"There's no {sp.time_words(hour, minute)} {said_ap}" if speech else f"There's no {evidence}",
+                    message=mixed_message,
                     confidence=0.9,
                     **common,
                 )
@@ -540,16 +587,16 @@ def _clock_times(text: str) -> list[Correction]:
         hour, minutes = int(match["h"]), int(match["mm"])
         shown = match["t"]
         if minutes >= 60:
-            message = "An hour has 60 minutes."
+            message = "An hour has sixty minutes." if speech else "An hour has 60 minutes."
         elif hour >= 25 or (hour == 24 and minutes > 0):
-            message = "A day ends at 23:59."
+            message = "A day ends at twenty-three fifty-nine." if speech else "A day ends at 23:59."
         else:
             continue
         found.append(
             Correction(
                 kind="weekday_date",
                 key=f"weekday_date:{shown}",
-                title=f"There's no {shown}",
+                title=f"There's no {sp.time_words(hour, minutes)}" if speech else f"There's no {shown}",
                 message=message,
                 evidence=shown,
                 urgency=NORMAL,
@@ -604,6 +651,13 @@ def _fmt(value: float, decimals: int) -> str:
     return f"{value:.{max(decimals, 2)}f}".rstrip("0").rstrip(".")
 
 
+def _you_said(text: str, match: re.Match[str], ctx: TextContext) -> str:
+    """The result they gave: "You wrote 170." on screen, "You said one seventy." aloud."""
+    if ctx.is_speech:
+        return f"You said {ctx.said(text, match.start('c'), match.end('c'))}."
+    return f"You wrote {match['c']}."
+
+
 def arithmetic(text: str, ctx: TextContext) -> list[Correction]:
     if ctx.is_code_editor or ctx.is_terminal:
         return []  # code is full of things that look like sums and are not claims
@@ -628,12 +682,17 @@ def arithmetic(text: str, ctx: TextContext) -> list[Correction]:
             continue
         shown = _fmt(value, places)
         evidence = match.group(0).strip()
+        left, right = _fmt(a, _decimals(match["a"])), _fmt(b, _decimals(match["b"]))
+        title = f"{left} {symbol} {right} is {shown}"
+        if ctx.is_speech:
+            word = {"+": "plus", "−": "minus", "×": "times", "÷": "divided by"}[symbol]
+            title = _cap(f"{sp.number_words(left)} {word} {sp.number_words(right)} is {sp.number_words(shown)}")
         found.append(
             Correction(
                 kind="arithmetic",
                 key=f"arithmetic:{evidence}",
-                title=f"{_fmt(a, _decimals(match['a']))} {symbol} {_fmt(b, _decimals(match['b']))} is {shown}",
-                message=f"You wrote {match['c']}.",
+                title=title,
+                message=_you_said(text, match, ctx),
                 evidence=evidence,
                 fix=evidence[: match.start("c") - match.start()] + shown,
                 fix_kind="replace",
@@ -651,12 +710,17 @@ def arithmetic(text: str, ctx: TextContext) -> list[Correction]:
             continue  # right, or rounded the way people round
         shown = _fmt(value, places)
         evidence = match.group(0).strip()
+        title = f"{match['p']}% of {match['base']} is {shown}"
+        if ctx.is_speech:
+            title = _cap(
+                f"{sp.number_words(match['p'])} percent of {sp.number_words(match['base'])} is {sp.number_words(shown)}"
+            )
         found.append(
             Correction(
                 kind="arithmetic",
                 key=f"arithmetic:{evidence}",
-                title=f"{match['p']}% of {match['base']} is {shown}",
-                message=f"You wrote {match['c']}.",
+                title=title,
+                message=_you_said(text, match, ctx),
                 evidence=evidence,
                 fix=evidence[: match.start("c") - match.start()] + shown,
                 fix_kind="replace",
@@ -1228,18 +1292,65 @@ DETECTORS = {
 SPEECH_KINDS = ("weekday_date", "arithmetic", "profile_fact")
 
 
+def _said_fix(correction: Correction, norm: sp.Spoken, start: int) -> str:
+    """A fix for a spoken card in the person's own words, or "" when it cannot be said that way."""
+    evidence, fix = correction.evidence, correction.fix
+    if fix in evidence:  # the fix is a piece of the evidence: "Thursday"
+        at = start + evidence.index(fix)
+        return norm.said(at, at + len(fix))
+    shown, new = evidence.split(), fix.split()
+    if len(shown) != len(new):
+        return ""
+    differing = [i for i, (a, b) in enumerate(zip(shown, new, strict=True)) if a != b]
+    if len(differing) != 1:
+        return ""
+    old_word = shown[differing[0]].strip(".,;:!?")
+    said = norm.said(start, start + len(evidence))
+    swapped = re.sub(rf"\b{re.escape(old_word)}\b", new[differing[0]].strip(".,;:!?"), said, count=1, flags=re.I)
+    return "" if swapped == said else swapped
+
+
+def _in_said_words(correction: Correction, norm: sp.Spoken) -> Correction:
+    """The card quotes what the person said, not the written form the detectors read."""
+    evidence = correction.evidence
+    start = norm.text.find(evidence) if evidence else -1
+    if start < 0:
+        return correction
+    said = norm.said(start, start + len(evidence))
+    key = correction.key
+    for shown, spoken_form in ((evidence.casefold(), said.casefold()), (evidence, said)):
+        if key.endswith(shown):
+            key = key[: len(key) - len(shown)] + spoken_form
+            break
+    fix, fix_kind = correction.fix, correction.fix_kind
+    if fix and fix_kind == "replace":
+        fix = _said_fix(correction, norm, start)
+        fix_kind = "replace" if fix else ""
+    return replace(correction, evidence=said, key=key, fix=fix, fix_kind=fix_kind)
+
+
 def detect(text: str, ctx: TextContext, *, kinds: tuple[str, ...] = KINDS) -> list[Correction]:
-    """Every correction the enabled detectors find, most urgent first."""
+    """Every correction the enabled detectors find, most urgent first.
+
+    Speech is first turned into the written form the detectors parse (pilot.live.spoken), and the cards that come
+    back quote the words that were said and are worded to be read aloud.
+    """
     if not text or not text.strip():
         return []
     allowed = SPEECH_KINDS if ctx.source == "speech" else kinds
+    read, where, norm = text, ctx, None
+    if ctx.source == "speech":
+        norm = sp.normalise(text)
+        read, where = norm.text, replace(ctx, spoken=norm)
     results: list[Correction] = []
     for kind in kinds:
         if kind not in allowed or kind not in DETECTORS:
             continue
         try:
-            results.extend(DETECTORS[kind](text, ctx))
+            results.extend(DETECTORS[kind](read, where))
         except Exception:  # a detector bug must never take the live layer down
             continue
+    if norm is not None:
+        results = [_in_said_words(c, norm) for c in results]
     order = {URGENT: 0, NORMAL: 1, LOW: 2}
     return sorted(results, key=lambda c: order.get(c.urgency, 3))

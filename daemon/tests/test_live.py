@@ -262,7 +262,9 @@ async def test_engine_holds_still_while_the_person_talks_and_catches_what_they_s
     await run_for(live, clock, 1)
     await settle()
     # Both catches from one sentence come back as one reply, and both get a card.
-    assert spoken == [("14 November is a Saturday. You said Tuesday. Your manager is Priya. You said Sarah.", False)]
+    assert spoken == [
+        ("The fourteenth of November is a Saturday. You said Tuesday. Your manager is Priya. You said Sarah.", False)
+    ]
     assert sorted(p["kind"] for e, p in events if e == "live_interjection") == ["profile_fact", "weekday_date"]
 
 
